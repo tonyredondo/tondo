@@ -23,6 +23,27 @@ jq -e '
   and .async_frames == "frame-task-waker-registry"
   and .diagnostics == "source-span-task-thread-crash-envelope"
   and .host_handles == "opaque-capability-indexed"
+  and .sync_bridge.status == "verified-private-scalar-lane"
+  and .sync_bridge.atomic_symbols == [
+    "tondo_rt_atomic_new",
+    "tondo_rt_atomic_load",
+    "tondo_rt_atomic_store",
+    "tondo_rt_atomic_swap",
+    "tondo_rt_atomic_compare_exchange"
+  ]
+  and .sync_bridge.parking_symbols == [
+    "tondo_rt_sync_park_new",
+    "tondo_rt_sync_park_epoch",
+    "tondo_rt_sync_park_wait",
+    "tondo_rt_sync_park_wake",
+    "tondo_rt_sync_park_waiters"
+  ]
+  and .sync_bridge.memory_order_codes == {Relaxed: 0, Acquire: 1, Release: 2, AcqRel: 3, SeqCst: 4}
+  and .sync_bridge.atomic_value_lane == "u64"
+  and .sync_bridge.parking_signal == "epoch-condvar"
+  and .sync_bridge.cooperative_wait == "poll-and-scheduler-park"
+  and .sync_bridge.blocking_wait == "native-workers-only"
+  and .sync_bridge.generic_values == "pending-native-lowering"
   and .direct_calls == "verified-ordinal-resolved-private-symbols"
   and .visibility == "compiler-runtime-only"
   and .public_ffi == "forbidden"
@@ -37,4 +58,21 @@ grep -Fq 'pub struct NativeAbiContract' "$source" || { echo "missing typed ABI c
 grep -Fq 'NATIVE_ABI_CONTRACT_FORMAT' "$source" || { echo "missing ABI contract format" >&2; exit 1; }
 grep -Fq 'private-versioned-no-ffi-promise' "$root/docs/contracts/native-memory.md" || { echo "memory visibility boundary is incomplete" >&2; exit 1; }
 grep -Fq 'verified-ordinal-resolved-private-symbols' "$root/docs/contracts/native-abi.md" || { echo "ABI direct-call boundary is incomplete" >&2; exit 1; }
+for symbol in \
+    tondo_rt_atomic_new \
+    tondo_rt_atomic_load \
+    tondo_rt_atomic_store \
+    tondo_rt_atomic_swap \
+    tondo_rt_atomic_compare_exchange \
+    tondo_rt_sync_park_new \
+    tondo_rt_sync_park_epoch \
+    tondo_rt_sync_park_wait \
+    tondo_rt_sync_park_wake \
+    tondo_rt_sync_park_waiters; do
+    grep -Fq "$symbol" "$root/crates/tondo-native-runtime/src/lib.rs" \
+        || { echo "native sync ABI symbol is missing: $symbol" >&2; exit 1; }
+done
+grep -Fq 'cooperative VM never calls the blocking wait symbol' \
+    "$root/docs/contracts/native-abi.md" \
+    || { echo "native sync ABI does not document cooperative non-blocking wait" >&2; exit 1; }
 echo "native ABI contract: OK"

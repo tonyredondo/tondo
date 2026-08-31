@@ -46,6 +46,14 @@ type HeapMapEntry = (Option<Value>, Option<Value>);
 pub trait VmHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError>;
 
+    /// Announces the logical execution unit that is about to call the host.
+    ///
+    /// The hosted synchronization implementation uses this identity to
+    /// distinguish a legitimate reentrant acquisition from contention owned
+    /// by another cooperative task. Hosts that do not track ownership can
+    /// keep the default no-op implementation.
+    fn set_execution_unit(&mut self, _unit: u64) {}
+
     /// Starts work that may block independently of the cooperative executor.
     fn start_async(&mut self, name: &str, _arguments: &[RuntimeValue]) -> Result<u64, VmError> {
         Err(VmError::UnsupportedHostCall(name.to_owned()))
@@ -1090,6 +1098,8 @@ impl<'program, 'host> Engine<'program, 'host> {
         arguments: &[RuntimeValue],
         frame: Option<usize>,
     ) -> Result<u64, VmError> {
+        self.host
+            .set_execution_unit(Self::task_id(self.current_task));
         let call = self.host.start_async(name, arguments)?;
         self.record_sync(
             self.current_task,
@@ -1098,6 +1108,16 @@ impl<'program, 'host> Engine<'program, 'host> {
             frame,
         )?;
         Ok(call)
+    }
+
+    fn invoke_host(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+    ) -> Result<RuntimeValue, VmError> {
+        self.host
+            .set_execution_unit(Self::task_id(self.current_task));
+        self.host.invoke(name, arguments)
     }
 
     fn run(
@@ -1130,6 +1150,8 @@ impl<'program, 'host> Engine<'program, 'host> {
             panic_observed: false,
             discard_completion: false,
         });
+        self.host
+            .set_execution_unit(Self::task_id(self.current_task));
         self.record_thread(DiagnosticThreadState::Started)?;
         self.record_task(0, None, DiagnosticTaskState::Created)?;
         self.record_task(0, None, DiagnosticTaskState::Running)?;
@@ -1549,6 +1571,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 task.status = TaskStatus::Running;
                 self.current_task = next;
+                self.host
+                    .set_execution_unit(Self::task_id(self.current_task));
                 self.frames = std::mem::take(&mut task.frames);
                 self.pending_unwind = task.pending_unwind.take();
                 let parent = self.diagnostic_parent(next);
@@ -8363,7 +8387,7 @@ impl Engine<'_, '_> {
                         snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let returned = self.host.invoke(function.name(), &snapshots)?;
+                let returned = self.invoke_host(function.name(), &snapshots)?;
                 if matches!(
                     function,
                     BytecodeBootstrapHostFunction::TestingFailNow
@@ -8765,7 +8789,7 @@ impl Engine<'_, '_> {
                         snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let returned = self.host.invoke(function.name(), &snapshots)?;
+                let returned = self.invoke_host(function.name(), &snapshots)?;
                 if matches!(
                     function,
                     BytecodeBootstrapHostFunction::TestingFailNow
@@ -8884,14 +8908,14 @@ impl Engine<'_, '_> {
         result_ty: BytecodeTypeId,
         texts: impl IntoIterator<Item = String>,
     ) -> Result<Value, VmError> {
-        let builder = self.host.invoke("std.format.Builder.new", &[])?;
+        let builder = self.invoke_host("std.format.Builder.new", &[])?;
         if !matches!(builder, RuntimeValue::Host { .. }) {
             return Err(VmError::Host(
                 "std.format.Builder.new returned a non-builder value".into(),
             ));
         }
         for text in texts {
-            let appended = self.host.invoke(
+            let appended = self.invoke_host(
                 "std.format.Builder.append",
                 &[builder.clone(), RuntimeValue::String(text)],
             )?;
@@ -8907,7 +8931,7 @@ impl Engine<'_, '_> {
                 }
             }
         }
-        let finished = self.host.invoke("std.format.Builder.finish", &[builder])?;
+        let finished = self.invoke_host("std.format.Builder.finish", &[builder])?;
         self.materialize_host_value(result_ty, finished)
     }
 
@@ -10100,7 +10124,7 @@ impl Engine<'_, '_> {
                         outcome: metadata.outcome,
                     })
                 } else {
-                    let returned = self.host.invoke(&metadata.name, &snapshots)?;
+                    let returned = self.invoke_host(&metadata.name, &snapshots)?;
                     if matches!(
                         metadata.name.as_str(),
                         "std.testing.failNow" | "std.testing.skip"

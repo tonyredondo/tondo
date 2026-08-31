@@ -2405,9 +2405,13 @@ El contrato machine-readable cerrado por `STD-SYNC-001` está en
 [`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y su explicación
 normativa está en [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md).
 Estos artefactos fijan la superficie y sus negativos. La superficie de
-compilador y el modelo hosted determinista ya están implementados; el parking
-cooperativo y el puente ABI nativo permanecen explícitamente en
-`STD-SYNC-HOST-001`.
+compilador, el parking cooperativo hosted y el puente ABI nativo de
+atomics/señales ya están implementados y verificados por
+`STD-SYNC-HOST-001`. El puente nativo mantiene handles opacos, órdenes de
+memoria explícitos y una señal epoch; solo bloquea workers nativos, nunca el
+executor cooperativo. La ejecución del closure de `Once.getOrInit` requiere una
+continuación de VM y permanece explícitamente pendiente en
+`STD-SYNC-TEST-001`, sin fingir una inicialización exitosa.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y

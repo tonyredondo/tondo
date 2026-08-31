@@ -74,6 +74,33 @@ pointer, object layout, allocator, symbol name, or FFI entry point to Tondo
 source. A future public FFI would require a separate decision and versioned
 contract.
 
+## Synchronization host bridge
+
+`STD-SYNC-HOST-001` adds a private, scalar synchronization lane without
+changing that boundary. The runtime exports the following symbols:
+
+- `tondo_rt_atomic_new`, `tondo_rt_atomic_load`, `tondo_rt_atomic_store`,
+  `tondo_rt_atomic_swap` and `tondo_rt_atomic_compare_exchange` operate on an
+  opaque `AtomicU64` cell. Memory-order codes are `0=Relaxed`, `1=Acquire`,
+  `2=Release`, `3=AcqRel` and `4=SeqCst`; load/store/CAS-failure restrictions
+  are checked before touching the cell. Compare-exchange is strong (no
+  spurious failure) and reports a mismatch through the private status channel.
+- `tondo_rt_sync_park_new`, `tondo_rt_sync_park_epoch`,
+  `tondo_rt_sync_park_wait`, `tondo_rt_sync_park_wake` and
+  `tondo_rt_sync_park_waiters` implement an epoch signal. A native worker may
+  wait on a changed epoch with an optional nanosecond timeout; the epoch is
+  advanced before notification, closing the check-then-sleep race. The
+  cooperative VM never calls the blocking wait symbol: it keeps its waiter in
+  scheduler state and polls/reacquires the resource instead.
+
+The atomic and parking maps retain `Arc` cells outside the global handle-table
+lock, so operations from distinct native workers are genuinely concurrent while
+handle validation and retain/release remain serialized. Invalid handles,
+invalid order pairs and timeout outcomes use the existing private status
+channel. This is a conformance bridge for the native scalar lane, not a
+generic managed-value or collection lowering; those consumers must add their
+own verified layouts and reclamation evidence.
+
 The machine-readable record is
 [`testing/native-abi.json`](../../testing/native-abi.json). Its canonical typed
 reader is in `crates/tondo-compiler/src/toolchain.rs`; static and negative

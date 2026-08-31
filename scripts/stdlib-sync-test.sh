@@ -49,6 +49,9 @@ expect_failure selectable-lock env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/selectab
 jq '.implementation.status = "pending-after-native-gate"' testing/stdlib-sync.json > "$tmp_dir/stale-implementation.json"
 expect_failure stale-implementation env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/stale-implementation.json" scripts/stdlib-sync-check.sh
 
+jq '.implementation.parking_and_native_bridge = "pending-STD-SYNC-HOST-001"' testing/stdlib-sync.json > "$tmp_dir/stale-parking.json"
+expect_failure stale-parking env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/stale-parking.json" scripts/stdlib-sync-check.sh
+
 for marker in \
     'pub enum SyncError' \
     'pub type Mutex[T]' \
@@ -81,10 +84,11 @@ for marker in \
     'strong-no-spurious-failure' \
     'one-linearization-coherent-value-collection' \
     'finite-structural-O1' \
-    'required-after-native-gate' \
-    'verified-compiler-and-hosted-model' \
-    'hosted-deterministic-model' \
-    'pending-STD-SYNC-HOST-001' \
+    'verified-scheduler-and-native-bridge' \
+    'verified-compiler-hosted-parking-native-bridge' \
+    'scheduler-backed-hosted-model' \
+    'verified-host-parking-native-atomic-epoch-bridge' \
+    'pending-STD-SYNC-TEST-001' \
     'WaitGroup' \
     'implicit-poisoning'; do
     grep -Fq "$marker" testing/stdlib-sync.json
@@ -99,9 +103,13 @@ jq -e '
   and .collections.snapshot == "one-linearization-coherent-value-collection"
   and .collections.direct_for.binding == "value-only"
   and .implementation.public_api_promoted == false
-  and .implementation.status == "verified-compiler-and-hosted-model"
-  and .implementation.host == "hosted-deterministic-model"
-  and .implementation.parking_and_native_bridge == "pending-STD-SYNC-HOST-001"
+  and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
+  and .implementation.host == "scheduler-backed-hosted-model"
+  and .implementation.parking_and_native_bridge == "verified-host-parking-native-atomic-epoch-bridge"
+  and .implementation.native_atomic_lane == "u64"
+  and .implementation.native_parking_signal == "epoch-condvar"
+  and .implementation.cooperative_wait == "poll-and-scheduler-park"
+  and .implementation.once_initializer_continuation == "pending-STD-SYNC-TEST-001"
   and .implementation.fixture_stdout == "sync-ok"
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' testing/stdlib-sync.json >/dev/null
@@ -118,6 +126,7 @@ done
     || { echo "std.sync tests: fixture stdout sidecar is not sync-ok" >&2; exit 1; }
 
 cargo test -p tondo-compiler process_host::tests::sync_ --locked >/dev/null
+cargo test -p tondo-native-runtime native_sync_ --locked >/dev/null
 runtime_output="$(cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-impl-001.to)"
 [[ "$runtime_output" == "sync-ok" ]] \
     || { echo "std.sync tests: runtime fixture produced unexpected output: $runtime_output" >&2; exit 1; }

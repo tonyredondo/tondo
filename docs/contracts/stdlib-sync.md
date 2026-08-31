@@ -3,9 +3,16 @@
 
 Estado: contract-locked para Tondo 0.1, cerrado por STD-SYNC-001. El registro
 machine-readable está en testing/stdlib-sync.json y la descripción integrada en
-TONDO_STANDARD_LIBRARY_SPEC.md. La superficie de compilador y el modelo hosted
-determinista están implementados; el parking cooperativo real y el puente ABI
-nativo siguen siendo el siguiente bloque `STD-SYNC-HOST-001`.
+TONDO_STANDARD_LIBRARY_SPEC.md. La superficie de compilador, el parking
+cooperativo del host y el puente ABI nativo de atomics/señales están verificados
+por `STD-SYNC-HOST-001`. La ejecución de un initializer `Once` como continuación
+de VM sigue siendo una frontera separada y está explícitamente pendiente en
+`STD-SYNC-TEST-001`; este contrato no la simula como si ya estuviera completa.
+
+Implementación host: `scheduler-backed-hosted-model` con puente
+`verified-host-parking-native-atomic-epoch-bridge`.
+La continuación de initializer está marcada como
+`pending-STD-SYNC-TEST-001`.
 
 std.sync es la superficie de memoria compartida de Tondo. Reutiliza el único
 modelo de suspensión implícita, spawn, scope, Join y defer; no crea una familia
@@ -22,17 +29,30 @@ ejecución cross-thread.
 
 ## Estado de implementación
 
-El compilador ya registra `std.sync` como módulo bootstrap, resuelve sus
-nominales, comprueba bounds/efectos y baja llamadas a la identidad host estable.
-El host de referencia mantiene estado de mutexes, rwlocks, guards, semáforos,
-permits, once, barreras y atomics, con cleanup idempotente y errores nominales.
-Las operaciones no contendedidas y los casos de prueba deterministas son
-ejecutables hoy sobre la VM hosted. Cuando una operación necesitaría aparcar una
-task (`lock`, `read`, `write`, `acquire`, `getOrInit` o `wait` con estado
-pendiente), el modelo devuelve un error explícito de capacidad del host en vez
-de bloquear o simular progreso. `STD-SYNC-HOST-001` sustituirá ese límite por
-parking/wakeup cooperativo y por el puente nativo; no cambia la superficie
-pública ni sus contratos.
+El compilador registra `std.sync` como módulo bootstrap, resuelve sus nominales,
+comprueba bounds/efectos y baja llamadas a la identidad host estable. El host de
+referencia mantiene estado de mutexes, rwlocks, guards, semáforos, permits,
+once, barreras y atomics, con cleanup idempotente y errores nominales. La
+contención de locks, condiciones, semáforos y barreras se registra en colas FIFO
+por recurso y se reintenta desde el scheduler; ningún worker cooperativo se
+duerme ni hace spin dentro del host. La identidad lógica de la task se anuncia
+en cada entrada al host, de modo que una adquisición reentrante se diagnostica
+sin confundirla con contención de otra task.
+
+El runtime nativo expone un puente privado para atomics `u64` con los cinco
+órdenes de `MemoryOrder` y para señales de parking basadas en epoch/`Condvar`.
+Los handles siguen siendo capacidades opacas y el puente no expone punteros,
+layouts ni IDs físicos de threads. La espera bloqueante de la señal solo es
+para workers nativos; la VM hosted usa el estado poll/park cooperativo y falla
+cerrado ante un conjunto de esperas sin progreso. El lowering nativo de tipos
+genéricos y de las colecciones compartidas consumirá este puente en sus hojas
+posteriores.
+
+`Once.getOrInit` ya conserva el valor listo y diagnostica la reentrada, pero la
+ejecución de su closure initializer requiere una continuación de VM que todavía
+no está instalada. Mientras esa hoja no se cierre, una Once no inicializada
+devuelve `SyncError.ReentrantInitialization` de forma explícita; nunca publica
+un valor inventado ni deja un waiter detached.
 
 ## Superficie pública
 
@@ -341,9 +361,11 @@ de atomics, scheduler público, spin loops, operaciones de colecciones
 selectable, waitPop, waitDequeue, queues ilimitadas ocultas, préstamos en for y
 aliases globales SArray/SMap/SSet.
 
-La superficie de compilador y el modelo hosted determinista cierran
-STD-SYNC-IMPL-001. Permanecen pendientes STD-SYNC-HOST-001, el modelado/tests y
-fuzzing de STD-SYNC-TEST-001, STD-SYNC-PERF-001, las leaves de colecciones,
-STD-SYNC-CONF-001 y STD-SYNC-DOC-001. La frontera host de parking y la ABI nativa
-solo se promueven después de NATIVE-001; este contrato no convierte el modelo
-determinista en una promesa de scheduler.
+La superficie de compilador, el parking cooperativo hosted y la ABI nativa de
+atomics/señales cierran `STD-SYNC-HOST-001` sobre la frontera actualmente
+implementada. Permanecen pendientes la continuación de initializer de
+`Once.getOrInit` dentro de `STD-SYNC-TEST-001`, el modelado/fuzzing restante de
+`STD-SYNC-TEST-001`, `STD-SYNC-PERF-001`, las leaves de colecciones,
+`STD-SYNC-CONF-001` y `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada y
+solo su carril escalar `u64` está verificado aquí; los tipos genéricos y las
+colecciones deben demostrar su lowering y reclamación en sus propios bloques.

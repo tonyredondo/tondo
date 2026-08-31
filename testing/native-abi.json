@@ -13,6 +13,35 @@
   "async_frames": "frame-task-waker-registry",
   "diagnostics": "source-span-task-thread-crash-envelope",
   "host_handles": "opaque-capability-indexed",
+  "sync_bridge": {
+    "status": "verified-private-scalar-lane",
+    "atomic_symbols": [
+      "tondo_rt_atomic_new",
+      "tondo_rt_atomic_load",
+      "tondo_rt_atomic_store",
+      "tondo_rt_atomic_swap",
+      "tondo_rt_atomic_compare_exchange"
+    ],
+    "parking_symbols": [
+      "tondo_rt_sync_park_new",
+      "tondo_rt_sync_park_epoch",
+      "tondo_rt_sync_park_wait",
+      "tondo_rt_sync_park_wake",
+      "tondo_rt_sync_park_waiters"
+    ],
+    "memory_order_codes": {
+      "Relaxed": 0,
+      "Acquire": 1,
+      "Release": 2,
+      "AcqRel": 3,
+      "SeqCst": 4
+    },
+    "atomic_value_lane": "u64",
+    "parking_signal": "epoch-condvar",
+    "cooperative_wait": "poll-and-scheduler-park",
+    "blocking_wait": "native-workers-only",
+    "generic_values": "pending-native-lowering"
+  },
   "direct_calls": "verified-ordinal-resolved-private-symbols",
   "visibility": "compiler-runtime-only",
   "public_ffi": "forbidden",

@@ -19,8 +19,11 @@
     "scheduler_blocking": "forbidden"
   },
   "host": {
-    "status": "required-after-native-gate",
-    "reason": "std.sync needs scheduler parking, wakeups, host atomics and reclamation on VM and native runtimes; cooperative tasks must never block an executor worker"
+    "status": "verified-scheduler-and-native-bridge",
+    "reason": "std.sync needs scheduler parking, wakeups, host atomics and reclamation on VM and native runtimes; cooperative tasks must never block an executor worker",
+    "cooperative_model": "scheduler-owned-poll-and-reacquire",
+    "native_bridge": "private-u64-atomics-and-epoch-parking",
+    "blocking_native_workers_only": true
   },
   "surface": {
     "types": [
@@ -709,10 +712,14 @@
     "diagnostics-publish-payloads"
   ],
   "implementation": {
-    "status": "verified-compiler-and-hosted-model",
+    "status": "verified-compiler-hosted-parking-native-bridge",
     "public_api_promoted": false,
-    "host": "hosted-deterministic-model",
-    "parking_and_native_bridge": "pending-STD-SYNC-HOST-001",
+    "host": "scheduler-backed-hosted-model",
+    "parking_and_native_bridge": "verified-host-parking-native-atomic-epoch-bridge",
+    "native_atomic_lane": "u64",
+    "native_parking_signal": "epoch-condvar",
+    "cooperative_wait": "poll-and-scheduler-park",
+    "once_initializer_continuation": "pending-STD-SYNC-TEST-001",
     "fixture": "tests/runtime/m11-std-sync-impl-001.to",
     "fixture_stdout": "sync-ok",
     "artifacts": [
@@ -720,10 +727,10 @@
       "crates/tondo-compiler/src/hir/check.rs",
       "crates/tondo-compiler/src/process_host.rs",
       "crates/tondo-vm/src/runtime/execute.rs",
+      "crates/tondo-native-runtime/src/lib.rs",
       "tests/runtime/m11-std-sync-impl-001.to"
     ],
     "required_follow_ups": [
-      "STD-SYNC-HOST-001",
       "STD-SYNC-TEST-001",
       "STD-SYNC-PERF-001",
       "STD-SYNC-COLLECTION-FRONTEND-001",

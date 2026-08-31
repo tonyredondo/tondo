@@ -33,8 +33,11 @@ jq -e '
   and .capability.cross_thread == "requires-threads"
   and .capability.missing_cross_thread == "static-capability-error"
   and .capability.scheduler_blocking == "forbidden"
-  and .host.status == "required-after-native-gate"
+  and .host.status == "verified-scheduler-and-native-bridge"
   and .host.reason == "std.sync needs scheduler parking, wakeups, host atomics and reclamation on VM and native runtimes; cooperative tasks must never block an executor worker"
+  and .host.cooperative_model == "scheduler-owned-poll-and-reacquire"
+  and .host.native_bridge == "private-u64-atomics-and-epoch-parking"
+  and .host.blocking_native_workers_only == true
   and .surface.types == [
     "SyncError = { InvalidCapacity, InvalidParties, ResourceLimit, ReentrantLock, ReentrantInitialization, Broken }",
     "Mutex[T]",
@@ -170,12 +173,18 @@ jq -e '
   and .collections.direct_for.lock_held_in_body == false
   and .collections.direct_for.materialization == "forbidden"
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
-  and .implementation.status == "verified-compiler-and-hosted-model"
+  and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "hosted-deterministic-model"
-  and .implementation.parking_and_native_bridge == "pending-STD-SYNC-HOST-001"
+  and .implementation.host == "scheduler-backed-hosted-model"
+  and .implementation.parking_and_native_bridge == "verified-host-parking-native-atomic-epoch-bridge"
+  and .implementation.native_atomic_lane == "u64"
+  and .implementation.native_parking_signal == "epoch-condvar"
+  and .implementation.cooperative_wait == "poll-and-scheduler-park"
+  and .implementation.once_initializer_continuation == "pending-STD-SYNC-TEST-001"
   and .implementation.fixture == "tests/runtime/m11-std-sync-impl-001.to"
   and .implementation.fixture_stdout == "sync-ok"
+  and (.implementation.artifacts | index("crates/tondo-vm/src/runtime/execute.rs")) != null
+  and (.implementation.artifacts | index("crates/tondo-native-runtime/src/lib.rs")) != null
   and (.implementation.artifacts | index("crates/tondo-compiler/src/process_host.rs")) != null
 ' "$contract" >/dev/null || die "invalid machine-readable sync contract"
 
@@ -201,6 +210,9 @@ for marker in \
     'sync.Queue' \
     'auto-release-exactly-once' \
     'one-linearization-coherent-value-collection' \
+    'scheduler-backed-hosted-model' \
+    'verified-host-parking-native-atomic-epoch-bridge' \
+    'pending-STD-SYNC-TEST-001' \
     'STD-SYNC-HOST-001'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-sync.md" \
         || die "contract document misses marker: $marker"
@@ -208,5 +220,20 @@ done
 
 grep -Fq 'testing/stdlib-sync.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync registry"
+
+for symbol in \
+    tondo_rt_atomic_new \
+    tondo_rt_atomic_compare_exchange \
+    tondo_rt_sync_park_new \
+    tondo_rt_sync_park_wait \
+    tondo_rt_sync_park_wake; do
+    grep -Fq "$symbol" "$root/crates/tondo-native-runtime/src/lib.rs" \
+        || die "sync host bridge misses native symbol: $symbol"
+done
+grep -Fq 'cooperative VM never calls the blocking wait symbol' \
+    "$root/docs/contracts/native-abi.md" \
+    || die "sync host bridge does not document cooperative non-blocking wait"
+grep -Fq 'set_execution_unit' "$root/crates/tondo-vm/src/runtime/execute.rs" \
+    || die "sync host bridge misses execution-unit handoff"
 
 echo "std.sync contract: OK (guards; condition/semaphore/once/barrier; explicit atomics; shared collections)"

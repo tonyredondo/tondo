@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
@@ -500,12 +500,12 @@ enum HostValue {
     #[allow(dead_code)]
     UnknownFields(protobuf::UnknownFields),
     // Synchronization values are intentionally kept in the hosted registry.
-    // The first implementation models ownership and linearization without
-    // parking the cooperative executor; the scheduler-backed bridge is added
-    // by STD-SYNC-HOST-001.
+    // The registry is single-owner (the VM host), while pending operations
+    // are parked in the scheduler rather than blocking an executor worker.
     SyncMutex {
         value: RuntimeValue,
         locked: bool,
+        owner: Option<u64>,
     },
     SyncMutexGuard {
         owner: u64,
@@ -514,6 +514,7 @@ enum HostValue {
         value: RuntimeValue,
         readers: usize,
         writer: bool,
+        writer_owner: Option<u64>,
     },
     SyncReadGuard {
         owner: u64,
@@ -535,6 +536,7 @@ enum HostValue {
     SyncBarrier {
         parties: usize,
         arrived: usize,
+        generation: u64,
     },
     SyncAtomic {
         value: RuntimeValue,
@@ -725,6 +727,43 @@ enum TimeJobKind {
     Advance { target: i128 },
 }
 
+/// A synchronization identity used to order waiters without exposing host
+/// addresses to the VM. A queue is kept per identity so a newly arriving
+/// reader cannot bypass an older writer, and every wakeup remains FIFO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SyncResource {
+    Mutex(u64),
+    RwLock(u64),
+    Condition(u64),
+    Semaphore(u64),
+    Barrier(u64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncWaitKind {
+    MutexLock,
+    RwRead,
+    RwWrite,
+    Condition {
+        mutex: u64,
+        guard: u64,
+        notified: bool,
+        cancelled: bool,
+    },
+    SemaphoreAcquire,
+    Barrier {
+        generation: u64,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct PendingSync {
+    arguments: Vec<RuntimeValue>,
+    resource: SyncResource,
+    kind: SyncWaitKind,
+    owner: u64,
+}
+
 pub(crate) struct BootstrapHost {
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
@@ -737,6 +776,9 @@ pub(crate) struct BootstrapHost {
     jobs: BTreeMap<u64, AsyncJob>,
     ready_jobs: BTreeMap<u64, Result<RuntimeValue, VmError>>,
     ready_fs_jobs: BTreeSet<u64>,
+    sync_waiters: BTreeMap<u64, PendingSync>,
+    sync_queues: BTreeMap<SyncResource, VecDeque<u64>>,
+    current_unit: u64,
     time_jobs: BTreeMap<u64, TimeJob>,
     clock: ClockProvider,
     previous_clock: Option<(ClockProvider, u64)>,
@@ -797,6 +839,9 @@ impl BootstrapHost {
             jobs: BTreeMap::new(),
             ready_jobs: BTreeMap::new(),
             ready_fs_jobs: BTreeSet::new(),
+            sync_waiters: BTreeMap::new(),
+            sync_queues: BTreeMap::new(),
+            current_unit: 0,
             time_jobs: BTreeMap::new(),
             clock: ClockProvider::real(),
             previous_clock: None,
@@ -957,16 +1002,6 @@ impl BootstrapHost {
         Ok(*variant as u8)
     }
 
-    fn sync_order_strength(order: u8) -> u8 {
-        match order {
-            0 => 0,     // Relaxed
-            1 | 2 => 1, // Acquire / Release
-            3 => 2,     // AcqRel
-            4 => 3,     // SeqCst
-            _ => u8::MAX,
-        }
-    }
-
     fn sync_valid_load_order(order: u8) -> bool {
         matches!(order, 0 | 1 | 4)
     }
@@ -977,6 +1012,562 @@ impl BootstrapHost {
 
     fn sync_valid_cas_failure_order(order: u8) -> bool {
         matches!(order, 0 | 1 | 4)
+    }
+
+    /// The failure ordering of compare-exchange has a semantic, not merely
+    /// numeric, relationship to the success ordering.  In particular,
+    /// `Release` success cannot pair with `Acquire` failure: those orderings
+    /// are incomparable even though both have the same strength rank.
+    fn sync_valid_cas_orders(success: u8, failure: u8) -> bool {
+        match success {
+            0 => failure == 0,
+            1 => matches!(failure, 0 | 1),
+            2 => failure == 0,
+            3 => matches!(failure, 0 | 1),
+            4 => matches!(failure, 0 | 1 | 4),
+            _ => false,
+        }
+    }
+
+    fn next_async_call(&mut self) -> Result<u64, VmError> {
+        let call = self.next_job;
+        self.next_job = self
+            .next_job
+            .checked_add(1)
+            .ok_or_else(|| VmError::Host("async call identity space exhausted".into()))?;
+        Ok(call)
+    }
+
+    fn is_sync_suspendable(name: &str) -> bool {
+        matches!(
+            name,
+            "std.sync.Mutex.lock"
+                | "std.sync.RwLock.read"
+                | "std.sync.RwLock.write"
+                | "std.sync.Condition.wait"
+                | "std.sync.Semaphore.acquire"
+                | "std.sync.Once.getOrInit"
+                | "std.sync.Barrier.wait"
+        )
+    }
+
+    fn enqueue_sync_waiter(&mut self, call: u64, waiter: PendingSync) {
+        self.sync_queues
+            .entry(waiter.resource)
+            .or_default()
+            .push_back(call);
+        self.sync_waiters.insert(call, waiter);
+    }
+
+    fn sync_waiter_is_front(&self, call: u64, resource: SyncResource) -> bool {
+        self.sync_queues
+            .get(&resource)
+            .and_then(|queue| queue.front())
+            .is_some_and(|front| *front == call)
+    }
+
+    fn sync_resource_has_waiters(&self, resource: SyncResource) -> bool {
+        self.sync_queues
+            .get(&resource)
+            .is_some_and(|queue| !queue.is_empty())
+    }
+
+    fn remove_sync_waiter(&mut self, call: u64, resource: SyncResource) {
+        if let Some(queue) = self.sync_queues.get_mut(&resource) {
+            if let Some(position) = queue.iter().position(|candidate| *candidate == call) {
+                queue.remove(position);
+            }
+            if queue.is_empty() {
+                self.sync_queues.remove(&resource);
+            }
+        }
+        self.sync_waiters.remove(&call);
+    }
+
+    fn pending_sync_for(
+        &mut self,
+        call: u64,
+        name: &str,
+        arguments: &[RuntimeValue],
+    ) -> Result<bool, VmError> {
+        if !Self::is_sync_suspendable(name) {
+            return Ok(false);
+        }
+        match name {
+            "std.sync.Mutex.lock" => {
+                let [mutex] = arguments else {
+                    return Err(VmError::Host(
+                        "std.sync.Mutex.lock received an invalid argument list".into(),
+                    ));
+                };
+                let id = self.sync_host_id(mutex, RuntimeHostValueKind::Mutex, "Mutex")?;
+                let resource = SyncResource::Mutex(id);
+                let contended = match self.values.get(&id) {
+                    Some(HostValue::SyncMutex { locked, owner, .. }) => {
+                        if *locked && *owner == Some(self.current_unit) {
+                            false
+                        } else {
+                            *locked || self.sync_resource_has_waiters(resource)
+                        }
+                    }
+                    _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
+                };
+                if contended {
+                    self.enqueue_sync_waiter(
+                        call,
+                        PendingSync {
+                            arguments: arguments.to_vec(),
+                            resource,
+                            kind: SyncWaitKind::MutexLock,
+                            owner: self.current_unit,
+                        },
+                    );
+                    return Ok(true);
+                }
+            }
+            "std.sync.RwLock.read" => {
+                let [lock] = arguments else {
+                    return Err(VmError::Host(
+                        "std.sync.RwLock.read received an invalid argument list".into(),
+                    ));
+                };
+                let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
+                let resource = SyncResource::RwLock(id);
+                let contended = match self.values.get(&id) {
+                    Some(HostValue::SyncRwLock {
+                        writer,
+                        writer_owner,
+                        ..
+                    }) => {
+                        if *writer && *writer_owner == Some(self.current_unit) {
+                            false
+                        } else {
+                            (*writer && *writer_owner != Some(self.current_unit))
+                                || self.sync_resource_has_waiters(resource)
+                        }
+                    }
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if contended {
+                    self.enqueue_sync_waiter(
+                        call,
+                        PendingSync {
+                            arguments: arguments.to_vec(),
+                            resource,
+                            kind: SyncWaitKind::RwRead,
+                            owner: self.current_unit,
+                        },
+                    );
+                    return Ok(true);
+                }
+            }
+            "std.sync.RwLock.write" => {
+                let [lock] = arguments else {
+                    return Err(VmError::Host(
+                        "std.sync.RwLock.write received an invalid argument list".into(),
+                    ));
+                };
+                let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
+                let resource = SyncResource::RwLock(id);
+                let contended = match self.values.get(&id) {
+                    Some(HostValue::SyncRwLock {
+                        readers,
+                        writer,
+                        writer_owner,
+                        ..
+                    }) => {
+                        if *writer && *writer_owner == Some(self.current_unit) {
+                            false
+                        } else {
+                            ((*writer && *writer_owner != Some(self.current_unit)) || *readers > 0)
+                                || self.sync_resource_has_waiters(resource)
+                        }
+                    }
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if contended {
+                    self.enqueue_sync_waiter(
+                        call,
+                        PendingSync {
+                            arguments: arguments.to_vec(),
+                            resource,
+                            kind: SyncWaitKind::RwWrite,
+                            owner: self.current_unit,
+                        },
+                    );
+                    return Ok(true);
+                }
+            }
+            "std.sync.Condition.wait" => {
+                let [condition, guard] = arguments else {
+                    return Err(VmError::Host(
+                        "std.sync.Condition.wait received an invalid argument list".into(),
+                    ));
+                };
+                let condition_id =
+                    self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
+                let guard_id =
+                    self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
+                let mutex_id = match self.values.get(&guard_id) {
+                    Some(HostValue::SyncMutexGuard { owner }) => *owner,
+                    _ => return Err(VmError::Host("MutexGuard token is stale".into())),
+                };
+                match self.values.get(&mutex_id) {
+                    Some(HostValue::SyncMutex { locked, owner, .. })
+                        if *locked && *owner == Some(self.current_unit) => {}
+                    _ => {
+                        return Err(VmError::Host(
+                            "Condition.wait requires the current task to own the mutex".into(),
+                        ));
+                    }
+                }
+                // The release and registration are one host transition. The
+                // guard token remains owned by the parked task and is returned
+                // only after a notification plus a successful re-acquire.
+                if let Some(HostValue::SyncMutex { locked, owner, .. }) =
+                    self.values.get_mut(&mutex_id)
+                {
+                    *locked = false;
+                    *owner = None;
+                }
+                self.enqueue_sync_waiter(
+                    call,
+                    PendingSync {
+                        arguments: arguments.to_vec(),
+                        resource: SyncResource::Condition(condition_id),
+                        kind: SyncWaitKind::Condition {
+                            mutex: mutex_id,
+                            guard: guard_id,
+                            notified: false,
+                            cancelled: false,
+                        },
+                        owner: self.current_unit,
+                    },
+                );
+                return Ok(true);
+            }
+            "std.sync.Semaphore.acquire" => {
+                let [semaphore] = arguments else {
+                    return Err(VmError::Host(
+                        "std.sync.Semaphore.acquire received an invalid argument list".into(),
+                    ));
+                };
+                let id =
+                    self.sync_host_id(semaphore, RuntimeHostValueKind::Semaphore, "Semaphore")?;
+                let resource = SyncResource::Semaphore(id);
+                let contended = match self.values.get(&id) {
+                    Some(HostValue::SyncSemaphore { permits, .. }) => *permits == 0,
+                    _ => return Err(VmError::Host("Semaphore token is stale or invalid".into())),
+                } || self.sync_resource_has_waiters(resource);
+                if contended {
+                    self.enqueue_sync_waiter(
+                        call,
+                        PendingSync {
+                            arguments: arguments.to_vec(),
+                            resource,
+                            kind: SyncWaitKind::SemaphoreAcquire,
+                            owner: self.current_unit,
+                        },
+                    );
+                    return Ok(true);
+                }
+            }
+            "std.sync.Once.getOrInit" => {
+                // Initializer execution is a VM continuation, not a detached
+                // host callback. The current lowering therefore keeps the
+                // explicit ReentrantInitialization error until that
+                // continuation is installed; it must never pretend that an
+                // initializer completed while parked.
+                return Ok(false);
+            }
+            "std.sync.Barrier.wait" => {
+                let [barrier] = arguments else {
+                    return Err(VmError::Host(
+                        "std.sync.Barrier.wait received an invalid argument list".into(),
+                    ));
+                };
+                let id = self.sync_host_id(barrier, RuntimeHostValueKind::Barrier, "Barrier")?;
+                let (parties, arrived, generation) = match self.values.get(&id) {
+                    Some(HostValue::SyncBarrier {
+                        parties,
+                        arrived,
+                        generation,
+                    }) => (*parties, *arrived, *generation),
+                    _ => return Err(VmError::Host("Barrier token is stale or invalid".into())),
+                };
+                if parties == 1 {
+                    return Ok(false);
+                }
+                let next_arrived = arrived.saturating_add(1);
+                if next_arrived < parties {
+                    if let Some(HostValue::SyncBarrier { arrived, .. }) = self.values.get_mut(&id) {
+                        *arrived = next_arrived;
+                    }
+                    self.enqueue_sync_waiter(
+                        call,
+                        PendingSync {
+                            arguments: arguments.to_vec(),
+                            resource: SyncResource::Barrier(id),
+                            kind: SyncWaitKind::Barrier { generation },
+                            owner: self.current_unit,
+                        },
+                    );
+                    return Ok(true);
+                }
+                // The arriving task is the leader. Publish all completions as
+                // one generation transition so no participant can observe a
+                // partially reset barrier.
+                let queued = self
+                    .sync_queues
+                    .remove(&SyncResource::Barrier(id))
+                    .unwrap_or_default();
+                for queued_call in queued {
+                    self.sync_waiters.remove(&queued_call);
+                    self.ready_jobs.insert(
+                        queued_call,
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                            name: "BarrierRole".to_owned(),
+                            variant: 1,
+                            values: Vec::new(),
+                        }))),
+                    );
+                }
+                if let Some(HostValue::SyncBarrier {
+                    arrived,
+                    generation,
+                    ..
+                }) = self.values.get_mut(&id)
+                {
+                    *arrived = 0;
+                    *generation = generation.saturating_add(1);
+                }
+                self.ready_jobs.insert(
+                    call,
+                    Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                        name: "BarrierRole".to_owned(),
+                        variant: 0,
+                        values: Vec::new(),
+                    }))),
+                );
+                return Ok(true);
+            }
+            _ => unreachable!("sync suspendable name was matched above"),
+        }
+        Ok(false)
+    }
+
+    fn notify_condition(&mut self, condition: u64, all: bool) {
+        let resource = SyncResource::Condition(condition);
+        let calls = self.sync_queues.get(&resource).cloned().unwrap_or_default();
+        let limit = if all { usize::MAX } else { 1 };
+        let mut notified_count = 0;
+        for call in calls {
+            if notified_count >= limit {
+                break;
+            }
+            if let Some(PendingSync {
+                kind:
+                    SyncWaitKind::Condition {
+                        notified,
+                        cancelled,
+                        ..
+                    },
+                ..
+            }) = self.sync_waiters.get_mut(&call)
+            {
+                if !*cancelled && !*notified {
+                    *notified = true;
+                    notified_count += 1;
+                }
+            }
+        }
+    }
+
+    fn poll_sync(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
+        let Some(pending) = self.sync_waiters.get(&call).cloned() else {
+            return Ok(None);
+        };
+        if !self.sync_waiter_is_front(call, pending.resource) {
+            return Ok(None);
+        }
+        match pending.kind {
+            SyncWaitKind::MutexLock => {
+                let SyncResource::Mutex(id) = pending.resource else {
+                    unreachable!("mutex waiter resource mismatch")
+                };
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMutex { locked, owner, .. }) if !*locked => {
+                        *locked = true;
+                        *owner = Some(pending.owner);
+                        true
+                    }
+                    Some(HostValue::SyncMutex { .. }) => false,
+                    _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(None);
+                }
+                self.remove_sync_waiter(call, pending.resource);
+                let guard = self.allocate(
+                    RuntimeHostValueKind::MutexGuard,
+                    HostValue::SyncMutexGuard { owner: id },
+                );
+                Ok(Some(RuntimeValue::ResultOk(Box::new(guard))))
+            }
+            SyncWaitKind::RwRead => {
+                let SyncResource::RwLock(id) = pending.resource else {
+                    unreachable!("rw reader resource mismatch")
+                };
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncRwLock {
+                        readers, writer, ..
+                    }) if !*writer => {
+                        *readers = readers.saturating_add(1);
+                        true
+                    }
+                    Some(HostValue::SyncRwLock { .. }) => false,
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(None);
+                }
+                self.remove_sync_waiter(call, pending.resource);
+                let guard = self.allocate(
+                    RuntimeHostValueKind::ReadGuard,
+                    HostValue::SyncReadGuard { owner: id },
+                );
+                Ok(Some(RuntimeValue::ResultOk(Box::new(guard))))
+            }
+            SyncWaitKind::RwWrite => {
+                let SyncResource::RwLock(id) = pending.resource else {
+                    unreachable!("rw writer resource mismatch")
+                };
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncRwLock {
+                        readers,
+                        writer,
+                        writer_owner,
+                        ..
+                    }) if !*writer && *readers == 0 => {
+                        *writer = true;
+                        *writer_owner = Some(pending.owner);
+                        true
+                    }
+                    Some(HostValue::SyncRwLock { .. }) => false,
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(None);
+                }
+                self.remove_sync_waiter(call, pending.resource);
+                let guard = self.allocate(
+                    RuntimeHostValueKind::WriteGuard,
+                    HostValue::SyncWriteGuard { owner: id },
+                );
+                Ok(Some(RuntimeValue::ResultOk(Box::new(guard))))
+            }
+            SyncWaitKind::Condition {
+                mutex,
+                guard,
+                notified,
+                cancelled: _,
+            } => {
+                if !notified {
+                    return Ok(None);
+                }
+                let available = match self.values.get_mut(&mutex) {
+                    Some(HostValue::SyncMutex { locked, owner, .. }) if !*locked => {
+                        *locked = true;
+                        *owner = Some(pending.owner);
+                        true
+                    }
+                    Some(HostValue::SyncMutex { .. }) => false,
+                    _ => return Err(VmError::Host("Condition mutex is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(None);
+                }
+                self.remove_sync_waiter(call, pending.resource);
+                if !self.values.contains_key(&guard) {
+                    return Err(VmError::Host("Condition guard is stale".into()));
+                }
+                Ok(Some(pending.arguments[1].clone()))
+            }
+            SyncWaitKind::SemaphoreAcquire => {
+                let SyncResource::Semaphore(id) = pending.resource else {
+                    unreachable!("semaphore waiter resource mismatch")
+                };
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncSemaphore { permits, .. }) if *permits > 0 => {
+                        *permits -= 1;
+                        true
+                    }
+                    Some(HostValue::SyncSemaphore { .. }) => false,
+                    _ => return Err(VmError::Host("Semaphore token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(None);
+                }
+                self.remove_sync_waiter(call, pending.resource);
+                Ok(Some(self.allocate(
+                    RuntimeHostValueKind::Permit,
+                    HostValue::SyncPermit { owner: id },
+                )))
+            }
+            SyncWaitKind::Barrier { .. } => Ok(None),
+        }
+    }
+
+    fn cancel_sync_waiter(&mut self, call: u64) -> Result<bool, VmError> {
+        let Some(mut pending) = self.sync_waiters.get(&call).cloned() else {
+            return Ok(false);
+        };
+        match pending.kind {
+            SyncWaitKind::Condition {
+                mutex,
+                guard,
+                notified: _,
+                ..
+            } => {
+                pending.kind = SyncWaitKind::Condition {
+                    mutex,
+                    guard,
+                    notified: true,
+                    cancelled: true,
+                };
+                self.sync_waiters.insert(call, pending);
+                Ok(true)
+            }
+            SyncWaitKind::Barrier { .. } => {
+                let resource = pending.resource;
+                self.remove_sync_waiter(call, resource);
+                if let SyncResource::Barrier(id) = resource {
+                    let remaining = self.sync_queues.remove(&resource).unwrap_or_default();
+                    for waiter in remaining {
+                        self.sync_waiters.remove(&waiter);
+                        self.ready_jobs
+                            .insert(waiter, Ok(Self::sync_result_error(5)));
+                    }
+                    if let Some(HostValue::SyncBarrier {
+                        arrived,
+                        generation,
+                        ..
+                    }) = self.values.get_mut(&id)
+                    {
+                        *arrived = 0;
+                        *generation = generation.saturating_add(1);
+                    }
+                }
+                self.ready_jobs.insert(call, Ok(Self::sync_result_error(5)));
+                Ok(true)
+            }
+            _ => {
+                let resource = pending.resource;
+                self.remove_sync_waiter(call, resource);
+                self.ready_jobs.insert(call, Ok(Self::sync_result_error(5)));
+                Ok(true)
+            }
+        }
     }
 
     fn process_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -3026,6 +3617,10 @@ impl Default for BootstrapHost {
 }
 
 impl VmHost for BootstrapHost {
+    fn set_execution_unit(&mut self, unit: u64) {
+        self.current_unit = unit;
+    }
+
     fn begin_virtual_time(&mut self) -> Result<RuntimeValue, VmError> {
         if self.previous_clock.is_some() || self.virtual_controller.is_some() {
             return Err(VmError::Host(
@@ -6532,22 +7127,29 @@ impl VmHost for BootstrapHost {
                 HostValue::SyncMutex {
                     value: value.clone(),
                     locked: false,
+                    owner: None,
                 },
             )))),
             ("std.sync.Mutex.lock", [mutex]) => {
                 let id = self.sync_host_id(mutex, RuntimeHostValueKind::Mutex, "Mutex")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncMutex { locked, .. }) if !*locked => {
+                let (available, reentrant) = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMutex { locked, owner, .. }) if !*locked => {
                         *locked = true;
-                        true
+                        *owner = Some(self.current_unit);
+                        (true, false)
                     }
-                    Some(HostValue::SyncMutex { .. }) => false,
+                    Some(HostValue::SyncMutex { owner, .. }) => {
+                        (false, *owner == Some(self.current_unit))
+                    }
                     _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
                 };
                 if !available {
-                    // The hosted bootstrap has no scheduler parking hook yet;
-                    // report contention without mutating the lock.
-                    return Ok(Self::sync_result_error(3));
+                    if reentrant {
+                        return Ok(Self::sync_result_error(3));
+                    }
+                    return Err(VmError::Host(
+                        "Mutex.lock is contended; use the async host path".into(),
+                    ));
                 }
                 let guard = self.allocate(
                     RuntimeHostValueKind::MutexGuard,
@@ -6558,8 +7160,9 @@ impl VmHost for BootstrapHost {
             ("std.sync.Mutex.tryLock", [mutex]) => {
                 let id = self.sync_host_id(mutex, RuntimeHostValueKind::Mutex, "Mutex")?;
                 let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncMutex { locked, .. }) if !*locked => {
+                    Some(HostValue::SyncMutex { locked, owner, .. }) if !*locked => {
                         *locked = true;
+                        *owner = Some(self.current_unit);
                         true
                     }
                     Some(HostValue::SyncMutex { .. }) => false,
@@ -6585,6 +7188,7 @@ impl VmHost for BootstrapHost {
                     Some(HostValue::SyncMutex {
                         value,
                         locked: true,
+                        ..
                     }) => value.clone(),
                     _ => return Err(VmError::Host("Mutex owner is stale or unlocked".into())),
                 };
@@ -6598,7 +7202,14 @@ impl VmHost for BootstrapHost {
                     _ => return Err(VmError::Host("MutexGuard token is stale".into())),
                 };
                 match self.values.get_mut(&owner) {
-                    Some(HostValue::SyncMutex { locked, .. }) => *locked = false,
+                    Some(HostValue::SyncMutex {
+                        locked,
+                        owner: lock_owner,
+                        ..
+                    }) => {
+                        *locked = false;
+                        *lock_owner = None;
+                    }
                     _ => return Err(VmError::Host("Mutex owner is stale".into())),
                 }
                 Ok(RuntimeValue::Unit)
@@ -6609,6 +7220,7 @@ impl VmHost for BootstrapHost {
                     value: value.clone(),
                     readers: 0,
                     writer: false,
+                    writer_owner: None,
                 },
             )))),
             ("std.sync.RwLock.read", [lock]) => {
@@ -6657,15 +7269,24 @@ impl VmHost for BootstrapHost {
                 let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
                 let available = match self.values.get_mut(&id) {
                     Some(HostValue::SyncRwLock {
-                        readers, writer, ..
+                        readers,
+                        writer,
+                        writer_owner,
+                        ..
                     }) if !*writer && *readers == 0 => {
                         *writer = true;
+                        *writer_owner = Some(self.current_unit);
                         true
                     }
                     Some(HostValue::SyncRwLock { .. }) => false,
                     _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
                 };
                 if !available {
+                    if let Some(HostValue::SyncRwLock { writer_owner, .. }) = self.values.get(&id)
+                        && *writer_owner == Some(self.current_unit)
+                    {
+                        return Ok(Self::sync_result_error(3));
+                    }
                     return Ok(Self::sync_result_error(2));
                 }
                 let guard = self.allocate(
@@ -6678,9 +7299,13 @@ impl VmHost for BootstrapHost {
                 let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
                 let available = match self.values.get_mut(&id) {
                     Some(HostValue::SyncRwLock {
-                        readers, writer, ..
+                        readers,
+                        writer,
+                        writer_owner,
+                        ..
                     }) if !*writer && *readers == 0 => {
                         *writer = true;
+                        *writer_owner = Some(self.current_unit);
                         true
                     }
                     Some(HostValue::SyncRwLock { .. }) => false,
@@ -6733,6 +7358,7 @@ impl VmHost for BootstrapHost {
                         value,
                         readers,
                         writer,
+                        ..
                     }) if (*writer && expected_kind == RuntimeHostValueKind::WriteGuard)
                         || (*readers > 0 && expected_kind == RuntimeHostValueKind::ReadGuard) =>
                     {
@@ -6763,7 +7389,14 @@ impl VmHost for BootstrapHost {
                     _ => return Err(VmError::Host("WriteGuard token is stale".into())),
                 };
                 match self.values.get_mut(&owner) {
-                    Some(HostValue::SyncRwLock { writer, .. }) if *writer => *writer = false,
+                    Some(HostValue::SyncRwLock {
+                        writer,
+                        writer_owner,
+                        ..
+                    }) if *writer => {
+                        *writer = false;
+                        *writer_owner = None;
+                    }
                     _ => return Err(VmError::Host("RwLock owner is stale".into())),
                 }
                 Ok(RuntimeValue::Unit)
@@ -6781,7 +7414,9 @@ impl VmHost for BootstrapHost {
             }
             ("std.sync.Condition.notifyOne", [condition])
             | ("std.sync.Condition.notifyAll", [condition]) => {
-                self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
+                let condition_id =
+                    self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
+                self.notify_condition(condition_id, name == "std.sync.Condition.notifyAll");
                 Ok(RuntimeValue::Unit)
             }
             ("std.sync.semaphore", [RuntimeValue::Integer(capacity)]) => {
@@ -6913,6 +7548,7 @@ impl VmHost for BootstrapHost {
                     HostValue::SyncBarrier {
                         parties,
                         arrived: 0,
+                        generation: 0,
                     },
                 ))))
             }
@@ -6920,7 +7556,9 @@ impl VmHost for BootstrapHost {
                 let id = self.sync_host_id(barrier, RuntimeHostValueKind::Barrier, "Barrier")?;
                 let role = match self.values.get_mut(&id) {
                     Some(HostValue::SyncBarrier { parties: 1, .. }) => 0,
-                    Some(HostValue::SyncBarrier { parties, arrived }) => {
+                    Some(HostValue::SyncBarrier {
+                        parties, arrived, ..
+                    }) => {
                         *arrived = arrived.saturating_add(1);
                         if *arrived >= *parties {
                             *arrived = 0;
@@ -6992,7 +7630,7 @@ impl VmHost for BootstrapHost {
                 let success = Self::sync_memory_order(success)?;
                 let failure = Self::sync_memory_order(failure)?;
                 if !Self::sync_valid_cas_failure_order(failure)
-                    || Self::sync_order_strength(failure) > Self::sync_order_strength(success)
+                    || !Self::sync_valid_cas_orders(success, failure)
                 {
                     return Err(VmError::Host(
                         "Atomic.compareExchange has incompatible memory orders".into(),
@@ -7086,11 +7724,10 @@ impl VmHost for BootstrapHost {
             || name.starts_with("std.sync.Once.getOrInit")
             || name.starts_with("std.sync.Barrier.wait")
         {
-            let call = self.next_job;
-            self.next_job = self
-                .next_job
-                .checked_add(1)
-                .ok_or_else(|| VmError::Host("async call identity space exhausted".into()))?;
+            let call = self.next_async_call()?;
+            if self.pending_sync_for(call, name, arguments)? {
+                return Ok(call);
+            }
             let result = self.invoke(name, arguments);
             if name.starts_with("std.fs.") {
                 self.ready_fs_jobs.insert(call);
@@ -7183,6 +7820,9 @@ impl VmHost for BootstrapHost {
             self.ready_fs_jobs.remove(&call);
             return result.map(Some);
         }
+        if self.sync_waiters.contains_key(&call) {
+            return self.poll_sync(call);
+        }
         if self.time_jobs.contains_key(&call) {
             let ready = {
                 let job = self
@@ -7240,6 +7880,15 @@ impl VmHost for BootstrapHost {
                     return Ok((*call, value));
                 }
             }
+            if calls
+                .iter()
+                .all(|call| self.sync_waiters.contains_key(call))
+            {
+                return Err(VmError::Host(
+                    "cooperative executor has no runnable task while synchronization calls are pending"
+                        .into(),
+                ));
+            }
             if matches!(self.clock, ClockProvider::Virtual { .. }) {
                 let controller = calls.iter().find_map(|call| {
                     self.time_jobs.get(call).and_then(|job| match job.kind {
@@ -7290,6 +7939,10 @@ impl VmHost for BootstrapHost {
     }
 
     fn cancel_async(&mut self, call: u64) -> Result<(), VmError> {
+        if self.sync_waiters.contains_key(&call) {
+            self.cancel_sync_waiter(call)?;
+            return Ok(());
+        }
         if self.ready_jobs.contains_key(&call) {
             let cancelled = if self.ready_fs_jobs.contains(&call) {
                 self.fs_result_error("operation cancelled")
@@ -7330,9 +7983,14 @@ impl VmHost for BootstrapHost {
             }
             RuntimeHostValueKind::MutexGuard => {
                 if let Some(HostValue::SyncMutexGuard { owner }) = self.values.remove(id)
-                    && let Some(HostValue::SyncMutex { locked, .. }) = self.values.get_mut(&owner)
+                    && let Some(HostValue::SyncMutex {
+                        locked,
+                        owner: lock_owner,
+                        ..
+                    }) = self.values.get_mut(&owner)
                 {
                     *locked = false;
+                    *lock_owner = None;
                 }
             }
             RuntimeHostValueKind::ReadGuard => {
@@ -7344,9 +8002,14 @@ impl VmHost for BootstrapHost {
             }
             RuntimeHostValueKind::WriteGuard => {
                 if let Some(HostValue::SyncWriteGuard { owner }) = self.values.remove(id)
-                    && let Some(HostValue::SyncRwLock { writer, .. }) = self.values.get_mut(&owner)
+                    && let Some(HostValue::SyncRwLock {
+                        writer,
+                        writer_owner,
+                        ..
+                    }) = self.values.get_mut(&owner)
                 {
                     *writer = false;
+                    *writer_owner = None;
                 }
             }
             RuntimeHostValueKind::Permit => {
@@ -8859,6 +9522,21 @@ mod tests {
             .unwrap(),
             RuntimeValue::Variant { name, variant: 0, values } if name == "CompareExchange" && values == vec![RuntimeValue::Integer(3)]
         ));
+        // Acquire failure is not valid for a Release success ordering even
+        // though both have the same coarse strength rank.
+        assert!(
+            host.invoke(
+                "std.sync.Atomic.compareExchange",
+                &[
+                    atomic.clone(),
+                    RuntimeValue::Integer(4),
+                    RuntimeValue::Integer(5),
+                    release.clone(),
+                    acquire.clone(),
+                ],
+            )
+            .is_err()
+        );
         let invalid_order = host
             .invoke("intrinsic.sync.MemoryOrder.Release", &[])
             .unwrap();
@@ -8875,17 +9553,18 @@ mod tests {
         // The small validation helpers are part of the host boundary. Exercise
         // every closed order and the fail-closed shapes without relying on a
         // forged safe-language value.
-        for order in 0..=4 {
-            let expected = match order {
-                0 => 0,
-                1 | 2 => 1,
-                3 => 2,
-                4 => 3,
-                _ => unreachable!(),
-            };
-            assert_eq!(BootstrapHost::sync_order_strength(order), expected);
-        }
-        assert_eq!(BootstrapHost::sync_order_strength(9), u8::MAX);
+        assert!(BootstrapHost::sync_valid_cas_orders(0, 0));
+        assert!(BootstrapHost::sync_valid_cas_orders(1, 0));
+        assert!(BootstrapHost::sync_valid_cas_orders(1, 1));
+        assert!(BootstrapHost::sync_valid_cas_orders(2, 0));
+        assert!(BootstrapHost::sync_valid_cas_orders(3, 0));
+        assert!(BootstrapHost::sync_valid_cas_orders(3, 1));
+        assert!(BootstrapHost::sync_valid_cas_orders(4, 0));
+        assert!(BootstrapHost::sync_valid_cas_orders(4, 1));
+        assert!(BootstrapHost::sync_valid_cas_orders(4, 4));
+        assert!(!BootstrapHost::sync_valid_cas_orders(2, 1));
+        assert!(!BootstrapHost::sync_valid_cas_orders(3, 4));
+        assert!(!BootstrapHost::sync_valid_cas_orders(9, 0));
         assert!(BootstrapHost::sync_memory_order(&RuntimeValue::Unit).is_err());
         for value in [
             RuntimeValue::Variant {
@@ -9460,9 +10139,14 @@ mod tests {
         let wait = host
             .start_async(
                 "std.sync.Condition.wait",
-                &[condition, condition_guard.clone()],
+                &[condition.clone(), condition_guard.clone()],
             )
             .unwrap();
+        host.invoke(
+            "std.sync.Condition.notifyOne",
+            std::slice::from_ref(&condition),
+        )
+        .unwrap();
         let (completed, waited) = host.wait_async(&[wait]).unwrap();
         assert_eq!(completed, wait);
         assert_eq!(waited, condition_guard);
@@ -9516,6 +10200,159 @@ mod tests {
         // call identity instead of rejecting it before scheduling.
         let specialized = host.start_async("std.sync.Mutex.lock[Int]", &[]).unwrap();
         assert!(host.poll_async(specialized).is_err());
+    }
+
+    #[test]
+    fn sync_host_parks_contention_and_wakes_fifo_without_blocking() {
+        let mut host = BootstrapHost::default();
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+            .unwrap());
+
+        host.set_execution_unit(1);
+        let owner = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        host.set_execution_unit(2);
+        let first = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        host.set_execution_unit(3);
+        let second = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        assert_ne!(first, second);
+        assert!(host.poll_async(first).unwrap().is_none());
+        assert!(host.poll_async(second).unwrap().is_none());
+        host.set_execution_unit(1);
+        let reentrant = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        sync_error(host.poll_async(reentrant).unwrap().unwrap(), 3);
+
+        // Releasing the owner only makes the oldest waiter runnable. The
+        // second waiter cannot bypass it while the first guard is alive, and
+        // a newly arriving task cannot jump ahead of the registered queue.
+        host.set_execution_unit(1);
+        host.invoke("std.sync.MutexGuard.unlock", &[owner]).unwrap();
+        host.set_execution_unit(4);
+        let third = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        assert!(host.poll_async(third).unwrap().is_none());
+        let first_guard = ok(host.poll_async(first).unwrap().expect("first waiter wakes"));
+        assert!(host.poll_async(second).unwrap().is_none());
+        assert!(host.poll_async(third).unwrap().is_none());
+        host.cleanup(&first_guard).unwrap();
+        let second_guard = ok(host
+            .poll_async(second)
+            .unwrap()
+            .expect("second waiter wakes after first release"));
+        host.cleanup(&second_guard).unwrap();
+        let third_guard = ok(host
+            .poll_async(third)
+            .unwrap()
+            .expect("third waiter wakes after second release"));
+        host.cleanup(&third_guard).unwrap();
+
+        // A cancelled waiter is removed from the queue and completes without
+        // making the host wait or consuming the owner's guard.
+        host.set_execution_unit(1);
+        let held = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        host.set_execution_unit(4);
+        let cancelled = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        host.cancel_async(cancelled).unwrap();
+        sync_error(host.poll_async(cancelled).unwrap().unwrap(), 5);
+        host.cleanup(&held).unwrap();
+    }
+
+    #[test]
+    fn sync_host_condition_and_barrier_publish_generation_wakeups() {
+        let mut host = BootstrapHost::default();
+        let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Bool(false)])
+            .unwrap());
+        host.set_execution_unit(1);
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        let wait = host
+            .start_async(
+                "std.sync.Condition.wait",
+                &[condition.clone(), guard.clone()],
+            )
+            .unwrap();
+        assert!(host.poll_async(wait).unwrap().is_none());
+        host.invoke(
+            "std.sync.Condition.notifyOne",
+            std::slice::from_ref(&condition),
+        )
+        .unwrap();
+        assert_eq!(host.poll_async(wait).unwrap().unwrap(), guard);
+        host.cleanup(&guard).unwrap();
+
+        // A cancelled condition waiter remains at the front only long enough
+        // to reacquire its mutex. notifyOne must skip it and signal the next
+        // live waiter instead of consuming the notification.
+        host.set_execution_unit(1);
+        let first_guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        let first_wait = host
+            .start_async(
+                "std.sync.Condition.wait",
+                &[condition.clone(), first_guard.clone()],
+            )
+            .unwrap();
+        host.set_execution_unit(2);
+        let second_guard_initial = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        let second_wait = host
+            .start_async(
+                "std.sync.Condition.wait",
+                &[condition.clone(), second_guard_initial.clone()],
+            )
+            .unwrap();
+        host.cancel_async(first_wait).unwrap();
+        host.invoke(
+            "std.sync.Condition.notifyOne",
+            std::slice::from_ref(&condition),
+        )
+        .unwrap();
+        let cancelled_guard = host.poll_async(first_wait).unwrap().unwrap();
+        assert_eq!(cancelled_guard, first_guard);
+        host.cleanup(&cancelled_guard).unwrap();
+        let second_guard = host.poll_async(second_wait).unwrap().unwrap();
+        assert_eq!(second_guard, second_guard_initial);
+        host.cleanup(&second_guard).unwrap();
+
+        let barrier = ok(host
+            .invoke("std.sync.barrier", &[RuntimeValue::Integer(2)])
+            .unwrap());
+        host.set_execution_unit(1);
+        let first = host
+            .start_async("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+            .unwrap();
+        host.set_execution_unit(2);
+        let second = host
+            .start_async("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+            .unwrap();
+        assert!(matches!(
+            ok(host.poll_async(first).unwrap().unwrap()),
+            RuntimeValue::Variant { name, variant: 1, values }
+                if name == "BarrierRole" && values.is_empty()
+        ));
+        assert!(matches!(
+            ok(host.poll_async(second).unwrap().unwrap()),
+            RuntimeValue::Variant { name, variant: 0, values }
+                if name == "BarrierRole" && values.is_empty()
+        ));
     }
 
     fn json_limits(host: &mut BootstrapHost) -> RuntimeValue {

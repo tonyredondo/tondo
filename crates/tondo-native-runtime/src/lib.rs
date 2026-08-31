@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::ThreadId;
+use std::time::Duration;
 
 const HANDLE_BIT: u64 = 1 << 63;
 const RESULT_NONE: u64 = 0;
@@ -42,6 +43,10 @@ const STATUS_HOST_LIMIT: u64 = 14;
 const STATUS_HOST_CANCELLED: u64 = 15;
 /// A task or group child terminated by panicking outside its declared error channel.
 const STATUS_PANICKED: u64 = 16;
+/// The observed atomic value did not match the compare-exchange expectation.
+const STATUS_ATOMIC_MISMATCH: u64 = 17;
+/// A memory-order argument is outside the closed native ABI set.
+const STATUS_ATOMIC_INVALID_ORDER: u64 = 18;
 const STATUS_DIAG_CLEAN: u64 = 0;
 const STATUS_DIAG_FINDING: u64 = 1;
 const STATUS_DIAG_CAPTURED: u64 = 2;
@@ -118,6 +123,14 @@ enum Object {
         cursor: usize,
         output: Vec<u8>,
     },
+    /// A native atomic cell. The numeric value is kept in `State::atomics` so
+    /// operations can use the standard library's lock-free atomic primitive
+    /// without holding the global handle-table mutex.
+    Atomic,
+    /// A scheduler parking signal. Waiting is performed only after the signal
+    /// has been detached from the global handle table; waking never touches a
+    /// cooperative VM worker directly.
+    Park,
     /// An immutable, bounded byte carrier used by the private host ABI.
     Buffer {
         bytes: Vec<u8>,
@@ -308,6 +321,96 @@ impl WorkerSignal {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ParkingSnapshot {
+    epoch: u64,
+    waiters: u64,
+}
+
+/// A native wakeup edge detached from the global handle table. The epoch
+/// closes the check-then-sleep race: a waiter records the observed epoch while
+/// holding the signal lock, and a notifier increments it before notifying.
+#[derive(Debug)]
+struct ParkingSignal {
+    snapshot: Mutex<ParkingSnapshot>,
+    wake: Condvar,
+}
+
+impl ParkingSignal {
+    fn new() -> Self {
+        Self {
+            snapshot: Mutex::new(ParkingSnapshot {
+                epoch: 0,
+                waiters: 0,
+            }),
+            wake: Condvar::new(),
+        }
+    }
+
+    fn epoch(&self) -> u64 {
+        self.snapshot
+            .lock()
+            .expect("native parking signal is not poisoned")
+            .epoch
+    }
+
+    fn wait(&self, expected: u64, timeout_ns: u64) -> u64 {
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .expect("native parking signal is not poisoned");
+        if snapshot.epoch != expected {
+            return STATUS_OK;
+        }
+        snapshot.waiters = snapshot.waiters.saturating_add(1);
+        let timed_out = if timeout_ns == u64::MAX {
+            while snapshot.epoch == expected {
+                snapshot = self
+                    .wake
+                    .wait(snapshot)
+                    .expect("native parking signal is not poisoned");
+            }
+            false
+        } else {
+            let timeout = Duration::from_nanos(timeout_ns);
+            let (next, result) = self
+                .wake
+                .wait_timeout_while(snapshot, timeout, |state| state.epoch == expected)
+                .expect("native parking signal is not poisoned");
+            snapshot = next;
+            result.timed_out() && snapshot.epoch == expected
+        };
+        snapshot.waiters = snapshot.waiters.saturating_sub(1);
+        if timed_out {
+            STATUS_NOT_READY
+        } else {
+            STATUS_OK
+        }
+    }
+
+    fn wake(&self, all: bool) -> u64 {
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .expect("native parking signal is not poisoned");
+        snapshot.epoch = snapshot.epoch.saturating_add(1);
+        let waiters = snapshot.waiters;
+        if all {
+            self.wake.notify_all();
+        } else {
+            self.wake.notify_one();
+        }
+        waiters
+    }
+
+    fn waiters(&self) -> u64 {
+        self.snapshot
+            .lock()
+            .expect("native parking signal is not poisoned")
+            .waiters
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OneShotState {
     Pending,
@@ -452,6 +555,8 @@ enum ObjectKind {
     OneShot,
     Timer,
     Host,
+    Atomic,
+    Park,
     Buffer,
     Weak,
 }
@@ -556,6 +661,8 @@ struct State {
     last_status: u64,
     select_rotation: u64,
     thread_workers: BTreeMap<u64, Arc<WorkerSignal>>,
+    atomics: BTreeMap<u64, Arc<std::sync::atomic::AtomicU64>>,
+    parks: BTreeMap<u64, Arc<ParkingSignal>>,
     allocations_since_collection: u32,
     diagnostic: Option<DiagnosticCapture>,
 }
@@ -668,6 +775,8 @@ impl State {
                 children.extend(selection.arms.iter().map(|arm| arm.source));
             }
             Object::Host { .. }
+            | Object::Atomic
+            | Object::Park
             | Object::Buffer { .. }
             | Object::Weak { .. }
             | Object::Tombstone
@@ -737,7 +846,26 @@ impl State {
         if entry.strong.load() == 1 {
             return handle;
         }
-        self.alloc(object.clone(), entry.object)
+        let object_kind = entry.object;
+        let object = object.clone();
+        if matches!(object, Object::Atomic | Object::Park) {
+            let clone = self.alloc(object.clone(), object_kind);
+            match object {
+                Object::Atomic => {
+                    if let Some(shared) = self.atomics.get(&handle).cloned() {
+                        self.atomics.insert(clone, shared);
+                    }
+                }
+                Object::Park => {
+                    if let Some(shared) = self.parks.get(&handle).cloned() {
+                        self.parks.insert(clone, shared);
+                    }
+                }
+                _ => unreachable!("specialized clone was checked above"),
+            }
+            return clone;
+        }
+        self.alloc(object, object_kind)
     }
 
     fn mark_shared(&mut self, handle: u64) -> u64 {
@@ -838,6 +966,8 @@ impl State {
         if remove {
             self.objects.remove(&target);
             self.thread_workers.remove(&target);
+            self.atomics.remove(&target);
+            self.parks.remove(&target);
         }
     }
 
@@ -869,6 +999,8 @@ impl State {
             if remove {
                 self.objects.remove(&handle);
                 self.thread_workers.remove(&handle);
+                self.atomics.remove(&handle);
+                self.parks.remove(&handle);
             }
         }
     }
@@ -907,6 +1039,12 @@ impl State {
                 for arm in selection.arms.iter().copied().filter(|arm| arm.owned) {
                     self.discard_select_source_with_pending(arm, pending);
                 }
+            }
+            Object::Atomic => {
+                self.atomics.remove(&handle);
+            }
+            Object::Park => {
+                self.parks.remove(&handle);
             }
             _ => {}
         }
@@ -1076,6 +1214,12 @@ impl State {
             ) && let Some(signal) = self.thread_workers.get(&handle)
             {
                 signal.cancel();
+            }
+            if matches!(&object, Object::Atomic) {
+                self.atomics.remove(&handle);
+            }
+            if matches!(&object, Object::Park) {
+                self.parks.remove(&handle);
             }
             let children = Self::strong_children_of(&object);
             if let Object::Weak { target } = &object {
@@ -2418,6 +2562,47 @@ impl State {
         }
     }
 
+    fn atomic_new(&mut self, initial: u64) -> u64 {
+        let handle = self.alloc(Object::Atomic, ObjectKind::Atomic);
+        if handle != 0 {
+            self.atomics
+                .insert(handle, Arc::new(std::sync::atomic::AtomicU64::new(initial)));
+        }
+        handle
+    }
+
+    fn atomic_cell(&mut self, handle: u64) -> Option<Arc<std::sync::atomic::AtomicU64>> {
+        if !matches!(self.object(handle), Some(Object::Atomic)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(cell) = self.atomics.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(cell)
+    }
+
+    fn park_new(&mut self) -> u64 {
+        let handle = self.alloc(Object::Park, ObjectKind::Park);
+        if handle != 0 {
+            self.parks.insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
+    fn park_signal(&mut self, handle: u64) -> Option<Arc<ParkingSignal>> {
+        if !matches!(self.object(handle), Some(Object::Park)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(signal) = self.parks.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(signal)
+    }
+
     fn source_ready(&self, source: u64, kind: SelectSourceKind) -> Option<bool> {
         match (kind, self.object(source)) {
             (SelectSourceKind::Task, Some(Object::Task { state, .. })) => {
@@ -3062,6 +3247,51 @@ fn with_state<T>(function: impl FnOnce(&mut State) -> T) -> T {
     function(&mut state)
 }
 
+fn atomic_order(order: u64) -> Option<Ordering> {
+    match order {
+        0 => Some(Ordering::Relaxed),
+        1 => Some(Ordering::Acquire),
+        2 => Some(Ordering::Release),
+        3 => Some(Ordering::AcqRel),
+        4 => Some(Ordering::SeqCst),
+        _ => None,
+    }
+}
+
+fn atomic_load_order(order: u64) -> Option<Ordering> {
+    matches!(order, 0 | 1 | 4)
+        .then(|| atomic_order(order))
+        .flatten()
+}
+
+fn atomic_store_order(order: u64) -> Option<Ordering> {
+    matches!(order, 0 | 2 | 4)
+        .then(|| atomic_order(order))
+        .flatten()
+}
+
+fn atomic_cas_failure_order(order: u64) -> Option<Ordering> {
+    matches!(order, 0 | 1 | 4)
+        .then(|| atomic_order(order))
+        .flatten()
+}
+
+/// Returns whether a compare-exchange failure ordering is valid for the
+/// success ordering.  Release and Acquire are not interchangeable ranks:
+/// `Release` success only permits a Relaxed failure, while `Acquire` success
+/// permits Relaxed or Acquire.  Keeping this matrix explicit prevents passing
+/// an ordering pair that the Rust atomic primitive would reject at runtime.
+fn atomic_cas_orders_compatible(success: u64, failure: u64) -> bool {
+    match success {
+        0 => failure == 0,
+        1 => matches!(failure, 0 | 1),
+        2 => failure == 0,
+        3 => matches!(failure, 0 | 1),
+        4 => matches!(failure, 0 | 1 | 4),
+        _ => false,
+    }
+}
+
 /// Resets process-local native state. This is test-only in production: native
 /// retries start a fresh worker process instead of sharing this table.
 pub extern "C" fn tondo_rt_reset() {
@@ -3306,6 +3536,134 @@ pub extern "C" fn tondo_rt_buffer_len(buffer: u64) -> u64 {
 /// handle or out-of-range index and recording the corresponding status.
 pub extern "C" fn tondo_rt_buffer_byte(buffer: u64, index: u64) -> u64 {
     with_state(|state| state.buffer_byte(buffer, index))
+}
+
+/// Creates a native atomic scalar. The handle is opaque and the cell itself
+/// is safe to use from multiple OS threads; callers still cross the ordinary
+/// retain/mark-shared ownership boundary before publishing the handle.
+pub extern "C" fn tondo_rt_atomic_new(value: u64) -> u64 {
+    with_state(|state| state.atomic_new(value))
+}
+
+/// Loads an atomic scalar using the closed MemoryOrder ABI (0=Relaxed,
+/// 1=Acquire, 4=SeqCst). Invalid orders return zero and set the status
+/// channel to `STATUS_ATOMIC_INVALID_ORDER`.
+pub extern "C" fn tondo_rt_atomic_load(atomic: u64, order: u64) -> u64 {
+    let Some(order) = atomic_load_order(order) else {
+        with_state(|state| state.last_status = STATUS_ATOMIC_INVALID_ORDER);
+        return 0;
+    };
+    let Some(cell) = with_state(|state| state.atomic_cell(atomic)) else {
+        return 0;
+    };
+    cell.load(order)
+}
+
+/// Stores an atomic scalar using Relaxed, Release or SeqCst ordering.
+pub extern "C" fn tondo_rt_atomic_store(atomic: u64, value: u64, order: u64) -> u64 {
+    let Some(order) = atomic_store_order(order) else {
+        with_state(|state| state.last_status = STATUS_ATOMIC_INVALID_ORDER);
+        return STATUS_ATOMIC_INVALID_ORDER;
+    };
+    let Some(cell) = with_state(|state| state.atomic_cell(atomic)) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    cell.store(value, order);
+    STATUS_OK
+}
+
+/// Swaps an atomic scalar and returns its previous value. All five memory
+/// orders are valid for this read-modify-write operation.
+pub extern "C" fn tondo_rt_atomic_swap(atomic: u64, value: u64, order: u64) -> u64 {
+    let Some(order) = atomic_order(order) else {
+        with_state(|state| state.last_status = STATUS_ATOMIC_INVALID_ORDER);
+        return 0;
+    };
+    let Some(cell) = with_state(|state| state.atomic_cell(atomic)) else {
+        return 0;
+    };
+    cell.swap(value, order)
+}
+
+/// Performs a non-spurious compare-exchange and returns the observed value.
+/// `tondo_rt_last_status()` is `STATUS_OK` on exchange and
+/// `STATUS_ATOMIC_MISMATCH` when the observed value differs from `expected`.
+pub extern "C" fn tondo_rt_atomic_compare_exchange(
+    atomic: u64,
+    expected: u64,
+    desired: u64,
+    success: u64,
+    failure: u64,
+) -> u64 {
+    let success_code = success;
+    let failure_code = failure;
+    let Some(success) = atomic_order(success_code) else {
+        with_state(|state| state.last_status = STATUS_ATOMIC_INVALID_ORDER);
+        return 0;
+    };
+    let Some(failure) = atomic_cas_failure_order(failure_code) else {
+        with_state(|state| state.last_status = STATUS_ATOMIC_INVALID_ORDER);
+        return 0;
+    };
+    if !atomic_cas_orders_compatible(success_code, failure_code) {
+        with_state(|state| state.last_status = STATUS_ATOMIC_INVALID_ORDER);
+        return 0;
+    }
+    let Some(cell) = with_state(|state| state.atomic_cell(atomic)) else {
+        return 0;
+    };
+    match cell.compare_exchange(expected, desired, success, failure) {
+        Ok(previous) => {
+            with_state(|state| state.last_status = STATUS_OK);
+            previous
+        }
+        Err(observed) => {
+            with_state(|state| state.last_status = STATUS_ATOMIC_MISMATCH);
+            observed
+        }
+    }
+}
+
+/// Creates a native parking signal. The signal is an epoch, not a queue: a
+/// waiter must re-check its predicate after every successful wakeup.
+pub extern "C" fn tondo_rt_sync_park_new() -> u64 {
+    with_state(|state| state.park_new())
+}
+
+/// Reads the current parking epoch without waiting.
+pub extern "C" fn tondo_rt_sync_park_epoch(park: u64) -> u64 {
+    let Some(signal) = with_state(|state| state.park_signal(park)) else {
+        return u64::MAX;
+    };
+    signal.epoch()
+}
+
+/// Parks the calling native worker until the epoch changes or the supplied
+/// timeout expires. `u64::MAX` is an unbounded wait; the cooperative VM never
+/// calls this function directly and uses its poll/park state instead.
+pub extern "C" fn tondo_rt_sync_park_wait(park: u64, expected_epoch: u64, timeout_ns: u64) -> u64 {
+    let Some(signal) = with_state(|state| state.park_signal(park)) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    signal.wait(expected_epoch, timeout_ns)
+}
+
+/// Advances the parking epoch and wakes one waiter (`all=0`) or all waiters
+/// (`all!=0`). The return value is the number of waiters observed before the
+/// notification; it is diagnostic only and does not affect correctness.
+pub extern "C" fn tondo_rt_sync_park_wake(park: u64, all: u64) -> u64 {
+    let Some(signal) = with_state(|state| state.park_signal(park)) else {
+        return u64::MAX;
+    };
+    signal.wake(all != 0)
+}
+
+/// Returns the number of workers currently registered in a parking wait.
+pub extern "C" fn tondo_rt_sync_park_waiters(park: u64) -> u64 {
+    let Some(signal) = with_state(|state| state.park_signal(park)) else {
+        return u64::MAX;
+    };
+    signal.waiters()
 }
 
 pub extern "C" fn tondo_rt_scope_enter() -> u64 {
@@ -5121,6 +5479,70 @@ mod tests {
         assert_eq!(tondo_rt_group_remaining(group), 0);
         assert_eq!(tondo_rt_release(thread), STATUS_OK);
         assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_sync_atomics_are_linearizable_across_threads() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let atomic = tondo_rt_atomic_new(0);
+        assert!(atomic & HANDLE_BIT != 0);
+        assert_eq!(tondo_rt_atomic_load(atomic, 0), 0);
+        assert_eq!(tondo_rt_atomic_store(atomic, 1, 2), STATUS_OK);
+        assert_eq!(tondo_rt_atomic_swap(atomic, 2, 3), 1);
+
+        let workers = (0..4)
+            .map(|_| {
+                std::thread::spawn(move || {
+                    for _ in 0..100 {
+                        loop {
+                            let observed = tondo_rt_atomic_load(atomic, 0);
+                            let status = tondo_rt_atomic_compare_exchange(
+                                atomic,
+                                observed,
+                                observed.saturating_add(1),
+                                3,
+                                1,
+                            );
+                            if status == observed {
+                                break;
+                            }
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().expect("atomic worker must finish");
+        }
+        assert_eq!(tondo_rt_atomic_load(atomic, 4), 402);
+        assert_eq!(tondo_rt_atomic_compare_exchange(atomic, 999, 0, 3, 1), 402);
+        assert_eq!(tondo_rt_last_status(), STATUS_ATOMIC_MISMATCH);
+        assert_eq!(tondo_rt_atomic_compare_exchange(atomic, 402, 0, 2, 1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_ATOMIC_INVALID_ORDER);
+        assert_eq!(tondo_rt_atomic_load(atomic, 2), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_ATOMIC_INVALID_ORDER);
+        assert_eq!(tondo_rt_release(atomic), STATUS_OK);
+
+        let park = tondo_rt_sync_park_new();
+        let epoch = tondo_rt_sync_park_epoch(park);
+        assert_eq!(tondo_rt_sync_park_wait(park, epoch, 0), STATUS_NOT_READY);
+        let waiter = std::thread::spawn(move || tondo_rt_sync_park_wait(park, epoch, u64::MAX));
+        for _ in 0..100_000 {
+            if tondo_rt_sync_park_waiters(park) == 1 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(tondo_rt_sync_park_waiters(park) >= 1);
+        assert_eq!(tondo_rt_sync_park_wake(park, 0), 1);
+        assert_eq!(
+            waiter.join().expect("parking waiter must finish"),
+            STATUS_OK
+        );
+        assert_eq!(tondo_rt_sync_park_epoch(park), epoch + 1);
+        assert_eq!(tondo_rt_release(park), STATUS_OK);
         assert_eq!(tondo_rt_live_objects(), 0);
     }
 }
