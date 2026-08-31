@@ -89,7 +89,6 @@ jq -e '
   and .performance.report == "target/reliability/evidence/stdlib-sync-performance.json"
   and .performance.command == "scripts/stdlib-sync-performance.sh"
   and .promotion.remaining == [
-    "STD-SYNC-COLLECTION-ITER-001",
     "STD-SYNC-COLLECTION-TEST-001",
     "STD-SYNC-COLLECTION-PERF-001",
     "STD-SYNC-COLLECTION-CONF-001",
@@ -211,7 +210,7 @@ jq -e '
   and .frontend.runtime_lowering == "verified-hosted-runtime-boundary"
   and .frontend.implementation_contract == "testing/stdlib-sync-collection.json"
   and .collections.implementation_contract == "testing/stdlib-sync-collection.json"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-ITER-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-TEST-001"]
 ' testing/stdlib-sync.json >/dev/null
 
 scripts/stdlib-sync-collection-frontend-check.sh >/dev/null
