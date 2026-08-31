@@ -133,6 +133,10 @@ run_step stdlib-sync-performance-contract-tests \
     scripts/stdlib-sync-performance-test.sh
 run_step stdlib-sync-performance \
     scripts/stdlib-sync-performance.sh
+run_step stdlib-sync-collection-frontend-contract \
+    scripts/stdlib-sync-collection-frontend-check.sh
+run_step stdlib-sync-collection-frontend-contract-tests \
+    scripts/stdlib-sync-collection-frontend-test.sh
 run_step stdlib-executor-contract \
     scripts/stdlib-executor-check.sh
 run_step stdlib-executor-contract-tests \

@@ -585,6 +585,14 @@
     "global_aliases_status": "forbidden",
     "collection_error": "std.collections.CollectionError"
   },
+  "frontend": {
+    "task": "STD-SYNC-COLLECTION-FRONTEND-001",
+    "status": "verified",
+    "contract": "testing/stdlib-sync-collection-frontend.json",
+    "document": "docs/contracts/stdlib-sync-collection-frontend.md",
+    "runtime_lowering": "pending-STD-SYNC-COLLECTION-IMPL-001",
+    "public_api_promoted": false
+  },
   "fairness": {
     "lock_waiters": "FIFO-registration-with-bounded-barging",
     "condition_waiters": "FIFO-registration",
@@ -780,10 +788,20 @@
       "fuzz/fuzz_targets/stdlib_sync.rs",
       "scripts/stdlib-sync-fuzz.sh",
       "testing/stdlib-sync-test.json",
-      "tests/runtime/m11-std-sync-test-001.to"
+      "tests/runtime/m11-std-sync-test-001.to",
+      "crates/tondo-compiler/src/syntax/parser.rs",
+      "crates/tondo-compiler/src/resolve.rs",
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/hir/verify.rs",
+      "crates/tondo-compiler/src/mir/lower.rs",
+      "testing/stdlib-sync-collection-frontend.json",
+      "docs/contracts/stdlib-sync-collection-frontend.md",
+      "scripts/stdlib-sync-collection-frontend-check.sh",
+      "scripts/stdlib-sync-collection-frontend-test.sh"
     ],
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-FRONTEND-001",
       "STD-SYNC-COLLECTION-IMPL-001",
       "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
@@ -795,7 +813,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-COLLECTION-FRONTEND-001",
       "STD-SYNC-COLLECTION-IMPL-001",
       "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
@@ -804,6 +821,6 @@
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-SYNC-COLLECTION-FRONTEND-001"]
+    "next_blocks": ["STD-SYNC-COLLECTION-IMPL-001"]
   }
 }

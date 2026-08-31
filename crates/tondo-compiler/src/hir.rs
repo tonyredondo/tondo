@@ -2680,6 +2680,10 @@ pub enum HirBootstrapHostFunction {
     SyncAtomicStore,
     SyncAtomicSwap,
     SyncAtomicCompareExchange,
+    /// Compiler-owned construction marker for a qualified `std.sync`
+    /// collection literal.  It is intentionally not a public host callable;
+    /// executable lowering remains gated by STD-SYNC-COLLECTION-IMPL-001.
+    SyncCollectionLiteral,
     SyncMemoryOrderRelaxed,
     SyncMemoryOrderAcquire,
     SyncMemoryOrderRelease,
@@ -3054,6 +3058,7 @@ impl HirBootstrapHostFunction {
             Self::SyncAtomicStore => "std.sync.Atomic.store",
             Self::SyncAtomicSwap => "std.sync.Atomic.swap",
             Self::SyncAtomicCompareExchange => "std.sync.Atomic.compareExchange",
+            Self::SyncCollectionLiteral => "std.sync.collectionLiteral",
             Self::SyncMemoryOrderRelaxed => "intrinsic.sync.MemoryOrder.Relaxed",
             Self::SyncMemoryOrderAcquire => "intrinsic.sync.MemoryOrder.Acquire",
             Self::SyncMemoryOrderRelease => "intrinsic.sync.MemoryOrder.Release",

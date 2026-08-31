@@ -107,8 +107,10 @@ cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001`,
 `STD-ASYNC-GROUP-DOC-001` ya están cerrados para la VM hosted y el ABI del
 runtime nativo; `STD-SYNC-IMPL-001`, `STD-SYNC-TEST-001` y
 `STD-SYNC-PERF-001` ya están cerrados para la superficie del compilador, el
-modelo hosted determinista y la campaña de rendimiento target-qualified; el
-siguiente bloque es `STD-SYNC-COLLECTION-FRONTEND-001`. El modelo y
+modelo hosted determinista y la campaña de rendimiento target-qualified;
+`STD-SYNC-COLLECTION-FRONTEND-001` también está cerrado para la sintaxis,
+resolución nominal, HIR/MIR boundary y diagnóstico. El siguiente bloque es
+`STD-SYNC-COLLECTION-IMPL-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6281,8 +6283,11 @@ publica hasta cerrar el gate final.
   linearización, `for` directo `AsyncIterator` por valor con horizonte finito,
   orden, literals por identidad y separación respecto a `std.channel`. Los
   negativos ejecutables están en `scripts/stdlib-sync-check.sh` y
-  `scripts/stdlib-sync-test.sh`, integrados en `test-gate.sh`. La implementación
-  y el host siguen pendientes de las leaves `STD-SYNC-*` tras `NATIVE-001`.
+  `scripts/stdlib-sync-test.sh`, integrados en `test-gate.sh`. La superficie de
+  primitivas, host y parking está cerrada; el frontend de literales está
+  cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`. El runtime e iteración de
+  colecciones y la conformance final siguen pendientes de las leaves
+  `STD-SYNC-COLLECTION-*` tras `NATIVE-001`.
 
 - [x] **STD-EXEC-001 — Especificar `std.executor`.** El registro
   [`testing/stdlib-executor.json`](./testing/stdlib-executor.json) y el contrato
@@ -6590,14 +6595,20 @@ estas leaves.
   handles vivos y contadores de wakeups contra el host y el oracle independiente
   de `std.sync`. El cierre es target-qualified para `tondo-vm-hosted`; no
   sobreafirma rendimiento AOT nativo ni agrega targets distintos.
-- [ ] **STD-SYNC-COLLECTION-FRONTEND-001 — Implementar literales concurrentes.**
-  Extender lexer/parser preliminar, CST, formatter, resolución por identidad de
-  declaración, tipos, HIR/MIR y diagnósticos para las cinco formas calificadas.
-  Los aliases de `std.sync` conservan la forma, los paths de usuario no pueden
-  optar al azúcar y posición de tipo frente a expresión resuelve
-  `sync.Array[T]` sin heurísticas de runtime. Cubrir vacíos, map `[:]`, trailing
-  comma, duplicados, recovery y round-trip sin crear keywords ni aliases del
-  prelude.
+- [x] **STD-SYNC-COLLECTION-FRONTEND-001 — Implementar literales concurrentes.**
+  Cerrado el lexer/parser preliminar, CST lossless, formatter, resolución por
+  identidad de declaración, tipos, HIR/MIR boundary y diagnósticos para las
+  cinco formas cualificadas. Los aliases de `std.sync` conservan la identidad,
+  los paths de usuario no pueden optar al azúcar y posición de tipo frente a
+  expresión resuelve `sync.Array[T]` sin heurísticas de runtime. Se cubren
+  vacíos contextuales, map `[:]`, entrada única y múltiple, trailing comma,
+  duplicados, recovery y round-trip sin keywords ni aliases del prelude. La
+  evidencia ejecutable está en
+  [`testing/stdlib-sync-collection-frontend.json`](./testing/stdlib-sync-collection-frontend.json),
+  [`docs/contracts/stdlib-sync-collection-frontend.md`](./docs/contracts/stdlib-sync-collection-frontend.md),
+  `scripts/stdlib-sync-collection-frontend-check.sh` y
+  `scripts/stdlib-sync-collection-frontend-test.sh`; el lowering de runtime
+  queda explícitamente bloqueado por `STD-SYNC-COLLECTION-IMPL-001`.
 - [ ] **STD-SYNC-COLLECTION-IMPL-001 — Implementar colecciones compartidas.**
   Publicar handles `Copy + Discard + Send + Share`, array de longitud fija,
   map/set ordenados por linearización, stack LIFO y queue FIFO MPMC. Integrar
@@ -7538,8 +7549,10 @@ coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
-promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-SYNC-COLLECTION-FRONTEND-001`; `STD-SYNC-HOST-001`,
+promueve Cranelift únicamente para el target primario x86_64 GNU. El frontend de
+colecciones compartidas ya está cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`;
+el siguiente bloque crítico es `STD-SYNC-COLLECTION-IMPL-001`;
+`STD-SYNC-HOST-001`,
 `STD-SYNC-TEST-001` y `STD-SYNC-PERF-001` ya cerraron la frontera de
 parking/atomics, la continuación de `Once`, el modelo hosted determinista y el
 presupuesto de rendimiento target-qualified. ARM64 conserva una clasificación
@@ -7569,11 +7582,12 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 `NATIVE-002` están cerrados y `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` ya están
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
-seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-SYNC-COLLECTION-FRONTEND-001`; la implementación de superficie, el parking
+seleccionado queda promovido únicamente para x86_64 GNU. El frontend de
+colecciones compartidas está cerrado y el siguiente trabajo crítico es
+`STD-SYNC-COLLECTION-IMPL-001`; la implementación de superficie, el parking
 hosted, el puente nativo escalar, el modelo/test/fuzz, el presupuesto de
 rendimiento y la conformance del ABI del runtime nativo de Group ya tienen
-fronteras explícitas, mientras las colecciones compartidas y el lowering AOT
-async siguen pendientes.
+fronteras explícitas, mientras el runtime de colecciones compartidas y el
+lowering AOT async siguen pendientes.
 
 ---

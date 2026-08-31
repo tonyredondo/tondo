@@ -61,6 +61,15 @@ enum AssertArgument {
     Message,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncCollectionLiteralKind {
+    Array,
+    Map,
+    Set,
+    Stack,
+    Queue,
+}
+
 impl HirCheckOutput {
     pub fn program(&self) -> &HirProgram {
         &self.program
@@ -2037,6 +2046,38 @@ impl<'a> ExpressionChecker<'a> {
                     expression.span(),
                     ConstantDiagnosticKind::Set(items.clone()),
                 )),
+                HirExpressionKind::BootstrapHostCall {
+                    function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                    arguments,
+                } => {
+                    let name = match self.program.interner.kind(expression.ty()) {
+                        Ok(TypeKind::Nominal { identity, .. }) => {
+                            identity.declaration().names().first().map(Name::as_str)
+                        }
+                        _ => None,
+                    }?;
+                    match name {
+                        "Map" if arguments.len().is_multiple_of(2) => Some((
+                            id,
+                            expression.span(),
+                            ConstantDiagnosticKind::Map(
+                                arguments
+                                    .chunks_exact(2)
+                                    .map(|pair| HirMapEntry {
+                                        key: pair[0],
+                                        value: pair[1],
+                                    })
+                                    .collect(),
+                            ),
+                        )),
+                        "Set" => Some((
+                            id,
+                            expression.span(),
+                            ConstantDiagnosticKind::Set(arguments.clone()),
+                        )),
+                        _ => None,
+                    }
+                }
                 HirExpressionKind::Binary {
                     operator:
                         HirBinaryOperator::Less
@@ -5051,6 +5092,11 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        if let Some(collection) =
+            self.check_sync_collection_literal(file, node, expected, context)?
+        {
+            return Ok(collection);
+        }
         if let Some(function) =
             self.check_associated_function_value(file, node, expected, context)?
         {
@@ -5064,6 +5110,338 @@ impl<'a> ExpressionChecker<'a> {
         }
         let value = self.check_value_path(file, node, context, None)?;
         self.close_contextual_function_value(file, node.range(), value, expected, context)
+    }
+
+    /// Checks the qualified concurrent collection literal family while the
+    /// syntax is still the ordinary lossless `PathExpr + BracketPostfix`
+    /// shape.  The final type is accepted only when resolution points at one
+    /// of the five synthetic declarations installed for the exact
+    /// `toolchain:std:0.1-bootstrap::sync` module; spelling a user path with
+    /// the same names cannot opt into this sugar.
+    fn check_sync_collection_literal(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let identifiers = node
+            .child_tokens()
+            .filter(|token| token.kind() == TokenKind::Identifier)
+            .collect::<Vec<_>>();
+        // A module import (including an alias) is one segment followed by the
+        // nominal type name.  Requiring this shape also keeps member access
+        // and ordinary user indexing on their existing path.
+        if identifiers.len() != 2 {
+            return Ok(None);
+        }
+        let brackets = node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::BracketPostfix)
+            .collect::<Vec<_>>();
+        if brackets.len() != 1 {
+            return Ok(None);
+        }
+        let Some(final_reference) = self.resolved.reference(file, identifiers[1].range()) else {
+            return Ok(None);
+        };
+        let resolved_name = match final_reference.entity() {
+            ResolvedEntity::Name(name) => name,
+            ResolvedEntity::ContextualCandidates { type_name, .. } => type_name,
+            ResolvedEntity::Module(_) => return Ok(None),
+        };
+        let ResolvedName::External {
+            module,
+            namespace: Namespace::Type,
+            name,
+        } = resolved_name
+        else {
+            return Ok(None);
+        };
+        if module.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || module.path().as_str() != "sync"
+        {
+            return Ok(None);
+        }
+        let collection = match name.as_str() {
+            "Array" => SyncCollectionLiteralKind::Array,
+            "Map" => SyncCollectionLiteralKind::Map,
+            "Set" => SyncCollectionLiteralKind::Set,
+            "Stack" => SyncCollectionLiteralKind::Stack,
+            "Queue" => SyncCollectionLiteralKind::Queue,
+            _ => return Ok(None),
+        };
+        let symbol = self
+            .resolved
+            .bootstrap_nominal(module, name)
+            .expect("resolved bootstrap sync collection must have a nominal symbol");
+        let declaration = self
+            .resolved
+            .symbol(symbol)
+            .expect("resolved bootstrap sync collection symbol must have a declaration");
+        let expected_nominal = expected
+            .map(ExpressionExpectation::contextual_type)
+            .map(|ty| self.unique_sync_nominal_member(ty, symbol))
+            .transpose()?
+            .flatten();
+        let expected_arguments =
+            expected_nominal.and_then(|ty| self.sync_nominal_arguments(ty, symbol));
+        let bracket = brackets[0];
+
+        let values = if collection == SyncCollectionLiteralKind::Map {
+            let entries = Self::sync_map_literal_entries(bracket)?;
+            if entries.is_none() {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1102",
+                    "sync.Map literals require key:value entries or the empty `[:]` form",
+                    Vec::new(),
+                    None,
+                )?;
+                return Ok(Some(self.recovery_expression(file, node.range())?));
+            }
+            let entries = entries.expect("map entry shape was checked above");
+            if entries.is_empty() && expected_arguments.is_none() {
+                self.emit_collection_context_required(
+                    file,
+                    node.range(),
+                    "sync.Map",
+                    "sync.Map[K, V]",
+                )?;
+                return Ok(Some(self.recovery_expression(file, node.range())?));
+            }
+            let (key_type, value_type) = expected_arguments
+                .as_ref()
+                .and_then(|arguments| match arguments.as_slice() {
+                    [key, value] => Some((*key, *value)),
+                    _ => None,
+                })
+                .map_or((None, None), |(key, value)| (Some(key), Some(value)));
+            let mut key_type = key_type;
+            let mut value_type = value_type;
+            let mut arguments = Vec::with_capacity(entries.len() * 2);
+            let mut invalid = false;
+            for (key_node, value_node) in entries {
+                let key = self.check_expression(
+                    file,
+                    key_node,
+                    key_type.map(ExpressionExpectation::Direct),
+                    context,
+                )?;
+                let actual_key = self.expression_type(key);
+                invalid |= actual_key == self.program.interner.error();
+                if key_type.is_none() && actual_key != self.program.interner.error() {
+                    key_type = Some(actual_key);
+                }
+                let value = self.check_expression(
+                    file,
+                    value_node,
+                    value_type.map(ExpressionExpectation::Direct),
+                    context,
+                )?;
+                let actual_value = self.expression_type(value);
+                invalid |= actual_value == self.program.interner.error();
+                if value_type.is_none() && actual_value != self.program.interner.error() {
+                    value_type = Some(actual_value);
+                }
+                arguments.push(key);
+                arguments.push(value);
+            }
+            let (Some(key_type), Some(value_type)) = (key_type, value_type) else {
+                return Ok(Some(self.recovery_expression(file, node.range())?));
+            };
+            if invalid {
+                return Ok(Some(self.recovery_expression(file, node.range())?));
+            }
+            let ty = expected_nominal.unwrap_or(
+                self.program
+                    .interner
+                    .nominal(declaration.identity().clone(), vec![key_type, value_type])?,
+            );
+            return Ok(Some(self.allocate_expression(HirExpression {
+                span: self.sources.span(file, node.range())?,
+                ty,
+                category: HirValueCategory::Value,
+                kind: HirExpressionKind::BootstrapHostCall {
+                    function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                    arguments,
+                },
+            })?));
+        } else {
+            if bracket
+                .child_nodes()
+                .any(|child| child.kind() == SyntaxKind::SliceSpec)
+            {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1102",
+                    "sync collection sequence literals do not accept slice syntax",
+                    Vec::new(),
+                    None,
+                )?;
+                return Ok(Some(self.recovery_expression(file, node.range())?));
+            }
+            bracket
+                .child_nodes()
+                .filter(|child| child.kind() == SyntaxKind::BracketItem)
+                .filter_map(direct_expression_child)
+                .collect::<Vec<_>>()
+        };
+        let expected_item = expected_arguments
+            .as_ref()
+            .and_then(|arguments| (arguments.len() == 1).then_some(arguments[0]));
+        if values.is_empty() && expected_item.is_none() {
+            self.emit_collection_context_required(
+                file,
+                node.range(),
+                match collection {
+                    SyncCollectionLiteralKind::Array => "sync.Array",
+                    SyncCollectionLiteralKind::Set => "sync.Set",
+                    SyncCollectionLiteralKind::Stack => "sync.Stack",
+                    SyncCollectionLiteralKind::Queue => "sync.Queue",
+                    SyncCollectionLiteralKind::Map => unreachable!(),
+                },
+                match collection {
+                    SyncCollectionLiteralKind::Array => "sync.Array[T]",
+                    SyncCollectionLiteralKind::Set => "sync.Set[T]",
+                    SyncCollectionLiteralKind::Stack => "sync.Stack[T]",
+                    SyncCollectionLiteralKind::Queue => "sync.Queue[T]",
+                    SyncCollectionLiteralKind::Map => unreachable!(),
+                },
+            )?;
+            return Ok(Some(self.recovery_expression(file, node.range())?));
+        }
+        let mut item_type = expected_item;
+        let mut arguments = Vec::with_capacity(values.len());
+        let mut invalid = false;
+        for (index, value_node) in values.into_iter().enumerate() {
+            let value = self.check_expression(
+                file,
+                value_node,
+                if item_type.is_some() || index != 0 {
+                    item_type.map(ExpressionExpectation::Direct)
+                } else {
+                    None
+                },
+                context,
+            )?;
+            let actual = self.expression_type(value);
+            invalid |= actual == self.program.interner.error();
+            if item_type.is_none() && actual != self.program.interner.error() {
+                item_type = Some(actual);
+            }
+            arguments.push(value);
+        }
+        let Some(item_type) = item_type else {
+            return Ok(Some(self.recovery_expression(file, node.range())?));
+        };
+        if invalid {
+            return Ok(Some(self.recovery_expression(file, node.range())?));
+        }
+        let ty = expected_nominal.unwrap_or(
+            self.program
+                .interner
+                .nominal(declaration.identity().clone(), vec![item_type])?,
+        );
+        Ok(Some(self.allocate_expression(HirExpression {
+            span: self.sources.span(file, node.range())?,
+            ty,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::BootstrapHostCall {
+                function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                arguments,
+            },
+        })?))
+    }
+
+    fn unique_sync_nominal_member(
+        &self,
+        expected: TypeId,
+        symbol: SymbolId,
+    ) -> Result<Option<TypeId>, HirError> {
+        let matches = |ty| {
+            matches!(
+                self.program.interner.kind(ty),
+                Ok(TypeKind::Nominal { identity, .. })
+                    if self.resolved.symbol(symbol).is_some_and(|declaration| declaration.identity() == identity)
+            )
+        };
+        if matches(expected) {
+            return Ok(Some(expected));
+        }
+        let TypeKind::Union(members) = self.program.interner.kind(expected)? else {
+            return Ok(None);
+        };
+        let mut candidates = members.iter().copied().filter(|member| matches(*member));
+        let first = candidates.next();
+        Ok(first.filter(|_| candidates.next().is_none()))
+    }
+
+    fn sync_nominal_arguments(&self, ty: TypeId, symbol: SymbolId) -> Option<Vec<TypeId>> {
+        match self.program.interner.kind(ty).ok()? {
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } if self
+                .resolved
+                .symbol(symbol)
+                .is_some_and(|declaration| declaration.identity() == identity) =>
+            {
+                Some(arguments.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Extracts map pairs from both bracket encodings.  A one-entry map is
+    /// syntactically ambiguous with a slice and therefore arrives as
+    /// `BracketItem + SliceSpec`; two or more entries are retained as
+    /// alternating `BracketItem` nodes by the parser.  `[:]` is represented
+    /// by an empty `SliceSpec` and returns an empty pair list.
+    fn sync_map_literal_entries<'b>(
+        bracket: SyntaxNodeRef<'b>,
+    ) -> Result<Option<Vec<(SyntaxNodeRef<'b>, SyntaxNodeRef<'b>)>>, HirError> {
+        let direct = bracket.child_nodes().collect::<Vec<_>>();
+        if direct.len() == 1 && direct[0].kind() == SyntaxKind::SliceSpec {
+            let values = direct[0].child_nodes().collect::<Vec<_>>();
+            return Ok(values.is_empty().then_some(Vec::new()));
+        }
+        if direct.len() == 2
+            && direct[0].kind() == SyntaxKind::BracketItem
+            && direct[1].kind() == SyntaxKind::SliceSpec
+        {
+            let Some(key) = direct_expression_child(direct[0]) else {
+                return Ok(None);
+            };
+            let values = direct[1]
+                .child_nodes()
+                .filter(|child| AstExpression::cast(*child).is_some())
+                .collect::<Vec<_>>();
+            return Ok((values.len() == 1).then_some(vec![(key, values[0])]));
+        }
+        if direct.len() >= 4
+            && direct
+                .iter()
+                .all(|child| child.kind() == SyntaxKind::BracketItem)
+        {
+            let mut expressions = Vec::with_capacity(direct.len());
+            for item in direct {
+                let Some(expression) = direct_expression_child(item) else {
+                    return Ok(None);
+                };
+                expressions.push(expression);
+            }
+            if !expressions.len().is_multiple_of(2) {
+                return Ok(None);
+            }
+            return Ok(Some(
+                expressions
+                    .chunks_exact(2)
+                    .map(|pair| (pair[0], pair[1]))
+                    .collect(),
+            ));
+        }
+        Ok(None)
     }
 
     fn check_numeric_conversion_error_path(
@@ -24309,6 +24687,149 @@ mod tests {
             })
             .count();
         assert!(async_functions >= 4, "{async_functions}");
+    }
+
+    #[test]
+    fn qualified_sync_collection_literals_resolve_by_nominal_identity() {
+        let (_, _, output) = check(
+            "import std.sync as concurrent\n\
+             fn literals() {\n\
+                 let values: concurrent.Array[Int] = concurrent.Array[1, 2,]\n\
+                 let empty: concurrent.Array[Int] = concurrent.Array[]\n\
+                 let entries: concurrent.Map[String, Int] = concurrent.Map[\"one\": 1, \"two\": 2,]\n\
+                 let one_entry: concurrent.Map[String, Int] = concurrent.Map[\"one\": 1,]\n\
+                 let empty_entries: concurrent.Map[String, Int] = concurrent.Map[:]\n\
+                 let set: concurrent.Set[Int] = concurrent.Set[1, 2,]\n\
+                 let stack: concurrent.Stack[Int] = concurrent.Stack[1, 2,]\n\
+                 let queue: concurrent.Queue[Int] = concurrent.Queue[1, 2,]\n\
+                 let union: concurrent.Array[Int] | Int = concurrent.Array[1]\n\
+                 _ = (values, empty, entries, empty_entries, set, stack, queue, union)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let literals = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::BootstrapHostCall {
+                    function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                    arguments,
+                } => Some((expression.ty(), arguments.len())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(literals.len(), 9);
+        let identities = literals
+            .iter()
+            .map(|(ty, _)| {
+                let TypeKind::Nominal {
+                    identity,
+                    arguments,
+                } = output
+                    .program()
+                    .interner()
+                    .kind(*ty)
+                    .expect("sync literal type is interned")
+                else {
+                    panic!("sync literal is not nominal: {ty:?}");
+                };
+                assert_eq!(identity.module().as_str(), "sync");
+                (
+                    identity.declaration().names()[0].as_str().to_owned(),
+                    arguments.len(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            identities,
+            vec![
+                ("Array".into(), 1),
+                ("Array".into(), 1),
+                ("Map".into(), 2),
+                ("Map".into(), 2),
+                ("Map".into(), 2),
+                ("Set".into(), 1),
+                ("Stack".into(), 1),
+                ("Queue".into(), 1),
+                ("Array".into(), 1),
+            ]
+        );
+        assert_eq!(
+            literals.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+            vec![2, 0, 4, 2, 0, 2, 2, 2, 1]
+        );
+    }
+
+    #[test]
+    fn sync_collection_literal_context_and_shape_errors_are_diagnostic() {
+        for (source, code) in [
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Array[]\n}\n",
+                "E1101",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Map[:]\n}\n",
+                "E1101",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Set[]\n}\n",
+                "E1101",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Stack[]\n}\n",
+                "E1101",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Queue[]\n}\n",
+                "E1101",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Array[1:2]\n}\n",
+                "E1102",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Map[1, 2]\n}\n",
+                "E1102",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Map[1:2:3]\n}\n",
+                "E1102",
+            ),
+        ] {
+            let (_, _, output) = check(source);
+            assert!(
+                output
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code().as_str() == code),
+                "{source}\nexpected {code}, got {:#?}",
+                output.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn sync_collection_literal_constant_duplicates_match_value_literal_rules() {
+        let (_, _, map) = check(
+            "import std.sync as concurrent\n\
+             fn invalid(): concurrent.Map[String, Int] {\n\
+                 concurrent.Map[\"a\": 1, \"\\u{61}\": 2]\n\
+             }\n",
+        );
+        assert_eq!(codes(&map), ["E1116"]);
+
+        let (_, _, set) = check(
+            "import std.sync as concurrent\n\
+             fn values(): concurrent.Set[String] {\n\
+                 concurrent.Set[\"a\", \"\\u{61}\"]\n\
+             }\n",
+        );
+        assert_eq!(codes(&set), ["W1011"]);
     }
 
     #[test]

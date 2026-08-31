@@ -2410,6 +2410,9 @@ La matriz independiente de modelo, runtime, fuzz y límites de sanitización de
 El presupuesto reproducible de rendimiento de `STD-SYNC-PERF-001` está en
 [`testing/stdlib-sync-performance.json`](./testing/stdlib-sync-performance.json)
 y [`docs/contracts/stdlib-sync-performance.md`](./docs/contracts/stdlib-sync-performance.md).
+El frontend de los cinco literales cualificados tiene un contrato separado en
+[`testing/stdlib-sync-collection-frontend.json`](./testing/stdlib-sync-collection-frontend.json)
+y [`docs/contracts/stdlib-sync-collection-frontend.md`](./docs/contracts/stdlib-sync-collection-frontend.md).
 Estos artefactos fijan la superficie y sus negativos. La superficie de
 compilador, el parking cooperativo hosted y el puente ABI nativo de
 atomics/señales ya están implementados y verificados por
@@ -2419,6 +2422,15 @@ executor cooperativo. `STD-SYNC-TEST-001` verifica además que el closure de
 `Once.getOrInit` se ejecute mediante una continuación de VM, que la publicación
 sea posterior al retorno y que error, pánico o cancelación limpien y permitan
 reintentar sin waiters detached.
+
+La sintaxis `sync.Array[...]`, `sync.Map[...]`, `sync.Set[...]`,
+`sync.Stack[...]` y `sync.Queue[...]` ya está implementada en el frontend:
+aliases se resuelven por identidad de declaración, la posición de tipo no se
+confunde con la posición de expresión, los vacíos y `sync.Map[:]` reciben
+diagnósticos contextuales y el formatter conserva un round-trip lossless. El
+HIR emite el marcador interno `std.sync.collectionLiteral`; el lowering MIR
+mantiene una frontera explícita hasta `STD-SYNC-COLLECTION-IMPL-001`, por lo
+que todavía no se promete ejecución de handles concurrentes.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y

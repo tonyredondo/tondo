@@ -371,7 +371,18 @@ impl<'a> TypeLowerer<'a> {
             return Ok(());
         };
         let generic = self.interner.generic_parameter(0)?;
-        for name in ["SyncError", "BarrierRole", "MemoryOrder", "CompareExchange"] {
+        let generic_pair = [generic, self.interner.generic_parameter(1)?];
+        for name in [
+            "SyncError",
+            "BarrierRole",
+            "MemoryOrder",
+            "CompareExchange",
+            "Array",
+            "Map",
+            "Set",
+            "Stack",
+            "Queue",
+        ] {
             let type_name = Name::new(name).expect("bootstrap sync type names are valid");
             let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
                 continue;
@@ -380,11 +391,12 @@ impl<'a> TypeLowerer<'a> {
                 .resolved
                 .symbol(symbol)
                 .expect("bootstrap sync nominal symbols are indexed");
-            let generic_args = if name == "CompareExchange" {
-                vec![generic]
-            } else {
-                Vec::new()
+            let generic_count = match name {
+                "CompareExchange" | "Array" | "Set" | "Stack" | "Queue" => 1,
+                "Map" => 2,
+                _ => 0,
             };
+            let generic_args = generic_pair[..generic_count].to_vec();
             let self_type = self
                 .interner
                 .nominal(declaration.identity().clone(), generic_args)?;
@@ -412,25 +424,34 @@ impl<'a> TypeLowerer<'a> {
                     .into_iter()
                     .map(|variant| self.bootstrap_variant(symbol, variant, vec![generic]))
                     .collect(),
+                "Array" | "Map" | "Set" | "Stack" | "Queue" => Vec::new(),
                 _ => unreachable!("bootstrap sync nominal list is closed"),
+            };
+            let shape = if matches!(name, "Array" | "Map" | "Set" | "Stack" | "Queue") {
+                HirNominalShape::Newtype {
+                    // The frontend deliberately keeps the representation
+                    // opaque.  The runtime handle is supplied by the later
+                    // collection implementation block.
+                    underlying: self.interner.scalar(ScalarType::Unit),
+                }
+            } else {
+                HirNominalShape::Enum { variants }
             };
             self.declarations.insert(
                 symbol,
                 HirTypeDeclaration {
                     symbol,
                     span: declaration.span(),
-                    parameters: if name == "CompareExchange" {
-                        vec![HirGenericParameter {
-                            local: LocalId::synthetic_host_generic(0),
-                            position: 0,
+                    parameters: (0..generic_count)
+                        .map(|position| HirGenericParameter {
+                            local: LocalId::synthetic_host_generic(position as u32),
+                            position: position as u32,
                             bounds: Vec::new(),
-                        }]
-                    } else {
-                        Vec::new()
-                    },
+                        })
+                        .collect(),
                     kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
                         self_type,
-                        shape: HirNominalShape::Enum { variants },
+                        shape,
                     }),
                 },
             );

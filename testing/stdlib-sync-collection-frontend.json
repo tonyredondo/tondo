@@ -1,0 +1,105 @@
+{
+  "format": "tondo-stdlib-sync-collection-frontend/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.sync",
+  "parent_task": "STD-SYNC-001",
+  "task": "STD-SYNC-COLLECTION-FRONTEND-001",
+  "status": "verified",
+  "contract": "docs/contracts/stdlib-sync-collection-frontend.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "implementation": {
+    "status": "verified-frontend-runtime-lowering-pending",
+    "public_api_promoted": false,
+    "syntax": "lossless-BracketPostfix-without-new-keywords",
+    "resolution": "external-nominal-identity",
+    "formatter": "canonical-lossless-round-trip",
+    "hir_marker": "std.sync.collectionLiteral",
+    "mir_boundary": "pending-STD-SYNC-COLLECTION-IMPL-001",
+    "runtime": "pending-STD-SYNC-COLLECTION-IMPL-001",
+    "sources": [
+      "crates/tondo-compiler/src/syntax/parser.rs",
+      "crates/tondo-compiler/src/resolve.rs",
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/hir/verify.rs",
+      "crates/tondo-compiler/src/mir/lower.rs"
+    ],
+    "tests": [
+      "crates/tondo-compiler/src/syntax/parser.rs::qualified_sync_collection_brackets_are_lossless_and_reparseable",
+      "crates/tondo-compiler/src/hir/check.rs::qualified_sync_collection_literals_resolve_by_nominal_identity",
+      "crates/tondo-compiler/src/hir/check.rs::sync_collection_literal_context_and_shape_errors_are_diagnostic",
+      "crates/tondo-compiler/src/hir/check.rs::sync_collection_literal_constant_duplicates_match_value_literal_rules",
+      "crates/tondo-compiler/src/mir/lower.rs::sync_collection_literals_stop_at_the_runtime_implementation_boundary"
+    ]
+  },
+  "surface": {
+    "identities": [
+      "std.sync.Array[T]",
+      "std.sync.Map[K, V]",
+      "std.sync.Set[T]",
+      "std.sync.Stack[T]",
+      "std.sync.Queue[T]"
+    ],
+    "literal_forms": [
+      "sync.Array[...]",
+      "sync.Map[...]",
+      "sync.Set[...]",
+      "sync.Stack[...]",
+      "sync.Queue[...]"
+    ],
+    "qualified_only": true,
+    "aliases_resolve_by_identity": true,
+    "user_paths_opt_in": false,
+    "global_aliases": ["SArray", "SMap", "SSet"],
+    "global_aliases_status": "forbidden",
+    "type_position": "generic-application",
+    "expression_position": "qualified-literal",
+    "runtime_type_heuristics": false,
+    "cst_shape": "PathExpr-plus-BracketPostfix",
+    "no_new_keywords": true,
+    "trailing_comma": true,
+    "evaluation_order": "left-to-right",
+    "empty": {
+      "array_set_stack_queue": "requires-expected-sync-nominal-type",
+      "map": "sync.Map[:]"
+    },
+    "map": {
+      "entry": "key:value",
+      "single_entry": "sync.Map[key:value,]",
+      "multiple_entries": "sync.Map[key:value, key:value,]",
+      "malformed": "E1102"
+    },
+    "diagnostics": {
+      "missing_context": "E1101",
+      "invalid_shape": "E1102",
+      "duplicate_map_key": "E1116",
+      "duplicate_set_value": "W1011"
+    },
+    "duplicates": "ordinary-constant-collection-rules",
+    "recovery": "typed-error-expression-without-partial-lowering"
+  },
+  "promotion": {
+    "frontend_complete": true,
+    "runtime_complete": false,
+    "runtime_block": "STD-SYNC-COLLECTION-IMPL-001",
+    "next_blocks": ["STD-SYNC-COLLECTION-IMPL-001"]
+  },
+  "negative_cases": [
+    "empty-array-without-type-context",
+    "empty-set-without-type-context",
+    "empty-stack-without-type-context",
+    "empty-queue-without-type-context",
+    "map-without-colon-entry",
+    "map-with-slice-shaped-invalid-entry",
+    "sequence-with-slice-syntax",
+    "duplicate-constant-map-key",
+    "duplicate-constant-set-value",
+    "user-path-cannot-opt-into-sync-sugar",
+    "ordinary-type-position-remains-generic-application",
+    "unqualified-global-alias-forbidden",
+    "runtime-lowering-before-implementation-block"
+  ]
+}

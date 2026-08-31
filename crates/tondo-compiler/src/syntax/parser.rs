@@ -2444,10 +2444,31 @@ impl Parser<'_> {
         self.expect(TokenKind::LBracket)?;
         if self.at(TokenKind::Colon) {
             self.parse_slice_spec(None)?;
+            self.eat(TokenKind::Comma);
         } else if !self.at(TokenKind::RBracket) {
             self.parse_bracket_item()?;
             if self.at(TokenKind::Colon) {
-                self.parse_slice_spec(Some(()))?;
+                if self.bracket_has_multiple_map_entries() {
+                    // A qualified `std.sync.Map` literal uses the same
+                    // lossless bracket node as indexing/slicing.  Once a
+                    // second key/value separator is visible, retain every
+                    // pair as ordinary BracketItem children; semantic
+                    // resolution later decides whether the path is the
+                    // closed std.sync identity or a regular user path.
+                    self.bump();
+                    self.parse_bracket_item()?;
+                    while self.eat(TokenKind::Comma) {
+                        if self.at(TokenKind::RBracket) {
+                            break;
+                        }
+                        self.parse_bracket_item()?;
+                        self.expect(TokenKind::Colon)?;
+                        self.parse_bracket_item()?;
+                    }
+                } else {
+                    self.parse_slice_spec(Some(()))?;
+                    self.eat(TokenKind::Comma);
+                }
             } else {
                 while self.eat(TokenKind::Comma) {
                     if self.at(TokenKind::RBracket) {
@@ -2457,11 +2478,62 @@ impl Parser<'_> {
                 }
             }
         } else {
-            self.syntax_error("an index or generic argument list cannot be empty")?;
+            // Empty qualified brackets are retained for contextual
+            // concurrent collection literals (`sync.Array[]`, `sync.Map[:]`
+            // uses the colon form).  Whether an empty list is meaningful is
+            // decided by semantic identity/arity checking; ordinary indexing
+            // still emits its type-aware diagnostic there.
         }
         self.expect(TokenKind::RBracket)?;
         self.finish();
         Ok(())
+    }
+
+    /// Returns whether the current bracket contains two or more top-level
+    /// colon-separated entries.  A single colon remains a `SliceSpec` because
+    /// `value[start:end]` is valid ordinary syntax and is ambiguous with a
+    /// one-entry map literal until semantic identity resolution.
+    fn bracket_has_multiple_map_entries(&self) -> bool {
+        debug_assert_eq!(self.current(), TokenKind::Colon);
+        let mut offset = 0_usize;
+        let mut bracket_depth = 1_u32;
+        let mut paren_depth = 0_u32;
+        let mut brace_depth = 0_u32;
+        let mut saw_colon = true;
+        let mut saw_comma_after_colon = false;
+        loop {
+            let kind = self.nth(offset);
+            match kind {
+                TokenKind::LParen => paren_depth = paren_depth.saturating_add(1),
+                TokenKind::RParen => paren_depth = paren_depth.saturating_sub(1),
+                TokenKind::LBrace => brace_depth = brace_depth.saturating_add(1),
+                TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+                TokenKind::LBracket => bracket_depth = bracket_depth.saturating_add(1),
+                TokenKind::RBracket => {
+                    if bracket_depth == 1 {
+                        return false;
+                    }
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                TokenKind::Colon if bracket_depth == 1 && paren_depth == 0 && brace_depth == 0 => {
+                    if saw_colon && saw_comma_after_colon {
+                        return true;
+                    }
+                    saw_colon = true;
+                }
+                TokenKind::Comma
+                    if bracket_depth == 1 && paren_depth == 0 && brace_depth == 0 && saw_colon =>
+                {
+                    saw_comma_after_colon = true;
+                }
+                TokenKind::Eof | TokenKind::Nl => return false,
+                _ => {}
+            }
+            offset += 1;
+            if offset > self.original_token_count {
+                return false;
+            }
+        }
     }
 
     fn parse_bracket_item(&mut self) -> ParseResult {
@@ -4949,6 +5021,119 @@ enum Outcome {
                 .count(),
             4
         );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn qualified_sync_collection_brackets_are_lossless_and_reparseable() {
+        let source = br#"import std.sync as concurrent
+
+fn literals() {
+    let values = concurrent.Array[1, 2,]
+    let empty: concurrent.Array[Int] = concurrent.Array[]
+    let map: concurrent.Map[String, Int] = concurrent.Map[:]
+    let entries = concurrent.Map["one": 1, "two": 2,]
+    let set = concurrent.Set[1, 2,]
+    let stack = concurrent.Stack[1, 2,]
+    let queue = concurrent.Queue[1, 2,]
+    _ = (values, empty, map, entries, set, stack, queue)
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::BracketPostfix)
+                .count(),
+            7
+        );
+        assert_lossless(&sources, file, &parsed, source);
+        let formatted = format_parsed(&sources, file, &parsed)
+            .expect("qualified sync collection source formats")
+            .into_bytes();
+        let (reparsed_sources, reparsed_file, reparsed) =
+            parse_source(&formatted, ParseMode::Module);
+        assert!(
+            reparsed.diagnostics().is_empty(),
+            "formatted source: {:?}; diagnostics: {:#?}",
+            String::from_utf8_lossy(&formatted),
+            reparsed.diagnostics()
+        );
+        let reformatted = format_parsed(&reparsed_sources, reparsed_file, &reparsed)
+            .expect("reparsed qualified sync collection source formats")
+            .into_bytes();
+        assert_eq!(
+            reformatted, formatted,
+            "sync collection formatter must be stable"
+        );
+    }
+
+    #[test]
+    fn sync_map_lookahead_ignores_nested_delimiters() {
+        let source = br#"import std.sync as concurrent
+
+fn make(first: Int, second: Int): Int {
+    first + second
+}
+
+fn literals() {
+    let entry = concurrent.Map["one": make(first: 1, second: 2),]
+    _ = entry
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_lossless(&sources, file, &parsed, source);
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::SliceSpec)
+                .count(),
+            1,
+            "a nested call comma must not turn one map entry into multiple entries"
+        );
+    }
+
+    #[test]
+    fn sync_map_lookahead_ignores_nested_records_and_arrays() {
+        let source = br#"import std.sync as concurrent
+
+fn literals() {
+    let entry = concurrent.Map["one": Wrapper{field: [1, 2]},]
+    _ = entry
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn sync_map_lookahead_recovers_at_end_of_file() {
+        let source = br#"import std.sync as concurrent
+
+fn literals() {
+    concurrent.Map["one":
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(!parsed.diagnostics().is_empty());
         assert_lossless(&sources, file, &parsed, source);
     }
 

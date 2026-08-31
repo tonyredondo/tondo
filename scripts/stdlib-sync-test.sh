@@ -89,7 +89,6 @@ jq -e '
   and .performance.report == "target/reliability/evidence/stdlib-sync-performance.json"
   and .performance.command == "scripts/stdlib-sync-performance.sh"
   and .promotion.remaining == [
-    "STD-SYNC-COLLECTION-FRONTEND-001",
     "STD-SYNC-COLLECTION-IMPL-001",
     "STD-SYNC-COLLECTION-ITER-001",
     "STD-SYNC-COLLECTION-TEST-001",
@@ -210,8 +209,10 @@ jq -e '
   and .implementation.once_initializer_continuation == "verified-vm-continuation-and-cleanup"
   and .implementation.fixture_stdout == "sync-ok"
   and .testing == "testing/stdlib-sync-test.json"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-FRONTEND-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-IMPL-001"]
 ' testing/stdlib-sync.json >/dev/null
+
+scripts/stdlib-sync-collection-frontend-check.sh >/dev/null
 
 for path in \
     tests/runtime/m11-std-sync-impl-001.to \
@@ -233,6 +234,10 @@ for path in \
     tests/runtime/m11-std-sync-test-001.to \
     testing/stdlib-sync-performance.json \
     docs/contracts/stdlib-sync-performance.md \
+    testing/stdlib-sync-collection-frontend.json \
+    docs/contracts/stdlib-sync-collection-frontend.md \
+    scripts/stdlib-sync-collection-frontend-check.sh \
+    scripts/stdlib-sync-collection-frontend-test.sh \
     scripts/stdlib-sync-performance.sh \
     scripts/stdlib-sync-performance-test.sh; do
     [[ -e "$path" ]] || { echo "std.sync tests: missing TEST evidence path $path" >&2; exit 1; }
@@ -243,6 +248,10 @@ done
     || { echo "std.sync tests: performance runner is not executable" >&2; exit 1; }
 [[ -x scripts/stdlib-sync-performance-test.sh ]] \
     || { echo "std.sync tests: performance contract runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-collection-frontend-check.sh ]] \
+    || { echo "std.sync tests: collection frontend checker is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-collection-frontend-test.sh ]] \
+    || { echo "std.sync tests: collection frontend contract test is not executable" >&2; exit 1; }
 [[ -s fuzz/corpus/stdlib_sync/seed ]] \
     || { echo "std.sync tests: fuzz corpus is empty" >&2; exit 1; }
 

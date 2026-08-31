@@ -678,7 +678,7 @@ fn bootstrap_async_nominals() -> [(&'static str, SymbolKind, BootstrapNominalSha
     )]
 }
 
-fn bootstrap_sync_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 4] {
+fn bootstrap_sync_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 9] {
     [
         (
             "SyncError",
@@ -707,6 +707,15 @@ fn bootstrap_sync_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShap
             SymbolKind::Enum,
             BootstrapNominalShape::Enum(&["Exchanged", "Mismatch"]),
         ),
+        // Shared collection handles are nominal identities.  Keeping them in
+        // the bootstrap declaration table (instead of aliasing the ordinary
+        // Array/Map/Set intrinsics) lets semantic checking distinguish the
+        // concurrent surface before a runtime representation exists.
+        ("Array", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        ("Map", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        ("Set", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        ("Stack", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        ("Queue", SymbolKind::Type, BootstrapNominalShape::Newtype),
     ]
 }
 
@@ -1024,12 +1033,12 @@ impl Resolver<'_> {
                 kind: *kind,
                 visibility: Visibility::Public,
                 span,
-                generic_arity: if module_name == "async" && name.as_str() == "Completion" {
-                    2
-                } else if module_name == "sync" && name.as_str() == "CompareExchange" {
-                    1
-                } else {
-                    0
+                generic_arity: match (module_name, name.as_str()) {
+                    ("async", "Completion") => 2,
+                    ("sync", "CompareExchange") => 1,
+                    ("sync", "Array" | "Set" | "Stack" | "Queue") => 1,
+                    ("sync", "Map") => 2,
+                    _ => 0,
                 },
                 synthetic: true,
             });

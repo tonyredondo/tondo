@@ -4682,6 +4682,41 @@ impl Verifier<'_> {
                             && argument_types[0] == self.program.interner.scalar(ScalarType::UInt64)
                             && pointer_element(expression.ty).is_some()
                     }
+                    super::HirBootstrapHostFunction::SyncCollectionLiteral => {
+                        // This marker is emitted only by the qualified
+                        // std.sync literal checker.  Its nominal identity is
+                        // checked here so a forged HIR cannot turn the
+                        // compiler-owned marker into an arbitrary host call.
+                        match self.program.interner.kind(expression.ty) {
+                            Ok(TypeKind::Nominal {
+                                identity,
+                                arguments,
+                            }) => {
+                                let name = identity.declaration().names().first().map(Name::as_str);
+                                let nominal_arity = match name {
+                                    Some("Map") => 2,
+                                    Some("Array" | "Set" | "Stack" | "Queue") => 1,
+                                    _ => 0,
+                                };
+                                let operand_shape = match name {
+                                    Some("Map") => {
+                                        arguments.len() == 2
+                                            && argument_types.len() <= 128
+                                            && argument_types.len().is_multiple_of(2)
+                                    }
+                                    Some("Array" | "Set" | "Stack" | "Queue") => {
+                                        arguments.len() == 1 && argument_types.len() <= 128
+                                    }
+                                    _ => false,
+                                };
+                                identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                                    && identity.module().as_str() == "sync"
+                                    && nominal_arity == arguments.len()
+                                    && operand_shape
+                            }
+                            _ => false,
+                        }
+                    }
                     _ => false,
                 };
                 if !valid {

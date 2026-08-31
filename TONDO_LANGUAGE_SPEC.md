@@ -9420,6 +9420,14 @@ expresión. En particular, `sync.Array[Int]` en posición de tipo sigue siendo u
 aplicación genérica y `sync.Array[value]` en posición de expresión es un literal;
 ningún valor de runtime ni tipo esperado decide la categoría sintáctica.
 
+El frontend de esta forma está cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`.
+Su CST conserva `PathExpr + BracketPostfix` sin keywords nuevas y el HIR emite
+el marcador interno `std.sync.collectionLiteral` después de validar identidad,
+aridad, contexto vacío, trailing comma, orden de evaluación y duplicados. El
+verifier protege esa frontera y el lowering MIR rechaza todavía la construcción
+con `STD-SYNC-COLLECTION-IMPL-001`: la semántica de runtime de los handles no se
+considera implementada por este cierre de parser y checker.
+
 ### 23.25 Records y variantes
 
 ~~~ebnf

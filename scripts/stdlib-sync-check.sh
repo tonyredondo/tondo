@@ -39,6 +39,12 @@ jq -e '
   and .host.cooperative_model == "scheduler-owned-poll-and-reacquire"
   and .host.native_bridge == "private-u64-atomics-and-epoch-parking"
   and .host.blocking_native_workers_only == true
+  and .frontend.task == "STD-SYNC-COLLECTION-FRONTEND-001"
+  and .frontend.status == "verified"
+  and .frontend.contract == "testing/stdlib-sync-collection-frontend.json"
+  and .frontend.document == "docs/contracts/stdlib-sync-collection-frontend.md"
+  and .frontend.runtime_lowering == "pending-STD-SYNC-COLLECTION-IMPL-001"
+  and .frontend.public_api_promoted == false
   and .surface.types == [
     "SyncError = { InvalidCapacity, InvalidParties, ResourceLimit, ReentrantLock, ReentrantInitialization, Broken }",
     "Mutex[T]",
@@ -185,7 +191,7 @@ jq -e '
   and .performance.scope.native_aot == "not-claimed"
   and .performance.oracle.kind == "independent-model-and-host-invariant-checks"
   and .performance.invariants.fairness == "zero-FIFO-registration-violations"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-FRONTEND-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-IMPL-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -213,7 +219,9 @@ for path in \
     TONDO_IMPLEMENTATION_TRACKER.md \
     testing/stdlib-sync-test.json \
     testing/stdlib-sync-performance.json \
-    docs/contracts/stdlib-sync-performance.md; do
+    docs/contracts/stdlib-sync-performance.md \
+    testing/stdlib-sync-collection-frontend.json \
+    docs/contracts/stdlib-sync-collection-frontend.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -232,6 +240,7 @@ for marker in \
     'STD-SYNC-TEST-001' \
     'STD-SYNC-HOST-001' \
     'STD-SYNC-PERF-001' \
+    'STD-SYNC-COLLECTION-FRONTEND-001' \
     'tondo-vm-hosted' \
     'zero-FIFO-registration-violations'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-sync.md" \
@@ -244,6 +253,10 @@ grep -Fq 'testing/stdlib-sync-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" 
     || die "main stdlib spec does not link the sync testing contract"
 grep -Fq 'testing/stdlib-sync-performance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync performance contract"
+grep -Fq 'testing/stdlib-sync-collection-frontend.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the sync collection frontend contract"
+grep -Fq 'stdlib-sync-collection-frontend.md' "$root/docs/contracts/stdlib-sync.md" \
+    || die "sync contract does not link the collection frontend contract"
 
 [[ -x "$root/scripts/stdlib-sync-performance.sh" ]] \
     || die "sync performance runner is not executable"

@@ -7,7 +7,12 @@ TONDO_STANDARD_LIBRARY_SPEC.md. La superficie de compilador, el parking
 cooperativo del host y el puente ABI nativo de atomics/señales están verificados
 por `STD-SYNC-HOST-001`. La ejecución de un initializer `Once` como continuación
 de VM, su publicación, el despertar de waiters y la limpieza en error, pánico o
-cancelación están verificados por `STD-SYNC-TEST-001`.
+cancelación están verificados por `STD-SYNC-TEST-001`. El frontend de los cinco
+literales cualificados de colecciones está cerrado por
+`STD-SYNC-COLLECTION-FRONTEND-001`; su contrato es
+[`testing/stdlib-sync-collection-frontend.json`](../../testing/stdlib-sync-collection-frontend.json)
+y su guía normativa [`stdlib-sync-collection-frontend.md`](./stdlib-sync-collection-frontend.md).
+El runtime de esos handles sigue pendiente de `STD-SYNC-COLLECTION-IMPL-001`.
 
 Implementación host: `scheduler-backed-hosted-model` con puente
 `verified-host-parking-native-atomic-epoch-bridge`.
@@ -54,6 +59,15 @@ frame, publica el valor solo al retornar y despierta todos los waiters con el
 mismo resultado. Error declarado, pánico y cancelación limpian el initializer,
 restablecen `uninitialized` y permiten reintentar; ningún waiter queda detached
 ni observa un valor parcialmente construido.
+
+El frontend de colecciones compartidas ya resuelve por identidad nominal,
+preserva la forma lossless `PathExpr + BracketPostfix`, admite aliases de
+`std.sync`, vacíos contextuales, `sync.Map[:]`, trailing comma y diagnósticos de
+duplicados. El HIR publica únicamente el marcador interno
+`std.sync.collectionLiteral`; el verifier lo sella y el lowering MIR detiene la
+construcción con la frontera explícita de `STD-SYNC-COLLECTION-IMPL-001`. Por
+tanto, esta leaf no presenta todavía una colección concurrente ejecutable ni
+una API pública promovida.
 
 ## Superficie pública
 
@@ -240,6 +254,12 @@ de cambio se modela con Condition o channel.
 
 ## Colecciones compartidas
 
+La sintaxis y resolución del frontend están cerradas por
+`STD-SYNC-COLLECTION-FRONTEND-001`; para el contrato detallado y su evidencia
+ejecutable véase [`stdlib-sync-collection-frontend.md`](./stdlib-sync-collection-frontend.md).
+Las operaciones listadas aquí describen la superficie futura; su lowering y
+runtime permanecen en `STD-SYNC-COLLECTION-IMPL-001`.
+
 Las cinco identidades calificadas son:
 
     sync.Array[T: Copy + Send + Share]
@@ -399,9 +419,10 @@ selectable, waitPop, waitDequeue, queues ilimitadas ocultas, préstamos en for y
 aliases globales SArray/SMap/SSet.
 
 La superficie de compilador, el parking cooperativo hosted, la continuación de
-`Once`, la campaña target-qualified de `STD-SYNC-PERF-001` y la ABI nativa de
-atomics/señales cierran los bloques actualmente implementados. Permanecen
-pendientes las leaves de colecciones, `STD-SYNC-CONF-001` y
+`Once`, la campaña target-qualified de `STD-SYNC-PERF-001`, el frontend de
+literales de colecciones y la ABI nativa de atomics/señales cierran los bloques
+actualmente implementados. Permanecen pendientes el runtime e iteración de
+colecciones, `STD-SYNC-CONF-001` y
 `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada y solo su carril escalar
 `u64` está verificado aquí; los tipos genéricos y las colecciones deben
 demostrar su lowering y reclamación en sus propios bloques.

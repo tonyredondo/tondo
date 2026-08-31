@@ -6887,6 +6887,13 @@ fn bootstrap_host_function(
         HirBootstrapHostFunction::PointerFromAddress => {
             MirBootstrapHostFunction::PointerFromAddress
         }
+        HirBootstrapHostFunction::SyncCollectionLiteral => {
+            return Err(MirError::Construction {
+                span,
+                message: "sync collection literal lowering is pending STD-SYNC-COLLECTION-IMPL-001"
+                    .into(),
+            });
+        }
         HirBootstrapHostFunction::TestingLog => MirBootstrapHostFunction::TestingLog,
         HirBootstrapHostFunction::TestingTags => MirBootstrapHostFunction::TestingTags,
         HirBootstrapHostFunction::TestingFailNow => MirBootstrapHostFunction::TestingFailNow,
@@ -8064,6 +8071,28 @@ mod tests {
                 .any(|block| { matches!(block.terminator().kind(), MirTerminatorKind::Return) })
         );
         verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn sync_collection_literals_stop_at_the_runtime_implementation_boundary() {
+        let (resolved, hir) = checked(
+            "import std.sync as concurrent\n\
+             fn main() {\n\
+                 let values: concurrent.Array[Int] = concurrent.Array[1, 2]\n\
+                 let entries: concurrent.Map[String, Int] = concurrent.Map[\"one\": 1, \"two\": 2]\n\
+                 let set: concurrent.Set[Int] = concurrent.Set[1, 2]\n\
+                 let stack: concurrent.Stack[Int] = concurrent.Stack[1, 2]\n\
+                 let queue: concurrent.Queue[Int] = concurrent.Queue[1, 2]\n\
+                 _ = (values, entries, set, stack, queue)\n\
+             }\n",
+        );
+        let error = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "sync collection literal lowering is pending STD-SYNC-COLLECTION-IMPL-001"
+            ),
+            "{error}"
+        );
     }
 
     #[test]
