@@ -379,6 +379,14 @@ struct CallContinuation {
     call_span: BytecodeSpan,
     test_boundary: Option<TestBoundary>,
     virtual_time: Option<RuntimeValue>,
+    once: Option<OnceContinuation>,
+}
+
+#[derive(Debug, Clone)]
+struct OnceContinuation {
+    id: u64,
+    outcome: BytecodeTypeId,
+    initializer_outcome: BytecodeTypeId,
 }
 
 #[derive(Debug, Clone)]
@@ -587,7 +595,7 @@ enum TaskCompletion {
     Cancelled,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum RuntimeUnwind {
     Panic(VmPanic),
     Cancelled,
@@ -622,6 +630,19 @@ enum TaskWait {
     HostTask {
         call: u64,
         outcome: BytecodeTypeId,
+    },
+    Once {
+        id: u64,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+        completion: Option<OnceResolution>,
+    },
+    OnceTask {
+        id: u64,
+        outcome: BytecodeTypeId,
+        completion: Option<OnceResolution>,
     },
     OneShot {
         id: u64,
@@ -659,6 +680,21 @@ enum OneShotCompletion {
     Ok(Value),
     Err(Value),
     Cancelled,
+}
+
+#[derive(Debug, Clone)]
+enum OnceResolution {
+    Ready(Value),
+    Error(Value),
+    Panic(VmPanic),
+    Cancelled,
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeOnceState {
+    Uninitialized,
+    Initializing { owner: usize },
+    Ready(Value),
 }
 
 #[derive(Debug, Default)]
@@ -756,6 +792,7 @@ struct Engine<'program, 'host> {
     next_oneshot_id: u64,
     groups: BTreeMap<u64, RuntimeGroupState>,
     next_group_id: u64,
+    onces: BTreeMap<u64, RuntimeOnceState>,
     completion_order: BTreeMap<usize, u64>,
     next_completion_sequence: u64,
     statistics: VmStatistics,
@@ -802,6 +839,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             next_oneshot_id: 1,
             groups: BTreeMap::new(),
             next_group_id: 1,
+            onces: BTreeMap::new(),
             completion_order: BTreeMap::new(),
             next_completion_sequence: 1,
             statistics: VmStatistics::default(),
@@ -1219,6 +1257,141 @@ impl<'program, 'host> Engine<'program, 'host> {
             TaskWait::HostTask { .. } => Err(VmError::invariant(
                 "a host-only child task entered the runnable queue",
             )),
+            TaskWait::Once {
+                id,
+                outcome,
+                destination,
+                target,
+                unwind,
+                completion,
+            } => {
+                let frame = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| VmError::invariant("a resumed Once wait has no frame"))?;
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                let completion = match completion {
+                    Some(completion) => Some(completion),
+                    None => match self.onces.get(&id) {
+                        Some(RuntimeOnceState::Ready(value)) => {
+                            Some(OnceResolution::Ready(value.clone()))
+                        }
+                        Some(RuntimeOnceState::Initializing { .. }) => None,
+                        Some(RuntimeOnceState::Uninitialized) => {
+                            return Err(VmError::invariant(
+                                "Once waiter lost its initializer outcome",
+                            ));
+                        }
+                        None => {
+                            return Err(VmError::invariant(
+                                "Once wait references an unknown handle",
+                            ));
+                        }
+                    },
+                };
+                match completion {
+                    None => {
+                        self.park_current(
+                            TaskWait::Once {
+                                id,
+                                outcome,
+                                destination,
+                                target,
+                                unwind,
+                                completion: None,
+                            },
+                            &[],
+                        )?;
+                        Ok(false)
+                    }
+                    Some(OnceResolution::Ready(value)) => {
+                        let result = self.once_ref_result(outcome, &value)?;
+                        self.write_place(frame, &destination, result)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                    Some(OnceResolution::Error(error)) => {
+                        let result = self.oneshot_result(outcome, Err(error))?;
+                        self.write_place(frame, &destination, result)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                    Some(OnceResolution::Panic(panic)) => {
+                        self.begin_propagated_panic(frame, panic, unwind)?;
+                        Ok(true)
+                    }
+                    Some(OnceResolution::Cancelled) => {
+                        self.begin_cancel(frame, unwind)?;
+                        Ok(true)
+                    }
+                }
+            }
+            TaskWait::OnceTask {
+                id,
+                outcome,
+                completion,
+            } => {
+                if self.tasks[self.current_task].cancel_requested {
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    return Ok(false);
+                }
+                let completion = match completion {
+                    Some(completion) => Some(completion),
+                    None => match self.onces.get(&id) {
+                        Some(RuntimeOnceState::Ready(value)) => {
+                            Some(OnceResolution::Ready(value.clone()))
+                        }
+                        Some(RuntimeOnceState::Initializing { .. }) => None,
+                        Some(RuntimeOnceState::Uninitialized) => {
+                            return Err(VmError::invariant(
+                                "Once task waiter lost its initializer outcome",
+                            ));
+                        }
+                        None => {
+                            return Err(VmError::invariant(
+                                "Once task wait references an unknown handle",
+                            ));
+                        }
+                    },
+                };
+                match completion {
+                    None => {
+                        self.park_current(
+                            TaskWait::OnceTask {
+                                id,
+                                outcome,
+                                completion: None,
+                            },
+                            &[],
+                        )?;
+                        Ok(false)
+                    }
+                    Some(OnceResolution::Ready(value)) => {
+                        let result = self.once_ref_result(outcome, &value)?;
+                        self.complete_current_task(TaskCompletion::Returned(result))?;
+                        Ok(false)
+                    }
+                    Some(OnceResolution::Error(error)) => {
+                        let result = self.oneshot_result(outcome, Err(error))?;
+                        self.complete_current_task(TaskCompletion::Returned(result))?;
+                        Ok(false)
+                    }
+                    Some(OnceResolution::Panic(panic)) => {
+                        self.complete_current_task(TaskCompletion::Panicked(panic))?;
+                        Ok(false)
+                    }
+                    Some(OnceResolution::Cancelled) => {
+                        self.complete_current_task(TaskCompletion::Cancelled)?;
+                        Ok(false)
+                    }
+                }
+            }
             TaskWait::OneShot {
                 id,
                 outcome,
@@ -2037,6 +2210,115 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(task)
     }
 
+    fn spawn_once_initializer(
+        &mut self,
+        id: u64,
+        outcome: BytecodeTypeId,
+        initializer_outcome: BytecodeTypeId,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        let parent_frames = std::mem::take(&mut self.frames);
+        let unwind = self
+            .program
+            .function(function)
+            .ok_or_else(|| VmError::invariant("Once initializer target is invalid"))?
+            .unwind;
+        let pushed = self.push_frame(
+            function,
+            arguments,
+            Some(CallContinuation {
+                destination: None,
+                target: None,
+                unwind,
+                call_span: self
+                    .program
+                    .function(function)
+                    .ok_or_else(|| VmError::invariant("Once initializer target is invalid"))?
+                    .source,
+                test_boundary: None,
+                virtual_time: None,
+                once: Some(OnceContinuation {
+                    id,
+                    outcome,
+                    initializer_outcome,
+                }),
+            }),
+        );
+        let child_frames = std::mem::take(&mut self.frames);
+        self.frames = parent_frames;
+        pushed?;
+
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: child_frames,
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Runnable,
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("Once initializer targets a missing scope"))?
+            .children
+            .push(task);
+        self.record_new_task(task, Some(scope), DiagnosticTaskState::Runnable)?;
+        self.enqueue_task(task)?;
+        Ok(task)
+    }
+
+    fn spawn_once_wait_task(
+        &mut self,
+        id: u64,
+        outcome: BytecodeTypeId,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        if !matches!(
+            self.onces.get(&id),
+            Some(RuntimeOnceState::Initializing { .. })
+        ) {
+            return Err(VmError::invariant(
+                "Once wait task was created without an initializer",
+            ));
+        }
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Waiting(TaskWait::OnceTask {
+                id,
+                outcome,
+                completion: None,
+            }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("Once wait targets a missing scope"))?
+            .children
+            .push(task);
+        self.record_new_task(task, Some(scope), DiagnosticTaskState::Waiting)?;
+        Ok(task)
+    }
+
     fn spawn_async_iterator_collect(
         &mut self,
         cursor: Value,
@@ -2161,6 +2443,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         call_span: function_info.source,
                         test_boundary: None,
                         virtual_time: None,
+                        once: None,
                     }),
                 )?;
                 Ok(())
@@ -2171,6 +2454,8 @@ impl<'program, 'host> Engine<'program, 'host> {
             ))),
             OperationResult::HostAsync { name, .. } => Err(VmError::UnsupportedHostCall(name)),
             OperationResult::AsyncIteratorCollect { .. }
+            | OperationResult::OnceInit { .. }
+            | OperationResult::OnceWait { .. }
             | OperationResult::OneShotWait { .. }
             | OperationResult::GroupWait { .. }
             | OperationResult::TestBoundaryCall { .. }
@@ -3276,6 +3561,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                         }
                         let scope = self.select_task_scope(frame)?;
                         self.spawn_group_task_with_scope(id, operation, outcome, scope, true)?
+                    }
+                    OperationResult::OnceInit { .. } | OperationResult::OnceWait { .. } => {
+                        return Err(VmError::invariant(
+                            "Once initialization cannot be registered in select",
+                        ));
                     }
                     OperationResult::Value(value) => self.spawn_select_value_task(value)?,
                     OperationResult::Panic(code, message) => {
@@ -4648,6 +4938,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             call_span: span,
                             test_boundary: None,
                             virtual_time: None,
+                            once: None,
                         };
                         self.push_frame(function, arguments, Some(continuation))?;
                     }
@@ -4663,12 +4954,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                             call_span: span,
                             test_boundary: Some(boundary),
                             virtual_time: None,
+                            once: None,
                         };
                         self.push_frame(function, arguments, Some(continuation))?;
                     }
                     OperationResult::HostAsync { .. } => {
                         return Err(VmError::invariant(
                             "an async host call appeared in a synchronous invocation",
+                        ));
+                    }
+                    OperationResult::OnceInit { .. } | OperationResult::OnceWait { .. } => {
+                        return Err(VmError::invariant(
+                            "an async Once operation appeared in a synchronous invocation",
                         ));
                     }
                     OperationResult::OneShotWait { .. } => {
@@ -4730,7 +5027,46 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         call_span: span,
                                         test_boundary: None,
                                         virtual_time: None,
+                                        once: None,
                                     }),
+                                )?;
+                            }
+                            OperationResult::OnceInit {
+                                id,
+                                outcome,
+                                initializer_outcome,
+                                function,
+                                arguments,
+                            } => {
+                                self.push_frame(
+                                    function,
+                                    arguments,
+                                    Some(CallContinuation {
+                                        destination: Some(destination.clone()),
+                                        target: Some(*target),
+                                        unwind: *unwind,
+                                        call_span: span,
+                                        test_boundary: None,
+                                        virtual_time: None,
+                                        once: Some(OnceContinuation {
+                                            id,
+                                            outcome,
+                                            initializer_outcome,
+                                        }),
+                                    }),
+                                )?;
+                            }
+                            OperationResult::OnceWait { id, outcome } => {
+                                self.park_current(
+                                    TaskWait::Once {
+                                        id,
+                                        outcome,
+                                        destination: destination.clone(),
+                                        target: *target,
+                                        unwind: *unwind,
+                                        completion: None,
+                                    },
+                                    &[],
                                 )?;
                             }
                             OperationResult::HostAsync {
@@ -4827,6 +5163,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         call_span: span,
                                         test_boundary: None,
                                         virtual_time: Some(controller),
+                                        once: None,
                                     }),
                                 )?;
                             }
@@ -4925,6 +5262,39 @@ impl<'program, 'host> Engine<'program, 'host> {
                     } => {
                         let scope = self.active_task_scope(frame, *scope)?;
                         let child = self.spawn_task(function, arguments, scope)?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
+                    OperationResult::OnceInit {
+                        id,
+                        outcome,
+                        initializer_outcome,
+                        function,
+                        arguments,
+                    } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child = self.spawn_once_initializer(
+                            id,
+                            outcome,
+                            initializer_outcome,
+                            function,
+                            arguments,
+                            scope,
+                        )?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
+                    OperationResult::OnceWait { id, outcome } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child = self.spawn_once_wait_task(id, outcome, scope)?;
                         self.write_place(
                             frame,
                             destination,
@@ -5167,6 +5537,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         call_span: span,
                                         test_boundary: None,
                                         virtual_time: None,
+                                        once: None,
                                     }),
                                 )?;
                             }
@@ -5199,6 +5570,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             OperationResult::GroupWait { .. } => {
                                 return Err(VmError::invariant(
                                     "a Group wait cannot be used as deferred cleanup",
+                                ));
+                            }
+                            OperationResult::OnceInit { .. } | OperationResult::OnceWait { .. } => {
+                                return Err(VmError::invariant(
+                                    "Once initialization cannot be used as deferred cleanup",
                                 ));
                             }
                             OperationResult::Panic(code, message) => {
@@ -5250,17 +5626,28 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .program
                     .function(self.frames[frame].function)
                     .ok_or_else(|| VmError::invariant("returning frame has an invalid function"))?;
-                let value = self.take_slot(frame, function.return_slot)?;
+                let mut value = self.take_slot(frame, function.return_slot)?;
                 let finished = self
                     .frames
                     .pop()
                     .ok_or_else(|| VmError::invariant("return could not pop the current frame"))?;
                 if let Some(continuation) = finished.continuation {
+                    if let Some(once) = continuation.once.as_ref() {
+                        value = self.finish_once_initializer_return(once, value)?;
+                    }
                     if continuation.target.is_none()
                         && self.frames.is_empty()
                         && self.tasks[self.current_task].async_collect.is_some()
+                        && continuation.once.is_none()
                     {
                         self.finish_async_collect_next(value)?;
+                        return Ok(None);
+                    }
+                    if continuation.target.is_none()
+                        && self.frames.is_empty()
+                        && continuation.once.is_some()
+                    {
+                        self.complete_current_task(TaskCompletion::Returned(value))?;
                         return Ok(None);
                     }
                     let caller = self.frames.len().checked_sub(1).ok_or_else(|| {
@@ -5308,9 +5695,27 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .pop()
                     .ok_or_else(|| VmError::invariant("panic resume could not pop its frame"))?;
                 if let Some(continuation) = finished.continuation {
+                    if let Some(once) = continuation.once.as_ref() {
+                        let unwind = self.pending_unwind.clone().ok_or_else(|| {
+                            VmError::invariant("Once initializer unwind disappeared")
+                        })?;
+                        self.finish_once_initializer_unwind(once, &unwind)?;
+                        if continuation.target.is_none() && self.frames.is_empty() {
+                            let unwind = self.pending_unwind.take().ok_or_else(|| {
+                                VmError::invariant("Once initializer unwind disappeared")
+                            })?;
+                            let completion = match unwind {
+                                RuntimeUnwind::Panic(panic) => TaskCompletion::Panicked(panic),
+                                RuntimeUnwind::Cancelled => TaskCompletion::Cancelled,
+                            };
+                            self.complete_current_task(completion)?;
+                            return Ok(None);
+                        }
+                    }
                     if continuation.target.is_none()
                         && self.frames.is_empty()
                         && self.tasks[self.current_task].async_collect.is_some()
+                        && continuation.once.is_none()
                     {
                         let unwind = self.pending_unwind.take().ok_or_else(|| {
                             VmError::invariant("collect iterator unwind disappeared")
@@ -5415,6 +5820,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             call_span: span,
                             test_boundary: None,
                             virtual_time: None,
+                            once: None,
                         }),
                     )?;
                 }
@@ -5449,6 +5855,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                         "a Group wait cannot be used as deferred cleanup",
                     ));
                 }
+                OperationResult::OnceInit { .. } | OperationResult::OnceWait { .. } => {
+                    return Err(VmError::invariant(
+                        "Once initialization cannot be used as deferred cleanup",
+                    ));
+                }
                 OperationResult::Panic(code, message) => {
                     self.begin_panic(frame, code, message, span, continuation)?;
                 }
@@ -5475,6 +5886,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             call_span: span,
                             test_boundary: None,
                             virtual_time: Some(controller),
+                            once: None,
                         }),
                     )?;
                 }
@@ -5745,6 +6157,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                 Some(OneShotCompletion::Cancelled) | None => {}
             }
         }
+        for state in self.onces.values() {
+            if let RuntimeOnceState::Ready(value) = state {
+                roots.push(value.clone());
+            }
+        }
         Ok(roots)
     }
 
@@ -5939,6 +6356,16 @@ fn oneshot_handle(value: &Value, expected: RuntimeHostValueKind) -> Result<u64, 
     Ok(*id)
 }
 
+fn once_handle(value: &Value) -> Result<u64, VmError> {
+    let Value::Host(RuntimeValue::Host { kind, id }) = value else {
+        return Err(VmError::invariant("Once handle is not opaque"));
+    };
+    if *kind != RuntimeHostValueKind::Once {
+        return Err(VmError::invariant("Once handle has the wrong kind"));
+    }
+    Ok(*id)
+}
+
 fn group_handle(value: &Value) -> Result<u64, VmError> {
     let Value::Host(RuntimeValue::Host { kind, id }) = value else {
         return Err(VmError::invariant("Group handle is not opaque"));
@@ -5968,6 +6395,17 @@ enum OperationResult {
     HostAsync {
         name: String,
         arguments: Vec<RuntimeValue>,
+        outcome: BytecodeTypeId,
+    },
+    OnceInit {
+        id: u64,
+        outcome: BytecodeTypeId,
+        initializer_outcome: BytecodeTypeId,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+    },
+    OnceWait {
+        id: u64,
         outcome: BytecodeTypeId,
     },
     AsyncIteratorCollect {
@@ -9933,6 +10371,13 @@ impl Engine<'_, '_> {
             if let Some(environment) = environment {
                 values.insert(0, environment);
             }
+            if (metadata.name == "std.sync.once"
+                || metadata.name.starts_with("std.sync.once[")
+                || metadata.name.starts_with("std.sync.Once."))
+                && let Some(result) = self.prepare_once_method(&metadata, &values)?
+            {
+                return Ok(result);
+            }
             if metadata.name.starts_with("std.async.AsyncIterator.collect") {
                 let receiver_index = metadata
                     .parameters
@@ -10173,6 +10618,341 @@ impl Engine<'_, '_> {
             HeapObject::Tuple(vec![Some(waiter.clone()), Some(completer.clone())]),
             &[waiter, completer],
         )?))
+    }
+
+    fn result_parts(
+        &self,
+        result_ty: BytecodeTypeId,
+    ) -> Result<(BytecodeTypeId, BytecodeTypeId), VmError> {
+        let BytecodeTypeKind::Result { success, error } = self
+            .program
+            .ty(result_ty)
+            .ok_or_else(|| VmError::invariant("Result type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("expected a Result type"));
+        };
+        Ok((success, error))
+    }
+
+    fn option_value_type(&self, option_ty: BytecodeTypeId) -> Result<BytecodeTypeId, VmError> {
+        let BytecodeTypeKind::Option(value) = self
+            .program
+            .ty(option_ty)
+            .ok_or_else(|| VmError::invariant("Option type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("expected an Option type"));
+        };
+        Ok(value)
+    }
+
+    fn once_ref_result(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        value: &Value,
+    ) -> Result<Value, VmError> {
+        let (success, _) = self.result_parts(result_ty)?;
+        let ref_value = self.allocate(
+            success,
+            HeapObject::Ref(Some(value.clone())),
+            std::slice::from_ref(value),
+        )?;
+        self.oneshot_result(result_ty, Ok(ref_value))
+    }
+
+    fn once_get_result(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        value: Option<Value>,
+    ) -> Result<Value, VmError> {
+        let ref_ty = self.option_value_type(result_ty)?;
+        let Some(value) = value else {
+            return self.allocate(result_ty, HeapObject::OptionNone, &[]);
+        };
+        let reference = self.allocate(
+            ref_ty,
+            HeapObject::Ref(Some(value.clone())),
+            std::slice::from_ref(&value),
+        )?;
+        self.allocate(
+            result_ty,
+            HeapObject::OptionSome(Some(reference.clone())),
+            std::slice::from_ref(&reference),
+        )
+    }
+
+    fn once_resolution_result(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        resolution: &OnceResolution,
+    ) -> Result<Value, VmError> {
+        match resolution {
+            OnceResolution::Ready(value) => self.once_ref_result(result_ty, value),
+            OnceResolution::Error(error) => self.oneshot_result(result_ty, Err(error.clone())),
+            OnceResolution::Panic(_) | OnceResolution::Cancelled => Err(VmError::invariant(
+                "a cancelled or panicked Once initializer has no Result value",
+            )),
+        }
+    }
+
+    fn split_once_initializer(
+        &self,
+        value: Value,
+        result_ty: BytecodeTypeId,
+    ) -> Result<Result<Value, Value>, VmError> {
+        let (_, error_ty) = self.result_parts(result_ty)?;
+        if matches!(
+            self.program.ty(error_ty).map(|ty| &ty.kind),
+            Some(BytecodeTypeKind::Scalar(BytecodeScalarType::Never))
+        ) {
+            return Ok(Ok(value));
+        }
+        let Value::Heap(handle) = value else {
+            return Err(VmError::invariant(
+                "Once initializer returned a non-Result value",
+            ));
+        };
+        match self.heap.get(handle)? {
+            HeapObject::ResultOk(Some(value)) => Ok(Ok(value.clone())),
+            HeapObject::ResultErr(Some(error)) => Ok(Err(error.clone())),
+            HeapObject::ResultOk(None) | HeapObject::ResultErr(None) => Err(VmError::invariant(
+                "Once initializer returned a moved Result payload",
+            )),
+            _ => Err(VmError::invariant(
+                "Once initializer returned a different heap object",
+            )),
+        }
+    }
+
+    fn publish_once(&mut self, id: u64, resolution: OnceResolution) -> Result<(), VmError> {
+        let owner = match self.onces.get(&id) {
+            Some(RuntimeOnceState::Initializing { owner }) => *owner,
+            Some(RuntimeOnceState::Uninitialized | RuntimeOnceState::Ready(_)) => {
+                return Err(VmError::invariant(
+                    "Once initializer completed without an initializing owner",
+                ));
+            }
+            None => {
+                return Err(VmError::invariant(
+                    "Once handle is not registered in the VM",
+                ));
+            }
+        };
+        if owner != self.current_task {
+            return Err(VmError::invariant(
+                "a task other than the Once initializer published its value",
+            ));
+        }
+        let state = match &resolution {
+            OnceResolution::Ready(value) => RuntimeOnceState::Ready(value.clone()),
+            OnceResolution::Error(_) | OnceResolution::Panic(_) | OnceResolution::Cancelled => {
+                RuntimeOnceState::Uninitialized
+            }
+        };
+        self.onces.insert(id, state);
+
+        let waiters = self
+            .tasks
+            .iter()
+            .enumerate()
+            .filter_map(|(task, record)| match &record.status {
+                TaskStatus::Waiting(TaskWait::Once { id: pending, .. })
+                | TaskStatus::Waiting(TaskWait::OnceTask { id: pending, .. })
+                    if *pending == id =>
+                {
+                    Some(task)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for task in waiters {
+            let assigned = match &mut self.tasks[task].status {
+                TaskStatus::Waiting(TaskWait::Once { completion, .. })
+                | TaskStatus::Waiting(TaskWait::OnceTask { completion, .. }) => {
+                    *completion = Some(resolution.clone());
+                    true
+                }
+                _ => false,
+            };
+            if assigned {
+                self.wake_task(task)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_once_initializer_return(
+        &mut self,
+        continuation: &OnceContinuation,
+        value: Value,
+    ) -> Result<Value, VmError> {
+        let resolution =
+            match self.split_once_initializer(value, continuation.initializer_outcome)? {
+                Ok(value) => OnceResolution::Ready(value),
+                Err(error) => OnceResolution::Error(error),
+            };
+        self.publish_once(continuation.id, resolution.clone())?;
+        self.once_resolution_result(continuation.outcome, &resolution)
+    }
+
+    fn finish_once_initializer_unwind(
+        &mut self,
+        continuation: &OnceContinuation,
+        unwind: &RuntimeUnwind,
+    ) -> Result<(), VmError> {
+        let resolution = match unwind {
+            RuntimeUnwind::Panic(panic) => OnceResolution::Panic(panic.clone()),
+            RuntimeUnwind::Cancelled => OnceResolution::Cancelled,
+        };
+        self.publish_once(continuation.id, resolution)
+    }
+
+    fn prepare_once_method(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+    ) -> Result<Option<OperationResult>, VmError> {
+        let values = values
+            .iter()
+            .map(|value| match value {
+                Value::Loan(loan) => self.read_task_place(loan.task, loan.frame, &loan.place),
+                value => Ok(value.clone()),
+            })
+            .collect::<Result<Vec<_>, VmError>>()?;
+        let name = metadata
+            .name
+            .split_once('[')
+            .map_or(metadata.name.as_str(), |(base, _)| base);
+        if name == "std.sync.once" {
+            if !values.is_empty() {
+                return Err(VmError::invariant("Once constructor received arguments"));
+            }
+            let token = Value::Host(self.invoke_host("std.sync.once", &[])?);
+            let id = once_handle(&token)?;
+            self.onces.insert(id, RuntimeOnceState::Uninitialized);
+            return Ok(Some(OperationResult::Value(token)));
+        }
+        if !matches!(
+            name,
+            "std.sync.Once.get" | "std.sync.Once.getOrInit" | "std.sync.Once.isReady"
+        ) {
+            return Ok(None);
+        }
+        let receiver = metadata
+            .parameters
+            .iter()
+            .position(|parameter| parameter.receiver)
+            .ok_or_else(|| VmError::invariant("Once method has no receiver"))?;
+        let token = values
+            .get(receiver)
+            .ok_or_else(|| VmError::invariant("Once receiver is missing"))?;
+        let id = once_handle(token)?;
+        let state = self
+            .onces
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| VmError::invariant("Once handle is not registered in the VM"))?;
+        match name {
+            "std.sync.Once.get" => {
+                let value = match state {
+                    RuntimeOnceState::Ready(value) => Some(value),
+                    RuntimeOnceState::Uninitialized | RuntimeOnceState::Initializing { .. } => None,
+                };
+                Ok(Some(OperationResult::Value(
+                    self.once_get_result(metadata.outcome, value)?,
+                )))
+            }
+            "std.sync.Once.isReady" => Ok(Some(OperationResult::Value(Value::Bool(matches!(
+                state,
+                RuntimeOnceState::Ready(_)
+            ))))),
+            "std.sync.Once.getOrInit" => {
+                let initializer_index = metadata
+                    .parameters
+                    .iter()
+                    .enumerate()
+                    .find(|(index, parameter)| *index != receiver && !parameter.receiver)
+                    .map(|(index, _)| index)
+                    .ok_or_else(|| VmError::invariant("Once initializer is missing"))?;
+                let initializer = values
+                    .get(initializer_index)
+                    .ok_or_else(|| VmError::invariant("Once initializer value is missing"))?
+                    .clone();
+                match state {
+                    RuntimeOnceState::Ready(value) => Ok(Some(OperationResult::Value(
+                        self.once_ref_result(metadata.outcome, &value)?,
+                    ))),
+                    RuntimeOnceState::Initializing { owner } if owner == self.current_task => {
+                        // The public result carries SyncError when that is the
+                        // declared Once error type.  The host remains the
+                        // single source of the nominal error value.
+                        let snapshots = [
+                            snapshot_value(
+                                token,
+                                &self.heap,
+                                &self.callable_names,
+                                &self.nominal_names,
+                            )?,
+                            snapshot_value(
+                                &initializer,
+                                &self.heap,
+                                &self.callable_names,
+                                &self.nominal_names,
+                            )?,
+                        ];
+                        let returned = self.invoke_host("std.sync.Once.getOrInit", &snapshots)?;
+                        Ok(Some(OperationResult::Value(
+                            self.materialize_host_value(metadata.outcome, returned)?,
+                        )))
+                    }
+                    RuntimeOnceState::Initializing { .. } => Ok(Some(OperationResult::OnceWait {
+                        id,
+                        outcome: metadata.outcome,
+                    })),
+                    RuntimeOnceState::Uninitialized => {
+                        let call = self.prepare_evaluated_call(initializer, Vec::new())?;
+                        let OperationResult::Call {
+                            function,
+                            arguments,
+                        } = call
+                        else {
+                            return Err(VmError::invariant(
+                                "Once initializer is not a VM callable body",
+                            ));
+                        };
+                        let initializer_outcome = self
+                            .program
+                            .function(function)
+                            .ok_or_else(|| {
+                                VmError::invariant("Once initializer target is invalid")
+                            })?
+                            .callable;
+                        let initializer_outcome = self
+                            .program
+                            .callable(initializer_outcome)
+                            .ok_or_else(|| {
+                                VmError::invariant("Once initializer callable metadata is invalid")
+                            })?
+                            .outcome;
+                        self.onces.insert(
+                            id,
+                            RuntimeOnceState::Initializing {
+                                owner: self.current_task,
+                            },
+                        );
+                        Ok(Some(OperationResult::OnceInit {
+                            id,
+                            outcome: metadata.outcome,
+                            initializer_outcome,
+                            function,
+                            arguments,
+                        }))
+                    }
+                }
+            }
+            _ => unreachable!("Once method name was checked"),
+        }
     }
 
     fn prepare_oneshot_method(
@@ -12597,6 +13377,9 @@ impl Engine<'_, '_> {
                 OperationResult::GroupWait { .. } => {
                     Err(VmError::invariant("Group iterator callback is not allowed"))
                 }
+                OperationResult::OnceInit { .. } | OperationResult::OnceWait { .. } => {
+                    Err(VmError::invariant("Once iterator callback is not allowed"))
+                }
                 OperationResult::TestBoundaryCall { .. }
                 | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
                     "iterator callback crossed an internal async/test boundary",
@@ -13424,39 +14207,42 @@ mod tests {
     use std::time::Instant;
 
     use crate::bytecode::{
-        BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlock, BytecodeBlockId,
-        BytecodeBlockKind, BytecodeCallArgumentTarget, BytecodeCallable, BytecodeCallableId,
-        BytecodeCapabilitySet, BytecodeClosure, BytecodeClosureProtocols, BytecodeConstant,
-        BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
-        BytecodeContainmentKind, BytecodeCursorMode, BytecodeField, BytecodeFrameTraceDescriptor,
-        BytecodeFunction, BytecodeFunctionId, BytecodeFunctionParameter, BytecodeFunctionType,
-        BytecodeIndexAccess, BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType,
-        BytecodeLoanId, BytecodeNominal, BytecodeNominalId, BytecodeNominalShape,
-        BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind, BytecodeOperation,
-        BytecodeOperationKind, BytecodeParameter, BytecodeParameterMode, BytecodePlace,
-        BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind, BytecodeRvalue,
-        BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSelectArm,
-        BytecodeSelectRegistration, BytecodeSliceBounds, BytecodeSlot, BytecodeSlotId,
-        BytecodeSlotKind, BytecodeSpan, BytecodeTerminator, BytecodeTerminatorKind,
-        BytecodeTraceDescriptor, BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant,
-        BytecodeVariantPayload, derive_trace_metadata,
+        BytecodeAggregateKind, BytecodeAwaitable, BytecodeBinaryOperator, BytecodeBlock,
+        BytecodeBlockId, BytecodeBlockKind, BytecodeCallArgument, BytecodeCallArgumentTarget,
+        BytecodeCallProtocol, BytecodeCallable, BytecodeCallableId, BytecodeCapabilitySet,
+        BytecodeClosure, BytecodeClosureProtocols, BytecodeConstant, BytecodeConstantValue,
+        BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
+        BytecodeCursorMode, BytecodeField, BytecodeFrameTraceDescriptor, BytecodeFunction,
+        BytecodeFunctionId, BytecodeFunctionParameter, BytecodeFunctionType, BytecodeIndexAccess,
+        BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
+        BytecodeNominal, BytecodeNominalId, BytecodeNominalShape, BytecodeNumericConversionError,
+        BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
+        BytecodeParameter, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
+        BytecodeProgram, BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType,
+        BytecodeScopeId, BytecodeSelectArm, BytecodeSelectRegistration, BytecodeSliceBounds,
+        BytecodeSlot, BytecodeSlotId, BytecodeSlotKind, BytecodeSpan, BytecodeSpawnKind,
+        BytecodeTerminator, BytecodeTerminatorKind, BytecodeTraceDescriptor, BytecodeType,
+        BytecodeTypeId, BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload,
+        derive_trace_metadata,
     };
 
     use super::{
-        AggregatePayload, DeferredOperation, DeferredValue, DiagnosticConfig, DiagnosticEvent,
-        DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, GroupPoll,
-        HeapObject, IteratorAdapter, OneShotCompletion, OneShotState, OperationResult, PanicCode,
-        PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
-        RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState,
-        RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeSelectArm, RuntimeSelectRegion,
+        AggregatePayload, CallContinuation, DeferredOperation, DeferredValue, DiagnosticConfig,
+        DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine,
+        Frame, GroupPoll, HeapObject, IteratorAdapter, OnceContinuation, OnceResolution,
+        OneShotCompletion, OneShotState, OperationResult, PanicCode, PlaceComponent, PlaceFailure,
+        RejectingHost, ResolvedPlacePath, RuntimeCleanup, RuntimeDefer, RuntimeFallback,
+        RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind,
+        RuntimeJoin, RuntimeLoan, RuntimeOnceState, RuntimeSelectArm, RuntimeSelectRegion,
         RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion,
         TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits,
         VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome,
         clone_field, clone_index, clone_present, collection_length_fits_int, convert_numeric,
         execute, execute_with_diagnostics, group_handle, initial_value, integer_bounds,
-        integer_shape, next_unicode_scalar, operand_materialized_slot, operation_access_place,
-        paths_overlap, present, queue_object_equality, queue_payload_equality, runtime_host_kind,
-        set_field, set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
+        integer_shape, next_unicode_scalar, once_handle, operand_materialized_slot,
+        operation_access_place, paths_overlap, present, queue_object_equality,
+        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
+        snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -14003,6 +14789,1869 @@ mod tests {
             initial_gc_threshold: 1,
             ..VmLimits::default()
         }
+    }
+
+    #[derive(Debug, Default)]
+    struct OnceHost {
+        calls: Vec<String>,
+    }
+
+    impl VmHost for OnceHost {
+        fn invoke(
+            &mut self,
+            name: &str,
+            _arguments: &[RuntimeValue],
+        ) -> Result<RuntimeValue, VmError> {
+            self.calls.push(name.to_owned());
+            match name {
+                "std.sync.once" => Ok(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Once,
+                    id: 0,
+                }),
+                "std.sync.Once.getOrInit" => {
+                    Ok(RuntimeValue::ResultErr(Box::new(RuntimeValue::Integer(-9))))
+                }
+                _ => Err(VmError::UnsupportedHostCall(name.to_owned())),
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum OnceFaultMode {
+        ConstructorKind,
+        ConstructorError,
+        ReentrantError,
+        ReentrantWrongValue,
+    }
+
+    struct OnceFaultHost {
+        mode: OnceFaultMode,
+    }
+
+    impl VmHost for OnceFaultHost {
+        fn invoke(
+            &mut self,
+            name: &str,
+            _arguments: &[RuntimeValue],
+        ) -> Result<RuntimeValue, VmError> {
+            match (name, self.mode) {
+                ("std.sync.once", OnceFaultMode::ConstructorKind) => Ok(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Mutex,
+                    id: 0,
+                }),
+                ("std.sync.once", OnceFaultMode::ConstructorError) => {
+                    Err(VmError::Host("constructor failed".into()))
+                }
+                ("std.sync.Once.getOrInit", OnceFaultMode::ReentrantError) => {
+                    Err(VmError::Host("reentrant initializer failed".into()))
+                }
+                ("std.sync.Once.getOrInit", OnceFaultMode::ReentrantWrongValue) => {
+                    Ok(RuntimeValue::Unit)
+                }
+                ("std.sync.once", _) => Ok(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Once,
+                    id: 0,
+                }),
+                _ => Err(VmError::UnsupportedHostCall(name.to_owned())),
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct OnceTypes {
+        int: BytecodeTypeId,
+        string: BytecodeTypeId,
+        never: BytecodeTypeId,
+        once: BytecodeTypeId,
+        option_ref: BytecodeTypeId,
+        result_ref_string: BytecodeTypeId,
+        result_ref_int: BytecodeTypeId,
+        initializer_result: BytecodeTypeId,
+        initializer_never_result: BytecodeTypeId,
+        function_type: BytecodeTypeId,
+    }
+
+    fn once_program() -> (BytecodeProgram, OnceTypes) {
+        let mut program = terminal_fallback_program();
+        let int = BytecodeTypeId::new(5);
+        let string = BytecodeTypeId::new(0);
+        let never = BytecodeTypeId::new(19);
+        let once = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Once[Int, String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Once,
+                arguments: vec![int, string],
+            },
+        });
+        let ref_int = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Ref[Int]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Ref,
+                arguments: vec![int],
+            },
+        });
+        let option_ref = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Ref[Int]?".into(),
+            kind: BytecodeTypeKind::Option(ref_int),
+        });
+        let result_ref_string = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Ref[Int] ! String".into(),
+            kind: BytecodeTypeKind::Result {
+                success: ref_int,
+                error: string,
+            },
+        });
+        let result_ref_int = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Ref[Int] ! Int".into(),
+            kind: BytecodeTypeKind::Result {
+                success: ref_int,
+                error: int,
+            },
+        });
+        let initializer_result = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Int ! String".into(),
+            kind: BytecodeTypeKind::Result {
+                success: int,
+                error: string,
+            },
+        });
+        let initializer_never_result = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Int ! Never".into(),
+            kind: BytecodeTypeKind::Result {
+                success: int,
+                error: never,
+            },
+        });
+        let function_type = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "fn(): Int ! String".into(),
+            kind: BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_selectable: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: initializer_result,
+            }),
+        });
+        let initializer_callable = BytecodeCallableId::new(program.callables.len() as u32);
+        program.callables.push(BytecodeCallable {
+            name: "once_initializer".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: initializer_result,
+            function_type,
+            implementation: Some(BytecodeFunctionId::new(0)),
+            closure: None,
+        });
+        let span = BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        };
+        program.functions.push(BytecodeFunction {
+            callable: initializer_callable,
+            source: span,
+            types: vec![initializer_result],
+            spans: vec![span],
+            slots: vec![BytecodeSlot {
+                ty: initializer_result,
+                span: crate::bytecode::BytecodeSpanId::new(0),
+                kind: BytecodeSlotKind::Return,
+            }],
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: vec![BytecodeBlock {
+                kind: BytecodeBlockKind::Normal,
+                instructions: Vec::new(),
+                terminator: BytecodeTerminator {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeTerminatorKind::Return,
+                },
+            }],
+        });
+        (
+            program,
+            OnceTypes {
+                int,
+                string,
+                never,
+                once,
+                option_ref,
+                result_ref_string,
+                result_ref_int,
+                initializer_result,
+                initializer_never_result,
+                function_type,
+            },
+        )
+    }
+
+    fn once_method(
+        name: &str,
+        outcome: BytecodeTypeId,
+        types: OnceTypes,
+        with_initializer: bool,
+    ) -> BytecodeCallable {
+        let mut parameters = vec![BytecodeParameter {
+            mode: BytecodeParameterMode::Ref,
+            ty: types.once,
+            variadic_element: None,
+            receiver: true,
+        }];
+        if with_initializer {
+            parameters.push(BytecodeParameter {
+                mode: BytecodeParameterMode::Value,
+                ty: types.function_type,
+                variadic_element: None,
+                receiver: false,
+            });
+        }
+        BytecodeCallable {
+            name: name.into(),
+            generic_arity: 0,
+            parameters,
+            outcome,
+            function_type: types.function_type,
+            implementation: None,
+            closure: None,
+        }
+    }
+
+    fn once_engine<'program, 'host>(
+        program: &'program BytecodeProgram,
+        host: &'host mut dyn VmHost,
+    ) -> Engine<'program, 'host> {
+        let trace = derive_trace_metadata(program).expect("Once test program has valid traces");
+        Engine::new(
+            program,
+            host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        )
+    }
+
+    #[test]
+    fn once_method_helpers_cover_states_publication_and_failures() {
+        let (program, types) = once_program();
+        let mut host = OnceHost::default();
+        let mut engine = once_engine(&program, &mut host);
+
+        let constructor = once_method("std.sync.once[Int, String]", types.once, types, false);
+        let token = match engine
+            .prepare_once_method(&constructor, &[])
+            .unwrap()
+            .unwrap()
+        {
+            OperationResult::Value(value) => value,
+            _ => panic!("Once constructor returned the wrong operation"),
+        };
+        assert_eq!(once_handle(&token).unwrap(), 0);
+
+        let invalid_constructor =
+            once_method("std.sync.once[Int, String]", types.once, types, false);
+        assert!(matches!(
+            engine.prepare_once_method(&invalid_constructor, &[Value::Unit]),
+            Err(VmError::Invariant(message))
+                if message.contains("constructor received arguments")
+        ));
+        let unsupported = once_method(
+            "std.sync.Once.unknown[Int, String]",
+            types.once,
+            types,
+            false,
+        );
+        assert!(
+            engine
+                .prepare_once_method(&unsupported, &[])
+                .unwrap()
+                .is_none()
+        );
+
+        let get = once_method(
+            "std.sync.Once.get[Int, String]",
+            types.option_ref,
+            types,
+            false,
+        );
+        let mut no_receiver = get.clone();
+        no_receiver.parameters.clear();
+        assert!(matches!(
+            engine.prepare_once_method(&no_receiver, &[]),
+            Err(VmError::Invariant(message)) if message.contains("no receiver")
+        ));
+        assert!(matches!(
+            engine.prepare_once_method(&get, &[]),
+            Err(VmError::Invariant(message)) if message.contains("receiver is missing")
+        ));
+        let unknown_token = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Once,
+            id: 77,
+        });
+        assert!(matches!(
+            engine.prepare_once_method(&get, std::slice::from_ref(&unknown_token)),
+            Err(VmError::Invariant(message)) if message.contains("not registered")
+        ));
+        let get_value = match engine
+            .prepare_once_method(&get, std::slice::from_ref(&token))
+            .unwrap()
+            .unwrap()
+        {
+            OperationResult::Value(value) => value,
+            _ => panic!("Once.get returned the wrong operation"),
+        };
+        assert!(matches!(
+            engine.heap.get(get_value.heap_handle().unwrap()).unwrap(),
+            HeapObject::OptionNone
+        ));
+
+        let is_ready = once_method(
+            "std.sync.Once.isReady[Int, String]",
+            types.int,
+            types,
+            false,
+        );
+        let ready_value = match engine
+            .prepare_once_method(&is_ready, std::slice::from_ref(&token))
+            .unwrap()
+            .unwrap()
+        {
+            OperationResult::Value(value) => value,
+            _ => panic!("Once.isReady returned the wrong operation"),
+        };
+        assert_eq!(ready_value, Value::Bool(false));
+
+        let get_or_init = once_method(
+            "std.sync.Once.getOrInit[Int, String]",
+            types.result_ref_string,
+            types,
+            true,
+        );
+        let no_initializer_parameter = once_method(
+            "std.sync.Once.getOrInit[Int, String]",
+            types.result_ref_string,
+            types,
+            false,
+        );
+        assert!(matches!(
+            engine.prepare_once_method(&no_initializer_parameter, std::slice::from_ref(&token)),
+            Err(VmError::Invariant(message)) if message.contains("initializer is missing")
+        ));
+        assert!(matches!(
+            engine.prepare_once_method(&get_or_init, std::slice::from_ref(&token)),
+            Err(VmError::Invariant(message)) if message.contains("initializer value is missing")
+        ));
+        assert!(matches!(
+            engine.prepare_once_method(&get_or_init, &[token.clone(), Value::Integer(2)]),
+            Err(VmError::Invariant(message)) if message.contains("not a function")
+        ));
+        let initializer = Value::Function {
+            callable: BytecodeCallableId::new(1),
+            arguments: Vec::new(),
+        };
+        let first = engine
+            .prepare_once_method(&get_or_init, &[token.clone(), initializer.clone()])
+            .unwrap()
+            .unwrap();
+        assert!(matches!(first, OperationResult::OnceInit { id: 0, .. }));
+        assert!(matches!(
+            engine.onces.get(&0),
+            Some(RuntimeOnceState::Initializing { owner: 0 })
+        ));
+
+        let pending_get = match engine
+            .prepare_once_method(&get, std::slice::from_ref(&token))
+            .unwrap()
+            .unwrap()
+        {
+            OperationResult::Value(value) => value,
+            _ => panic!("Once.get while initializing returned the wrong operation"),
+        };
+        assert!(matches!(
+            engine.heap.get(pending_get.heap_handle().unwrap()).unwrap(),
+            HeapObject::OptionNone
+        ));
+        let pending_ready = engine
+            .prepare_once_method(&is_ready, std::slice::from_ref(&token))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            pending_ready,
+            OperationResult::Value(Value::Bool(false))
+        ));
+
+        engine.current_task = 1;
+        let other_wait = engine
+            .prepare_once_method(&get_or_init, &[token.clone(), initializer.clone()])
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            other_wait,
+            OperationResult::OnceWait { id: 0, .. }
+        ));
+        engine.current_task = 0;
+        let get_or_init_int_error = once_method(
+            "std.sync.Once.getOrInit[Int, Int]",
+            types.result_ref_int,
+            types,
+            true,
+        );
+        let reentrant = engine
+            .prepare_once_method(
+                &get_or_init_int_error,
+                &[token.clone(), initializer.clone()],
+            )
+            .unwrap()
+            .unwrap();
+        assert!(matches!(reentrant, OperationResult::Value(Value::Heap(_))));
+
+        let successful_initializer = engine
+            .allocate(
+                types.initializer_result,
+                HeapObject::ResultOk(Some(Value::Integer(41))),
+                &[Value::Integer(41)],
+            )
+            .unwrap();
+        let continuation = OnceContinuation {
+            id: 0,
+            outcome: types.result_ref_string,
+            initializer_outcome: types.initializer_result,
+        };
+        let published = engine
+            .finish_once_initializer_return(&continuation, successful_initializer)
+            .unwrap();
+        assert!(matches!(published, Value::Heap(_)));
+        assert!(matches!(
+            engine.onces.get(&0),
+            Some(RuntimeOnceState::Ready(_))
+        ));
+        let ready_call = engine
+            .prepare_once_method(&get_or_init, &[token.clone(), initializer.clone()])
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ready_call, OperationResult::Value(Value::Heap(_))));
+        let ready_get = engine
+            .prepare_once_method(&get, std::slice::from_ref(&token))
+            .unwrap()
+            .unwrap();
+        let ready_get = match ready_get {
+            OperationResult::Value(value) => value,
+            _ => panic!("Once.get after publication returned the wrong operation"),
+        };
+        assert!(matches!(
+            engine.heap.get(ready_get.heap_handle().unwrap()).unwrap(),
+            HeapObject::OptionSome(Some(_))
+        ));
+        assert!(matches!(
+            engine.once_resolution_result(
+                types.result_ref_string,
+                &OnceResolution::Panic(VmPanic {
+                    code: PanicCode::ExplicitPanic,
+                    message: "not a value".into(),
+                    span: BytecodeSpan {
+                        file: 0,
+                        start: 0,
+                        end: 0,
+                    },
+                    stack: Vec::new(),
+                    suppressed: Vec::new(),
+                }),
+            ),
+            Err(VmError::Invariant(message)) if message.contains("no Result value")
+        ));
+        assert!(matches!(
+            engine.once_resolution_result(types.result_ref_string, &OnceResolution::Cancelled),
+            Err(VmError::Invariant(message)) if message.contains("no Result value")
+        ));
+
+        assert_eq!(
+            engine
+                .split_once_initializer(Value::Integer(5), types.initializer_never_result)
+                .unwrap(),
+            Ok(Value::Integer(5))
+        );
+        assert!(matches!(
+            engine.split_once_initializer(Value::Integer(5), types.initializer_result),
+            Err(VmError::Invariant(message)) if message.contains("non-Result")
+        ));
+        let moved_result = engine
+            .allocate(types.initializer_result, HeapObject::ResultOk(None), &[])
+            .unwrap();
+        assert!(matches!(
+            engine.split_once_initializer(moved_result, types.initializer_result),
+            Err(VmError::Invariant(message)) if message.contains("moved Result")
+        ));
+        let wrong_result = engine
+            .allocate(types.string, HeapObject::String("wrong shape".into()), &[])
+            .unwrap();
+        assert!(matches!(
+            engine.split_once_initializer(wrong_result, types.initializer_result),
+            Err(VmError::Invariant(message)) if message.contains("different heap object")
+        ));
+
+        let failed_token = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Once,
+            id: 7,
+        });
+        engine
+            .onces
+            .insert(7, RuntimeOnceState::Initializing { owner: 0 });
+        let failure = engine
+            .allocate(
+                types.initializer_result,
+                HeapObject::ResultErr(Some(Value::Integer(3))),
+                &[Value::Integer(3)],
+            )
+            .unwrap();
+        let failed = engine
+            .finish_once_initializer_return(
+                &OnceContinuation {
+                    id: 7,
+                    outcome: types.result_ref_string,
+                    initializer_outcome: types.initializer_result,
+                },
+                failure,
+            )
+            .unwrap();
+        assert!(matches!(failed, Value::Heap(_)));
+        assert!(matches!(
+            engine.onces.get(&7),
+            Some(RuntimeOnceState::Uninitialized)
+        ));
+        assert!(matches!(
+            engine
+                .prepare_once_method(&get, std::slice::from_ref(&failed_token))
+                .unwrap(),
+            Some(OperationResult::Value(Value::Heap(_)))
+        ));
+
+        for (id, unwind) in [
+            (
+                8,
+                RuntimeUnwind::Panic(VmPanic {
+                    code: PanicCode::ExplicitPanic,
+                    message: "boom".into(),
+                    span: BytecodeSpan {
+                        file: 0,
+                        start: 0,
+                        end: 0,
+                    },
+                    stack: Vec::new(),
+                    suppressed: Vec::new(),
+                }),
+            ),
+            (9, RuntimeUnwind::Cancelled),
+        ] {
+            engine
+                .onces
+                .insert(id, RuntimeOnceState::Initializing { owner: 0 });
+            engine
+                .finish_once_initializer_unwind(
+                    &OnceContinuation {
+                        id,
+                        outcome: types.result_ref_string,
+                        initializer_outcome: types.initializer_result,
+                    },
+                    &unwind,
+                )
+                .unwrap();
+            assert!(matches!(
+                engine.onces.get(&id),
+                Some(RuntimeOnceState::Uninitialized)
+            ));
+        }
+
+        engine.tasks = vec![
+            scheduler_task(TaskStatus::Running),
+            scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 10,
+                outcome: types.result_ref_string,
+                destination: BytecodePlace {
+                    slot: BytecodeSlotId::new(0),
+                    ty: types.result_ref_string,
+                    projections: Vec::new(),
+                    source_loan: None,
+                },
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+                completion: None,
+            })),
+            scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                id: 10,
+                outcome: types.result_ref_string,
+                completion: None,
+            })),
+        ];
+        engine.runnable.clear();
+        engine.current_task = 0;
+        engine
+            .onces
+            .insert(10, RuntimeOnceState::Initializing { owner: 0 });
+        engine
+            .publish_once(10, OnceResolution::Ready(Value::Integer(12)))
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[1].resume,
+            Some(TaskWait::Once {
+                completion: Some(OnceResolution::Ready(Value::Integer(12))),
+                ..
+            })
+        ));
+        assert!(matches!(
+            engine.tasks[2].resume,
+            Some(TaskWait::OnceTask {
+                completion: Some(OnceResolution::Ready(Value::Integer(12))),
+                ..
+            })
+        ));
+
+        let (spawn_program, spawn_types) = once_program();
+        let mut spawn_host = RejectingHost;
+        let mut spawn_engine = once_engine(&spawn_program, &mut spawn_host);
+        spawn_engine.tasks.push(scheduler_task(TaskStatus::Running));
+        spawn_engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: Vec::new(),
+            closed: false,
+        }));
+        spawn_engine
+            .onces
+            .insert(20, RuntimeOnceState::Initializing { owner: 0 });
+        let initializer_task = spawn_engine
+            .spawn_once_initializer(
+                20,
+                spawn_types.result_ref_string,
+                spawn_types.initializer_result,
+                BytecodeFunctionId::new(0),
+                Vec::new(),
+                0,
+            )
+            .unwrap();
+        assert!(matches!(
+            spawn_engine.tasks[initializer_task].status,
+            TaskStatus::Runnable
+        ));
+        let waiting_task = spawn_engine
+            .spawn_once_wait_task(20, spawn_types.result_ref_string, 0)
+            .unwrap();
+        assert!(matches!(
+            spawn_engine.tasks[waiting_task].status,
+            TaskStatus::Waiting(TaskWait::OnceTask { id: 20, .. })
+        ));
+        spawn_engine
+            .onces
+            .insert(20, RuntimeOnceState::Ready(Value::Integer(55)));
+        assert!(
+            spawn_engine
+                .roots(&[])
+                .unwrap()
+                .contains(&Value::Integer(55))
+        );
+        spawn_engine
+            .onces
+            .insert(21, RuntimeOnceState::Uninitialized);
+        assert!(matches!(
+            spawn_engine.spawn_once_wait_task(21, spawn_types.result_ref_string, 0),
+            Err(VmError::Invariant(message)) if message.contains("without an initializer")
+        ));
+
+        engine.onces.insert(11, RuntimeOnceState::Uninitialized);
+        assert!(matches!(
+            engine.publish_once(11, OnceResolution::Cancelled),
+            Err(VmError::Invariant(message)) if message.contains("initializing owner")
+        ));
+        engine
+            .onces
+            .insert(12, RuntimeOnceState::Ready(Value::Integer(1)));
+        assert!(matches!(
+            engine.publish_once(12, OnceResolution::Cancelled),
+            Err(VmError::Invariant(message)) if message.contains("initializing owner")
+        ));
+        assert!(matches!(
+            engine.publish_once(99, OnceResolution::Cancelled),
+            Err(VmError::Invariant(message)) if message.contains("not registered")
+        ));
+        engine
+            .onces
+            .insert(13, RuntimeOnceState::Initializing { owner: 1 });
+        assert!(matches!(
+            engine.publish_once(13, OnceResolution::Cancelled),
+            Err(VmError::Invariant(message)) if message.contains("other than")
+        ));
+
+        assert!(matches!(
+            once_handle(&Value::Integer(1)),
+            Err(VmError::Invariant(message)) if message.contains("not opaque")
+        ));
+        assert!(matches!(
+            once_handle(&Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Mutex,
+                id: 1,
+            })),
+            Err(VmError::Invariant(message)) if message.contains("wrong kind")
+        ));
+        assert!(types.never.index() > 0);
+        drop(engine);
+        assert_eq!(host.calls, ["std.sync.once", "std.sync.Once.getOrInit"]);
+    }
+
+    #[test]
+    fn once_await_and_spawn_terminators_route_initializer_and_waiter() {
+        let (mut program, types) = once_program();
+        let join = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Join[Ref[Int], String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Join,
+                arguments: vec![types.result_ref_string, types.string],
+            },
+        });
+        let method_callable = BytecodeCallableId::new(program.callables.len() as u32);
+        program.callables.push(once_method(
+            "std.sync.Once.getOrInit[Int, String]",
+            types.result_ref_string,
+            types,
+            true,
+        ));
+        let driver_callable = BytecodeCallableId::new(program.callables.len() as u32);
+        let driver_function = BytecodeFunctionId::new(program.functions.len() as u32);
+        program.callables.push(BytecodeCallable {
+            name: "once_driver".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: join,
+            function_type: types.function_type,
+            implementation: Some(driver_function),
+            closure: None,
+        });
+        let span = BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        };
+        program.functions.push(BytecodeFunction {
+            callable: driver_callable,
+            source: span,
+            types: vec![join, types.once, types.function_type],
+            spans: vec![span],
+            slots: vec![
+                BytecodeSlot {
+                    ty: join,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::User { local: 0 },
+                },
+                BytecodeSlot {
+                    ty: types.once,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::User { local: 1 },
+                },
+                BytecodeSlot {
+                    ty: types.function_type,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::User { local: 2 },
+                },
+            ],
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: Vec::new(),
+        });
+
+        let place_operand = |slot: u32, ty: BytecodeTypeId| BytecodeOperand {
+            ty,
+            kind: BytecodeOperandKind::Move(BytecodePlace {
+                slot: BytecodeSlotId::new(slot),
+                ty,
+                projections: Vec::new(),
+                source_loan: None,
+            }),
+        };
+        let call_operation = || BytecodeOperation {
+            ty: types.result_ref_string,
+            kind: BytecodeOperationKind::Call {
+                callee: BytecodeOperand {
+                    ty: types.function_type,
+                    kind: BytecodeOperandKind::Function {
+                        callable: method_callable,
+                        arguments: Vec::new(),
+                    },
+                },
+                arguments: vec![
+                    BytecodeCallArgument {
+                        mode: BytecodeParameterMode::Value,
+                        target: BytecodeCallArgumentTarget::Receiver,
+                        value: place_operand(1, types.once),
+                    },
+                    BytecodeCallArgument {
+                        mode: BytecodeParameterMode::Value,
+                        target: BytecodeCallArgumentTarget::Fixed(1),
+                        value: place_operand(2, types.function_type),
+                    },
+                ],
+                signature: types.function_type,
+                protocol: BytecodeCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        let destination = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: join,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let frame_for = |token: Value, initializer: Value| Frame {
+            function: driver_function,
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![
+                SlotState::Uninitialized,
+                SlotState::Value(token),
+                SlotState::Value(initializer),
+            ],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: vec![0],
+            continuation: None,
+            select: None,
+        };
+        let token = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Once,
+            id: 0,
+        });
+        let initializer = Value::Function {
+            callable: BytecodeCallableId::new(1),
+            arguments: Vec::new(),
+        };
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: Vec::new(),
+            closed: false,
+        }));
+        engine.onces.insert(0, RuntimeOnceState::Uninitialized);
+        engine
+            .frames
+            .push(frame_for(token.clone(), initializer.clone()));
+
+        engine
+            .execute_terminator(
+                0,
+                &BytecodeTerminator {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeTerminatorKind::Await {
+                        awaitable: BytecodeAwaitable::Call(call_operation()),
+                        destination: destination.clone(),
+                        target: BytecodeBlockId::new(1),
+                        unwind: BytecodeBlockId::new(0),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.frames[1].continuation,
+            Some(CallContinuation {
+                once: Some(OnceContinuation { id: 0, .. }),
+                ..
+            })
+        ));
+        engine.frames.truncate(1);
+        engine.onces.insert(0, RuntimeOnceState::Uninitialized);
+        engine.frames[0].slots[1] = SlotState::Value(token.clone());
+        engine.frames[0].slots[2] = SlotState::Value(initializer.clone());
+
+        engine
+            .execute_terminator(
+                0,
+                &BytecodeTerminator {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeTerminatorKind::Spawn {
+                        operation: call_operation(),
+                        scope: BytecodeScopeId::new(0),
+                        kind: BytecodeSpawnKind::Task,
+                        destination: destination.clone(),
+                        target: BytecodeBlockId::new(1),
+                        unwind: BytecodeBlockId::new(0),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Join(RuntimeJoin { task: 1, scope: 0 }))
+        ));
+        assert!(matches!(engine.tasks[1].status, TaskStatus::Runnable));
+        assert!(matches!(
+            engine.onces.get(&0),
+            Some(RuntimeOnceState::Initializing { owner: 0 })
+        ));
+
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 1,
+            children: Vec::new(),
+            closed: false,
+        }));
+        engine.current_task = 1;
+        engine.frames[0].task_scopes = vec![1];
+        engine.frames[0].slots[1] = SlotState::Value(token.clone());
+        engine.frames[0].slots[2] = SlotState::Value(initializer.clone());
+        engine
+            .execute_terminator(
+                0,
+                &BytecodeTerminator {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeTerminatorKind::Spawn {
+                        operation: call_operation(),
+                        scope: BytecodeScopeId::new(0),
+                        kind: BytecodeSpawnKind::Thread,
+                        destination: destination.clone(),
+                        target: BytecodeBlockId::new(1),
+                        unwind: BytecodeBlockId::new(0),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Join(RuntimeJoin { task: 3, scope: 1 }))
+        ));
+        assert!(matches!(
+            engine.tasks[3].status,
+            TaskStatus::Waiting(TaskWait::OnceTask { id: 0, .. })
+        ));
+
+        engine.frames[0].slots[1] = SlotState::Value(token);
+        engine.frames[0].slots[2] = SlotState::Value(initializer);
+        engine
+            .execute_terminator(
+                0,
+                &BytecodeTerminator {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeTerminatorKind::Await {
+                        awaitable: BytecodeAwaitable::Call(call_operation()),
+                        destination,
+                        target: BytecodeBlockId::new(1),
+                        unwind: BytecodeBlockId::new(0),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[1].status,
+            TaskStatus::Waiting(TaskWait::Once { id: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn once_resume_paths_cover_waiters_completion_and_cancellation() {
+        let panic = || VmPanic {
+            code: PanicCode::ExplicitPanic,
+            message: "initializer panicked".into(),
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            stack: Vec::new(),
+            suppressed: Vec::new(),
+        };
+
+        for resolution in [
+            OnceResolution::Ready(Value::Integer(7)),
+            OnceResolution::Error(Value::Integer(8)),
+            OnceResolution::Panic(panic()),
+            OnceResolution::Cancelled,
+        ] {
+            let (program, types) = once_program();
+            let mut host = RejectingHost;
+            let mut engine = once_engine(&program, &mut host);
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                    id: 1,
+                    outcome: types.result_ref_int,
+                    completion: Some(resolution),
+                })));
+            engine.wake_task(0).unwrap();
+            assert!(!engine.resume_current_task().unwrap());
+            assert!(matches!(
+                engine.tasks[0].status,
+                TaskStatus::Complete(Some(TaskCompletion::Returned(_)))
+                    | TaskStatus::Complete(Some(TaskCompletion::Panicked(_)))
+                    | TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+            ));
+        }
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .onces
+            .insert(1, RuntimeOnceState::Ready(Value::Integer(9)));
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                id: 1,
+                outcome: types.result_ref_int,
+                completion: None,
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(!engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(_)))
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                id: 1,
+                outcome: types.result_ref_int,
+                completion: Some(OnceResolution::Ready(Value::Integer(10))),
+            })));
+        engine.tasks[0].cancel_requested = true;
+        engine.wake_task(0).unwrap();
+        assert!(!engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .onces
+            .insert(1, RuntimeOnceState::Initializing { owner: 9 });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                id: 1,
+                outcome: types.result_ref_int,
+                completion: None,
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(!engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Waiting(TaskWait::OnceTask { .. })
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.onces.insert(1, RuntimeOnceState::Uninitialized);
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                id: 1,
+                outcome: types.result_ref_int,
+                completion: None,
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::Invariant(message)) if message.contains("lost its initializer")
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                id: 2,
+                outcome: types.result_ref_int,
+                completion: None,
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::Invariant(message)) if message.contains("unknown handle")
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: BytecodePlace {
+                    slot: BytecodeSlotId::new(0),
+                    ty: types.result_ref_int,
+                    projections: Vec::new(),
+                    source_loan: None,
+                },
+                target: BytecodeBlockId::new(1),
+                unwind: BytecodeBlockId::new(0),
+                completion: None,
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::Invariant(message)) if message.contains("unknown handle")
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: BytecodePlace {
+                    slot: BytecodeSlotId::new(0),
+                    ty: types.result_ref_int,
+                    projections: Vec::new(),
+                    source_loan: None,
+                },
+                target: BytecodeBlockId::new(1),
+                unwind: BytecodeBlockId::new(0),
+                completion: None,
+            })));
+        engine.onces.insert(1, RuntimeOnceState::Uninitialized);
+        engine.wake_task(0).unwrap();
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::Invariant(message)) if message.contains("lost its initializer")
+        ));
+
+        let once_wait_place = |ty| BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        for completion in [
+            OnceResolution::Ready(Value::Integer(21)),
+            OnceResolution::Error(Value::Integer(22)),
+        ] {
+            let (program, types) = once_program();
+            let mut host = RejectingHost;
+            let mut engine = once_engine(&program, &mut host);
+            engine.frames.push(Frame {
+                function: BytecodeFunctionId::new(0),
+                block: BytecodeBlockId::new(0),
+                instruction: 0,
+                slots: vec![SlotState::Uninitialized],
+                loans: Vec::new(),
+                cleanups: Vec::new(),
+                task_scopes: Vec::new(),
+                continuation: None,
+                select: None,
+            });
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                    id: 1,
+                    outcome: types.result_ref_int,
+                    destination: once_wait_place(types.result_ref_int),
+                    target: BytecodeBlockId::new(1),
+                    unwind: BytecodeBlockId::new(0),
+                    completion: Some(completion),
+                })));
+            engine.wake_task(0).unwrap();
+            assert!(engine.resume_current_task().unwrap());
+            assert!(matches!(
+                engine.frames[0].slots[0],
+                SlotState::Value(Value::Heap(_))
+            ));
+            assert_eq!(engine.frames[0].block, BytecodeBlockId::new(1));
+        }
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .onces
+            .insert(1, RuntimeOnceState::Ready(Value::Integer(31)));
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: once_wait_place(types.result_ref_int),
+                target: BytecodeBlockId::new(1),
+                unwind: BytecodeBlockId::new(0),
+                completion: None,
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Heap(_))
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .onces
+            .insert(1, RuntimeOnceState::Initializing { owner: 1 });
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: once_wait_place(types.result_ref_int),
+                target: BytecodeBlockId::new(1),
+                unwind: BytecodeBlockId::new(0),
+                completion: None,
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(!engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Waiting(TaskWait::Once { .. })
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: once_wait_place(types.result_ref_int),
+                target: BytecodeBlockId::new(1),
+                unwind: BytecodeBlockId::new(0),
+                completion: Some(OnceResolution::Panic(panic())),
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(engine.resume_current_task().unwrap());
+        assert!(engine.pending_unwind.is_some());
+        assert_eq!(engine.frames[0].block, BytecodeBlockId::new(0));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: once_wait_place(types.result_ref_int),
+                target: BytecodeBlockId::new(1),
+                unwind: BytecodeBlockId::new(0),
+                completion: Some(OnceResolution::Cancelled),
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: once_wait_place(types.result_ref_int),
+                target: BytecodeBlockId::new(1),
+                unwind: BytecodeBlockId::new(0),
+                completion: Some(OnceResolution::Ready(Value::Integer(41))),
+            })));
+        engine.tasks[0].cancel_requested = true;
+        engine.wake_task(0).unwrap();
+        assert!(engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::Invariant(message)) if message.contains("active task is missing")
+        ));
+        engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+        engine.tasks[0].resume = Some(TaskWait::HostTask {
+            call: 1,
+            outcome: types.result_ref_int,
+        });
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::Invariant(message)) if message.contains("host-only child")
+        ));
+        engine.tasks[0].resume = Some(TaskWait::Scope);
+        assert!(engine.resume_current_task().unwrap());
+        assert!(engine.resume_current_task().unwrap());
+    }
+
+    #[test]
+    fn once_helpers_reject_malformed_types_and_collected_values() {
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+
+        assert!(matches!(
+            engine.result_parts(BytecodeTypeId::new(999)),
+            Err(VmError::Invariant(message)) if message.contains("type is missing")
+        ));
+        assert!(matches!(
+            engine.result_parts(types.int),
+            Err(VmError::Invariant(message)) if message.contains("expected a Result")
+        ));
+        assert!(matches!(
+            engine.option_value_type(BytecodeTypeId::new(999)),
+            Err(VmError::Invariant(message)) if message.contains("type is missing")
+        ));
+        assert!(matches!(
+            engine.option_value_type(types.int),
+            Err(VmError::Invariant(message)) if message.contains("expected an Option")
+        ));
+        assert!(matches!(
+            engine.once_ref_result(types.int, &Value::Integer(1)),
+            Err(VmError::Invariant(message)) if message.contains("expected a Result")
+        ));
+        assert!(matches!(
+            engine.once_get_result(types.int, None),
+            Err(VmError::Invariant(message)) if message.contains("expected an Option")
+        ));
+        assert!(matches!(
+            engine.once_resolution_result(types.int, &OnceResolution::Ready(Value::Integer(1))),
+            Err(VmError::Invariant(message)) if message.contains("expected a Result")
+        ));
+        assert!(matches!(
+            engine.once_resolution_result(types.int, &OnceResolution::Error(Value::Integer(1))),
+            Err(VmError::Invariant(message)) if message.contains("one-shot operation")
+        ));
+        assert!(matches!(
+            engine.split_once_initializer(Value::Integer(1), types.int),
+            Err(VmError::Invariant(message)) if message.contains("expected a Result")
+        ));
+
+        let collected = engine
+            .allocate(
+                types.initializer_result,
+                HeapObject::ResultOk(Some(Value::Integer(2))),
+                &[],
+            )
+            .unwrap();
+        let handle = collected.heap_handle().unwrap();
+        engine.heap.collect(&[], &mut engine.statistics).unwrap();
+        assert!(matches!(
+            engine.split_once_initializer(Value::Heap(handle), types.initializer_result),
+            Err(VmError::Invariant(message)) if message.contains("heap handle refers to a collected")
+        ));
+
+        engine
+            .onces
+            .insert(1, RuntimeOnceState::Initializing { owner: 0 });
+        let initializer_result = engine
+            .allocate(
+                types.initializer_result,
+                HeapObject::ResultOk(Some(Value::Integer(3))),
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.finish_once_initializer_return(
+                &OnceContinuation {
+                    id: 1,
+                    outcome: types.int,
+                    initializer_outcome: types.initializer_result,
+                },
+                initializer_result,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("expected a Result")
+        ));
+
+        let unregistered_initializer = engine
+            .allocate(
+                types.initializer_result,
+                HeapObject::ResultOk(Some(Value::Integer(4))),
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.finish_once_initializer_return(
+                &OnceContinuation {
+                    id: 99,
+                    outcome: types.result_ref_string,
+                    initializer_outcome: types.initializer_result,
+                },
+                unregistered_initializer,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("not registered")
+        ));
+    }
+
+    #[test]
+    fn once_resume_failures_cover_cancellation_and_write_boundaries() {
+        let panic = VmPanic {
+            code: PanicCode::ExplicitPanic,
+            message: "scope child failed".into(),
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            stack: Vec::new(),
+            suppressed: Vec::new(),
+        };
+        let wait_place = |ty, slot| BytecodePlace {
+            slot: BytecodeSlotId::new(slot),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: wait_place(types.result_ref_int, 0),
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+                completion: Some(OnceResolution::Ready(Value::Integer(1))),
+            })));
+        engine.wake_task(0).unwrap();
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::Invariant(message)) if message.contains("has no frame")
+        ));
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: vec![0],
+            continuation: None,
+            select: None,
+        });
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                id: 1,
+                outcome: types.result_ref_int,
+                destination: wait_place(types.result_ref_int, 0),
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+                completion: Some(OnceResolution::Ready(Value::Integer(2))),
+            })));
+        engine.tasks.push({
+            let mut task = scheduler_task(TaskStatus::Complete(Some(TaskCompletion::Panicked(
+                panic.clone(),
+            ))));
+            task.panic_observed = false;
+            task
+        });
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: vec![1],
+            closed: false,
+        }));
+        engine.wake_task(0).unwrap();
+        assert!(engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
+
+        for (completion, expected) in [
+            (
+                OnceResolution::Ready(Value::Integer(3)),
+                "expected a Result",
+            ),
+            (
+                OnceResolution::Error(Value::Integer(4)),
+                "one-shot operation",
+            ),
+        ] {
+            let (program, types) = once_program();
+            let mut host = RejectingHost;
+            let mut engine = once_engine(&program, &mut host);
+            engine.frames.push(Frame {
+                function: BytecodeFunctionId::new(0),
+                block: BytecodeBlockId::new(0),
+                instruction: 0,
+                slots: vec![SlotState::Uninitialized],
+                loans: Vec::new(),
+                task_scopes: Vec::new(),
+                cleanups: Vec::new(),
+                continuation: None,
+                select: None,
+            });
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                    id: 1,
+                    outcome: types.int,
+                    destination: wait_place(types.result_ref_int, 0),
+                    target: BytecodeBlockId::new(0),
+                    unwind: BytecodeBlockId::new(0),
+                    completion: Some(completion),
+                })));
+            engine.wake_task(0).unwrap();
+            assert!(matches!(
+                engine.resume_current_task(),
+                Err(VmError::Invariant(message)) if message.contains(expected)
+            ));
+        }
+
+        for completion in [
+            OnceResolution::Ready(Value::Integer(5)),
+            OnceResolution::Error(Value::Integer(6)),
+        ] {
+            let (program, types) = once_program();
+            let mut host = RejectingHost;
+            let mut engine = once_engine(&program, &mut host);
+            engine.frames.push(Frame {
+                function: BytecodeFunctionId::new(0),
+                block: BytecodeBlockId::new(0),
+                instruction: 0,
+                slots: vec![SlotState::Uninitialized],
+                loans: Vec::new(),
+                task_scopes: Vec::new(),
+                cleanups: Vec::new(),
+                continuation: None,
+                select: None,
+            });
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::Once {
+                    id: 1,
+                    outcome: types.result_ref_int,
+                    destination: wait_place(types.result_ref_int, 99),
+                    target: BytecodeBlockId::new(0),
+                    unwind: BytecodeBlockId::new(0),
+                    completion: Some(completion),
+                })));
+            engine.wake_task(0).unwrap();
+            let write_error = engine.resume_current_task().unwrap_err();
+            assert!(
+                write_error.to_string().contains("slot")
+                    || write_error.to_string().contains("place"),
+                "unexpected write error: {write_error}"
+            );
+        }
+
+        for completion in [
+            OnceResolution::Ready(Value::Integer(7)),
+            OnceResolution::Error(Value::Integer(8)),
+            OnceResolution::Panic(panic.clone()),
+            OnceResolution::Cancelled,
+        ] {
+            let (program, types) = once_program();
+            let mut host = RejectingHost;
+            let mut engine = once_engine(&program, &mut host);
+            let mut task = scheduler_task(TaskStatus::Waiting(TaskWait::OnceTask {
+                id: 1,
+                outcome: types.result_ref_int,
+                completion: Some(completion),
+            }));
+            task.parent_scope = Some(99);
+            engine.tasks.push(task);
+            engine.wake_task(0).unwrap();
+            assert!(matches!(
+                engine.resume_current_task(),
+                Err(VmError::Invariant(message)) if message.contains("no owning scope")
+            ));
+        }
+
+        let (program, types) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            task_scopes: Vec::new(),
+            cleanups: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+        engine.tasks[0].resume = Some(TaskWait::OnceTask {
+            id: 1,
+            outcome: types.result_ref_int,
+            completion: None,
+        });
+        engine
+            .onces
+            .insert(1, RuntimeOnceState::Initializing { owner: 0 });
+        engine.diagnostics = Some(
+            super::super::diagnostics::DiagnosticSession::new(DiagnosticConfig {
+                max_events: 1,
+                ..DiagnosticConfig::default()
+            })
+            .unwrap(),
+        );
+        assert!(matches!(
+            engine.resume_current_task(),
+            Err(VmError::ResourceLimit {
+                resource: "diagnostic events",
+                limit: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn once_spawn_helpers_reject_invalid_targets_and_scopes() {
+        let (program, types) = once_program();
+
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        assert!(matches!(
+            engine.spawn_once_initializer(
+                1,
+                types.result_ref_string,
+                types.initializer_result,
+                BytecodeFunctionId::new(999),
+                Vec::new(),
+                0,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("target is invalid")
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        let invalid_arguments = engine.spawn_once_initializer(
+            1,
+            types.result_ref_string,
+            types.initializer_result,
+            BytecodeFunctionId::new(0),
+            vec![Value::Integer(1)],
+            0,
+        );
+        assert!(matches!(
+            invalid_arguments,
+            Err(VmError::Invariant(message)) if message.contains("argument")
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        assert!(matches!(
+            engine.spawn_once_initializer(
+                1,
+                types.result_ref_string,
+                types.initializer_result,
+                BytecodeFunctionId::new(0),
+                Vec::new(),
+                0,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("missing scope")
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .onces
+            .insert(1, RuntimeOnceState::Initializing { owner: 0 });
+        assert!(matches!(
+            engine.spawn_once_wait_task(1, types.result_ref_string, 0),
+            Err(VmError::Invariant(message)) if message.contains("missing scope")
+        ));
+    }
+
+    #[test]
+    fn once_method_boundaries_propagate_host_and_type_failures() {
+        let (program, types) = once_program();
+        let constructor = once_method("std.sync.once[Int, String]", types.once, types, false);
+        for mode in [
+            OnceFaultMode::ConstructorKind,
+            OnceFaultMode::ConstructorError,
+        ] {
+            let mut host = OnceFaultHost { mode };
+            let mut engine = once_engine(&program, &mut host);
+            assert!(engine.prepare_once_method(&constructor, &[]).is_err());
+        }
+
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        let token = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Once,
+            id: 0,
+        });
+        engine
+            .onces
+            .insert(0, RuntimeOnceState::Ready(Value::Integer(10)));
+        let get_wrong_type = once_method("std.sync.Once.get[Int, String]", types.int, types, false);
+        assert!(matches!(
+            engine.prepare_once_method(&get_wrong_type, std::slice::from_ref(&token)),
+            Err(VmError::Invariant(message)) if message.contains("expected an Option")
+        ));
+        let ready_wrong_type = once_method(
+            "std.sync.Once.getOrInit[Int, String]",
+            types.int,
+            types,
+            true,
+        );
+        let initializer = Value::Function {
+            callable: BytecodeCallableId::new(1),
+            arguments: Vec::new(),
+        };
+        assert!(matches!(
+            engine.prepare_once_method(&ready_wrong_type, &[token.clone(), initializer.clone()]),
+            Err(VmError::Invariant(message)) if message.contains("expected a Result")
+        ));
+
+        let mut host = OnceFaultHost {
+            mode: OnceFaultMode::ReentrantError,
+        };
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .onces
+            .insert(0, RuntimeOnceState::Initializing { owner: 0 });
+        let get_or_init = once_method(
+            "std.sync.Once.getOrInit[Int, String]",
+            types.result_ref_string,
+            types,
+            true,
+        );
+        assert!(matches!(
+            engine.prepare_once_method(&get_or_init, &[token.clone(), initializer.clone()]),
+            Err(VmError::Host(message)) if message.contains("reentrant initializer")
+        ));
+
+        let mut host = OnceFaultHost {
+            mode: OnceFaultMode::ReentrantWrongValue,
+        };
+        let mut engine = once_engine(&program, &mut host);
+        engine
+            .onces
+            .insert(0, RuntimeOnceState::Initializing { owner: 0 });
+        assert!(matches!(
+            engine.prepare_once_method(&get_or_init, &[token.clone(), initializer.clone()]),
+            Err(VmError::Host(message)) if message.contains("bootstrap host result")
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.onces.insert(0, RuntimeOnceState::Uninitialized);
+        let closure_initializer = Value::Function {
+            callable: BytecodeCallableId::new(0),
+            arguments: Vec::new(),
+        };
+        assert!(matches!(
+            engine.prepare_once_method(
+                &get_or_init,
+                &[token, closure_initializer],
+            ),
+            Err(VmError::Invariant(message)) if message.contains("callable kind")
+        ));
     }
 
     fn scheduler_task(status: TaskStatus) -> TaskRecord {

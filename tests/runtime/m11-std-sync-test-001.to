@@ -1,0 +1,30 @@
+import std.console
+import std.sync
+
+fn main(): !sync.SyncError {
+    let once = sync.once[Int, sync.SyncError]()
+    if once.isReady() {
+        panic("Once unexpectedly initialized")
+    }
+    let failed = once.getOrInit(() { err(sync.SyncError.InvalidCapacity) })
+    match failed {
+        ok(_) => assert(false)
+        err(error) => match error {
+            sync.SyncError.InvalidCapacity => ()
+            _ => assert(false)
+        }
+    }
+    if once.isReady() {
+        panic("Once published a failed initializer")
+    }
+    let first = once.getOrInit(() { 41 })?
+    assert(first.value == 41)
+    assert(once.isReady())
+    let second = once.getOrInit(() { 99 })?
+    assert(second.value == 41)
+    match once.get() {
+        some(value) => assert(value.value == 41)
+        none => assert(false)
+    }
+    console.println("sync-test-ok")
+}

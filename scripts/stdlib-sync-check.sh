@@ -25,6 +25,7 @@ jq -e '
   and .status == "contract-locked"
   and .contract == "docs/contracts/stdlib-sync.md"
   and .spec == "TONDO_STANDARD_LIBRARY_SPEC.md"
+  and .testing == "testing/stdlib-sync-test.json"
   and .language_spec == "TONDO_LANGUAGE_SPEC.md"
   and .layer == "B2"
   and .kind == "runtime-facing"
@@ -172,7 +173,7 @@ jq -e '
   and .collections.direct_for.post_cursor_insertions == "excluded"
   and .collections.direct_for.lock_held_in_body == false
   and .collections.direct_for.materialization == "forbidden"
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-SYNC-PERF-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -180,7 +181,7 @@ jq -e '
   and .implementation.native_atomic_lane == "u64"
   and .implementation.native_parking_signal == "epoch-condvar"
   and .implementation.cooperative_wait == "poll-and-scheduler-park"
-  and .implementation.once_initializer_continuation == "pending-STD-SYNC-TEST-001"
+  and .implementation.once_initializer_continuation == "verified-vm-continuation-and-cleanup"
   and .implementation.fixture == "tests/runtime/m11-std-sync-impl-001.to"
   and .implementation.fixture_stdout == "sync-ok"
   and (.implementation.artifacts | index("crates/tondo-vm/src/runtime/execute.rs")) != null
@@ -197,7 +198,8 @@ for path in \
     docs/contracts/stdlib-sync.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_LANGUAGE_SPEC.md \
-    TONDO_IMPLEMENTATION_TRACKER.md; do
+    TONDO_IMPLEMENTATION_TRACKER.md \
+    testing/stdlib-sync-test.json; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -212,7 +214,8 @@ for marker in \
     'one-linearization-coherent-value-collection' \
     'scheduler-backed-hosted-model' \
     'verified-host-parking-native-atomic-epoch-bridge' \
-    'pending-STD-SYNC-TEST-001' \
+    'verified-vm-continuation-and-cleanup' \
+    'STD-SYNC-TEST-001' \
     'STD-SYNC-HOST-001'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-sync.md" \
         || die "contract document misses marker: $marker"
@@ -220,6 +223,8 @@ done
 
 grep -Fq 'testing/stdlib-sync.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync registry"
+grep -Fq 'testing/stdlib-sync-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the sync testing contract"
 
 for symbol in \
     tondo_rt_atomic_new \

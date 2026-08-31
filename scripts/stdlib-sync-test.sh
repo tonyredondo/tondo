@@ -4,6 +4,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+contract="${TONDO_STDLIB_SYNC_CONTRACT:-testing/stdlib-sync.json}"
+testing_contract="${TONDO_STDLIB_SYNC_TEST_CONTRACT:-testing/stdlib-sync-test.json}"
+
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tondo-stdlib-sync-negative.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -15,6 +18,81 @@ expect_failure() {
         exit 1
     fi
 }
+
+[[ -f "$testing_contract" ]] || {
+    echo "std.sync tests: missing testing contract: $testing_contract" >&2
+    exit 1
+}
+tail -c 1 "$testing_contract" | cmp -s <(printf '\n') || {
+    echo "std.sync tests: testing contract must end with LF" >&2
+    exit 1
+}
+! grep -nE $'\r|[[:blank:]]$' "$testing_contract" >/dev/null || {
+    echo "std.sync tests: testing contract contains CR or trailing whitespace" >&2
+    exit 1
+}
+
+jq -e '
+  .format == "tondo-stdlib-sync-testing/1"
+  and .edition == "0.1"
+  and .phase == "STD-0.1B"
+  and .owner == "std.sync"
+  and .task == "STD-SYNC-TEST-001"
+  and .status == "verified"
+  and .contract == "testing/stdlib-sync.json"
+  and .limits.max_tasks == 64
+  and .limits.max_fuzz_input_bytes == 4096
+  and .limits.max_fuzz_steps == 1024
+  and .limits.model_seed_count == 4096
+  and .limits.fuzz_smoke_runs == 128
+  and .model.status == "verified"
+  and (.model.sources | index("crates/tondo-reliability/src/sync_model.rs")) != null
+  and (.model.sources | index("crates/tondo-reliability/tests/sync_models.rs")) != null
+  and (.model.laws | length) == 8
+  and .model.sequence_seeds == 4096
+  and .model.oracle == "independent bounded state machines with deterministic replay and invariant checks"
+  and .vm.status == "verified"
+  and .vm.fixture == "tests/runtime/m11-std-sync-test-001.to"
+  and .vm.expected_exit == 0
+  and .vm.expected_stdout == "sync-test-ok"
+  and (.vm.properties | length) == 5
+  and .test.status == "verified"
+  and (.test.sources | length) >= 5
+  and (.test.commands | length) == 6
+  and (.test.cases | length) == 8
+  and .test.oracle == "runtime output, VM continuation invariants and independent model observations agree"
+  and .fuzz.status == "verified"
+  and .fuzz.target == "stdlib_sync"
+  and .fuzz.source == "fuzz/fuzz_targets/stdlib_sync.rs"
+  and .fuzz.corpus == "fuzz/corpus/stdlib_sync/seed"
+  and .fuzz.input_limit_bytes == 4096
+  and .fuzz.step_limit == 1024
+  and .fuzz.smoke.runs == 128
+  and .fuzz.smoke.seed == 4102
+  and .fuzz.smoke.result == "passed"
+  and .sanitization.status == "bounded-safe-rust-no-unsafe-boundary"
+  and .sanitization.applicable == false
+  and .sanitization.native_aot == "deferred-to-STD-SYNC-PERF-001"
+  and .promotion.runtime_continuation_complete == true
+  and .promotion.model_test_fuzz_complete == true
+  and .promotion.sanitization_boundary_explicit == true
+  and .promotion.remaining == [
+    "STD-SYNC-PERF-001",
+    "STD-SYNC-COLLECTION-FRONTEND-001",
+    "STD-SYNC-COLLECTION-IMPL-001",
+    "STD-SYNC-COLLECTION-ITER-001",
+    "STD-SYNC-COLLECTION-TEST-001",
+    "STD-SYNC-COLLECTION-PERF-001",
+    "STD-SYNC-COLLECTION-CONF-001",
+    "STD-SYNC-CONF-001",
+    "STD-SYNC-DOC-001"
+  ]
+' "$testing_contract" >/dev/null || {
+    echo "std.sync tests: invalid machine-readable TEST contract" >&2
+    exit 1
+}
+
+TONDO_STDLIB_SYNC_CONTRACT="$contract" scripts/stdlib-sync-check.sh >/dev/null
 
 jq '.locks.mutex.reentrant = "deadlock"' testing/stdlib-sync.json > "$tmp_dir/reentrant.json"
 expect_failure reentrant-lock env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/reentrant.json" scripts/stdlib-sync-check.sh
@@ -30,6 +108,15 @@ expect_failure semaphore-capacity env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/semap
 
 jq '.once.declared_error = "sticky-failure"' testing/stdlib-sync.json > "$tmp_dir/once-error.json"
 expect_failure once-error-reset env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/once-error.json" scripts/stdlib-sync-check.sh
+
+jq '.status = "open"' "$testing_contract" > "$tmp_dir/testing-open.json"
+expect_failure testing-status env TONDO_STDLIB_SYNC_TEST_CONTRACT="$tmp_dir/testing-open.json" scripts/stdlib-sync-test.sh
+
+jq '.model.sequence_seeds = 4095' "$testing_contract" > "$tmp_dir/testing-seed-count.json"
+expect_failure testing-seed-count env TONDO_STDLIB_SYNC_TEST_CONTRACT="$tmp_dir/testing-seed-count.json" scripts/stdlib-sync-test.sh
+
+jq '.fuzz.step_limit = 2048' "$testing_contract" > "$tmp_dir/testing-fuzz-limit.json"
+expect_failure testing-fuzz-limit env TONDO_STDLIB_SYNC_TEST_CONTRACT="$tmp_dir/testing-fuzz-limit.json" scripts/stdlib-sync-test.sh
 
 jq '.barrier.cancellation = "ignore-cancellation"' testing/stdlib-sync.json > "$tmp_dir/barrier-cancel.json"
 expect_failure barrier-cancellation env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/barrier-cancel.json" scripts/stdlib-sync-check.sh
@@ -88,7 +175,7 @@ for marker in \
     'verified-compiler-hosted-parking-native-bridge' \
     'scheduler-backed-hosted-model' \
     'verified-host-parking-native-atomic-epoch-bridge' \
-    'pending-STD-SYNC-TEST-001' \
+    'verified-vm-continuation-and-cleanup' \
     'WaitGroup' \
     'implicit-poisoning'; do
     grep -Fq "$marker" testing/stdlib-sync.json
@@ -109,9 +196,10 @@ jq -e '
   and .implementation.native_atomic_lane == "u64"
   and .implementation.native_parking_signal == "epoch-condvar"
   and .implementation.cooperative_wait == "poll-and-scheduler-park"
-  and .implementation.once_initializer_continuation == "pending-STD-SYNC-TEST-001"
+  and .implementation.once_initializer_continuation == "verified-vm-continuation-and-cleanup"
   and .implementation.fixture_stdout == "sync-ok"
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .testing == "testing/stdlib-sync-test.json"
+  and .promotion.next_blocks == ["STD-SYNC-PERF-001"]
 ' testing/stdlib-sync.json >/dev/null
 
 for path in \
@@ -125,10 +213,43 @@ done
 [[ "$(tr -d '\r\n' < tests/runtime/m11-std-sync-impl-001.stdout)" == "sync-ok" ]] \
     || { echo "std.sync tests: fixture stdout sidecar is not sync-ok" >&2; exit 1; }
 
+for path in \
+    crates/tondo-reliability/src/sync_model.rs \
+    crates/tondo-reliability/tests/sync_models.rs \
+    fuzz/fuzz_targets/stdlib_sync.rs \
+    fuzz/corpus/stdlib_sync/seed \
+    scripts/stdlib-sync-fuzz.sh \
+    tests/runtime/m11-std-sync-test-001.to; do
+    [[ -e "$path" ]] || { echo "std.sync tests: missing TEST evidence path $path" >&2; exit 1; }
+done
+[[ -x scripts/stdlib-sync-fuzz.sh ]] \
+    || { echo "std.sync tests: fuzz runner is not executable" >&2; exit 1; }
+[[ -s fuzz/corpus/stdlib_sync/seed ]] \
+    || { echo "std.sync tests: fuzz corpus is empty" >&2; exit 1; }
+
+for marker in \
+    'OnceContinuation' \
+    'RuntimeOnceState' \
+    'OperationResult::OnceInit' \
+    'TaskWait::Once' \
+    'finish_once_initializer_unwind' \
+    'publish_once' \
+    'MAX_FUZZ_INPUT_BYTES' \
+    'MAX_FUZZ_STEPS'; do
+    grep -Fq "$marker" crates/tondo-vm/src/runtime/execute.rs crates/tondo-reliability/src/sync_model.rs \
+        || { echo "std.sync tests: missing implementation/model anchor $marker" >&2; exit 1; }
+done
+
 cargo test -p tondo-compiler process_host::tests::sync_ --locked >/dev/null
+cargo test -p tondo-vm --lib --locked >/dev/null
 cargo test -p tondo-native-runtime native_sync_ --locked >/dev/null
+cargo test -p tondo-reliability --test sync_models --locked >/dev/null
+cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_sync --locked >/dev/null
 runtime_output="$(cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-impl-001.to)"
 [[ "$runtime_output" == "sync-ok" ]] \
     || { echo "std.sync tests: runtime fixture produced unexpected output: $runtime_output" >&2; exit 1; }
+test_runtime_output="$(cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-test-001.to)"
+[[ "$test_runtime_output" == "sync-test-ok" ]] \
+    || { echo "std.sync tests: TEST runtime fixture produced unexpected output: $test_runtime_output" >&2; exit 1; }
 
-echo "std.sync tests: OK (negative contract cases; cleanup; ordering; collections; promotion anchors)"
+echo "std.sync tests: OK (negative contracts; models; VM Once continuation; bounded fuzz target; teardown anchors)"

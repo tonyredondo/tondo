@@ -2404,14 +2404,18 @@ worker cooperativo. Guards y permits liberan exactamente una vez por consumo,
 El contrato machine-readable cerrado por `STD-SYNC-001` está en
 [`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y su explicación
 normativa está en [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md).
+La matriz independiente de modelo, runtime, fuzz y límites de sanitización de
+`STD-SYNC-TEST-001` está en
+[`testing/stdlib-sync-test.json`](./testing/stdlib-sync-test.json).
 Estos artefactos fijan la superficie y sus negativos. La superficie de
 compilador, el parking cooperativo hosted y el puente ABI nativo de
 atomics/señales ya están implementados y verificados por
 `STD-SYNC-HOST-001`. El puente nativo mantiene handles opacos, órdenes de
 memoria explícitos y una señal epoch; solo bloquea workers nativos, nunca el
-executor cooperativo. La ejecución del closure de `Once.getOrInit` requiere una
-continuación de VM y permanece explícitamente pendiente en
-`STD-SYNC-TEST-001`, sin fingir una inicialización exitosa.
+executor cooperativo. `STD-SYNC-TEST-001` verifica además que el closure de
+`Once.getOrInit` se ejecute mediante una continuación de VM, que la publicación
+sea posterior al retorno y que error, pánico o cancelación limpien y permitan
+reintentar sin waiters detached.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y

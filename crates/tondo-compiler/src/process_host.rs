@@ -1374,11 +1374,11 @@ impl BootstrapHost {
                     },
                 ..
             }) = self.sync_waiters.get_mut(&call)
+                && !*cancelled
+                && !*notified
             {
-                if !*cancelled && !*notified {
-                    *notified = true;
-                    notified_count += 1;
-                }
+                *notified = true;
+                notified_count += 1;
             }
         }
     }
@@ -9585,9 +9585,9 @@ mod tests {
         ] {
             assert!(BootstrapHost::sync_memory_order(&value).is_err());
         }
-        assert!(BootstrapHost::sync_valid_load_order(2) == false);
-        assert!(BootstrapHost::sync_valid_store_order(1) == false);
-        assert!(BootstrapHost::sync_valid_cas_failure_order(2) == false);
+        assert!(!BootstrapHost::sync_valid_load_order(2));
+        assert!(!BootstrapHost::sync_valid_store_order(1));
+        assert!(!BootstrapHost::sync_valid_cas_failure_order(2));
 
         let mutex = ok(host
             .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
@@ -9758,7 +9758,7 @@ mod tests {
             RuntimeValue::OptionSome(value) => *value,
             other => panic!("permit must be restored by cleanup: {other:?}"),
         };
-        host.invoke("std.sync.Permit.release", &[permit.clone()])
+        host.invoke("std.sync.Permit.release", std::slice::from_ref(&permit))
             .unwrap();
         assert!(host.invoke("std.sync.Permit.release", &[permit]).is_err());
 

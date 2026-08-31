@@ -6,13 +6,13 @@ machine-readable está en testing/stdlib-sync.json y la descripción integrada e
 TONDO_STANDARD_LIBRARY_SPEC.md. La superficie de compilador, el parking
 cooperativo del host y el puente ABI nativo de atomics/señales están verificados
 por `STD-SYNC-HOST-001`. La ejecución de un initializer `Once` como continuación
-de VM sigue siendo una frontera separada y está explícitamente pendiente en
-`STD-SYNC-TEST-001`; este contrato no la simula como si ya estuviera completa.
+de VM, su publicación, el despertar de waiters y la limpieza en error, pánico o
+cancelación están verificados por `STD-SYNC-TEST-001`.
 
 Implementación host: `scheduler-backed-hosted-model` con puente
 `verified-host-parking-native-atomic-epoch-bridge`.
 La continuación de initializer está marcada como
-`pending-STD-SYNC-TEST-001`.
+`verified-vm-continuation-and-cleanup`.
 
 std.sync es la superficie de memoria compartida de Tondo. Reutiliza el único
 modelo de suspensión implícita, spawn, scope, Join y defer; no crea una familia
@@ -48,11 +48,12 @@ cerrado ante un conjunto de esperas sin progreso. El lowering nativo de tipos
 genéricos y de las colecciones compartidas consumirá este puente en sus hojas
 posteriores.
 
-`Once.getOrInit` ya conserva el valor listo y diagnostica la reentrada, pero la
-ejecución de su closure initializer requiere una continuación de VM que todavía
-no está instalada. Mientras esa hoja no se cierre, una Once no inicializada
-devuelve `SyncError.ReentrantInitialization` de forma explícita; nunca publica
-un valor inventado ni deja un waiter detached.
+`Once.getOrInit` conserva el valor listo y diagnostica la reentrada. Cuando el
+initializer es un closure de VM, el motor instala una `OnceContinuation` en su
+frame, publica el valor solo al retornar y despierta todos los waiters con el
+mismo resultado. Error declarado, pánico y cancelación limpian el initializer,
+restablecen `uninitialized` y permiten reintentar; ningún waiter queda detached
+ni observa un valor parcialmente construido.
 
 ## Superficie pública
 
@@ -336,6 +337,33 @@ one-linearization-coherent-value-collection. Igualdad,
 serialización, agregaciones exactas y aritmética de colecciones se hacen sobre
 ese snapshot; no se inventa una copia que mezcle estados de distintos instantes.
 
+## Modelo, pruebas y límites de diagnóstico
+
+`STD-SYNC-TEST-001` tiene un contrato de pruebas independiente en
+[`testing/stdlib-sync-test.json`](../../testing/stdlib-sync-test.json). Los
+modelos acotados de `crates/tondo-reliability/src/sync_model.rs` no comparten
+estado ni código con la VM: comprueban órdenes de memoria, publicación
+release/acquire, colas FIFO, registro atómico de condiciones, handoff de
+semáforos, generaciones de barrera, reintentos de `Once`, wakeups y cleanup.
+`crates/tondo-reliability/tests/sync_models.rs` reproduce 4.096 seeds y exige
+replay determinista, límites finitos y cero waiters pendientes después del
+teardown.
+
+El fixture ejecutable
+`tests/runtime/m11-std-sync-test-001.to` comprueba la continuación real de
+`Once.getOrInit`: el closure se ejecuta, el resultado se publica después del
+retorno, `get`/`isReady` observan el mismo valor y la segunda llamada no vuelve a
+ejecutar el initializer. El target `stdlib_sync` de libFuzzer repite el modelo
+con entradas limitadas a 4 KiB y 1.024 transiciones, conservando un corpus de
+regresión y comprobando que cada resumen sea reproducible.
+
+La superficie modelada está escrita en Rust seguro y el runtime nativo declara
+`#![forbid(unsafe_code)]`; por ello AddressSanitizer/UBSan no añaden una
+frontera aplicable a este bloque. La campaña de sanitización de productos AOT
+queda explícitamente en `STD-SYNC-PERF-001`, mediante
+`scripts/native-aot-quality.sh`, sin presentar esta evidencia hosted como una
+garantía de otro target.
+
 ## Fairness, progreso y diagnóstico
 
 Mutexes, semáforos y condiciones atienden waiters por FIFO de registro, con un
@@ -361,11 +389,10 @@ de atomics, scheduler público, spin loops, operaciones de colecciones
 selectable, waitPop, waitDequeue, queues ilimitadas ocultas, préstamos en for y
 aliases globales SArray/SMap/SSet.
 
-La superficie de compilador, el parking cooperativo hosted y la ABI nativa de
-atomics/señales cierran `STD-SYNC-HOST-001` sobre la frontera actualmente
-implementada. Permanecen pendientes la continuación de initializer de
-`Once.getOrInit` dentro de `STD-SYNC-TEST-001`, el modelado/fuzzing restante de
-`STD-SYNC-TEST-001`, `STD-SYNC-PERF-001`, las leaves de colecciones,
-`STD-SYNC-CONF-001` y `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada y
-solo su carril escalar `u64` está verificado aquí; los tipos genéricos y las
-colecciones deben demostrar su lowering y reclamación en sus propios bloques.
+La superficie de compilador, el parking cooperativo hosted, la continuación de
+`Once` y la ABI nativa de atomics/señales cierran `STD-SYNC-TEST-001` sobre la
+frontera actualmente implementada. Permanecen pendientes
+`STD-SYNC-PERF-001`, las leaves de colecciones, `STD-SYNC-CONF-001` y
+`STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada y solo su carril escalar
+`u64` está verificado aquí; los tipos genéricos y las colecciones deben
+demostrar su lowering y reclamación en sus propios bloques.

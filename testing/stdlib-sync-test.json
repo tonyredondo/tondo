@@ -1,0 +1,121 @@
+{
+  "format": "tondo-stdlib-sync-testing/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.sync",
+  "task": "STD-SYNC-TEST-001",
+  "status": "verified",
+  "contract": "testing/stdlib-sync.json",
+  "limits": {
+    "max_tasks": 64,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 1024,
+    "model_seed_count": 4096,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/src/sync_model.rs",
+      "crates/tondo-reliability/tests/sync_models.rs"
+    ],
+    "laws": [
+      "release/acquire publication forbids stale data after the flag",
+      "compare-exchange failure orders are no stronger than success",
+      "mutex registration is FIFO and reentrant acquisition is rejected",
+      "condition wait releases and registers atomically, hides spurious wakeups and reacquires before cancellation",
+      "semaphore handoff consumes one permit exactly once and cancellation consumes none",
+      "Once wakes all waiters, retries error/panic/cancellation and publishes a value once",
+      "barrier generations elect one leader and cancellation breaks the generation",
+      "all bounded resources are torn down with no detached waiter"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded state machines with deterministic replay and invariant checks",
+    "command": "cargo test -p tondo-reliability --test sync_models --locked"
+  },
+  "vm": {
+    "status": "verified",
+    "fixture": "tests/runtime/m11-std-sync-test-001.to",
+    "expected_exit": 0,
+    "expected_stdout": "sync-test-ok",
+    "properties": [
+      "Once.getOrInit executes a VM closure continuation",
+      "the initializer result is published only after the continuation returns",
+      "a declared initializer error resets Once to uninitialized before retry",
+      "a second getOrInit observes the memoized value instead of running its closure",
+      "get and isReady observe the same published value"
+    ],
+    "command": "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-test-001.to"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/tests/sync_models.rs",
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "tests/runtime/m11-std-sync-test-001.to",
+      "scripts/stdlib-sync-check.sh",
+      "scripts/stdlib-sync-test.sh"
+    ],
+    "commands": [
+      "scripts/stdlib-sync-check.sh",
+      "cargo test -p tondo-reliability --test sync_models --locked",
+      "cargo test -p tondo-vm --lib --locked",
+      "cargo test -p tondo-native-runtime native_sync_ --locked",
+      "cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_sync --locked",
+      "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-test-001.to"
+    ],
+    "cases": [
+      "memory-order-matrix-and-publication",
+      "mutex-fifo-reentrancy-cancellation-cleanup",
+      "condition-atomic-registration-spurious-wakeup-and-reacquire",
+      "semaphore-capacity-fifo-handoff-and-double-release",
+      "once-success-retry-panic-cancellation-and-waiter-wakeup",
+      "barrier-reusable-generation-leader-and-break",
+      "bounded-adversarial-replay-and-teardown",
+      "vm-once-continuation-and-memoization"
+    ],
+    "oracle": "runtime output, VM continuation invariants and independent model observations agree"
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_sync",
+    "source": "fuzz/fuzz_targets/stdlib_sync.rs",
+    "corpus": "fuzz/corpus/stdlib_sync/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 1024,
+    "smoke": {
+      "runs": 128,
+      "seed": 4102,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "oracle": "panic-free bounded replay, invariant checks, deterministic summary and zero pending waiters",
+    "command": "TONDO_SYNC_FUZZ_RUNS=128 scripts/stdlib-sync-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_sync fuzz/corpus/stdlib_sync -- -runs=0 -max_len=4096"
+  },
+  "sanitization": {
+    "status": "bounded-safe-rust-no-unsafe-boundary",
+    "applicable": false,
+    "address": "not-applicable-to-safe-model-and-hosted-VM",
+    "undefined": "not-applicable-to-safe-model-and-hosted-VM",
+    "native_aot": "deferred-to-STD-SYNC-PERF-001",
+    "reason": "The independent model, VM continuation and native sync bridge are Rust code with forbid(unsafe_code); native AOT sanitizer coverage belongs to the target-qualified performance gate.",
+    "boundary": "scripts/native-aot-quality.sh"
+  },
+  "promotion": {
+    "runtime_continuation_complete": true,
+    "model_test_fuzz_complete": true,
+    "sanitization_boundary_explicit": true,
+    "remaining": [
+      "STD-SYNC-PERF-001",
+      "STD-SYNC-COLLECTION-FRONTEND-001",
+      "STD-SYNC-COLLECTION-IMPL-001",
+      "STD-SYNC-COLLECTION-ITER-001",
+      "STD-SYNC-COLLECTION-TEST-001",
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ]
+  }
+}

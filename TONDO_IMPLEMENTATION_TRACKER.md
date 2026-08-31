@@ -106,7 +106,8 @@ cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001`,
 `STD-ASYNC-GROUP-DOC-001` ya están cerrados para la VM hosted y el ABI del
 runtime nativo; `STD-SYNC-IMPL-001` ya está cerrado para la superficie del
 compilador y el modelo hosted determinista; el siguiente bloque es
-`STD-SYNC-TEST-001`, después de cerrar `STD-SYNC-HOST-001`. El modelo y
+`STD-SYNC-TEST-001`, después de cerrar `STD-SYNC-HOST-001`. El bloque crítico
+actual queda cerrado y el siguiente es `STD-SYNC-PERF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6564,12 +6565,22 @@ estas leaves.
   dejar waiters detached. El runtime nativo verifica el carril privado de
   `AtomicU64` con los cinco órdenes de memoria y señales epoch de parking sobre
   `Condvar`, con operaciones concurrentes entre workers y handles opacos. La
-  ejecución del closure de `Once.getOrInit` requiere una continuación de VM y
-  queda explícitamente en `STD-SYNC-TEST-001`; este bloque no la simula.
-- [ ] **STD-SYNC-TEST-001 — Modelar y endurecer sync.** Cubrir litmus de memoria,
-  races, wakeups perdidos, liberación de guard/permit, pánico/cancelación,
-  once/barrier, teardown y límites bajo scheduling adversario y sanitización
-  aplicable.
+  ejecución del closure de `Once.getOrInit` se cubre en
+  `STD-SYNC-TEST-001` mediante una continuación de VM verificable, sin
+  simularla en este bloque.
+- [x] **STD-SYNC-TEST-001 — Modelar y endurecer sync.** El registro separado
+  [`testing/stdlib-sync-test.json`](./testing/stdlib-sync-test.json) cierra las
+  celdas `MODEL`, `TEST` y `FUZZ`. Los modelos independientes de
+  `crates/tondo-reliability/src/sync_model.rs` cubren litmus de memoria,
+  publicación release/acquire, FIFO, wakeups perdidos, liberación de
+  guard/permit, pánico/cancelación, once/barrier, teardown y límites bajo
+  scheduling adversario. El fixture
+  `tests/runtime/m11-std-sync-test-001.to` prueba la continuación real de
+  `Once.getOrInit`, su memoización y el cleanup de sus resultados; el target
+  `stdlib_sync` mantiene corpus persistente, 4 KiB/1.024 pasos y 128 ejecuciones
+  smoke reproducibles. La frontera de sanitización es explícita: estos modelos,
+  VM y bridge están escritos en Rust seguro (`forbid(unsafe_code)`), por lo que
+  ASan/UBSan no aplican aquí y la campaña AOT queda en `STD-SYNC-PERF-001`.
 - [ ] **STD-SYNC-PERF-001 — Medir sync.** Fijar uncontended/contended latency,
   throughput, fairness, memoria y tail latency por target contra un oracle de
   corrección independiente.
@@ -7522,9 +7533,9 @@ coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-SYNC-TEST-001`; `STD-SYNC-HOST-001` ya cerró la
-frontera de parking/atomics del host y `STD-SYNC-IMPL-001` cerró la superficie
-de compilador y el modelo hosted determinista. ARM64 conserva una clasificación
+bloque crítico es `STD-SYNC-PERF-001`; `STD-SYNC-HOST-001` y
+`STD-SYNC-TEST-001` ya cerraron la frontera de parking/atomics, la continuación
+de `Once` y el modelo hosted determinista. ARM64 conserva una clasificación
 de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
@@ -7552,10 +7563,10 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-SYNC-TEST-001`; la implementación de superficie, el parking
+crítico es `STD-SYNC-PERF-001`; la implementación de superficie, el parking
 hosted, el puente nativo escalar, el modelo/test/fuzz, el presupuesto de
 rendimiento y la conformance del ABI del runtime nativo de Group ya tienen
-fronteras explícitas, mientras la continuación de `Once`, las colecciones
-compartidas y el lowering AOT async siguen pendientes.
+fronteras explícitas, mientras las colecciones compartidas y el lowering AOT
+async siguen pendientes.
 
 ---

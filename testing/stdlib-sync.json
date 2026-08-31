@@ -8,6 +8,7 @@
   "status": "contract-locked",
   "contract": "docs/contracts/stdlib-sync.md",
   "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "testing": "testing/stdlib-sync-test.json",
   "language_spec": "TONDO_LANGUAGE_SPEC.md",
   "layer": "B2",
   "kind": "runtime-facing",
@@ -719,19 +720,26 @@
     "native_atomic_lane": "u64",
     "native_parking_signal": "epoch-condvar",
     "cooperative_wait": "poll-and-scheduler-park",
-    "once_initializer_continuation": "pending-STD-SYNC-TEST-001",
+    "once_initializer_continuation": "verified-vm-continuation-and-cleanup",
     "fixture": "tests/runtime/m11-std-sync-impl-001.to",
     "fixture_stdout": "sync-ok",
+    "testing_fixture": "tests/runtime/m11-std-sync-test-001.to",
+    "testing_fixture_stdout": "sync-test-ok",
     "artifacts": [
       "crates/tondo-compiler/src/hir/lower.rs",
       "crates/tondo-compiler/src/hir/check.rs",
       "crates/tondo-compiler/src/process_host.rs",
       "crates/tondo-vm/src/runtime/execute.rs",
       "crates/tondo-native-runtime/src/lib.rs",
-      "tests/runtime/m11-std-sync-impl-001.to"
+      "tests/runtime/m11-std-sync-impl-001.to",
+      "crates/tondo-reliability/src/sync_model.rs",
+      "crates/tondo-reliability/tests/sync_models.rs",
+      "fuzz/fuzz_targets/stdlib_sync.rs",
+      "scripts/stdlib-sync-fuzz.sh",
+      "testing/stdlib-sync-test.json",
+      "tests/runtime/m11-std-sync-test-001.to"
     ],
     "required_follow_ups": [
-      "STD-SYNC-TEST-001",
       "STD-SYNC-PERF-001",
       "STD-SYNC-COLLECTION-FRONTEND-001",
       "STD-SYNC-COLLECTION-IMPL-001",
@@ -745,8 +753,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-HOST-001",
-      "STD-SYNC-TEST-001",
       "STD-SYNC-PERF-001",
       "STD-SYNC-COLLECTION-FRONTEND-001",
       "STD-SYNC-COLLECTION-IMPL-001",
@@ -757,6 +763,6 @@
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-SYNC-PERF-001"]
   }
 }
