@@ -672,6 +672,12 @@ impl DiagnosticCapture {
     }
 }
 
+type SyncArrayCell = Arc<RwLock<Vec<u64>>>;
+type SyncMapCell = Arc<RwLock<Vec<(u64, u64)>>>;
+type SyncSetCell = Arc<RwLock<Vec<u64>>>;
+type SyncStackCell = Arc<Mutex<Vec<u64>>>;
+type SyncQueueCell = Arc<Mutex<VecDeque<u64>>>;
+
 #[derive(Debug, Default)]
 struct State {
     next_id: u64,
@@ -683,11 +689,11 @@ struct State {
     thread_workers: BTreeMap<u64, Arc<WorkerSignal>>,
     atomics: BTreeMap<u64, Arc<std::sync::atomic::AtomicU64>>,
     parks: BTreeMap<u64, Arc<ParkingSignal>>,
-    sync_arrays: BTreeMap<u64, Arc<RwLock<Vec<u64>>>>,
-    sync_maps: BTreeMap<u64, Arc<RwLock<Vec<(u64, u64)>>>>,
-    sync_sets: BTreeMap<u64, Arc<RwLock<Vec<u64>>>>,
-    sync_stacks: BTreeMap<u64, Arc<Mutex<Vec<u64>>>>,
-    sync_queues: BTreeMap<u64, Arc<Mutex<VecDeque<u64>>>>,
+    sync_arrays: BTreeMap<u64, SyncArrayCell>,
+    sync_maps: BTreeMap<u64, SyncMapCell>,
+    sync_sets: BTreeMap<u64, SyncSetCell>,
+    sync_stacks: BTreeMap<u64, SyncStackCell>,
+    sync_queues: BTreeMap<u64, SyncQueueCell>,
     sync_collection_parks: BTreeMap<u64, Arc<ParkingSignal>>,
     allocations_since_collection: u32,
     diagnostic: Option<DiagnosticCapture>,
@@ -2714,7 +2720,7 @@ impl State {
         Some(signal)
     }
 
-    fn sync_array_cell(&mut self, handle: u64) -> Option<Arc<RwLock<Vec<u64>>>> {
+    fn sync_array_cell(&mut self, handle: u64) -> Option<SyncArrayCell> {
         if !matches!(self.object(handle), Some(Object::SyncArray)) {
             self.last_status = STATUS_INVALID_HANDLE;
             return None;
@@ -2726,7 +2732,7 @@ impl State {
         Some(cell)
     }
 
-    fn sync_map_cell(&mut self, handle: u64) -> Option<Arc<RwLock<Vec<(u64, u64)>>>> {
+    fn sync_map_cell(&mut self, handle: u64) -> Option<SyncMapCell> {
         if !matches!(self.object(handle), Some(Object::SyncMap)) {
             self.last_status = STATUS_INVALID_HANDLE;
             return None;
@@ -2738,7 +2744,7 @@ impl State {
         Some(cell)
     }
 
-    fn sync_set_cell(&mut self, handle: u64) -> Option<Arc<RwLock<Vec<u64>>>> {
+    fn sync_set_cell(&mut self, handle: u64) -> Option<SyncSetCell> {
         if !matches!(self.object(handle), Some(Object::SyncSet)) {
             self.last_status = STATUS_INVALID_HANDLE;
             return None;
@@ -2750,7 +2756,7 @@ impl State {
         Some(cell)
     }
 
-    fn sync_stack_cell(&mut self, handle: u64) -> Option<Arc<Mutex<Vec<u64>>>> {
+    fn sync_stack_cell(&mut self, handle: u64) -> Option<SyncStackCell> {
         if !matches!(self.object(handle), Some(Object::SyncStack)) {
             self.last_status = STATUS_INVALID_HANDLE;
             return None;
@@ -2762,7 +2768,7 @@ impl State {
         Some(cell)
     }
 
-    fn sync_queue_cell(&mut self, handle: u64) -> Option<Arc<Mutex<VecDeque<u64>>>> {
+    fn sync_queue_cell(&mut self, handle: u64) -> Option<SyncQueueCell> {
         if !matches!(self.object(handle), Some(Object::SyncQueue)) {
             self.last_status = STATUS_INVALID_HANDLE;
             return None;
