@@ -11164,6 +11164,124 @@ mod tests {
     }
 
     #[test]
+    fn channel_host_direct_send_receive_paths_are_nonblocking_and_terminal() {
+        let mut host = BootstrapHost::default();
+        assert!(
+            host.invoke(
+                "std.channel.Sender.send",
+                &[RuntimeValue::Integer(0), RuntimeValue::Integer(1)],
+            )
+            .is_err()
+        );
+        assert!(
+            host.invoke("std.channel.Receiver.receive", &[RuntimeValue::Integer(0)],)
+                .is_err()
+        );
+        let stale_sender = RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ChannelSender,
+            id: u64::MAX,
+        };
+        let stale_receiver = RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ChannelReceiver,
+            id: u64::MAX,
+        };
+        assert!(
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[stale_sender, RuntimeValue::Integer(2)],
+            )
+            .is_err()
+        );
+        assert!(
+            host.invoke("std.channel.Receiver.tryReceive", &[stale_receiver],)
+                .is_err()
+        );
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        assert_eq!(
+            host.invoke(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(1)],
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))
+        );
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(1)))
+        );
+        assert!(
+            host.invoke(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .is_err()
+        );
+
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+                .unwrap(),
+        );
+        host.invoke(
+            "std.channel.Sender.send",
+            &[sender.clone(), RuntimeValue::Integer(2)],
+        )
+        .unwrap();
+        assert!(
+            host.invoke(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(3)],
+            )
+            .is_err()
+        );
+        host.invoke(
+            "std.channel.Receiver.close",
+            std::slice::from_ref(&receiver),
+        )
+        .unwrap();
+        channel_variant(
+            match host
+                .invoke(
+                    "std.channel.Sender.send",
+                    &[sender, RuntimeValue::Integer(4)],
+                )
+                .unwrap()
+            {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected closed send error, got {other:?}"),
+            },
+            "SendError",
+            0,
+            Some(RuntimeValue::Integer(4)),
+        );
+
+        let mut limited = BootstrapHost::with_max_bytes(Vec::new(), 0);
+        let (sender, _receiver) =
+            channel_endpoints(limited.invoke("std.channel.unbounded", &[]).unwrap());
+        channel_variant(
+            match limited
+                .invoke(
+                    "std.channel.Sender.send",
+                    &[sender, RuntimeValue::Integer(5)],
+                )
+                .unwrap()
+            {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected unbounded resource error, got {other:?}"),
+            },
+            "SendError",
+            1,
+            Some(RuntimeValue::Integer(5)),
+        );
+    }
+
+    #[test]
     fn sync_mutex_guards_are_affine_and_cleanup_releases_once() {
         let mut host = BootstrapHost::default();
         let mutex = ok(host
