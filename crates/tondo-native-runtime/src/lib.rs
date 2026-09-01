@@ -3147,9 +3147,11 @@ impl State {
                         .insert(waiter.id, NativeChannelSendOutcome::Closed);
                 }
             }
-            let values = last
-                .then(|| state.queue.drain(..).collect::<VecDeque<_>>())
-                .unwrap_or_default();
+            let values = if last {
+                state.queue.drain(..).collect::<VecDeque<_>>()
+            } else {
+                VecDeque::new()
+            };
             wake.notify_all();
             values
         };
@@ -5094,15 +5096,13 @@ fn native_channel_progress(state: &mut NativeChannelState) -> bool {
         let room = state.capacity.is_none_or(|capacity| {
             state.queue.len() < capacity && state.queue.len() < HOST_MAX_BYTES
         });
-        if room {
-            if let Some(sender) = state.send_waiters.pop_front() {
-                state.queue.push_back(sender.value);
-                state
-                    .send_results
-                    .insert(sender.id, NativeChannelSendOutcome::Committed);
-                changed = true;
-                continue;
-            }
+        if room && let Some(sender) = state.send_waiters.pop_front() {
+            state.queue.push_back(sender.value);
+            state
+                .send_results
+                .insert(sender.id, NativeChannelSendOutcome::Committed);
+            changed = true;
+            continue;
         }
         break;
     }
