@@ -137,6 +137,10 @@ run_step stdlib-channel-async-iter-contract-tests \
     scripts/stdlib-channel-async-iter-test.sh
 run_step stdlib-channel-async-iter-implementation \
     scripts/stdlib-channel-async-iter.sh
+run_step stdlib-channel-testing-contract \
+    scripts/stdlib-channel-test-check.sh
+run_step stdlib-channel-testing-contract-tests \
+    scripts/stdlib-channel-test-test.sh
 run_step stdlib-sync-contract \
     scripts/stdlib-sync-check.sh
 run_step stdlib-sync-contract-tests \

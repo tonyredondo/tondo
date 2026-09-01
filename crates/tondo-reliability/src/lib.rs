@@ -1,5 +1,6 @@
 #![doc = "Deterministic reliability tooling for the Tondo repository."]
 
+pub mod channel_model;
 pub mod gap_audit;
 pub mod generator;
 pub mod harness;

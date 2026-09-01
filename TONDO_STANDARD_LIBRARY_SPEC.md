@@ -2282,8 +2282,11 @@ el drenado terminal. La adaptación `Receiver[T] -> AsyncIterator[T]` bajo
 `T: Discard` queda verificada en la VM hosted por
 [`testing/stdlib-channel-async-iter.json`](./testing/stdlib-channel-async-iter.json)
 y [`docs/contracts/stdlib-channel-async-iter.md`](./docs/contracts/stdlib-channel-async-iter.md).
-La evidencia no reclama lowering AOT de canales ni cambia la obligación de
-cerrar TEST, PERF, CONF y DOC.
+El modelo, las regresiones y el fuzzing acotado de
+[`testing/stdlib-channel-test.json`](./testing/stdlib-channel-test.json) y
+[`docs/contracts/stdlib-channel-test.md`](./docs/contracts/stdlib-channel-test.md)
+ya están verificados para `STD-CHANNEL-TEST-001`. La evidencia no reclama
+lowering AOT de canales ni cambia la obligación de cerrar PERF, CONF y DOC.
 
 ~~~tondo pseudocode
 pub type Sender[T]

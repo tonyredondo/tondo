@@ -123,6 +123,7 @@ jq -e '
   and .iterator.implementation == "verified-hosted-vm"
   and .iterator.native_aot_lowering == "not-claimed"
   and .iterator.contract == "testing/stdlib-channel-async-iter.json"
+  and .testing == "testing/stdlib-channel-test.json"
   and .fairness.waiter_order == "FIFO-registration-per-operation"
   and .fairness.same_channel_tie == "oldest-compatible-registration"
   and .fairness.select_tie == "core-select-rotation"
@@ -162,23 +163,22 @@ jq -e '
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-channel-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == [
-    "STD-CHANNEL-TEST-001",
     "STD-CHANNEL-PERF-001",
     "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
   and .promotion.implementation_pending == [
-    "STD-CHANNEL-TEST-001",
     "STD-CHANNEL-PERF-001",
     "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
-  and .promotion.next_blocks == ["STD-CHANNEL-TEST-001", "STD-CHANNEL-PERF-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel contract"
 
 for path in \
     docs/contracts/stdlib-channel.md \
     docs/contracts/stdlib-channel-async-iter.md \
+    docs/contracts/stdlib-channel-test.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
@@ -193,6 +193,7 @@ for marker in \
     'FIFO-registration-per-operation' \
     'channel.send.rollback' \
     'verified-scheduler-and-native-bridge' \
+    'stdlib-channel-test.json' \
     'STD-CHANNEL-IMPL-001'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-channel.md" \
         || die "contract document misses marker: $marker"

@@ -190,6 +190,29 @@ que el caller puede recuperar los mensajes pendientes en vez de perder
 ownership. No existe `for await`, `AsyncChannel`, materialización automática ni
 un `collect` específico del canal.
 
+## Reliability model and fuzzing
+
+STD-CHANNEL-TEST-001 is closed at the independent model and regression
+boundary. The complete testing contract is
+[testing/stdlib-channel-test.json](../../testing/stdlib-channel-test.json) and
+its executable explanation is
+[docs/contracts/stdlib-channel-test.md](./stdlib-channel-test.md).
+
+The bounded reference model tracks endpoint identity, FIFO waiter registration,
+select prepare/rollback/commit, cancellation, terminal close, an affine payload
+ledger and one wakeup per completed waiter. It covers rendezvous, finite
+backpressure, explicit unbounded resource limits, simultaneous readiness,
+multiple producers and consumers, abandoned operations and structured cleanup.
+The integration suite replays 4096 deterministic seeds and reruns the existing
+hosted VM and private native ABI regressions. The libFuzzer target caps each
+input at 4096 bytes and 512 transitions; the observed smoke completed 128 runs
+with seed 4104.
+
+This evidence proves model robustness and the current hosted/native regression
+boundary only. It does not change native_aot_lowering: not-claimed or
+public_api_promoted: false, and it does not replace the separate PERF, CONF
+or DOC leaves. STD-CHANNEL-PERF-001 is the next block.
+
 ## Eventos privados de diagnóstico
 
 La implementación puede emitir en el namespace `std.channel` los eventos
@@ -210,8 +233,8 @@ El contrato excluye `sendAsync`/`receiveAsync`, `waitSend`/`waitReceive`,
 por defecto, clones implícitos, un executor propio y cualquier API pública de
 `select`. La keyword núcleo sigue siendo la única representación de selección.
 
-La implementación pública permanece pendiente de
-`STD-CHANNEL-ASYNC-ITER-001`, su modelo y fuzzing, presupuestos de rendimiento,
-conformidad VM/nativa y documentación ejecutable. El contrato ya puede
+La implementación pública permanece pendiente de los presupuestos de
+rendimiento, conformidad VM/nativa y documentación ejecutable. El modelo y
+fuzzing de `STD-CHANNEL-TEST-001` ya están cerrados. El contrato ya puede
 alimentar `DIAG-RUNTIME-001`, pero no promociona símbolos runtime ni lowering
 AOT antes de cerrar esas leaves.

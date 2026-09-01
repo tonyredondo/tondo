@@ -177,6 +177,7 @@
     "native_aot_lowering": "not-claimed",
     "contract": "testing/stdlib-channel-async-iter.json"
   },
+  "testing": "testing/stdlib-channel-test.json",
   "fairness": {
     "waiter_order": "FIFO-registration-per-operation",
     "same_channel_tie": "oldest-compatible-registration",
@@ -318,7 +319,6 @@
     },
     "evidence_report": "target/reliability/evidence/stdlib-channel-implementation.json",
     "required_follow_ups": [
-      "STD-CHANNEL-TEST-001",
       "STD-CHANNEL-PERF-001",
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
@@ -326,11 +326,10 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-CHANNEL-TEST-001",
       "STD-CHANNEL-PERF-001",
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": ["STD-CHANNEL-TEST-001", "STD-CHANNEL-PERF-001"]
+    "next_blocks": ["STD-CHANNEL-PERF-001"]
   }
 }

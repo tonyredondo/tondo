@@ -73,6 +73,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "stdlib_channel"
+path = "fuzz_targets/stdlib_channel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "diagnostics"
 path = "fuzz_targets/diagnostics.rs"
 test = false

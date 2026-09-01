@@ -128,7 +128,7 @@ cursores, snapshots, límites, cleanup y capability `threads`; la campaña no
 promueve fast paths nativos ni lowering AOT genérico. `STD-SYNC-CONF-001` y la
 conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
 con la guía ejecutable; el siguiente trabajo desbloqueado es
-`STD-CHANNEL-TEST-001` y `STD-CHANNEL-PERF-001`. El modelo y
+`STD-CHANNEL-PERF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6775,13 +6775,20 @@ estas leaves.
   lowering AOT. La fixture, negativa y evidencia están en
   `testing/stdlib-channel-async-iter.json` y
   `docs/contracts/stdlib-channel-async-iter.md`; los siguientes leaves son
-  `STD-CHANNEL-TEST-001` y `STD-CHANNEL-PERF-001`.
-- [ ] **STD-CHANNEL-TEST-001 — Modelar y fuzzear canales.** Cubrir buffers 0/N,
-  forma unbounded bajo límites, cierre concurrente, fairness declarada,
-  commit/rollback mediante `select`, `else`, ready simultáneo, cancelación,
-  productores/consumidores
-  abandonados, payloads afines y ausencia de mensajes o wakeups duplicados o
-  perdidos.
+  `STD-CHANNEL-PERF-001`.
+- [x] **STD-CHANNEL-TEST-001 — Modelar y fuzzear canales.** Cerrado el modelo
+  independiente con ledger de ownership afín, colas FIFO de waiters, select
+  prepare/rollback/commit, cancelación, cierre terminal, fairness y wakeups
+  exactamente una vez. La suite de integración cubre buffers 0/N, unbounded
+  acotado, productores/consumidores múltiples, ready simultáneo, `else`,
+  abandono, drenaje FIFO y cleanup sobre 4096 seeds deterministas; el target
+  libFuzzer completó 128 ejecuciones con seed 4104. Se mantienen las
+  regresiones hosted VM/ABI nativo privado y la frontera `native_aot_lowering:
+  not-claimed`. El contrato y la evidencia están en
+  `testing/stdlib-channel-test.json`,
+  `docs/contracts/stdlib-channel-test.md` y
+  `scripts/stdlib-channel-test-check.sh`; el siguiente bloque es
+  `STD-CHANNEL-PERF-001`.
 - [ ] **STD-CHANNEL-PERF-001 — Medir canales.** Registrar throughput, tail
   latency, memoria, wakeups y backpressure con 1:1, N:1 y N:M.
 - [ ] **STD-CHANNEL-CONF-001 — Conformar canales.** Reutilizar el mismo corpus
@@ -7689,8 +7696,8 @@ hosted y `STD-SYNC-COLLECTION-CONF-001` queda cerrado para la equivalencia
 observable VM/native; `STD-SYNC-CONF-001` y `STD-SYNC-DOC-001` también quedan
 cerrados para el corpus común VM/native-bridge y la guía ejecutable; la adaptación
 hosted `Receiver[T] -> AsyncIterator[T]` de `STD-CHANNEL-ASYNC-ITER-001` también
-está cerrada; el siguiente trabajo crítico es `STD-CHANNEL-TEST-001` junto con
-`STD-CHANNEL-PERF-001`. La
+está cerrada; `STD-CHANNEL-TEST-001` queda cerrado para modelo, regresiones y
+fuzz acotado; el siguiente trabajo crítico es `STD-CHANNEL-PERF-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

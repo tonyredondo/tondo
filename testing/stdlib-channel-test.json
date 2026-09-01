@@ -1,0 +1,119 @@
+{
+  "format": "tondo-stdlib-channel-testing/1",
+  "owner": "std.channel",
+  "parent_owner": "std.async",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-CHANNEL-TEST-001",
+  "status": "verified",
+  "contract": "docs/contracts/stdlib-channel-test.md",
+  "implementation_contract": "testing/stdlib-channel.json",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-channel.json",
+  "layer": "B2",
+  "kind": "reliability-facing",
+  "target": "reference-model-and-hosted-native-regression-boundary",
+  "limits": {
+    "max_channel_buffer": 64,
+    "max_unbounded_queue": 64,
+    "max_channel_handles": 128,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 512,
+    "model_seed_count": 4096,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/src/channel_model.rs",
+      "crates/tondo-reliability/tests/channel_models.rs"
+    ],
+    "laws": [
+      "bounded(0) is rendezvous and preserves registration FIFO",
+      "bounded capacities apply backpressure without moving a full-buffer payload",
+      "unbounded is explicit and stops at a finite resource limit",
+      "endpoint creation is bounded and fork shares channel identity",
+      "multiple producers and consumers preserve per-operation registration order",
+      "select preparation observes readiness without mutating channel state",
+      "select rollback retains caller and channel ownership",
+      "select commit linearizes exactly one ready arm",
+      "select else returns without changing observable state",
+      "simultaneously ready arms rotate fairly",
+      "cancellation unregisters a waiter and returns an affine payload",
+      "closing the last receiver wakes blocked senders with intact payloads",
+      "closing the last receiver drains committed values in FIFO order",
+      "closing the last sender ends receive only after the queue drains",
+      "each completed waiter receives exactly one wakeup",
+      "cleanup leaves no queue, waiter, result or non-caller payload ownership",
+      "stale endpoints and waiter tokens fail closed"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded channel state, affine payload ledger, FIFO waiter queues and exact wakeup accounting",
+    "command": "cargo test -p tondo-reliability --test channel_models --locked"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/tests/channel_models.rs",
+      "crates/tondo-reliability/src/channel_model.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-native-runtime/src/lib.rs",
+      "fuzz/fuzz_targets/stdlib_channel.rs"
+    ],
+    "commands": [
+      "CARGO_TARGET_DIR=target-fast cargo test -p tondo-reliability --lib channel_model --locked",
+      "CARGO_TARGET_DIR=target-fast cargo test -p tondo-reliability --test channel_models --locked",
+      "CARGO_TARGET_DIR=target-fast cargo test -p tondo-compiler channel_host_ --locked",
+      "CARGO_TARGET_DIR=target-fast cargo test -p tondo-native-runtime native_channel_ --locked",
+      "CARGO_TARGET_DIR=target-fast cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_channel --locked"
+    ],
+    "cases": [
+      "bounded_zero_rendezvous_fifo",
+      "bounded_positive_backpressure",
+      "unbounded_resource_limit",
+      "multiple_producers_and_consumers",
+      "simultaneously_ready_select_rotation",
+      "select_prepare_rollback_no_mutation",
+      "select_else_no_mutation",
+      "cancellation_returns_affine_payload",
+      "close_cancels_waiters_and_drains_last_receiver",
+      "last_sender_drains_before_closed",
+      "no_duplicate_or_lost_payloads",
+      "exactly_one_wakeup_per_waiter",
+      "deterministic_4096_seed_replay"
+    ],
+    "oracle": "runtime regression suites and independent model observations agree on ownership, FIFO, wakeup and cleanup outcomes"
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_channel",
+    "source": "fuzz/fuzz_targets/stdlib_channel.rs",
+    "corpus": "fuzz/corpus/stdlib_channel/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 512,
+    "smoke": {
+      "runs": 128,
+      "seed": 4104,
+      "result": "passed",
+      "toolchain": "nightly-2026-07-28"
+    },
+    "oracle": "panic-free bounded replay, affine ownership invariants, exact wakeup accounting and structured cleanup",
+    "command": "TONDO_CHANNEL_FUZZ_RUNS=128 scripts/stdlib-channel-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_channel fuzz/corpus/stdlib_channel -- -runs=0 -max_len=4096"
+  },
+  "sanitization": {
+    "status": "bounded-safe-rust-no-unsafe-boundary",
+    "applicable": false,
+    "native_aot": "not-claimed",
+    "reason": "This leaf validates an independent Rust model and hosted/native regression boundary; it does not introduce an AOT lowering or public runtime API"
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "implementation_pending": [],
+    "next_blocks": [
+      "STD-CHANNEL-PERF-001"
+    ],
+    "remaining": []
+  }
+}
