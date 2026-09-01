@@ -28,6 +28,11 @@ La campaña target-qualified de rendimiento de colecciones de
 `STD-SYNC-COLLECTION-PERF-001` está en
 [`testing/stdlib-sync-collection-performance.json`](../../testing/stdlib-sync-collection-performance.json)
 y [`stdlib-sync-collection-performance.md`](./stdlib-sync-collection-performance.md).
+La conformance observable VM/native de las colecciones está cerrada por
+`STD-SYNC-COLLECTION-CONF-001` en
+[`testing/stdlib-sync-collection-conformance.json`](../../testing/stdlib-sync-collection-conformance.json)
+y [`stdlib-sync-collection-conformance.md`](./stdlib-sync-collection-conformance.md);
+su ABI nativa es privada y no afirma lowering AOT genérico.
 Su probe hosted mide 31 workloads, tres procesos y 27 muestras por workload
 para cardinalidades y unidades lógicas 1/8/64; conserva mediana/P95/P99,
 throughput, allocations, memoria lógica, retries, wakeups, parking y handles
@@ -457,9 +462,9 @@ aliases globales SArray/SMap/SSet.
 La superficie de compilador, el parking cooperativo hosted, la continuación de
 `Once`, la campaña target-qualified de `STD-SYNC-PERF-001`, el frontend de
 literales, la implementación de colecciones compartidas para hosted/native ABI,
-la iteración directa, el modelo/test/fuzz acotado y la campaña PERF hosted de
-colecciones cierran los bloques actualmente implementados. Permanecen
-pendientes `STD-SYNC-COLLECTION-CONF-001`, `STD-SYNC-CONF-001` y
+la iteración directa, el modelo/test/fuzz acotado, la campaña PERF hosted y la
+conformance observable VM/native de colecciones cierran los bloques actualmente
+implementados. Permanecen pendientes `STD-SYNC-CONF-001` y
 `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada:
 el bloque de pruebas verifica modelos, histories, cursores, aliases, límites y
 cleanup, no un layout de tipos genéricos ni lowering AOT.

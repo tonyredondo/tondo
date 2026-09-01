@@ -85,7 +85,7 @@
     "frontend_complete": true,
     "runtime_complete": true,
     "implementation_block": "STD-SYNC-COLLECTION-IMPL-001",
-    "next_blocks": ["STD-SYNC-COLLECTION-CONF-001"]
+    "next_blocks": ["STD-SYNC-CONF-001"]
   },
   "negative_cases": [
     "empty-array-without-type-context",

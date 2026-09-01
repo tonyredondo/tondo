@@ -2428,6 +2428,10 @@ esta evidencia no introduce otra representación pública.
 La campaña target-qualified de rendimiento de los cinco owners se registra en
 [`testing/stdlib-sync-collection-performance.json`](./testing/stdlib-sync-collection-performance.json)
 y [`docs/contracts/stdlib-sync-collection-performance.md`](./docs/contracts/stdlib-sync-collection-performance.md).
+La equivalencia observable entre la VM hosted y el ABI nativo privado se cierra
+con `STD-SYNC-COLLECTION-CONF-001` en
+[`testing/stdlib-sync-collection-conformance.json`](./testing/stdlib-sync-collection-conformance.json)
+y [`docs/contracts/stdlib-sync-collection-conformance.md`](./docs/contracts/stdlib-sync-collection-conformance.md).
 Mide la línea base real de la VM hosted por cardinalidad y unidades lógicas,
 incluidos fast path 1:1, lecturas y escrituras independientes, hot key/slot,
 MPMC determinista, cursor directo, snapshot y resize. Los contadores de
@@ -2464,6 +2468,13 @@ linearización, las invariantes de cursor/alias/cleanup y el smoke fuzz
 determinista de 128 ejecuciones; esta evidencia sigue siendo una frontera de
 fiabilidad y regresión, no una afirmación de fast paths, API pública o lowering
 AOT genérico.
+
+La conformance de colecciones ejecuta ocho casos con las mismas líneas
+observables en VM y nativo: aliases y bounds, outcomes CAS, orden de
+linearización, `for` finito, snapshots, LIFO/FIFO, límites, cleanup y la
+capability `threads`. El ABI nativo y sus workers sirven como evidencia del
+runtime host-target; el lowering AOT genérico y cualquier API pública de cursor
+continúan sin reclamarse.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y

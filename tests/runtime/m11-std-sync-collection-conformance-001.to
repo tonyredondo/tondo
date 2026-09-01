@@ -1,0 +1,204 @@
+import std.console
+import std.sync as concurrent
+
+fn main() {
+    let array: concurrent.Array[Int] = concurrent.Array[1, 2, 3]
+    let array_alias = array
+    assert(array_alias.length() == 3)
+    assert(array.get(0) == some(1))
+    _ = array_alias.set(1, 4)
+    assert(array.get(1) == some(4))
+    _ = array.compareExchange(1, 1, 9)
+    assert(array.get(1) == some(4))
+    _ = array.compareExchange(1, 4, 5)
+    assert(array.get(1) == some(5))
+    assert(array.get(99) == none)
+    match array.snapshot() {
+        ok(snapshot) => {
+            var total = 0
+            for item in snapshot {
+                total += item
+            }
+            assert(total == 9)
+        }
+        err(_) => assert(false)
+    }
+    console.println("array-alias-bounds:3:9")
+
+    let map: concurrent.Map[String, Int] = concurrent.Map["a": 1, "b": 2]
+    let map_alias = map
+    _ = map_alias.insert("a", 3)
+    _ = map.remove("a")
+    _ = map.insert("a", 4)
+    _ = map.compareExchange("a", 3, 6)
+    _ = map.compareExchange("a", 4, 5)
+    var map_order = 0
+    for (key, value) in map {
+        if key == "b" {
+            map_order = map_order * 10 + value
+        } else {
+            assert(key == "a")
+            map_order = map_order * 10 + value
+        }
+    }
+    assert(map_order == 25)
+    match map.snapshot() {
+        ok(snapshot) => {
+            var snapshot_order = 0
+            for (key, value) in snapshot {
+                _ = key
+                snapshot_order = snapshot_order * 10 + value
+            }
+            assert(snapshot_order == 25)
+        }
+        err(_) => assert(false)
+    }
+    console.println("map-linearization:25:2")
+
+    let set: concurrent.Set[Int] = concurrent.Set[1, 2]
+    match set.insert(1) {
+        ok(inserted) => assert(inserted == false)
+        err(_) => assert(false)
+    }
+    assert(set.remove(1))
+    match set.insert(1) {
+        ok(inserted) => assert(inserted)
+        err(_) => assert(false)
+    }
+    var set_order = 0
+    for item in set {
+        set_order = set_order * 10 + item
+    }
+    assert(set_order == 21)
+    match set.snapshot() {
+        ok(snapshot) => {
+            var snapshot_order = 0
+            for item in snapshot {
+                snapshot_order = snapshot_order * 10 + item
+            }
+            assert(snapshot_order == 21)
+        }
+        err(_) => assert(false)
+    }
+    console.println("set-linearization:21:2")
+
+    let stack: concurrent.Stack[Int] = concurrent.Stack[1, 2, 3]
+    _ = stack.push(4)
+    assert(stack.peek() == some(4))
+    assert(stack.pop() == some(4))
+    var stack_order = 0
+    for item in stack {
+        stack_order = stack_order * 10 + item
+    }
+    assert(stack_order == 321)
+    assert(stack.length() == 3)
+    match stack.snapshot() {
+        ok(snapshot) => {
+            var snapshot_order = 0
+            for item in snapshot {
+                snapshot_order = snapshot_order * 10 + item
+            }
+            assert(snapshot_order == 321)
+        }
+        err(_) => assert(false)
+    }
+
+    let queue: concurrent.Queue[Int] = concurrent.Queue[1, 2, 3]
+    _ = queue.enqueue(4)
+    assert(queue.peek() == some(1))
+    assert(queue.dequeue() == some(1))
+    var queue_order = 0
+    for item in queue {
+        queue_order = queue_order * 10 + item
+    }
+    assert(queue_order == 234)
+    assert(queue.length() == 3)
+    match queue.snapshot() {
+        ok(snapshot) => {
+            var snapshot_order = 0
+            for item in snapshot {
+                snapshot_order = snapshot_order * 10 + item
+            }
+            assert(snapshot_order == 234)
+        }
+        err(_) => assert(false)
+    }
+    console.println("stack-queue-order:321:234:3")
+
+    let cursor_array: concurrent.Array[Int] = concurrent.Array[1, 2]
+    var array_cursor_order = 0
+    for item in cursor_array {
+        array_cursor_order = array_cursor_order * 10 + item
+    }
+
+    let cursor_map: concurrent.Map[String, Int] = concurrent.Map["a": 1, "b": 2]
+    var map_cursor_order = 0
+    for (key, value) in cursor_map {
+        _ = key
+        map_cursor_order = map_cursor_order * 10 + value
+    }
+    _ = cursor_map.insert("c", 3)
+    assert(cursor_map.length() == 3)
+
+    let cursor_set: concurrent.Set[Int] = concurrent.Set[1, 2]
+    var set_cursor_order = 0
+    for item in cursor_set {
+        set_cursor_order = set_cursor_order * 10 + item
+    }
+    _ = cursor_set.insert(3)
+    assert(cursor_set.length() == 3)
+
+    let cursor_stack: concurrent.Stack[Int] = concurrent.Stack[1, 2]
+    var stack_cursor_order = 0
+    for item in cursor_stack {
+        stack_cursor_order = stack_cursor_order * 10 + item
+    }
+    _ = cursor_stack.push(3)
+    assert(cursor_stack.length() == 3)
+
+    let cursor_queue: concurrent.Queue[Int] = concurrent.Queue[1, 2]
+    var queue_cursor_order = 0
+    for item in cursor_queue {
+        queue_cursor_order = queue_cursor_order * 10 + item
+    }
+    _ = cursor_queue.enqueue(3)
+    assert(cursor_queue.length() == 3)
+    assert(array_cursor_order == 12)
+    assert(map_cursor_order == 12)
+    assert(set_cursor_order == 12)
+    assert(stack_cursor_order == 21)
+    assert(queue_cursor_order == 12)
+    console.println("cursor-horizon:12:12:12:21:12")
+
+    let snapshot_values: concurrent.Array[Int] = concurrent.Array[4, 5]
+    match snapshot_values.snapshot() {
+        ok(snapshot) => {
+            var total = 0
+            for item in snapshot {
+                total += item
+            }
+            assert(total == 9)
+        }
+        err(_) => assert(false)
+    }
+    console.println("snapshot-equivalence:9")
+
+    let empty_array: concurrent.Array[Int] = concurrent.Array[]
+    let empty_stack: concurrent.Stack[Int] = concurrent.Stack[]
+    let empty_queue: concurrent.Queue[Int] = concurrent.Queue[]
+    assert(empty_array.isEmpty())
+    assert(empty_stack.isEmpty())
+    assert(empty_queue.isEmpty())
+    assert(empty_array.get(0) == none)
+    assert(empty_stack.pop() == none)
+    assert(empty_queue.dequeue() == none)
+    console.println("limits-cleanup:empty-none")
+
+    let threaded: concurrent.Array[Int] = concurrent.Array[0]
+    let threaded_alias = threaded
+    _ = threaded_alias.set(0, 7)
+    assert(threaded.get(0) == some(7))
+    console.println("threads-capability:shared-alias")
+
+    console.println("sync-collection-conformance-ok")
+}

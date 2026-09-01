@@ -623,6 +623,19 @@
         "cleanup": "no-pending-collection-job-waiter-or-scheduler-queue-before-probe-return"
       }
     },
+    "conformance": {
+      "task": "STD-SYNC-COLLECTION-CONF-001",
+      "status": "verified",
+      "contract": "testing/stdlib-sync-collection-conformance.json",
+      "document": "docs/contracts/stdlib-sync-collection-conformance.md",
+      "target": "tondo-vm-hosted-and-native-runtime-abi",
+      "cases": 8,
+      "vm_lines": 9,
+      "native_status": "verified-native-runtime-abi",
+      "native_aot": "not-claimed",
+      "report": "target/reliability/evidence/stdlib-sync-collection-conformance.json",
+      "command": "scripts/stdlib-sync-collection-conformance.sh"
+    },
     "literal_forms": [
       "sync.Array[...]",
       "sync.Map[...]",
@@ -869,10 +882,18 @@
       "scripts/stdlib-sync-collection-test-test.sh",
       "scripts/stdlib-sync-collection-fuzz.sh",
       "fuzz/fuzz_targets/stdlib_sync_collections.rs",
-      "fuzz/corpus/stdlib_sync_collections/seed"
+      "fuzz/corpus/stdlib_sync_collections/seed",
+      "testing/stdlib-sync-collection-conformance.json",
+      "docs/contracts/stdlib-sync-collection-conformance.md",
+      "scripts/stdlib-sync-collection-conformance-check.sh",
+      "scripts/stdlib-sync-collection-conformance-test.sh",
+      "scripts/stdlib-sync-collection-conformance.sh",
+      "tests/runtime/m11-std-sync-collection-conformance-001.to",
+      "tests/runtime/m11-std-sync-collection-conformance-001.stdout",
+      "tests/runtime/m11-std-sync-collection-conformance-001.exit",
+      "crates/tondo-native-runtime/examples/sync_collection_conformance.rs"
     ],
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ]
@@ -882,6 +903,6 @@
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-SYNC-COLLECTION-CONF-001"]
+    "next_blocks": ["STD-SYNC-CONF-001"]
   }
 }

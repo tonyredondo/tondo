@@ -72,16 +72,22 @@ jq -e '
   and (.implementation.sources | type == "array" and length == 11)
   and (.implementation.tests | type == "array" and length == 7)
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == [
-    "STD-SYNC-COLLECTION-CONF-001",
-    "STD-SYNC-CONF-001",
-    "STD-SYNC-DOC-001"
-  ]
+  and .implementation.required_follow_ups == ["STD-SYNC-CONF-001", "STD-SYNC-DOC-001"]
+  and .conformance.task == "STD-SYNC-COLLECTION-CONF-001"
+  and .conformance.status == "verified"
+  and .conformance.contract == "testing/stdlib-sync-collection-conformance.json"
+  and .conformance.document == "docs/contracts/stdlib-sync-collection-conformance.md"
+  and .conformance.target == "tondo-vm-hosted-and-native-runtime-abi"
+  and .conformance.cases == 8
+  and .conformance.vm_lines == 9
+  and .conformance.native_status == "verified-native-runtime-abi"
+  and .conformance.native_aot == "not-claimed"
+  and .conformance.report == "target/reliability/evidence/stdlib-sync-collection-conformance.json"
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 14
   and .promotion.implementation_complete == true
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-CONF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
   and .promotion.remaining == .implementation.required_follow_ups
 ' "$contract" >/dev/null || die "invalid machine-readable implementation contract"
 
@@ -96,7 +102,9 @@ for path in \
     testing/stdlib-sync-collection-iter.json \
     docs/contracts/stdlib-sync-collection-iter.md \
     testing/stdlib-sync-collection-performance.json \
-    docs/contracts/stdlib-sync-collection-performance.md; do
+    docs/contracts/stdlib-sync-collection-performance.md \
+    testing/stdlib-sync-collection-conformance.json \
+    docs/contracts/stdlib-sync-collection-conformance.md; do
     [[ -f "$root/$path" ]] || die "missing linked path: $path"
 done
 
@@ -175,7 +183,12 @@ jq -e '
   and .frontend.runtime_lowering == "verified-hosted-runtime-boundary"
   and .frontend.implementation_contract == "testing/stdlib-sync-collection.json"
   and .collections.implementation_contract == "testing/stdlib-sync-collection.json"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-CONF-001"]
+  and .collections.conformance.task == "STD-SYNC-COLLECTION-CONF-001"
+  and .collections.conformance.status == "verified"
+  and .collections.conformance.contract == "testing/stdlib-sync-collection-conformance.json"
+  and .collections.conformance.document == "docs/contracts/stdlib-sync-collection-conformance.md"
+  and .collections.conformance.native_aot == "not-claimed"
+  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
   and (.promotion.implementation_pending | index("STD-SYNC-COLLECTION-IMPL-001")) == null
 ' "$root/testing/stdlib-sync.json" >/dev/null \
     || die "parent std.sync registry does not promote the implementation leaf"
@@ -184,7 +197,7 @@ jq -e '
   .implementation.status == "verified-frontend-lowering-consumed"
   and .implementation.mir_boundary == "verified-hosted-runtime-boundary"
   and .implementation.runtime == "verified-by-STD-SYNC-COLLECTION-IMPL-001"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-CONF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
 ' "$root/testing/stdlib-sync-collection-frontend.json" >/dev/null \
     || die "frontend registry does not point at the consumed implementation boundary"
 
@@ -192,6 +205,8 @@ grep -Fq 'testing/stdlib-sync-collection.json' "$root/TONDO_STANDARD_LIBRARY_SPE
     || die "main stdlib spec does not link the implementation contract"
 grep -Fq 'stdlib-sync-collection.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "parent sync document does not link the implementation contract"
+grep -Fq 'stdlib-sync-collection-conformance.md' "$root/docs/contracts/stdlib-sync.md" \
+    || die "parent sync document does not link the collection conformance contract"
 grep -Fq 'STD-SYNC-COLLECTION-IMPL-001' "$root/TONDO_IMPLEMENTATION_TRACKER.md" \
     || die "tracker does not record the implementation leaf"
 

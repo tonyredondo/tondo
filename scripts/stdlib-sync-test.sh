@@ -88,11 +88,7 @@ jq -e '
   ]
   and .performance.report == "target/reliability/evidence/stdlib-sync-performance.json"
   and .performance.command == "scripts/stdlib-sync-performance.sh"
-  and .promotion.remaining == [
-    "STD-SYNC-COLLECTION-CONF-001",
-    "STD-SYNC-CONF-001",
-    "STD-SYNC-DOC-001"
-  ]
+  and .promotion.remaining == ["STD-SYNC-CONF-001", "STD-SYNC-DOC-001"]
 ' "$testing_contract" >/dev/null || {
     echo "std.sync tests: invalid machine-readable TEST contract" >&2
     exit 1
@@ -208,7 +204,12 @@ jq -e '
   and .frontend.runtime_lowering == "verified-hosted-runtime-boundary"
   and .frontend.implementation_contract == "testing/stdlib-sync-collection.json"
   and .collections.implementation_contract == "testing/stdlib-sync-collection.json"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-CONF-001"]
+  and .collections.conformance.task == "STD-SYNC-COLLECTION-CONF-001"
+  and .collections.conformance.status == "verified"
+  and .collections.conformance.contract == "testing/stdlib-sync-collection-conformance.json"
+  and .collections.conformance.document == "docs/contracts/stdlib-sync-collection-conformance.md"
+  and .collections.conformance.native_aot == "not-claimed"
+  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
 ' testing/stdlib-sync.json >/dev/null
 
 scripts/stdlib-sync-collection-frontend-check.sh >/dev/null
@@ -242,6 +243,13 @@ for path in \
     docs/contracts/stdlib-sync-collection.md \
     scripts/stdlib-sync-collection-check.sh \
     scripts/stdlib-sync-collection-test.sh \
+    testing/stdlib-sync-collection-conformance.json \
+    docs/contracts/stdlib-sync-collection-conformance.md \
+    scripts/stdlib-sync-collection-conformance-check.sh \
+    scripts/stdlib-sync-collection-conformance-test.sh \
+    scripts/stdlib-sync-collection-conformance.sh \
+    tests/runtime/m11-std-sync-collection-conformance-001.to \
+    crates/tondo-native-runtime/examples/sync_collection_conformance.rs \
     scripts/stdlib-sync-performance.sh \
     scripts/stdlib-sync-performance-test.sh; do
     [[ -e "$path" ]] || { echo "std.sync tests: missing TEST evidence path $path" >&2; exit 1; }
@@ -260,6 +268,12 @@ done
     || { echo "std.sync tests: collection implementation checker is not executable" >&2; exit 1; }
 [[ -x scripts/stdlib-sync-collection-test.sh ]] \
     || { echo "std.sync tests: collection implementation contract test is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-collection-conformance-check.sh ]] \
+    || { echo "std.sync tests: collection conformance checker is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-collection-conformance-test.sh ]] \
+    || { echo "std.sync tests: collection conformance contract test is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-collection-conformance.sh ]] \
+    || { echo "std.sync tests: collection conformance runner is not executable" >&2; exit 1; }
 [[ -s fuzz/corpus/stdlib_sync/seed ]] \
     || { echo "std.sync tests: fuzz corpus is empty" >&2; exit 1; }
 

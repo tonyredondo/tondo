@@ -155,6 +155,12 @@ run_step stdlib-sync-collection-performance-contract-tests \
     scripts/stdlib-sync-collection-performance-test.sh
 run_step stdlib-sync-collection-performance \
     scripts/stdlib-sync-collection-performance.sh
+run_step stdlib-sync-collection-conformance-contract \
+    scripts/stdlib-sync-collection-conformance-check.sh
+run_step stdlib-sync-collection-conformance-contract-tests \
+    scripts/stdlib-sync-collection-conformance-test.sh
+run_step stdlib-sync-collection-conformance \
+    scripts/stdlib-sync-collection-conformance.sh
 run_step stdlib-executor-contract \
     scripts/stdlib-executor-check.sh
 run_step stdlib-executor-contract-tests \

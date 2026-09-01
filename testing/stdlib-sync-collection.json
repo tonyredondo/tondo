@@ -169,11 +169,7 @@
       "scripts/stdlib-sync-collection-test.sh"
     ],
     "proof": "hosted VM exercises all five identities and 32 methods; native ABI exercises order, strong CAS, shared handles, worker progress, limits and teardown",
-    "required_follow_ups": [
-      "STD-SYNC-COLLECTION-CONF-001",
-      "STD-SYNC-CONF-001",
-      "STD-SYNC-DOC-001"
-    ]
+    "required_follow_ups": ["STD-SYNC-CONF-001", "STD-SYNC-DOC-001"]
   },
   "performance": {
     "task": "STD-SYNC-COLLECTION-PERF-001",
@@ -194,6 +190,19 @@
     "command": "scripts/stdlib-sync-collection-performance.sh",
     "oracle": "independent-bounded-collection-model-and-host-invariant-checks"
   },
+  "conformance": {
+    "task": "STD-SYNC-COLLECTION-CONF-001",
+    "status": "verified",
+    "contract": "testing/stdlib-sync-collection-conformance.json",
+    "document": "docs/contracts/stdlib-sync-collection-conformance.md",
+    "target": "tondo-vm-hosted-and-native-runtime-abi",
+    "cases": 8,
+    "vm_lines": 9,
+    "native_status": "verified-native-runtime-abi",
+    "native_aot": "not-claimed",
+    "report": "target/reliability/evidence/stdlib-sync-collection-conformance.json",
+    "command": "scripts/stdlib-sync-collection-conformance.sh"
+  },
   "negative_cases": [
     "wrong-nominal-host-kind",
     "stale-host-token",
@@ -213,11 +222,7 @@
   "promotion": {
     "implementation_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-SYNC-COLLECTION-CONF-001"],
-    "remaining": [
-      "STD-SYNC-COLLECTION-CONF-001",
-      "STD-SYNC-CONF-001",
-      "STD-SYNC-DOC-001"
-    ]
+    "next_blocks": ["STD-SYNC-CONF-001"],
+    "remaining": ["STD-SYNC-CONF-001", "STD-SYNC-DOC-001"]
   }
 }

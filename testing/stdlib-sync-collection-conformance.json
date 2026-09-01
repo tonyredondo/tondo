@@ -1,0 +1,112 @@
+{
+  "format": "tondo-stdlib-sync-collection-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.sync.collection",
+  "task": "STD-SYNC-COLLECTION-CONF-001",
+  "status": "verified",
+  "contract": "testing/stdlib-sync-collection.json",
+  "document": "docs/contracts/stdlib-sync-collection-conformance.md",
+  "vm": {
+    "fixture": "tests/runtime/m11-std-sync-collection-conformance-001.to",
+    "command": "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-collection-conformance-001.to",
+    "expected_exit": 0,
+    "expected_stdout": [
+      "array-alias-bounds:3:9",
+      "map-linearization:25:2",
+      "set-linearization:21:2",
+      "stack-queue-order:321:234:3",
+      "cursor-horizon:12:12:12:21:12",
+      "snapshot-equivalence:9",
+      "limits-cleanup:empty-none",
+      "threads-capability:shared-alias",
+      "sync-collection-conformance-ok"
+    ],
+    "oracle": "hosted-VM-sync-collection-observable-lines"
+  },
+  "native": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "probe": "crates/tondo-native-runtime/examples/sync_collection_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example sync_collection_conformance --locked",
+    "status": "verified-native-runtime-abi",
+    "target_policy": "host-target-only-until-native-aot-collection-lowering",
+    "oracle": "same-case-id-and-normalized-collection-observables"
+  },
+  "rules": {
+    "same_corpus": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "observable": "exact-ordered-lines-plus-native-result-tags",
+    "literal_alias": "copy-handle-same-state",
+    "bounds": "recoverable-none-or-CollectionError",
+    "linearization": "one-operation-at-a-time-and-insertion-order",
+    "direct_for": "finite-weakly-consistent-value-only-no-body-lock",
+    "order": "array-ascending-map-set-insertion-stack-top-down-queue-front-first",
+    "snapshot": "one-linearization-coherent-value-collection",
+    "stack_queue": "non-destructive-observation",
+    "capability": "cross-thread-sharing-requires-threads; cooperative-hosted-does-not",
+    "suspension": "inferred-for-suspendable-collection-operations",
+    "static_rejections": "ref-mut-var-bindings-and-missing-stack-queue-bounds",
+    "cleanup": "fresh-case-reset-and-zero-live-objects-before-return",
+    "native_aot": "not-claimed"
+  },
+  "cases": [
+    {
+      "id": "array-alias-bounds",
+      "vm_observable": "array-alias-bounds:3:9",
+      "native_expected": {"status":"passed","line":"array-alias-bounds:3:9","cleanup":true}
+    },
+    {
+      "id": "map-linearization",
+      "vm_observable": "map-linearization:25:2",
+      "native_expected": {"status":"passed","line":"map-linearization:25:2","cleanup":true}
+    },
+    {
+      "id": "set-linearization",
+      "vm_observable": "set-linearization:21:2",
+      "native_expected": {"status":"passed","line":"set-linearization:21:2","cleanup":true}
+    },
+    {
+      "id": "stack-queue-order",
+      "vm_observable": "stack-queue-order:321:234:3",
+      "native_expected": {"status":"passed","line":"stack-queue-order:321:234:3","cleanup":true}
+    },
+    {
+      "id": "cursor-horizon",
+      "vm_observable": "cursor-horizon:12:12:12:21:12",
+      "native_expected": {"status":"passed","line":"cursor-horizon:12:12:12:21:12","cleanup":true}
+    },
+    {
+      "id": "snapshot-equivalence",
+      "vm_observable": "snapshot-equivalence:9",
+      "native_expected": {"status":"passed","line":"snapshot-equivalence:9","cleanup":true}
+    },
+    {
+      "id": "limits-cleanup",
+      "vm_observable": "limits-cleanup:empty-none",
+      "native_expected": {"status":"passed","line":"limits-cleanup:empty-none","cleanup":true}
+    },
+    {
+      "id": "threads-capability",
+      "vm_observable": "threads-capability:shared-alias",
+      "native_expected": {"status":"passed","line":"threads-capability:shared-alias","cleanup":true,"workers":4,"increments":40}
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-vm-fixture",
+    "missing-native-probe",
+    "corpus-id-drift",
+    "native-case-missing",
+    "native-case-duplicate",
+    "observable-line-drift",
+    "static-loan-rejection-drift",
+    "suspension-inference-drift",
+    "stale-native-handle",
+    "nonzero-live-objects",
+    "physical-path-in-evidence",
+    "native-aot-lowering-claim"
+  ],
+  "report": "target/reliability/evidence/stdlib-sync-collection-conformance.json",
+  "next_blocks": ["STD-SYNC-CONF-001"]
+}
