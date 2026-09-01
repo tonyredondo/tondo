@@ -11,7 +11,7 @@
   "probe": {
     "path": "crates/tondo-compiler/src/process_host.rs",
     "test": "process_host::tests::sync_collection_performance_probe",
-    "sha256": "5b9d7a0140e611636848facee3dfab458c6a92d33a4fb30468f2413da5a0a52b"
+    "sha256": "7ce24bfdc1e5e074ce79ccba3b9c75b21803bc31470ae63cd2b946928716780d"
   },
   "protocol": {
     "clock": "monotonic",
