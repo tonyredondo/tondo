@@ -76,11 +76,12 @@ done < <(jq -r '.required_checks[]' "$contract")
 public_api="testing/stdlib-public-api.json"
 matrix="testing/stdlib-matrix.json"
 evidence="testing/stdlib-owner-evidence.json"
-conformance="target/reliability/evidence/stdlib-conformance.json"
-distribution="target/reliability/evidence/stdlib-distribution/stdlib-distribution.json"
-performance="target/reliability/evidence/stdlib-performance-report.json"
-async_select="target/reliability/evidence/async-select-conformance.json"
-async_perf="target/reliability/evidence/async-select-performance.json"
+evidence_root="${TONDO_STDLIB_EVIDENCE_DIR:-target/reliability/evidence}"
+conformance="$evidence_root/stdlib-conformance.json"
+distribution="$evidence_root/stdlib-distribution/stdlib-distribution.json"
+performance="$evidence_root/stdlib-performance-report.json"
+async_select="$evidence_root/async-select-conformance.json"
+async_perf="$evidence_root/async-select-performance.json"
 
 jq -e '
   .format == "tondo-stdlib-public-api-audit/1"
@@ -143,9 +144,17 @@ jq -e \
      and (.measurements | length) > 0' \
     "$async_perf" >/dev/null || die "async-select performance evidence is stale or incomplete"
 
+resolve_path() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) printf '%s/%s\n' "$root" "$1" ;;
+    esac
+}
+
 dist_archive="$(jq -r '.archive' "$distribution")"
-[[ -f "$root/$dist_archive" ]] || die "distribution archive is missing: $dist_archive"
-dist_archive_sha256="$(sha256sum "$root/$dist_archive" | cut -d' ' -f1)"
+dist_archive_path="$(resolve_path "$dist_archive")"
+[[ -f "$dist_archive_path" ]] || die "distribution archive is missing: $dist_archive"
+dist_archive_sha256="$(sha256sum "$dist_archive_path" | cut -d' ' -f1)"
 jq -e \
     --arg archive_sha256 "$dist_archive_sha256" \
     '.format == "tondo-stdlib-distribution-evidence/1"
@@ -196,19 +205,20 @@ done < <(jq -r '.required_inputs[]' "$contract")
 copy_evidence() {
     local source="$1" destination="$2"
     mkdir -p "$stage/evidence/$(dirname "$destination")"
-    cp -- "$root/$source" "$stage/evidence/$destination"
+    cp -- "$(resolve_path "$source")" "$stage/evidence/$destination"
 }
 
-copy_evidence "target/reliability/evidence/stdlib-conformance.json" "stdlib-conformance.json"
-copy_evidence "target/reliability/evidence/stdlib-performance-report.json" "stdlib-performance-report.json"
-copy_evidence "target/reliability/evidence/async-select-conformance.json" "async-select-conformance.json"
-copy_evidence "target/reliability/evidence/async-select-performance.json" "async-select-performance.json"
-copy_evidence "target/reliability/evidence/conformance-result.json" "conformance-result.json"
-copy_evidence "target/reliability/evidence/layer-evidence.json" "layer-evidence.json"
-copy_evidence "target/reliability/evidence/stdlib-distribution/stdlib-distribution.json" "stdlib-distribution.json"
+copy_evidence "$evidence_root/stdlib-conformance.json" "stdlib-conformance.json"
+copy_evidence "$evidence_root/stdlib-performance-report.json" "stdlib-performance-report.json"
+copy_evidence "$evidence_root/async-select-conformance.json" "async-select-conformance.json"
+copy_evidence "$evidence_root/async-select-performance.json" "async-select-performance.json"
+copy_evidence "$evidence_root/conformance-result.json" "conformance-result.json"
+copy_evidence "$evidence_root/layer-evidence.json" "layer-evidence.json"
+copy_evidence "$evidence_root/stdlib-distribution/stdlib-distribution.json" "stdlib-distribution.json"
 mkdir -p "$stage/evidence/stdlib-conformance-logs"
-cp -a -- "$root/target/reliability/evidence/stdlib-conformance-logs/." "$stage/evidence/stdlib-conformance-logs/"
-cp -- "$root/target/reliability/evidence/stdlib-distribution/tondo-std-0.1.tar" "$stage/distribution/tondo-std-0.1.tar"
+cp -a -- "$evidence_root/stdlib-conformance-logs/." "$stage/evidence/stdlib-conformance-logs/"
+cp -- "$(resolve_path "$evidence_root/stdlib-distribution/tondo-std-0.1.tar")" \
+    "$stage/distribution/tondo-std-0.1.tar"
 
 while IFS= read -r log; do
     [[ -n "$log" ]] || continue
