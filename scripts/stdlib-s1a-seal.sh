@@ -6,6 +6,9 @@ cd "$root"
 
 contract="${TONDO_STDLIB_S1A_SEAL_CONTRACT:-$root/testing/stdlib-s1a-seal.json}"
 output_dir="${TONDO_STDLIB_S1A_SEAL_DIR:-$root/target/reliability/evidence/stdlib-s1a-seal}"
+if [[ "$output_dir" != /* ]]; then
+    output_dir="$root/$output_dir"
+fi
 
 die() {
     echo "stdlib S1A seal: $*" >&2
