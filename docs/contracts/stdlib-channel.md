@@ -12,8 +12,37 @@ de Tondo. Reutiliza el scheduler y la expresión núcleo `select`, no crea un
 segundo tipo `Task`/`Future`, no añade `std.async.select` y no introduce
 capabilities ambientales. La implementación necesita primitivas de wakeup,
 estado atómico y almacenamiento de VM y backend nativo, por lo que su frontera
-`HOST` queda pendiente de `NATIVE-001` y de `STD-CHANNEL-IMPL-001`
-(`required-after-native-gate`).
+`HOST` queda cerrada para el scheduler hosted y el bridge nativo privado por
+`STD-CHANNEL-IMPL-001`. Este cierre es target-qualified: no promociona todavía
+los símbolos como API pública ni afirma lowering AOT genérico de canales.
+
+## Frontera de implementación verificada
+
+Estado de host: `verified-scheduler-and-native-bridge`; estado nativo:
+`verified-native-runtime-abi`.
+
+El compilador registra por identidad nominal `Sender[T]`, `Receiver[T]` y sus
+errores, conserva el bound `T: Send` y baja `send`/`receive` seleccionables a
+la misma keyword núcleo `select`. La VM hosted ejecuta una cola `VecDeque` con
+jobs de scheduler: una llamada que no puede comprometerse se registra, se
+desregistra al cancelar y se reintenta sin bloquear un worker cooperativo.
+El orden FIFO se aplica al punto de commit, incluido el rendezvous de
+`bounded(0)` y el backpressure de capacidades positivas.
+
+El runtime nativo expone únicamente un bridge privado de capacidades opacas
+`u64`. Cada identidad usa una celda `Mutex`/`Condvar`, las esperas bloqueantes
+se permiten solo en workers nativos y los resultados se transportan por
+handles `Result`/`Option` internos. El carrier `ChannelDrain` de
+`Receiver.close` conserva los valores pendientes hasta que el lowering nativo
+futuro los materialice como `Array[T]`; su layout no es una promesa ABI.
+
+La fixture `tests/runtime/m11-std-channel-impl-001.to` verifica constructor,
+FIFO, `Full`, cierre, backpressure y commit de ambos brazos seleccionables.
+La sonda independiente
+`crates/tondo-native-runtime/examples/channel_conformance.rs` verifica la
+misma frontera observable en un proceso nativo fresco. Ambas pruebas son
+evidencia de hosted VM y ABI nativo privado sobre el target host; no equivalen
+a ejecución AOT Cranelift ni a una publicación de la librería.
 
 ## Superficie pública
 
@@ -176,7 +205,7 @@ por defecto, clones implícitos, un executor propio y cualquier API pública de
 `select`. La keyword núcleo sigue siendo la única representación de selección.
 
 La implementación pública permanece pendiente de
-`STD-CHANNEL-IMPL-001`, `STD-CHANNEL-ASYNC-ITER-001`, su modelo y fuzzing,
-presupuestos de rendimiento, conformidad VM/nativa y documentación ejecutable.
-El contrato ya puede alimentar `DIAG-RUNTIME-001`, pero no promociona símbolos
-runtime antes de cerrar esas leaves.
+`STD-CHANNEL-ASYNC-ITER-001`, su modelo y fuzzing, presupuestos de rendimiento,
+conformidad VM/nativa y documentación ejecutable. El contrato ya puede
+alimentar `DIAG-RUNTIME-001`, pero no promociona símbolos runtime ni lowering
+AOT antes de cerrar esas leaves.

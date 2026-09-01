@@ -313,7 +313,8 @@ impl<'a> TypeLowerer<'a> {
         self.lower_bootstrap_messagepack_nominal_declarations()?;
         self.lower_bootstrap_protobuf_nominal_declarations()?;
         self.lower_bootstrap_async_nominal_declarations()?;
-        self.lower_bootstrap_sync_nominal_declarations()
+        self.lower_bootstrap_sync_nominal_declarations()?;
+        self.lower_bootstrap_channel_nominal_declarations()
     }
 
     fn lower_bootstrap_async_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -436,6 +437,92 @@ impl<'a> TypeLowerer<'a> {
                 }
             } else {
                 HirNominalShape::Enum { variants }
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: (0..generic_count)
+                        .map(|position| HirGenericParameter {
+                            local: LocalId::synthetic_host_generic(position as u32),
+                            position: position as u32,
+                            bounds: Vec::new(),
+                        })
+                        .collect(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn lower_bootstrap_channel_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("channel")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let generic = self.interner.generic_parameter(0)?;
+        for name in [
+            "Sender",
+            "Receiver",
+            "ChannelError",
+            "SendError",
+            "TrySendError",
+            "TryReceive",
+        ] {
+            let type_name = Name::new(name).expect("bootstrap channel type names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("bootstrap channel nominal symbols are indexed");
+            let generic_count = match name {
+                "Sender" | "Receiver" | "SendError" | "TrySendError" | "TryReceive" => 1,
+                "ChannelError" => 0,
+                _ => unreachable!("bootstrap channel nominal list is closed"),
+            };
+            let generic_args = (generic_count == 1)
+                .then_some(vec![generic])
+                .unwrap_or_default();
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), generic_args)?;
+            let shape = match name {
+                "Sender" | "Receiver" => HirNominalShape::Newtype {
+                    underlying: self.interner.scalar(ScalarType::Unit),
+                },
+                "ChannelError" => HirNominalShape::Enum {
+                    variants: ["InvalidCapacity", "ResourceLimit"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                        .collect(),
+                },
+                "SendError" => HirNominalShape::Enum {
+                    variants: ["Closed", "ResourceLimit"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, vec![generic]))
+                        .collect(),
+                },
+                "TrySendError" => HirNominalShape::Enum {
+                    variants: ["Full", "Closed", "ResourceLimit"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, vec![generic]))
+                        .collect(),
+                },
+                "TryReceive" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "Item", vec![generic]),
+                        self.bootstrap_variant(symbol, "Empty", Vec::new()),
+                        self.bootstrap_variant(symbol, "Closed", Vec::new()),
+                    ],
+                },
+                _ => unreachable!("bootstrap channel nominal list is closed"),
             };
             self.declarations.insert(
                 symbol,
@@ -884,6 +971,7 @@ impl<'a> TypeLowerer<'a> {
         let process = ModulePath::new("process")?;
         let async_module = ModulePath::new("async")?;
         let sync = ModulePath::new("sync")?;
+        let channel = ModulePath::new("channel")?;
         let bytes_module = self
             .packages
             .module(self.packages.standard(), &bytes_module);
@@ -892,6 +980,7 @@ impl<'a> TypeLowerer<'a> {
             .packages
             .module(self.packages.standard(), &async_module);
         let sync_module = self.packages.module(self.packages.standard(), &sync);
+        let channel_module = self.packages.module(self.packages.standard(), &channel);
         let time = ModulePath::new("time")?;
         let time_module = self.packages.module(self.packages.standard(), &time);
         let env = ModulePath::new("env")?;
@@ -949,6 +1038,14 @@ impl<'a> TypeLowerer<'a> {
                 matches!(
                     reference.entity(),
                     ResolvedEntity::Module(module) if module == sync_module
+                )
+            })
+        });
+        let channel_referenced = channel_module.as_ref().is_some_and(|channel_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == channel_module
                 )
             })
         });
@@ -1068,6 +1165,7 @@ impl<'a> TypeLowerer<'a> {
             && !process_referenced
             && !async_referenced
             && !sync_referenced
+            && !channel_referenced
             && !time_referenced
             && !env_referenced
             && !math_referenced
@@ -2218,6 +2316,136 @@ impl<'a> TypeLowerer<'a> {
                 compare_exchange,
                 1,
                 atomic_bounds,
+            )?;
+        }
+
+        if channel_referenced {
+            let channel_module = channel_module
+                .as_ref()
+                .expect("channel reference implies a bootstrap channel module");
+            let generic_value = self.interner.generic_parameter(0)?;
+            let sender = self.bootstrap_nominal_type_with_args(
+                channel_module,
+                "Sender",
+                vec![generic_value],
+            )?;
+            let receiver = self.bootstrap_nominal_type_with_args(
+                channel_module,
+                "Receiver",
+                vec![generic_value],
+            )?;
+            let channel_error = self.bootstrap_nominal_type(channel_module, "ChannelError")?;
+            let send_error = self.bootstrap_nominal_type_with_args(
+                channel_module,
+                "SendError",
+                vec![generic_value],
+            )?;
+            let try_send_error = self.bootstrap_nominal_type_with_args(
+                channel_module,
+                "TrySendError",
+                vec![generic_value],
+            )?;
+            let try_receive = self.bootstrap_nominal_type_with_args(
+                channel_module,
+                "TryReceive",
+                vec![generic_value],
+            )?;
+            let endpoints = self.interner.tuple(vec![sender, receiver])?;
+            let endpoint_result = self.interner.result(endpoints, channel_error)?;
+            let sender_result = self.interner.result(sender, channel_error)?;
+            let receiver_result = self.interner.result(receiver, channel_error)?;
+            let send_result = self.interner.result(unit, send_error)?;
+            let try_send_result = self.interner.result(unit, try_send_error)?;
+            let receive_result = self.interner.option(generic_value)?;
+            let send_bound = vec![(0, vec![self.prelude_trait_bound("Send")])];
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelBounded,
+                vec![(int, ParameterMode::Value, false)],
+                endpoint_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelUnbounded,
+                Vec::new(),
+                endpoint_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelSenderFork,
+                vec![(sender, ParameterMode::Ref, true)],
+                sender_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelSenderSend,
+                vec![
+                    (sender, ParameterMode::Ref, true),
+                    (generic_value, ParameterMode::Value, false),
+                ],
+                send_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelSenderTrySend,
+                vec![
+                    (sender, ParameterMode::Ref, true),
+                    (generic_value, ParameterMode::Value, false),
+                ],
+                try_send_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelSenderClose,
+                vec![(sender, ParameterMode::Value, true)],
+                unit,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelReceiverFork,
+                vec![(receiver, ParameterMode::Ref, true)],
+                receiver_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelReceiverReceive,
+                vec![(receiver, ParameterMode::Ref, true)],
+                receive_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelReceiverTryReceive,
+                vec![(receiver, ParameterMode::Ref, true)],
+                try_receive,
+                1,
+                send_bound.clone(),
+            )?;
+            let array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic_value])?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelReceiverClose,
+                vec![(receiver, ParameterMode::Value, true)],
+                array,
+                1,
+                send_bound,
             )?;
         }
 

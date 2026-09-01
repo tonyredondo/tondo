@@ -1802,13 +1802,47 @@ impl<'program, 'host> Engine<'program, 'host> {
             .collect()
     }
 
+    fn host_call_wakes_select(&self, call: u64) -> bool {
+        let Some(task) = self.tasks.iter().find(|task| {
+            matches!(
+                task.status,
+                TaskStatus::Waiting(TaskWait::HostTask { call: pending, .. })
+                    | TaskStatus::Waiting(TaskWait::HostCall {
+                        call: pending,
+                        completion: None,
+                        ..
+                    })
+                    | TaskStatus::Waiting(TaskWait::DeferredHostCall {
+                        call: pending,
+                        completion: None,
+                        ..
+                    }) if pending == call
+            )
+        }) else {
+            return false;
+        };
+        task.waiters.iter().any(|waiter| {
+            self.tasks.get(*waiter).is_some_and(|task| {
+                matches!(task.status, TaskStatus::Waiting(TaskWait::Select { .. }))
+            })
+        })
+    }
+
     fn poll_host_calls(&mut self) -> Result<(), VmError> {
         for call in self.pending_host_calls() {
             if self.host.is_virtual_quiescence_call(call) && !self.runnable.is_empty() {
                 continue;
             }
+            let wakes_select = self.host_call_wakes_select(call);
             if let Some(value) = self.host.poll_async(call)? {
                 self.complete_host_call(call, value)?;
+                if wakes_select {
+                    // A channel send/receive is committed by completing its
+                    // host task. Stop this poll round after waking a select
+                    // owner so another ready arm cannot commit before the
+                    // owner performs the core three-phase selection.
+                    break;
+                }
             }
         }
         Ok(())
@@ -6360,6 +6394,18 @@ fn sync_collection_host_kind(
         _ => return None,
     };
     let identity_suffix = format!("::sync::type::{}", nominal.name);
+    (nominal.identity.contains(":toolchain:std:0.1-bootstrap::")
+        && nominal.identity.ends_with(&identity_suffix))
+    .then_some(kind)
+}
+
+fn channel_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<RuntimeHostValueKind> {
+    let kind = match nominal.name.as_str() {
+        "Sender" => RuntimeHostValueKind::ChannelSender,
+        "Receiver" => RuntimeHostValueKind::ChannelReceiver,
+        _ => return None,
+    };
+    let identity_suffix = format!("::channel::type::{}", nominal.name);
     (nominal.identity.contains(":toolchain:std:0.1-bootstrap::")
         && nominal.identity.ends_with(&identity_suffix))
     .then_some(kind)
@@ -12615,7 +12661,9 @@ impl Engine<'_, '_> {
                 .program
                 .nominals
                 .get(nominal.index() as usize)
-                .and_then(sync_collection_host_kind)
+                .and_then(|nominal| {
+                    sync_collection_host_kind(nominal).or_else(|| channel_host_kind(nominal))
+                })
                 == Some(kind) =>
             {
                 Ok(Value::Host(RuntimeValue::Host { kind, id }))

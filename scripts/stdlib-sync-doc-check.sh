@@ -48,7 +48,7 @@ jq -e '
   ]
   and .implementation.required_follow_ups == []
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
 ' "$contract" >/dev/null || die "owner contract does not close the documentation record"
 
 for marker in \

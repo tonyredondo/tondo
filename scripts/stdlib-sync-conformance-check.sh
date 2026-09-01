@@ -63,7 +63,7 @@ jq -e '
   and (([.negative_cases[]] | unique | length) == (.negative_cases | length))
   and all([.vm.fixture, .native.runtime, .native.probe, .contract, .document][]; startswith("/") | not)
   and .report == "target/reliability/evidence/stdlib-sync-conformance.json"
-  and .next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable conformance contract"
 
 for path in testing/stdlib-sync.json testing/stdlib-sync-test.json testing/stdlib-sync-collection-conformance.json docs/contracts/stdlib-sync.md docs/contracts/stdlib-sync-conformance.md docs/contracts/stdlib-sync-collection-conformance.md TONDO_STANDARD_LIBRARY_SPEC.md TONDO_LANGUAGE_SPEC.md TONDO_IMPLEMENTATION_TRACKER.md tests/runtime/m11-std-sync-conformance-001.to tests/runtime/m11-std-sync-conformance-001.stdout tests/runtime/m11-std-sync-conformance-001.exit tests/compile-fail/m11-std-sync-conf-missing-threads.to tests/compile-fail/m11-std-sync-conf-missing-threads.codes crates/tondo-compiler/src/driver.rs crates/tondo-native-runtime/src/lib.rs crates/tondo-native-runtime/examples/sync_conformance.rs; do
@@ -95,7 +95,7 @@ jq -e '
   and .conformance.document == "docs/contracts/stdlib-sync-conformance.md"
   and .conformance.target == "tondo-vm-hosted-and-native-runtime-abi"
   and .conformance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
   and (.promotion.remaining | index("STD-SYNC-CONF-001")) == null
 ' "$root/testing/stdlib-sync.json" >/dev/null || die "std.sync owner registry does not promote sync conformance"
 
@@ -103,10 +103,10 @@ jq -e '
   .collections.conformance.task == "STD-SYNC-COLLECTION-CONF-001"
   and .collections.conformance.status == "verified"
   and .collections.conformance.contract == "testing/stdlib-sync-collection-conformance.json"
-  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
 ' "$root/testing/stdlib-sync.json" >/dev/null || die "std.sync registry does not retain the collection dependency"
 
-jq -e '.next_blocks == ["STD-CHANNEL-IMPL-001"]' "$root/testing/stdlib-sync-collection-conformance.json" >/dev/null || die "collection child conformance does not advance with its owner"
+jq -e '.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]' "$root/testing/stdlib-sync-collection-conformance.json" >/dev/null || die "collection child conformance does not advance with its owner"
 
 grep -Fxq 'E1008' "$root/tests/compile-fail/m11-std-sync-conf-missing-threads.codes" || die "missing-threads fixture does not pin E1008"
 grep -Fq 'stdlib-sync-conformance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" || die "main stdlib spec does not link sync conformance"

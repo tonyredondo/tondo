@@ -31,6 +31,18 @@ expect_failure random-fairness env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/rando
 jq '.iterator.bound = "T: Copy"' testing/stdlib-channel.json > "$tmp_dir/wrong-iterator-bound.json"
 expect_failure wrong-iterator-bound env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/wrong-iterator-bound.json" scripts/stdlib-channel-check.sh
 
+jq '.implementation.status = "pending"' testing/stdlib-channel.json > "$tmp_dir/pending-implementation.json"
+expect_failure pending-implementation env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/pending-implementation.json" scripts/stdlib-channel-check.sh
+
+jq '.implementation.native_aot_lowering = "verified"' testing/stdlib-channel.json > "$tmp_dir/unclaimed-aot.json"
+expect_failure claimed-aot env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/unclaimed-aot.json" scripts/stdlib-channel-check.sh
+
+jq '.host.blocking_native_workers_only = false' testing/stdlib-channel.json > "$tmp_dir/cooperative-blocking.json"
+expect_failure cooperative-blocking env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/cooperative-blocking.json" scripts/stdlib-channel-check.sh
+
+jq '.implementation.native_probe.status = "pending"' testing/stdlib-channel.json > "$tmp_dir/pending-probe.json"
+expect_failure pending-probe env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/pending-probe.json" scripts/stdlib-channel-check.sh
+
 for marker in \
     'pub enum ChannelError' \
     'pub enum SendError[T]' \
@@ -51,7 +63,8 @@ for marker in \
     'receiver-close-and-discard-pending-values' \
     'FIFO-registration-per-operation' \
     'channel.receive.rollback' \
-    'required-after-native-gate' \
+    'verified-scheduler-and-native-bridge' \
+    'STD-CHANNEL-IMPL-001' \
     'AsyncChannel' \
     'stdlib-select-api'; do
     grep -Fq "$marker" testing/stdlib-channel.json
@@ -67,6 +80,10 @@ jq -e '
   and .iterator.bound == "T: Discard"
   and .fairness.waiter_order == "FIFO-registration-per-operation"
   and .implementation.public_api_promoted == false
+  and .implementation.status == "verified-hosted-vm-and-native-runtime-abi"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and .host.blocking_native_workers_only == true
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
 ' testing/stdlib-channel.json >/dev/null
 
-echo "std.channel tests: OK (negative contract cases, ownership, backpressure, select and fairness anchors)"
+echo "std.channel tests: OK (negative contract cases, ownership, backpressure, select, runtime boundary and fairness anchors)"

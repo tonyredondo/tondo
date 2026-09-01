@@ -15610,6 +15610,8 @@ impl<'a> ExpressionChecker<'a> {
                 ("sync", Some("once")) => HirBootstrapHostFunction::SyncOnce,
                 ("sync", Some("barrier")) => HirBootstrapHostFunction::SyncBarrier,
                 ("sync", Some("atomic")) => HirBootstrapHostFunction::SyncAtomic,
+                ("channel", Some("bounded")) => HirBootstrapHostFunction::ChannelBounded,
+                ("channel", Some("unbounded")) => HirBootstrapHostFunction::ChannelUnbounded,
                 ("iter", Some("map")) => HirBootstrapHostFunction::IterMap,
                 ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
                 ("iter", Some("take")) => HirBootstrapHostFunction::IterTake,
@@ -15682,6 +15684,7 @@ impl<'a> ExpressionChecker<'a> {
                 | ("protobuf", Some(name))
                 | ("iter", Some(name))
                 | ("sync", Some(name))
+                | ("channel", Some(name))
                 | ("path", Some(name))
                 | ("fs", Some(name))
                 | ("testing", Some(name)) => {
@@ -18125,6 +18128,19 @@ impl<'a> ExpressionChecker<'a> {
         )? {
             return Ok(Some(call));
         }
+        if let Some(call) = self.check_channel_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            expected,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_process_method_call(
             file,
             range,
@@ -19060,6 +19076,82 @@ impl<'a> ExpressionChecker<'a> {
                 self.sources.span(file, bracket.range())?,
                 "E1104",
                 "std.sync collection methods do not declare explicit type arguments",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        if self
+            .program
+            .callable(HirCallableId::Host(function))
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            Some(receiver),
+            None,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_channel_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let TypeKind::Nominal {
+            identity,
+            arguments,
+        } = self.program.interner.kind(receiver_type)?
+        else {
+            return Ok(None);
+        };
+        if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.module().as_str() != "channel"
+            || arguments.len() != 1
+        {
+            return Ok(None);
+        }
+        let owner = identity.declaration().to_string();
+        let function = match (owner.as_str(), member) {
+            ("Sender", "fork") => HirBootstrapHostFunction::ChannelSenderFork,
+            ("Sender", "send") => HirBootstrapHostFunction::ChannelSenderSend,
+            ("Sender", "trySend") => HirBootstrapHostFunction::ChannelSenderTrySend,
+            ("Sender", "close") => HirBootstrapHostFunction::ChannelSenderClose,
+            ("Receiver", "fork") => HirBootstrapHostFunction::ChannelReceiverFork,
+            ("Receiver", "receive") => HirBootstrapHostFunction::ChannelReceiverReceive,
+            ("Receiver", "tryReceive") => HirBootstrapHostFunction::ChannelReceiverTryReceive,
+            ("Receiver", "close") => HirBootstrapHostFunction::ChannelReceiverClose,
+            _ => return Ok(None),
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "std.channel endpoint methods do not declare explicit type arguments",
                 Vec::new(),
                 None,
             )?;

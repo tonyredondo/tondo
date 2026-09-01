@@ -125,6 +125,12 @@ run_step stdlib-channel-contract \
     scripts/stdlib-channel-check.sh
 run_step stdlib-channel-contract-tests \
     scripts/stdlib-channel-test.sh
+run_step stdlib-channel-implementation-contract \
+    scripts/stdlib-channel-implementation-check.sh
+run_step stdlib-channel-implementation-contract-tests \
+    scripts/stdlib-channel-implementation-test.sh
+run_step stdlib-channel-implementation \
+    scripts/stdlib-channel-implementation.sh
 run_step stdlib-sync-contract \
     scripts/stdlib-sync-check.sh
 run_step stdlib-sync-contract-tests \

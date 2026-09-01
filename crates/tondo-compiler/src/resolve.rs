@@ -719,6 +719,33 @@ fn bootstrap_sync_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShap
     ]
 }
 
+fn bootstrap_channel_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 6] {
+    [
+        ("Sender", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        ("Receiver", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        (
+            "ChannelError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["InvalidCapacity", "ResourceLimit"]),
+        ),
+        (
+            "SendError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Closed", "ResourceLimit"]),
+        ),
+        (
+            "TrySendError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Full", "Closed", "ResourceLimit"]),
+        ),
+        (
+            "TryReceive",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Item", "Empty", "Closed"]),
+        ),
+    ]
+}
+
 fn bootstrap_messagepack_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 5] {
     [
         (
@@ -987,7 +1014,13 @@ impl Resolver<'_> {
             "async",
             &bootstrap_async_nominals(),
         )?;
-        self.install_bootstrap_module_nominals(file, program, "sync", &bootstrap_sync_nominals())
+        self.install_bootstrap_module_nominals(file, program, "sync", &bootstrap_sync_nominals())?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "channel",
+            &bootstrap_channel_nominals(),
+        )
     }
 
     fn install_bootstrap_module_nominals(
@@ -1038,6 +1071,10 @@ impl Resolver<'_> {
                     ("sync", "CompareExchange") => 1,
                     ("sync", "Array" | "Set" | "Stack" | "Queue") => 1,
                     ("sync", "Map") => 2,
+                    (
+                        "channel",
+                        "Sender" | "Receiver" | "SendError" | "TrySendError" | "TryReceive",
+                    ) => 1,
                     _ => 0,
                 },
                 synthetic: true,

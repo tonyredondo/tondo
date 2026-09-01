@@ -235,6 +235,8 @@ pub enum RuntimeHostValueKind {
     SyncSet,
     SyncStack,
     SyncQueue,
+    ChannelSender,
+    ChannelReceiver,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

@@ -1,0 +1,8 @@
+import std.channel
+
+fn invalid(): !channel.ChannelError suspends {
+    let endpoints = channel.bounded[Int](0)?
+    let receiver = endpoints.1
+    let value = await receiver.receive()
+    _ = value
+}

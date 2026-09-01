@@ -127,7 +127,7 @@ observable VM/native de ocho casos, incluidos aliases, outcomes, orden,
 cursores, snapshots, límites, cleanup y capability `threads`; la campaña no
 promueve fast paths nativos ni lowering AOT genérico. `STD-SYNC-CONF-001` y la
 conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
-con la guía ejecutable y el siguiente bloque es `STD-CHANNEL-IMPL-001`. El modelo y
+con la guía ejecutable y el siguiente bloque es `STD-CHANNEL-ASYNC-ITER-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6282,9 +6282,10 @@ publica hasta cerrar el gate final.
   registros, ownership `T: Send`, cancelación y eventos privados para
   `DIAG-RUNTIME-001`. Los negativos ejecutables son
   `scripts/stdlib-channel-check.sh` y `scripts/stdlib-channel-test.sh`,
-  integrados en `test-gate.sh`. La implementación y el bridge host siguen
-  pendientes de las leaves `STD-CHANNEL-*`; no se define selector, casos,
-  macros ni operaciones paralelas de selección.
+  integrados en `test-gate.sh`. Este contrato no define selector, casos,
+  macros ni operaciones paralelas de selección; la implementación
+  target-qualified se registra por separado en `STD-CHANNEL-IMPL-001`, sin
+  convertir este contrato en una API pública ni reclamar lowering AOT.
 
 - [x] **STD-SYNC-001 — Especificar `std.sync`.** El registro
   [`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y el contrato
@@ -6747,13 +6748,20 @@ estas leaves.
 
 #### 21.3.3 `std.channel`
 
-- [ ] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Publicar endpoints
-  `Sender`/`Receiver`, `bounded(0/N)`, `unbounded` explícito, send/receive,
-  fork, try-operations, cierre, devolución de pendientes, backpressure y
-  `send`/`receive` seleccionables con `T: Send` sobre la keyword núcleo y sin
-  tasks desligadas. Un
-  envío no comprometido devuelve su payload afín intacto y el último receiver
-  no puede abandonar valores con obligación terminal.
+- [x] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Cerrada la
+  superficie nominal de `Sender[T]`/`Receiver[T]` en compiler, VM hosted y ABI
+  nativo privado: `bounded(0/N)`, `unbounded` explícito, FIFO, backpressure,
+  `fork`, try-operations, cierre y devolución terminal de pendientes. Las
+  llamadas `send`/`receive` se registran en el scheduler y participan en la
+  keyword núcleo `select` sin tasks desligadas; el commit mueve el payload una
+  sola vez y todo fallo devuelve el valor afín intacto. La fixture
+  `tests/runtime/m11-std-channel-impl-001.to` cubre además ambos brazos
+  seleccionables; `crates/tondo-native-runtime/examples/channel_conformance.rs`
+  comprueba el mismo corpus observable en un proceso nativo fresco. El
+  registro y la evidencia están en `testing/stdlib-channel.json` y
+  `target/reliability/evidence/stdlib-channel-implementation.json`; el cierre
+  es target-qualified, no promociona una API pública y no reclama lowering AOT.
+  El siguiente bloque es `STD-CHANNEL-ASYNC-ITER-001`.
 - [ ] **STD-CHANNEL-ASYNC-ITER-001 — Adaptar canales a `AsyncIterator`.**
   Implementar la vista consumible bajo `T: Discard` sobre el protocolo ya
   cerrado, preservando backpressure, cierre, cancelación y ownership sin
@@ -7467,6 +7475,7 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 | `UTEST-SUSPENSION-CONTRACT-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_contracts.rs` fijan `E1611` para `await call()`, llamada directa a `Waiter.wait()` y hashes de interfaz `suspends`. |
 | `STD-A-ASYNC-IMPL-001` | **Cerrada** | Implementación VM completa de `std.async`: ruta directa y `spawn` de `collect`, cursor genérico, límites, cancelación cooperativa, liberación terminal y loans; rendimiento y conformance global siguen en sus leaves S1A. |
 | `STD-A-FUZZ-001` | **Cerrada** | Target owner-aware con 22 rutas, corpus y seeds reproducibles, límites de entrada/source/RSS/timeout, oráculos de no-panic e invariantes por owner, replay de minimizados y campañas smoke/nightly integradas; `FUZZ=verified` 22/22. |
+| `STD-CHANNEL-IMPL-001` | **Cerrada** | Compiler, VM hosted y bridge nativo privado verifican endpoints nominales, bounded/unbounded, FIFO, backpressure, fork, cierres, drenado terminal, cancelación y send/receive seleccionables; fixture y sonda nativa hash-bound, sin API pública ni lowering AOT. |
 | `STD-CHANNEL-ASYNC-ITER-001` | **Pendiente real** | Requiere adaptación de Channel en S1; no forma parte del bootstrap VM. |
 | `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
 | `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
@@ -7672,7 +7681,7 @@ acotado, `STD-SYNC-COLLECTION-PERF-001` queda cerrado para la línea base
 hosted y `STD-SYNC-COLLECTION-CONF-001` queda cerrado para la equivalencia
 observable VM/native; `STD-SYNC-CONF-001` y `STD-SYNC-DOC-001` también quedan
 cerrados para el corpus común VM/native-bridge y la guía ejecutable; el siguiente
-trabajo crítico es `STD-CHANNEL-IMPL-001`. La
+trabajo crítico es `STD-CHANNEL-ASYNC-ITER-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

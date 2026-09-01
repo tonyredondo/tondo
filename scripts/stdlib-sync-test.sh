@@ -220,7 +220,7 @@ jq -e '
   and .documentation.expected_stdout == "sync-doc-ok"
   and .implementation.required_follow_ups == []
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
 ' testing/stdlib-sync.json >/dev/null
 
 scripts/stdlib-sync-collection-frontend-check.sh >/dev/null

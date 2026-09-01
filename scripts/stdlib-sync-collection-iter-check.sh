@@ -87,7 +87,7 @@ jq -e '
   and (.negative_cases | length) == 14
   and .promotion.implementation_complete == true
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
   and .promotion.remaining == .implementation.required_follow_ups
 ' "$contract" >/dev/null || die "invalid machine-readable iteration contract"
 
@@ -146,7 +146,7 @@ for marker in \
 done
 
 jq -e '
-  .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
   and (.promotion.implementation_pending | index("STD-SYNC-COLLECTION-ITER-001")) == null
   and (.promotion.implementation_pending | index("STD-SYNC-COLLECTION-TEST-001")) == null
   and .collections.direct_for.protocol == "AsyncIterator"
@@ -154,7 +154,7 @@ jq -e '
     || die "parent std.sync registry does not expose the iteration promotion boundary"
 
 jq -e '
-  .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
   and (.promotion.remaining | index("STD-SYNC-COLLECTION-ITER-001")) == null
   and (.promotion.remaining | index("STD-SYNC-COLLECTION-TEST-001")) == null
 ' "$root/testing/stdlib-sync-collection.json" >/dev/null \

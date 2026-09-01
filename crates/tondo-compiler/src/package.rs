@@ -658,6 +658,7 @@ pub(crate) fn bootstrap_standard_modules() -> Result<Vec<ModulePath>, PackageGra
         "process",
         "async",
         "sync",
+        "channel",
         "time",
         "env",
         "math",

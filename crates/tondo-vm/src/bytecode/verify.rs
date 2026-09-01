@@ -2425,6 +2425,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.sync.Set.")
                 && !callable.name.starts_with("std.sync.Stack.")
                 && !callable.name.starts_with("std.sync.Queue.")
+                && !callable.name.starts_with("std.channel.Sender.")
+                && !callable.name.starts_with("std.channel.Receiver.")
                 && !callable.name.starts_with("std.testing.shrink")
             {
                 return Err(BytecodeVerificationError::new(

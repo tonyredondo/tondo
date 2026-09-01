@@ -2721,6 +2721,16 @@ pub enum HirBootstrapHostFunction {
     SyncQueueDequeue,
     SyncQueuePeek,
     SyncQueueSnapshot,
+    ChannelBounded,
+    ChannelUnbounded,
+    ChannelSenderFork,
+    ChannelSenderSend,
+    ChannelSenderTrySend,
+    ChannelSenderClose,
+    ChannelReceiverFork,
+    ChannelReceiverReceive,
+    ChannelReceiverTryReceive,
+    ChannelReceiverClose,
     SyncMemoryOrderRelaxed,
     SyncMemoryOrderAcquire,
     SyncMemoryOrderRelease,
@@ -3132,6 +3142,16 @@ impl HirBootstrapHostFunction {
             Self::SyncQueueDequeue => "std.sync.Queue.dequeue",
             Self::SyncQueuePeek => "std.sync.Queue.peek",
             Self::SyncQueueSnapshot => "std.sync.Queue.snapshot",
+            Self::ChannelBounded => "std.channel.bounded",
+            Self::ChannelUnbounded => "std.channel.unbounded",
+            Self::ChannelSenderFork => "std.channel.Sender.fork",
+            Self::ChannelSenderSend => "std.channel.Sender.send",
+            Self::ChannelSenderTrySend => "std.channel.Sender.trySend",
+            Self::ChannelSenderClose => "std.channel.Sender.close",
+            Self::ChannelReceiverFork => "std.channel.Receiver.fork",
+            Self::ChannelReceiverReceive => "std.channel.Receiver.receive",
+            Self::ChannelReceiverTryReceive => "std.channel.Receiver.tryReceive",
+            Self::ChannelReceiverClose => "std.channel.Receiver.close",
             Self::SyncMemoryOrderRelaxed => "intrinsic.sync.MemoryOrder.Relaxed",
             Self::SyncMemoryOrderAcquire => "intrinsic.sync.MemoryOrder.Acquire",
             Self::SyncMemoryOrderRelease => "intrinsic.sync.MemoryOrder.Release",
@@ -3525,6 +3545,8 @@ impl HirBootstrapHostFunction {
                 | Self::SyncQueueDequeue
                 | Self::SyncQueuePeek
                 | Self::SyncQueueSnapshot
+                | Self::ChannelSenderSend
+                | Self::ChannelReceiverReceive
                 | Self::TimeSleep
                 | Self::TimerWait
                 | Self::TestingWithVirtualTime
@@ -3549,7 +3571,12 @@ impl HirBootstrapHostFunction {
     pub const fn is_selectable(self) -> bool {
         matches!(
             self,
-            Self::AsyncWaiterWait | Self::AsyncGroupNext | Self::TimeSleep | Self::TimerWait
+            Self::AsyncWaiterWait
+                | Self::AsyncGroupNext
+                | Self::ChannelSenderSend
+                | Self::ChannelReceiverReceive
+                | Self::TimeSleep
+                | Self::TimerWait
         )
     }
 

@@ -255,7 +255,7 @@ jq -e '
   and .performance.invariants.fairness == "zero-FIFO-registration-violations"
   and .implementation.required_follow_ups == []
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"

@@ -546,6 +546,12 @@ enum HostValue {
     SyncSet(Vec<RuntimeValue>),
     SyncStack(Vec<RuntimeValue>),
     SyncQueue(VecDeque<RuntimeValue>),
+    ChannelSender {
+        channel: u64,
+    },
+    ChannelReceiver {
+        channel: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -742,6 +748,7 @@ enum SyncResource {
     Condition(u64),
     Semaphore(u64),
     Barrier(u64),
+    Channel(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -759,6 +766,8 @@ enum SyncWaitKind {
     Barrier {
         generation: u64,
     },
+    ChannelSend,
+    ChannelReceive,
 }
 
 #[derive(Debug, Clone)]
@@ -767,6 +776,19 @@ struct PendingSync {
     resource: SyncResource,
     kind: SyncWaitKind,
     owner: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ChannelState {
+    /// `Some(n)` is a bounded channel, including rendezvous `Some(0)`. `None`
+    /// is the explicitly requested unbounded form, still limited by the host
+    /// resource budget.
+    capacity: Option<usize>,
+    queue: VecDeque<RuntimeValue>,
+    senders: usize,
+    receivers: usize,
+    sender_closed: bool,
+    receiver_closed: bool,
 }
 
 pub(crate) struct BootstrapHost {
@@ -789,6 +811,7 @@ pub(crate) struct BootstrapHost {
     ready_fs_jobs: BTreeSet<u64>,
     sync_waiters: BTreeMap<u64, PendingSync>,
     sync_queues: BTreeMap<SyncResource, VecDeque<u64>>,
+    channels: BTreeMap<u64, ChannelState>,
     current_unit: u64,
     time_jobs: BTreeMap<u64, TimeJob>,
     clock: ClockProvider,
@@ -854,6 +877,7 @@ impl BootstrapHost {
             ready_fs_jobs: BTreeSet::new(),
             sync_waiters: BTreeMap::new(),
             sync_queues: BTreeMap::new(),
+            channels: BTreeMap::new(),
             current_unit: 0,
             time_jobs: BTreeMap::new(),
             clock: ClockProvider::real(),
@@ -1019,6 +1043,361 @@ impl BootstrapHost {
         Ok(*id)
     }
 
+    fn channel_error(variant: u32) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "ChannelError".to_owned(),
+            variant,
+            values: Vec::new(),
+        }
+    }
+
+    fn channel_result_error(variant: u32) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(Self::channel_error(variant)))
+    }
+
+    fn channel_send_result_error(variant: u32, value: RuntimeValue) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "SendError".to_owned(),
+            variant,
+            values: vec![value],
+        }))
+    }
+
+    fn channel_try_send_result_error(variant: u32, value: RuntimeValue) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "TrySendError".to_owned(),
+            variant,
+            values: vec![value],
+        }))
+    }
+
+    fn channel_try_receive(variant: u32, value: Option<RuntimeValue>) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "TryReceive".to_owned(),
+            variant,
+            values: value.into_iter().collect(),
+        }
+    }
+
+    fn channel_sender_id(&self, value: &RuntimeValue) -> Result<(u64, u64), VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ChannelSender,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Sender value is invalid".into()));
+        };
+        let channel = match self.values.get(id) {
+            Some(HostValue::ChannelSender { channel }) => *channel,
+            _ => return Err(VmError::Host("Sender token is stale or invalid".into())),
+        };
+        if !self.channels.contains_key(&channel) {
+            return Err(VmError::Host("Sender channel identity is stale".into()));
+        }
+        Ok((*id, channel))
+    }
+
+    fn channel_receiver_id(&self, value: &RuntimeValue) -> Result<(u64, u64), VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ChannelReceiver,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Receiver value is invalid".into()));
+        };
+        let channel = match self.values.get(id) {
+            Some(HostValue::ChannelReceiver { channel }) => *channel,
+            _ => return Err(VmError::Host("Receiver token is stale or invalid".into())),
+        };
+        if !self.channels.contains_key(&channel) {
+            return Err(VmError::Host("Receiver channel identity is stale".into()));
+        }
+        Ok((*id, channel))
+    }
+
+    fn channel_waiting_call(&self, channel: u64, kind: SyncWaitKind) -> Option<u64> {
+        self.sync_queues
+            .get(&SyncResource::Channel(channel))
+            .and_then(|queue| {
+                queue.iter().copied().find(|call| {
+                    self.sync_waiters
+                        .get(call)
+                        .is_some_and(|pending| pending.kind == kind)
+                })
+            })
+    }
+
+    fn channel_match_waiters(
+        &mut self,
+        channel: u64,
+    ) -> Result<Option<(u64, u64, RuntimeValue)>, VmError> {
+        let Some(queue) = self
+            .sync_queues
+            .get(&SyncResource::Channel(channel))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let send = queue.iter().copied().find(|call| {
+            self.sync_waiters
+                .get(call)
+                .is_some_and(|pending| pending.kind == SyncWaitKind::ChannelSend)
+        });
+        let receive = queue.iter().copied().find(|call| {
+            self.sync_waiters
+                .get(call)
+                .is_some_and(|pending| pending.kind == SyncWaitKind::ChannelReceive)
+        });
+        let (Some(send), Some(receive)) = (send, receive) else {
+            return Ok(None);
+        };
+        let payload = self
+            .sync_waiters
+            .get(&send)
+            .and_then(|pending| pending.arguments.get(1))
+            .cloned()
+            .ok_or_else(|| VmError::Host("channel send waiter has no payload".into()))?;
+        self.remove_sync_waiter(send, SyncResource::Channel(channel));
+        self.remove_sync_waiter(receive, SyncResource::Channel(channel));
+        self.ready_jobs.insert(
+            send,
+            Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+        );
+        self.ready_jobs.insert(
+            receive,
+            Ok(RuntimeValue::OptionSome(Box::new(payload.clone()))),
+        );
+        Ok(Some((send, receive, payload)))
+    }
+
+    fn channel_new(&mut self, capacity: Option<usize>) -> RuntimeValue {
+        let channel = self.next_value;
+        self.next_value = self
+            .next_value
+            .checked_add(1)
+            .expect("channel identity space exhausted");
+        self.channels.insert(
+            channel,
+            ChannelState {
+                capacity,
+                queue: VecDeque::new(),
+                senders: 1,
+                receivers: 1,
+                sender_closed: false,
+                receiver_closed: false,
+            },
+        );
+        let sender = self.allocate(
+            RuntimeHostValueKind::ChannelSender,
+            HostValue::ChannelSender { channel },
+        );
+        let receiver = self.allocate(
+            RuntimeHostValueKind::ChannelReceiver,
+            HostValue::ChannelReceiver { channel },
+        );
+        RuntimeValue::Tuple(vec![sender, receiver])
+    }
+
+    fn channel_close_sender(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        let (endpoint, channel) = self.channel_sender_id(value)?;
+        let _ = self.values.remove(&endpoint);
+        let state = self
+            .channels
+            .get_mut(&channel)
+            .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
+        state.senders = state
+            .senders
+            .checked_sub(1)
+            .ok_or_else(|| VmError::Host("Sender endpoint count underflow".into()))?;
+        if state.senders == 0 {
+            state.sender_closed = true;
+        }
+        Ok(())
+    }
+
+    fn channel_close_receiver(
+        &mut self,
+        value: &RuntimeValue,
+    ) -> Result<Vec<RuntimeValue>, VmError> {
+        let (endpoint, channel) = self.channel_receiver_id(value)?;
+        let _ = self.values.remove(&endpoint);
+        let state = self
+            .channels
+            .get_mut(&channel)
+            .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
+        state.receivers = state
+            .receivers
+            .checked_sub(1)
+            .ok_or_else(|| VmError::Host("Receiver endpoint count underflow".into()))?;
+        if state.receivers == 0 {
+            state.receiver_closed = true;
+            return Ok(state.queue.drain(..).collect());
+        }
+        Ok(Vec::new())
+    }
+
+    fn channel_fork_sender(&mut self, value: &RuntimeValue) -> Result<RuntimeValue, VmError> {
+        let (_, channel) = self.channel_sender_id(value)?;
+        let state = self
+            .channels
+            .get_mut(&channel)
+            .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
+        state.senders = state
+            .senders
+            .checked_add(1)
+            .ok_or_else(|| VmError::Host("Sender endpoint count exhausted".into()))?;
+        Ok(self.allocate(
+            RuntimeHostValueKind::ChannelSender,
+            HostValue::ChannelSender { channel },
+        ))
+    }
+
+    fn channel_fork_receiver(&mut self, value: &RuntimeValue) -> Result<RuntimeValue, VmError> {
+        let (_, channel) = self.channel_receiver_id(value)?;
+        let state = self
+            .channels
+            .get_mut(&channel)
+            .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
+        state.receivers = state
+            .receivers
+            .checked_add(1)
+            .ok_or_else(|| VmError::Host("Receiver endpoint count exhausted".into()))?;
+        Ok(self.allocate(
+            RuntimeHostValueKind::ChannelReceiver,
+            HostValue::ChannelReceiver { channel },
+        ))
+    }
+
+    fn channel_send_now(
+        &mut self,
+        sender: &RuntimeValue,
+        value: RuntimeValue,
+    ) -> Result<RuntimeValue, VmError> {
+        let (_, channel) = self.channel_sender_id(sender)?;
+        let receiver_closed = self
+            .channels
+            .get(&channel)
+            .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?
+            .receiver_closed;
+        if receiver_closed {
+            return Ok(Self::channel_send_result_error(0, value));
+        }
+        if self
+            .channel_waiting_call(channel, SyncWaitKind::ChannelReceive)
+            .is_some()
+        {
+            let _ = self.channel_match_waiters(channel)?;
+            return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)));
+        }
+        let state = self
+            .channels
+            .get_mut(&channel)
+            .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
+        if state.receivers == 0 {
+            return Ok(Self::channel_send_result_error(0, value));
+        }
+        if state.capacity.is_none() && state.queue.len() as u64 >= self.max_bytes {
+            return Ok(Self::channel_send_result_error(1, value));
+        }
+        if state
+            .capacity
+            .is_some_and(|capacity| state.queue.len() >= capacity)
+        {
+            return Err(VmError::Host(
+                "channel send would block outside the VM scheduler".into(),
+            ));
+        }
+        state.queue.push_back(value);
+        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+    }
+
+    fn channel_try_send_now(
+        &mut self,
+        sender: &RuntimeValue,
+        value: RuntimeValue,
+    ) -> Result<RuntimeValue, VmError> {
+        let (_, channel) = self.channel_sender_id(sender)?;
+        let receiver_closed = self
+            .channels
+            .get(&channel)
+            .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?
+            .receiver_closed;
+        if receiver_closed {
+            return Ok(Self::channel_try_send_result_error(1, value));
+        }
+        if self
+            .channel_waiting_call(channel, SyncWaitKind::ChannelReceive)
+            .is_some()
+        {
+            let _ = self.channel_match_waiters(channel)?;
+            return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)));
+        }
+        let state = self
+            .channels
+            .get_mut(&channel)
+            .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
+        if state.receivers == 0 {
+            return Ok(Self::channel_try_send_result_error(1, value));
+        }
+        if state.capacity.is_none() && state.queue.len() as u64 >= self.max_bytes {
+            return Ok(Self::channel_try_send_result_error(2, value));
+        }
+        if state
+            .capacity
+            .is_some_and(|capacity| state.queue.len() >= capacity)
+        {
+            return Ok(Self::channel_try_send_result_error(0, value));
+        }
+        state.queue.push_back(value);
+        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+    }
+
+    fn channel_receive_now(&mut self, receiver: &RuntimeValue) -> Result<RuntimeValue, VmError> {
+        let (_, channel) = self.channel_receiver_id(receiver)?;
+        if let Some(state) = self.channels.get_mut(&channel)
+            && let Some(value) = state.queue.pop_front()
+        {
+            return Ok(RuntimeValue::OptionSome(Box::new(value)));
+        }
+        if let Some((_, _, value)) = self.channel_match_waiters(channel)? {
+            return Ok(RuntimeValue::OptionSome(Box::new(value)));
+        }
+        let state = self
+            .channels
+            .get(&channel)
+            .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
+        if state.receiver_closed || state.sender_closed {
+            return Ok(RuntimeValue::OptionNone);
+        }
+        Err(VmError::Host(
+            "channel receive would block outside the VM scheduler".into(),
+        ))
+    }
+
+    fn channel_try_receive_now(
+        &mut self,
+        receiver: &RuntimeValue,
+    ) -> Result<RuntimeValue, VmError> {
+        let (_, channel) = self.channel_receiver_id(receiver)?;
+        if let Some(state) = self.channels.get_mut(&channel)
+            && let Some(value) = state.queue.pop_front()
+        {
+            return Ok(Self::channel_try_receive(0, Some(value)));
+        }
+        if let Some((_, _, value)) = self.channel_match_waiters(channel)? {
+            return Ok(Self::channel_try_receive(0, Some(value)));
+        }
+        let state = self
+            .channels
+            .get(&channel)
+            .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
+        if state.receiver_closed || state.sender_closed {
+            Ok(Self::channel_try_receive(2, None))
+        } else {
+            Ok(Self::channel_try_receive(1, None))
+        }
+    }
+
     fn sync_memory_order(value: &RuntimeValue) -> Result<u8, VmError> {
         let RuntimeValue::Variant {
             name,
@@ -1080,7 +1459,67 @@ impl BootstrapHost {
                 | "std.sync.Semaphore.acquire"
                 | "std.sync.Once.getOrInit"
                 | "std.sync.Barrier.wait"
+                | "std.channel.Sender.send"
+                | "std.channel.Receiver.receive"
         )
+    }
+
+    fn channel_waiter_is_oldest(&self, channel: u64, call: u64, kind: SyncWaitKind) -> bool {
+        self.sync_queues
+            .get(&SyncResource::Channel(channel))
+            .and_then(|queue| {
+                queue
+                    .iter()
+                    .position(|candidate| *candidate == call)
+                    .map(|position| (queue, position))
+            })
+            .is_some_and(|(queue, position)| {
+                queue.iter().take(position).all(|candidate| {
+                    self.sync_waiters
+                        .get(candidate)
+                        .is_none_or(|pending| pending.kind != kind)
+                })
+            })
+    }
+
+    fn pending_channel_for(
+        &mut self,
+        call: u64,
+        name: &str,
+        arguments: &[RuntimeValue],
+    ) -> Result<bool, VmError> {
+        let name = name.split_once('[').map_or(name, |(base, _)| base);
+        let (channel, kind) = match name {
+            "std.channel.Sender.send" => {
+                let [sender, _value] = arguments else {
+                    return Err(VmError::Host(
+                        "std.channel.Sender.send received an invalid argument list".into(),
+                    ));
+                };
+                let (_, channel) = self.channel_sender_id(sender)?;
+                (channel, SyncWaitKind::ChannelSend)
+            }
+            "std.channel.Receiver.receive" => {
+                let [receiver] = arguments else {
+                    return Err(VmError::Host(
+                        "std.channel.Receiver.receive received an invalid argument list".into(),
+                    ));
+                };
+                let (_, channel) = self.channel_receiver_id(receiver)?;
+                (channel, SyncWaitKind::ChannelReceive)
+            }
+            _ => return Ok(false),
+        };
+        self.enqueue_sync_waiter(
+            call,
+            PendingSync {
+                arguments: arguments.to_vec(),
+                resource: SyncResource::Channel(channel),
+                kind,
+                owner: self.current_unit,
+            },
+        );
+        Ok(true)
     }
 
     fn enqueue_sync_waiter(&mut self, call: u64, waiter: PendingSync) {
@@ -1122,8 +1561,15 @@ impl BootstrapHost {
         name: &str,
         arguments: &[RuntimeValue],
     ) -> Result<bool, VmError> {
+        let name = name.split_once('[').map_or(name, |(base, _)| base);
         if !Self::is_sync_suspendable(name) {
             return Ok(false);
+        }
+        if matches!(
+            name,
+            "std.channel.Sender.send" | "std.channel.Receiver.receive"
+        ) {
+            return self.pending_channel_for(call, name, arguments);
         }
         match name {
             "std.sync.Mutex.lock" => {
@@ -1419,6 +1865,12 @@ impl BootstrapHost {
         let Some(pending) = self.sync_waiters.get(&call).cloned() else {
             return Ok(None);
         };
+        if matches!(
+            pending.kind,
+            SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive
+        ) {
+            return self.poll_channel(call);
+        }
         if !self.sync_waiter_is_front(call, pending.resource) {
             return Ok(None);
         }
@@ -1547,6 +1999,116 @@ impl BootstrapHost {
                 )))
             }
             SyncWaitKind::Barrier { .. } => Ok(None),
+            SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive => {
+                unreachable!("channel waiters are polled by poll_channel")
+            }
+        }
+    }
+
+    fn poll_channel(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
+        let Some(pending) = self.sync_waiters.get(&call).cloned() else {
+            return Ok(None);
+        };
+        let SyncResource::Channel(channel) = pending.resource else {
+            unreachable!("channel waiter resource mismatch")
+        };
+        match pending.kind {
+            SyncWaitKind::ChannelSend => {
+                if !self.channel_waiter_is_oldest(channel, call, SyncWaitKind::ChannelSend) {
+                    return Ok(None);
+                }
+                let receiver_closed = self
+                    .channels
+                    .get(&channel)
+                    .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?
+                    .receiver_closed;
+                if receiver_closed {
+                    let payload = pending.arguments.get(1).cloned().ok_or_else(|| {
+                        VmError::Host("channel send waiter has no payload".into())
+                    })?;
+                    self.remove_sync_waiter(call, pending.resource);
+                    return Ok(Some(Self::channel_send_result_error(0, payload)));
+                }
+                if self
+                    .channel_waiting_call(channel, SyncWaitKind::ChannelReceive)
+                    .is_some()
+                {
+                    let Some((send, _receive, _payload)) = self.channel_match_waiters(channel)?
+                    else {
+                        return Ok(None);
+                    };
+                    if send != call {
+                        return Ok(None);
+                    }
+                    self.ready_jobs.remove(&call);
+                    return Ok(Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))));
+                }
+                let state = self
+                    .channels
+                    .get_mut(&channel)
+                    .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
+                if state.capacity.is_none() && state.queue.len() as u64 >= self.max_bytes {
+                    let payload = pending.arguments.get(1).cloned().ok_or_else(|| {
+                        VmError::Host("channel send waiter has no payload".into())
+                    })?;
+                    self.remove_sync_waiter(call, pending.resource);
+                    return Ok(Some(Self::channel_send_result_error(1, payload)));
+                }
+                if state
+                    .capacity
+                    .is_some_and(|capacity| state.queue.len() >= capacity)
+                {
+                    return Ok(None);
+                }
+                let payload =
+                    pending.arguments.get(1).cloned().ok_or_else(|| {
+                        VmError::Host("channel send waiter has no payload".into())
+                    })?;
+                state.queue.push_back(payload);
+                self.remove_sync_waiter(call, pending.resource);
+                Ok(Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))))
+            }
+            SyncWaitKind::ChannelReceive => {
+                if !self.channel_waiter_is_oldest(channel, call, SyncWaitKind::ChannelReceive) {
+                    return Ok(None);
+                }
+                if let Some(state) = self.channels.get_mut(&channel)
+                    && let Some(value) = state.queue.pop_front()
+                {
+                    self.remove_sync_waiter(call, pending.resource);
+                    return Ok(Some(RuntimeValue::OptionSome(Box::new(value))));
+                }
+                if self
+                    .channel_waiting_call(channel, SyncWaitKind::ChannelSend)
+                    .is_some()
+                {
+                    let Some((_send, receive, payload)) = self.channel_match_waiters(channel)?
+                    else {
+                        return Ok(None);
+                    };
+                    if receive != call {
+                        return Ok(None);
+                    }
+                    self.ready_jobs.remove(&call);
+                    return Ok(Some(RuntimeValue::OptionSome(Box::new(payload))));
+                }
+                let closed = self
+                    .channels
+                    .get(&channel)
+                    .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?
+                    .sender_closed;
+                if closed
+                    || self
+                        .channels
+                        .get(&channel)
+                        .is_some_and(|state| state.receiver_closed)
+                {
+                    self.remove_sync_waiter(call, pending.resource);
+                    return Ok(Some(RuntimeValue::OptionNone));
+                }
+                Ok(None)
+            }
+            _ => unreachable!("poll_channel called for a non-channel waiter"),
         }
     }
 
@@ -1591,6 +2153,10 @@ impl BootstrapHost {
                     }
                 }
                 self.ready_jobs.insert(call, Ok(Self::sync_result_error(5)));
+                Ok(true)
+            }
+            SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive => {
+                self.remove_sync_waiter(call, pending.resource);
                 Ok(true)
             }
             _ => {
@@ -3746,6 +4312,20 @@ impl BootstrapHost {
         Ok(payload.map_or(RuntimeValue::OptionNone, |payload| {
             RuntimeValue::OptionSome(Box::new(payload))
         }))
+    }
+
+    fn channel_discard_receiver(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        let (_, channel) = self.channel_receiver_id(value)?;
+        let state = self
+            .channels
+            .get(&channel)
+            .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
+        if state.receivers == 1 && !state.queue.is_empty() {
+            return Err(VmError::Host(
+                "discarding a receiver with pending values violates its terminal obligation".into(),
+            ));
+        }
+        self.channel_close_receiver(value).map(|_| ())
     }
 }
 
@@ -8405,6 +8985,46 @@ impl VmHost for BootstrapHost {
                     values: vec![value],
                 })
             }
+            ("std.channel.bounded", [RuntimeValue::Integer(capacity)]) => {
+                let Ok(capacity) = usize::try_from(*capacity) else {
+                    return Ok(Self::channel_result_error(0));
+                };
+                let Ok(capacity_limit) = u64::try_from(capacity) else {
+                    return Ok(Self::channel_result_error(1));
+                };
+                if capacity_limit > self.max_bytes {
+                    return Ok(Self::channel_result_error(1));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.channel_new(Some(capacity)),
+                )))
+            }
+            ("std.channel.unbounded", []) => {
+                Ok(RuntimeValue::ResultOk(Box::new(self.channel_new(None))))
+            }
+            ("std.channel.Sender.fork", [sender]) => Ok(RuntimeValue::ResultOk(Box::new(
+                self.channel_fork_sender(sender)?,
+            ))),
+            ("std.channel.Sender.send", [sender, value]) => {
+                self.channel_send_now(sender, value.clone())
+            }
+            ("std.channel.Sender.trySend", [sender, value]) => {
+                self.channel_try_send_now(sender, value.clone())
+            }
+            ("std.channel.Sender.close", [sender]) => {
+                self.channel_close_sender(sender)?;
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.channel.Receiver.fork", [receiver]) => Ok(RuntimeValue::ResultOk(Box::new(
+                self.channel_fork_receiver(receiver)?,
+            ))),
+            ("std.channel.Receiver.receive", [receiver]) => self.channel_receive_now(receiver),
+            ("std.channel.Receiver.tryReceive", [receiver]) => {
+                self.channel_try_receive_now(receiver)
+            }
+            ("std.channel.Receiver.close", [receiver]) => {
+                Ok(RuntimeValue::Array(self.channel_close_receiver(receiver)?))
+            }
             ("std.console.print", _) => Err(VmError::Host(
                 "std.console.print received an invalid bootstrap argument list".into(),
             )),
@@ -8463,6 +9083,8 @@ impl VmHost for BootstrapHost {
                 | "std.sync.Semaphore.acquire"
                 | "std.sync.Once.getOrInit"
                 | "std.sync.Barrier.wait"
+                | "std.channel.Sender.send"
+                | "std.channel.Receiver.receive"
                 | "std.sync.Array.get"
                 | "std.sync.Array.set"
                 | "std.sync.Array.compareExchange"
@@ -8492,6 +9114,8 @@ impl VmHost for BootstrapHost {
             || name.starts_with("std.sync.Semaphore.acquire")
             || name.starts_with("std.sync.Once.getOrInit")
             || name.starts_with("std.sync.Barrier.wait")
+            || name.starts_with("std.channel.Sender.send")
+            || name.starts_with("std.channel.Receiver.receive")
             || name.starts_with("std.sync.Array.get")
             || name.starts_with("std.sync.Array.set")
             || name.starts_with("std.sync.Array.compareExchange")
@@ -8811,6 +9435,12 @@ impl VmHost for BootstrapHost {
                 {
                     *permits += 1;
                 }
+            }
+            RuntimeHostValueKind::ChannelSender => {
+                self.channel_close_sender(value)?;
+            }
+            RuntimeHostValueKind::ChannelReceiver => {
+                self.channel_discard_receiver(value)?;
             }
             _ => {}
         }
@@ -10139,8 +10769,398 @@ mod tests {
                     error.as_ref(),
                     RuntimeValue::Variant { name, variant: actual, values }
                         if name == "SyncError" && *actual == variant && values.is_empty()
-                )
+            )
         ));
+    }
+
+    fn channel_endpoints(value: RuntimeValue) -> (RuntimeValue, RuntimeValue) {
+        let RuntimeValue::Tuple(values) = ok(value) else {
+            panic!("channel constructor must return a sender/receiver tuple");
+        };
+        let [sender, receiver] = values.as_slice() else {
+            panic!("channel constructor returned the wrong endpoint arity");
+        };
+        (sender.clone(), receiver.clone())
+    }
+
+    fn channel_variant(
+        value: RuntimeValue,
+        name: &str,
+        variant: u32,
+        payload: Option<RuntimeValue>,
+    ) {
+        assert!(matches!(
+            value,
+            RuntimeValue::Variant {
+                name: actual,
+                variant: actual_variant,
+                values,
+            } if actual == name
+                && actual_variant == variant
+                && values == payload.into_iter().collect::<Vec<_>>()
+        ));
+    }
+
+    #[test]
+    fn channel_host_implements_capacity_fifo_errors_and_explicit_close() {
+        let mut host = BootstrapHost::with_max_bytes(Vec::new(), 2);
+        let invalid = host
+            .invoke("std.channel.bounded", &[RuntimeValue::Integer(-1)])
+            .unwrap();
+        channel_variant(
+            match invalid {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected invalid-capacity error, got {other:?}"),
+            },
+            "ChannelError",
+            0,
+            None,
+        );
+        let too_large = host
+            .invoke("std.channel.bounded", &[RuntimeValue::Integer(3)])
+            .unwrap();
+        channel_variant(
+            match too_large {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected bounded resource error, got {other:?}"),
+            },
+            "ChannelError",
+            1,
+            None,
+        );
+
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        assert!(matches!(
+            host.invoke("std.channel.Sender.trySend", &[sender.clone(), RuntimeValue::Integer(1)])
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if *value == RuntimeValue::Unit
+        ));
+        assert!(matches!(
+            host.invoke("std.channel.Sender.trySend", &[sender.clone(), RuntimeValue::Integer(2)])
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if *value == RuntimeValue::Unit
+        ));
+        channel_variant(
+            match host
+                .invoke(
+                    "std.channel.Sender.trySend",
+                    &[sender.clone(), RuntimeValue::Integer(3)],
+                )
+                .unwrap()
+            {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected a full error, got {other:?}"),
+            },
+            "TrySendError",
+            0,
+            Some(RuntimeValue::Integer(3)),
+        );
+        channel_variant(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            "TryReceive",
+            0,
+            Some(RuntimeValue::Integer(1)),
+        );
+        channel_variant(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            "TryReceive",
+            0,
+            Some(RuntimeValue::Integer(2)),
+        );
+        channel_variant(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            "TryReceive",
+            1,
+            None,
+        );
+        host.invoke("std.channel.Sender.close", std::slice::from_ref(&sender))
+            .unwrap();
+        channel_variant(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            "TryReceive",
+            2,
+            None,
+        );
+        assert!(
+            host.invoke("std.channel.Sender.close", std::slice::from_ref(&sender))
+                .is_err()
+        );
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.close",
+                std::slice::from_ref(&receiver)
+            )
+            .unwrap(),
+            RuntimeValue::Array(Vec::new())
+        );
+        assert!(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn channel_host_enforces_unbounded_limit_forks_and_receiver_drain() {
+        let mut host = BootstrapHost::with_max_bytes(Vec::new(), 1);
+        let (sender, receiver) =
+            channel_endpoints(host.invoke("std.channel.unbounded", &[]).unwrap());
+        assert!(matches!(
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[sender.clone(), RuntimeValue::Integer(9)]
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(_)
+        ));
+        channel_variant(
+            match host
+                .invoke(
+                    "std.channel.Sender.trySend",
+                    &[sender.clone(), RuntimeValue::Integer(10)],
+                )
+                .unwrap()
+            {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected unbounded resource error, got {other:?}"),
+            },
+            "TrySendError",
+            2,
+            Some(RuntimeValue::Integer(10)),
+        );
+        let sender_fork = ok(host
+            .invoke("std.channel.Sender.fork", std::slice::from_ref(&sender))
+            .unwrap());
+        let receiver_fork = ok(host
+            .invoke("std.channel.Receiver.fork", std::slice::from_ref(&receiver))
+            .unwrap());
+        host.invoke("std.channel.Sender.close", std::slice::from_ref(&sender))
+            .unwrap();
+        host.invoke(
+            "std.channel.Sender.close",
+            std::slice::from_ref(&sender_fork),
+        )
+        .unwrap();
+        assert!(matches!(
+            host.invoke("std.channel.Receiver.tryReceive", std::slice::from_ref(&receiver))
+                .unwrap(),
+            RuntimeValue::Variant { name, variant: 0, values }
+                if name == "TryReceive" && values == vec![RuntimeValue::Integer(9)]
+        ));
+        assert!(matches!(
+            host.invoke("std.channel.Receiver.tryReceive", std::slice::from_ref(&receiver))
+                .unwrap(),
+            RuntimeValue::Variant { name, variant: 2, values }
+                if name == "TryReceive" && values.is_empty()
+        ));
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.close",
+                std::slice::from_ref(&receiver)
+            )
+            .unwrap(),
+            RuntimeValue::Array(Vec::new())
+        );
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.close",
+                std::slice::from_ref(&receiver_fork)
+            )
+            .unwrap(),
+            RuntimeValue::Array(Vec::new())
+        );
+
+        let mut drain_host = BootstrapHost::with_max_bytes(Vec::new(), 2);
+        let (sender, receiver) = channel_endpoints(
+            drain_host
+                .invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        drain_host
+            .invoke(
+                "std.channel.Sender.trySend",
+                &[sender.clone(), RuntimeValue::Integer(4)],
+            )
+            .unwrap();
+        drain_host
+            .invoke(
+                "std.channel.Sender.trySend",
+                &[sender.clone(), RuntimeValue::Integer(5)],
+            )
+            .unwrap();
+        assert_eq!(
+            drain_host
+                .invoke(
+                    "std.channel.Receiver.close",
+                    std::slice::from_ref(&receiver)
+                )
+                .unwrap(),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(4), RuntimeValue::Integer(5)])
+        );
+        drain_host
+            .invoke("std.channel.Sender.close", std::slice::from_ref(&sender))
+            .unwrap();
+    }
+
+    #[test]
+    fn channel_host_scheduler_preserves_rendezvous_fifo_and_cancellation() {
+        let mut host = BootstrapHost::default();
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                .unwrap(),
+        );
+        let send = host
+            .start_async(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(7)],
+            )
+            .unwrap();
+        assert!(host.poll_async(send).unwrap().is_none());
+        let receive = host
+            .start_async(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        assert_eq!(
+            host.poll_async(send).unwrap(),
+            Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+        );
+        assert_eq!(
+            host.poll_async(receive).unwrap(),
+            Some(RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(7))))
+        );
+
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+                .unwrap(),
+        );
+        let first = host
+            .start_async(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(1)],
+            )
+            .unwrap();
+        let second = host
+            .start_async(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(2)],
+            )
+            .unwrap();
+        let receive = host
+            .start_async(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        assert!(host.poll_async(first).unwrap().is_some());
+        assert!(host.poll_async(receive).unwrap().is_some());
+        assert!(host.poll_async(second).unwrap().is_some());
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver)
+            )
+            .unwrap(),
+            RuntimeValue::Variant {
+                name: "TryReceive".into(),
+                variant: 0,
+                values: vec![RuntimeValue::Integer(2)],
+            }
+        );
+
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+                .unwrap(),
+        );
+        host.invoke(
+            "std.channel.Sender.trySend",
+            &[sender.clone(), RuntimeValue::Integer(11)],
+        )
+        .unwrap();
+        let cancelled_receive = host
+            .start_async(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        host.cancel_async(cancelled_receive).unwrap();
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver)
+            )
+            .unwrap(),
+            RuntimeValue::Variant {
+                name: "TryReceive".into(),
+                variant: 0,
+                values: vec![RuntimeValue::Integer(11)],
+            }
+        );
+
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                .unwrap(),
+        );
+        let pending_a = host
+            .start_async(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(21)],
+            )
+            .unwrap();
+        let pending_b = host
+            .start_async(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(22)],
+            )
+            .unwrap();
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.close",
+                std::slice::from_ref(&receiver)
+            )
+            .unwrap(),
+            RuntimeValue::Array(Vec::new())
+        );
+        channel_variant(
+            match host.poll_async(pending_a).unwrap().unwrap() {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected closed send error, got {other:?}"),
+            },
+            "SendError",
+            0,
+            Some(RuntimeValue::Integer(21)),
+        );
+        channel_variant(
+            match host.poll_async(pending_b).unwrap().unwrap() {
+                RuntimeValue::ResultErr(error) => *error,
+                other => panic!("expected closed send error, got {other:?}"),
+            },
+            "SendError",
+            0,
+            Some(RuntimeValue::Integer(22)),
+        );
     }
 
     #[test]

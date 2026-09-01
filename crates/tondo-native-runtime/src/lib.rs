@@ -54,6 +54,13 @@ const STATUS_ATOMIC_MISMATCH: u64 = 17;
 const STATUS_ATOMIC_INVALID_ORDER: u64 = 18;
 /// A collection index or operation shape is invalid.
 const STATUS_COLLECTION_INVALID: u64 = 19;
+/// A channel capacity is negative or cannot be represented by the native
+/// resource budget.
+const STATUS_CHANNEL_INVALID_CAPACITY: u64 = 20;
+/// A non-blocking channel operation found no space in a bounded buffer.
+const STATUS_CHANNEL_FULL: u64 = 21;
+/// A non-blocking receive found an open channel without a committed value.
+const STATUS_CHANNEL_EMPTY: u64 = 22;
 const STATUS_DIAG_CLEAN: u64 = 0;
 const STATUS_DIAG_FINDING: u64 = 1;
 const STATUS_DIAG_CAPTURED: u64 = 2;
@@ -153,6 +160,27 @@ enum Object {
     SyncCursor {
         collection: u64,
         kind: SyncCursorCollection,
+    },
+    /// A private channel identity. Endpoint objects retain this identity and
+    /// the synchronized state lives in `State::channels`.
+    Channel,
+    /// An affine sender endpoint. Closing is tracked separately from object
+    /// destruction so explicit close and cleanup share one state transition.
+    ChannelSender {
+        channel: u64,
+        closed: bool,
+    },
+    /// An affine receiver endpoint. The last receiver owns the terminal
+    /// obligation to drain committed values through the private drain carrier.
+    ChannelReceiver {
+        channel: u64,
+        closed: bool,
+    },
+    /// Pending values returned by the native receiver-close bridge. This is an
+    /// internal carrier which a future native lowering turns into `Array[T]`;
+    /// it keeps managed payloads alive through the normal object graph.
+    ChannelDrain {
+        values: VecDeque<u64>,
     },
     /// An immutable, bounded byte carrier used by the private host ABI.
     Buffer {
@@ -588,6 +616,10 @@ enum ObjectKind {
     SyncStack,
     SyncQueue,
     SyncCursor,
+    Channel,
+    ChannelSender,
+    ChannelReceiver,
+    ChannelDrain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -741,6 +773,68 @@ type SyncSetCell = Arc<RwLock<SyncSetState>>;
 type SyncStackCell = Arc<Mutex<SyncStackState>>;
 type SyncQueueCell = Arc<Mutex<SyncQueueState>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeChannelSendOutcome {
+    Committed,
+    Closed,
+    Full,
+    ResourceLimit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeChannelReceiveOutcome {
+    Value(u64),
+    Empty,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeChannelSendWaiter {
+    id: u64,
+    value: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeChannelReceiveWaiter {
+    id: u64,
+}
+
+#[derive(Debug)]
+struct NativeChannelState {
+    /// `Some(0)` is a rendezvous; `None` is the explicit unbounded form.
+    capacity: Option<usize>,
+    queue: VecDeque<u64>,
+    senders: u64,
+    receivers: u64,
+    sender_closed: bool,
+    receiver_closed: bool,
+    next_waiter: u64,
+    send_waiters: VecDeque<NativeChannelSendWaiter>,
+    receive_waiters: VecDeque<NativeChannelReceiveWaiter>,
+    send_results: BTreeMap<u64, NativeChannelSendOutcome>,
+    receive_results: BTreeMap<u64, NativeChannelReceiveOutcome>,
+}
+
+type NativeChannelCell = Arc<(Mutex<NativeChannelState>, Condvar)>;
+
+impl NativeChannelState {
+    fn new(capacity: Option<usize>) -> Self {
+        Self {
+            capacity,
+            queue: VecDeque::new(),
+            senders: 0,
+            receivers: 0,
+            sender_closed: false,
+            receiver_closed: false,
+            next_waiter: 1,
+            send_waiters: VecDeque::new(),
+            receive_waiters: VecDeque::new(),
+            send_results: BTreeMap::new(),
+            receive_results: BTreeMap::new(),
+        }
+    }
+}
+
 enum SyncCursorSource {
     Array(SyncArrayCell, Arc<ParkingSignal>),
     Map(SyncMapCell, Arc<ParkingSignal>),
@@ -767,6 +861,7 @@ struct State {
     sync_queues: BTreeMap<u64, SyncQueueCell>,
     sync_collection_parks: BTreeMap<u64, Arc<ParkingSignal>>,
     sync_cursors: BTreeMap<u64, Arc<Mutex<SyncCursorState>>>,
+    channels: BTreeMap<u64, NativeChannelCell>,
     allocations_since_collection: u32,
     diagnostic: Option<DiagnosticCapture>,
 }
@@ -876,10 +971,15 @@ impl State {
                 children.push(group.last_value);
             }
             Object::SyncCursor { collection, .. } => children.push(*collection),
+            Object::ChannelSender { channel, .. } | Object::ChannelReceiver { channel, .. } => {
+                children.push(*channel);
+            }
+            Object::ChannelDrain { values } => children.extend(values.iter().copied()),
             Object::Select(selection) => {
                 children.extend(selection.arms.iter().map(|arm| arm.source));
             }
-            Object::Host { .. }
+            Object::Channel
+            | Object::Host { .. }
             | Object::Atomic
             | Object::Park
             | Object::SyncArray
@@ -952,6 +1052,10 @@ impl State {
                 | Object::Weak { .. }
                 | Object::Tombstone
                 | Object::SyncCursor { .. }
+                | Object::Channel
+                | Object::ChannelSender { .. }
+                | Object::ChannelReceiver { .. }
+                | Object::ChannelDrain { .. }
         ) {
             self.last_status = STATUS_INVALID_TRANSITION;
             return 0;
@@ -1118,6 +1222,7 @@ impl State {
             self.thread_workers.remove(&target);
             self.atomics.remove(&target);
             self.parks.remove(&target);
+            self.channels.remove(&target);
         }
     }
 
@@ -1151,6 +1256,7 @@ impl State {
                 self.thread_workers.remove(&handle);
                 self.atomics.remove(&handle);
                 self.parks.remove(&handle);
+                self.channels.remove(&handle);
             }
         }
     }
@@ -1219,6 +1325,14 @@ impl State {
             Object::SyncCursor { .. } => {
                 self.sync_cursors.remove(&handle);
             }
+            Object::Channel => self.channel_destroy(handle, pending),
+            Object::ChannelSender { channel, closed } => {
+                self.channel_cleanup_endpoint(*channel, true, *closed, pending);
+            }
+            Object::ChannelReceiver { channel, closed } => {
+                self.channel_cleanup_endpoint(*channel, false, *closed, pending);
+            }
+            Object::ChannelDrain { .. } => {}
             _ => {}
         }
     }
@@ -1418,6 +1532,14 @@ impl State {
                 Object::SyncCursor { .. } => {
                     self.sync_cursors.remove(&handle);
                 }
+                Object::Channel => self.channel_destroy(handle, &mut pending),
+                Object::ChannelSender { channel, closed } => {
+                    self.channel_cleanup_endpoint(*channel, true, *closed, &mut pending);
+                }
+                Object::ChannelReceiver { channel, closed } => {
+                    self.channel_cleanup_endpoint(*channel, false, *closed, &mut pending);
+                }
+                Object::ChannelDrain { .. } => {}
                 _ => {}
             }
             let children = Self::strong_children_of(&object);
@@ -1435,6 +1557,7 @@ impl State {
             {
                 self.objects.remove(&handle);
                 self.thread_workers.remove(&handle);
+                self.channels.remove(&handle);
             }
         }
         self.drain_destruction(&mut pending);
@@ -2860,6 +2983,326 @@ impl State {
             return None;
         };
         Some(cell)
+    }
+
+    fn channel_payload_retain(&mut self, value: u64) -> u64 {
+        if !Self::valid_handle(value) {
+            return STATUS_OK;
+        }
+        if !self.live_handle(value) {
+            return self.status(STATUS_INVALID_HANDLE);
+        }
+        self.retain(value)
+    }
+
+    fn channel_payload_release(&mut self, value: u64, pending: &mut VecDeque<u64>) {
+        if self.live_handle(value) {
+            self.release_strong_edge(value, pending);
+        }
+    }
+
+    fn channel_cell(&mut self, handle: u64) -> Option<NativeChannelCell> {
+        if !matches!(self.object(handle), Some(Object::Channel)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(cell) = self.channels.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(cell)
+    }
+
+    fn channel_endpoint_cell(
+        &mut self,
+        endpoint: u64,
+        sender: bool,
+    ) -> Option<(u64, NativeChannelCell)> {
+        let channel = match self.object(endpoint) {
+            Some(Object::ChannelSender { channel, closed }) if sender && !closed => *channel,
+            Some(Object::ChannelReceiver { channel, closed }) if !sender && !closed => *channel,
+            Some(Object::ChannelSender { .. }) | Some(Object::ChannelReceiver { .. }) => {
+                self.last_status = STATUS_INVALID_TRANSITION;
+                return None;
+            }
+            _ => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                return None;
+            }
+        };
+        let Some(cell) = self.channels.get(&channel).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some((channel, cell))
+    }
+
+    fn channel_new(&mut self, capacity: Option<usize>) -> u64 {
+        if capacity.is_some_and(|capacity| capacity > HOST_MAX_BYTES) {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        }
+        let handle = self.alloc(Object::Channel, ObjectKind::Channel);
+        if handle != 0 {
+            self.channels.insert(
+                handle,
+                Arc::new((
+                    Mutex::new(NativeChannelState::new(capacity)),
+                    Condvar::new(),
+                )),
+            );
+        }
+        handle
+    }
+
+    fn channel_endpoint(&mut self, channel: u64, sender: bool) -> u64 {
+        let Some(cell) = self.channel_cell(channel) else {
+            return 0;
+        };
+        {
+            let (lock, _) = &*cell;
+            let mut state = lock.lock().expect("native channel state is not poisoned");
+            if sender {
+                if state.sender_closed || state.senders == u64::MAX {
+                    self.last_status = STATUS_HOST_CLOSED;
+                    return 0;
+                }
+                state.senders += 1;
+            } else {
+                if state.receiver_closed || state.receivers == u64::MAX {
+                    self.last_status = STATUS_HOST_CLOSED;
+                    return 0;
+                }
+                state.receivers += 1;
+            }
+        }
+        let object = if sender {
+            Object::ChannelSender {
+                channel,
+                closed: false,
+            }
+        } else {
+            Object::ChannelReceiver {
+                channel,
+                closed: false,
+            }
+        };
+        let kind = if sender {
+            ObjectKind::ChannelSender
+        } else {
+            ObjectKind::ChannelReceiver
+        };
+        let endpoint = self.alloc(object, kind);
+        if endpoint == 0 {
+            let (lock, wake) = &*cell;
+            let mut state = lock.lock().expect("native channel state is not poisoned");
+            if sender {
+                state.senders = state.senders.saturating_sub(1);
+            } else {
+                state.receivers = state.receivers.saturating_sub(1);
+            }
+            wake.notify_all();
+        }
+        endpoint
+    }
+
+    fn channel_close_sender(&mut self, endpoint: u64) -> u64 {
+        let Some((channel, cell)) = self.channel_endpoint_cell(endpoint, true) else {
+            return self.last_status;
+        };
+        let (lock, wake) = &*cell;
+        {
+            let mut state = lock.lock().expect("native channel state is not poisoned");
+            state.senders = state.senders.saturating_sub(1);
+            if state.senders == 0 {
+                state.sender_closed = true;
+            }
+            wake.notify_all();
+        }
+        if let Some(Object::ChannelSender { closed, .. }) = self.object_mut(endpoint) {
+            *closed = true;
+        } else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return STATUS_INVALID_HANDLE;
+        }
+        let _ = channel;
+        STATUS_OK
+    }
+
+    fn channel_close_receiver(&mut self, endpoint: u64) -> u64 {
+        let Some((channel, cell)) = self.channel_endpoint_cell(endpoint, false) else {
+            return self.last_status;
+        };
+        let values = {
+            let (lock, wake) = &*cell;
+            let mut state = lock.lock().expect("native channel state is not poisoned");
+            state.receivers = state.receivers.saturating_sub(1);
+            let last = state.receivers == 0;
+            if last {
+                state.receiver_closed = true;
+                let waiters = state.send_waiters.drain(..).collect::<Vec<_>>();
+                for waiter in waiters {
+                    state
+                        .send_results
+                        .insert(waiter.id, NativeChannelSendOutcome::Closed);
+                }
+            }
+            let values = last
+                .then(|| state.queue.drain(..).collect::<VecDeque<_>>())
+                .unwrap_or_default();
+            wake.notify_all();
+            values
+        };
+        if let Some(Object::ChannelReceiver { closed, .. }) = self.object_mut(endpoint) {
+            *closed = true;
+        } else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return 0;
+        }
+        self.channel_drain_new(channel, values)
+    }
+
+    fn channel_drain_new(&mut self, _channel: u64, values: VecDeque<u64>) -> u64 {
+        let retained_values = values.iter().copied().collect::<Vec<_>>();
+        let drain = self.alloc(Object::ChannelDrain { values }, ObjectKind::ChannelDrain);
+        let mut pending = VecDeque::new();
+        for value in retained_values {
+            self.channel_payload_release(value, &mut pending);
+        }
+        self.drain_destruction(&mut pending);
+        if drain == 0 {
+            return 0;
+        }
+        drain
+    }
+
+    fn channel_cleanup_endpoint(
+        &mut self,
+        channel: u64,
+        sender: bool,
+        closed: bool,
+        pending: &mut VecDeque<u64>,
+    ) {
+        if closed {
+            return;
+        }
+        let Some(cell) = self.channels.get(&channel).cloned() else {
+            return;
+        };
+        let (drained, waiting) = {
+            let (lock, wake) = &*cell;
+            let mut state = lock.lock().expect("native channel state is not poisoned");
+            if sender {
+                state.senders = state.senders.saturating_sub(1);
+                if state.senders == 0 {
+                    state.sender_closed = true;
+                }
+                wake.notify_all();
+                (VecDeque::new(), Vec::new())
+            } else {
+                state.receivers = state.receivers.saturating_sub(1);
+                if state.receivers != 0 {
+                    wake.notify_all();
+                    (VecDeque::new(), Vec::new())
+                } else {
+                    state.receiver_closed = true;
+                    let waiting = state.send_waiters.drain(..).collect::<Vec<_>>();
+                    let drained = state.queue.drain(..).collect::<VecDeque<_>>();
+                    for waiter in &waiting {
+                        state
+                            .send_results
+                            .insert(waiter.id, NativeChannelSendOutcome::Closed);
+                    }
+                    self.last_status = if drained.is_empty() {
+                        self.last_status
+                    } else {
+                        STATUS_INVALID_TRANSITION
+                    };
+                    wake.notify_all();
+                    (
+                        drained,
+                        waiting.into_iter().map(|waiter| waiter.value).collect(),
+                    )
+                }
+            }
+        };
+        for value in drained {
+            self.channel_payload_release(value, pending);
+        }
+        for value in waiting {
+            self.channel_payload_release(value, pending);
+        }
+    }
+
+    fn channel_destroy(&mut self, handle: u64, pending: &mut VecDeque<u64>) {
+        let Some(cell) = self.channels.remove(&handle) else {
+            return;
+        };
+        let (queued, waiting) = {
+            let (lock, wake) = &*cell;
+            let mut state = lock.lock().expect("native channel state is not poisoned");
+            let queued = state.queue.drain(..).collect::<Vec<_>>();
+            let waiting = state
+                .send_waiters
+                .drain(..)
+                .map(|waiter| waiter.value)
+                .collect::<Vec<_>>();
+            state.receive_waiters.clear();
+            state.send_results.clear();
+            state.receive_results.clear();
+            wake.notify_all();
+            (queued, waiting)
+        };
+        for value in queued.into_iter().chain(waiting) {
+            self.channel_payload_release(value, pending);
+        }
+    }
+
+    fn channel_drain_len(&mut self, drain: u64) -> u64 {
+        match self.object(drain) {
+            Some(Object::ChannelDrain { values }) => values.len() as u64,
+            _ => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                u64::MAX
+            }
+        }
+    }
+
+    fn channel_drain_next(&mut self, drain: u64) -> u64 {
+        let Some(value) = self.object(drain).and_then(|object| match object {
+            Object::ChannelDrain { values } => values.front().copied(),
+            _ => None,
+        }) else {
+            if !matches!(self.object(drain), Some(Object::ChannelDrain { .. })) {
+                self.last_status = STATUS_INVALID_HANDLE;
+            }
+            return 0;
+        };
+        if self.channel_payload_retain(value) != STATUS_OK {
+            return 0;
+        }
+        let removed = match self.object_mut(drain) {
+            Some(Object::ChannelDrain { values }) => values.pop_front(),
+            _ => None,
+        };
+        if removed != Some(value) {
+            let _ = self.release(value);
+            self.last_status = STATUS_INVALID_TRANSITION;
+            return 0;
+        }
+        let mut pending = VecDeque::new();
+        self.release_strong_edge(value, &mut pending);
+        self.drain_destruction(&mut pending);
+        value
+    }
+
+    fn channel_waiters(&mut self, channel: u64) -> u64 {
+        let Some(cell) = self.channel_cell(channel) else {
+            return u64::MAX;
+        };
+        let (lock, _) = &*cell;
+        let state = lock.lock().expect("native channel state is not poisoned");
+        (state.send_waiters.len() + state.receive_waiters.len()) as u64
     }
 
     fn sync_collection_park(&mut self, handle: u64) -> Option<Arc<ParkingSignal>> {
@@ -4454,6 +4897,130 @@ pub extern "C" fn tondo_rt_sync_park_waiters(park: u64) -> u64 {
     signal.waiters()
 }
 
+/// Creates a private native channel identity. The caller obtains affine
+/// endpoints with `tondo_rt_channel_sender` and
+/// `tondo_rt_channel_receiver`, then releases this identity.
+pub extern "C" fn tondo_rt_channel_bounded(capacity: i64) -> u64 {
+    let Ok(capacity) = usize::try_from(capacity) else {
+        with_state(|state| state.last_status = STATUS_CHANNEL_INVALID_CAPACITY);
+        return 0;
+    };
+    with_state(|state| state.channel_new(Some(capacity)))
+}
+
+/// Creates the explicitly unbounded native channel form. The queue remains
+/// subject to `HOST_MAX_BYTES` so resource exhaustion is recoverable.
+pub extern "C" fn tondo_rt_channel_unbounded() -> u64 {
+    with_state(|state| state.channel_new(None))
+}
+
+pub extern "C" fn tondo_rt_channel_sender(channel: u64) -> u64 {
+    with_state(|state| state.channel_endpoint(channel, true))
+}
+
+pub extern "C" fn tondo_rt_channel_receiver(channel: u64) -> u64 {
+    with_state(|state| state.channel_endpoint(channel, false))
+}
+
+pub extern "C" fn tondo_rt_channel_sender_fork(sender: u64) -> u64 {
+    with_state(|state| {
+        let Some((channel, _)) = state.channel_endpoint_cell(sender, true) else {
+            return 0;
+        };
+        state.channel_endpoint(channel, true)
+    })
+}
+
+pub extern "C" fn tondo_rt_channel_receiver_fork(receiver: u64) -> u64 {
+    with_state(|state| {
+        let Some((channel, _)) = state.channel_endpoint_cell(receiver, false) else {
+            return 0;
+        };
+        state.channel_endpoint(channel, false)
+    })
+}
+
+pub extern "C" fn tondo_rt_channel_sender_close(sender: u64) -> u64 {
+    with_state(|state| state.channel_close_sender(sender))
+}
+
+/// Closes a receiver and returns a private drain carrier. The carrier is
+/// consumed with `tondo_rt_channel_drain_next`; native lowering maps it to the
+/// public `Array[T]` result without exposing a layout or pointer.
+pub extern "C" fn tondo_rt_channel_receiver_close(receiver: u64) -> u64 {
+    with_state(|state| state.channel_close_receiver(receiver))
+}
+
+pub extern "C" fn tondo_rt_channel_send(sender: u64, value: u64) -> u64 {
+    let (cell, status) = with_state(|state| {
+        let Some((_, cell)) = state.channel_endpoint_cell(sender, true) else {
+            return (None, state.last_status);
+        };
+        let status = state.channel_payload_retain(value);
+        (Some(cell), status)
+    });
+    if status != STATUS_OK {
+        return 0;
+    }
+    let Some(cell) = cell else {
+        return 0;
+    };
+    native_channel_send_result(native_channel_send(&cell, value), value)
+}
+
+pub extern "C" fn tondo_rt_channel_try_send(sender: u64, value: u64) -> u64 {
+    let (cell, status) = with_state(|state| {
+        let Some((_, cell)) = state.channel_endpoint_cell(sender, true) else {
+            return (None, state.last_status);
+        };
+        let status = state.channel_payload_retain(value);
+        (Some(cell), status)
+    });
+    if status != STATUS_OK {
+        return 0;
+    }
+    let Some(cell) = cell else {
+        return 0;
+    };
+    native_channel_send_result(native_channel_try_send(&cell, value), value)
+}
+
+pub extern "C" fn tondo_rt_channel_receive(receiver: u64) -> u64 {
+    let cell = with_state(|state| {
+        state
+            .channel_endpoint_cell(receiver, false)
+            .map(|(_, cell)| cell)
+    });
+    let Some(cell) = cell else {
+        return 0;
+    };
+    native_channel_receive_result(native_channel_receive(&cell))
+}
+
+pub extern "C" fn tondo_rt_channel_try_receive(receiver: u64) -> u64 {
+    let cell = with_state(|state| {
+        state
+            .channel_endpoint_cell(receiver, false)
+            .map(|(_, cell)| cell)
+    });
+    let Some(cell) = cell else {
+        return 0;
+    };
+    native_channel_try_receive_result(native_channel_try_receive(&cell))
+}
+
+pub extern "C" fn tondo_rt_channel_drain_len(drain: u64) -> u64 {
+    with_state(|state| state.channel_drain_len(drain))
+}
+
+pub extern "C" fn tondo_rt_channel_drain_next(drain: u64) -> u64 {
+    with_state(|state| state.channel_drain_next(drain))
+}
+
+pub extern "C" fn tondo_rt_channel_waiters(channel: u64) -> u64 {
+    with_state(|state| state.channel_waiters(channel))
+}
+
 fn native_collection_result(tag: u64, payload: Option<u64>) -> u64 {
     with_state(|state| state.host_result(tag, payload))
 }
@@ -4468,6 +5035,270 @@ fn native_collection_status(status: u64) {
 
 fn native_optional_result(value: Option<u64>) -> u64 {
     native_collection_result(value.map_or(RESULT_NONE, |_| RESULT_SOME), value)
+}
+
+/// Advances every native waiter that can be committed without blocking. The
+/// queues themselves are the FIFO registration order; completed outcomes stay
+/// in the result maps until their owning call consumes them.
+fn native_channel_progress(state: &mut NativeChannelState) -> bool {
+    let mut changed = false;
+    if state.receiver_closed {
+        while let Some(waiter) = state.send_waiters.pop_front() {
+            state
+                .send_results
+                .insert(waiter.id, NativeChannelSendOutcome::Closed);
+            changed = true;
+        }
+    }
+    loop {
+        if let Some(receiver) = state.receive_waiters.front().copied() {
+            if let Some(value) = state.queue.pop_front() {
+                state.receive_waiters.pop_front();
+                state
+                    .receive_results
+                    .insert(receiver.id, NativeChannelReceiveOutcome::Value(value));
+                changed = true;
+                continue;
+            }
+            if let Some(sender) = state.send_waiters.pop_front() {
+                state.receive_waiters.pop_front();
+                state
+                    .send_results
+                    .insert(sender.id, NativeChannelSendOutcome::Committed);
+                state.receive_results.insert(
+                    receiver.id,
+                    NativeChannelReceiveOutcome::Value(sender.value),
+                );
+                changed = true;
+                continue;
+            }
+        }
+        if state.receiver_closed {
+            while let Some(receiver) = state.receive_waiters.pop_front() {
+                state
+                    .receive_results
+                    .insert(receiver.id, NativeChannelReceiveOutcome::Closed);
+                changed = true;
+            }
+            break;
+        }
+        if state.sender_closed && state.queue.is_empty() && state.send_waiters.is_empty() {
+            while let Some(receiver) = state.receive_waiters.pop_front() {
+                state
+                    .receive_results
+                    .insert(receiver.id, NativeChannelReceiveOutcome::Closed);
+                changed = true;
+            }
+            break;
+        }
+        let room = state.capacity.is_none_or(|capacity| {
+            state.queue.len() < capacity && state.queue.len() < HOST_MAX_BYTES
+        });
+        if room {
+            if let Some(sender) = state.send_waiters.pop_front() {
+                state.queue.push_back(sender.value);
+                state
+                    .send_results
+                    .insert(sender.id, NativeChannelSendOutcome::Committed);
+                changed = true;
+                continue;
+            }
+        }
+        break;
+    }
+    changed
+}
+
+fn native_channel_next_waiter(state: &mut NativeChannelState) -> Option<u64> {
+    let id = state.next_waiter;
+    state.next_waiter = state.next_waiter.checked_add(1)?;
+    Some(id)
+}
+
+fn native_channel_send(cell: &NativeChannelCell, value: u64) -> NativeChannelSendOutcome {
+    let (lock, wake) = &**cell;
+    let mut state = lock.lock().expect("native channel state is not poisoned");
+    if state.receiver_closed || state.receivers == 0 {
+        return NativeChannelSendOutcome::Closed;
+    }
+    let room = state
+        .capacity
+        .is_none_or(|capacity| state.queue.len() < capacity && state.queue.len() < HOST_MAX_BYTES)
+        && (state.capacity.is_some() || state.queue.len() < HOST_MAX_BYTES);
+    if state.receive_waiters.is_empty() && room {
+        state.queue.push_back(value);
+        wake.notify_all();
+        return NativeChannelSendOutcome::Committed;
+    }
+    if state.capacity.is_none() && state.queue.len() >= HOST_MAX_BYTES {
+        return NativeChannelSendOutcome::ResourceLimit;
+    }
+    let Some(id) = native_channel_next_waiter(&mut state) else {
+        return NativeChannelSendOutcome::ResourceLimit;
+    };
+    state
+        .send_waiters
+        .push_back(NativeChannelSendWaiter { id, value });
+    loop {
+        let _ = native_channel_progress(&mut state);
+        if let Some(outcome) = state.send_results.remove(&id) {
+            wake.notify_all();
+            return outcome;
+        }
+        state = wake
+            .wait(state)
+            .expect("native channel state is not poisoned");
+    }
+}
+
+fn native_channel_try_send(cell: &NativeChannelCell, value: u64) -> NativeChannelSendOutcome {
+    let (lock, wake) = &**cell;
+    let mut state = lock.lock().expect("native channel state is not poisoned");
+    let _ = native_channel_progress(&mut state);
+    if state.receiver_closed || state.receivers == 0 {
+        return NativeChannelSendOutcome::Closed;
+    }
+    if let Some(receiver) = state.receive_waiters.pop_front() {
+        state
+            .receive_results
+            .insert(receiver.id, NativeChannelReceiveOutcome::Value(value));
+        wake.notify_all();
+        return NativeChannelSendOutcome::Committed;
+    }
+    if state
+        .capacity
+        .is_some_and(|capacity| state.queue.len() >= capacity)
+    {
+        return NativeChannelSendOutcome::Full;
+    }
+    if state.capacity.is_none() && state.queue.len() >= HOST_MAX_BYTES {
+        return NativeChannelSendOutcome::ResourceLimit;
+    }
+    state.queue.push_back(value);
+    wake.notify_all();
+    NativeChannelSendOutcome::Committed
+}
+
+fn native_channel_receive(cell: &NativeChannelCell) -> NativeChannelReceiveOutcome {
+    let (lock, wake) = &**cell;
+    let mut state = lock.lock().expect("native channel state is not poisoned");
+    let _ = native_channel_progress(&mut state);
+    if let Some(value) = state.queue.pop_front() {
+        let _ = native_channel_progress(&mut state);
+        wake.notify_all();
+        return NativeChannelReceiveOutcome::Value(value);
+    }
+    if state.sender_closed {
+        return NativeChannelReceiveOutcome::Closed;
+    }
+    let Some(id) = native_channel_next_waiter(&mut state) else {
+        return NativeChannelReceiveOutcome::Closed;
+    };
+    state
+        .receive_waiters
+        .push_back(NativeChannelReceiveWaiter { id });
+    loop {
+        let _ = native_channel_progress(&mut state);
+        if let Some(outcome) = state.receive_results.remove(&id) {
+            wake.notify_all();
+            return outcome;
+        }
+        state = wake
+            .wait(state)
+            .expect("native channel state is not poisoned");
+    }
+}
+
+fn native_channel_try_receive(cell: &NativeChannelCell) -> NativeChannelReceiveOutcome {
+    let (lock, wake) = &**cell;
+    let mut state = lock.lock().expect("native channel state is not poisoned");
+    let _ = native_channel_progress(&mut state);
+    if let Some(value) = state.queue.pop_front() {
+        let _ = native_channel_progress(&mut state);
+        wake.notify_all();
+        return NativeChannelReceiveOutcome::Value(value);
+    }
+    if let Some(sender) = state.send_waiters.pop_front() {
+        state
+            .send_results
+            .insert(sender.id, NativeChannelSendOutcome::Committed);
+        wake.notify_all();
+        return NativeChannelReceiveOutcome::Value(sender.value);
+    }
+    if state.sender_closed || state.receiver_closed {
+        NativeChannelReceiveOutcome::Closed
+    } else {
+        NativeChannelReceiveOutcome::Empty
+    }
+}
+
+fn native_channel_send_result(outcome: NativeChannelSendOutcome, value: u64) -> u64 {
+    with_state(|state| {
+        let mut pending = VecDeque::new();
+        let result = match outcome {
+            NativeChannelSendOutcome::Committed => state.host_result(RESULT_OK, None),
+            NativeChannelSendOutcome::Closed => {
+                state.last_status = STATUS_HOST_CLOSED;
+                state.host_result(RESULT_ERR, Some(value))
+            }
+            NativeChannelSendOutcome::Full => {
+                state.last_status = STATUS_CHANNEL_FULL;
+                state.host_result(RESULT_ERR, Some(value))
+            }
+            NativeChannelSendOutcome::ResourceLimit => {
+                state.last_status = STATUS_HOST_LIMIT;
+                state.host_result(RESULT_ERR, Some(value))
+            }
+        };
+        if !matches!(outcome, NativeChannelSendOutcome::Committed) {
+            state.channel_payload_release(value, &mut pending);
+            state.drain_destruction(&mut pending);
+        }
+        result
+    })
+}
+
+fn native_channel_receive_result(outcome: NativeChannelReceiveOutcome) -> u64 {
+    with_state(|state| {
+        let mut pending = VecDeque::new();
+        let result = match outcome {
+            NativeChannelReceiveOutcome::Value(value) => {
+                let result = state.host_result(RESULT_SOME, Some(value));
+                state.channel_payload_release(value, &mut pending);
+                result
+            }
+            NativeChannelReceiveOutcome::Closed => state.host_result(RESULT_NONE, None),
+            NativeChannelReceiveOutcome::Empty => {
+                state.last_status = STATUS_CHANNEL_EMPTY;
+                RESULT_NONE
+            }
+        };
+        state.drain_destruction(&mut pending);
+        result
+    })
+}
+
+fn native_channel_try_receive_result(outcome: NativeChannelReceiveOutcome) -> u64 {
+    with_state(|state| {
+        let mut pending = VecDeque::new();
+        let result = match outcome {
+            NativeChannelReceiveOutcome::Value(value) => {
+                let result = state.host_result(RESULT_SOME, Some(value));
+                state.channel_payload_release(value, &mut pending);
+                result
+            }
+            NativeChannelReceiveOutcome::Empty => {
+                state.last_status = STATUS_CHANNEL_EMPTY;
+                RESULT_NONE
+            }
+            NativeChannelReceiveOutcome::Closed => {
+                state.last_status = STATUS_HOST_CLOSED;
+                state.host_result(RESULT_ERR, Some(STATUS_HOST_CLOSED))
+            }
+        };
+        state.drain_destruction(&mut pending);
+        result
+    })
 }
 
 fn next_sync_generation(next_generation: &mut u64) -> Result<u64, u64> {
@@ -7642,6 +8473,199 @@ mod tests {
         );
         assert_eq!(tondo_rt_sync_park_epoch(park), epoch + 1);
         assert_eq!(tondo_rt_release(park), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_channel_bounded_fifo_errors_and_terminal_drain() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        assert_eq!(tondo_rt_channel_bounded(-1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_CHANNEL_INVALID_CAPACITY);
+        assert_eq!(tondo_rt_channel_bounded((HOST_MAX_BYTES + 1) as i64), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_HOST_LIMIT);
+
+        let channel = tondo_rt_channel_bounded(2);
+        let sender = tondo_rt_channel_sender(channel);
+        let receiver = tondo_rt_channel_receiver(channel);
+        assert!(channel & HANDLE_BIT != 0);
+        assert!(sender & HANDLE_BIT != 0);
+        assert!(receiver & HANDLE_BIT != 0);
+        assert_eq!(tondo_rt_release(channel), STATUS_OK);
+
+        for value in [1, 2] {
+            let result = tondo_rt_channel_try_send(sender, value);
+            assert_eq!(tondo_rt_result_tag(result), RESULT_OK);
+            assert_eq!(tondo_rt_release(result), STATUS_OK);
+        }
+        let full = tondo_rt_channel_try_send(sender, 3);
+        assert_eq!(tondo_rt_result_tag(full), RESULT_ERR);
+        assert_eq!(tondo_rt_result_payload(full), 3);
+        assert_eq!(tondo_rt_last_status(), STATUS_CHANNEL_FULL);
+        assert_eq!(tondo_rt_release(full), STATUS_OK);
+
+        for value in [1, 2] {
+            let result = tondo_rt_channel_try_receive(receiver);
+            assert_eq!(tondo_rt_result_tag(result), RESULT_SOME);
+            assert_eq!(tondo_rt_result_payload(result), value);
+            assert_eq!(tondo_rt_release(result), STATUS_OK);
+        }
+        assert_eq!(tondo_rt_channel_try_receive(receiver), RESULT_NONE);
+        assert_eq!(tondo_rt_last_status(), STATUS_CHANNEL_EMPTY);
+
+        assert_eq!(tondo_rt_channel_sender_close(sender), STATUS_OK);
+        let closed = tondo_rt_channel_try_receive(receiver);
+        assert_eq!(tondo_rt_result_tag(closed), RESULT_ERR);
+        assert_eq!(tondo_rt_result_payload(closed), STATUS_HOST_CLOSED);
+        assert_eq!(tondo_rt_release(closed), STATUS_OK);
+        let drain = tondo_rt_channel_receiver_close(receiver);
+        assert_eq!(tondo_rt_channel_drain_len(drain), 0);
+        assert_eq!(tondo_rt_channel_drain_next(drain), 0);
+        assert_eq!(tondo_rt_release(drain), STATUS_OK);
+        assert_eq!(tondo_rt_release(sender), STATUS_OK);
+        assert_eq!(tondo_rt_release(receiver), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let drain_channel = tondo_rt_channel_bounded(2);
+        let sender = tondo_rt_channel_sender(drain_channel);
+        let receiver = tondo_rt_channel_receiver(drain_channel);
+        assert_eq!(tondo_rt_release(drain_channel), STATUS_OK);
+        for value in [31, 32] {
+            let result = tondo_rt_channel_try_send(sender, value);
+            assert_eq!(tondo_rt_result_tag(result), RESULT_OK);
+            assert_eq!(tondo_rt_release(result), STATUS_OK);
+        }
+        assert_eq!(tondo_rt_channel_sender_close(sender), STATUS_OK);
+        let drain = tondo_rt_channel_receiver_close(receiver);
+        assert_eq!(tondo_rt_channel_drain_len(drain), 2);
+        assert_eq!(tondo_rt_channel_drain_next(drain), 31);
+        assert_eq!(tondo_rt_channel_drain_next(drain), 32);
+        assert_eq!(tondo_rt_channel_drain_len(drain), 0);
+        assert_eq!(tondo_rt_channel_drain_next(drain), 0);
+        assert_eq!(tondo_rt_release(drain), STATUS_OK);
+        assert_eq!(tondo_rt_release(sender), STATUS_OK);
+        assert_eq!(tondo_rt_release(receiver), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_channel_rendezvous_fifo_wakeup_and_close_preserve_payloads() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+
+        let rendezvous = tondo_rt_channel_bounded(0);
+        let sender = tondo_rt_channel_sender(rendezvous);
+        let receiver = tondo_rt_channel_receiver(rendezvous);
+        assert_eq!(tondo_rt_release(rendezvous), STATUS_OK);
+        let waiting_receiver = std::thread::spawn(move || tondo_rt_channel_receive(receiver));
+        for _ in 0..100_000 {
+            if tondo_rt_channel_waiters(rendezvous) >= 1 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(tondo_rt_channel_waiters(rendezvous) >= 1);
+        let sent = tondo_rt_channel_send(sender, 7);
+        assert_eq!(tondo_rt_result_tag(sent), RESULT_OK);
+        assert_eq!(tondo_rt_release(sent), STATUS_OK);
+        let received = waiting_receiver
+            .join()
+            .expect("rendezvous receiver must finish");
+        assert_eq!(tondo_rt_result_tag(received), RESULT_SOME);
+        assert_eq!(tondo_rt_result_payload(received), 7);
+        assert_eq!(tondo_rt_release(received), STATUS_OK);
+        assert_eq!(tondo_rt_channel_waiters(rendezvous), 0);
+        assert_eq!(tondo_rt_channel_sender_close(sender), STATUS_OK);
+        let drain = tondo_rt_channel_receiver_close(receiver);
+        assert_eq!(tondo_rt_channel_drain_len(drain), 0);
+        assert_eq!(tondo_rt_release(drain), STATUS_OK);
+        assert_eq!(tondo_rt_release(sender), STATUS_OK);
+        assert_eq!(tondo_rt_release(receiver), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let bounded = tondo_rt_channel_bounded(1);
+        let sender = tondo_rt_channel_sender(bounded);
+        let receiver = tondo_rt_channel_receiver(bounded);
+        assert_eq!(tondo_rt_release(bounded), STATUS_OK);
+        let first = tondo_rt_channel_try_send(sender, 11);
+        assert_eq!(tondo_rt_result_tag(first), RESULT_OK);
+        assert_eq!(tondo_rt_release(first), STATUS_OK);
+        let pending_sender = std::thread::spawn(move || tondo_rt_channel_send(sender, 12));
+        for _ in 0..100_000 {
+            if tondo_rt_channel_waiters(bounded) >= 1 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(tondo_rt_channel_waiters(bounded), 1);
+        let received = tondo_rt_channel_receive(receiver);
+        assert_eq!(tondo_rt_result_tag(received), RESULT_SOME);
+        assert_eq!(tondo_rt_result_payload(received), 11);
+        assert_eq!(tondo_rt_release(received), STATUS_OK);
+        let sent = pending_sender.join().expect("buffered sender must finish");
+        assert_eq!(tondo_rt_result_tag(sent), RESULT_OK);
+        assert_eq!(tondo_rt_release(sent), STATUS_OK);
+        let received = tondo_rt_channel_receive(receiver);
+        assert_eq!(tondo_rt_result_tag(received), RESULT_SOME);
+        assert_eq!(tondo_rt_result_payload(received), 12);
+        assert_eq!(tondo_rt_release(received), STATUS_OK);
+        assert_eq!(tondo_rt_channel_sender_close(sender), STATUS_OK);
+        let drain = tondo_rt_channel_receiver_close(receiver);
+        assert_eq!(tondo_rt_channel_drain_len(drain), 0);
+        assert_eq!(tondo_rt_release(drain), STATUS_OK);
+        assert_eq!(tondo_rt_release(sender), STATUS_OK);
+        assert_eq!(tondo_rt_release(receiver), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let closed_channel = tondo_rt_channel_bounded(0);
+        let sender = tondo_rt_channel_sender(closed_channel);
+        let receiver = tondo_rt_channel_receiver(closed_channel);
+        assert_eq!(tondo_rt_release(closed_channel), STATUS_OK);
+        let pending_sender = std::thread::spawn(move || tondo_rt_channel_send(sender, 21));
+        for _ in 0..100_000 {
+            if tondo_rt_channel_waiters(closed_channel) >= 1 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(tondo_rt_channel_waiters(closed_channel), 1);
+        let drain = tondo_rt_channel_receiver_close(receiver);
+        assert_eq!(tondo_rt_channel_drain_len(drain), 0);
+        assert_eq!(tondo_rt_release(drain), STATUS_OK);
+        let closed = pending_sender.join().expect("closed sender must wake");
+        assert_eq!(tondo_rt_result_tag(closed), RESULT_ERR);
+        assert_eq!(tondo_rt_result_payload(closed), 21);
+        assert_eq!(tondo_rt_last_status(), STATUS_HOST_CLOSED);
+        assert_eq!(tondo_rt_release(closed), STATUS_OK);
+        assert_eq!(tondo_rt_channel_waiters(closed_channel), 0);
+        assert_eq!(tondo_rt_channel_sender_close(sender), STATUS_OK);
+        assert_eq!(tondo_rt_release(sender), STATUS_OK);
+        assert_eq!(tondo_rt_release(receiver), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let sender_closed_channel = tondo_rt_channel_bounded(0);
+        let sender = tondo_rt_channel_sender(sender_closed_channel);
+        let receiver = tondo_rt_channel_receiver(sender_closed_channel);
+        assert_eq!(tondo_rt_release(sender_closed_channel), STATUS_OK);
+        let pending_receiver = std::thread::spawn(move || tondo_rt_channel_receive(receiver));
+        for _ in 0..100_000 {
+            if tondo_rt_channel_waiters(sender_closed_channel) >= 1 {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(tondo_rt_channel_waiters(sender_closed_channel), 1);
+        assert_eq!(tondo_rt_channel_sender_close(sender), STATUS_OK);
+        let closed_receive = pending_receiver
+            .join()
+            .expect("last sender close must wake receiver");
+        assert_eq!(tondo_rt_result_tag(closed_receive), RESULT_NONE);
+        assert_eq!(tondo_rt_release(closed_receive), STATUS_OK);
+        let drain = tondo_rt_channel_receiver_close(receiver);
+        assert_eq!(tondo_rt_channel_drain_len(drain), 0);
+        assert_eq!(tondo_rt_release(drain), STATUS_OK);
+        assert_eq!(tondo_rt_release(sender), STATUS_OK);
+        assert_eq!(tondo_rt_release(receiver), STATUS_OK);
         assert_eq!(tondo_rt_live_objects(), 0);
     }
 }

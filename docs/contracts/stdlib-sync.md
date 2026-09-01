@@ -545,7 +545,9 @@ literales, la implementación de colecciones compartidas para hosted/native ABI,
 la iteración directa, el modelo/test/fuzz acotado, la campaña PERF hosted, la
 conformance observable VM/native de colecciones, la conformance global y la
 guía ejecutable de `STD-SYNC-DOC-001` cierran los bloques actualmente
-implementados. El siguiente bloque de la familia es `STD-CHANNEL-IMPL-001`.
+implementados. `STD-CHANNEL-IMPL-001` añade la frontera hosted/native privada
+de canales; el siguiente bloque de la familia es
+`STD-CHANNEL-ASYNC-ITER-001`.
 La ABI nativa sigue siendo privada:
 el bloque de pruebas verifica modelos, histories, cursores, aliases, límites y
 cleanup, no un layout de tipos genéricos ni lowering AOT.

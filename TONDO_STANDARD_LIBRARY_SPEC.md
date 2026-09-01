@@ -2273,7 +2273,12 @@ El registro machine-readable y sus negativos ejecutables viven en
 normativo ampliado está en
 [`docs/contracts/stdlib-channel.md`](./docs/contracts/stdlib-channel.md).
 `STD-CONC-001` queda cerrado como contrato runtime-facing, pero no promociona
-una implementación pública antes de sus leaves `STD-CHANNEL-*`.
+una implementación pública antes de sus leaves `STD-CHANNEL-*`. La ejecución
+de `STD-CHANNEL-IMPL-001` ya está verificada en la VM hosted y en el ABI nativo
+privado: el scheduler conserva waiters y commit FIFO, mientras el runtime
+nativo usa capacidades opacas `u64`, `Mutex`/`Condvar` y un carrier interno para
+el drenado terminal. La evidencia no reclama lowering AOT de canales ni cambia
+la obligación de cerrar `STD-CHANNEL-ASYNC-ITER-001`, TEST, PERF, CONF y DOC.
 
 ~~~tondo pseudocode
 pub type Sender[T]
@@ -2439,7 +2444,7 @@ La guía de uso y los ejemplos ejecutables de `std.sync` se cierran con
 `STD-SYNC-DOC-001` en
 [`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y
 [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md). El siguiente
-bloque de implementación es `STD-CHANNEL-IMPL-001`.
+bloque de implementación es `STD-CHANNEL-ASYNC-ITER-001`.
 El fixture VM ejecuta Mutex, RwLock, Condition, Semaphore, Once, Barrier,
 atomics y un consumidor de colecciones; la sonda nativa prueba únicamente el
 puente ABI privado de atomics, parking, workers y handles. La ausencia de

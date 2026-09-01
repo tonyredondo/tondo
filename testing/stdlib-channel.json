@@ -12,8 +12,11 @@
   "kind": "runtime-facing",
   "target": "tondo-vm-hosted-and-native",
   "host": {
-    "status": "required-after-native-gate",
-    "reason": "Channel needs scheduler wakeups, bounded queue storage and atomic endpoint state on VM and native runtimes; it does not read an ambient host capability"
+    "status": "verified-scheduler-and-native-bridge",
+    "reason": "Channel needs scheduler wakeups, bounded queue storage and atomic endpoint state on VM and native runtimes; it does not read an ambient host capability",
+    "cooperative_model": "scheduler-owned-poll-and-reacquire",
+    "native_bridge": "private-u64-channel-condvar-and-drain",
+    "blocking_native_workers_only": true
   },
   "surface": {
     "types": [
@@ -266,11 +269,52 @@
     "diagnostics-publish-payloads"
   ],
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "verified-hosted-vm-and-native-runtime-abi",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
+    "host": "verified-scheduler-and-native-bridge",
+    "native_status": "verified-native-runtime-abi",
+    "native_aot_lowering": "not-claimed",
+    "algorithmic_fast_paths": "deferred-to-STD-CHANNEL-PERF-001",
+    "sources": [
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/package.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-compiler/src/resolve.rs",
+      "crates/tondo-vm/src/bytecode/verify.rs",
+      "crates/tondo-vm/src/runtime.rs",
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "crates/tondo-native-runtime/src/lib.rs"
+    ],
+    "tests": [
+      "crates/tondo-compiler/src/hir/check.rs::check_channel_method_call",
+      "crates/tondo-compiler/src/hir/check.rs::select_semantics_accepts_compiler_owned_selectable_adapters",
+      "crates/tondo-compiler/src/process_host.rs::channel_host_implements_capacity_fifo_errors_and_explicit_close",
+      "crates/tondo-compiler/src/process_host.rs::channel_host_enforces_unbounded_limit_forks_and_receiver_drain",
+      "crates/tondo-compiler/src/process_host.rs::channel_host_scheduler_preserves_rendezvous_fifo_and_cancellation",
+      "crates/tondo-native-runtime/src/lib.rs::native_channel_bounded_fifo_errors_and_terminal_drain",
+      "crates/tondo-native-runtime/src/lib.rs::native_channel_rendezvous_fifo_wakeup_and_close_preserve_payloads",
+      "tests/runtime/m11-std-channel-impl-001.to",
+      "tests/compile-fail/m11-std-channel-await.to",
+      "scripts/stdlib-channel-implementation-check.sh",
+      "scripts/stdlib-channel-implementation-test.sh"
+    ],
+    "proof": "STD-CHANNEL-IMPL-001 verifies typed nominal endpoints lowered through the compiler into a scheduler-owned hosted VM channel and a private native opaque-u64 Condvar bridge; FIFO commit, bounded and unbounded limits, cancellation, selectable send/receive, terminal drain and intact failure payloads are executable, while public API promotion and generic AOT lowering remain closed",
+    "fixture": {
+      "path": "tests/runtime/m11-std-channel-impl-001.to",
+      "stdout": "channel-ok",
+      "exit": 0,
+      "status": "passed"
+    },
+    "native_probe": {
+      "path": "crates/tondo-native-runtime/examples/channel_conformance.rs",
+      "status": "passed",
+      "cases": 4,
+      "target_policy": "host-target-only-until-native-aot-channel-lowering"
+    },
+    "evidence_report": "target/reliability/evidence/stdlib-channel-implementation.json",
     "required_follow_ups": [
-      "STD-CHANNEL-IMPL-001",
       "STD-CHANNEL-ASYNC-ITER-001",
       "STD-CHANNEL-TEST-001",
       "STD-CHANNEL-PERF-001",
@@ -280,13 +324,12 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-CHANNEL-IMPL-001",
       "STD-CHANNEL-ASYNC-ITER-001",
       "STD-CHANNEL-TEST-001",
       "STD-CHANNEL-PERF-001",
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-CHANNEL-ASYNC-ITER-001"]
   }
 }

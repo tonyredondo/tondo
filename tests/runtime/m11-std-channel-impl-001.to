@@ -1,0 +1,86 @@
+import std.channel
+import std.console
+
+fn main(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](2)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+
+    match sender.trySend(1) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    match sender.trySend(2) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    match sender.trySend(3) {
+        ok(_) => assert(false)
+        err(error) => match error {
+            channel.TrySendError.Full(value) => assert(value == 3)
+            channel.TrySendError.Closed(_) => assert(false)
+            channel.TrySendError.ResourceLimit(_) => assert(false)
+        }
+    }
+
+    match receiver.tryReceive() {
+        channel.TryReceive.Item(value) => assert(value == 1)
+        channel.TryReceive.Empty => assert(false)
+        channel.TryReceive.Closed => assert(false)
+    }
+    match receiver.tryReceive() {
+        channel.TryReceive.Item(value) => assert(value == 2)
+        channel.TryReceive.Empty => assert(false)
+        channel.TryReceive.Closed => assert(false)
+    }
+    match receiver.tryReceive() {
+        channel.TryReceive.Item(_) => assert(false)
+        channel.TryReceive.Empty => {}
+        channel.TryReceive.Closed => assert(false)
+    }
+
+    match sender.send(4) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    match receiver.receive() {
+        some(value) => assert(value == 4)
+        none => assert(false)
+    }
+
+    sender.close()
+    match receiver.tryReceive() {
+        channel.TryReceive.Item(_) => assert(false)
+        channel.TryReceive.Empty => assert(false)
+        channel.TryReceive.Closed => {}
+    }
+    let drained = receiver.close()
+    assert(drained.length() == 0)
+
+    let selected_receive_endpoints = channel.bounded[Int](1)?
+    let selected_receive_sender = selected_receive_endpoints.0
+    let selected_receive_receiver = selected_receive_endpoints.1
+    match selected_receive_sender.trySend(5) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    let receive_arm = select {
+        selected_receive_receiver.receive() => 1
+        else => 2
+    }
+    assert(receive_arm == 1)
+
+    let selected_send_endpoints = channel.bounded[Int](1)?
+    let selected_send_sender = selected_send_endpoints.0
+    let selected_send_receiver = selected_send_endpoints.1
+    let send_arm = select {
+        selected_send_sender.send(6) => 3
+        else => 4
+    }
+    assert(send_arm == 3)
+    match selected_send_receiver.receive() {
+        some(value) => assert(value == 6)
+        none => assert(false)
+    }
+    console.println("channel-ok")
+}

@@ -955,6 +955,6 @@
   },
   "promotion": {
     "implementation_pending": [],
-    "next_blocks": ["STD-CHANNEL-IMPL-001"]
+    "next_blocks": ["STD-CHANNEL-ASYNC-ITER-001"]
   }
 }

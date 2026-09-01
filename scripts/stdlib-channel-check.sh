@@ -28,8 +28,11 @@ jq -e '
   and .layer == "B0"
   and .kind == "runtime-facing"
   and .target == "tondo-vm-hosted-and-native"
-  and .host.status == "required-after-native-gate"
+  and .host.status == "verified-scheduler-and-native-bridge"
   and .host.reason == "Channel needs scheduler wakeups, bounded queue storage and atomic endpoint state on VM and native runtimes; it does not read an ambient host capability"
+  and .host.cooperative_model == "scheduler-owned-poll-and-reacquire"
+  and .host.native_bridge == "private-u64-channel-condvar-and-drain"
+  and .host.blocking_native_workers_only == true
   and .surface.types == [
     "Sender[T]",
     "Receiver[T]",
@@ -143,18 +146,33 @@ jq -e '
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 27
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "verified-hosted-vm-and-native-runtime-abi"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
-  and .promotion.implementation_pending == [
-    "STD-CHANNEL-IMPL-001",
+  and .implementation.host == "verified-scheduler-and-native-bridge"
+  and .implementation.native_status == "verified-native-runtime-abi"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and .implementation.algorithmic_fast_paths == "deferred-to-STD-CHANNEL-PERF-001"
+  and (.implementation.sources | type == "array" and length == 10)
+  and (.implementation.tests | type == "array" and length == 11)
+  and .implementation.fixture == {path:"tests/runtime/m11-std-channel-impl-001.to",stdout:"channel-ok",exit:0,status:"passed"}
+  and .implementation.native_probe == {path:"crates/tondo-native-runtime/examples/channel_conformance.rs",status:"passed",cases:4,target_policy:"host-target-only-until-native-aot-channel-lowering"}
+  and .implementation.evidence_report == "target/reliability/evidence/stdlib-channel-implementation.json"
+  and (.implementation.proof | type == "string" and length > 0)
+  and .implementation.required_follow_ups == [
     "STD-CHANNEL-ASYNC-ITER-001",
     "STD-CHANNEL-TEST-001",
     "STD-CHANNEL-PERF-001",
     "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .promotion.implementation_pending == [
+    "STD-CHANNEL-ASYNC-ITER-001",
+    "STD-CHANNEL-TEST-001",
+    "STD-CHANNEL-PERF-001",
+    "STD-CHANNEL-CONF-001",
+    "STD-CHANNEL-DOC-001"
+  ]
+  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel contract"
 
 for path in \
@@ -172,7 +190,8 @@ for marker in \
     'moves-only-on-linearization' \
     'FIFO-registration-per-operation' \
     'channel.send.rollback' \
-    'required-after-native-gate'; do
+    'verified-scheduler-and-native-bridge' \
+    'STD-CHANNEL-IMPL-001'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-channel.md" \
         || die "contract document misses marker: $marker"
 done
