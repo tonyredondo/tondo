@@ -2435,6 +2435,11 @@ y [`docs/contracts/stdlib-sync-collection-conformance.md`](./docs/contracts/stdl
 La conformance global de `std.sync` se cierra con `STD-SYNC-CONF-001` en
 [`testing/stdlib-sync-conformance.json`](./testing/stdlib-sync-conformance.json)
 y [`docs/contracts/stdlib-sync-conformance.md`](./docs/contracts/stdlib-sync-conformance.md).
+La guía de uso y los ejemplos ejecutables de `std.sync` se cierran con
+`STD-SYNC-DOC-001` en
+[`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y
+[`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md). El siguiente
+bloque de implementación es `STD-CHANNEL-IMPL-001`.
 El fixture VM ejecuta Mutex, RwLock, Condition, Semaphore, Once, Barrier,
 atomics y un consumidor de colecciones; la sonda nativa prueba únicamente el
 puente ABI privado de atomics, parking, workers y handles. La ausencia de
@@ -2494,7 +2499,11 @@ guard, mientras que los invariantes recuperables pertenecen al tipo protegido y
 a sus errores nominales. Tampoco existe `WaitGroup`; `scope` y
 `Group[Unit, E]` expresan la vida de los hijos sin un contador separado. Los
 atomics exigen seleccionar el memory ordering en la operación; la API no oculta
-un orden débil como default.
+un orden débil como default. La guía `STD-SYNC-DOC-001` convierte estas reglas
+en ejemplos ejecutables: ordenación explícita para evitar deadlocks, cleanup y
+cancelación sin poisoning, los cinco literales cualificados, CAS fuerte, `for`
+directo débil frente a `snapshot()` coherente y la elección visible entre una
+queue no bloqueante y `std.channel` con espera/backpressure.
 
 Los tipos compartidos publican `Send`/`Share` solo cuando sus parámetros y la
 implementación interior lo demuestran. `threads` es necesario para semántica
@@ -2783,6 +2792,10 @@ cambio un único punto de linearización y materializa una colección ordinaria
 independiente con esos mismos órdenes. Igualdad, agregaciones exactas,
 serialización, aritmética de colecciones y cualquier decisión que necesite un
 solo instante se realizan sobre el snapshot, no directamente sobre el owner.
+`sync.Stack` es LIFO y `sync.Queue` es FIFO-MPMC; `pop`/`dequeue` devuelven
+`none` sin esperar. La espera, el rendezvous y el backpressure pertenecen a
+`std.channel.bounded(0)`, `bounded(n)` o `unbounded()` cuando se elige de forma
+explícita, no a una queue oculta.
 
 ##### 14.4.4.5 Estrategia de implementación y progreso
 

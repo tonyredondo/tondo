@@ -72,7 +72,7 @@ jq -e '
   and (.implementation.sources | type == "array" and length == 11)
   and (.implementation.tests | type == "array" and length == 7)
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-SYNC-DOC-001"]
+  and .implementation.required_follow_ups == []
   and .conformance.task == "STD-SYNC-COLLECTION-CONF-001"
   and .conformance.status == "verified"
   and .conformance.contract == "testing/stdlib-sync-collection-conformance.json"
@@ -87,7 +87,7 @@ jq -e '
   and (.negative_cases | length) == 14
   and .promotion.implementation_complete == true
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
   and .promotion.remaining == .implementation.required_follow_ups
 ' "$contract" >/dev/null || die "invalid machine-readable implementation contract"
 
@@ -188,7 +188,7 @@ jq -e '
   and .collections.conformance.contract == "testing/stdlib-sync-collection-conformance.json"
   and .collections.conformance.document == "docs/contracts/stdlib-sync-collection-conformance.md"
   and .collections.conformance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
   and (.promotion.implementation_pending | index("STD-SYNC-COLLECTION-IMPL-001")) == null
 ' "$root/testing/stdlib-sync.json" >/dev/null \
     || die "parent std.sync registry does not promote the implementation leaf"
@@ -197,7 +197,7 @@ jq -e '
   .implementation.status == "verified-frontend-lowering-consumed"
   and .implementation.mir_boundary == "verified-hosted-runtime-boundary"
   and .implementation.runtime == "verified-by-STD-SYNC-COLLECTION-IMPL-001"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
 ' "$root/testing/stdlib-sync-collection-frontend.json" >/dev/null \
     || die "frontend registry does not point at the consumed implementation boundary"
 

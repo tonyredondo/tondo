@@ -77,7 +77,7 @@ jq -e '
   and .promotion.frontend_complete == true
   and .promotion.runtime_complete == true
   and .promotion.implementation_block == "STD-SYNC-COLLECTION-IMPL-001"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 13
 ' "$contract" >/dev/null || die "invalid machine-readable frontend contract"
@@ -130,7 +130,7 @@ jq -e '
   and .frontend.contract == "testing/stdlib-sync-collection-frontend.json"
   and .frontend.runtime_lowering == "verified-hosted-runtime-boundary"
   and .frontend.implementation_contract == "testing/stdlib-sync-collection.json"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
   and (.promotion.implementation_pending | index("STD-SYNC-COLLECTION-FRONTEND-001")) == null
 ' "$root/testing/stdlib-sync.json" >/dev/null \
     || die "parent std.sync registry does not promote the frontend"

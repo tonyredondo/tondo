@@ -1,0 +1,78 @@
+import std.console
+import std.sync
+
+fn main(): !sync.SyncError {
+    // ordering-no-deadlock (ordered_mutexes): acquire in one explicit order and never hold two guards.
+    let first = sync.mutex(1)?
+    let second = sync.mutex(2)?
+    var first_guard = first.lock()?
+    let first_value = first_guard.get().value
+    first_guard.unlock()
+    var second_guard = second.lock()?
+    let second_value = second_guard.get().value
+    second_guard.unlock()
+    assert(first_value + second_value == 3)
+
+    // cleanup-no-poison (cleanup_without_poison): explicit release leaves the mutex reusable.
+    let cleanup_mutex = sync.mutex(5)?
+    var cleanup_guard = cleanup_mutex.lock()?
+    assert(cleanup_guard.get().value == 5)
+    cleanup_guard.unlock()
+    var retry_guard = cleanup_mutex.lock()?
+    assert(retry_guard.get().value == 5)
+    retry_guard.unlock()
+
+    // explicit-atomic-cas (explicit_atomic_cas): every memory order is named and CAS is strong.
+    let atomic = sync.atomic(1)
+    let acquire = sync.MemoryOrder.Acquire()
+    let release = sync.MemoryOrder.Release()
+    let seq_cst = sync.MemoryOrder.SeqCst()
+    atomic.store(2, release)
+    assert(atomic.load(acquire) == 2)
+    match atomic.compareExchange(2, 3, seq_cst, acquire) {
+        sync.CompareExchange.Exchanged(previous) => assert(previous == 2)
+        sync.CompareExchange.Mismatch(_) => assert(false)
+    }
+    match atomic.compareExchange(2, 4, seq_cst, acquire) {
+        sync.CompareExchange.Exchanged(_) => assert(false)
+        sync.CompareExchange.Mismatch(observed) => assert(observed == 3)
+    }
+
+    // five-collection-literals (five_collection_literals): the five canonical qualified forms.
+    let array: sync.Array[Int] = sync.Array[1, 2]
+    let map: sync.Map[String, Int] = sync.Map["a": 1]
+    let set: sync.Set[Int] = sync.Set[1, 2]
+    let stack: sync.Stack[Int] = sync.Stack[1, 2]
+    let queue: sync.Queue[Int] = sync.Queue[1, 2]
+    assert(array.length() == 2)
+    assert(map.length() == 1)
+    assert(set.length() == 2)
+    assert(stack.length() == 2)
+    assert(queue.length() == 2)
+    assert(array.get(0) == some(1))
+
+    // weak-for-vs-snapshot (weak_read_vs_snapshot): choose a weak for or an exact snapshot explicitly.
+    let observed_array: sync.Array[Int] = sync.Array[1, 2, 3]
+    var observed = 0
+    for item in observed_array {
+        observed += item
+    }
+    assert(observed == 6)
+    match observed_array.snapshot() {
+        ok(snapshot) => {
+            var coherent = 0
+            for item in snapshot {
+                coherent += item
+            }
+            assert(coherent == 6)
+        }
+        err(_) => assert(false)
+    }
+
+    // queue-vs-channel (queue_without_backpressure): dequeue is non-blocking; channels own waiting.
+    let nonblocking_queue: sync.Queue[Int] = sync.Queue[1, 2]
+    assert(nonblocking_queue.dequeue() == some(1))
+    assert(nonblocking_queue.dequeue() == some(2))
+    assert(nonblocking_queue.dequeue() == none)
+    console.println("sync-doc-ok")
+}

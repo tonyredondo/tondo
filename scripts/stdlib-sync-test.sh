@@ -88,7 +88,7 @@ jq -e '
   ]
   and .performance.report == "target/reliability/evidence/stdlib-sync-performance.json"
   and .performance.command == "scripts/stdlib-sync-performance.sh"
-  and .promotion.remaining == ["STD-SYNC-DOC-001"]
+  and .promotion.remaining == []
 ' "$testing_contract" >/dev/null || {
     echo "std.sync tests: invalid machine-readable TEST contract" >&2
     exit 1
@@ -163,7 +163,12 @@ for marker in \
     'pub fn sync.Set.snapshot(ref self): Set[K] ! CollectionError suspends' \
     'pub fn sync.Stack.pop(ref self): T? suspends' \
     'pub fn sync.Queue.dequeue(ref self): T? suspends' \
-    'sync.Queue[...]'; do
+    'sync.Queue[...]' \
+    '## Ordering y deadlocks' \
+    '## Cancelación, cleanup y ausencia de poisoning' \
+    '## Costes y elección queue/channel' \
+    '## Ejemplos ejecutables' \
+    'STD-SYNC-DOC-001'; do
     grep -Fq "$marker" docs/contracts/stdlib-sync.md
 done
 
@@ -209,7 +214,13 @@ jq -e '
   and .collections.conformance.contract == "testing/stdlib-sync-collection-conformance.json"
   and .collections.conformance.document == "docs/contracts/stdlib-sync-collection-conformance.md"
   and .collections.conformance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
+  and .documentation.task == "STD-SYNC-DOC-001"
+  and .documentation.status == "verified"
+  and .documentation.fixture == "tests/runtime/m11-std-sync-doc-001.to"
+  and .documentation.expected_stdout == "sync-doc-ok"
+  and .implementation.required_follow_ups == []
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
 ' testing/stdlib-sync.json >/dev/null
 
 scripts/stdlib-sync-collection-frontend-check.sh >/dev/null
@@ -262,7 +273,12 @@ for path in \
     tests/compile-fail/m11-std-sync-conf-missing-threads.codes \
     crates/tondo-native-runtime/examples/sync_conformance.rs \
     scripts/stdlib-sync-performance.sh \
-    scripts/stdlib-sync-performance-test.sh; do
+    scripts/stdlib-sync-performance-test.sh \
+    scripts/stdlib-sync-doc-check.sh \
+    scripts/stdlib-sync-doc-test.sh \
+    tests/runtime/m11-std-sync-doc-001.to \
+    tests/runtime/m11-std-sync-doc-001.stdout \
+    tests/runtime/m11-std-sync-doc-001.exit; do
     [[ -e "$path" ]] || { echo "std.sync tests: missing TEST evidence path $path" >&2; exit 1; }
 done
 [[ -x scripts/stdlib-sync-fuzz.sh ]] \
@@ -291,6 +307,10 @@ done
     || { echo "std.sync tests: sync conformance contract test is not executable" >&2; exit 1; }
 [[ -x scripts/stdlib-sync-conformance.sh ]] \
     || { echo "std.sync tests: sync conformance runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-doc-check.sh ]] \
+    || { echo "std.sync tests: sync documentation checker is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-doc-test.sh ]] \
+    || { echo "std.sync tests: sync documentation contract test is not executable" >&2; exit 1; }
 [[ -s fuzz/corpus/stdlib_sync/seed ]] \
     || { echo "std.sync tests: fuzz corpus is empty" >&2; exit 1; }
 
@@ -318,5 +338,7 @@ runtime_output="$(cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-im
 test_runtime_output="$(cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-test-001.to)"
 [[ "$test_runtime_output" == "sync-test-ok" ]] \
     || { echo "std.sync tests: TEST runtime fixture produced unexpected output: $test_runtime_output" >&2; exit 1; }
+TONDO_STDLIB_SYNC_CONTRACT="$contract" scripts/stdlib-sync-doc-check.sh >/dev/null
+scripts/stdlib-sync-doc-test.sh >/dev/null
 
-echo "std.sync tests: OK (negative contracts; models; VM Once continuation; bounded fuzz target; teardown anchors)"
+echo "std.sync tests: OK (negative contracts; models; VM Once continuation; bounded fuzz target; teardown and documentation anchors)"

@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "8cbd3965d0708fe7c62619d60cc47a63d279f776668483e29fa1a60e65c9bee3"
+      "sha256": "434e977c57d1d9f15bf51784bec2cf2a393ad42cf5cc06d6da0239c6df393d20"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,15 +34,15 @@
     }
   ],
   "summary": {
-    "logical_tests": 2702,
-    "repetitions": 3014,
-    "physical_sources": 557,
-    "unique_source_hashes": 909,
+    "logical_tests": 2703,
+    "repetitions": 3015,
+    "physical_sources": 558,
+    "unique_source_hashes": 910,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 69,
       "draft-contract": 38,
-      "fixture": 179,
+      "fixture": 180,
       "fuzz-target": 9,
       "rust-test": 1882,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 9,
       "draft-pending": 38,
-      "executable": 2633,
+      "executable": 2634,
       "non-executable": 22
     },
     "by_phase": {
@@ -71,7 +71,7 @@
       "protocol": 70,
       "reliability": 125,
       "resolution": 27,
-      "runtime": 321,
+      "runtime": 322,
       "semantic": 887,
       "testing": 38,
       "tooling": 4
@@ -15264,6 +15264,27 @@
       "sidecars": [
         "tests/runtime/m11-std-sync-conformance-001.exit",
         "tests/runtime/m11-std-sync-conformance-001.stdout"
+      ]
+    },
+    {
+      "id": "fixture:runtime/m11-std-sync-doc-001",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "runtime",
+      "source": "tests/runtime/m11-std-sync-doc-001.to",
+      "fixture": "runtime/m11-std-sync-doc-001",
+      "group": "runtime",
+      "requirements": [],
+      "oracle": "exit+stdout+stderr+diagnostics",
+      "repetitions": 1,
+      "source_sha256": "2627965590c6b9fbef7c75a6230b52e70ca146dd4b3e2c2dae74eeaeb14e4802",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "tests/runtime/m11-std-sync-doc-001.exit",
+        "tests/runtime/m11-std-sync-doc-001.stdout"
       ]
     },
     {

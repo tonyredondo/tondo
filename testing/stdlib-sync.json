@@ -672,6 +672,32 @@
     "report": "target/reliability/evidence/stdlib-sync-conformance.json",
     "command": "scripts/stdlib-sync-conformance.sh"
   },
+  "documentation": {
+    "task": "STD-SYNC-DOC-001",
+    "status": "verified",
+    "document": "docs/contracts/stdlib-sync.md",
+    "fixture": "tests/runtime/m11-std-sync-doc-001.to",
+    "command": "scripts/stdlib-sync-doc-check.sh",
+    "expected_stdout": "sync-doc-ok",
+    "examples": [
+      "ordering-no-deadlock",
+      "cleanup-no-poison",
+      "explicit-atomic-cas",
+      "five-collection-literals",
+      "weak-for-vs-snapshot",
+      "queue-vs-channel"
+    ],
+    "sections": [
+      "surface",
+      "ordering",
+      "deadlocks",
+      "poisoning",
+      "cancellation",
+      "cleanup",
+      "costs",
+      "executable-examples"
+    ]
+  },
   "fairness": {
     "lock_waiters": "FIFO-registration-with-bounded-barging",
     "condition_waiters": "FIFO-registration",
@@ -917,16 +943,18 @@
       "tests/runtime/m11-std-sync-conformance-001.exit",
       "tests/compile-fail/m11-std-sync-conf-missing-threads.to",
       "tests/compile-fail/m11-std-sync-conf-missing-threads.codes",
-      "crates/tondo-native-runtime/examples/sync_conformance.rs"
+      "crates/tondo-native-runtime/examples/sync_conformance.rs",
+      "docs/contracts/stdlib-sync.md",
+      "scripts/stdlib-sync-doc-check.sh",
+      "scripts/stdlib-sync-doc-test.sh",
+      "tests/runtime/m11-std-sync-doc-001.to",
+      "tests/runtime/m11-std-sync-doc-001.stdout",
+      "tests/runtime/m11-std-sync-doc-001.exit"
     ],
-    "required_follow_ups": [
-      "STD-SYNC-DOC-001"
-    ]
+    "required_follow_ups": []
   },
   "promotion": {
-    "implementation_pending": [
-      "STD-SYNC-DOC-001"
-    ],
-    "next_blocks": ["STD-SYNC-DOC-001"]
+    "implementation_pending": [],
+    "next_blocks": ["STD-CHANNEL-IMPL-001"]
   }
 }

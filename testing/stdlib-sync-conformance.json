@@ -114,5 +114,5 @@
     "physical-path-in-evidence"
   ],
   "report": "target/reliability/evidence/stdlib-sync-conformance.json",
-  "next_blocks": ["STD-SYNC-DOC-001"]
+  "next_blocks": ["STD-CHANNEL-IMPL-001"]
 }

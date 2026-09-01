@@ -106,9 +106,7 @@
   "promotion": {
     "model_test_fuzz_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-SYNC-DOC-001"],
-    "remaining": [
-      "STD-SYNC-DOC-001"
-    ]
+    "next_blocks": ["STD-CHANNEL-IMPL-001"],
+    "remaining": []
   }
 }

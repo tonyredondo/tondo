@@ -70,6 +70,7 @@ siendo una capacidad declarada por target.
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
+- [Contrato de owner de `std.sync`](./docs/contracts/stdlib-sync.md)
 - [Contrato de rendimiento de `std.sync`](./docs/contracts/stdlib-sync-performance.md)
 - [Contrato de rendimiento de colecciones de `std.sync`](./docs/contracts/stdlib-sync-collection-performance.md)
 - [Contrato de owner de `std.executor`](./docs/contracts/stdlib-executor.md)
@@ -125,8 +126,8 @@ vivos. `STD-SYNC-COLLECTION-CONF-001` queda cerrado para la equivalencia
 observable VM/native de ocho casos, incluidos aliases, outcomes, orden,
 cursores, snapshots, límites, cleanup y capability `threads`; la campaña no
 promueve fast paths nativos ni lowering AOT genérico. `STD-SYNC-CONF-001` y la
-conformance global ya están cerrados. El siguiente bloque es
-`STD-SYNC-DOC-001`. El modelo y
+conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
+con la guía ejecutable y el siguiente bloque es `STD-CHANNEL-IMPL-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6730,12 +6731,19 @@ estas leaves.
   los negativos están en `testing/stdlib-sync-conformance.json`,
   `docs/contracts/stdlib-sync-conformance.md` y sus tres scripts; el cierre
   es target-qualified y no reclama locks nativos públicos ni lowering AOT.
-- [ ] **STD-SYNC-DOC-001 — Documentar sync.** Publicar ordering, deadlocks,
-  ausencia de poisoning, cancelación, cleanup, costes y ejemplos ejecutables
-  sin defaults ocultos. Incluir los cinco literales, array fijo, CAS, `for`
-  directo débil, snapshots coherentes, orden, LIFO/FIFO y la elección explícita
-  entre queue no bloqueante y channel con espera/backpressure. Contrastar en un
-  ejemplo la lectura observacional eficiente con decisiones sobre snapshot.
+- [x] **STD-SYNC-DOC-001 — Documentar sync.** La guía ejecutable en
+  [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md) publica
+  ordering y límites de deadlock, ausencia de poisoning, cancelación, cleanup y
+  costes sin defaults ocultos. El fixture
+  `tests/runtime/m11-std-sync-doc-001.to` ejecuta los seis casos de decisión:
+  los cinco literales cualificados y el array fijo, CAS con órdenes explícitos,
+  `for` directo débil frente a snapshots coherentes, orden LIFO/FIFO y la
+  elección explícita entre queue no bloqueante y channel con
+  espera/backpressure. `scripts/stdlib-sync-doc-check.sh` y
+  `scripts/stdlib-sync-doc-test.sh` mantienen el contrato y sus negativos. El
+  cierre es target-qualified para la VM hosted y no promociona lowering AOT,
+  locks nativos públicos ni una release; el siguiente bloque es
+  `STD-CHANNEL-IMPL-001`.
 
 #### 21.3.3 `std.channel`
 
@@ -7622,9 +7630,10 @@ la ejecución hosted y el ABI nativo privado quedan cerrados por
 `STD-SYNC-COLLECTION-IMPL-001`; `STD-SYNC-COLLECTION-TEST-001` también está
 cerrado para el modelo/test/fuzz acotado y `STD-SYNC-COLLECTION-PERF-001`
 queda cerrado para la línea base de rendimiento hosted; la conformance
-observable de colecciones y la conformance global de `std.sync` quedan cerradas
-por `STD-SYNC-COLLECTION-CONF-001` y `STD-SYNC-CONF-001`; el siguiente bloque
-crítico es `STD-SYNC-DOC-001`;
+observable de colecciones, la conformance global y la guía ejecutable de
+`std.sync` quedan cerradas por `STD-SYNC-COLLECTION-CONF-001`,
+`STD-SYNC-CONF-001` y `STD-SYNC-DOC-001`; el siguiente bloque crítico es
+`STD-CHANNEL-IMPL-001`;
 `STD-SYNC-HOST-001`,
 `STD-SYNC-TEST-001` y `STD-SYNC-PERF-001` ya cerraron la frontera de
 parking/atomics, la continuación de `Once`, el modelo hosted determinista y el
@@ -7661,8 +7670,9 @@ de `STD-SYNC-COLLECTION-IMPL-001` ya tiene evidencia ejecutable;
 `STD-SYNC-COLLECTION-TEST-001` también está cerrado para el modelo/test/fuzz
 acotado, `STD-SYNC-COLLECTION-PERF-001` queda cerrado para la línea base
 hosted y `STD-SYNC-COLLECTION-CONF-001` queda cerrado para la equivalencia
-observable VM/native; `STD-SYNC-CONF-001` también queda cerrado para el corpus
-común VM/native-bridge; el siguiente trabajo crítico es `STD-SYNC-DOC-001`. La
+observable VM/native; `STD-SYNC-CONF-001` y `STD-SYNC-DOC-001` también quedan
+cerrados para el corpus común VM/native-bridge y la guía ejecutable; el siguiente
+trabajo crítico es `STD-CHANNEL-IMPL-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

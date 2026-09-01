@@ -65,8 +65,8 @@ jq -e '
   and .sanitization.native_aot == "not-claimed"
   and .promotion.model_test_fuzz_complete == true
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
-  and .promotion.remaining == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
+  and .promotion.remaining == []
 ' "$contract" >/dev/null || die "invalid machine-readable collection test contract"
 
 for path in \
@@ -124,7 +124,7 @@ jq -e '
   .collections.test_contract == "testing/stdlib-sync-collection-test.json"
   and .collections.test_document == "docs/contracts/stdlib-sync-collection-test.md"
   and .collections.runtime_status == "verified-hosted-vm-and-native-runtime-abi"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
   and (.promotion.implementation_pending | index("STD-SYNC-COLLECTION-TEST-001")) == null
 ' "$root/testing/stdlib-sync.json" >/dev/null \
     || die "parent std.sync registry does not expose the promoted test boundary"
@@ -132,7 +132,7 @@ jq -e '
 jq -e '
   .testing_contract == "testing/stdlib-sync-collection-test.json"
   and .testing_document == "docs/contracts/stdlib-sync-collection-test.md"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
   and (.promotion.remaining | index("STD-SYNC-COLLECTION-TEST-001")) == null
 ' "$root/testing/stdlib-sync-collection.json" >/dev/null \
     || die "collection implementation registry does not link its test follow-up"
@@ -140,7 +140,7 @@ jq -e '
 jq -e '
   .testing_contract == "testing/stdlib-sync-collection-test.json"
   and .testing_document == "docs/contracts/stdlib-sync-collection-test.md"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
 ' "$root/testing/stdlib-sync-collection-iter.json" >/dev/null \
     || die "collection iteration registry does not link its test follow-up"
 

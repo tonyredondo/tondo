@@ -407,6 +407,77 @@ one-linearization-coherent-value-collection. Igualdad,
 serialización, agregaciones exactas y aritmética de colecciones se hacen sobre
 ese snapshot; no se inventa una copia que mezcle estados de distintos instantes.
 
+## Ordering y deadlocks
+
+`std.sync` no publica un orden global de locks ni intenta adivinarlo. El caller
+elige un orden estable para los recursos que necesita y adquiere cada guard en
+ese orden; libera el guard antes de invertirlo o llamar a código que pueda
+adquirir otro recurso. Una llamada ordinaria a `lock`, `read`, `write`, `wait`,
+`acquire` o `getOrInit` espera implícitamente y no lleva `await`. Esto evita una
+API paralela y hace visible dónde puede suspender el control.
+
+El ejemplo `ordering-no-deadlock` adquiere `first` y `second` de uno en uno.
+No garantiza que un programa que invierta ese orden sea inmune a deadlocks: la
+ausencia de un protocolo global es deliberada y forma parte del contrato. Si la
+ordenación no puede expresarse, se debe reducir el ámbito de los guards o usar
+un `std.channel` con un único owner del estado.
+
+## Cancelación, cleanup y ausencia de poisoning
+
+Cancelar antes del commit desregistra el waiter sin consumir un permit ni
+alterar un lock. Cancelar mientras un guard o permit está vivo libera ese
+recurso antes del unwind; `Condition.wait` reacquirea el mutex antes de
+propagar la cancelación. `defer` puede registrar la liberación de un owner afín
+con su forma de llamada, y `unlock`/`release` son las formas terminales
+explícitas. El cleanup es idempotente y ocurre también durante panic-unwind.
+
+No existe poisoning implícito: un panic no inyecta un estado de error en el
+mutex ni en el valor protegido. Si una aplicación necesita recordar un fallo,
+lo almacena explícitamente, por ejemplo en `Once[Result[T, E], Never]`. El
+ejemplo `cleanup-no-poison` libera un guard y vuelve a adquirir la misma
+identidad; la segunda adquisición observa el valor y demuestra que no hay un
+estado oculto de poisoning.
+
+## Costes y elección queue/channel
+
+Las operaciones no contendedidas usan el fast path del host. Con contención,
+la task se aparca en el scheduler y el worker cooperativo no se bloquea ni
+hace spin ilimitado. Los contadores de waiters, wakeups, handles vivos y la
+memoria lógica son observables en los perfiles de rendimiento; no se debe
+inferir un coste nativo AOT a partir de la VM hosted.
+
+`sync.Array` es de longitud fija: `get`/`set` no implican resize ni una copia
+oculta. El cursor de `for` directo captura un horizonte `finite-structural-O1`, no
+materializa contenido proporcional a la cardinalidad y ofrece una lectura
+observacional débil. `snapshot()` es la decisión explícita cuando se necesita
+una colección coherente: tiene un único punto de linearización y un coste O(n)
+de materialización. El ejemplo `weak-for-vs-snapshot` muestra ambas decisiones
+sobre el mismo owner; sumar mientras se observa puede ser suficiente, pero
+igualdad, serialización o una decisión exacta deben usar el snapshot.
+
+`sync.Stack` conserva LIFO y `sync.Queue` conserva FIFO-MPMC. `dequeue` y
+`pop` son no bloqueantes y devuelven `none` si están vacíos. Una queue no
+introduce backpressure ni una espera escondida. Cuando el productor debe
+esperar o limitar memoria, la elección explícita es `std.channel`:
+`bounded(0)` expresa rendezvous, `bounded(n)` expresa backpressure finita y
+`unbounded()` solo se usa si ese crecimiento explícito es la política deseada.
+El ejemplo `queue-vs-channel` deja la diferencia en la superficie, sin
+`waitDequeue`, `waitPop` ni sufijos `Async` inventados.
+
+## Ejemplos ejecutables
+
+La fixture
+`tests/runtime/m11-std-sync-doc-001.to` ejecuta los seis casos documentados y
+su sidecar exige salida `sync-doc-ok` y exit `0`. Se valida con
+`scripts/stdlib-sync-doc-check.sh`; el checker también comprueba que el ejemplo
+mantiene los cinco literales cualificados (`sync.Array`, `sync.Map`,
+`sync.Set`, `sync.Stack` y `sync.Queue`), el array fijo, los dos resultados de
+CAS con órdenes explícitos, el `for` por valor y el snapshot coherente. Los
+casos se identifican como `ordering-no-deadlock`, `cleanup-no-poison`,
+`explicit-atomic-cas`, `five-collection-literals`, `weak-for-vs-snapshot` y
+`queue-vs-channel` dentro del programa. La fixture prueba la semántica hosted
+actual; no afirma lowering AOT, locks nativos públicos ni una release.
+
 ## Modelo, pruebas y límites de diagnóstico
 
 `STD-SYNC-TEST-001` tiene un contrato de pruebas independiente en
@@ -472,8 +543,9 @@ La superficie de compilador, el parking cooperativo hosted, la continuación de
 `Once`, la campaña target-qualified de `STD-SYNC-PERF-001`, el frontend de
 literales, la implementación de colecciones compartidas para hosted/native ABI,
 la iteración directa, el modelo/test/fuzz acotado, la campaña PERF hosted, la
-conformance observable VM/native de colecciones y la conformance global de
-`std.sync` cierran los bloques actualmente implementados. Permanece pendiente
-`STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada:
+conformance observable VM/native de colecciones, la conformance global y la
+guía ejecutable de `STD-SYNC-DOC-001` cierran los bloques actualmente
+implementados. El siguiente bloque de la familia es `STD-CHANNEL-IMPL-001`.
+La ABI nativa sigue siendo privada:
 el bloque de pruebas verifica modelos, histories, cursores, aliases, límites y
 cleanup, no un layout de tipos genéricos ni lowering AOT.

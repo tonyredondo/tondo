@@ -60,6 +60,30 @@ jq -e '
   and .conformance.static_capability == "E1008-missing-threads"
   and .conformance.report == "target/reliability/evidence/stdlib-sync-conformance.json"
   and .conformance.command == "scripts/stdlib-sync-conformance.sh"
+  and .documentation.task == "STD-SYNC-DOC-001"
+  and .documentation.status == "verified"
+  and .documentation.document == "docs/contracts/stdlib-sync.md"
+  and .documentation.fixture == "tests/runtime/m11-std-sync-doc-001.to"
+  and .documentation.command == "scripts/stdlib-sync-doc-check.sh"
+  and .documentation.expected_stdout == "sync-doc-ok"
+  and .documentation.examples == [
+    "ordering-no-deadlock",
+    "cleanup-no-poison",
+    "explicit-atomic-cas",
+    "five-collection-literals",
+    "weak-for-vs-snapshot",
+    "queue-vs-channel"
+  ]
+  and .documentation.sections == [
+    "surface",
+    "ordering",
+    "deadlocks",
+    "poisoning",
+    "cancellation",
+    "cleanup",
+    "costs",
+    "executable-examples"
+  ]
   and .surface.types == [
     "SyncError = { InvalidCapacity, InvalidParties, ResourceLimit, ReentrantLock, ReentrantInitialization, Broken }",
     "Mutex[T]",
@@ -229,7 +253,9 @@ jq -e '
   and .performance.scope.native_aot == "not-claimed"
   and .performance.oracle.kind == "independent-model-and-host-invariant-checks"
   and .performance.invariants.fairness == "zero-FIFO-registration-violations"
-  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
+  and .implementation.required_follow_ups == []
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-CHANNEL-IMPL-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -277,7 +303,10 @@ for path in \
     tests/runtime/m11-std-sync-conformance-001.exit \
     tests/compile-fail/m11-std-sync-conf-missing-threads.to \
     tests/compile-fail/m11-std-sync-conf-missing-threads.codes \
-    crates/tondo-native-runtime/examples/sync_conformance.rs; do
+    crates/tondo-native-runtime/examples/sync_conformance.rs \
+    tests/runtime/m11-std-sync-doc-001.to \
+    tests/runtime/m11-std-sync-doc-001.stdout \
+    tests/runtime/m11-std-sync-doc-001.exit; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -326,6 +355,8 @@ grep -Fq 'testing/stdlib-sync-collection-conformance.json' "$root/TONDO_STANDARD
     || die "main stdlib spec does not link the sync collection conformance contract"
 grep -Fq 'testing/stdlib-sync-conformance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync conformance contract"
+grep -Fq 'STD-SYNC-DOC-001' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not record sync documentation closure"
 grep -Fq 'stdlib-sync-collection-frontend.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection frontend contract"
 grep -Fq 'stdlib-sync-collection.md' "$root/docs/contracts/stdlib-sync.md" \
@@ -340,6 +371,8 @@ grep -Fq 'stdlib-sync-collection-conformance.md' "$root/docs/contracts/stdlib-sy
     || die "sync contract does not link the collection conformance contract"
 grep -Fq 'stdlib-sync-conformance.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the sync conformance contract"
+grep -Fq 'STD-SYNC-DOC-001' "$root/docs/contracts/stdlib-sync.md" \
+    || die "sync contract does not record documentation closure"
 
 [[ -x "$root/scripts/stdlib-sync-performance.sh" ]] \
     || die "sync performance runner is not executable"
@@ -363,6 +396,10 @@ grep -Fq 'stdlib-sync-conformance.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync conformance contract test is not executable"
 [[ -x "$root/scripts/stdlib-sync-conformance.sh" ]] \
     || die "sync conformance runner is not executable"
+[[ -x "$root/scripts/stdlib-sync-doc-check.sh" ]] \
+    || die "sync documentation checker is not executable"
+[[ -x "$root/scripts/stdlib-sync-doc-test.sh" ]] \
+    || die "sync documentation contract test is not executable"
 
 for symbol in \
     tondo_rt_atomic_new \
@@ -407,5 +444,6 @@ scripts/stdlib-sync-collection-test-check.sh >/dev/null
 scripts/stdlib-sync-collection-performance-check.sh >/dev/null
 scripts/stdlib-sync-collection-conformance-check.sh >/dev/null
 scripts/stdlib-sync-conformance-check.sh >/dev/null
+scripts/stdlib-sync-doc-check.sh >/dev/null
 
-echo "std.sync contract: OK (guards; condition/semaphore/once/barrier; explicit atomics; shared collections)"
+echo "std.sync contract: OK (guards; condition/semaphore/once/barrier; explicit atomics; shared collections; documentation)"
