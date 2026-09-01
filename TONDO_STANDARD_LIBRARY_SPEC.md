@@ -2421,6 +2421,10 @@ La iteración directa por valor, su horizonte finito y las generaciones de curso
 están cerrados en
 [`testing/stdlib-sync-collection-iter.json`](./testing/stdlib-sync-collection-iter.json) y
 [`docs/contracts/stdlib-sync-collection-iter.md`](./docs/contracts/stdlib-sync-collection-iter.md).
+El modelo secuencial, las histories de linearización y el fuzz acotado se
+registran en [`testing/stdlib-sync-collection-test.json`](./testing/stdlib-sync-collection-test.json)
+y [`docs/contracts/stdlib-sync-collection-test.md`](./docs/contracts/stdlib-sync-collection-test.md);
+esta evidencia no introduce otra representación pública.
 Estos artefactos fijan la superficie y sus negativos. La superficie de
 compilador, el parking cooperativo hosted y el puente ABI nativo de
 atomics/señales ya están implementados y verificados por
@@ -2441,7 +2445,12 @@ entrega al host y el bloque `STD-SYNC-COLLECTION-IMPL-001` verifica su ejecució
 en el modelo hosted y en el ABI nativo privado. Esto no promociona una API
 pública ni afirma lowering genérico AOT; la iteración directa queda cerrada por
 `STD-SYNC-COLLECTION-ITER-001`, cuya ejecución hosted y ABI nativa privada ya
-está verificada en el contrato enlazado.
+está verificada en el contrato enlazado. `STD-SYNC-COLLECTION-TEST-001` cierra
+además el modelo secuencial independiente, la búsqueda acotada de histories de
+linearización, las invariantes de cursor/alias/cleanup y el smoke fuzz
+determinista de 128 ejecuciones; esta evidencia sigue siendo una frontera de
+fiabilidad y regresión, no una afirmación de fast paths, API pública o lowering
+AOT genérico.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y

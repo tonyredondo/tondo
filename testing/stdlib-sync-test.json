@@ -125,7 +125,6 @@
     "model_test_fuzz_complete": true,
     "sanitization_boundary_explicit": true,
     "remaining": [
-      "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",

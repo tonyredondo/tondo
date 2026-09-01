@@ -1,0 +1,117 @@
+{
+  "format": "tondo-stdlib-sync-collection-testing/1",
+  "owner": "std.sync.collection",
+  "parent_owner": "std.sync",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-SYNC-COLLECTION-TEST-001",
+  "status": "verified",
+  "contract": "docs/contracts/stdlib-sync-collection-test.md",
+  "implementation_contract": "testing/stdlib-sync-collection.json",
+  "iteration_contract": "testing/stdlib-sync-collection-iter.json",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-sync.json",
+  "layer": "B2",
+  "kind": "reliability-facing",
+  "target": "reference-model-and-hosted-native-regression-boundary",
+  "limits": {
+    "max_collection_entries": 64,
+    "max_collection_handles": 128,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 512,
+    "max_history_operations": 12,
+    "model_seed_count": 4096,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/src/sync_collection_model.rs",
+      "crates/tondo-reliability/tests/sync_collection_models.rs"
+    ],
+    "owners": ["Array", "Map", "Set", "Stack", "Queue"],
+    "laws": [
+      "array length is fixed and an out-of-range get returns none",
+      "array set and strong compare-exchange linearize one slot without spurious success",
+      "map replacement preserves position and remove/reinsert appends a fresh generation",
+      "set duplicate insertion is a false no-op and remove is idempotent",
+      "stack is LIFO and queue is FIFO without destructive peek or snapshot",
+      "map compare-exchange distinguishes absent, mismatch, replacement and removal",
+      "every bounded operation is checked against an independent sequential state",
+      "histories preserve real-time precedence while searching all permitted linearizations",
+      "direct cursors capture a finite structural horizon without copying contents",
+      "cursor generations are yielded at most once under removal, replacement and reinsertion",
+      "stack and queue cursors never consume their source",
+      "aliases share identity and the last handle or cursor performs cleanup exactly once",
+      "stale handles and cursors fail closed before state access",
+      "bounded fuzz schedules are deterministic, panic-free and leak-free"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded sequential state, exhaustive history search and cursor invariants",
+    "command": "cargo test -p tondo-reliability --test sync_collection_models --locked"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/tests/sync_collection_models.rs",
+      "crates/tondo-native-runtime/src/lib.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-compiler/src/driver.rs"
+    ],
+    "commands": [
+      "scripts/stdlib-sync-collection-test-check.sh",
+      "cargo test -p tondo-reliability --test sync_collection_models --locked",
+      "cargo test -p tondo-native-runtime native_sync_ --locked",
+      "cargo test -p tondo-compiler process_host::tests::sync_ --locked",
+      "cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_sync_collections --locked"
+    ],
+    "cases": [
+      "five-owner-sequential-reference-order-and-cas",
+      "array-fixed-bounds-and-recoverable-index-error",
+      "map-duplicate-replacement-remove-reinsert-and-absent-cas",
+      "set-duplicate-and-idempotent-remove",
+      "stack-lifo-queue-fifo-peek-and-snapshot",
+      "linearizable-history-search-and-impossible-outcome-rejection",
+      "cursor-horizon-replacement-removal-reinsertion-and-order",
+      "cursor-non-destructive-stack-queue-observation",
+      "alias-copy-last-drop-cursor-source-retention-and-stale-failure",
+      "bounded-limits-panic-free-replay-and-exact-cleanup"
+    ],
+    "oracle": "runtime regression suites and independent model observations agree on observable outcomes"
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_sync_collections",
+    "source": "fuzz/fuzz_targets/stdlib_sync_collections.rs",
+    "corpus": "fuzz/corpus/stdlib_sync_collections/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 512,
+    "smoke": {
+      "runs": 128,
+      "seed": 4103,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "oracle": "panic-free bounded replay, per-owner invariants, finite cursor teardown and zero live tokens",
+    "command": "TONDO_SYNC_COLLECTION_FUZZ_RUNS=128 scripts/stdlib-sync-collection-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_sync_collections fuzz/corpus/stdlib_sync_collections -- -runs=0 -max_len=4096"
+  },
+  "sanitization": {
+    "status": "bounded-safe-rust-no-unsafe-boundary",
+    "applicable": false,
+    "native_aot": "not-claimed",
+    "reason": "The independent model and current hosted/native regression lane use safe Rust; this block does not promote generic native AOT or sanitizer coverage."
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "implementation_pending": [],
+    "next_blocks": ["STD-SYNC-COLLECTION-PERF-001"],
+    "remaining": [
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ]
+  }
+}

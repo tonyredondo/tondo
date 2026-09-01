@@ -145,6 +145,10 @@ run_step stdlib-sync-collection-iter-contract \
     scripts/stdlib-sync-collection-iter-check.sh
 run_step stdlib-sync-collection-iter-contract-tests \
     scripts/stdlib-sync-collection-iter-test.sh
+run_step stdlib-sync-collection-test-contract \
+    scripts/stdlib-sync-collection-test-check.sh
+run_step stdlib-sync-collection-test-contract-tests \
+    scripts/stdlib-sync-collection-test-test.sh
 run_step stdlib-executor-contract \
     scripts/stdlib-executor-check.sh
 run_step stdlib-executor-contract-tests \

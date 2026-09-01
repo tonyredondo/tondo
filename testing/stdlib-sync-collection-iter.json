@@ -7,6 +7,8 @@
   "task": "STD-SYNC-COLLECTION-ITER-001",
   "status": "contract-locked",
   "contract": "docs/contracts/stdlib-sync-collection-iter.md",
+  "testing_contract": "testing/stdlib-sync-collection-test.json",
+  "testing_document": "docs/contracts/stdlib-sync-collection-test.md",
   "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
   "language_spec": "TONDO_LANGUAGE_SPEC.md",
   "parent_contract": "testing/stdlib-sync-collection.json",
@@ -115,7 +117,6 @@
     ],
     "proof": "compiler checks value-only and capability rules; hosted VM executes all five direct orders with finite generation horizon; native private ABI verifies ordered cursors, removal/reinsertion exclusion, source retention and stale-handle cleanup",
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
@@ -141,9 +142,8 @@
   "promotion": {
     "implementation_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-SYNC-COLLECTION-TEST-001"],
+    "next_blocks": ["STD-SYNC-COLLECTION-PERF-001"],
     "remaining": [
-      "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",

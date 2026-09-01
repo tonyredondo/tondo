@@ -114,8 +114,10 @@ resolución nominal, HIR/MIR boundary y diagnóstico, y
 y el ABI nativo privado (sin promoción de una API pública ni lowering AOT
 genérico). `STD-SYNC-COLLECTION-ITER-001` queda cerrado para el `for` directo
 finito en la VM hosted y el ABI nativo privado, sin reclamar lowering AOT
-genérico; el siguiente bloque es
-`STD-SYNC-COLLECTION-TEST-001`. El modelo y
+genérico. `STD-SYNC-COLLECTION-TEST-001` queda cerrado para los modelos
+secuenciales independientes, histories de linearización, cursores, aliases,
+cleanup y fuzz acotado; el siguiente bloque es
+`STD-SYNC-COLLECTION-PERF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6658,17 +6660,20 @@ estas leaves.
   `scripts/stdlib-sync-collection-iter-check.sh` y
   `scripts/stdlib-sync-collection-iter-test.sh`. El runtime AOT genérico y una
   API pública de cursor no se declaran completados.
-- [ ] **STD-SYNC-COLLECTION-TEST-001 — Modelar y fuzzear colecciones
-  compartidas.** Mantener modelos secuenciales de referencia y linearizability
-  histories para get/set/CAS, insert/remove, push/pop y enqueue/dequeue. Cubrir
-  carreras de primera/última entrada, duplicados, resize, orden concurrente,
-  slots y keys independientes, cursor directo y snapshot frente a writers,
-  alias de handle, último drop, valores afines `Discard`, cancelación, límites,
-  ABA, reclamación, pánico y scheduling determinista/stress. Para `for`, cubrir
-  horizonte frente a altas continuas, reemplazo/retiro antes de `next`, mutación
-  desde el body, salida temprana, ausencia de locks retenidos, bounds y rechazo
-  de préstamos; ninguna generación repetida, pérdida fuera de la semántica
-  débil, doble drop ni use-after-free puede sobrevivir.
+- [x] **STD-SYNC-COLLECTION-TEST-001 — Modelar y fuzzear colecciones
+  compartidas.** Cerrado con modelos secuenciales independientes acotados para
+  `Array`, `Map`, `Set`, `Stack` y `Queue`; operaciones de orden, límites,
+  duplicados, reemplazo/reinserción, CAS y snapshots; búsqueda exhaustiva de
+  histories de linearización con precedencia de tiempo real; cursores directos
+  con horizonte finito y generaciones; aliases, retención de la fuente,
+  handles/cursors stale y cleanup exactamente una vez; y replay/fuzz
+  determinista, panic-free y leak-free. La evidencia vive en
+  `testing/stdlib-sync-collection-test.json`,
+  `docs/contracts/stdlib-sync-collection-test.md`,
+  `crates/tondo-reliability/tests/sync_collection_models.rs` y el target
+  `stdlib_sync_collections`; las regresiones hosted/native se ejecutan en los
+  carriles existentes. El bloque no promueve fast paths, sanitizers, API pública
+  ni lowering AOT genérico.
 - [ ] **STD-SYNC-COLLECTION-PERF-001 — Medir colecciones compartidas.** Fijar
   fast path 1:1, lectura dominante, escrituras sobre keys independientes,
   contención hot-key/hot-slot, MPMC, cursor directo, snapshot y resize por
@@ -7579,8 +7584,9 @@ repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El frontend de
 colecciones compartidas ya está cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`;
 la ejecución hosted y el ABI nativo privado quedan cerrados por
-`STD-SYNC-COLLECTION-IMPL-001`; el siguiente bloque crítico es
-`STD-SYNC-COLLECTION-TEST-001`;
+`STD-SYNC-COLLECTION-IMPL-001`; `STD-SYNC-COLLECTION-TEST-001` también está
+cerrado para el modelo/test/fuzz acotado; el siguiente bloque crítico es
+`STD-SYNC-COLLECTION-PERF-001`;
 `STD-SYNC-HOST-001`,
 `STD-SYNC-TEST-001` y `STD-SYNC-PERF-001` ya cerraron la frontera de
 parking/atomics, la continuación de `Once`, el modelo hosted determinista y el
@@ -7613,8 +7619,10 @@ implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU. El frontend de
 colecciones compartidas está cerrado y la ejecución hosted/ABI nativo privado
-de `STD-SYNC-COLLECTION-IMPL-001` ya tiene evidencia ejecutable; el siguiente
-trabajo crítico es `STD-SYNC-COLLECTION-TEST-001`. La implementación de
+de `STD-SYNC-COLLECTION-IMPL-001` ya tiene evidencia ejecutable;
+`STD-SYNC-COLLECTION-TEST-001` también está cerrado para el modelo/test/fuzz
+acotado y el siguiente trabajo crítico es `STD-SYNC-COLLECTION-PERF-001`. La
+implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de
 Group ya tienen fronteras explícitas, mientras la iteración directa, el

@@ -66,6 +66,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "stdlib_sync_collections"
+path = "fuzz_targets/stdlib_sync_collections.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "diagnostics"
 path = "fuzz_targets/diagnostics.rs"
 test = false

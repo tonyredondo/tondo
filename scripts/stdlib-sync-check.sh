@@ -177,6 +177,8 @@ jq -e '
   and .collections.snapshot == "one-linearization-coherent-value-collection"
   and .collections.implementation_contract == "testing/stdlib-sync-collection.json"
   and .collections.runtime_status == "verified-hosted-vm-and-native-runtime-abi"
+  and .collections.test_contract == "testing/stdlib-sync-collection-test.json"
+  and .collections.test_document == "docs/contracts/stdlib-sync-collection-test.md"
   and .collections.direct_for.protocol == "AsyncIterator"
   and .collections.direct_for.horizon == "finite-structural-O1"
   and .collections.direct_for.binding == "value-only"
@@ -199,7 +201,7 @@ jq -e '
   and .performance.scope.native_aot == "not-claimed"
   and .performance.oracle.kind == "independent-model-and-host-invariant-checks"
   and .performance.invariants.fairness == "zero-FIFO-registration-violations"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-TEST-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-PERF-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -233,7 +235,9 @@ for path in \
     testing/stdlib-sync-collection.json \
     docs/contracts/stdlib-sync-collection.md \
     testing/stdlib-sync-collection-iter.json \
-    docs/contracts/stdlib-sync-collection-iter.md; do
+    docs/contracts/stdlib-sync-collection-iter.md \
+    testing/stdlib-sync-collection-test.json \
+    docs/contracts/stdlib-sync-collection-test.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -280,6 +284,8 @@ grep -Fq 'stdlib-sync-collection.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection implementation contract"
 grep -Fq 'stdlib-sync-collection-iter.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection iteration contract"
+grep -Fq 'stdlib-sync-collection-test.md' "$root/docs/contracts/stdlib-sync.md" \
+    || die "sync contract does not link the collection test contract"
 
 [[ -x "$root/scripts/stdlib-sync-performance.sh" ]] \
     || die "sync performance runner is not executable"
@@ -315,5 +321,6 @@ grep -Fq 'set_execution_unit' "$root/crates/tondo-vm/src/runtime/execute.rs" \
 
 scripts/stdlib-sync-collection-check.sh >/dev/null
 scripts/stdlib-sync-collection-iter-check.sh >/dev/null
+scripts/stdlib-sync-collection-test-check.sh >/dev/null
 
 echo "std.sync contract: OK (guards; condition/semaphore/once/barrier; explicit atomics; shared collections)"

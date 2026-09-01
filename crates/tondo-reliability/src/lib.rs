@@ -11,6 +11,7 @@ pub mod quality;
 pub mod ratchet;
 pub mod regression;
 pub mod spec_structure;
+pub mod sync_collection_model;
 pub mod sync_model;
 pub mod tracker;
 

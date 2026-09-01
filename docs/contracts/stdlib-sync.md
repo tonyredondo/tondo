@@ -20,6 +20,10 @@ iteración directa está cerrada para el VM hosted y el ABI nativo privado por
 `STD-SYNC-COLLECTION-ITER-001`; su registro es
 [`testing/stdlib-sync-collection-iter.json`](../../testing/stdlib-sync-collection-iter.json)
 y su contrato [`stdlib-sync-collection-iter.md`](./stdlib-sync-collection-iter.md).
+El modelo secuencial, el comprobador de histories, la campaña de cursores y el
+fuzz acotado de esas colecciones se registran en
+[`testing/stdlib-sync-collection-test.json`](../../testing/stdlib-sync-collection-test.json)
+y [`stdlib-sync-collection-test.md`](./stdlib-sync-collection-test.md).
 
 Implementación host: `scheduler-backed-hosted-model` con puente
 `verified-host-parking-native-atomic-epoch-bridge`.
@@ -273,6 +277,10 @@ y un registro en [`testing/stdlib-sync-collection.json`](../../testing/stdlib-sy
 La iteración directa tiene su contrato separado en
 [`stdlib-sync-collection-iter.md`](./stdlib-sync-collection-iter.md) y su registro
 en [`testing/stdlib-sync-collection-iter.json`](../../testing/stdlib-sync-collection-iter.json).
+El contrato de modelo/fuzz de la superficie compartida está separado en
+[`stdlib-sync-collection-test.md`](./stdlib-sync-collection-test.md) y
+[`testing/stdlib-sync-collection-test.json`](../../testing/stdlib-sync-collection-test.json);
+no añade una API pública ni altera la frontera AOT.
 Las operaciones listadas aquí ya se ejecutan en esos dos carriles; el lowering
 genérico AOT permanece target-qualified y sigue sus hojas propias.
 
@@ -436,10 +444,10 @@ aliases globales SArray/SMap/SSet.
 
 La superficie de compilador, el parking cooperativo hosted, la continuación de
 `Once`, la campaña target-qualified de `STD-SYNC-PERF-001`, el frontend de
-literales y la implementación de colecciones compartidas para hosted/native ABI
-cierran los bloques actualmente implementados. Permanecen pendientes la
-iteración directa, `STD-SYNC-COLLECTION-TEST-001`,
+literales, la implementación de colecciones compartidas para hosted/native ABI,
+la iteración directa y el modelo/test/fuzz acotado cierran los bloques
+actualmente implementados. Permanecen pendientes
 `STD-SYNC-COLLECTION-PERF-001`, `STD-SYNC-COLLECTION-CONF-001`,
 `STD-SYNC-CONF-001` y `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada:
-este bloque verifica el carrier escalar opaco y su reclamación, no un layout de
-tipos genéricos ni lowering AOT.
+el bloque de pruebas verifica modelos, histories, cursores, aliases, límites y
+cleanup, no un layout de tipos genéricos ni lowering AOT.
