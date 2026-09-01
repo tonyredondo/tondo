@@ -657,6 +657,21 @@
     "implementation_document": "docs/contracts/stdlib-sync-collection.md",
     "public_api_promoted": false
   },
+  "conformance": {
+    "task": "STD-SYNC-CONF-001",
+    "status": "verified",
+    "contract": "testing/stdlib-sync-conformance.json",
+    "document": "docs/contracts/stdlib-sync-conformance.md",
+    "target": "tondo-vm-hosted-and-native-runtime-abi",
+    "cases": 8,
+    "vm_lines": 9,
+    "native_status": "verified-native-runtime-abi",
+    "native_aot": "not-claimed",
+    "collection_dependency": "STD-SYNC-COLLECTION-CONF-001",
+    "static_capability": "E1008-missing-threads",
+    "report": "target/reliability/evidence/stdlib-sync-conformance.json",
+    "command": "scripts/stdlib-sync-conformance.sh"
+  },
   "fairness": {
     "lock_waiters": "FIFO-registration-with-bounded-barging",
     "condition_waiters": "FIFO-registration",
@@ -891,18 +906,27 @@
       "tests/runtime/m11-std-sync-collection-conformance-001.to",
       "tests/runtime/m11-std-sync-collection-conformance-001.stdout",
       "tests/runtime/m11-std-sync-collection-conformance-001.exit",
-      "crates/tondo-native-runtime/examples/sync_collection_conformance.rs"
+      "crates/tondo-native-runtime/examples/sync_collection_conformance.rs",
+      "testing/stdlib-sync-conformance.json",
+      "docs/contracts/stdlib-sync-conformance.md",
+      "scripts/stdlib-sync-conformance-check.sh",
+      "scripts/stdlib-sync-conformance-test.sh",
+      "scripts/stdlib-sync-conformance.sh",
+      "tests/runtime/m11-std-sync-conformance-001.to",
+      "tests/runtime/m11-std-sync-conformance-001.stdout",
+      "tests/runtime/m11-std-sync-conformance-001.exit",
+      "tests/compile-fail/m11-std-sync-conf-missing-threads.to",
+      "tests/compile-fail/m11-std-sync-conf-missing-threads.codes",
+      "crates/tondo-native-runtime/examples/sync_conformance.rs"
     ],
     "required_follow_ups": [
-      "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ]
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-SYNC-CONF-001"]
+    "next_blocks": ["STD-SYNC-DOC-001"]
   }
 }

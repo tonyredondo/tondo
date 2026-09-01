@@ -66,7 +66,7 @@ jq -e '
   and (.negative_cases | length == 13)
   and (([.negative_cases[]] | unique | length) == (.negative_cases | length))
   and .report == "target/reliability/evidence/stdlib-sync-collection-conformance.json"
-  and .next_blocks == ["STD-SYNC-CONF-001"]
+  and .next_blocks == ["STD-SYNC-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable conformance contract"
 
 for path in \
@@ -138,7 +138,7 @@ jq -e '
   and .conformance.document == "docs/contracts/stdlib-sync-collection-conformance.md"
   and .conformance.target == "tondo-vm-hosted-and-native-runtime-abi"
   and .conformance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
   and (.promotion.remaining | index("STD-SYNC-COLLECTION-CONF-001")) == null
 ' "$root/testing/stdlib-sync-collection.json" >/dev/null \
     || die "collection implementation registry does not promote conformance"
@@ -149,7 +149,7 @@ jq -e '
   and .collections.conformance.contract == "testing/stdlib-sync-collection-conformance.json"
   and .collections.conformance.document == "docs/contracts/stdlib-sync-collection-conformance.md"
   and .collections.conformance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
 ' "$root/testing/stdlib-sync.json" >/dev/null \
     || die "parent std.sync registry does not expose collection conformance"
 

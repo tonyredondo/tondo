@@ -88,7 +88,7 @@ jq -e '
   ]
   and .performance.report == "target/reliability/evidence/stdlib-sync-performance.json"
   and .performance.command == "scripts/stdlib-sync-performance.sh"
-  and .promotion.remaining == ["STD-SYNC-CONF-001", "STD-SYNC-DOC-001"]
+  and .promotion.remaining == ["STD-SYNC-DOC-001"]
 ' "$testing_contract" >/dev/null || {
     echo "std.sync tests: invalid machine-readable TEST contract" >&2
     exit 1
@@ -250,6 +250,17 @@ for path in \
     scripts/stdlib-sync-collection-conformance.sh \
     tests/runtime/m11-std-sync-collection-conformance-001.to \
     crates/tondo-native-runtime/examples/sync_collection_conformance.rs \
+    testing/stdlib-sync-conformance.json \
+    docs/contracts/stdlib-sync-conformance.md \
+    scripts/stdlib-sync-conformance-check.sh \
+    scripts/stdlib-sync-conformance-test.sh \
+    scripts/stdlib-sync-conformance.sh \
+    tests/runtime/m11-std-sync-conformance-001.to \
+    tests/runtime/m11-std-sync-conformance-001.stdout \
+    tests/runtime/m11-std-sync-conformance-001.exit \
+    tests/compile-fail/m11-std-sync-conf-missing-threads.to \
+    tests/compile-fail/m11-std-sync-conf-missing-threads.codes \
+    crates/tondo-native-runtime/examples/sync_conformance.rs \
     scripts/stdlib-sync-performance.sh \
     scripts/stdlib-sync-performance-test.sh; do
     [[ -e "$path" ]] || { echo "std.sync tests: missing TEST evidence path $path" >&2; exit 1; }
@@ -274,6 +285,12 @@ done
     || { echo "std.sync tests: collection conformance contract test is not executable" >&2; exit 1; }
 [[ -x scripts/stdlib-sync-collection-conformance.sh ]] \
     || { echo "std.sync tests: collection conformance runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-conformance-check.sh ]] \
+    || { echo "std.sync tests: sync conformance checker is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-conformance-test.sh ]] \
+    || { echo "std.sync tests: sync conformance contract test is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-conformance.sh ]] \
+    || { echo "std.sync tests: sync conformance runner is not executable" >&2; exit 1; }
 [[ -s fuzz/corpus/stdlib_sync/seed ]] \
     || { echo "std.sync tests: fuzz corpus is empty" >&2; exit 1; }
 

@@ -1,0 +1,11 @@
+fn worker(): Int suspends {
+    1
+}
+
+fn invalid() suspends {
+    scope {
+        let pending = spawn thread worker()
+        let value = await pending
+        _ = value
+    }
+}

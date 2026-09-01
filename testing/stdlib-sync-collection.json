@@ -169,7 +169,7 @@
       "scripts/stdlib-sync-collection-test.sh"
     ],
     "proof": "hosted VM exercises all five identities and 32 methods; native ABI exercises order, strong CAS, shared handles, worker progress, limits and teardown",
-    "required_follow_ups": ["STD-SYNC-CONF-001", "STD-SYNC-DOC-001"]
+    "required_follow_ups": ["STD-SYNC-DOC-001"]
   },
   "performance": {
     "task": "STD-SYNC-COLLECTION-PERF-001",
@@ -222,7 +222,7 @@
   "promotion": {
     "implementation_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-SYNC-CONF-001"],
-    "remaining": ["STD-SYNC-CONF-001", "STD-SYNC-DOC-001"]
+    "next_blocks": ["STD-SYNC-DOC-001"],
+    "remaining": ["STD-SYNC-DOC-001"]
   }
 }

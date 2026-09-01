@@ -1,0 +1,9 @@
+atomic-orders:1:4
+compare-exchange:cas
+parking-wakeup:notify
+cleanup-no-poison:guards-permits
+once-publication:41
+barrier-generations:2
+threads-capability:static-rejection
+collection-conformance:delegated
+sync-conformance-ok

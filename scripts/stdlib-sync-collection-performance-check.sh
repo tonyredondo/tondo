@@ -107,7 +107,7 @@ jq -e '
   and .collections.performance.status == "verified-hosted-vm-baseline"
   and .collections.performance.target == "tondo-vm-hosted"
   and .collections.performance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
 ' testing/stdlib-sync.json >/dev/null \
     || die "parent std.sync registry does not expose the performance boundary"
 
@@ -116,7 +116,7 @@ jq -e '
   and .performance.contract == "testing/stdlib-sync-collection-performance.json"
   and .performance.document == "docs/contracts/stdlib-sync-collection-performance.md"
   and .performance.status == "verified-hosted-vm-baseline"
-  and .promotion.next_blocks == ["STD-SYNC-CONF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-DOC-001"]
 ' testing/stdlib-sync-collection.json >/dev/null \
     || die "collection implementation registry does not expose the performance boundary"
 

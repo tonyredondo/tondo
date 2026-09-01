@@ -2432,6 +2432,15 @@ La equivalencia observable entre la VM hosted y el ABI nativo privado se cierra
 con `STD-SYNC-COLLECTION-CONF-001` en
 [`testing/stdlib-sync-collection-conformance.json`](./testing/stdlib-sync-collection-conformance.json)
 y [`docs/contracts/stdlib-sync-collection-conformance.md`](./docs/contracts/stdlib-sync-collection-conformance.md).
+La conformance global de `std.sync` se cierra con `STD-SYNC-CONF-001` en
+[`testing/stdlib-sync-conformance.json`](./testing/stdlib-sync-conformance.json)
+y [`docs/contracts/stdlib-sync-conformance.md`](./docs/contracts/stdlib-sync-conformance.md).
+El fixture VM ejecuta Mutex, RwLock, Condition, Semaphore, Once, Barrier,
+atomics y un consumidor de colecciones; la sonda nativa prueba únicamente el
+puente ABI privado de atomics, parking, workers y handles. La ausencia de
+`threads` se rechaza estáticamente con E1008. El contrato consume la
+conformance hija de colecciones, no afirma locks nativos públicos ni lowering
+AOT genérico y no constituye un release.
 Mide la línea base real de la VM hosted por cardinalidad y unidades lógicas,
 incluidos fast path 1:1, lecturas y escrituras independientes, hot key/slot,
 MPMC determinista, cursor directo, snapshot y resize. Los contadores de
@@ -2468,6 +2477,10 @@ linearización, las invariantes de cursor/alias/cleanup y el smoke fuzz
 determinista de 128 ejecuciones; esta evidencia sigue siendo una frontera de
 fiabilidad y regresión, no una afirmación de fast paths, API pública o lowering
 AOT genérico.
+La conformance global usa ocho casos comunes y líneas VM ordenadas, y exige
+cleanup con cero objetos vivos en cada proceso nativo. Su alcance nativo
+permanece target-qualified hasta que exista lowering AOT; la ejecución
+cooperativa sigue sin bloquear workers.
 
 La conformance de colecciones ejecuta ocho casos con las mismas líneas
 observables en VM y nativo: aliases y bounds, outcomes CAS, orden de

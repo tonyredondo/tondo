@@ -12,8 +12,8 @@ use crate::diagnostics::{
     Related, Severity,
 };
 use crate::hir::{
-    ExpressionCheckLimits, HirCallableId, HirDiscardStatus, HirError, HirProgram,
-    TypeLoweringLimits, check_expressions_configured, lower_types,
+    ExpressionCheckLimits, HirCallableId, HirDiscardStatus, HirError, HirExpressionKind,
+    HirProgram, HirSpawnKind, TypeLoweringLimits, check_expressions_configured, lower_types,
 };
 use crate::mir::{MirError, MirLoweringLimits, MirSummary, lower_to_mir};
 pub use crate::package::Edition;
@@ -176,7 +176,11 @@ pub struct BuildTarget {
 
 impl BuildTarget {
     pub fn vm_hosted() -> Self {
-        let supported_capabilities = Self::vm_hosted_capabilities();
+        let mut supported_capabilities = Self::vm_hosted_capabilities();
+        supported_capabilities.insert(
+            CapabilityName::new("threads")
+                .expect("threads is a registered Tondo target capability"),
+        );
         Self {
             name: "tondo-vm-hosted".into(),
             diagnostic_source_id: SourceId::new("target:tondo-vm-hosted")
@@ -1188,6 +1192,29 @@ fn execute_with_derives(
     if !core_warnings {
         expression_diagnostics.retain(|diagnostic| diagnostic.severity() != Severity::Warning);
     }
+
+    if !request
+        .capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "threads")
+        && let Some(expression) = hir_program.expressions().find(|expression| {
+            matches!(
+                expression.kind(),
+                HirExpressionKind::Spawn {
+                    kind: HirSpawnKind::Thread,
+                    ..
+                }
+            )
+        })
+    {
+        expression_diagnostics.push(Diagnostic::new(
+            Severity::Error,
+            DiagnosticCode::new("E1008")?,
+            "capability `threads` is missing for `spawn thread`",
+            PrimaryLocation::Source(expression.span()),
+        )?);
+    }
+
     if expression_diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity() == Severity::Error)
@@ -4758,7 +4785,7 @@ fn main() {
 
     #[test]
     fn direct_suspension_is_inferred_and_join_can_cross_a_function_boundary() {
-        let output = execute(operation_request(
+        let output = execute(operation_request_with_capabilities(
             Operation::Run,
             b"fn work(): Int suspends { 1 }\n\
               fn prepare(): Join[Int, Never] {\n\
@@ -4773,11 +4800,55 @@ fn main() {
               }\n",
             SourceForm::Script,
             ResourceLimits::default(),
+            BTreeSet::from([CapabilityName::new("threads").unwrap()]),
         ))
         .unwrap();
         assert_eq!(output.status(), CompilationStatus::Success);
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn thread_spawn_requires_an_explicit_threads_target_capability() {
+        let source = b"fn work(): Int suspends { 1 }\n\
+                      fn main() {\n\
+                          scope {\n\
+                              let job = spawn thread work()\n\
+                              let value = await job\n\
+                              _ = value\n\
+                          }\n\
+                      }\n";
+        let rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            source,
+            SourceForm::Script,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = rejected
+            .diagnostics()
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.code() == "E1008")
+            .expect("missing threads diagnostic");
+        assert!(
+            diagnostic
+                .message()
+                .contains("capability `threads` is missing")
+        );
+
+        let accepted = execute(operation_request_with_capabilities(
+            Operation::Check,
+            source,
+            SourceForm::Script,
+            ResourceLimits::default(),
+            BTreeSet::from([CapabilityName::new("threads").unwrap()]),
+        ))
+        .unwrap();
+        assert_eq!(accepted.status(), CompilationStatus::Success);
+        assert!(accepted.diagnostics().diagnostics().is_empty());
     }
 
     #[test]

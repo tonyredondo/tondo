@@ -108,5 +108,5 @@
     "native-aot-lowering-claim"
   ],
   "report": "target/reliability/evidence/stdlib-sync-collection-conformance.json",
-  "next_blocks": ["STD-SYNC-CONF-001"]
+  "next_blocks": ["STD-SYNC-DOC-001"]
 }

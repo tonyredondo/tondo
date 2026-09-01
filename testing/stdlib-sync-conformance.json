@@ -1,0 +1,118 @@
+{
+  "format": "tondo-stdlib-sync-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.sync",
+  "task": "STD-SYNC-CONF-001",
+  "status": "verified",
+  "contract": "testing/stdlib-sync.json",
+  "document": "docs/contracts/stdlib-sync-conformance.md",
+  "vm": {
+    "fixture": "tests/runtime/m11-std-sync-conformance-001.to",
+    "command": "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-conformance-001.to",
+    "expected_exit": 0,
+    "expected_stdout": [
+      "atomic-orders:1:4",
+      "compare-exchange:cas",
+      "parking-wakeup:notify",
+      "cleanup-no-poison:guards-permits",
+      "once-publication:41",
+      "barrier-generations:2",
+      "threads-capability:static-rejection",
+      "collection-conformance:delegated",
+      "sync-conformance-ok"
+    ],
+    "oracle": "hosted-VM-complete-std-sync-observable-lines"
+  },
+  "native": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "probe": "crates/tondo-native-runtime/examples/sync_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example sync_conformance --locked",
+    "status": "verified-native-runtime-abi",
+    "target_policy": "host-target-only-until-native-aot-sync-lowering",
+    "oracle": "same-case-id-and-normalized-atomic-parking-worker-observables"
+  },
+  "rules": {
+    "same_corpus": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "observable": "ordered-vm-lines-plus-native-normalized-result-tags",
+    "vm_surface": "mutex-rwlock-condition-semaphore-once-barrier-atomic-and-sync-collection-consumer",
+    "native_scope": "private-atomic-parking-worker-bridge; locks-once-barrier-are-vm-owned",
+    "capability": "cross-thread-sharing-and-spawn-require-threads; cooperative-sync-does-not",
+    "memory_orders": "closed-relaxed-acquire-release-acqrel-seqcst-set-with-invalid-combinations-rejected",
+    "compare_exchange": "non-spurious-observation-with-mismatch-status-and-linearizable-workers",
+    "parking": "epoch-check-before-sleep-with-timeout-wake-one-and-wake-all",
+    "ownership": "opaque-handles-are-released-exactly-once-and-stale-use-is-rejected",
+    "once": "failed-initialization-can-retry-and-success-is-memoized",
+    "barrier": "each-generation-advances-once-and-does-not-reuse-an-epoch",
+    "worker": "completed-and-cancelled-native-workers-join-before-release",
+    "collection_dependency": "STD-SYNC-COLLECTION-CONF-001-runs-as-a-required-child-conformance",
+    "scheduler_blocking": "cooperative-VM-path-never-blocks-a-worker",
+    "static_rejections": "missing-threads-capability-is-a-driver-and-compile-fail-rejection",
+    "cleanup": "fresh-case-reset-and-zero-live-objects-before-return",
+    "native_aot": "not-claimed"
+  },
+  "cases": [
+    {
+      "id": "atomic-orders",
+      "vm_observable": "atomic-orders:1:4",
+      "native_expected": {"id":"atomic-orders","status":"passed","orders":[0,1,2,3,4],"invalid_order":true,"cleanup":true}
+    },
+    {
+      "id": "compare-exchange",
+      "vm_observable": "compare-exchange:cas",
+      "native_expected": {"id":"compare-exchange","status":"passed","final":40,"workers":4,"increments":40,"mismatch":true,"cleanup":true}
+    },
+    {
+      "id": "parking-wakeup",
+      "vm_observable": "parking-wakeup:notify",
+      "native_expected": {"id":"parking-wakeup","status":"passed","one":true,"all":true,"timeout":true,"epoch":2,"cleanup":true}
+    },
+    {
+      "id": "cleanup-no-poison",
+      "vm_observable": "cleanup-no-poison:guards-permits",
+      "native_expected": {"id":"cleanup-no-poison","status":"passed","shared_arc":true,"double_release":true,"live_objects":0,"cleanup":true}
+    },
+    {
+      "id": "once-publication",
+      "vm_observable": "once-publication:41",
+      "native_expected": {"id":"once-publication","status":"passed","published":41,"retry":true,"memoized":true,"native_scope":"atomic-publication-bridge","cleanup":true}
+    },
+    {
+      "id": "barrier-generations",
+      "vm_observable": "barrier-generations:2",
+      "native_expected": {"id":"barrier-generations","status":"passed","generations":2,"epoch":2,"native_scope":"epoch-parking-bridge","cleanup":true}
+    },
+    {
+      "id": "threads-capability",
+      "vm_observable": "threads-capability:static-rejection",
+      "native_expected": {"id":"threads-capability","status":"passed","completed":true,"cancelled":true,"distinct_worker":true,"cleanup":true}
+    },
+    {
+      "id": "collection-conformance",
+      "vm_observable": "collection-conformance:delegated",
+      "native_expected": {"id":"collection-conformance","status":"passed","delegated":"STD-SYNC-COLLECTION-CONF-001","cleanup":true}
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-vm-fixture",
+    "missing-native-probe",
+    "corpus-id-drift",
+    "native-case-missing",
+    "native-case-duplicate",
+    "vm-line-drift",
+    "native-observable-drift",
+    "invalid-memory-order",
+    "parking-timeout-drift",
+    "stale-handle-cleanup-drift",
+    "missing-threads-static-rejection",
+    "collection-dependency-not-consumed",
+    "native-lock-abi-overclaim",
+    "native-aot-lowering-claim",
+    "physical-path-in-evidence"
+  ],
+  "report": "target/reliability/evidence/stdlib-sync-conformance.json",
+  "next_blocks": ["STD-SYNC-DOC-001"]
+}

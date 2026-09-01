@@ -1,0 +1,111 @@
+import std.console
+import std.sync
+
+fn main(): !sync.SyncError {
+    let atom = sync.atomic(1)
+    let relaxed = sync.MemoryOrder.Relaxed()
+    let acquire = sync.MemoryOrder.Acquire()
+    let release = sync.MemoryOrder.Release()
+    let acq_rel = sync.MemoryOrder.AcqRel()
+    let seq_cst = sync.MemoryOrder.SeqCst()
+    assert(atom.load(relaxed) == 1)
+    atom.store(2, release)
+    assert(atom.load(acquire) == 2)
+    assert(atom.swap(3, acq_rel) == 2)
+    match atom.compareExchange(3, 4, seq_cst, acquire) {
+        sync.CompareExchange.Exchanged(previous) => assert(previous == 3)
+        sync.CompareExchange.Mismatch(_) => assert(false)
+    }
+    assert(atom.load(seq_cst) == 4)
+    console.println("atomic-orders:1:4")
+    console.println("compare-exchange:cas")
+
+    let mutex = sync.mutex(7)?
+    var guard = mutex.lock()?
+    assert(guard.get().value == 7)
+    _ = guard.getMut()
+    guard.unlock()
+    match mutex.tryLock() {
+        some(guard2) => guard2.unlock()
+        none => assert(false)
+    }
+
+    let rw = sync.rwLock("value")?
+    let reader = rw.read()?
+    assert(reader.get().value == "value")
+    reader.unlock()
+    match rw.tryRead() {
+        some(reader2) => reader2.unlock()
+        none => assert(false)
+    }
+    var writer = rw.write()?
+    assert(writer.get().value == "value")
+    _ = writer.getMut()
+    writer.unlock()
+    match rw.tryWrite() {
+        some(writer2) => writer2.unlock()
+        none => assert(false)
+    }
+    let condition = sync.condition()?
+    let condition_mutex = sync.mutex(0)?
+    var condition_guard = condition_mutex.lock()?
+    let waited_guard = condition.wait(var condition_guard)
+    waited_guard.unlock()
+    condition.notifyOne()
+    condition.notifyAll()
+
+    let semaphore = sync.semaphore(2)?
+    let permit = semaphore.acquire()
+    permit.release()
+    match semaphore.tryAcquire() {
+        some(permit2) => permit2.release()
+        none => assert(false)
+    }
+    console.println("parking-wakeup:notify")
+    console.println("cleanup-no-poison:guards-permits")
+
+    let once = sync.once[Int, sync.SyncError]()
+    if once.isReady() {
+        panic("Once unexpectedly initialized")
+    }
+    let failed = once.getOrInit(() { err(sync.SyncError.InvalidCapacity) })
+    match failed {
+        ok(_) => assert(false)
+        err(error) => match error {
+            sync.SyncError.InvalidCapacity => ()
+            _ => assert(false)
+        }
+    }
+    if once.isReady() {
+        panic("Once published a failed initializer")
+    }
+    let first = once.getOrInit(() { 41 })?
+    assert(first.value == 41)
+    assert(once.isReady())
+    let second = once.getOrInit(() { 99 })?
+    assert(second.value == 41)
+    match once.get() {
+        some(value) => assert(value.value == 41)
+        none => assert(false)
+    }
+    console.println("once-publication:41")
+
+    let barrier = sync.barrier(1)?
+    _ = barrier.wait()?
+    _ = barrier.wait()?
+    console.println("barrier-generations:2")
+
+    console.println("threads-capability:static-rejection")
+
+    let array: sync.Array[Int] = sync.Array[1, 2]
+    let array_alias = array
+    assert(array_alias.length() == 2)
+    _ = array_alias.set(1, 4)
+    assert(array.get(1) == some(4))
+    match array.snapshot() {
+        ok(snapshot) => assert(snapshot.length() == 2)
+        err(_) => assert(false)
+    }
+    console.println("collection-conformance:delegated")
+    console.println("sync-conformance-ok")
+}
