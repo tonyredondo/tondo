@@ -117,7 +117,6 @@
     ],
     "proof": "compiler checks value-only and capability rules; hosted VM executes all five direct orders with finite generation horizon; native private ABI verifies ordered cursors, removal/reinsertion exclusion, source retention and stale-handle cleanup",
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
@@ -142,9 +141,8 @@
   "promotion": {
     "implementation_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-SYNC-COLLECTION-PERF-001"],
+    "next_blocks": ["STD-SYNC-COLLECTION-CONF-001"],
     "remaining": [
-      "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"

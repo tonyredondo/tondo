@@ -582,6 +582,47 @@
       "runtime_status": "verified-hosted-vm-and-private-native-runtime-abi",
       "native_aot_lowering": "not-claimed"
     },
+    "performance": {
+      "task": "STD-SYNC-COLLECTION-PERF-001",
+      "status": "verified-hosted-vm-baseline",
+      "contract": "testing/stdlib-sync-collection-performance.json",
+      "document": "docs/contracts/stdlib-sync-collection-performance.md",
+      "target": "tondo-vm-hosted",
+      "backend": "bytecode-vm",
+      "profile": "test",
+      "workloads": 31,
+      "samples_per_workload": 27,
+      "participant_cardinalities": [1, 8, 64],
+      "collection_cardinalities": [1, 8, 64],
+      "metrics": [
+        "latency",
+        "tail_latency",
+        "throughput",
+        "allocations",
+        "logical_memory_bytes",
+        "retries",
+        "wakeups",
+        "parking",
+        "live_handles"
+      ],
+      "report": "target/reliability/evidence/stdlib-sync-collection-performance.json",
+      "command": "scripts/stdlib-sync-collection-performance.sh",
+      "hosted_model": "single-worker-ready-job-collection-baseline",
+      "native_aot": "not-claimed",
+      "algorithmic_fast_paths": "deferred-to-native-targeted-performance-campaign",
+      "oracle": {
+        "sources": [
+          "crates/tondo-reliability/src/sync_collection_model.rs",
+          "crates/tondo-reliability/tests/sync_collection_models.rs"
+        ],
+        "kind": "independent-bounded-collection-model-and-host-invariant-checks"
+      },
+      "invariants": {
+        "cursor": "direct-next-has-no-content-materialization-or-visited-table-and-does-not-hold-body-lock",
+        "contention": "hosted-collection-calls-complete-ready-with-zero-retries-wakeups-and-parking",
+        "cleanup": "no-pending-collection-job-waiter-or-scheduler-queue-before-probe-return"
+      }
+    },
     "literal_forms": [
       "sync.Array[...]",
       "sync.Map[...]",
@@ -831,7 +872,6 @@
       "fuzz/corpus/stdlib_sync_collections/seed"
     ],
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
@@ -839,11 +879,9 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-COLLECTION-PERF-001",
-      "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-SYNC-COLLECTION-PERF-001"]
+    "next_blocks": ["STD-SYNC-COLLECTION-CONF-001"]
   }
 }

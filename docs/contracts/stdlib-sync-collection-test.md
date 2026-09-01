@@ -49,6 +49,8 @@ runner are `fuzz/corpus/stdlib_sync_collections/seed` and
 `scripts/stdlib-sync-collection-fuzz.sh`.
 
 The block is verified for the independent model and regression evidence. The
-next leaves are target-qualified collection performance, VM/native conformance,
-the broader `std.sync` conformance campaign and documentation. The existing
-native ABI remains private and the AOT boundary remains explicitly unclaimed.
+target-qualified hosted collection performance baseline is a separate leaf;
+it does not promote native fast paths, public APIs or generic AOT lowering.
+The next leaves are VM/native collection conformance, the broader `std.sync`
+conformance campaign and documentation. The existing native ABI remains
+private and the AOT boundary remains explicitly unclaimed.

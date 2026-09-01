@@ -74,11 +74,14 @@ native runtime remains `#![forbid(unsafe_code)]`; no pointer or object layout
 is part of this contract. Blocking is permitted only on native workers. The
 cooperative VM never calls the native blocking wait symbol.
 
-The current cell carriers are the correctness baseline for this block. Treiber
-stack, Michael--Scott queue, slot-level CAS, sharding and other algorithmic
-fast paths are performance work tracked by `STD-SYNC-COLLECTION-PERF-001`; they
-are not claimed by this contract. The same applies to generic native AOT
-lowering.
+The current cell carriers are the correctness baseline for this block. The
+hosted baseline campaign is now recorded by
+[`STD-SYNC-COLLECTION-PERF-001`](./stdlib-sync-collection-performance.md): it
+measures the real single-worker path, cardinality growth, direct cursors and
+snapshots without pretending to be native contention evidence. Treiber stack,
+Michael--Scott queue, slot-level CAS, sharding and other algorithmic fast paths
+remain deferred to a comparable native-target campaign; they are not claimed
+by this contract. The same applies to generic native AOT lowering.
 
 ## Bounds and failures
 
@@ -100,7 +103,7 @@ runtime suite. The check and negative-contract runner are
 `scripts/test-gate.sh`.
 
 This leaf remains complete for the hosted VM and native ABI only. Direct `for`
-iteration is complete in its own hosted/native-private-ABI contract, while the
-model/fuzz campaign, performance campaign, cross-target conformance and broad
-documentation leaf remain visible in the tracker and in the
-`promotion.remaining` list of the JSON record.
+iteration is complete in its own hosted/native-private-ABI contract, and the
+hosted performance baseline is complete in the linked PERF contract. Cross-
+target conformance and the broad documentation leaf remain visible in the
+tracker and in the `promotion.remaining` list of the JSON record.

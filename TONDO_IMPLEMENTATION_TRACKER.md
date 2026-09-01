@@ -45,7 +45,7 @@ hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
 lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
 siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-08-31
+**Última actualización:** 2026-09-01
 
 **Especificaciones normativas:**
 
@@ -71,6 +71,7 @@ siendo una capacidad declarada por target.
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
 - [Contrato de rendimiento de `std.sync`](./docs/contracts/stdlib-sync-performance.md)
+- [Contrato de rendimiento de colecciones de `std.sync`](./docs/contracts/stdlib-sync-collection-performance.md)
 - [Contrato de owner de `std.executor`](./docs/contracts/stdlib-executor.md)
 - [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
@@ -116,8 +117,12 @@ genérico). `STD-SYNC-COLLECTION-ITER-001` queda cerrado para el `for` directo
 finito en la VM hosted y el ABI nativo privado, sin reclamar lowering AOT
 genérico. `STD-SYNC-COLLECTION-TEST-001` queda cerrado para los modelos
 secuenciales independientes, histories de linearización, cursores, aliases,
-cleanup y fuzz acotado; el siguiente bloque es
-`STD-SYNC-COLLECTION-PERF-001`. El modelo y
+cleanup y fuzz acotado. `STD-SYNC-COLLECTION-PERF-001` queda cerrado para la
+campaña target-qualified de rendimiento de la VM hosted: 31 workloads, tres
+procesos independientes, 27 muestras por workload y métricas de latencia,
+throughput, allocations, memoria lógica, retries, wakeups, parking y handles
+vivos. El siguiente bloque es `STD-SYNC-COLLECTION-CONF-001`; la campaña no
+promueve fast paths nativos ni lowering AOT genérico. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6635,8 +6640,9 @@ estas leaves.
   `scripts/stdlib-sync-collection-check.sh` y
   `scripts/stdlib-sync-collection-test.sh`, integrados en los gates de
   `std.sync`. Los fast paths algorítmicos CAS/sharding, el lowering AOT
-  genérico y la promoción de una API pública no se declaran completados; quedan
-  target-qualified para `STD-SYNC-COLLECTION-PERF-001` y las leaves posteriores.
+  genérico y la promoción de una API pública no se declaran completados; la
+  estrategia nativa queda target-qualified para una campaña posterior y no se
+  infiere del baseline hosted de `STD-SYNC-COLLECTION-PERF-001`.
 - [x] **STD-SYNC-COLLECTION-ITER-001 — Implementar `for` concurrente directo.**
   Reconocer solo las cinco identidades cerradas de `std.sync` y bajar el header
   ordinario por valor a `cursor[sync,C]: AsyncIterator[T]`, copiando el handle y
@@ -6673,16 +6679,29 @@ estas leaves.
   `crates/tondo-reliability/tests/sync_collection_models.rs` y el target
   `stdlib_sync_collections`; las regresiones hosted/native se ejecutan en los
   carriles existentes. El bloque no promueve fast paths, sanitizers, API pública
-  ni lowering AOT genérico.
-- [ ] **STD-SYNC-COLLECTION-PERF-001 — Medir colecciones compartidas.** Fijar
-  fast path 1:1, lectura dominante, escrituras sobre keys independientes,
-  contención hot-key/hot-slot, MPMC, cursor directo, snapshot y resize por
-  cardinalidad y cores.
-  Registrar throughput, p50/p99, escalabilidad, allocations, memoria, retries,
-  wakeups y parking frente a oracles equivalentes; el gate rechaza un lock
-  global accidental, una copia o tabla de visitados O(n) en `for` y cualquier
-  retención de locks durante el body. Seleccionar por target la estrategia
-  demostrablemente más eficiente sin alterar semántica.
+  ni lowering AOT genérico. La campaña PERF hosted queda cerrada por separado
+  y no altera este oráculo.
+- [x] **STD-SYNC-COLLECTION-PERF-001 — Medir colecciones compartidas.** Cerrada
+  la campaña target-qualified de la VM hosted para los cinco owners con 31
+  workloads sobre cardinalidades/unidades lógicas 1/8/64, tres procesos
+  independientes y 27 muestras por workload. El probe mide latencia mediana y
+  de cola, throughput, allocations lógicas, memoria lógica, retries, wakeups,
+  parking y handles vivos para fast path 1:1, lecturas/escrituras
+  independientes, hot key/slot, MPMC lógico, cursor directo, snapshot y resize.
+  El oráculo independiente y los invariantes rechazan operaciones inestables,
+  contadores de contención hosted no nulos, jobs/waiters pendientes, copias o
+  tablas de visitados en el cursor y retención de locks durante el body. Se
+  selecciona `single-worker-ready-job-collection-baseline` para este target;
+  los fast paths algorítmicos nativos, la contención real y el lowering AOT
+  genérico permanecen sin reclamar hasta una campaña target-qualified
+  comparable.
+  La evidencia está en
+  [`testing/stdlib-sync-collection-performance.json`](./testing/stdlib-sync-collection-performance.json),
+  [`docs/contracts/stdlib-sync-collection-performance.md`](./docs/contracts/stdlib-sync-collection-performance.md),
+  `scripts/stdlib-sync-collection-performance-check.sh`,
+  `scripts/stdlib-sync-collection-performance-test.sh` y
+  `scripts/stdlib-sync-collection-performance.sh`, integrados en
+  `scripts/test-gate.sh`.
 - [ ] **STD-SYNC-COLLECTION-CONF-001 — Conformar colecciones compartidas.**
   Ejecutar el mismo corpus observable en VM y nativo: literales y aliases,
   bounds estáticos, outcomes, linearización, `for` débil finito, orden de
@@ -7585,8 +7604,9 @@ promueve Cranelift únicamente para el target primario x86_64 GNU. El frontend d
 colecciones compartidas ya está cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`;
 la ejecución hosted y el ABI nativo privado quedan cerrados por
 `STD-SYNC-COLLECTION-IMPL-001`; `STD-SYNC-COLLECTION-TEST-001` también está
-cerrado para el modelo/test/fuzz acotado; el siguiente bloque crítico es
-`STD-SYNC-COLLECTION-PERF-001`;
+cerrado para el modelo/test/fuzz acotado y `STD-SYNC-COLLECTION-PERF-001`
+queda cerrado para la línea base de rendimiento hosted; el siguiente bloque
+crítico es `STD-SYNC-COLLECTION-CONF-001`;
 `STD-SYNC-HOST-001`,
 `STD-SYNC-TEST-001` y `STD-SYNC-PERF-001` ya cerraron la frontera de
 parking/atomics, la continuación de `Once`, el modelo hosted determinista y el
@@ -7621,7 +7641,8 @@ seleccionado queda promovido únicamente para x86_64 GNU. El frontend de
 colecciones compartidas está cerrado y la ejecución hosted/ABI nativo privado
 de `STD-SYNC-COLLECTION-IMPL-001` ya tiene evidencia ejecutable;
 `STD-SYNC-COLLECTION-TEST-001` también está cerrado para el modelo/test/fuzz
-acotado y el siguiente trabajo crítico es `STD-SYNC-COLLECTION-PERF-001`. La
+acotado y `STD-SYNC-COLLECTION-PERF-001` queda cerrado para la línea base
+hosted; el siguiente trabajo crítico es `STD-SYNC-COLLECTION-CONF-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

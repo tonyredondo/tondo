@@ -2425,6 +2425,19 @@ El modelo secuencial, las histories de linearización y el fuzz acotado se
 registran en [`testing/stdlib-sync-collection-test.json`](./testing/stdlib-sync-collection-test.json)
 y [`docs/contracts/stdlib-sync-collection-test.md`](./docs/contracts/stdlib-sync-collection-test.md);
 esta evidencia no introduce otra representación pública.
+La campaña target-qualified de rendimiento de los cinco owners se registra en
+[`testing/stdlib-sync-collection-performance.json`](./testing/stdlib-sync-collection-performance.json)
+y [`docs/contracts/stdlib-sync-collection-performance.md`](./docs/contracts/stdlib-sync-collection-performance.md).
+Mide la línea base real de la VM hosted por cardinalidad y unidades lógicas,
+incluidos fast path 1:1, lecturas y escrituras independientes, hot key/slot,
+MPMC determinista, cursor directo, snapshot y resize. Los contadores de
+allocations, memoria lógica, retries, wakeups y parking son explícitos; el
+informe no mezcla targets ni presenta la VM single-worker como evidencia de
+contención nativa. El cursor conserva la invariante
+`direct-next-has-no-content-materialization-or-visited-table` y no retiene
+locks durante el cuerpo. La estrategia hosted queda seleccionada como línea
+base hasta disponer de una campaña concurrente comparable; los fast paths
+algorítmicos nativos y lowering AOT siguen sin reclamarse.
 Estos artefactos fijan la superficie y sus negativos. La superficie de
 compilador, el parking cooperativo hosted y el puente ABI nativo de
 atomics/señales ya están implementados y verificados por

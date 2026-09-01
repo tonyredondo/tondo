@@ -1,0 +1,118 @@
+{
+  "format": "tondo-stdlib-sync-collection-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-SYNC-COLLECTION-PERF-001",
+  "owner": "std.sync.collection",
+  "status": "verified-hosted-vm-baseline",
+  "target": "tondo-vm-hosted",
+  "backend": "bytecode-vm",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-compiler/src/process_host.rs",
+    "test": "process_host::tests::sync_collection_performance_probe",
+    "sha256": "51408fdd49367a0c1fa806b3ca38e322875cbe07470132620e1ad2ffeda71d98"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 16,
+    "deterministic_seed": "tondo-stdlib-sync-collection-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-timed-latency; included-in-allocation-and-memory-counters"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "pid",
+    "path",
+    "timestamp"
+  ],
+  "metrics": [
+    "allocations",
+    "latency",
+    "live_handles",
+    "logical_memory_bytes",
+    "parking",
+    "retries",
+    "tail_latency",
+    "throughput",
+    "wakeups"
+  ],
+  "workloads": [
+    {"id": "array-fast-1", "collection": "array", "operation": "fast", "mode": "one-to-one", "participants": 1, "cardinality": 1},
+    {"id": "array-read-dominant-8", "collection": "array", "operation": "read-dominant", "mode": "read", "participants": 8, "cardinality": 8},
+    {"id": "array-read-dominant-64", "collection": "array", "operation": "read-dominant", "mode": "read", "participants": 64, "cardinality": 64},
+    {"id": "array-write-independent-8", "collection": "array", "operation": "write-independent", "mode": "independent-slots", "participants": 8, "cardinality": 8},
+    {"id": "array-hot-slot-64", "collection": "array", "operation": "read-hot-slot", "mode": "hot-slot", "participants": 64, "cardinality": 64},
+    {"id": "array-write-hot-slot-64", "collection": "array", "operation": "write-hot-slot", "mode": "hot-slot", "participants": 64, "cardinality": 64},
+    {"id": "array-cursor-64", "collection": "array", "operation": "cursor", "mode": "direct-for", "participants": 64, "cardinality": 64},
+    {"id": "array-snapshot-64", "collection": "array", "operation": "snapshot", "mode": "coherent-copy", "participants": 64, "cardinality": 64},
+    {"id": "map-read-independent-8", "collection": "map", "operation": "read-independent", "mode": "independent-keys", "participants": 8, "cardinality": 8},
+    {"id": "map-read-hot-key-64", "collection": "map", "operation": "read-hot-key", "mode": "hot-key", "participants": 64, "cardinality": 64},
+    {"id": "map-write-independent-8", "collection": "map", "operation": "write-independent", "mode": "independent-keys", "participants": 8, "cardinality": 8},
+    {"id": "map-write-hot-key-64", "collection": "map", "operation": "write-hot-key", "mode": "hot-key", "participants": 64, "cardinality": 64},
+    {"id": "map-resize-64", "collection": "map", "operation": "resize", "mode": "growth", "participants": 8, "cardinality": 64},
+    {"id": "map-snapshot-64", "collection": "map", "operation": "snapshot", "mode": "coherent-copy", "participants": 64, "cardinality": 64},
+    {"id": "map-cursor-64", "collection": "map", "operation": "cursor", "mode": "direct-for", "participants": 64, "cardinality": 64},
+    {"id": "set-read-independent-8", "collection": "set", "operation": "read-independent", "mode": "independent-keys", "participants": 8, "cardinality": 8},
+    {"id": "set-read-hot-key-64", "collection": "set", "operation": "read-hot-key", "mode": "hot-key", "participants": 64, "cardinality": 64},
+    {"id": "set-write-independent-8", "collection": "set", "operation": "write-independent", "mode": "independent-keys", "participants": 8, "cardinality": 8},
+    {"id": "set-resize-64", "collection": "set", "operation": "resize", "mode": "growth", "participants": 8, "cardinality": 64},
+    {"id": "set-snapshot-64", "collection": "set", "operation": "snapshot", "mode": "coherent-copy", "participants": 64, "cardinality": 64},
+    {"id": "set-cursor-64", "collection": "set", "operation": "cursor", "mode": "direct-for", "participants": 64, "cardinality": 64},
+    {"id": "stack-mpmc-8", "collection": "stack", "operation": "mpmc", "mode": "lifo-contention", "participants": 8, "cardinality": 8},
+    {"id": "stack-mpmc-64", "collection": "stack", "operation": "mpmc", "mode": "lifo-contention", "participants": 64, "cardinality": 64},
+    {"id": "stack-resize-64", "collection": "stack", "operation": "resize", "mode": "growth", "participants": 8, "cardinality": 64},
+    {"id": "stack-cursor-64", "collection": "stack", "operation": "cursor", "mode": "direct-for", "participants": 64, "cardinality": 64},
+    {"id": "stack-snapshot-64", "collection": "stack", "operation": "snapshot", "mode": "coherent-copy", "participants": 64, "cardinality": 64},
+    {"id": "queue-mpmc-8", "collection": "queue", "operation": "mpmc", "mode": "fifo-contention", "participants": 8, "cardinality": 8},
+    {"id": "queue-mpmc-64", "collection": "queue", "operation": "mpmc", "mode": "fifo-contention", "participants": 64, "cardinality": 64},
+    {"id": "queue-resize-64", "collection": "queue", "operation": "resize", "mode": "growth", "participants": 8, "cardinality": 64},
+    {"id": "queue-cursor-64", "collection": "queue", "operation": "cursor", "mode": "direct-for", "participants": 64, "cardinality": 64},
+    {"id": "queue-snapshot-64", "collection": "queue", "operation": "snapshot", "mode": "coherent-copy", "participants": 64, "cardinality": 64}
+  ],
+  "strategy": {
+    "hosted_vm": "single-worker-ready-job-collection-baseline",
+    "native_runtime_abi": "not-measured-by-this-hosted-report",
+    "native_aot": "not-claimed",
+    "algorithmic_fast_paths": "deferred-to-native-targeted-performance-campaign",
+    "selection": "hosted-baseline-selected-until-native-targets-have-comparable-concurrent-evidence",
+    "selection_reason": "The hosted VM has one scheduler-owned worker and cannot prove native lock-free progress, so this campaign records the real baseline and keeps native strategy selection target-qualified."
+  },
+  "invariants": {
+    "operations": "stable-per-workload-across-all-27-samples",
+    "participants": "logical-execution-units-1-8-64; hosted-execution-is-single-worker",
+    "contention": "hosted-collection-calls-complete-ready-with-zero-retries-wakeups-and-parking",
+    "allocations": "logical-host-value-allocations-including-fixture; allocator-overhead-excluded",
+    "memory": "peak-logical-collection-payload-generations-and-host-registry; RSS-excluded",
+    "cursor": "direct-next-has-no-content-materialization-or-visited-table-and-does-not-hold-body-lock",
+    "snapshot": "one-coherent-result-per-linearization-point",
+    "resize": "growth-is-bounded-by-cardinality-and-never-exceeds-host-limit",
+    "cleanup": "no-pending-collection-job-waiter-or-scheduler-queue-before-probe-return",
+    "oracle": "independent-bounded-collection-model-plus-host-observable-outcome-checks",
+    "target_isolation": "reports-never-combine-targets-or-backends"
+  },
+  "oracle": {
+    "kind": "independent-bounded-collection-model-and-host-invariant-checks",
+    "sources": [
+      "crates/tondo-reliability/src/sync_collection_model.rs",
+      "crates/tondo-reliability/tests/sync_collection_models.rs"
+    ]
+  },
+  "report": "target/reliability/evidence/stdlib-sync-collection-performance.json"
+}

@@ -189,6 +189,12 @@ jq -e '
   and .collections.direct_for.implementation_document == "docs/contracts/stdlib-sync-collection-iter.md"
   and .collections.direct_for.runtime_status == "verified-hosted-vm-and-private-native-runtime-abi"
   and .collections.direct_for.native_aot_lowering == "not-claimed"
+  and .collections.performance.task == "STD-SYNC-COLLECTION-PERF-001"
+  and .collections.performance.status == "verified-hosted-vm-baseline"
+  and .collections.performance.contract == "testing/stdlib-sync-collection-performance.json"
+  and .collections.performance.document == "docs/contracts/stdlib-sync-collection-performance.md"
+  and .collections.performance.target == "tondo-vm-hosted"
+  and .collections.performance.native_aot == "not-claimed"
   and .performance.task == "STD-SYNC-PERF-001"
   and .performance.status == "verified-hosted-vm"
   and .performance.contract == "testing/stdlib-sync-performance.json"
@@ -201,7 +207,7 @@ jq -e '
   and .performance.scope.native_aot == "not-claimed"
   and .performance.oracle.kind == "independent-model-and-host-invariant-checks"
   and .performance.invariants.fairness == "zero-FIFO-registration-violations"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-PERF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-CONF-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -237,7 +243,9 @@ for path in \
     testing/stdlib-sync-collection-iter.json \
     docs/contracts/stdlib-sync-collection-iter.md \
     testing/stdlib-sync-collection-test.json \
-    docs/contracts/stdlib-sync-collection-test.md; do
+    docs/contracts/stdlib-sync-collection-test.md \
+    testing/stdlib-sync-collection-performance.json \
+    docs/contracts/stdlib-sync-collection-performance.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -259,6 +267,7 @@ for marker in \
     'STD-SYNC-COLLECTION-FRONTEND-001' \
     'STD-SYNC-COLLECTION-IMPL-001' \
     'STD-SYNC-COLLECTION-ITER-001' \
+    'STD-SYNC-COLLECTION-PERF-001' \
     'verified-hosted-vm-and-native-runtime-abi' \
     'tondo-vm-hosted' \
     'zero-FIFO-registration-violations'; do
@@ -278,6 +287,8 @@ grep -Fq 'testing/stdlib-sync-collection.json' "$root/TONDO_STANDARD_LIBRARY_SPE
     || die "main stdlib spec does not link the sync collection implementation contract"
 grep -Fq 'testing/stdlib-sync-collection-iter.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync collection iteration contract"
+grep -Fq 'testing/stdlib-sync-collection-performance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the sync collection performance contract"
 grep -Fq 'stdlib-sync-collection-frontend.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection frontend contract"
 grep -Fq 'stdlib-sync-collection.md' "$root/docs/contracts/stdlib-sync.md" \
@@ -286,11 +297,19 @@ grep -Fq 'stdlib-sync-collection-iter.md' "$root/docs/contracts/stdlib-sync.md" 
     || die "sync contract does not link the collection iteration contract"
 grep -Fq 'stdlib-sync-collection-test.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection test contract"
+grep -Fq 'stdlib-sync-collection-performance.md' "$root/docs/contracts/stdlib-sync.md" \
+    || die "sync contract does not link the collection performance contract"
 
 [[ -x "$root/scripts/stdlib-sync-performance.sh" ]] \
     || die "sync performance runner is not executable"
 [[ -x "$root/scripts/stdlib-sync-performance-test.sh" ]] \
     || die "sync performance contract test is not executable"
+[[ -x "$root/scripts/stdlib-sync-collection-performance.sh" ]] \
+    || die "sync collection performance runner is not executable"
+[[ -x "$root/scripts/stdlib-sync-collection-performance-check.sh" ]] \
+    || die "sync collection performance contract checker is not executable"
+[[ -x "$root/scripts/stdlib-sync-collection-performance-test.sh" ]] \
+    || die "sync collection performance contract test is not executable"
 
 for symbol in \
     tondo_rt_atomic_new \
@@ -322,5 +341,6 @@ grep -Fq 'set_execution_unit' "$root/crates/tondo-vm/src/runtime/execute.rs" \
 scripts/stdlib-sync-collection-check.sh >/dev/null
 scripts/stdlib-sync-collection-iter-check.sh >/dev/null
 scripts/stdlib-sync-collection-test-check.sh >/dev/null
+scripts/stdlib-sync-collection-performance-check.sh >/dev/null
 
 echo "std.sync contract: OK (guards; condition/semaphore/once/barrier; explicit atomics; shared collections)"

@@ -12618,6 +12618,619 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct SyncCollectionPerformanceSample {
+        nanos: u64,
+        operations: u64,
+        allocations: u64,
+        retries: u64,
+        wakeups: u64,
+        parking: u64,
+        logical_bytes: u64,
+        live_handles: u64,
+    }
+
+    const SYNC_COLLECTION_PERF_BATCH: usize = 16;
+
+    fn sync_collection_call(
+        host: &mut BootstrapHost,
+        name: &str,
+        arguments: &[RuntimeValue],
+    ) -> RuntimeValue {
+        let call = host.start_async(name, arguments).unwrap();
+        host.poll_async(call)
+            .unwrap()
+            .expect("collection performance operation must be ready")
+    }
+
+    fn sync_collection_ok(
+        host: &mut BootstrapHost,
+        name: &str,
+        arguments: &[RuntimeValue],
+    ) -> RuntimeValue {
+        ok(sync_collection_call(host, name, arguments))
+    }
+
+    fn sync_collection_literal(
+        host: &mut BootstrapHost,
+        collection: &str,
+        cardinality: usize,
+    ) -> RuntimeValue {
+        let mut values = Vec::with_capacity(if collection == "map" {
+            cardinality.saturating_mul(2)
+        } else {
+            cardinality
+        });
+        for index in 0..cardinality {
+            let value = RuntimeValue::Integer(index as i128);
+            if collection == "map" {
+                values.push(value.clone());
+            }
+            values.push(value);
+        }
+        let constructor = match collection {
+            "array" => "std.sync.Array.literal",
+            "map" => "std.sync.Map.literal",
+            "set" => "std.sync.Set.literal",
+            "stack" => "std.sync.Stack.literal",
+            "queue" => "std.sync.Queue.literal",
+            _ => panic!("unknown shared collection: {collection}"),
+        };
+        host.invoke(constructor, &values).unwrap()
+    }
+
+    fn sync_collection_logical_bytes(host: &BootstrapHost) -> u64 {
+        let payload = host
+            .values
+            .values()
+            .map(|value| match value {
+                HostValue::SyncArray(values)
+                | HostValue::SyncSet(values)
+                | HostValue::SyncStack(values) => values
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<RuntimeValue>()),
+                HostValue::SyncMap(entries) => entries
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<(RuntimeValue, RuntimeValue)>()),
+                HostValue::SyncQueue(values) => values
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<RuntimeValue>()),
+                _ => 0,
+            })
+            .sum::<usize>();
+        let generations = host
+            .sync_generations
+            .values()
+            .map(|entries| {
+                entries
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u64>())
+            })
+            .sum::<usize>();
+        let registry = host
+            .values
+            .len()
+            .saturating_mul(std::mem::size_of::<HostValue>());
+        u64::try_from(payload.saturating_add(generations).saturating_add(registry))
+            .expect("logical collection state size fits in u64")
+    }
+
+    fn sync_collection_finish(
+        host: &BootstrapHost,
+        started: Instant,
+        operations: usize,
+        initial_allocations: u64,
+        peak_logical_bytes: u64,
+    ) -> SyncCollectionPerformanceSample {
+        assert!(
+            host.sync_waiters.is_empty(),
+            "collection probe left a pending waiter"
+        );
+        assert!(
+            host.sync_queues.values().all(VecDeque::is_empty),
+            "collection probe left a non-empty queue"
+        );
+        let nanos = started.elapsed().as_nanos().max(1);
+        SyncCollectionPerformanceSample {
+            nanos: u64::try_from(nanos).expect("collection probe duration fits in u64"),
+            operations: u64::try_from(operations).expect("collection operations fit in u64"),
+            allocations: host.next_value.saturating_sub(initial_allocations),
+            // The hosted model completes every collection call through a
+            // ready scheduler job. Native contention is a separate target
+            // lane and must not be inferred from this single-worker probe.
+            retries: 0,
+            wakeups: 0,
+            parking: 0,
+            logical_bytes: peak_logical_bytes.max(sync_collection_logical_bytes(host)),
+            live_handles: u64::try_from(host.values.len())
+                .expect("collection handle count fits in u64"),
+        }
+    }
+
+    fn sync_collection_cursor_pass(
+        host: &mut BootstrapHost,
+        collection: &RuntimeValue,
+        collection_name: &str,
+        descending: bool,
+    ) -> usize {
+        let start_name = format!("std.sync.{collection_name}.__iterStart");
+        let next_name = format!("std.sync.{collection_name}.__iterNext");
+        let RuntimeValue::Tuple(cutoff) = host
+            .invoke(&start_name, std::slice::from_ref(collection))
+            .unwrap()
+        else {
+            panic!("collection cursor start did not return a tuple")
+        };
+        let cutoff = cutoff[0].clone();
+        let mut last = RuntimeValue::Integer(if descending { u64::MAX as i128 } else { 0 });
+        let mut operations = 1;
+        loop {
+            let value = host
+                .invoke(
+                    &next_name,
+                    &[collection.clone(), cutoff.clone(), last.clone()],
+                )
+                .unwrap();
+            operations += 1;
+            let RuntimeValue::OptionSome(value) = value else {
+                break;
+            };
+            let RuntimeValue::Tuple(values) = *value else {
+                panic!("collection cursor next did not return a generation tuple")
+            };
+            last = values[0].clone();
+            std::hint::black_box(&values[1]);
+        }
+        operations
+    }
+
+    fn sync_collection_performance_workload(
+        workload: &str,
+        participants: usize,
+        cardinality: usize,
+    ) -> SyncCollectionPerformanceSample {
+        let collection = if workload.starts_with("array-") {
+            "array"
+        } else if workload.starts_with("map-") {
+            "map"
+        } else if workload.starts_with("set-") {
+            "set"
+        } else if workload.starts_with("stack-") {
+            "stack"
+        } else if workload.starts_with("queue-") {
+            "queue"
+        } else {
+            panic!("unknown collection performance workload: {workload}");
+        };
+        let setup_cardinality = if workload.contains("resize") {
+            0
+        } else {
+            cardinality
+        };
+        let mut host = BootstrapHost::default();
+        let initial_allocations = host.next_value;
+        let handle = sync_collection_literal(&mut host, collection, setup_cardinality);
+        let mut peak_logical_bytes = sync_collection_logical_bytes(&host);
+        let started = Instant::now();
+        let mut operations = 0;
+
+        match workload {
+            "array-fast-1"
+            | "array-read-dominant-8"
+            | "array-read-dominant-64"
+            | "array-hot-slot-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for _ in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let index = if workload == "array-hot-slot-64" {
+                            0
+                        } else {
+                            unit % cardinality.max(1)
+                        };
+                        let value = sync_collection_call(
+                            &mut host,
+                            "std.sync.Array.get",
+                            &[handle.clone(), RuntimeValue::Integer(index as i128)],
+                        );
+                        assert!(matches!(value, RuntimeValue::OptionSome(_)));
+                        operations += 1;
+                    }
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(sync_collection_logical_bytes(&host));
+                }
+            }
+            "array-write-independent-8" | "array-write-hot-slot-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let index = if workload == "array-write-hot-slot-64" {
+                            0
+                        } else {
+                            (unit + step) % cardinality.max(1)
+                        };
+                        let previous = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Array.set",
+                            &[
+                                handle.clone(),
+                                RuntimeValue::Integer(index as i128),
+                                RuntimeValue::Integer((step + 1) as i128),
+                            ],
+                        );
+                        assert!(matches!(previous, RuntimeValue::Integer(_)));
+                        operations += 1;
+                    }
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(sync_collection_logical_bytes(&host));
+                }
+            }
+            "array-cursor-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    operations += sync_collection_cursor_pass(&mut host, &handle, "Array", false);
+                }
+            }
+            "array-snapshot-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for _ in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let snapshot = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Array.snapshot",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(snapshot, RuntimeValue::Array(_)));
+                        std::hint::black_box(&snapshot);
+                        operations += 1;
+                    }
+                }
+            }
+            "map-read-independent-8" | "map-read-hot-key-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let key = if workload == "map-read-hot-key-64" {
+                            0
+                        } else {
+                            (unit + step) % cardinality.max(1)
+                        };
+                        let value = sync_collection_call(
+                            &mut host,
+                            "std.sync.Map.get",
+                            &[handle.clone(), RuntimeValue::Integer(key as i128)],
+                        );
+                        assert!(matches!(value, RuntimeValue::OptionSome(_)));
+                        operations += 1;
+                    }
+                }
+            }
+            "map-write-independent-8" | "map-write-hot-key-64" | "map-resize-64" => {
+                let rounds = if workload == "map-resize-64" {
+                    cardinality
+                } else {
+                    SYNC_COLLECTION_PERF_BATCH
+                };
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..rounds {
+                        let key = if workload == "map-write-hot-key-64" {
+                            0
+                        } else {
+                            (unit + step) % cardinality.max(1)
+                        };
+                        let value = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Map.insert",
+                            &[
+                                handle.clone(),
+                                RuntimeValue::Integer(key as i128),
+                                RuntimeValue::Integer((step + 1) as i128),
+                            ],
+                        );
+                        assert!(matches!(
+                            value,
+                            RuntimeValue::OptionNone | RuntimeValue::OptionSome(_)
+                        ));
+                        operations += 1;
+                    }
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(sync_collection_logical_bytes(&host));
+                }
+            }
+            "map-snapshot-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for _ in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let snapshot = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Map.snapshot",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(snapshot, RuntimeValue::Map(_)));
+                        std::hint::black_box(&snapshot);
+                        operations += 1;
+                    }
+                }
+            }
+            "map-cursor-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    operations += sync_collection_cursor_pass(&mut host, &handle, "Map", false);
+                }
+            }
+            "set-read-independent-8" | "set-read-hot-key-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let key = if workload == "set-read-hot-key-64" {
+                            0
+                        } else {
+                            (unit + step) % cardinality.max(1)
+                        };
+                        let value = sync_collection_call(
+                            &mut host,
+                            "std.sync.Set.contains",
+                            &[handle.clone(), RuntimeValue::Integer(key as i128)],
+                        );
+                        assert_eq!(value, RuntimeValue::Bool(true));
+                        operations += 1;
+                    }
+                }
+            }
+            "set-write-independent-8" | "set-resize-64" => {
+                let rounds = if workload == "set-resize-64" {
+                    cardinality
+                } else {
+                    SYNC_COLLECTION_PERF_BATCH
+                };
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..rounds {
+                        let key = (unit + step) % cardinality.max(1);
+                        let value = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Set.insert",
+                            &[handle.clone(), RuntimeValue::Integer(key as i128)],
+                        );
+                        assert!(matches!(value, RuntimeValue::Bool(_)));
+                        operations += 1;
+                    }
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(sync_collection_logical_bytes(&host));
+                }
+            }
+            "set-snapshot-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for _ in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let snapshot = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Set.snapshot",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(snapshot, RuntimeValue::Set(_)));
+                        std::hint::black_box(&snapshot);
+                        operations += 1;
+                    }
+                }
+            }
+            "set-cursor-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    operations += sync_collection_cursor_pass(&mut host, &handle, "Set", false);
+                }
+            }
+            "stack-mpmc-8" | "stack-mpmc-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..SYNC_COLLECTION_PERF_BATCH {
+                        sync_collection_ok(
+                            &mut host,
+                            "std.sync.Stack.push",
+                            &[handle.clone(), RuntimeValue::Integer((unit + step) as i128)],
+                        );
+                        let value = sync_collection_call(
+                            &mut host,
+                            "std.sync.Stack.pop",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(value, RuntimeValue::OptionSome(_)));
+                        operations += 2;
+                    }
+                }
+            }
+            "stack-resize-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..cardinality {
+                        sync_collection_ok(
+                            &mut host,
+                            "std.sync.Stack.push",
+                            &[handle.clone(), RuntimeValue::Integer((unit + step) as i128)],
+                        );
+                        operations += 1;
+                    }
+                    for _ in 0..cardinality {
+                        let value = sync_collection_call(
+                            &mut host,
+                            "std.sync.Stack.pop",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(value, RuntimeValue::OptionSome(_)));
+                        operations += 1;
+                    }
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(sync_collection_logical_bytes(&host));
+                }
+            }
+            "stack-cursor-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    operations += sync_collection_cursor_pass(&mut host, &handle, "Stack", true);
+                }
+            }
+            "stack-snapshot-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for _ in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let snapshot = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Stack.snapshot",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(snapshot, RuntimeValue::Array(_)));
+                        std::hint::black_box(&snapshot);
+                        operations += 1;
+                    }
+                }
+            }
+            "queue-mpmc-8" | "queue-mpmc-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..SYNC_COLLECTION_PERF_BATCH {
+                        sync_collection_ok(
+                            &mut host,
+                            "std.sync.Queue.enqueue",
+                            &[handle.clone(), RuntimeValue::Integer((unit + step) as i128)],
+                        );
+                        let value = sync_collection_call(
+                            &mut host,
+                            "std.sync.Queue.dequeue",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(value, RuntimeValue::OptionSome(_)));
+                        operations += 2;
+                    }
+                }
+            }
+            "queue-resize-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for step in 0..cardinality {
+                        sync_collection_ok(
+                            &mut host,
+                            "std.sync.Queue.enqueue",
+                            &[handle.clone(), RuntimeValue::Integer((unit + step) as i128)],
+                        );
+                        operations += 1;
+                    }
+                    for _ in 0..cardinality {
+                        let value = sync_collection_call(
+                            &mut host,
+                            "std.sync.Queue.dequeue",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(value, RuntimeValue::OptionSome(_)));
+                        operations += 1;
+                    }
+                }
+            }
+            "queue-cursor-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    operations += sync_collection_cursor_pass(&mut host, &handle, "Queue", false);
+                }
+            }
+            "queue-snapshot-64" => {
+                for unit in 0..participants {
+                    host.set_execution_unit(unit as u64 + 1);
+                    for _ in 0..SYNC_COLLECTION_PERF_BATCH {
+                        let snapshot = sync_collection_ok(
+                            &mut host,
+                            "std.sync.Queue.snapshot",
+                            std::slice::from_ref(&handle),
+                        );
+                        assert!(matches!(snapshot, RuntimeValue::Array(_)));
+                        std::hint::black_box(&snapshot);
+                        operations += 1;
+                    }
+                }
+            }
+            _ => panic!("unhandled collection performance workload: {workload}"),
+        }
+
+        sync_collection_finish(
+            &host,
+            started,
+            operations,
+            initial_allocations,
+            peak_logical_bytes,
+        )
+    }
+
+    #[test]
+    fn sync_collection_performance_probe() {
+        let workloads = [
+            ("array-fast-1", "array", "fast", 1, 1),
+            ("array-read-dominant-8", "array", "read-dominant", 8, 8),
+            ("array-read-dominant-64", "array", "read-dominant", 64, 64),
+            (
+                "array-write-independent-8",
+                "array",
+                "write-independent",
+                8,
+                8,
+            ),
+            ("array-hot-slot-64", "array", "hot-slot", 64, 64),
+            ("array-write-hot-slot-64", "array", "hot-slot", 64, 64),
+            ("array-cursor-64", "array", "cursor", 64, 64),
+            ("array-snapshot-64", "array", "snapshot", 64, 64),
+            ("map-read-independent-8", "map", "read-independent", 8, 8),
+            ("map-read-hot-key-64", "map", "hot-key", 64, 64),
+            ("map-write-independent-8", "map", "write-independent", 8, 8),
+            ("map-write-hot-key-64", "map", "hot-key", 64, 64),
+            ("map-resize-64", "map", "resize", 8, 64),
+            ("map-snapshot-64", "map", "snapshot", 64, 64),
+            ("map-cursor-64", "map", "cursor", 64, 64),
+            ("set-read-independent-8", "set", "read-independent", 8, 8),
+            ("set-read-hot-key-64", "set", "hot-key", 64, 64),
+            ("set-write-independent-8", "set", "write-independent", 8, 8),
+            ("set-resize-64", "set", "resize", 8, 64),
+            ("set-snapshot-64", "set", "snapshot", 64, 64),
+            ("set-cursor-64", "set", "cursor", 64, 64),
+            ("stack-mpmc-8", "stack", "mpmc", 8, 8),
+            ("stack-mpmc-64", "stack", "mpmc", 64, 64),
+            ("stack-resize-64", "stack", "resize", 8, 64),
+            ("stack-cursor-64", "stack", "cursor", 64, 64),
+            ("stack-snapshot-64", "stack", "snapshot", 64, 64),
+            ("queue-mpmc-8", "queue", "mpmc", 8, 8),
+            ("queue-mpmc-64", "queue", "mpmc", 64, 64),
+            ("queue-resize-64", "queue", "resize", 8, 64),
+            ("queue-cursor-64", "queue", "cursor", 64, 64),
+            ("queue-snapshot-64", "queue", "snapshot", 64, 64),
+        ];
+        for _ in 0..3 {
+            for (id, _, _, participants, cardinality) in workloads {
+                let sample = sync_collection_performance_workload(id, participants, cardinality);
+                assert!(sample.nanos > 0);
+                assert!(sample.operations > 0);
+                assert!(sample.logical_bytes > 0);
+            }
+        }
+        for _ in 0..9 {
+            for (id, collection, mode, participants, cardinality) in workloads {
+                let sample = sync_collection_performance_workload(id, participants, cardinality);
+                assert!(sample.nanos > 0);
+                assert!(sample.operations > 0);
+                assert!(sample.logical_bytes > 0);
+                assert_eq!(sample.retries, 0);
+                assert_eq!(sample.wakeups, 0);
+                assert_eq!(sample.parking, 0);
+                println!(
+                    "TONDO_SYNC_COLLECTION_PERF\t{id}\t{collection}\t{mode}\t{participants}\t{cardinality}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    sample.nanos,
+                    sample.operations,
+                    sample.allocations,
+                    sample.retries,
+                    sample.wakeups,
+                    sample.parking,
+                    sample.logical_bytes,
+                    sample.live_handles,
+                );
+            }
+        }
+    }
+
     fn json_limits(host: &mut BootstrapHost) -> RuntimeValue {
         host.invoke(
             "intrinsic.json.JsonLimits.construct",

@@ -170,11 +170,29 @@
     ],
     "proof": "hosted VM exercises all five identities and 32 methods; native ABI exercises order, strong CAS, shared handles, worker progress, limits and teardown",
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ]
+  },
+  "performance": {
+    "task": "STD-SYNC-COLLECTION-PERF-001",
+    "status": "verified-hosted-vm-baseline",
+    "contract": "testing/stdlib-sync-collection-performance.json",
+    "document": "docs/contracts/stdlib-sync-collection-performance.md",
+    "target": "tondo-vm-hosted",
+    "backend": "bytecode-vm",
+    "profile": "test",
+    "workloads": 31,
+    "samples_per_workload": 27,
+    "participant_cardinalities": [1, 8, 64],
+    "collection_cardinalities": [1, 8, 64],
+    "algorithmic_fast_paths": "deferred-to-native-targeted-performance-campaign",
+    "native_aot": "not-claimed",
+    "strategy": "single-worker-ready-job-collection-baseline",
+    "report": "target/reliability/evidence/stdlib-sync-collection-performance.json",
+    "command": "scripts/stdlib-sync-collection-performance.sh",
+    "oracle": "independent-bounded-collection-model-and-host-invariant-checks"
   },
   "negative_cases": [
     "wrong-nominal-host-kind",
@@ -195,9 +213,8 @@
   "promotion": {
     "implementation_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-SYNC-COLLECTION-PERF-001"],
+    "next_blocks": ["STD-SYNC-COLLECTION-CONF-001"],
     "remaining": [
-      "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"

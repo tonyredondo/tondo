@@ -6,10 +6,13 @@ machine-readable record is
 [`testing/stdlib-sync-collection-iter.json`](../../testing/stdlib-sync-collection-iter.json).
 The collection construction and method contract remains
 [`testing/stdlib-sync-collection.json`](../../testing/stdlib-sync-collection.json);
-model/fuzz, performance, conformance and public-documentation leaves remain
-separate tracker tasks.
+model/fuzz, conformance and public-documentation leaves remain separate
+tracker tasks. The target-qualified hosted performance baseline is recorded in
+the separate PERF leaf linked below.
 
 This contract verifies the hosted VM and a private native-runtime cursor ABI.
+Its target-qualified hosted performance baseline is recorded separately by
+[`stdlib-sync-collection-performance.md`](./stdlib-sync-collection-performance.md).
 It does not promote a source-level cursor type, expose a native layout, or
 claim generic native AOT lowering.
 
@@ -101,6 +104,8 @@ retention, stale handles and cleanup. Contract and negative-case runners are
 `scripts/stdlib-sync-collection-iter-test.sh`; both are integrated into the
 standard test gate.
 
-This leaf does not close the model/fuzz campaign, performance measurements,
-cross-target conformance or the broader `std.sync` documentation task. Those
-remain visible as the next promotion blocks in the JSON record and tracker.
+This leaf does not close cross-target conformance or the broader `std.sync`
+documentation task. The hosted performance measurement is closed by its
+separate target-qualified contract; native algorithm selection and generic AOT
+remain unclaimed. The remaining leaves stay visible in the JSON record and
+tracker.

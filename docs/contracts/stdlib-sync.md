@@ -24,6 +24,18 @@ El modelo secuencial, el comprobador de histories, la campaña de cursores y el
 fuzz acotado de esas colecciones se registran en
 [`testing/stdlib-sync-collection-test.json`](../../testing/stdlib-sync-collection-test.json)
 y [`stdlib-sync-collection-test.md`](./stdlib-sync-collection-test.md).
+La campaña target-qualified de rendimiento de colecciones de
+`STD-SYNC-COLLECTION-PERF-001` está en
+[`testing/stdlib-sync-collection-performance.json`](../../testing/stdlib-sync-collection-performance.json)
+y [`stdlib-sync-collection-performance.md`](./stdlib-sync-collection-performance.md).
+Su probe hosted mide 31 workloads, tres procesos y 27 muestras por workload
+para cardinalidades y unidades lógicas 1/8/64; conserva mediana/P95/P99,
+throughput, allocations, memoria lógica, retries, wakeups, parking y handles
+vivos. La línea base es `single-worker-ready-job-collection-baseline`: no es
+una afirmación de MPMC nativo ni de fast paths lock-free. La invariante del
+cursor exige `direct-next-has-no-content-materialization-or-visited-table` y
+ningún lock durante el cuerpo; la selección algorítmica nativa y el lowering
+AOT quedan explícitamente diferidos.
 
 Implementación host: `scheduler-backed-hosted-model` con puente
 `verified-host-parking-native-atomic-epoch-bridge`.
@@ -445,9 +457,9 @@ aliases globales SArray/SMap/SSet.
 La superficie de compilador, el parking cooperativo hosted, la continuación de
 `Once`, la campaña target-qualified de `STD-SYNC-PERF-001`, el frontend de
 literales, la implementación de colecciones compartidas para hosted/native ABI,
-la iteración directa y el modelo/test/fuzz acotado cierran los bloques
-actualmente implementados. Permanecen pendientes
-`STD-SYNC-COLLECTION-PERF-001`, `STD-SYNC-COLLECTION-CONF-001`,
-`STD-SYNC-CONF-001` y `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada:
+la iteración directa, el modelo/test/fuzz acotado y la campaña PERF hosted de
+colecciones cierran los bloques actualmente implementados. Permanecen
+pendientes `STD-SYNC-COLLECTION-CONF-001`, `STD-SYNC-CONF-001` y
+`STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada:
 el bloque de pruebas verifica modelos, histories, cursores, aliases, límites y
 cleanup, no un layout de tipos genéricos ni lowering AOT.
