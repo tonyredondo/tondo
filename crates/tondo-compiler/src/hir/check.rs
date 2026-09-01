@@ -11901,6 +11901,26 @@ impl<'a> ExpressionChecker<'a> {
 
         if matches!(
             query.constructor(),
+            HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator"
+        ) && let [element] = query.arguments()
+            && self
+                .channel_receiver_element_type(query.target())?
+                .is_some_and(|actual| actual == *element)
+        {
+            let discard = TraitQuery::from_parts(
+                HirTraitConstructor::Prelude(
+                    Name::new("Discard").expect("prelude trait names are valid"),
+                ),
+                Vec::new(),
+                *element,
+            );
+            let status = self.prove_trait_query(span, &discard, context, active, memo)?;
+            memo.insert(query.clone(), status);
+            return Ok(status);
+        }
+
+        if matches!(
+            query.constructor(),
             HirTraitConstructor::Prelude(name) if name.as_str() == "Display"
         ) && query.arguments().is_empty()
             && HirPreludeTraitMethod::Display
@@ -13444,12 +13464,65 @@ impl<'a> ExpressionChecker<'a> {
         span: Span,
         context: &BodyContext,
     ) -> Result<Option<TraitQuery>, HirError> {
+        if let Some(element) = self.channel_receiver_element_type(source)? {
+            // `Receiver[T]` owns a compiler-sealed AsyncIterator witness. The
+            // witness is valid only after proving the payload's Discard bound;
+            // MIR later routes its `next` call to the private receiver host.
+            // Reserve the concrete close result/signature in the same HIR
+            // interner so MIR can consume the receiver without manufacturing
+            // type ids in a detached substitution interner.
+            let drained = self
+                .program
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![element])?;
+            self.program.interner.function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Value, source)],
+                None,
+                drained,
+            ))?;
+            let unit = self.program.interner.scalar(ScalarType::Unit);
+            self.program.interner.function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Ref, source)],
+                None,
+                unit,
+            ))?;
+            HirPreludeTraitMethod::AsyncIteratorNext
+                .function_type(&mut self.program.interner, &[element, source])?
+                .expect("channel receiver async iterator has a fixed next signature");
+            return Ok(Some(
+                HirPreludeTraitMethod::AsyncIteratorNext
+                    .query(&[element, source])
+                    .expect("channel receiver async iterator query has fixed arity"),
+            ));
+        }
         self.trait_iterator_query(
             source,
             span,
             context,
             HirPreludeTraitMethod::AsyncIteratorNext,
         )
+    }
+
+    fn channel_receiver_element_type(&self, source: TypeId) -> Result<Option<TypeId>, HirError> {
+        let TypeKind::Nominal {
+            identity,
+            arguments,
+        } = self.program.interner.kind(source)?
+        else {
+            return Ok(None);
+        };
+        if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.module().as_str() != "channel"
+            || identity.declaration().to_string() != "Receiver"
+            || arguments.len() != 1
+        {
+            return Ok(None);
+        }
+        Ok(arguments.first().copied())
     }
 
     fn trait_iterator_query(

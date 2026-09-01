@@ -127,7 +127,8 @@ observable VM/native de ocho casos, incluidos aliases, outcomes, orden,
 cursores, snapshots, límites, cleanup y capability `threads`; la campaña no
 promueve fast paths nativos ni lowering AOT genérico. `STD-SYNC-CONF-001` y la
 conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
-con la guía ejecutable y el siguiente bloque es `STD-CHANNEL-ASYNC-ITER-001`. El modelo y
+con la guía ejecutable; el siguiente trabajo desbloqueado es
+`STD-CHANNEL-TEST-001` y `STD-CHANNEL-PERF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -2492,7 +2493,8 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   `collect(limit:)` y las reglas
   genéricas de cierre/backpressure quedan separadas en `ASYNC-ITER-EXT-001`;
   la adaptación concreta de `std.channel.Receiver[T]` bajo `T: Discard`
-  pertenece a STD-0.1B y se cierra en `STD-CHANNEL-ASYNC-ITER-001`.
+  pertenece a STD-0.1B y queda cerrado en `STD-CHANNEL-ASYNC-ITER-001`, con la
+  frontera hosted/AOT registrada en su contrato específico.
 
 - [x] **ASYNC-ITER-EXT-001 — Completar streams genéricos en `std.async`.**
   `AsyncIterator.collect(limit:)` queda implementado como lowering MIR genérico
@@ -6762,13 +6764,18 @@ estas leaves.
   `target/reliability/evidence/stdlib-channel-implementation.json`; el cierre
   es target-qualified, no promociona una API pública y no reclama lowering AOT.
   El siguiente bloque es `STD-CHANNEL-ASYNC-ITER-001`.
-- [ ] **STD-CHANNEL-ASYNC-ITER-001 — Adaptar canales a `AsyncIterator`.**
-  Implementar la vista consumible bajo `T: Discard` sobre el protocolo ya
-  cerrado, preservando backpressure, cierre, cancelación y ownership sin
-  materializar arrays ni crear otro tipo de stream. Probar que salir pronto del
-  `for` no puede perder un valor afín; esos valores usan la API manual. Depende
-  de `STD-CHANNEL-IMPL-001` y de `ASYNC-ITER-EXT-001` y debe cerrar antes de la
-  conformidad de `std.channel`.
+- [x] **STD-CHANNEL-ASYNC-ITER-001 — Adaptar canales a `AsyncIterator`.**
+  Cerrada la vista consumible bajo `T: Discard` sobre el protocolo ya cerrado:
+  el compilador selecciona un witness privado `next(mut self)` y la VM hosted
+  reutiliza el waiter FIFO de `receive`, conserva backpressure y cierra el
+  receiver en salida normal o temprana. El `collect` genérico marca el endpoint
+  antes de su primer poll para que cancelación y cleanup descarten sólo payloads
+  `Discard`; los payloads afines reciben `E1105` y siguen usando `receive`/`close`.
+  No se crea otro tipo de stream, no se promueve API pública y no se reclama
+  lowering AOT. La fixture, negativa y evidencia están en
+  `testing/stdlib-channel-async-iter.json` y
+  `docs/contracts/stdlib-channel-async-iter.md`; los siguientes leaves son
+  `STD-CHANNEL-TEST-001` y `STD-CHANNEL-PERF-001`.
 - [ ] **STD-CHANNEL-TEST-001 — Modelar y fuzzear canales.** Cubrir buffers 0/N,
   forma unbounded bajo límites, cierre concurrente, fairness declarada,
   commit/rollback mediante `select`, `else`, ready simultáneo, cancelación,
@@ -7476,7 +7483,7 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 | `STD-A-ASYNC-IMPL-001` | **Cerrada** | Implementación VM completa de `std.async`: ruta directa y `spawn` de `collect`, cursor genérico, límites, cancelación cooperativa, liberación terminal y loans; rendimiento y conformance global siguen en sus leaves S1A. |
 | `STD-A-FUZZ-001` | **Cerrada** | Target owner-aware con 22 rutas, corpus y seeds reproducibles, límites de entrada/source/RSS/timeout, oráculos de no-panic e invariantes por owner, replay de minimizados y campañas smoke/nightly integradas; `FUZZ=verified` 22/22. |
 | `STD-CHANNEL-IMPL-001` | **Cerrada** | Compiler, VM hosted y bridge nativo privado verifican endpoints nominales, bounded/unbounded, FIFO, backpressure, fork, cierres, drenado terminal, cancelación y send/receive seleccionables; fixture y sonda nativa hash-bound, sin API pública ni lowering AOT. |
-| `STD-CHANNEL-ASYNC-ITER-001` | **Pendiente real** | Requiere adaptación de Channel en S1; no forma parte del bootstrap VM. |
+| `STD-CHANNEL-ASYNC-ITER-001` | **Cerrada** | Witness privado `Receiver[T] -> AsyncIterator[T]` bajo `T: Discard`, lowering de `for` y `collect` genérico, scheduler FIFO, cleanup/cancelación y negativa affine `E1105` verificados en la VM hosted; ABI nativa y lowering AOT permanecen sin reclamar. |
 | `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
 | `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
 
@@ -7680,8 +7687,10 @@ de `STD-SYNC-COLLECTION-IMPL-001` ya tiene evidencia ejecutable;
 acotado, `STD-SYNC-COLLECTION-PERF-001` queda cerrado para la línea base
 hosted y `STD-SYNC-COLLECTION-CONF-001` queda cerrado para la equivalencia
 observable VM/native; `STD-SYNC-CONF-001` y `STD-SYNC-DOC-001` también quedan
-cerrados para el corpus común VM/native-bridge y la guía ejecutable; el siguiente
-trabajo crítico es `STD-CHANNEL-ASYNC-ITER-001`. La
+cerrados para el corpus común VM/native-bridge y la guía ejecutable; la adaptación
+hosted `Receiver[T] -> AsyncIterator[T]` de `STD-CHANNEL-ASYNC-ITER-001` también
+está cerrada; el siguiente trabajo crítico es `STD-CHANNEL-TEST-001` junto con
+`STD-CHANNEL-PERF-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

@@ -3109,7 +3109,10 @@ implementa ambos protocolos, `Iterator[T]` tiene precedencia. `break`, error, ca
 cierran el stream según su contrato. `collect(limit: ...)` es la operación
 explícita que materializa un `Array[T]`; exige límite cuando no se puede demostrar
 finitud. `std.channel.Receiver[T]` se adapta a este protocolo cuando
-`T: Discard`; valores con obligación terminal conservan la API manual.
+`T: Discard`; valores con obligación terminal conservan la API manual. La
+adaptación hosted está cerrada en `STD-CHANNEL-ASYNC-ITER-001`, con contrato en
+[`testing/stdlib-channel-async-iter.json`](./testing/stdlib-channel-async-iter.json);
+no reclama lowering AOT ni añade una forma `for await`.
 `AsyncIterator` es distinto de `Iterator[T]`, aunque ambos conservan la regla de
 una implementación por target y elemento.
 

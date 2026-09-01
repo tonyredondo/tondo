@@ -812,6 +812,9 @@ pub(crate) struct BootstrapHost {
     sync_waiters: BTreeMap<u64, PendingSync>,
     sync_queues: BTreeMap<SyncResource, VecDeque<u64>>,
     channels: BTreeMap<u64, ChannelState>,
+    /// Receiver endpoints that entered the compiler-owned `AsyncIterator`
+    /// view. Their pending values may be discarded by terminal cleanup.
+    channel_iterator_receivers: BTreeSet<u64>,
     current_unit: u64,
     time_jobs: BTreeMap<u64, TimeJob>,
     clock: ClockProvider,
@@ -878,6 +881,7 @@ impl BootstrapHost {
             sync_waiters: BTreeMap::new(),
             sync_queues: BTreeMap::new(),
             channels: BTreeMap::new(),
+            channel_iterator_receivers: BTreeSet::new(),
             current_unit: 0,
             time_jobs: BTreeMap::new(),
             clock: ClockProvider::real(),
@@ -1220,6 +1224,7 @@ impl BootstrapHost {
         value: &RuntimeValue,
     ) -> Result<Vec<RuntimeValue>, VmError> {
         let (endpoint, channel) = self.channel_receiver_id(value)?;
+        self.channel_iterator_receivers.remove(&endpoint);
         let _ = self.values.remove(&endpoint);
         let state = self
             .channels
@@ -1461,6 +1466,7 @@ impl BootstrapHost {
                 | "std.sync.Barrier.wait"
                 | "std.channel.Sender.send"
                 | "std.channel.Receiver.receive"
+                | "std.channel.Receiver.__asyncIteratorNext"
         )
     }
 
@@ -1562,11 +1568,25 @@ impl BootstrapHost {
         arguments: &[RuntimeValue],
     ) -> Result<bool, VmError> {
         let base_name = name.split_once('[').map_or(name, |(base, _)| base);
+        let channel_name = match base_name {
+            "std.channel.Receiver.__asyncIteratorNext" => "std.channel.Receiver.receive",
+            other => other,
+        };
         if matches!(
-            base_name,
+            channel_name,
             "std.channel.Sender.send" | "std.channel.Receiver.receive"
         ) {
-            return self.pending_channel_for(call, base_name, arguments);
+            if base_name == "std.channel.Receiver.__asyncIteratorNext" {
+                let [receiver] = arguments else {
+                    return Err(VmError::Host(
+                        "std.channel.Receiver.__asyncIteratorNext received an invalid argument list"
+                            .into(),
+                    ));
+                };
+                let (endpoint, _) = self.channel_receiver_id(receiver)?;
+                self.channel_iterator_receivers.insert(endpoint);
+            }
+            return self.pending_channel_for(call, channel_name, arguments);
         }
         if !Self::is_sync_suspendable(name) {
             return Ok(false);
@@ -4315,12 +4335,13 @@ impl BootstrapHost {
     }
 
     fn channel_discard_receiver(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
-        let (_, channel) = self.channel_receiver_id(value)?;
+        let (endpoint, channel) = self.channel_receiver_id(value)?;
+        let iterator_receiver = self.channel_iterator_receivers.remove(&endpoint);
         let state = self
             .channels
             .get(&channel)
             .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
-        if state.receivers == 1 && !state.queue.is_empty() {
+        if !iterator_receiver && state.receivers == 1 && !state.queue.is_empty() {
             return Err(VmError::Host(
                 "discarding a receiver with pending values violates its terminal obligation".into(),
             ));
@@ -9018,7 +9039,15 @@ impl VmHost for BootstrapHost {
             ("std.channel.Receiver.fork", [receiver]) => Ok(RuntimeValue::ResultOk(Box::new(
                 self.channel_fork_receiver(receiver)?,
             ))),
-            ("std.channel.Receiver.receive", [receiver]) => self.channel_receive_now(receiver),
+            ("std.channel.Receiver.__asyncIteratorAdopt", [receiver]) => {
+                let (endpoint, _) = self.channel_receiver_id(receiver)?;
+                self.channel_iterator_receivers.insert(endpoint);
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.channel.Receiver.receive", [receiver])
+            | ("std.channel.Receiver.__asyncIteratorNext", [receiver]) => {
+                self.channel_receive_now(receiver)
+            }
             ("std.channel.Receiver.tryReceive", [receiver]) => {
                 self.channel_try_receive_now(receiver)
             }
@@ -9116,6 +9145,7 @@ impl VmHost for BootstrapHost {
             || name.starts_with("std.sync.Barrier.wait")
             || name.starts_with("std.channel.Sender.send")
             || name.starts_with("std.channel.Receiver.receive")
+            || name.starts_with("std.channel.Receiver.__asyncIteratorNext")
             || name.starts_with("std.sync.Array.get")
             || name.starts_with("std.sync.Array.set")
             || name.starts_with("std.sync.Array.compareExchange")
@@ -11161,6 +11191,169 @@ mod tests {
             0,
             Some(RuntimeValue::Integer(22)),
         );
+    }
+
+    #[test]
+    fn channel_host_async_iterator_next_reuses_receive_waiter_and_cleanup() {
+        let mut host = BootstrapHost::default();
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                .unwrap(),
+        );
+        let next = host
+            .start_async(
+                "std.channel.Receiver.__asyncIteratorNext",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        assert!(host.poll_async(next).unwrap().is_none());
+        let send = host
+            .start_async(
+                "std.channel.Sender.send",
+                &[sender.clone(), RuntimeValue::Integer(7)],
+            )
+            .unwrap();
+        assert_eq!(
+            host.poll_async(next).unwrap(),
+            Some(RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(7))))
+        );
+        assert_eq!(
+            host.poll_async(send).unwrap(),
+            Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+        );
+
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        host.invoke(
+            "std.channel.Sender.trySend",
+            &[sender.clone(), RuntimeValue::Integer(1)],
+        )
+        .unwrap();
+        host.invoke(
+            "std.channel.Sender.trySend",
+            &[sender.clone(), RuntimeValue::Integer(2)],
+        )
+        .unwrap();
+        let next = host
+            .start_async(
+                "std.channel.Receiver.__asyncIteratorNext[Int]",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        assert_eq!(
+            host.poll_async(next).unwrap(),
+            Some(RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(1))))
+        );
+        host.cleanup(&receiver).unwrap();
+        assert!(matches!(
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[sender, RuntimeValue::Integer(3)],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(_)
+        ));
+    }
+
+    #[test]
+    fn channel_host_async_iterator_adoption_allows_zero_limit_cleanup() {
+        let mut host = BootstrapHost::default();
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        let tail = ok(host
+            .invoke("std.channel.Sender.fork", std::slice::from_ref(&sender))
+            .unwrap());
+        for value in [1, 2] {
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[sender.clone(), RuntimeValue::Integer(value)],
+            )
+            .unwrap();
+        }
+        host.invoke("std.channel.Sender.close", std::slice::from_ref(&sender))
+            .unwrap();
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.__asyncIteratorAdopt[Int]",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            RuntimeValue::Unit
+        );
+        host.cleanup(&receiver).unwrap();
+        assert!(matches!(
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[tail, RuntimeValue::Integer(3)],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(_)
+        ));
+    }
+
+    #[test]
+    fn channel_host_async_iterator_cancellation_allows_terminal_cleanup() {
+        let mut host = BootstrapHost::default();
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                .unwrap(),
+        );
+        let pending = host
+            .start_async(
+                "std.channel.Receiver.__asyncIteratorNext",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        assert!(host.poll_async(pending).unwrap().is_none());
+        host.cancel_async(pending).unwrap();
+        host.cleanup(&receiver).unwrap();
+        assert!(matches!(
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[sender, RuntimeValue::Integer(9)],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(_)
+        ));
+    }
+
+    #[test]
+    fn channel_host_manual_receive_preserves_affine_terminal_obligation() {
+        let mut host = BootstrapHost::default();
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        for value in [1, 2] {
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[sender.clone(), RuntimeValue::Integer(value)],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(1)))
+        );
+        assert!(host.cleanup(&receiver).is_err());
+        assert_eq!(
+            host.invoke(
+                "std.channel.Receiver.close",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(2)])
+        );
+        host.invoke("std.channel.Sender.close", std::slice::from_ref(&sender))
+            .unwrap();
     }
 
     #[test]

@@ -1295,7 +1295,10 @@ impl<'a> TypeLowerer<'a> {
         let io_limits_outcome = self.interner.result(io_limits, io_error)?;
         let io_bytes_outcome = self.interner.result(bytes, io_error)?;
 
-        if async_referenced || async_iterator_referenced {
+        // A channel receiver carries a compiler-sealed AsyncIterator witness,
+        // so importing `std.channel` must also install the generic extension
+        // hosts (`collect`) even when source never spells the prelude trait.
+        if async_referenced || async_iterator_referenced || channel_referenced {
             let waiter_value = self.interner.generic_parameter(0)?;
             let waiter_error = self.interner.generic_parameter(1)?;
             let waiter = self
@@ -2425,6 +2428,22 @@ impl<'a> TypeLowerer<'a> {
                 HirBootstrapHostFunction::ChannelReceiverReceive,
                 vec![(receiver, ParameterMode::Ref, true)],
                 receive_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelReceiverAsyncIteratorNext,
+                vec![(receiver, ParameterMode::Mut, true)],
+                receive_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelReceiverAsyncIteratorAdopt,
+                vec![(receiver, ParameterMode::Ref, true)],
+                unit,
                 1,
                 send_bound.clone(),
             )?;

@@ -172,7 +172,10 @@
     "backpressure": "one-next-at-a-time",
     "early_exit": "receiver-close-and-discard-pending-values",
     "affine_values": "manual-receive-and-close-required",
-    "materialization": "forbidden"
+    "materialization": "generic-collect-only",
+    "implementation": "verified-hosted-vm",
+    "native_aot_lowering": "not-claimed",
+    "contract": "testing/stdlib-channel-async-iter.json"
   },
   "fairness": {
     "waiter_order": "FIFO-registration-per-operation",
@@ -315,7 +318,6 @@
     },
     "evidence_report": "target/reliability/evidence/stdlib-channel-implementation.json",
     "required_follow_ups": [
-      "STD-CHANNEL-ASYNC-ITER-001",
       "STD-CHANNEL-TEST-001",
       "STD-CHANNEL-PERF-001",
       "STD-CHANNEL-CONF-001",
@@ -324,12 +326,11 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-CHANNEL-ASYNC-ITER-001",
       "STD-CHANNEL-TEST-001",
       "STD-CHANNEL-PERF-001",
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": ["STD-CHANNEL-ASYNC-ITER-001"]
+    "next_blocks": ["STD-CHANNEL-TEST-001", "STD-CHANNEL-PERF-001"]
   }
 }

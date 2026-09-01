@@ -2577,6 +2577,20 @@ impl<'a> FunctionBuilder<'a> {
                 });
             }
         };
+        let channel_receiver = async_iteration
+            && self
+                .channel_receiver_element_type(source_type, span)?
+                .is_some_and(|actual| actual == element);
+        let channel_next_signature = channel_receiver
+            .then(|| {
+                self.specialized_host_function_type(
+                    HirBootstrapHostFunction::ChannelReceiverAsyncIteratorNext,
+                    &[element],
+                    span,
+                )
+            })
+            .transpose()?;
+        let call_signature = channel_next_signature.unwrap_or(function_type);
         let next = self.allocate_temporary(outcome, span, block)?;
         let header = self.allocate_block(MirBlockKind::Normal)?;
         let inspect = self.allocate_block(MirBlockKind::Normal)?;
@@ -2601,18 +2615,27 @@ impl<'a> FunctionBuilder<'a> {
             ty: outcome,
             kind: MirOperationKind::Call {
                 callee: MirOperand {
-                    ty: function_type,
-                    kind: MirOperandKind::PreludeTraitFunction {
-                        method: if async_iteration {
-                            HirPreludeTraitMethod::AsyncIteratorNext
-                        } else {
-                            HirPreludeTraitMethod::IteratorNext
-                        },
-                        arguments: vec![element, source_type],
+                    ty: call_signature,
+                    kind: if channel_receiver {
+                        MirOperandKind::Function {
+                            callable: HirCallableId::Host(
+                                HirBootstrapHostFunction::ChannelReceiverAsyncIteratorNext,
+                            ),
+                            arguments: vec![element],
+                        }
+                    } else {
+                        MirOperandKind::PreludeTraitFunction {
+                            method: if async_iteration {
+                                HirPreludeTraitMethod::AsyncIteratorNext
+                            } else {
+                                HirPreludeTraitMethod::IteratorNext
+                            },
+                            arguments: vec![element, source_type],
+                        }
                     },
                 },
                 arguments,
-                signature: function_type,
+                signature: call_signature,
                 protocol: HirCallProtocol::Call,
                 unsafe_call: false,
             },
@@ -2661,7 +2684,78 @@ impl<'a> FunctionBuilder<'a> {
             },
             span,
         )?;
-        self.finish_iterating_for(span, id, pattern, item, body, header, body_start, exit)
+        let result =
+            self.finish_iterating_for(span, id, pattern, item, body, header, body_start, exit)?;
+        if channel_receiver {
+            let close = self.channel_receiver_close_operation(state, element, span)?;
+            let drain = self.allocate_temporary(close.ty, span, exit)?;
+            return self.invoke(exit, span, Some(self.local_place(drain)), close);
+        }
+        Ok(result)
+    }
+
+    fn channel_receiver_element_type(
+        &self,
+        source: TypeId,
+        span: Span,
+    ) -> Result<Option<TypeId>, MirError> {
+        let TypeKind::Nominal {
+            identity,
+            arguments,
+        } = self
+            .hir
+            .interner()
+            .kind(source)
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("cannot inspect channel receiver type: {error}"),
+            })?
+        else {
+            return Ok(None);
+        };
+        if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.module().as_str() != "channel"
+            || identity.declaration().to_string() != "Receiver"
+            || arguments.len() != 1
+        {
+            return Ok(None);
+        }
+        Ok(arguments.first().copied())
+    }
+
+    fn channel_receiver_close_operation(
+        &mut self,
+        state: MirLocalId,
+        element: TypeId,
+        span: Span,
+    ) -> Result<MirOperation, MirError> {
+        let callable = HirCallableId::Host(HirBootstrapHostFunction::ChannelReceiverClose);
+        let signature = self.specialized_host_function_type(
+            HirBootstrapHostFunction::ChannelReceiverClose,
+            &[element],
+            span,
+        )?;
+        let outcome = self.function_outcome(signature, span)?;
+        Ok(MirOperation {
+            ty: outcome,
+            kind: MirOperationKind::Call {
+                callee: MirOperand {
+                    ty: signature,
+                    kind: MirOperandKind::Function {
+                        callable,
+                        arguments: vec![element],
+                    },
+                },
+                arguments: vec![MirCallArgument {
+                    mode: ParameterMode::Value,
+                    target: crate::hir::HirCallArgumentTarget::Receiver,
+                    value: self.transfer_local(state, span)?,
+                }],
+                signature,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
+            },
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3380,11 +3474,70 @@ impl<'a> FunctionBuilder<'a> {
                 }
             };
         let source_type = source.ty;
+        let channel_receiver = self
+            .channel_receiver_element_type(source_type, span)?
+            .is_some_and(|actual| actual == element);
         let state = self.allocate_temporary(source_type, span, current)?;
         let remaining_ty = limit.ty;
         let remaining = self.allocate_temporary(remaining_ty, span, current)?;
         self.assign_operand(current, span, self.local_place(state), source)?;
         self.assign_operand(current, span, self.local_place(remaining), limit)?;
+
+        if channel_receiver {
+            // Generic `AsyncIterator.collect` may stop before the first
+            // `next` (limit zero), or may unwind while a next is pending. Mark
+            // the receiver before entering that control-flow so terminal
+            // cleanup can discard buffered `T: Discard` values safely. This is
+            // a compiler-owned witness, not a channel-specific public method.
+            let adopt_signature = self.specialized_host_function_type(
+                HirBootstrapHostFunction::ChannelReceiverAsyncIteratorAdopt,
+                &[element],
+                span,
+            )?;
+            let adopt_outcome = self.function_outcome(adopt_signature, span)?;
+            let adopt_result = self.allocate_temporary(adopt_outcome, span, current)?;
+            let adopt_loan_depth = self.active_loans.len();
+            let adopt_loan =
+                self.reserve_loan(current, span, ParameterMode::Ref, self.local_place(state))?;
+            let adopt_operation = MirOperation {
+                ty: adopt_outcome,
+                kind: MirOperationKind::Call {
+                    callee: MirOperand {
+                        ty: adopt_signature,
+                        kind: MirOperandKind::Function {
+                            callable: HirCallableId::Host(
+                                HirBootstrapHostFunction::ChannelReceiverAsyncIteratorAdopt,
+                            ),
+                            arguments: vec![element],
+                        },
+                    },
+                    arguments: vec![MirCallArgument {
+                        mode: ParameterMode::Ref,
+                        target: crate::hir::HirCallArgumentTarget::Receiver,
+                        value: adopt_loan,
+                    }],
+                    signature: adopt_signature,
+                    protocol: HirCallProtocol::Call,
+                    unsafe_call: false,
+                },
+            };
+            let adopt_arguments = match &adopt_operation.kind {
+                MirOperationKind::Call { arguments, .. } => arguments,
+                _ => unreachable!("the channel iterator adoption operation is a call"),
+            };
+            self.consume_call_loans(adopt_arguments, adopt_loan_depth, span)?;
+            current = self
+                .invoke(
+                    current,
+                    span,
+                    Some(self.local_place(adopt_result)),
+                    adopt_operation,
+                )?
+                .ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "channel iterator adoption unexpectedly diverges".into(),
+                })?;
+        }
 
         let capacity_signature = self.specialized_host_function_type(
             HirBootstrapHostFunction::CollectionArrayWithCapacity,
@@ -3400,6 +3553,19 @@ impl<'a> FunctionBuilder<'a> {
         let capacity_result = self.allocate_temporary(capacity_outcome, span, current)?;
         let array_local = self.allocate_temporary(*array, span, current)?;
         let next_signature = self.async_iterator_next_signature(element, source_type, span)?;
+        let next_callee = if channel_receiver {
+            MirOperandKind::Function {
+                callable: HirCallableId::Host(
+                    HirBootstrapHostFunction::ChannelReceiverAsyncIteratorNext,
+                ),
+                arguments: vec![element],
+            }
+        } else {
+            MirOperandKind::PreludeTraitFunction {
+                method: HirPreludeTraitMethod::AsyncIteratorNext,
+                arguments: vec![element, source_type],
+            }
+        };
         let next_outcome = self.function_outcome(next_signature, span)?;
         let next_result = self.allocate_temporary(next_outcome, span, current)?;
         let push_outcome = self.function_outcome(push_signature, span)?;
@@ -3539,10 +3705,7 @@ impl<'a> FunctionBuilder<'a> {
             kind: MirOperationKind::Call {
                 callee: MirOperand {
                     ty: next_signature,
-                    kind: MirOperandKind::PreludeTraitFunction {
-                        method: HirPreludeTraitMethod::AsyncIteratorNext,
-                        arguments: vec![element, source_type],
-                    },
+                    kind: next_callee,
                 },
                 arguments: vec![MirCallArgument {
                     mode: ParameterMode::Mut,

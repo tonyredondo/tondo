@@ -179,6 +179,12 @@ backpressure de un elemento y termina con `none` tras cerrar el último sender y
 drenar el buffer. Salir pronto del `for` cierra el receiver; los elementos
 pendientes se descartan solo porque el bound `Discard` lo hace seguro.
 
+La adaptación está implementada y verificada en la VM hosted por
+[`STD-CHANNEL-ASYNC-ITER-001`](./stdlib-channel-async-iter.md). El host privado
+reutiliza el waiter FIFO de `receive`; no expone otro tipo de stream ni reclama
+lowering AOT. `AsyncIterator.collect(limit:)` sigue siendo la extensión genérica
+de `std.async`, nunca un método específico de `std.channel`.
+
 Para valores afines se usa `receive` y `Receiver.close` explícitamente, de modo
 que el caller puede recuperar los mensajes pendientes en vez de perder
 ownership. No existe `for await`, `AsyncChannel`, materialización automática ni

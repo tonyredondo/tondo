@@ -867,8 +867,9 @@ el efecto se infiere y el cierre ocurre al salir. Si una fuente implementa
 también `Iterator[T]`, el protocolo síncrono tiene precedencia; no existe
 `for await`. La materialización solo ocurre mediante
 `collect(limit:)`, con un límite finito y sin publicar arrays parciales. La
-adaptación de `std.channel.Receiver` pertenece a STD-0.1B y no es una
-dependencia de esta superficie A.
+adaptación de `std.channel.Receiver` pertenece a STD-0.1B y está cerrada para
+la VM hosted en `STD-CHANNEL-ASYNC-ITER-001`; su contrato separado mantiene
+la frontera de lowering AOT y no es una dependencia de esta superficie A.
 
 La superficie nominal mínima de `std.async` es:
 
@@ -2277,8 +2278,12 @@ una implementación pública antes de sus leaves `STD-CHANNEL-*`. La ejecución
 de `STD-CHANNEL-IMPL-001` ya está verificada en la VM hosted y en el ABI nativo
 privado: el scheduler conserva waiters y commit FIFO, mientras el runtime
 nativo usa capacidades opacas `u64`, `Mutex`/`Condvar` y un carrier interno para
-el drenado terminal. La evidencia no reclama lowering AOT de canales ni cambia
-la obligación de cerrar `STD-CHANNEL-ASYNC-ITER-001`, TEST, PERF, CONF y DOC.
+el drenado terminal. La adaptación `Receiver[T] -> AsyncIterator[T]` bajo
+`T: Discard` queda verificada en la VM hosted por
+[`testing/stdlib-channel-async-iter.json`](./testing/stdlib-channel-async-iter.json)
+y [`docs/contracts/stdlib-channel-async-iter.md`](./docs/contracts/stdlib-channel-async-iter.md).
+La evidencia no reclama lowering AOT de canales ni cambia la obligación de
+cerrar TEST, PERF, CONF y DOC.
 
 ~~~tondo pseudocode
 pub type Sender[T]
@@ -2350,7 +2355,9 @@ canal. El bound es necesario porque salir pronto del `for` puede cerrar el
 último receiver y la sintaxis de iteración no tiene un resultado donde devolver
 mensajes pendientes afines. Para esos valores se usa `receive` y
 `Receiver.close` explícitos. No existe una variante `AsyncChannel`, una
-operación `receiveAsync` ni una materialización intermedia.
+operación `receiveAsync`, una materialización intermedia dentro de `for` ni un
+`collect` específico del canal; `AsyncIterator.collect(limit:)` sigue siendo la
+extensión genérica de `std.async`.
 
 El runtime puede emitir hooks privados en `std.channel` para
 `create`, `sender.fork`, `receiver.fork`, `send.prepare`, `send.commit`,

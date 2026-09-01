@@ -2729,6 +2729,16 @@ pub enum HirBootstrapHostFunction {
     ChannelSenderClose,
     ChannelReceiverFork,
     ChannelReceiverReceive,
+    /// Compiler-owned async-iterator witness for `channel.Receiver[T]`.
+    ///
+    /// This keeps the public `receive` signature (`ref self`) separate from
+    /// the `AsyncIterator.next` protocol (`mut self`) while both operations
+    /// share the same scheduler-owned channel state.
+    ChannelReceiverAsyncIteratorNext,
+    /// Compiler-owned adoption marker for the generic `AsyncIterator.collect`
+    /// lowering. It transfers terminal cleanup of a receiver to the discardable
+    /// iterator view without exposing a channel-specific public API.
+    ChannelReceiverAsyncIteratorAdopt,
     ChannelReceiverTryReceive,
     ChannelReceiverClose,
     SyncMemoryOrderRelaxed,
@@ -3150,6 +3160,8 @@ impl HirBootstrapHostFunction {
             Self::ChannelSenderClose => "std.channel.Sender.close",
             Self::ChannelReceiverFork => "std.channel.Receiver.fork",
             Self::ChannelReceiverReceive => "std.channel.Receiver.receive",
+            Self::ChannelReceiverAsyncIteratorNext => "std.channel.Receiver.__asyncIteratorNext",
+            Self::ChannelReceiverAsyncIteratorAdopt => "std.channel.Receiver.__asyncIteratorAdopt",
             Self::ChannelReceiverTryReceive => "std.channel.Receiver.tryReceive",
             Self::ChannelReceiverClose => "std.channel.Receiver.close",
             Self::SyncMemoryOrderRelaxed => "intrinsic.sync.MemoryOrder.Relaxed",
@@ -3547,6 +3559,7 @@ impl HirBootstrapHostFunction {
                 | Self::SyncQueueSnapshot
                 | Self::ChannelSenderSend
                 | Self::ChannelReceiverReceive
+                | Self::ChannelReceiverAsyncIteratorNext
                 | Self::TimeSleep
                 | Self::TimerWait
                 | Self::TestingWithVirtualTime

@@ -1,0 +1,9 @@
+import std.channel
+
+fn consume(receiver: channel.Receiver[Join[Int, Never]]) {
+    for item in receiver {
+        _ = item
+    }
+}
+
+fn main() {}

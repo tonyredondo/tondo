@@ -1,0 +1,127 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.channel.async-iter",
+  "parent_owner": "std.channel",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-CHANNEL-ASYNC-ITER-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-channel-async-iter.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-channel.json",
+  "async_contract": "testing/stdlib-async.json",
+  "layer": "B1",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted",
+  "surface": {
+    "identity": "std.channel.Receiver[T]",
+    "protocol": "AsyncIterator[T]",
+    "bound": "T: Discard",
+    "next_signature": "fn next(mut self): T? suspends",
+    "for_form": "for item in receiver",
+    "selection": "async-only-when-no-sync-iterator",
+    "one_element_per_next": true,
+    "backpressure": "one-next-at-a-time",
+    "materialization": "generic-collect-only",
+    "channel_specific_collect": "forbidden",
+    "for_await": "forbidden",
+    "new_stream_type": false,
+    "public_api_promoted": false
+  },
+  "semantics": {
+    "end": "none-after-last-sender-and-buffer-drained",
+    "early_exit": "close-receiver-and-discard-pending-values",
+    "discard_requirement": "proved-before-iterator-selection",
+    "affine_payload": "manual-receive-and-close-required",
+    "close_after_for": "compiler-owned-terminal-close",
+    "cancel_pending_next": "unregister-and-discard-on-cleanup",
+    "generic_collect": "uses-the-same-next-and-cleanup-boundary",
+    "no_array_intermediate": true
+  },
+  "ownership": {
+    "receiver_affine": true,
+    "payload_bound": "T: Send",
+    "iterator_bound": "T: Discard",
+    "next_receiver_mode": "mut-borrow",
+    "manual_receive_mode": "ref-borrow",
+    "pending_discard": "only-after-discard-proof",
+    "early_exit_preserves_affine_values": true,
+    "implicit_receiver_drop": "compile-error"
+  },
+  "runtime": {
+    "hosted_vm": {
+      "status": "verified",
+      "next_host": "std.channel.Receiver.__asyncIteratorNext",
+      "adopt_host": "std.channel.Receiver.__asyncIteratorAdopt",
+      "scheduler": "reuses-receive-waiter-and-fifo",
+      "cleanup_marker": "endpoint-local-discardable-iterator-view",
+      "blocking": "cooperative-poll-and-scheduler-park"
+    },
+    "native_runtime_abi": {
+      "status": "unchanged-parent-channel-abi",
+      "reason": "the async view is compiler-owned over the existing channel state",
+      "aot_lowering": "not-claimed"
+    },
+    "native_aot_lowering": "not-claimed"
+  },
+  "implementation": {
+    "status": "verified-hosted-vm",
+    "public_api_promoted": false,
+    "native_aot_lowering": "not-claimed",
+    "sources": [
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/mir/lower.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-vm/src/runtime/execute.rs"
+    ],
+    "tests": [
+      "crates/tondo-compiler/src/hir/check.rs::async_iterator_trait_query",
+      "crates/tondo-compiler/src/hir/check.rs::async_iterator_collect_is_generic_and_implicitly_awaited",
+      "crates/tondo-compiler/src/mir/lower.rs::lower_async_iterator_collect",
+      "crates/tondo-compiler/src/process_host.rs::channel_host_async_iterator_next_reuses_receive_waiter_and_cleanup",
+      "crates/tondo-compiler/src/process_host.rs::channel_host_async_iterator_adoption_allows_zero_limit_cleanup",
+      "crates/tondo-compiler/src/process_host.rs::channel_host_async_iterator_cancellation_allows_terminal_cleanup",
+      "tests/runtime/m11-std-channel-async-iter-001.to",
+      "tests/compile-fail/m11-std-channel-async-iter-discard.to",
+      "scripts/stdlib-channel-async-iter-check.sh",
+      "scripts/stdlib-channel-async-iter-test.sh",
+      "scripts/stdlib-channel-async-iter.sh"
+    ],
+    "proof": "The compiler proves Discard before selecting the sealed receiver AsyncIterator witness; the hosted VM routes one-element next calls through the existing FIFO receive waiter, closes explicitly on for exit, marks generic collect ownership before its first next, and rejects affine payloads with E1105. Native channel ABI behavior and generic native AOT lowering remain outside this leaf.",
+    "fixture": {
+      "path": "tests/runtime/m11-std-channel-async-iter-001.to",
+      "stdout": "channel-async-iter-ok",
+      "exit": 0,
+      "status": "passed"
+    },
+    "negative_fixture": {
+      "path": "tests/compile-fail/m11-std-channel-async-iter-discard.to",
+      "codes": ["E1105"],
+      "status": "passed"
+    },
+    "evidence_report": "target/reliability/evidence/stdlib-channel-async-iter.json",
+    "required_follow_ups": []
+  },
+  "negative_cases": [
+    "iterator-without-discard-bound",
+    "affine-payload-early-exit",
+    "explicit-for-await",
+    "channel-specific-collect",
+    "multiple-nexts-before-commit",
+    "pending-value-lost-on-cancel",
+    "pending-value-lost-on-early-exit",
+    "public-iterator-witness",
+    "native-aot-claim",
+    "array-materialization-in-for",
+    "manual-receive-marker-confusion"
+  ],
+  "promotion": {
+    "implementation_complete": true,
+    "implementation_pending": [],
+    "next_blocks": ["STD-CHANNEL-TEST-001", "STD-CHANNEL-PERF-001"],
+    "remaining": []
+  }
+}

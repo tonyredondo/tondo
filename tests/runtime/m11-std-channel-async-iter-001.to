@@ -1,0 +1,86 @@
+import std.channel
+import std.console
+import std.async
+
+fn collect_zero(receiver: channel.Receiver[Int]) {
+    match receiver.collect(limit: 0) {
+        ok(values) => assert(values.length() == 0)
+        err(_) => assert(false)
+    }
+    let drained = receiver.close()
+    assert(drained.length() == 2)
+}
+
+fn main(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](2)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+
+    match sender.trySend(1) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    match sender.trySend(2) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    sender.close()
+
+    var total = 0
+    for value in receiver {
+        total += value
+    }
+    assert(total == 3)
+
+    let early_endpoints = channel.bounded[Int](2)?
+    let early_sender = early_endpoints.0
+    let early_receiver = early_endpoints.1
+    match early_sender.trySend(10) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    match early_sender.trySend(11) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    early_sender.close()
+    for value in early_receiver {
+        assert(value == 10)
+        break
+    }
+
+    let collect_endpoints = channel.bounded[Int](2)?
+    let collect_sender = collect_endpoints.0
+    let collect_receiver = collect_endpoints.1
+    match collect_sender.trySend(20) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    match collect_sender.trySend(21) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    collect_sender.close()
+    match collect_receiver.collect(limit: 2) {
+        ok(values) => assert(values.length() == 2)
+        err(_) => assert(false)
+    }
+    let collect_drained = collect_receiver.close()
+    assert(collect_drained.length() == 0)
+
+    let zero_endpoints = channel.bounded[Int](2)?
+    let zero_sender = zero_endpoints.0
+    let zero_receiver = zero_endpoints.1
+    match zero_sender.trySend(30) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    match zero_sender.trySend(31) {
+        ok(_) => {}
+        err(_) => assert(false)
+    }
+    zero_sender.close()
+    collect_zero(zero_receiver)
+
+    console.println("channel-async-iter-ok")
+}

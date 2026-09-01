@@ -37,18 +37,18 @@ jq -e '
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-channel-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == [
-    "STD-CHANNEL-ASYNC-ITER-001",
     "STD-CHANNEL-TEST-001",
     "STD-CHANNEL-PERF-001",
     "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
   and .promotion.implementation_pending == .implementation.required_follow_ups
-  and .promotion.next_blocks == ["STD-CHANNEL-ASYNC-ITER-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-TEST-001", "STD-CHANNEL-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel implementation contract"
 
 for path in \
     docs/contracts/stdlib-channel.md \
+    docs/contracts/stdlib-channel-async-iter.md \
     docs/contracts/native-abi.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_LANGUAGE_SPEC.md \
