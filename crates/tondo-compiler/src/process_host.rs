@@ -1561,15 +1561,15 @@ impl BootstrapHost {
         name: &str,
         arguments: &[RuntimeValue],
     ) -> Result<bool, VmError> {
-        let name = name.split_once('[').map_or(name, |(base, _)| base);
-        if !Self::is_sync_suspendable(name) {
-            return Ok(false);
-        }
+        let base_name = name.split_once('[').map_or(name, |(base, _)| base);
         if matches!(
-            name,
+            base_name,
             "std.channel.Sender.send" | "std.channel.Receiver.receive"
         ) {
-            return self.pending_channel_for(call, name, arguments);
+            return self.pending_channel_for(call, base_name, arguments);
+        }
+        if !Self::is_sync_suspendable(name) {
+            return Ok(false);
         }
         match name {
             "std.sync.Mutex.lock" => {
