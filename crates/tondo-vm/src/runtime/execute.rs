@@ -15732,6 +15732,7 @@ fn collection_length_fits_int(length: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::hint::black_box;
     use std::time::Instant;
 
@@ -15758,11 +15759,12 @@ mod tests {
     use super::{
         AggregatePayload, CallContinuation, DeferredOperation, DeferredValue, DiagnosticConfig,
         DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine,
-        Frame, GroupPoll, HeapObject, IteratorAdapter, OnceContinuation, OnceResolution,
-        OneShotCompletion, OneShotState, OperationResult, PanicCode, PlaceComponent, PlaceFailure,
-        RejectingHost, ResolvedPlacePath, RuntimeCleanup, RuntimeDefer, RuntimeFallback,
-        RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind,
-        RuntimeJoin, RuntimeLoan, RuntimeOnceState, RuntimeSelectArm, RuntimeSelectRegion,
+        Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter, OnceContinuation,
+        OnceResolution, OneShotCompletion, OneShotState, OperationResult, PanicCode,
+        PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeActorState,
+        RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation,
+        RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeOnceState,
+        RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm, RuntimeSelectRegion,
         RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion,
         TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits,
         VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome,
@@ -18198,6 +18200,439 @@ mod tests {
             panic_observed: false,
             discard_completion: false,
         }
+    }
+
+    macro_rules! executor_assert {
+        ($condition:expr $(,)?) => {
+            ($condition)
+                .then_some(())
+                .expect("executor assertion failed");
+        };
+    }
+
+    macro_rules! executor_assert_eq {
+        ($left:expr, $right:expr $(,)?) => {
+            (($left) == ($right))
+                .then_some(())
+                .expect("executor assertion failed");
+        };
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy)]
+    struct ExecutorTypes {
+        int: BytecodeTypeId,
+        string: BytecodeTypeId,
+        never: BytecodeTypeId,
+        pool: BytecodeTypeId,
+        blocking_pool: BytecodeTypeId,
+        actor: BytecodeTypeId,
+        actor_ref: BytecodeTypeId,
+        executor_error: BytecodeTypeId,
+        submit_error: BytecodeTypeId,
+        actor_send_error: BytecodeTypeId,
+        job_result: BytecodeTypeId,
+        join: BytecodeTypeId,
+        pool_result: BytecodeTypeId,
+        blocking_result: BytecodeTypeId,
+        submit_result: BytecodeTypeId,
+        actor_result: BytecodeTypeId,
+        actor_constructor_result: BytecodeTypeId,
+        function_type: BytecodeTypeId,
+    }
+
+    fn executor_program() -> (BytecodeProgram, ExecutorTypes) {
+        let mut program = terminal_fallback_program();
+        let int = BytecodeTypeId::new(5);
+        let string = BytecodeTypeId::new(0);
+        let never = BytecodeTypeId::new(19);
+        let identity =
+            |name: &str| format!("pkg:toolchain:std:0.1-bootstrap::executor::type::{name}");
+        let pool_nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "Pool".into(),
+            identity: identity("Pool"),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Newtype { underlying: int },
+        });
+        let blocking_pool_nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "BlockingPool".into(),
+            identity: identity("BlockingPool"),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Newtype { underlying: int },
+        });
+        let actor_nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "Actor".into(),
+            identity: identity("Actor"),
+            generic_arity: 3,
+            shape: BytecodeNominalShape::Newtype { underlying: int },
+        });
+        let actor_ref_nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "ActorRef".into(),
+            identity: identity("ActorRef"),
+            generic_arity: 1,
+            shape: BytecodeNominalShape::Newtype { underlying: int },
+        });
+        let executor_error_nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "ExecutorError".into(),
+            identity: identity("ExecutorError"),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Enum {
+                variants: (0..4)
+                    .map(|member| BytecodeVariant {
+                        member,
+                        payload: BytecodeVariantPayload::Unit,
+                    })
+                    .collect(),
+            },
+        });
+        let submit_error_nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "SubmitError".into(),
+            identity: identity("SubmitError"),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Enum {
+                variants: (0..4)
+                    .map(|member| BytecodeVariant {
+                        member,
+                        payload: BytecodeVariantPayload::Unit,
+                    })
+                    .collect(),
+            },
+        });
+        let actor_send_error_nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "ActorSendError".into(),
+            identity: identity("ActorSendError"),
+            generic_arity: 1,
+            shape: BytecodeNominalShape::Enum {
+                variants: (0..5)
+                    .map(|member| BytecodeVariant {
+                        member,
+                        payload: BytecodeVariantPayload::Tuple(vec![int]),
+                    })
+                    .collect(),
+            },
+        });
+        let mut append_type = |name: &str, kind: BytecodeTypeKind| {
+            let id = BytecodeTypeId::new(program.types.len() as u32);
+            program.types.push(BytecodeType {
+                name: name.into(),
+                kind,
+            });
+            id
+        };
+        let pool = append_type(
+            "executor.Pool",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(pool_nominal),
+                identity: identity("Pool"),
+                arguments: Vec::new(),
+            },
+        );
+        let blocking_pool = append_type(
+            "executor.BlockingPool",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(blocking_pool_nominal),
+                identity: identity("BlockingPool"),
+                arguments: Vec::new(),
+            },
+        );
+        let actor = append_type(
+            "executor.Actor[Int, Int, String]",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(actor_nominal),
+                identity: identity("Actor"),
+                arguments: vec![int, int, string],
+            },
+        );
+        let actor_ref = append_type(
+            "executor.ActorRef[Int]",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(actor_ref_nominal),
+                identity: identity("ActorRef"),
+                arguments: vec![int],
+            },
+        );
+        let executor_error = append_type(
+            "executor.ExecutorError",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(executor_error_nominal),
+                identity: identity("ExecutorError"),
+                arguments: Vec::new(),
+            },
+        );
+        let submit_error = append_type(
+            "executor.SubmitError",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(submit_error_nominal),
+                identity: identity("SubmitError"),
+                arguments: Vec::new(),
+            },
+        );
+        let actor_send_error = append_type(
+            "executor.ActorSendError[Int]",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(actor_send_error_nominal),
+                identity: identity("ActorSendError"),
+                arguments: vec![int],
+            },
+        );
+        let job_result = append_type(
+            "Int ! Never",
+            BytecodeTypeKind::Result {
+                success: int,
+                error: never,
+            },
+        );
+        let join = append_type(
+            "Join[Int, Never]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Join,
+                arguments: vec![int, never],
+            },
+        );
+        let pool_result = append_type(
+            "Pool ! ExecutorError",
+            BytecodeTypeKind::Result {
+                success: pool,
+                error: executor_error,
+            },
+        );
+        let blocking_result = append_type(
+            "BlockingPool ! ExecutorError",
+            BytecodeTypeKind::Result {
+                success: blocking_pool,
+                error: executor_error,
+            },
+        );
+        let submit_result = append_type(
+            "Join[Int, Never] ! SubmitError",
+            BytecodeTypeKind::Result {
+                success: join,
+                error: submit_error,
+            },
+        );
+        let actor_result = append_type(
+            "Int ! ActorSendError[Int]",
+            BytecodeTypeKind::Result {
+                success: int,
+                error: actor_send_error,
+            },
+        );
+        let actor_constructor_result = append_type(
+            "Actor[Int, Int, String] ! ExecutorError",
+            BytecodeTypeKind::Result {
+                success: actor,
+                error: executor_error,
+            },
+        );
+        let function_type = append_type(
+            "fn(): Int ! Never",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: true,
+                is_selectable: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: job_result,
+            }),
+        );
+        let span = BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        };
+        let function = |callable, return_ty| BytecodeFunction {
+            callable,
+            source: span,
+            types: vec![return_ty],
+            spans: vec![span],
+            slots: vec![BytecodeSlot {
+                ty: return_ty,
+                span: crate::bytecode::BytecodeSpanId::new(0),
+                kind: BytecodeSlotKind::Return,
+            }],
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: vec![BytecodeBlock {
+                kind: BytecodeBlockKind::Normal,
+                instructions: Vec::new(),
+                terminator: BytecodeTerminator {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeTerminatorKind::Return,
+                },
+            }],
+        };
+        program.callables[0].implementation = Some(BytecodeFunctionId::new(0));
+        program
+            .functions
+            .push(function(BytecodeCallableId::new(0), int));
+        program.callables.push(BytecodeCallable {
+            name: "executor_job".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: job_result,
+            function_type,
+            implementation: Some(BytecodeFunctionId::new(1)),
+            closure: None,
+        });
+        program
+            .functions
+            .push(function(BytecodeCallableId::new(1), job_result));
+        program.callables.push(BytecodeCallable {
+            name: "executor_host_job".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: job_result,
+            function_type,
+            implementation: None,
+            closure: None,
+        });
+        (
+            program,
+            ExecutorTypes {
+                int,
+                string,
+                never,
+                pool,
+                blocking_pool,
+                actor,
+                actor_ref,
+                executor_error,
+                submit_error,
+                actor_send_error,
+                job_result,
+                join,
+                pool_result,
+                blocking_result,
+                submit_result,
+                actor_result,
+                actor_constructor_result,
+                function_type,
+            },
+        )
+    }
+
+    fn executor_engine<'program, 'host>(
+        program: &'program BytecodeProgram,
+        host: &'host mut dyn VmHost,
+    ) -> Engine<'program, 'host> {
+        let trace = derive_trace_metadata(program).expect("executor test program has valid traces");
+        Engine::new(
+            program,
+            host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        )
+    }
+
+    fn executor_metadata(
+        name: &str,
+        outcome: BytecodeTypeId,
+        function_type: BytecodeTypeId,
+    ) -> BytecodeCallable {
+        BytecodeCallable {
+            name: name.into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome,
+            function_type,
+            implementation: None,
+            closure: None,
+        }
+    }
+
+    fn operation_value(operation: OperationResult) -> Value {
+        match operation {
+            OperationResult::Value(value) => value,
+            _ => panic!("executor operation did not return a value"),
+        }
+    }
+
+    fn result_error_variant(engine: &Engine<'_, '_>, value: &Value) -> u32 {
+        let Value::Heap(result) = value else {
+            panic!("executor result is not managed")
+        };
+        let HeapObject::ResultErr(Some(Value::Heap(error))) = engine.heap.get(*result).unwrap()
+        else {
+            panic!("executor result is not an error")
+        };
+        let HeapObject::Variant { variant, .. } = engine.heap.get(*error).unwrap() else {
+            panic!("executor error is not a variant")
+        };
+        *variant
+    }
+
+    fn result_ok_value(engine: &Engine<'_, '_>, value: &Value) -> Value {
+        let Value::Heap(result) = value else {
+            panic!("executor result is not managed")
+        };
+        let HeapObject::ResultOk(Some(value)) = engine.heap.get(*result).unwrap() else {
+            panic!("executor result is not successful")
+        };
+        value.clone()
+    }
+
+    fn constructor_error_variant(
+        engine: &mut Engine<'_, '_>,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+        blocking: bool,
+    ) -> u32 {
+        let value = operation_value(
+            engine
+                .executor_pool_constructor(metadata, values, blocking)
+                .unwrap(),
+        );
+        result_error_variant(engine, &value)
+    }
+
+    fn open_executor_pool(workers: usize, capacity: usize) -> RuntimePoolState {
+        RuntimePoolState {
+            blocking: false,
+            workers,
+            capacity,
+            running: 0,
+            queued: VecDeque::new(),
+            submit_waiters: VecDeque::new(),
+            lifecycle_waiters: Vec::new(),
+            lifecycle: RuntimePoolLifecycle::Open,
+        }
+    }
+
+    fn executor_engine_with_scope<'program, 'host>(
+        program: &'program BytecodeProgram,
+        host: &'host mut dyn VmHost,
+    ) -> Engine<'program, 'host> {
+        let mut engine = executor_engine(program, host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(1),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: vec![0],
+            continuation: None,
+            select: None,
+        });
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: Vec::new(),
+            closed: false,
+        }));
+        engine
     }
 
     fn select_test_frame(region: RuntimeSelectRegion) -> Frame {
@@ -25267,6 +25702,1414 @@ mod tests {
         assert!(matches!(
             engine.tasks[cancelled_task].status,
             TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+    }
+
+    #[test]
+    fn executor_helpers_cover_handles_results_and_constructor_boundaries() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+
+        executor_assert!(
+            engine
+                .executor_handle(&Value::Integer(1), RuntimeHostValueKind::ExecutorPool)
+                .is_err()
+        );
+        executor_assert!(
+            engine
+                .executor_handle(
+                    &Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::ExecutorPool,
+                        id: 0,
+                    }),
+                    RuntimeHostValueKind::ExecutorPool,
+                )
+                .is_err()
+        );
+        executor_assert!(
+            engine
+                .executor_handle(
+                    &Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::ExecutorActor,
+                        id: 1,
+                    }),
+                    RuntimeHostValueKind::ExecutorPool,
+                )
+                .is_err()
+        );
+        let pool_handle = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorPool,
+            id: 1,
+        });
+        executor_assert_eq!(
+            engine
+                .executor_handle(&pool_handle, RuntimeHostValueKind::ExecutorPool)
+                .unwrap(),
+            1
+        );
+
+        let function = Value::Function {
+            callable: BytecodeCallableId::new(1),
+            arguments: Vec::new(),
+        };
+        executor_assert_eq!(
+            engine.executor_callable(&function).unwrap(),
+            (BytecodeFunctionId::new(1), Vec::new())
+        );
+        let captured_string = engine
+            .allocate(types.string, HeapObject::String("captured".into()), &[])
+            .unwrap();
+        let captured_array = engine
+            .allocate(
+                BytecodeTypeId::new(1),
+                HeapObject::Array(vec![Some(captured_string.clone())].into()),
+                &[],
+            )
+            .unwrap();
+        let closure = engine
+            .allocate(
+                BytecodeTypeId::new(16),
+                HeapObject::Closure {
+                    callable: BytecodeCallableId::new(0),
+                    captures: vec![Some(captured_string), Some(captured_array)],
+                },
+                &[],
+            )
+            .unwrap();
+        executor_assert_eq!(
+            engine.executor_callable(&closure).unwrap().0,
+            BytecodeFunctionId::new(0)
+        );
+        executor_assert!(engine.executor_callable(&Value::Integer(1)).is_err());
+        executor_assert!(matches!(
+            engine.executor_callable(&Value::Function {
+                callable: BytecodeCallableId::new(2),
+                arguments: Vec::new(),
+            }),
+            Err(VmError::UnsupportedHostCall(name)) if name == "executor host job"
+        ));
+        let text = engine
+            .allocate(
+                types.string,
+                HeapObject::String("not a closure".into()),
+                &[],
+            )
+            .unwrap();
+        executor_assert!(engine.executor_callable(&text).is_err());
+
+        let ok = engine
+            .executor_result_ok(types.pool_result, Value::Integer(4))
+            .unwrap();
+        executor_assert!(matches!(
+            engine.heap.get(ok.heap_handle().unwrap()).unwrap(),
+            HeapObject::ResultOk(Some(Value::Integer(4)))
+        ));
+        executor_assert!(engine.executor_result_ok(types.int, Value::Unit).is_err());
+        executor_assert!(matches!(
+            engine.executor_error_result(types.job_result, 0),
+            Err(VmError::Invariant(message)) if message.contains("not an enum")
+        ));
+        for variant in 0..4 {
+            let error = engine
+                .executor_error_result(types.pool_result, variant)
+                .unwrap();
+            executor_assert_eq!(result_error_variant(&engine, &error), variant as u32);
+        }
+        executor_assert!(engine.executor_error_result(types.pool_result, 4).is_err());
+        executor_assert!(matches!(
+            engine.executor_error_result(types.actor_result, 0),
+            Err(VmError::Invariant(message)) if message.contains("carries a payload")
+        ));
+        executor_assert!(matches!(
+            engine.executor_actor_error_result(types.job_result, 0, Value::Integer(7)),
+            Err(VmError::Invariant(message)) if message.contains("not an enum")
+        ));
+        executor_assert!(matches!(
+            engine.executor_actor_error_result(types.pool_result, 0, Value::Integer(7)),
+            Err(VmError::Invariant(message)) if message.contains("no message payload")
+        ));
+        let actor_error = engine
+            .executor_actor_error_result(types.actor_result, 2, Value::Integer(7))
+            .unwrap();
+        executor_assert!(matches!(
+            actor_error,
+            Value::Heap(result)
+                if matches!(
+                    engine.heap.get(result).unwrap(),
+                    HeapObject::ResultErr(Some(Value::Heap(error)))
+                        if matches!(
+                            engine.heap.get(*error).unwrap(),
+                            HeapObject::Variant {
+                                variant: 2,
+                                payload: AggregatePayload::Tuple(values),
+                            } if values == &vec![Some(Value::Integer(7))]
+                        )
+                )
+        ));
+        executor_assert!(
+            engine
+                .executor_actor_error_result(types.actor_result, 5, Value::Integer(7))
+                .is_err()
+        );
+
+        engine.next_executor_id = u64::MAX;
+        executor_assert!(matches!(
+            engine.next_executor_id(),
+            Err(VmError::ResourceLimit {
+                resource: "executor handles",
+                limit: u64::MAX
+            })
+        ));
+        engine.next_executor_id = 1;
+
+        let pool = executor_metadata("std.executor.pool", types.pool_result, types.function_type);
+        executor_assert!(
+            engine
+                .executor_pool_constructor(&pool, &[Value::Unit, Value::Integer(1)], false)
+                .is_err()
+        );
+        executor_assert_eq!(
+            constructor_error_variant(
+                &mut engine,
+                &pool,
+                &[Value::Integer(0), Value::Integer(1)],
+                false,
+            ),
+            0
+        );
+        executor_assert_eq!(
+            constructor_error_variant(
+                &mut engine,
+                &pool,
+                &[Value::Integer(1), Value::Integer(-1)],
+                false,
+            ),
+            1
+        );
+        executor_assert_eq!(
+            constructor_error_variant(
+                &mut engine,
+                &pool,
+                &[Value::Integer(i128::MAX), Value::Integer(1)],
+                false,
+            ),
+            2
+        );
+        executor_assert_eq!(
+            constructor_error_variant(
+                &mut engine,
+                &pool,
+                &[Value::Integer(1), Value::Integer(i128::MAX)],
+                false,
+            ),
+            2
+        );
+        executor_assert_eq!(
+            constructor_error_variant(
+                &mut engine,
+                &pool,
+                &[Value::Integer(4097), Value::Integer(1)],
+                false,
+            ),
+            2
+        );
+        let blocking = executor_metadata(
+            "std.executor.blockingPool",
+            types.blocking_result,
+            types.function_type,
+        );
+        executor_assert_eq!(
+            constructor_error_variant(
+                &mut engine,
+                &blocking,
+                &[Value::Integer(1), Value::Integer(1)],
+                true,
+            ),
+            3
+        );
+        let created = operation_value(
+            engine
+                .executor_pool_constructor(&pool, &[Value::Integer(1), Value::Integer(0)], false)
+                .unwrap(),
+        );
+        executor_assert!(matches!(
+            engine.heap.get(created.heap_handle().unwrap()).unwrap(),
+            HeapObject::ResultOk(Some(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorPool,
+                ..
+            })))
+        ));
+
+        executor_assert!(matches!(
+            engine.slice_value(types.string, Value::Integer(1), None, None, None),
+            Err(VmError::Invariant(message)) if message.contains("slice base is not managed")
+        ));
+        let string_value = engine
+            .allocate(types.string, HeapObject::String("slice".into()), &[])
+            .unwrap();
+        executor_assert!(matches!(
+            engine.slice_value(
+                types.string,
+                string_value.clone(),
+                Some(Value::Bool(true)),
+                None,
+                None,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("slice start is not Int")
+        ));
+        let sliced = engine
+            .slice_value(types.string, string_value, None, None, None)
+            .unwrap()
+            .unwrap();
+        executor_assert!(matches!(
+            engine.heap.get(sliced.heap_handle().unwrap()).unwrap(),
+            HeapObject::String(value) if value == "slice"
+        ));
+        let pool_nominal = program
+            .nominals
+            .iter()
+            .enumerate()
+            .find_map(|(index, nominal)| {
+                (nominal.name == "Pool").then_some(BytecodeNominalId::new(index as u32))
+            })
+            .unwrap();
+        let wrong_slice_shape = engine
+            .allocate(
+                types.pool,
+                HeapObject::Newtype {
+                    nominal: pool_nominal,
+                    value: Some(Value::Integer(1)),
+                },
+                &[Value::Integer(1)],
+            )
+            .unwrap();
+        executor_assert!(matches!(
+            engine.slice_value(types.string, wrong_slice_shape, None, None, None),
+            Err(VmError::Invariant(message)) if message.contains("not Array or String")
+        ));
+    }
+
+    #[test]
+    fn executor_host_bridge_defaults_remain_explicit_until_the_host_block() {
+        let mut host = RejectingHost;
+        executor_assert!(matches!(
+            host.start_async("executor blocking job", &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "executor blocking job"
+        ));
+        executor_assert_eq!(host.poll_async(1).unwrap(), None);
+        executor_assert!(matches!(
+            host.wait_async(&[]),
+            Err(VmError::Invariant(message)) if message.contains("no calls")
+        ));
+        executor_assert!(host.cancel_async(1).is_ok());
+        executor_assert!(host.cleanup(&RuntimeValue::Unit).is_ok());
+        executor_assert!(!host.is_virtual_quiescence_call(1));
+    }
+
+    #[test]
+    fn executor_submission_requires_an_active_task_scope() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(1),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        executor_assert!(matches!(
+            engine.admit_executor_submit(
+                0,
+                1,
+                BytecodeFunctionId::new(1),
+                Vec::new(),
+                types.submit_result,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("no active task scope")
+        ));
+    }
+
+    #[test]
+    fn executor_actor_zero_capacity_rejects_without_queueing() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.actors.insert(
+            8,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: BytecodeFunctionId::new(1),
+                step_arguments: Vec::new(),
+                capacity: 0,
+                mailbox: VecDeque::new(),
+                stopped: false,
+            },
+        );
+        let result = engine
+            .executor_actor_send(8, Value::Integer(1), types.actor_result)
+            .unwrap();
+        executor_assert_eq!(result_error_variant(&engine, &result), 0);
+        executor_assert!(engine.actors[&8].mailbox.is_empty());
+    }
+
+    #[test]
+    fn executor_fail_closed_edges_cover_invalid_descriptors_and_transitions() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+
+        executor_assert!(
+            engine
+                .executor_callable(&Value::Function {
+                    callable: BytecodeCallableId::new(999),
+                    arguments: Vec::new(),
+                })
+                .is_err()
+        );
+        executor_assert!(
+            engine
+                .executor_result_ok(BytecodeTypeId::new(999), Value::Unit)
+                .is_err()
+        );
+        executor_assert!(
+            engine
+                .executor_error_result(BytecodeTypeId::new(999), 0)
+                .is_err()
+        );
+        executor_assert!(
+            engine
+                .executor_actor_error_result(BytecodeTypeId::new(999), 0, Value::Integer(1))
+                .is_err()
+        );
+        executor_assert!(engine.executor_error_result(types.int, 0).is_err());
+        executor_assert!(
+            engine
+                .executor_actor_error_result(types.int, 0, Value::Integer(1))
+                .is_err()
+        );
+
+        let pool = executor_metadata("std.executor.pool", types.pool_result, types.function_type);
+        engine.next_executor_id = u64::MAX;
+        executor_assert!(
+            engine
+                .executor_pool_constructor(&pool, &[Value::Integer(1), Value::Integer(1)], false)
+                .is_err()
+        );
+        engine.next_executor_id = 1;
+
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        executor_assert!(
+            engine
+                .spawn_pool_job(1, BytecodeFunctionId::new(1), Vec::new(), 99)
+                .is_err()
+        );
+        executor_assert!(
+            engine
+                .spawn_pool_job(999, BytecodeFunctionId::new(1), Vec::new(), 0)
+                .is_err()
+        );
+        executor_assert!(engine.service_executor_pool(999).is_err());
+        executor_assert!(engine.finish_executor_pool_lifecycle(999).is_err());
+        executor_assert!(engine.begin_executor_pool_lifecycle(999, false).is_err());
+
+        engine.pool_running.insert(0, 77);
+        executor_assert!(engine.finish_executor_job(0).is_err());
+        engine.pool_running.remove(&0);
+
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::PoolJob {
+                pool: 1,
+                function: BytecodeFunctionId::new(1),
+                arguments: Vec::new(),
+            })));
+        engine.pools.get_mut(&1).unwrap().queued.push_back(0);
+        executor_assert_eq!(engine.finish_executor_job(0).unwrap(), ());
+        executor_assert!(engine.pools[&1].queued.is_empty());
+
+        engine.pools.insert(
+            2,
+            RuntimePoolState {
+                lifecycle: RuntimePoolLifecycle::Closed,
+                ..open_executor_pool(1, 1)
+            },
+        );
+        executor_assert_eq!(engine.service_executor_pool(2).unwrap(), 0);
+        engine.pools.insert(3, open_executor_pool(1, 1));
+        engine.pools.get_mut(&3).unwrap().running = 1;
+        executor_assert_eq!(engine.finish_executor_pool_lifecycle(3).unwrap(), ());
+        executor_assert!(engine.pools[&3].lifecycle == RuntimePoolLifecycle::Open);
+
+        engine.pools.insert(
+            4,
+            RuntimePoolState {
+                lifecycle: RuntimePoolLifecycle::ShuttingDown,
+                ..open_executor_pool(1, 1)
+            },
+        );
+        executor_assert!(engine.begin_executor_pool_lifecycle(4, true).unwrap());
+        executor_assert!(engine.pools[&4].lifecycle == RuntimePoolLifecycle::Cancelled);
+        engine.pools.insert(
+            5,
+            RuntimePoolState {
+                lifecycle: RuntimePoolLifecycle::ShuttingDown,
+                ..open_executor_pool(1, 1)
+            },
+        );
+        executor_assert!(engine.begin_executor_pool_lifecycle(5, false).is_err());
+
+        for name in [
+            "std.executor.BlockingPool.shutdown[Int]",
+            "std.executor.BlockingPool.cancel[Int]",
+        ] {
+            let metadata = executor_metadata(name, types.int, types.function_type);
+            executor_assert!(engine.prepare_executor_call(&metadata, &[]).is_err());
+        }
+    }
+
+    #[test]
+    fn executor_error_frontiers_cover_runtime_failures() {
+        let (program, types) = executor_program();
+
+        let mut host = RejectingHost;
+        let engine = executor_engine(&program, &mut host);
+        executor_assert!(
+            engine
+                .executor_callable(&Value::Heap(HeapHandle::for_test(99, 1)))
+                .is_err()
+        );
+        drop(engine);
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.heap.clear_type_descriptors_for_test();
+        executor_assert!(engine.executor_error_result(types.pool_result, 0).is_err());
+        executor_assert!(
+            engine
+                .executor_actor_error_result(types.actor_result, 0, Value::Integer(1))
+                .is_err()
+        );
+        drop(engine);
+
+        let mut host = RejectingHost;
+        let mut limited = executor_engine(&program, &mut host);
+        limited.heap.set_max_heap_objects_for_test(0);
+        executor_assert!(matches!(
+            limited.executor_error_result(types.pool_result, 0),
+            Err(VmError::OutOfMemory { .. })
+        ));
+        executor_assert!(matches!(
+            limited.executor_actor_error_result(types.actor_result, 0, Value::Integer(1)),
+            Err(VmError::OutOfMemory { .. })
+        ));
+        drop(limited);
+
+        let invalid_constructor =
+            executor_metadata("std.executor.pool", types.int, types.function_type);
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        for (workers, capacity, blocking) in [
+            (0_i128, 1_i128, false),
+            (1, -1, false),
+            (i128::MAX, 1, false),
+            (1, i128::MAX, false),
+            (4097, 1, false),
+            (1, 1, true),
+            (1, 1, false),
+        ] {
+            executor_assert!(
+                engine
+                    .executor_pool_constructor(
+                        &invalid_constructor,
+                        &[Value::Integer(workers), Value::Integer(capacity)],
+                        blocking,
+                    )
+                    .is_err()
+            );
+        }
+        drop(engine);
+
+        let valid_constructor =
+            executor_metadata("std.executor.pool", types.pool_result, types.function_type);
+        let mut host = RejectingHost;
+        let mut diagnostic_engine = executor_engine(&program, &mut host);
+        diagnostic_engine.diagnostics = Some(
+            super::super::diagnostics::DiagnosticSession::new(DiagnosticConfig {
+                max_events: 1,
+                ..DiagnosticConfig::default()
+            })
+            .unwrap(),
+        );
+        diagnostic_engine
+            .record_thread(DiagnosticThreadState::Started)
+            .unwrap();
+        executor_assert!(matches!(
+            diagnostic_engine.executor_pool_constructor(
+                &valid_constructor,
+                &[Value::Integer(1), Value::Integer(1)],
+                false,
+            ),
+            Err(VmError::ResourceLimit {
+                resource: "diagnostic events",
+                limit: 1,
+            })
+        ));
+        drop(diagnostic_engine);
+
+        let mut host = RejectingHost;
+        let mut invalid_scope = executor_engine_with_scope(&program, &mut host);
+        invalid_scope.frames[0].task_scopes = vec![99];
+        executor_assert!(invalid_scope.current_executor_scope(0).is_err());
+
+        let mut host = RejectingHost;
+        let mut unknown_pool = executor_engine_with_scope(&program, &mut host);
+        executor_assert!(
+            unknown_pool
+                .spawn_pool_job(999, BytecodeFunctionId::new(1), Vec::new(), 0)
+                .is_err()
+        );
+
+        let mut host = RejectingHost;
+        let mut task_diagnostic = executor_engine_with_scope(&program, &mut host);
+        task_diagnostic.pools.insert(1, open_executor_pool(1, 1));
+        task_diagnostic.diagnostics = Some(
+            super::super::diagnostics::DiagnosticSession::new(DiagnosticConfig {
+                max_events: 1,
+                ..DiagnosticConfig::default()
+            })
+            .unwrap(),
+        );
+        executor_assert!(matches!(
+            task_diagnostic.spawn_pool_job(1, BytecodeFunctionId::new(1), Vec::new(), 0),
+            Err(VmError::ResourceLimit {
+                resource: "diagnostic events",
+                limit: 1,
+            })
+        ));
+
+        let mut host = RejectingHost;
+        let mut terminal_service = executor_engine(&program, &mut host);
+        terminal_service.pools.insert(
+            1,
+            RuntimePoolState {
+                lifecycle: RuntimePoolLifecycle::Cancelling,
+                ..open_executor_pool(1, 1)
+            },
+        );
+        terminal_service
+            .pools
+            .get_mut(&1)
+            .unwrap()
+            .lifecycle_waiters
+            .push(999);
+        executor_assert!(terminal_service.service_executor_pool(1).is_err());
+
+        let mut host = RejectingHost;
+        let mut queued_service = executor_engine(&program, &mut host);
+        queued_service.pools.insert(2, open_executor_pool(1, 1));
+        queued_service
+            .pools
+            .get_mut(&2)
+            .unwrap()
+            .queued
+            .push_back(999);
+        executor_assert!(queued_service.service_executor_pool(2).is_err());
+
+        let mut host = RejectingHost;
+        let mut waiter_service = executor_engine(&program, &mut host);
+        waiter_service.pools.insert(3, open_executor_pool(1, 1));
+        waiter_service
+            .pools
+            .get_mut(&3)
+            .unwrap()
+            .submit_waiters
+            .push_back(999);
+        executor_assert!(waiter_service.service_executor_pool(3).is_err());
+
+        let mut host = RejectingHost;
+        let mut lifecycle_waiter = executor_engine(&program, &mut host);
+        lifecycle_waiter.pools.insert(
+            4,
+            RuntimePoolState {
+                lifecycle: RuntimePoolLifecycle::ShuttingDown,
+                ..open_executor_pool(1, 1)
+            },
+        );
+        lifecycle_waiter
+            .pools
+            .get_mut(&4)
+            .unwrap()
+            .lifecycle_waiters
+            .push(999);
+        executor_assert!(lifecycle_waiter.finish_executor_pool_lifecycle(4).is_err());
+
+        let mut host = RejectingHost;
+        let mut begin_submit = executor_engine(&program, &mut host);
+        begin_submit.pools.insert(5, open_executor_pool(1, 1));
+        begin_submit
+            .pools
+            .get_mut(&5)
+            .unwrap()
+            .submit_waiters
+            .push_back(999);
+        executor_assert!(
+            begin_submit
+                .begin_executor_pool_lifecycle(5, false)
+                .is_err()
+        );
+
+        let mut host = RejectingHost;
+        let mut begin_cancel = executor_engine(&program, &mut host);
+        begin_cancel.pools.insert(6, open_executor_pool(1, 1));
+        begin_cancel
+            .pools
+            .get_mut(&6)
+            .unwrap()
+            .queued
+            .push_back(999);
+        executor_assert!(begin_cancel.begin_executor_pool_lifecycle(6, true).is_err());
+
+        let mut host = RejectingHost;
+        let mut begin_service = executor_engine(&program, &mut host);
+        begin_service.pools.insert(7, open_executor_pool(2, 10));
+        begin_service
+            .pools
+            .get_mut(&7)
+            .unwrap()
+            .queued
+            .push_back(999);
+        executor_assert!(
+            begin_service
+                .begin_executor_pool_lifecycle(7, false)
+                .is_err()
+        );
+
+        let mut host = RejectingHost;
+        let mut begin_finish = executor_engine(&program, &mut host);
+        begin_finish.pools.insert(8, open_executor_pool(1, 1));
+        begin_finish
+            .pools
+            .get_mut(&8)
+            .unwrap()
+            .lifecycle_waiters
+            .push(999);
+        executor_assert!(begin_finish.begin_executor_pool_lifecycle(8, true).is_err());
+
+        let mut host = RejectingHost;
+        let mut finish_job = executor_engine(&program, &mut host);
+        finish_job.pools.insert(9, open_executor_pool(2, 10));
+        finish_job
+            .pools
+            .get_mut(&9)
+            .unwrap()
+            .queued
+            .extend([1, 999]);
+        executor_assert!(finish_job.finish_executor_job(1).is_err());
+
+        let submit = executor_metadata(
+            "std.executor.Pool.submit[Int, Never]",
+            types.submit_result,
+            types.function_type,
+        );
+        let job = Value::Function {
+            callable: BytecodeCallableId::new(1),
+            arguments: Vec::new(),
+        };
+        let mut host = RejectingHost;
+        let mut dispatch = executor_engine(&program, &mut host);
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(&submit, &[Value::Integer(1), job.clone()])
+                .is_err()
+        );
+        let pool_handle = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorPool,
+            id: 1,
+        });
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(&submit, &[pool_handle.clone(), Value::Integer(1)])
+                .is_err()
+        );
+
+        let actor = executor_metadata(
+            "std.executor.Pool.actor[Int, Int, String]",
+            types.actor_constructor_result,
+            types.function_type,
+        );
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(
+                    &actor,
+                    &[
+                        Value::Integer(1),
+                        Value::Integer(0),
+                        Value::Integer(1),
+                        job.clone()
+                    ],
+                )
+                .is_err()
+        );
+        let invalid_capacity = executor_metadata(
+            "std.executor.Pool.actor[Int, Int, String]",
+            types.int,
+            types.function_type,
+        );
+        for capacity in [-1_i128, i128::MAX, 1_000_001] {
+            executor_assert!(
+                dispatch
+                    .prepare_executor_call(
+                        &invalid_capacity,
+                        &[
+                            pool_handle.clone(),
+                            Value::Integer(0),
+                            Value::Integer(capacity),
+                            job.clone(),
+                        ],
+                    )
+                    .is_err()
+            );
+        }
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(
+                    &actor,
+                    &[
+                        pool_handle.clone(),
+                        Value::Integer(0),
+                        Value::Integer(1),
+                        Value::Integer(1),
+                    ],
+                )
+                .is_err()
+        );
+        dispatch.next_executor_id = u64::MAX;
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(
+                    &actor,
+                    &[
+                        pool_handle.clone(),
+                        Value::Integer(0),
+                        Value::Integer(1),
+                        job.clone(),
+                    ],
+                )
+                .is_err()
+        );
+        dispatch.next_executor_id = 1;
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(
+                    &invalid_capacity,
+                    &[
+                        pool_handle.clone(),
+                        Value::Integer(0),
+                        Value::Integer(1),
+                        job.clone(),
+                    ],
+                )
+                .is_err()
+        );
+
+        let shutdown = executor_metadata(
+            "std.executor.Pool.shutdown[Int]",
+            types.int,
+            types.function_type,
+        );
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(&shutdown, &[Value::Integer(1)])
+                .is_err()
+        );
+        let send = executor_metadata(
+            "std.executor.ActorRef.send[Int]",
+            types.actor_result,
+            types.function_type,
+        );
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(&send, &[Value::Integer(1), Value::Integer(1)])
+                .is_err()
+        );
+        let stop = executor_metadata(
+            "std.executor.Actor.stop[Int, Int, String]",
+            types.actor_result,
+            types.function_type,
+        );
+        executor_assert!(
+            dispatch
+                .prepare_executor_call(&stop, &[Value::Integer(1)])
+                .is_err()
+        );
+        drop(dispatch);
+
+        let invalid_pool_constructor =
+            executor_metadata("std.executor.pool[Int]", types.int, types.function_type);
+        let invalid_blocking_constructor = executor_metadata(
+            "std.executor.blockingPool[Int]",
+            types.int,
+            types.function_type,
+        );
+        let mut host = RejectingHost;
+        let mut constructors = executor_engine(&program, &mut host);
+        executor_assert!(
+            constructors
+                .prepare_executor_call(
+                    &invalid_pool_constructor,
+                    &[Value::Integer(1), Value::Integer(1)],
+                )
+                .is_err()
+        );
+        executor_assert!(
+            constructors
+                .prepare_executor_call(
+                    &invalid_blocking_constructor,
+                    &[Value::Integer(1), Value::Integer(1)],
+                )
+                .is_err()
+        );
+
+        let mut host = RejectingHost;
+        let mut closed_admission = executor_engine_with_scope(&program, &mut host);
+        closed_admission.pools.insert(
+            1,
+            RuntimePoolState {
+                lifecycle: RuntimePoolLifecycle::Closed,
+                ..open_executor_pool(1, 1)
+            },
+        );
+        executor_assert!(
+            closed_admission
+                .admit_executor_submit(0, 1, BytecodeFunctionId::new(1), Vec::new(), types.int,)
+                .is_err()
+        );
+
+        let mut host = RejectingHost;
+        let mut spawn_failure = executor_engine_with_scope(&program, &mut host);
+        spawn_failure.pools.insert(1, open_executor_pool(2, 10));
+        spawn_failure
+            .pools
+            .get_mut(&1)
+            .unwrap()
+            .queued
+            .push_back(999);
+        executor_assert!(
+            spawn_failure
+                .admit_executor_submit(
+                    0,
+                    1,
+                    BytecodeFunctionId::new(1),
+                    Vec::new(),
+                    types.submit_result,
+                )
+                .is_err()
+        );
+
+        let mut host = RejectingHost;
+        let mut result_failure = executor_engine_with_scope(&program, &mut host);
+        result_failure.pools.insert(1, open_executor_pool(1, 1));
+        executor_assert!(
+            result_failure
+                .admit_executor_submit(0, 1, BytecodeFunctionId::new(1), Vec::new(), types.int,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn executor_pool_admission_and_lifecycle_are_bounded_and_fifo() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: Vec::new(),
+            closed: false,
+        }));
+        engine.pools.insert(1, open_executor_pool(1, 0));
+        executor_assert!(engine.executor_pool_capacity_available(1).unwrap());
+        engine.pools.get_mut(&1).unwrap().running = 1;
+        executor_assert!(!engine.executor_pool_capacity_available(1).unwrap());
+        engine.pools.get_mut(&1).unwrap().capacity = 2;
+        executor_assert!(engine.executor_pool_capacity_available(1).unwrap());
+        engine.pools.get_mut(&1).unwrap().running = 2;
+        executor_assert!(!engine.executor_pool_capacity_available(1).unwrap());
+        engine.pools.get_mut(&1).unwrap().lifecycle = RuntimePoolLifecycle::Closed;
+        executor_assert!(!engine.executor_pool_capacity_available(1).unwrap());
+        executor_assert!(engine.executor_pool_capacity_available(999).is_err());
+
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        let first = engine
+            .spawn_pool_job(1, BytecodeFunctionId::new(1), Vec::new(), 0)
+            .unwrap();
+        executor_assert!(matches!(engine.tasks[first].status, TaskStatus::Runnable));
+        executor_assert!(engine.tasks[first].resume.is_some());
+        engine.pool_running.insert(first, 1);
+        engine.pools.get_mut(&1).unwrap().running = 1;
+        engine.finish_executor_job(first).unwrap();
+        executor_assert_eq!(engine.pools[&1].running, 0);
+
+        let queued = engine.tasks.len();
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::PoolJob {
+                pool: 1,
+                function: BytecodeFunctionId::new(1),
+                arguments: Vec::new(),
+            })));
+        engine.pools.get_mut(&1).unwrap().queued.push_back(queued);
+        engine.finish_executor_job(queued).unwrap();
+        executor_assert!(!engine.pools[&1].queued.contains(&queued));
+
+        let lifecycle_waiter = engine.tasks.len();
+        engine.tasks.push(scheduler_task(TaskStatus::Waiting(
+            TaskWait::PoolLifecycle {
+                pool: 1,
+                cancel: false,
+                destination: BytecodePlace {
+                    slot: BytecodeSlotId::new(0),
+                    ty: types.int,
+                    projections: Vec::new(),
+                    source_loan: None,
+                },
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+            },
+        )));
+        let state = engine.pools.get_mut(&1).unwrap();
+        state.lifecycle = RuntimePoolLifecycle::ShuttingDown;
+        state.lifecycle_waiters.push(lifecycle_waiter);
+        engine.finish_executor_pool_lifecycle(1).unwrap();
+        executor_assert!(matches!(
+            engine.tasks[lifecycle_waiter].status,
+            TaskStatus::Runnable
+        ));
+        executor_assert_eq!(engine.pools[&1].lifecycle, RuntimePoolLifecycle::Closed);
+
+        executor_assert!(engine.finish_executor_pool_lifecycle(999).is_err());
+
+        engine.pools.insert(5, open_executor_pool(1, 1));
+        let submit_waiter = engine.tasks.len();
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::PoolJob {
+                pool: 5,
+                function: BytecodeFunctionId::new(1),
+                arguments: Vec::new(),
+            })));
+        engine
+            .pools
+            .get_mut(&5)
+            .unwrap()
+            .submit_waiters
+            .push_back(submit_waiter);
+        executor_assert!(engine.begin_executor_pool_lifecycle(5, false).unwrap());
+        executor_assert!(matches!(
+            engine.tasks[submit_waiter].status,
+            TaskStatus::Runnable
+        ));
+
+        engine.pools.insert(2, open_executor_pool(1, 1));
+        executor_assert!(engine.begin_executor_pool_lifecycle(2, true).unwrap());
+        executor_assert_eq!(engine.pools[&2].lifecycle, RuntimePoolLifecycle::Cancelled);
+        executor_assert!(engine.begin_executor_pool_lifecycle(1, false).is_err());
+        engine.pools.insert(
+            3,
+            RuntimePoolState {
+                blocking: true,
+                ..open_executor_pool(1, 1)
+            },
+        );
+        executor_assert!(matches!(
+            engine.begin_executor_pool_lifecycle(3, false),
+            Err(VmError::UnsupportedHostCall(name)) if name.contains("BlockingPool.lifecycle")
+        ));
+
+        engine.pools.insert(4, open_executor_pool(1, 1));
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(1),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: vec![1],
+            continuation: None,
+            select: None,
+        });
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(1),
+            owner: 0,
+            children: Vec::new(),
+            closed: false,
+        }));
+        let admitted = engine
+            .admit_executor_submit(
+                0,
+                4,
+                BytecodeFunctionId::new(1),
+                Vec::new(),
+                types.submit_result,
+            )
+            .unwrap()
+            .unwrap();
+        executor_assert!(matches!(
+            engine.heap.get(admitted.heap_handle().unwrap()).unwrap(),
+            HeapObject::ResultOk(Some(Value::Join(RuntimeJoin { .. })))
+        ));
+        engine.pools.get_mut(&4).unwrap().running = 1;
+        executor_assert!(
+            engine
+                .admit_executor_submit(
+                    0,
+                    4,
+                    BytecodeFunctionId::new(1),
+                    Vec::new(),
+                    types.submit_result,
+                )
+                .unwrap()
+                .is_none()
+        );
+        engine.pools.get_mut(&4).unwrap().lifecycle = RuntimePoolLifecycle::Closed;
+        let closed = engine
+            .admit_executor_submit(
+                0,
+                4,
+                BytecodeFunctionId::new(1),
+                Vec::new(),
+                types.submit_result,
+            )
+            .unwrap()
+            .unwrap();
+        executor_assert_eq!(result_error_variant(&engine, &closed), 1);
+        engine.pools.get_mut(&4).unwrap().lifecycle = RuntimePoolLifecycle::Cancelled;
+        let cancelled = engine
+            .admit_executor_submit(
+                0,
+                4,
+                BytecodeFunctionId::new(1),
+                Vec::new(),
+                types.submit_result,
+            )
+            .unwrap()
+            .unwrap();
+        executor_assert_eq!(result_error_variant(&engine, &cancelled), 2);
+        executor_assert!(
+            engine
+                .admit_executor_submit(
+                    0,
+                    999,
+                    BytecodeFunctionId::new(1),
+                    Vec::new(),
+                    types.submit_result,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn executor_actor_and_dispatch_boundaries_preserve_message_errors() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.actors.insert(
+            7,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: BytecodeFunctionId::new(1),
+                step_arguments: Vec::new(),
+                capacity: 1,
+                mailbox: VecDeque::new(),
+                stopped: false,
+            },
+        );
+        let sent = engine
+            .executor_actor_send(7, Value::Integer(3), types.actor_result)
+            .unwrap();
+        executor_assert!(matches!(
+            engine.heap.get(sent.heap_handle().unwrap()).unwrap(),
+            HeapObject::ResultOk(Some(Value::Unit))
+        ));
+        let saturated = engine
+            .executor_actor_send(7, Value::Integer(4), types.actor_result)
+            .unwrap();
+        executor_assert_eq!(result_error_variant(&engine, &saturated), 0);
+        engine.executor_actor_stop(7, types.actor_result).unwrap();
+        let terminated = engine
+            .executor_actor_send(7, Value::Integer(5), types.actor_result)
+            .unwrap();
+        executor_assert_eq!(result_error_variant(&engine, &terminated), 3);
+        executor_assert!(
+            engine
+                .executor_actor_send(999, Value::Integer(1), types.actor_result)
+                .is_err()
+        );
+        executor_assert!(engine.executor_actor_stop(999, types.actor_result).is_err());
+
+        let pool_metadata = executor_metadata(
+            "std.executor.pool[Int]",
+            types.pool_result,
+            types.function_type,
+        );
+        let pool_result = operation_value(
+            engine
+                .prepare_executor_call(&pool_metadata, &[Value::Integer(1), Value::Integer(1)])
+                .unwrap()
+                .unwrap(),
+        );
+        let pool_value = result_ok_value(&engine, &pool_result);
+        let job = Value::Function {
+            callable: BytecodeCallableId::new(1),
+            arguments: Vec::new(),
+        };
+        let submit = executor_metadata(
+            "std.executor.Pool.submit[Int, Never]",
+            types.submit_result,
+            types.function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(&submit, &[pool_value.clone(), job.clone()])
+                .unwrap(),
+            Some(OperationResult::PoolSubmit { wait: true, .. })
+        ));
+        let try_submit = executor_metadata(
+            "std.executor.Pool.trySubmit[Int, Never]",
+            types.submit_result,
+            types.function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(&try_submit, &[pool_value.clone(), job.clone()])
+                .unwrap(),
+            Some(OperationResult::PoolSubmit { wait: false, .. })
+        ));
+        executor_assert!(engine.prepare_executor_call(&submit, &[]).is_err());
+
+        let actor_metadata = executor_metadata(
+            "std.executor.Pool.actor[Int, Int, String]",
+            types.actor_constructor_result,
+            types.function_type,
+        );
+        let actor_invalid = operation_value(
+            engine
+                .prepare_executor_call(
+                    &actor_metadata,
+                    &[
+                        pool_value.clone(),
+                        Value::Integer(0),
+                        Value::Integer(-1),
+                        job.clone(),
+                    ],
+                )
+                .unwrap()
+                .unwrap(),
+        );
+        executor_assert_eq!(result_error_variant(&engine, &actor_invalid), 1);
+        executor_assert!(matches!(
+            engine.prepare_executor_call(
+                &actor_metadata,
+                &[
+                    pool_value.clone(),
+                    Value::Integer(0),
+                    Value::Unit,
+                    job.clone(),
+                ],
+            ),
+            Err(VmError::Invariant(message)) if message.contains("capacity is not Int")
+        ));
+        let actor_overflow = operation_value(
+            engine
+                .prepare_executor_call(
+                    &actor_metadata,
+                    &[
+                        pool_value.clone(),
+                        Value::Integer(0),
+                        Value::Integer(i128::MAX),
+                        job.clone(),
+                    ],
+                )
+                .unwrap()
+                .unwrap(),
+        );
+        executor_assert_eq!(result_error_variant(&engine, &actor_overflow), 2);
+        let actor_too_large = operation_value(
+            engine
+                .prepare_executor_call(
+                    &actor_metadata,
+                    &[
+                        pool_value.clone(),
+                        Value::Integer(0),
+                        Value::Integer(1_000_001),
+                        job.clone(),
+                    ],
+                )
+                .unwrap()
+                .unwrap(),
+        );
+        executor_assert_eq!(result_error_variant(&engine, &actor_too_large), 2);
+        let actor_created = operation_value(
+            engine
+                .prepare_executor_call(
+                    &actor_metadata,
+                    &[
+                        pool_value.clone(),
+                        Value::Integer(0),
+                        Value::Integer(1),
+                        job.clone(),
+                    ],
+                )
+                .unwrap()
+                .unwrap(),
+        );
+        executor_assert!(matches!(
+            engine
+                .heap
+                .get(actor_created.heap_handle().unwrap())
+                .unwrap(),
+            HeapObject::ResultOk(Some(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorActor,
+                ..
+            })))
+        ));
+        executor_assert!(engine.prepare_executor_call(&actor_metadata, &[]).is_err());
+
+        let shutdown = executor_metadata(
+            "std.executor.Pool.shutdown[Int]",
+            types.int,
+            types.function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(&shutdown, std::slice::from_ref(&pool_value))
+                .unwrap(),
+            Some(OperationResult::PoolLifecycle { cancel: false, .. })
+        ));
+        executor_assert!(engine.prepare_executor_call(&shutdown, &[]).is_err());
+        let cancel = executor_metadata(
+            "std.executor.Pool.cancel[Int]",
+            types.int,
+            types.function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(&cancel, std::slice::from_ref(&pool_value))
+                .unwrap(),
+            Some(OperationResult::PoolLifecycle { cancel: true, .. })
+        ));
+
+        let actor_ref = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorActorRef,
+            id: 7,
+        });
+        let send = executor_metadata(
+            "std.executor.ActorRef.send[Int]",
+            types.actor_result,
+            types.function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(&send, &[actor_ref.clone(), Value::Integer(6)])
+                .unwrap(),
+            Some(OperationResult::ActorSend {
+                wait: true,
+                actor: 7,
+                ..
+            })
+        ));
+        let try_send = executor_metadata(
+            "std.executor.ActorRef.trySend[Int]",
+            types.actor_result,
+            types.function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(&try_send, &[actor_ref, Value::Integer(6)])
+                .unwrap(),
+            Some(OperationResult::ActorSend {
+                wait: false,
+                actor: 7,
+                ..
+            })
+        ));
+        executor_assert!(engine.prepare_executor_call(&send, &[]).is_err());
+
+        let stop = executor_metadata(
+            "std.executor.Actor.stop[Int, Int, String]",
+            types.actor_result,
+            types.function_type,
+        );
+        let actor_handle = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorActor,
+            id: 7,
+        });
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(&stop, std::slice::from_ref(&actor_handle))
+                .unwrap(),
+            Some(OperationResult::ActorStop { actor: 7, .. })
+        ));
+        executor_assert!(engine.prepare_executor_call(&stop, &[]).is_err());
+
+        let blocking_run = executor_metadata(
+            "std.executor.BlockingPool.run[Int, Never]",
+            types.submit_result,
+            types.function_type,
+        );
+        executor_assert!(matches!(
+            engine.prepare_executor_call(&blocking_run, &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name.contains("BlockingPool.run")
+        ));
+        let unknown = executor_metadata("std.executor.unknown", types.int, types.function_type);
+        executor_assert!(
+            engine
+                .prepare_executor_call(&unknown, &[])
+                .unwrap()
+                .is_none()
+        );
+        executor_assert!(
+            engine
+                .prepare_executor_call(
+                    &unknown,
+                    &[Value::Loan(RuntimeLoan {
+                        task: 99,
+                        frame: 0,
+                        place: BytecodePlace {
+                            slot: BytecodeSlotId::new(0),
+                            ty: types.int,
+                            projections: Vec::new(),
+                            source_loan: None,
+                        },
+                        mode: BytecodeParameterMode::Ref,
+                    })],
+                )
+                .is_err()
+        );
+
+        drop(engine);
+        let mut malformed_program = program.clone();
+        let actor_error_nominal = malformed_program
+            .nominals
+            .iter_mut()
+            .find(|nominal| nominal.name == "ActorSendError")
+            .unwrap();
+        if let BytecodeNominalShape::Enum { variants } = &mut actor_error_nominal.shape {
+            variants[0].payload = BytecodeVariantPayload::Tuple(Vec::new());
+        }
+        let mut malformed_engine = executor_engine(&malformed_program, &mut host);
+        executor_assert!(matches!(
+            malformed_engine.executor_actor_error_result(types.actor_result, 0, Value::Integer(7)),
+            Err(VmError::Invariant(message)) if message.contains("payload arity is not one")
         ));
     }
 }

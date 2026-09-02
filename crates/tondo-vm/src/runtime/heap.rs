@@ -97,6 +97,11 @@ impl HeapHandle {
     }
 
     #[cfg(test)]
+    pub(super) const fn for_test(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+
+    #[cfg(test)]
     pub(super) const fn index(self) -> u32 {
         self.index
     }
@@ -536,6 +541,16 @@ impl Heap {
     #[cfg(test)]
     pub(super) fn live_objects(&self) -> u32 {
         self.live_objects
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_type_descriptors_for_test(&mut self) {
+        self.descriptors.clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_max_heap_objects_for_test(&mut self, limit: u32) {
+        self.limits.max_heap_objects = limit;
     }
 
     fn visit_object(
