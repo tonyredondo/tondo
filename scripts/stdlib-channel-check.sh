@@ -155,7 +155,7 @@ jq -e '
   and .implementation.host == "verified-scheduler-and-native-bridge"
   and .implementation.native_status == "verified-native-runtime-abi"
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.algorithmic_fast_paths == "deferred-to-STD-CHANNEL-PERF-001"
+  and .implementation.algorithmic_fast_paths == "deferred-to-native-targeted-performance-campaign"
   and (.implementation.sources | type == "array" and length == 10)
   and (.implementation.tests | type == "array" and length == 11)
   and .implementation.fixture == {path:"tests/runtime/m11-std-channel-impl-001.to",stdout:"channel-ok",exit:0,status:"passed"}
@@ -163,22 +163,39 @@ jq -e '
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-channel-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == [
-    "STD-CHANNEL-PERF-001",
-    "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
+  and .performance == {
+    task: "STD-CHANNEL-PERF-001",
+    contract: "testing/stdlib-channel-performance.json",
+    document: "docs/contracts/stdlib-channel-performance.md",
+    status: "verified-hosted-vm-baseline",
+    target: "tondo-vm-hosted",
+    native_aot: "not-claimed",
+    workloads: 9,
+    samples_per_workload: 27
+  }
+  and .conformance == {
+    task: "STD-CHANNEL-CONF-001",
+    contract: "testing/stdlib-channel-conformance.json",
+    document: "docs/contracts/stdlib-channel-conformance.md",
+    status: "verified",
+    target: "tondo-vm-hosted-and-native-runtime-abi",
+    cases: 8,
+    native_aot: "not-claimed"
+  }
   and .promotion.implementation_pending == [
-    "STD-CHANNEL-PERF-001",
-    "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
-  and .promotion.next_blocks == ["STD-CHANNEL-PERF-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel contract"
 
 for path in \
     docs/contracts/stdlib-channel.md \
     docs/contracts/stdlib-channel-async-iter.md \
     docs/contracts/stdlib-channel-test.md \
+    docs/contracts/stdlib-channel-performance.md \
+    docs/contracts/stdlib-channel-conformance.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
@@ -201,5 +218,9 @@ done
 
 grep -Fq 'testing/stdlib-channel.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the channel registry"
+grep -Fq 'testing/stdlib-channel-performance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the channel performance contract"
+grep -Fq 'testing/stdlib-channel-conformance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the channel conformance contract"
 
 echo "std.channel contract: OK (typed endpoints; bounded/unbounded backpressure; cancel-safe select; FIFO fairness)"

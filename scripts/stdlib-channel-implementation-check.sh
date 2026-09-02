@@ -29,7 +29,7 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.native_status == "verified-native-runtime-abi"
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.algorithmic_fast_paths == "deferred-to-STD-CHANNEL-PERF-001"
+  and .implementation.algorithmic_fast_paths == "deferred-to-native-targeted-performance-campaign"
   and (.implementation.sources | type == "array" and length == 10)
   and (.implementation.tests | type == "array" and length == 11)
   and .implementation.fixture == {path:"tests/runtime/m11-std-channel-impl-001.to",stdout:"channel-ok",exit:0,status:"passed"}
@@ -37,18 +37,22 @@ jq -e '
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-channel-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == [
-    "STD-CHANNEL-PERF-001",
-    "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
   and .promotion.implementation_pending == .implementation.required_follow_ups
-  and .promotion.next_blocks == ["STD-CHANNEL-PERF-001"]
+  and .performance.task == "STD-CHANNEL-PERF-001"
+  and .performance.status == "verified-hosted-vm-baseline"
+  and .performance.target == "tondo-vm-hosted"
+  and .performance.native_aot == "not-claimed"
+  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel implementation contract"
 
 for path in \
     docs/contracts/stdlib-channel.md \
     docs/contracts/stdlib-channel-async-iter.md \
     docs/contracts/stdlib-channel-test.md \
+    docs/contracts/stdlib-channel-performance.md \
+    docs/contracts/stdlib-channel-conformance.md \
     docs/contracts/native-abi.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_LANGUAGE_SPEC.md \
@@ -60,6 +64,21 @@ for path in \
     tests/compile-fail/m11-std-channel-await.codes \
     crates/tondo-native-runtime/examples/channel_conformance.rs; do
     [[ -f "$root/$path" ]] || die "missing implementation input: $path"
+done
+
+for path in \
+    testing/stdlib-channel-performance.json \
+    scripts/stdlib-channel-performance-check.sh \
+    scripts/stdlib-channel-performance-test.sh \
+    scripts/stdlib-channel-performance.sh; do
+    [[ -f "$root/$path" ]] || die "missing performance boundary input: $path"
+done
+for path in \
+    testing/stdlib-channel-conformance.json \
+    scripts/stdlib-channel-conformance-check.sh \
+    scripts/stdlib-channel-conformance-test.sh \
+    scripts/stdlib-channel-conformance.sh; do
+    [[ -f "$root/$path" ]] || die "missing conformance boundary input: $path"
 done
 
 for script in \

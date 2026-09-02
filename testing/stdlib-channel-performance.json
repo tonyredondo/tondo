@@ -1,0 +1,94 @@
+{
+  "format": "tondo-stdlib-channel-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-CHANNEL-PERF-001",
+  "owner": "std.channel",
+  "status": "verified-hosted-vm-baseline",
+  "target": "tondo-vm-hosted",
+  "backend": "bytecode-vm",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-compiler/src/process_host.rs",
+    "test": "process_host::tests::channel_performance_probe",
+    "sha256": "feb8f8b324ce1d500a192d9828c6717135f09d1a204e0026469c85358070d34b"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 16,
+    "deterministic_seed": "tondo-stdlib-channel-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-timed-latency; included-in-allocation-and-memory-counters"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "pid",
+    "path",
+    "timestamp"
+  ],
+  "metrics": [
+    "allocations",
+    "backpressure",
+    "latency",
+    "live_handles",
+    "logical_memory_bytes",
+    "queued_peak",
+    "tail_latency",
+    "throughput",
+    "wakeups"
+  ],
+  "workloads": [
+    {"id": "rendezvous-1-1", "topology": "1:1", "mode": "rendezvous", "capacity": 0, "producers": 1, "consumers": 1},
+    {"id": "buffered-1-1", "topology": "1:1", "mode": "buffered", "capacity": 1, "producers": 1, "consumers": 1},
+    {"id": "rendezvous-n-1", "topology": "n:1", "mode": "rendezvous", "capacity": 0, "producers": 8, "consumers": 1},
+    {"id": "buffered-n-1", "topology": "n:1", "mode": "buffered", "capacity": 8, "producers": 8, "consumers": 1},
+    {"id": "rendezvous-n-m", "topology": "n:m", "mode": "rendezvous", "capacity": 0, "producers": 8, "consumers": 4},
+    {"id": "buffered-n-m", "topology": "n:m", "mode": "buffered", "capacity": 8, "producers": 8, "consumers": 4},
+    {"id": "unbounded-n-m", "topology": "n:m", "mode": "unbounded", "capacity": null, "producers": 8, "consumers": 4},
+    {"id": "backpressure-buffered", "topology": "1:1", "mode": "backpressure", "capacity": 1, "producers": 1, "consumers": 1},
+    {"id": "close-wakeup-senders", "topology": "n:1", "mode": "close-wakeup", "capacity": 0, "producers": 8, "consumers": 1}
+  ],
+  "strategy": {
+    "hosted_vm": "scheduler-owned-single-worker-channel-baseline",
+    "native_runtime_abi": "not-measured-by-this-hosted-report",
+    "native_aot": "not-claimed",
+    "algorithmic_fast_paths": "deferred-to-native-targeted-performance-campaign",
+    "selection": "hosted-baseline-selected-until-native-targets-have-comparable-concurrent-evidence",
+    "selection_reason": "The hosted VM uses a scheduler-owned worker; this campaign records channel latency and queue behavior without presenting it as native concurrent throughput."
+  },
+  "invariants": {
+    "operations": "stable-per-workload-across-all-27-samples",
+    "topologies": "1:1, n:1 and n:m are explicit",
+    "fifo": "received-values-follow-commit-order",
+    "backpressure": "blocked-sends-retain-payload-and-wake-exactly-once",
+    "wakeup": "one-per-completed-pending-waiter",
+    "memory": "logical-channel-state-and-waiter-capacity; allocator-overhead-excluded",
+    "cleanup": "no-pending-channel-waiter-or-live-endpoint-before-probe-return",
+    "oracle": "independent-bounded-channel-model-plus-host-invariant-checks",
+    "target_isolation": "reports-never-combine-targets-or-backends"
+  },
+  "oracle": {
+    "kind": "independent-bounded-channel-model-and-host-invariant-checks",
+    "sources": [
+      "crates/tondo-reliability/src/channel_model.rs",
+      "crates/tondo-reliability/tests/channel_models.rs"
+    ]
+  },
+  "report": "target/reliability/evidence/stdlib-channel-performance.json"
+}

@@ -1,0 +1,8 @@
+bounded-fifo:12:full:closed
+rendezvous-wakeup:7:cleanup
+receiver-drain:45:fifo
+closed-error:9:payload-preserved
+invalid-capacity:rejected
+select-commit:1:6
+closed-wakeup:42:cleanup
+channel-conformance-ok

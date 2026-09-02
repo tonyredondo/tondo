@@ -88,6 +88,9 @@ stale testing frontier fails the repository gate.
 ## Promotion boundary
 
 STD-CHANNEL-TEST-001 is complete for the model, regression suite and fuzz
-smoke. STD-CHANNEL-PERF-001 is the next block. Conformance and documentation
-remain separate leaves. No test result here changes the parent contract's
-native_aot_lowering: not-claimed or public_api_promoted: false decisions.
+smoke. The hosted performance baseline is closed separately by
+`STD-CHANNEL-PERF-001`; `STD-CHANNEL-CONF-001` is now closed by the shared
+VM/native corpus and `STD-CHANNEL-DOC-001` is the next block. Documentation
+remains a separate leaf. No test result here changes the
+parent contract's native_aot_lowering: not-claimed or public_api_promoted:
+false decisions.

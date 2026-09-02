@@ -13307,6 +13307,556 @@ mod tests {
     }
 
     #[derive(Debug, Clone, Copy)]
+    struct ChannelPerformanceSample {
+        nanos: u64,
+        operations: u64,
+        blocked: u64,
+        backpressure: u64,
+        wakeups: u64,
+        allocations: u64,
+        logical_bytes: u64,
+        live_handles: u64,
+        queued_peak: u64,
+    }
+
+    #[derive(Debug, Default)]
+    struct ChannelPerformanceCounters {
+        operations: usize,
+        blocked: usize,
+        backpressure: usize,
+        wakeups: usize,
+        peak_logical_bytes: u64,
+        peak_queued: usize,
+        expected: VecDeque<RuntimeValue>,
+    }
+
+    const CHANNEL_PERF_BATCH: usize = 16;
+
+    fn channel_performance_logical_bytes(host: &BootstrapHost) -> u64 {
+        let values = host
+            .values
+            .len()
+            .saturating_mul(std::mem::size_of::<HostValue>());
+        let channels = host
+            .channels
+            .values()
+            .map(|state| {
+                std::mem::size_of::<ChannelState>().saturating_add(
+                    state
+                        .queue
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<RuntimeValue>()),
+                )
+            })
+            .sum::<usize>();
+        let waiters = host
+            .sync_waiters
+            .values()
+            .map(|pending| {
+                std::mem::size_of::<PendingSync>().saturating_add(
+                    pending
+                        .arguments
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<RuntimeValue>()),
+                )
+            })
+            .sum::<usize>();
+        let waiter_queues = host
+            .sync_queues
+            .values()
+            .map(|queue| queue.capacity().saturating_mul(std::mem::size_of::<u64>()))
+            .sum::<usize>();
+        u64::try_from(
+            values
+                .saturating_add(channels)
+                .saturating_add(waiters)
+                .saturating_add(waiter_queues),
+        )
+        .expect("logical channel state size fits in u64")
+    }
+
+    fn channel_performance_live_handles(host: &BootstrapHost) -> u64 {
+        u64::try_from(
+            host.values
+                .values()
+                .filter(|value| {
+                    matches!(
+                        value,
+                        HostValue::ChannelSender { .. } | HostValue::ChannelReceiver { .. }
+                    )
+                })
+                .count(),
+        )
+        .expect("channel handle count fits in u64")
+    }
+
+    fn channel_performance_observe(
+        host: &BootstrapHost,
+        counters: &mut ChannelPerformanceCounters,
+    ) {
+        counters.peak_logical_bytes = counters
+            .peak_logical_bytes
+            .max(channel_performance_logical_bytes(host));
+        counters.peak_queued = counters.peak_queued.max(
+            host.channels
+                .values()
+                .map(|state| state.queue.len())
+                .max()
+                .unwrap_or(0),
+        );
+    }
+
+    fn channel_performance_endpoints(
+        host: &mut BootstrapHost,
+        capacity: Option<usize>,
+        producers: usize,
+        consumers: usize,
+    ) -> (Vec<RuntimeValue>, Vec<RuntimeValue>) {
+        assert!(producers > 0 && consumers > 0);
+        let pair = match capacity {
+            Some(capacity) => host
+                .invoke(
+                    "std.channel.bounded",
+                    &[RuntimeValue::Integer(capacity as i128)],
+                )
+                .unwrap(),
+            None => host.invoke("std.channel.unbounded", &[]).unwrap(),
+        };
+        let (sender, receiver) = channel_endpoints(pair);
+        let mut senders = vec![sender];
+        let mut receivers = vec![receiver];
+        for _ in 1..producers {
+            let sender = ok(host
+                .invoke("std.channel.Sender.fork", std::slice::from_ref(&senders[0]))
+                .unwrap());
+            senders.push(sender);
+        }
+        for _ in 1..consumers {
+            let receiver = ok(host
+                .invoke(
+                    "std.channel.Receiver.fork",
+                    std::slice::from_ref(&receivers[0]),
+                )
+                .unwrap());
+            receivers.push(receiver);
+        }
+        (senders, receivers)
+    }
+
+    fn channel_performance_close_endpoints(
+        host: &mut BootstrapHost,
+        senders: Vec<RuntimeValue>,
+        receivers: Vec<RuntimeValue>,
+    ) {
+        for sender in senders {
+            host.invoke("std.channel.Sender.close", std::slice::from_ref(&sender))
+                .unwrap();
+        }
+        for receiver in receivers {
+            assert!(matches!(
+                host.invoke(
+                    "std.channel.Receiver.close",
+                    std::slice::from_ref(&receiver)
+                )
+                .unwrap(),
+                RuntimeValue::Array(_)
+            ));
+        }
+    }
+
+    fn channel_performance_send_result(value: RuntimeValue) {
+        assert!(matches!(
+            value,
+            RuntimeValue::ResultOk(result) if *result == RuntimeValue::Unit
+        ));
+    }
+
+    fn channel_performance_receive_result(
+        value: RuntimeValue,
+        expected: &mut VecDeque<RuntimeValue>,
+    ) {
+        let RuntimeValue::OptionSome(value) = value else {
+            panic!("channel performance receive did not return a value")
+        };
+        assert_eq!(
+            *value,
+            expected
+                .pop_front()
+                .expect("channel performance received more values than it sent")
+        );
+    }
+
+    fn channel_performance_exchange(
+        host: &mut BootstrapHost,
+        senders: &[RuntimeValue],
+        receivers: &[RuntimeValue],
+        rounds: usize,
+        counters: &mut ChannelPerformanceCounters,
+    ) {
+        for round in 0..rounds {
+            let mut pending = Vec::new();
+            for (producer, sender) in senders.iter().enumerate() {
+                let value = RuntimeValue::Integer((round * senders.len() + producer) as i128);
+                counters.expected.push_back(value.clone());
+                host.set_execution_unit(producer as u64 + 1);
+                let call = host
+                    .start_async("std.channel.Sender.send", &[sender.clone(), value.clone()])
+                    .unwrap();
+                counters.operations += 1;
+                let result = host.poll_async(call).unwrap();
+                channel_performance_observe(host, counters);
+                if let Some(result) = result {
+                    channel_performance_send_result(result);
+                } else {
+                    counters.blocked += 1;
+                    counters.backpressure += 1;
+                    pending.push((call, value));
+                }
+            }
+
+            for index in 0..senders.len() {
+                let receiver = &receivers[index % receivers.len()];
+                host.set_execution_unit(
+                    senders.len() as u64 + (index % receivers.len()) as u64 + 1,
+                );
+                let call = host
+                    .start_async(
+                        "std.channel.Receiver.receive",
+                        std::slice::from_ref(receiver),
+                    )
+                    .unwrap();
+                counters.operations += 1;
+                let result = host.poll_async(call).unwrap();
+                channel_performance_observe(host, counters);
+                let result = result.unwrap_or_else(|| {
+                    counters.blocked += 1;
+                    host.poll_async(call)
+                        .unwrap()
+                        .expect("channel receive must wake after a pending send")
+                });
+                channel_performance_receive_result(result, &mut counters.expected);
+
+                let mut remaining = Vec::with_capacity(pending.len());
+                for (pending_call, value) in pending {
+                    if let Some(result) = host.poll_async(pending_call).unwrap() {
+                        channel_performance_send_result(result);
+                        counters.wakeups += 1;
+                    } else {
+                        remaining.push((pending_call, value));
+                    }
+                    channel_performance_observe(host, counters);
+                }
+                pending = remaining;
+            }
+            assert!(
+                pending.is_empty(),
+                "channel performance exchange left a pending sender"
+            );
+        }
+        assert!(counters.expected.is_empty());
+    }
+
+    fn channel_performance_unbounded_burst(
+        host: &mut BootstrapHost,
+        senders: &[RuntimeValue],
+        receivers: &[RuntimeValue],
+        counters: &mut ChannelPerformanceCounters,
+    ) {
+        for round in 0..CHANNEL_PERF_BATCH {
+            for (producer, sender) in senders.iter().enumerate() {
+                let value = RuntimeValue::Integer((round * senders.len() + producer) as i128);
+                counters.expected.push_back(value.clone());
+                host.set_execution_unit(producer as u64 + 1);
+                let call = host
+                    .start_async("std.channel.Sender.send", &[sender.clone(), value])
+                    .unwrap();
+                counters.operations += 1;
+                channel_performance_send_result(
+                    host.poll_async(call)
+                        .unwrap()
+                        .expect("unbounded send must be ready"),
+                );
+                channel_performance_observe(host, counters);
+            }
+        }
+        let total = CHANNEL_PERF_BATCH * senders.len();
+        for index in 0..total {
+            let receiver = &receivers[index % receivers.len()];
+            host.set_execution_unit(senders.len() as u64 + (index % receivers.len()) as u64 + 1);
+            let call = host
+                .start_async(
+                    "std.channel.Receiver.receive",
+                    std::slice::from_ref(receiver),
+                )
+                .unwrap();
+            counters.operations += 1;
+            channel_performance_receive_result(
+                host.poll_async(call)
+                    .unwrap()
+                    .expect("unbounded receive must be ready"),
+                &mut counters.expected,
+            );
+            channel_performance_observe(host, counters);
+        }
+        assert!(counters.expected.is_empty());
+    }
+
+    fn channel_performance_buffered_backpressure(
+        host: &mut BootstrapHost,
+        sender: &RuntimeValue,
+        receiver: &RuntimeValue,
+        counters: &mut ChannelPerformanceCounters,
+    ) {
+        for round in 0..CHANNEL_PERF_BATCH {
+            let first = RuntimeValue::Integer((round * 2) as i128);
+            counters.expected.push_back(first.clone());
+            let call = host
+                .start_async("std.channel.Sender.send", &[sender.clone(), first])
+                .unwrap();
+            counters.operations += 1;
+            channel_performance_send_result(
+                host.poll_async(call)
+                    .unwrap()
+                    .expect("first buffered send must be ready"),
+            );
+            channel_performance_observe(host, counters);
+
+            let second = RuntimeValue::Integer((round * 2 + 1) as i128);
+            counters.expected.push_back(second.clone());
+            let pending_call = host
+                .start_async("std.channel.Sender.send", &[sender.clone(), second])
+                .unwrap();
+            counters.operations += 1;
+            assert!(host.poll_async(pending_call).unwrap().is_none());
+            counters.blocked += 1;
+            counters.backpressure += 1;
+            channel_performance_observe(host, counters);
+
+            let receive_call = host
+                .start_async(
+                    "std.channel.Receiver.receive",
+                    std::slice::from_ref(receiver),
+                )
+                .unwrap();
+            counters.operations += 1;
+            channel_performance_receive_result(
+                host.poll_async(receive_call)
+                    .unwrap()
+                    .expect("buffered receive must be ready"),
+                &mut counters.expected,
+            );
+            channel_performance_observe(host, counters);
+
+            channel_performance_send_result(
+                host.poll_async(pending_call)
+                    .unwrap()
+                    .expect("buffered sender must wake after one receive"),
+            );
+            counters.wakeups += 1;
+            channel_performance_observe(host, counters);
+
+            let receive_call = host
+                .start_async(
+                    "std.channel.Receiver.receive",
+                    std::slice::from_ref(receiver),
+                )
+                .unwrap();
+            counters.operations += 1;
+            channel_performance_receive_result(
+                host.poll_async(receive_call)
+                    .unwrap()
+                    .expect("second buffered receive must be ready"),
+                &mut counters.expected,
+            );
+            channel_performance_observe(host, counters);
+        }
+        assert!(counters.expected.is_empty());
+    }
+
+    fn channel_performance_close_wakeup(
+        host: &mut BootstrapHost,
+        senders: &[RuntimeValue],
+        receiver: RuntimeValue,
+        counters: &mut ChannelPerformanceCounters,
+    ) {
+        let mut pending = Vec::with_capacity(CHANNEL_PERF_BATCH);
+        for index in 0..CHANNEL_PERF_BATCH {
+            let sender = &senders[index % senders.len()];
+            let value = RuntimeValue::Integer(index as i128);
+            host.set_execution_unit(index as u64 + 1);
+            let call = host
+                .start_async("std.channel.Sender.send", &[sender.clone(), value.clone()])
+                .unwrap();
+            counters.operations += 1;
+            assert!(host.poll_async(call).unwrap().is_none());
+            counters.blocked += 1;
+            counters.backpressure += 1;
+            pending.push((call, value));
+            channel_performance_observe(host, counters);
+        }
+        host.invoke(
+            "std.channel.Receiver.close",
+            std::slice::from_ref(&receiver),
+        )
+        .unwrap();
+        counters.operations += 1;
+        for (call, value) in pending {
+            let result = host
+                .poll_async(call)
+                .unwrap()
+                .expect("closing the receiver must wake every sender");
+            assert!(matches!(
+                result,
+                RuntimeValue::ResultErr(error)
+                    if matches!(error.as_ref(), RuntimeValue::Variant { name, variant: actual, values }
+                        if name == "SendError" && *actual == 0 && *values == vec![value])
+            ));
+            counters.wakeups += 1;
+            channel_performance_observe(host, counters);
+        }
+    }
+
+    fn channel_performance_finish(
+        host: &mut BootstrapHost,
+        started: Instant,
+        initial_allocations: u64,
+        counters: ChannelPerformanceCounters,
+        senders: Vec<RuntimeValue>,
+        receivers: Vec<RuntimeValue>,
+    ) -> ChannelPerformanceSample {
+        let nanos = started.elapsed().as_nanos().max(1);
+        let logical_bytes = counters
+            .peak_logical_bytes
+            .max(channel_performance_logical_bytes(host));
+        channel_performance_close_endpoints(host, senders, receivers);
+        assert!(host.sync_waiters.is_empty());
+        assert!(host.sync_queues.values().all(VecDeque::is_empty));
+        assert!(host.ready_jobs.is_empty());
+        assert!(host.channel_iterator_receivers.is_empty());
+        ChannelPerformanceSample {
+            nanos: u64::try_from(nanos).expect("channel probe duration fits in u64"),
+            operations: u64::try_from(counters.operations)
+                .expect("channel probe operations fit in u64"),
+            blocked: u64::try_from(counters.blocked)
+                .expect("channel probe blocked count fits in u64"),
+            backpressure: u64::try_from(counters.backpressure)
+                .expect("channel probe backpressure count fits in u64"),
+            wakeups: u64::try_from(counters.wakeups)
+                .expect("channel probe wakeup count fits in u64"),
+            allocations: host.next_value.saturating_sub(initial_allocations),
+            logical_bytes,
+            live_handles: channel_performance_live_handles(host),
+            queued_peak: u64::try_from(counters.peak_queued)
+                .expect("channel queue peak fits in u64"),
+        }
+    }
+
+    fn channel_performance_workload(
+        workload: &str,
+        capacity: Option<usize>,
+        producers: usize,
+        consumers: usize,
+    ) -> ChannelPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let initial_allocations = host.next_value;
+        let (mut senders, mut receivers) =
+            channel_performance_endpoints(&mut host, capacity, producers, consumers);
+        let mut counters = ChannelPerformanceCounters::default();
+        channel_performance_observe(&host, &mut counters);
+        let started = Instant::now();
+        match workload {
+            "rendezvous-1-1" | "buffered-1-1" | "rendezvous-n-1" | "buffered-n-1"
+            | "rendezvous-n-m" | "buffered-n-m" => channel_performance_exchange(
+                &mut host,
+                &senders,
+                &receivers,
+                CHANNEL_PERF_BATCH,
+                &mut counters,
+            ),
+            "unbounded-n-m" => {
+                channel_performance_unbounded_burst(&mut host, &senders, &receivers, &mut counters)
+            }
+            "backpressure-buffered" => channel_performance_buffered_backpressure(
+                &mut host,
+                &senders[0],
+                &receivers[0],
+                &mut counters,
+            ),
+            "close-wakeup-senders" => {
+                let receiver = receivers
+                    .pop()
+                    .expect("close wakeup workload needs one receiver");
+                channel_performance_close_wakeup(&mut host, &senders, receiver, &mut counters);
+            }
+            _ => panic!("unknown channel performance workload: {workload}"),
+        }
+        channel_performance_finish(
+            &mut host,
+            started,
+            initial_allocations,
+            counters,
+            std::mem::take(&mut senders),
+            std::mem::take(&mut receivers),
+        )
+    }
+
+    #[test]
+    fn channel_performance_probe() {
+        let workloads = [
+            ("rendezvous-1-1", "1:1", "rendezvous", Some(0), 1, 1),
+            ("buffered-1-1", "1:1", "buffered", Some(1), 1, 1),
+            ("rendezvous-n-1", "n:1", "rendezvous", Some(0), 8, 1),
+            ("buffered-n-1", "n:1", "buffered", Some(8), 8, 1),
+            ("rendezvous-n-m", "n:m", "rendezvous", Some(0), 8, 4),
+            ("buffered-n-m", "n:m", "buffered", Some(8), 8, 4),
+            ("unbounded-n-m", "n:m", "unbounded", None, 8, 4),
+            (
+                "backpressure-buffered",
+                "1:1",
+                "backpressure",
+                Some(1),
+                1,
+                1,
+            ),
+            ("close-wakeup-senders", "n:1", "close-wakeup", Some(0), 8, 1),
+        ];
+        for _ in 0..3 {
+            for (id, _, _, capacity, producers, consumers) in workloads {
+                let sample = channel_performance_workload(id, capacity, producers, consumers);
+                assert!(sample.nanos > 0);
+                assert!(sample.operations > 0);
+                assert!(sample.allocations > 0);
+                assert!(sample.logical_bytes > 0);
+                assert_eq!(sample.live_handles, 0);
+            }
+        }
+        for _ in 0..9 {
+            for (id, topology, mode, capacity, producers, consumers) in workloads {
+                let sample = channel_performance_workload(id, capacity, producers, consumers);
+                assert!(sample.nanos > 0);
+                assert!(sample.operations > 0);
+                assert!(sample.allocations > 0);
+                assert!(sample.logical_bytes > 0);
+                assert_eq!(sample.live_handles, 0);
+                let capacity =
+                    capacity.map_or_else(|| "unbounded".into(), |value| value.to_string());
+                println!(
+                    "TONDO_CHANNEL_PERF\t{id}\t{topology}\t{mode}\t{capacity}\t{producers}\t{consumers}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    sample.nanos,
+                    sample.operations,
+                    sample.blocked,
+                    sample.backpressure,
+                    sample.wakeups,
+                    sample.allocations,
+                    sample.logical_bytes,
+                    sample.live_handles,
+                    sample.queued_peak,
+                );
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct SyncPerformanceSample {
         nanos: u64,
         operations: u64,

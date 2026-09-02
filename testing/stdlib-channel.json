@@ -278,7 +278,7 @@
     "host": "verified-scheduler-and-native-bridge",
     "native_status": "verified-native-runtime-abi",
     "native_aot_lowering": "not-claimed",
-    "algorithmic_fast_paths": "deferred-to-STD-CHANNEL-PERF-001",
+    "algorithmic_fast_paths": "deferred-to-native-targeted-performance-campaign",
     "sources": [
       "crates/tondo-compiler/src/hir.rs",
       "crates/tondo-compiler/src/hir/check.rs",
@@ -319,17 +319,32 @@
     },
     "evidence_report": "target/reliability/evidence/stdlib-channel-implementation.json",
     "required_follow_ups": [
-      "STD-CHANNEL-PERF-001",
-      "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ]
   },
+  "performance": {
+    "task": "STD-CHANNEL-PERF-001",
+    "contract": "testing/stdlib-channel-performance.json",
+    "document": "docs/contracts/stdlib-channel-performance.md",
+    "status": "verified-hosted-vm-baseline",
+    "target": "tondo-vm-hosted",
+    "native_aot": "not-claimed",
+    "workloads": 9,
+    "samples_per_workload": 27
+  },
+  "conformance": {
+    "task": "STD-CHANNEL-CONF-001",
+    "contract": "testing/stdlib-channel-conformance.json",
+    "document": "docs/contracts/stdlib-channel-conformance.md",
+    "status": "verified",
+    "target": "tondo-vm-hosted-and-native-runtime-abi",
+    "cases": 8,
+    "native_aot": "not-claimed"
+  },
   "promotion": {
     "implementation_pending": [
-      "STD-CHANNEL-PERF-001",
-      "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": ["STD-CHANNEL-PERF-001"]
+    "next_blocks": ["STD-CHANNEL-DOC-001"]
   }
 }

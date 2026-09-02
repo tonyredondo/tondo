@@ -211,7 +211,49 @@ with seed 4104.
 This evidence proves model robustness and the current hosted/native regression
 boundary only. It does not change native_aot_lowering: not-claimed or
 public_api_promoted: false, and it does not replace the separate PERF, CONF
-or DOC leaves. STD-CHANNEL-PERF-001 is the next block.
+or DOC leaves. `STD-CHANNEL-PERF-001` and `STD-CHANNEL-CONF-001` are now
+closed; the executable documentation leaf remains.
+
+## VM/native conformance
+
+`STD-CHANNEL-CONF-001` closes the shared observable corpus in
+[`testing/stdlib-channel-conformance.json`](../../testing/stdlib-channel-conformance.json)
+and [`stdlib-channel-conformance.md`](./stdlib-channel-conformance.md). A
+fresh hosted VM process emits eight ordered case lines, including bounded FIFO,
+rendezvous wakeup, terminal drain, closed/error payloads, invalid capacity,
+hosted `select`, close wakeup and deferred panic cleanup. A fresh native
+process runs the same case IDs through the private opaque endpoint ABI and
+checks normalized result tags, payload preservation, waiter cleanup and zero
+live objects.
+
+The native bridge does not expose a select API, so the `select-commit` case
+records that target boundary while the hosted implementation and scheduler
+tests prove the core prepare/commit/rollback path. The separate panic fixture
+checks exit 101 and that `defer receiver.close()` emits its cleanup marker
+before propagation. This conformance evidence covers the host target and
+private ABI only; it does not claim Cranelift AOT lowering, a public FFI layout
+or native fast paths.
+
+## Performance baseline
+
+`STD-CHANNEL-PERF-001` records the scheduler-owned hosted VM baseline in
+[`testing/stdlib-channel-performance.json`](../../testing/stdlib-channel-performance.json)
+and [`stdlib-channel-performance.md`](./stdlib-channel-performance.md). The
+probe measures nine explicit 1:1, n:1 and n:m workloads with rendezvous,
+buffered, unbounded, backpressure and close-wakeup behavior. Three warmups and
+nine repetitions in each of three independent processes produce 27 monotonic
+samples per workload, including median, tail latency, throughput, logical
+memory, queue peak, backpressure, wakeups and cleanup counters.
+
+The report is target-qualified to `tondo-vm-hosted` / `bytecode-vm`. Its
+logical memory excludes allocator overhead and RSS, and its fixture is outside
+timed latency. The independent bounded channel model runs before the probe;
+the probe additionally checks FIFO commit order, intact affine payloads,
+one-wakeup-per-waiter and zero live endpoints after cleanup. Native runtime
+contention, native AOT lowering and algorithmic fast paths remain unmeasured:
+`native AOT` is `not-claimed`, and fast paths are deferred to a comparable
+native-targeted campaign. This baseline is evidence, not a public API
+promotion.
 
 ## Eventos privados de diagnóstico
 
@@ -233,8 +275,8 @@ El contrato excluye `sendAsync`/`receiveAsync`, `waitSend`/`waitReceive`,
 por defecto, clones implícitos, un executor propio y cualquier API pública de
 `select`. La keyword núcleo sigue siendo la única representación de selección.
 
-La implementación pública permanece pendiente de los presupuestos de
-rendimiento, conformidad VM/nativa y documentación ejecutable. El modelo y
-fuzzing de `STD-CHANNEL-TEST-001` ya están cerrados. El contrato ya puede
-alimentar `DIAG-RUNTIME-001`, pero no promociona símbolos runtime ni lowering
-AOT antes de cerrar esas leaves.
+La implementación pública permanece pendiente de documentación ejecutable. El
+modelo/fuzzing, la línea base de rendimiento hosted de `STD-CHANNEL-PERF-001`
+y la conformance VM/native de `STD-CHANNEL-CONF-001` ya están cerrados. El
+siguiente bloque de promoción es `STD-CHANNEL-DOC-001`. El contrato ya puede alimentar
+`DIAG-RUNTIME-001`, pero no promociona símbolos runtime ni lowering AOT.

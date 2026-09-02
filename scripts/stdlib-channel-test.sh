@@ -85,7 +85,7 @@ jq -e '
   and .implementation.native_aot_lowering == "not-claimed"
   and .host.blocking_native_workers_only == true
   and .testing == "testing/stdlib-channel-test.json"
-  and .promotion.next_blocks == ["STD-CHANNEL-PERF-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
 ' testing/stdlib-channel.json >/dev/null
 
 echo "std.channel tests: OK (negative contract cases, ownership, backpressure, select, runtime boundary and fairness anchors)"

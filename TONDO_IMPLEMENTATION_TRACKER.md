@@ -127,8 +127,10 @@ observable VM/native de ocho casos, incluidos aliases, outcomes, orden,
 cursores, snapshots, límites, cleanup y capability `threads`; la campaña no
 promueve fast paths nativos ni lowering AOT genérico. `STD-SYNC-CONF-001` y la
 conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
-con la guía ejecutable; el siguiente trabajo desbloqueado es
-`STD-CHANNEL-PERF-001`. El modelo y
+con la guía ejecutable; `STD-CHANNEL-PERF-001` queda cerrado para la línea
+base de rendimiento hosted; `STD-CHANNEL-CONF-001` también queda cerrado para
+la equivalencia observable VM/native y el siguiente trabajo desbloqueado es
+`STD-CHANNEL-DOC-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6774,8 +6776,8 @@ estas leaves.
   No se crea otro tipo de stream, no se promueve API pública y no se reclama
   lowering AOT. La fixture, negativa y evidencia están en
   `testing/stdlib-channel-async-iter.json` y
-  `docs/contracts/stdlib-channel-async-iter.md`; los siguientes leaves son
-  `STD-CHANNEL-PERF-001`.
+  `docs/contracts/stdlib-channel-async-iter.md`; `STD-CHANNEL-PERF-001` queda
+  cerrado para su campaña hosted.
 - [x] **STD-CHANNEL-TEST-001 — Modelar y fuzzear canales.** Cerrado el modelo
   independiente con ledger de ownership afín, colas FIFO de waiters, select
   prepare/rollback/commit, cancelación, cierre terminal, fairness y wakeups
@@ -6787,12 +6789,35 @@ estas leaves.
   not-claimed`. El contrato y la evidencia están en
   `testing/stdlib-channel-test.json`,
   `docs/contracts/stdlib-channel-test.md` y
-  `scripts/stdlib-channel-test-check.sh`; el siguiente bloque es
-  `STD-CHANNEL-PERF-001`.
-- [ ] **STD-CHANNEL-PERF-001 — Medir canales.** Registrar throughput, tail
-  latency, memoria, wakeups y backpressure con 1:1, N:1 y N:M.
-- [ ] **STD-CHANNEL-CONF-001 — Conformar canales.** Reutilizar el mismo corpus
-  observable sobre VM y nativo, incluidos pánicos/errores y cleanup.
+  `scripts/stdlib-channel-test-check.sh`; la conformance de canales queda
+  cerrada en el bloque siguiente.
+- [x] **STD-CHANNEL-PERF-001 — Medir canales.** Cerrada la campaña
+  target-qualified del VM hosted con nueve workloads explícitos 1:1, n:1 y
+  n:m: rendezvous, buffers, unbounded burst, backpressure y wakeups al cerrar
+  el último receiver. Tres procesos independientes aportan 27 muestras por
+  workload, con latencia/throughput, P95/P99, memoria lógica, queue peak,
+  allocations, backpressure, wakeups y handles vivos. El oráculo independiente
+  de `channel_model` se ejecuta antes de cada campaña y la sonda verifica FIFO
+  por commit, payloads afines intactos, un wakeup por waiter y cleanup sin
+  endpoints vivos. El contrato y el informe son
+  `testing/stdlib-channel-performance.json`,
+  `docs/contracts/stdlib-channel-performance.md` y
+  `target/reliability/evidence/stdlib-channel-performance.json`; el baseline
+  queda limitado a `tondo-vm-hosted` / `bytecode-vm`, mantiene
+  `native_aot: not-claimed` y difiere fast paths a una campaña nativa
+  comparable. El siguiente bloque de ese slice es la conformance compartida.
+- [x] **STD-CHANNEL-CONF-001 — Conformar canales.** Cerrado con un corpus de
+  ocho casos y un fixture de pánico: la VM hosted emite líneas ordenadas para
+  FIFO, rendezvous, errores con payload intacto, capacidad inválida, drenado,
+  wakeups y cleanup diferido; la sonda nativa ejecuta los mismos IDs mediante
+  el ABI privado y exige cero waiters/handles vivos. El caso de `select` queda
+  explícitamente target-qualified porque el bridge nativo no publica una API
+  de selección. La evidencia está en
+  `testing/stdlib-channel-conformance.json`,
+  `docs/contracts/stdlib-channel-conformance.md` y
+  `target/reliability/evidence/stdlib-channel-conformance.json`; no reclama
+  lowering AOT ni layout nativo público. El siguiente bloque es
+  `STD-CHANNEL-DOC-001`.
 - [ ] **STD-CHANNEL-DOC-001 — Documentar canales.** Fijar orden, cierre,
   cancelación, fairness, costes y ejemplos ejecutables de composición.
 
@@ -7697,7 +7722,8 @@ observable VM/native; `STD-SYNC-CONF-001` y `STD-SYNC-DOC-001` también quedan
 cerrados para el corpus común VM/native-bridge y la guía ejecutable; la adaptación
 hosted `Receiver[T] -> AsyncIterator[T]` de `STD-CHANNEL-ASYNC-ITER-001` también
 está cerrada; `STD-CHANNEL-TEST-001` queda cerrado para modelo, regresiones y
-fuzz acotado; el siguiente trabajo crítico es `STD-CHANNEL-PERF-001`. La
+fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
+el siguiente trabajo crítico es `STD-CHANNEL-DOC-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

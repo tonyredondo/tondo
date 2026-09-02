@@ -141,6 +141,18 @@ run_step stdlib-channel-testing-contract \
     scripts/stdlib-channel-test-check.sh
 run_step stdlib-channel-testing-contract-tests \
     scripts/stdlib-channel-test-test.sh
+run_step stdlib-channel-performance-contract \
+    scripts/stdlib-channel-performance-check.sh
+run_step stdlib-channel-performance-contract-tests \
+    scripts/stdlib-channel-performance-test.sh
+run_step stdlib-channel-performance \
+    scripts/stdlib-channel-performance.sh
+run_step stdlib-channel-conformance-contract \
+    scripts/stdlib-channel-conformance-check.sh
+run_step stdlib-channel-conformance-contract-tests \
+    scripts/stdlib-channel-conformance-test.sh
+run_step stdlib-channel-conformance \
+    scripts/stdlib-channel-conformance.sh
 run_step stdlib-sync-contract \
     scripts/stdlib-sync-check.sh
 run_step stdlib-sync-contract-tests \

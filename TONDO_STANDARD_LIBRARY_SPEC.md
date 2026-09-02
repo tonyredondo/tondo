@@ -2286,7 +2286,23 @@ El modelo, las regresiones y el fuzzing acotado de
 [`testing/stdlib-channel-test.json`](./testing/stdlib-channel-test.json) y
 [`docs/contracts/stdlib-channel-test.md`](./docs/contracts/stdlib-channel-test.md)
 ya están verificados para `STD-CHANNEL-TEST-001`. La evidencia no reclama
-lowering AOT de canales ni cambia la obligación de cerrar PERF, CONF y DOC.
+lowering AOT de canales ni cambia la obligación de cerrar CONF y DOC. La línea
+base target-qualified de rendimiento para `STD-CHANNEL-PERF-001` queda
+registrada en
+[`testing/stdlib-channel-performance.json`](./testing/stdlib-channel-performance.json)
+y [`docs/contracts/stdlib-channel-performance.md`](./docs/contracts/stdlib-channel-performance.md):
+nueve workloads explícitos 1:1, n:1 y n:m, tres warmups y 27 muestras por
+workload sobre `tondo-vm-hosted` / `bytecode-vm`, con latencia de cola,
+throughput, memoria lógica, backpressure y wakeups. Esta evidencia no reclama
+contención nativa, fast paths algorítmicos ni lowering AOT; `native_aot` sigue
+`not-claimed`. La conformance observable compartida de
+`STD-CHANNEL-CONF-001` queda registrada en
+[`testing/stdlib-channel-conformance.json`](./testing/stdlib-channel-conformance.json)
+y [`docs/contracts/stdlib-channel-conformance.md`](./docs/contracts/stdlib-channel-conformance.md):
+ocho casos sobre VM hosted y ABI nativo privado cubren FIFO, rendezvous,
+errores con payload intacto, drenado terminal, wakeups, cleanup diferido y el
+límite explícito de `select` nativo. El siguiente bloque es
+`STD-CHANNEL-DOC-001`.
 
 ~~~tondo pseudocode
 pub type Sender[T]

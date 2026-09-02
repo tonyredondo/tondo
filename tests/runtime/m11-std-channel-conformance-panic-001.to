@@ -1,0 +1,20 @@
+import std.channel
+import std.console
+
+fn cleanup_receiver(receiver: channel.Receiver[Int]) {
+    let _ = receiver.close()
+}
+
+fn main(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](1)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    match sender.trySend(9) {
+        ok(_) => ()
+        err(_) => assert(false)
+    }
+    defer cleanup_receiver(receiver)
+    defer console.println("channel-panic-cleanup")
+    sender.close()
+    panic("channel conformance panic")
+}

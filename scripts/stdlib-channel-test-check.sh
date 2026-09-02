@@ -66,7 +66,7 @@ jq -e '
   and .sanitization.native_aot == "not-claimed"
   and .promotion.model_test_fuzz_complete == true
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-CHANNEL-PERF-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
   and .promotion.remaining == []
 ' "$contract" >/dev/null || die "invalid machine-readable channel testing contract"
 
@@ -123,10 +123,8 @@ done
 
 jq -e '
   .testing == "testing/stdlib-channel-test.json"
-  and .promotion.next_blocks == ["STD-CHANNEL-PERF-001"]
+  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
   and .promotion.implementation_pending == [
-    "STD-CHANNEL-PERF-001",
-    "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
   and .implementation.required_follow_ups == .promotion.implementation_pending

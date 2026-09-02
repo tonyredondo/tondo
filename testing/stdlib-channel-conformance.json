@@ -1,0 +1,111 @@
+{
+  "format": "tondo-stdlib-channel-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.channel",
+  "task": "STD-CHANNEL-CONF-001",
+  "status": "verified",
+  "contract": "testing/stdlib-channel.json",
+  "document": "docs/contracts/stdlib-channel-conformance.md",
+  "vm": {
+    "fixture": "tests/runtime/m11-std-channel-conformance-001.to",
+    "command": "cargo run -q -p tondo-cli --locked -- run tests/runtime/m11-std-channel-conformance-001.to",
+    "expected_exit": 0,
+    "expected_stdout": [
+      "bounded-fifo:12:full:closed",
+      "rendezvous-wakeup:7:cleanup",
+      "receiver-drain:45:fifo",
+      "closed-error:9:payload-preserved",
+      "invalid-capacity:rejected",
+      "select-commit:1:6",
+      "closed-wakeup:42:cleanup",
+      "channel-conformance-ok"
+    ],
+    "oracle": "hosted-VM-channel-observable-lines",
+    "panic_fixture": "tests/runtime/m11-std-channel-conformance-panic-001.to",
+    "panic_expected_exit": 101,
+    "panic_expected_stdout": ["channel-panic-cleanup"],
+    "panic_oracle": "deferred-receiver-close-before-panic-propagation"
+  },
+  "native": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "probe": "crates/tondo-native-runtime/examples/channel_shared_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example channel_shared_conformance --locked",
+    "status": "verified-native-runtime-abi",
+    "target_policy": "host-target-only-until-native-aot-channel-lowering",
+    "oracle": "same-case-id-and-normalized-channel-observables"
+  },
+  "rules": {
+    "same_corpus": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "observable": "ordered-case-lines-plus-native-result-tags",
+    "fifo": "commit-order-for-buffered-and-rendezvous-values",
+    "errors": "closed-full-invalid-capacity-and-resource-limit-preserve-payload-or-status",
+    "panic": "deferred-close-before-propagation-and-native-unwind-guard",
+    "cleanup": "zero-live-endpoints-and-no-waiters-before-each-case-result",
+    "select_boundary": "hosted-select-is-covered-by-implementation-leaves;private-native-channel-abi-does-not-expose-select",
+    "native_aot": "not-claimed"
+  },
+  "cases": [
+    {
+      "id": "bounded-fifo",
+      "vm_observable": "bounded-fifo:12:full:closed",
+      "native_expected": {"status":"passed","order":[1,2],"full_payload":3,"closed":true,"cleanup":true}
+    },
+    {
+      "id": "rendezvous-wakeup",
+      "vm_observable": "rendezvous-wakeup:7:cleanup",
+      "native_expected": {"status":"passed","value":7,"wakeups":true,"cleanup":true}
+    },
+    {
+      "id": "receiver-drain",
+      "vm_observable": "receiver-drain:45:fifo",
+      "native_expected": {"status":"passed","pending":[4,5],"fifo":true,"cleanup":true}
+    },
+    {
+      "id": "closed-error",
+      "vm_observable": "closed-error:9:payload-preserved",
+      "native_expected": {"status":"passed","payload":9,"status_code":13,"cleanup":true}
+    },
+    {
+      "id": "invalid-capacity",
+      "vm_observable": "invalid-capacity:rejected",
+      "native_expected": {"status":"passed","negative":true,"resource_limit":true,"cleanup":true}
+    },
+    {
+      "id": "select-commit",
+      "vm_observable": "select-commit:1:6",
+      "native_expected": {"status":"passed","delegated":"hosted-select-implementation-leaf","native_abi":"private-channel-only"}
+    },
+    {
+      "id": "closed-wakeup",
+      "vm_observable": "closed-wakeup:42:cleanup",
+      "native_expected": {"status":"passed","payload":42,"wakeups":true,"cleanup":true}
+    },
+    {
+      "id": "panic-cleanup",
+      "vm_observable": "panic-exit:101:channel-panic-cleanup",
+      "native_expected": {"status":"passed","panic":true,"cleanup":"exactly-once"}
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-vm-fixture",
+    "missing-vm-panic-fixture",
+    "missing-native-probe",
+    "corpus-id-drift",
+    "native-case-missing",
+    "native-case-duplicate",
+    "observable-line-drift",
+    "wrong-error-status",
+    "panic-does-not-close-receiver",
+    "closed-wakeup-leaves-waiter",
+    "receiver-close-drops-pending-values",
+    "physical-path-in-evidence",
+    "native-aot-lowering-claim",
+    "select-native-api-claim"
+  ],
+  "report": "target/reliability/evidence/stdlib-channel-conformance.json",
+  "next_blocks": ["STD-CHANNEL-DOC-001"]
+}

@@ -1,0 +1,163 @@
+import std.channel
+import std.console
+
+fn rendezvous_sender(sender: channel.Sender[Int], value: Int) suspends {
+    var owned = sender
+    match owned.send(value) {
+        ok(_) => ()
+        err(_) => panic("rendezvous send did not commit")
+    }
+}
+
+fn closed_sender(sender: channel.Sender[Int], value: Int) suspends {
+    var owned = sender
+    match owned.send(value) {
+        ok(_) => panic("closed send unexpectedly committed")
+        err(channel.SendError.Closed(payload)) => assert(payload == value)
+        err(channel.SendError.ResourceLimit(_)) => panic("closed send reported a resource limit")
+    }
+}
+
+fn yield_once() suspends {}
+
+fn bounded_fifo_case(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](2)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    match sender.trySend(1) {
+        ok(_) => ()
+        err(_) => assert(false)
+    }
+    match sender.trySend(2) {
+        ok(_) => ()
+        err(_) => assert(false)
+    }
+    match sender.trySend(3) {
+        ok(_) => assert(false)
+        err(channel.TrySendError.Full(value)) => assert(value == 3)
+        err(channel.TrySendError.Closed(_)) => assert(false)
+        err(channel.TrySendError.ResourceLimit(_)) => assert(false)
+    }
+    match receiver.tryReceive() {
+        channel.TryReceive.Item(value) => assert(value == 1)
+        _ => assert(false)
+    }
+    match receiver.tryReceive() {
+        channel.TryReceive.Item(value) => assert(value == 2)
+        _ => assert(false)
+    }
+    sender.close()
+    match receiver.tryReceive() {
+        channel.TryReceive.Closed => ()
+        _ => assert(false)
+    }
+    let drained = receiver.close()
+    assert(drained.length() == 0)
+    console.println("bounded-fifo:12:full:closed")
+}
+
+fn rendezvous_case(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](0)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    scope {
+        let child = spawn rendezvous_sender(sender, 7)
+        match receiver.receive() {
+            some(value) => assert(value == 7)
+            none => assert(false)
+        }
+        let _ = await child
+    }
+    let drained = receiver.close()
+    assert(drained.length() == 0)
+    console.println("rendezvous-wakeup:7:cleanup")
+}
+
+fn receiver_drain_case(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](2)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    for value in [4, 5] {
+        match sender.trySend(value) {
+            ok(_) => ()
+            err(_) => assert(false)
+        }
+    }
+    sender.close()
+    let drained = receiver.close()
+    var order = 0
+    for value in drained {
+        order = order * 10 + value
+    }
+    assert(order == 45)
+    console.println("receiver-drain:45:fifo")
+}
+
+fn closed_error_case(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](1)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    let drained = receiver.close()
+    assert(drained.length() == 0)
+    match sender.trySend(9) {
+        ok(_) => assert(false)
+        err(channel.TrySendError.Closed(value)) => assert(value == 9)
+        err(channel.TrySendError.Full(_)) => assert(false)
+        err(channel.TrySendError.ResourceLimit(_)) => assert(false)
+    }
+    sender.close()
+    console.println("closed-error:9:payload-preserved")
+}
+
+fn invalid_capacity_case() {
+    match channel.bounded[Int](-1) {
+        ok(_) => assert(false)
+        err(channel.ChannelError.InvalidCapacity) => ()
+        err(channel.ChannelError.ResourceLimit) => assert(false)
+    }
+    console.println("invalid-capacity:rejected")
+}
+
+fn select_case(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](1)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    let arm = select {
+        sender.send(6) => 1
+        else => 2
+    }
+    assert(arm == 1)
+    match receiver.receive() {
+        some(value) => assert(value == 6)
+        none => assert(false)
+    }
+    sender.close()
+    let drained = receiver.close()
+    assert(drained.length() == 0)
+    console.println("select-commit:1:6")
+}
+
+fn closed_wakeup_case(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](0)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    scope {
+        let child = spawn closed_sender(sender, 42)
+        yield_once()
+        let drained = receiver.close()
+        assert(drained.length() == 0)
+        let _ = await child
+    }
+    console.println("closed-wakeup:42:cleanup")
+}
+
+fn main(): !channel.ChannelError {
+    let _ = bounded_fifo_case()?
+    let _ = rendezvous_case()?
+    let _ = receiver_drain_case()?
+    let _ = closed_error_case()?
+    invalid_capacity_case()
+    let _ = select_case()?
+    let _ = closed_wakeup_case()?
+    console.println("channel-conformance-ok")
+}
