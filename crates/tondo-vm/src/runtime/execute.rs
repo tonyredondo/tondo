@@ -3237,6 +3237,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_join_completion(
         &mut self,
         frame: usize,
