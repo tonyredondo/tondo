@@ -64,6 +64,7 @@ jq -n \
       blocking_pool:{status:"capability-missing-until-host-gate",host_workers:false},
       actor:{mailbox_handler_execution:false,actor_ref_acquisition:false},
       public_boundary:{api_promoted:false,native_runtime:"not-claimed",native_aot_lowering:"not-claimed"},
+      regressions:["crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"],
       open_decisions:["The locked surface has Pool.actor -> Actor but no canonical Actor -> ActorRef acquisition operation"],
       remaining:["actor-mailbox-handler-execution","actor-ref-acquisition-contract-decision","STD-EXEC-HOST-001","STD-EXEC-TEST-001","STD-EXEC-PERF-001","STD-EXEC-CONF-001","STD-EXEC-DOC-001"],
       divergences:[]

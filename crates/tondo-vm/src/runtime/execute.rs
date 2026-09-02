@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::bytecode::{
     ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeAwaitable,
@@ -849,6 +849,7 @@ struct Engine<'program, 'host> {
     onces: BTreeMap<u64, RuntimeOnceState>,
     pools: BTreeMap<u64, RuntimePoolState>,
     pool_running: BTreeMap<usize, u64>,
+    executor_job_tasks: BTreeSet<usize>,
     actors: BTreeMap<u64, RuntimeActorState>,
     next_executor_id: u64,
     completion_order: BTreeMap<usize, u64>,
@@ -900,6 +901,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             onces: BTreeMap::new(),
             pools: BTreeMap::new(),
             pool_running: BTreeMap::new(),
+            executor_job_tasks: BTreeSet::new(),
             actors: BTreeMap::new(),
             next_executor_id: 1,
             completion_order: BTreeMap::new(),
@@ -1950,6 +1952,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 let parent_scope = self.tasks[child].parent_scope;
                 let join_error = self.join_error_type(owner.ty)?;
+                let executor_job = self.executor_job_tasks.contains(&child);
                 let completion = self
                     .take_task_completion(child)?
                     .ok_or_else(|| VmError::invariant("woken Join has no completion"))?;
@@ -1960,6 +1963,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     target,
                     unwind,
                     join_error,
+                    executor_job,
                 )?;
                 if let Some(scope) = parent_scope
                     && self.task_scopes.get(scope).is_some_and(Option::is_some)
@@ -3241,10 +3245,15 @@ impl<'program, 'host> Engine<'program, 'host> {
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
         join_error: BytecodeTypeId,
+        executor_job: bool,
     ) -> Result<(), VmError> {
         match completion {
             TaskCompletion::Returned(value) => {
-                let value = self.logical_join_value(value, join_error)?;
+                let value = if executor_job {
+                    self.logical_join_value(value, join_error)?
+                } else {
+                    value
+                };
                 self.write_place(frame, destination, value)?;
                 self.jump(frame, target);
             }
@@ -5188,6 +5197,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             .as_ref()
             .map(|owner| self.join_error_type(owner.ty))
             .transpose()?;
+        let executor_job = self.executor_job_tasks.contains(&winner_arm.task);
         for (index, arm) in region.arms.into_iter().enumerate() {
             if index != winner_index && arm.owned {
                 self.discard_task_completion(arm.task)?;
@@ -5211,9 +5221,13 @@ impl<'program, 'host> Engine<'program, 'host> {
             .ok_or_else(|| VmError::invariant("select winner has no bytecode arm"))?;
         match completion {
             TaskCompletion::Returned(value) => {
-                let value = match join_error {
-                    Some(error) => self.logical_join_value(value, error)?,
-                    None => value,
+                let value = if executor_job {
+                    match join_error {
+                        Some(error) => self.logical_join_value(value, error)?,
+                        None => value,
+                    }
+                } else {
+                    value
                 };
                 if let Some(payload) = arm.payload() {
                     self.write_place(frame, payload, value)?;
@@ -5725,6 +5739,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 *target,
                                 *unwind,
                                 join_error,
+                                self.executor_job_tasks.contains(&join.task),
                             )?;
                             if let Some(scope) = parent_scope
                                 && self.task_scopes.get(scope).is_some_and(Option::is_some)
@@ -11111,6 +11126,7 @@ impl Engine<'_, '_> {
             .ok_or_else(|| VmError::invariant("executor job targets a missing task scope"))?
             .children
             .push(task);
+        self.executor_job_tasks.insert(task);
         self.pools
             .get_mut(&pool)
             .ok_or_else(|| VmError::invariant("executor job targets an unknown pool"))?

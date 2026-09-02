@@ -347,7 +347,8 @@
         "scripts/stdlib-executor-implementation-check.sh",
         "scripts/stdlib-executor-implementation-test.sh",
         "crates/tondo-vm/src/runtime/execute.rs::logical_join_value",
-        "crates/tondo-vm/src/runtime/execute.rs::begin_executor_pool_lifecycle"
+        "crates/tondo-vm/src/runtime/execute.rs::begin_executor_pool_lifecycle",
+        "crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"
       ],
       "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
       "open_decision": "The locked surface has Pool.actor -> Actor but no canonical Actor -> ActorRef acquisition operation",

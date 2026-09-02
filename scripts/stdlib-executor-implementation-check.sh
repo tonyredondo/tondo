@@ -86,6 +86,7 @@ for marker in \
     'executor_actor_error_result' \
     'RuntimeHostValueKind::ExecutorPool' \
     'RuntimeActorState' \
+    'executor_job_tasks' \
     'join_error_type' \
     'logical_join_value' \
     'is_temporary_join_result'; do
