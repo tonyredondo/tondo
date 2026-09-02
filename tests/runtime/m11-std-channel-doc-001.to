@@ -1,0 +1,216 @@
+import std.channel
+import std.console
+
+fn send_one(sender: channel.Sender[Int], value: Int) suspends {
+    var owned = sender
+    match owned.send(value) {
+        ok(_) => ()
+        err(_) => panic("fan-out send failed")
+    }
+}
+
+fn fan_out_fan_in(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](2)?
+    var sender = endpoints.0
+    let receiver = endpoints.1
+    let second_sender = sender.fork()?
+    scope {
+        let first = spawn send_one(sender, 1)
+        let second = spawn send_one(second_sender, 2)
+        var total = 0
+        let first_value = match receiver.receive() {
+            some(value) => value
+            none => panic("fan-out receiver closed")
+        }
+        let second_value = match receiver.receive() {
+            some(value) => value
+            none => panic("fan-out receiver closed")
+        }
+        total += first_value
+        total += second_value
+        let _ = await first
+        let _ = await second
+        assert(total == 3)
+    }
+    let drained = receiver.close()
+    assert(drained.length() == 0)
+}
+
+fn double_stage(input: channel.Receiver[Int], output: channel.Sender[Int]) suspends {
+    var source = input
+    var sink = output
+    for _ in [0, 1] {
+        match source.receive() {
+            some(value) => match sink.send(value * 2) {
+                ok(_) => ()
+                err(_) => panic("pipeline output closed")
+            }
+            none => panic("pipeline input closed")
+        }
+    }
+    let pending = source.close()
+    assert(pending.length() == 0)
+    sink.close()
+}
+
+fn pipeline_backpressure(): !channel.ChannelError {
+    let input = channel.bounded[Int](1)?
+    let output = channel.bounded[Int](1)?
+    let producer = input.0
+    let source = input.1
+    let sink = output.0
+    let result = output.1
+    scope {
+        let stage = spawn double_stage(source, sink)
+        match producer.send(3) {
+            ok(_) => ()
+            err(_) => panic("pipeline input rejected")
+        }
+        match producer.send(4) {
+            ok(_) => ()
+            err(_) => panic("pipeline input rejected")
+        }
+        producer.close()
+        match result.receive() {
+            some(value) => assert(value == 6)
+            none => panic("pipeline output closed")
+        }
+        match result.receive() {
+            some(value) => assert(value == 8)
+            none => panic("pipeline output closed")
+        }
+        let _ = await stage
+    }
+    let drained = result.close()
+    assert(drained.length() == 0)
+}
+
+fn yield_once() suspends {}
+
+fn waiting_send(sender: channel.Sender[Int], value: Int) suspends {
+    var owned = sender
+    match owned.send(value) {
+        ok(_) => panic("cancelled send committed")
+        err(channel.SendError.Closed(payload)) => assert(payload == value)
+        err(channel.SendError.ResourceLimit(_)) => panic("cancelled send hit limit")
+    }
+}
+
+fn select_cancel_safe_multichannel_reference(): !channel.ChannelError {
+    let selected = channel.bounded[Int](1)?
+    let selected_sender = selected.0
+    let selected_receiver = selected.1
+    match selected_sender.trySend(7) {
+        ok(_) => ()
+        err(_) => panic("select setup failed")
+    }
+    let arm = select {
+        selected_receiver.receive() => 2
+        else => 3
+    }
+    assert(arm == 2)
+    selected_sender.close()
+    let selected_drained = selected_receiver.close()
+    assert(selected_drained.length() == 0)
+
+    let empty = channel.bounded[Int](1)?
+    let empty_sender = empty.0
+    let empty_receiver = empty.1
+    let empty_arm = select {
+        empty_receiver.receive() => 1
+        else => 2
+    }
+    assert(empty_arm == 2)
+    empty_sender.close()
+    let empty_drained = empty_receiver.close()
+    assert(empty_drained.length() == 0)
+
+    let rendezvous = channel.bounded[Int](0)?
+    let blocked_sender = rendezvous.0
+    let blocked_receiver = rendezvous.1
+    scope {
+        let child = spawn waiting_send(blocked_sender, 9)
+        yield_once()
+        let drained = blocked_receiver.close()
+        assert(drained.length() == 0)
+        let _ = await child
+    }
+}
+
+fn select_cancel_safe(): !channel.ChannelError {
+    let selected = channel.bounded[Int](1)?
+    let selected_sender = selected.0
+    let selected_receiver = selected.1
+    let arm = select {
+        selected_sender.send(7) => 1
+    }
+    assert(arm == 1)
+    let selected_value = match selected_receiver.receive() {
+        some(value) => value
+        none => panic("selected value disappeared")
+    }
+    assert(selected_value == 7)
+    selected_sender.close()
+    let selected_drained = selected_receiver.close()
+    assert(selected_drained.length() == 0)
+
+    let rendezvous = channel.bounded[Int](0)?
+    let blocked_sender = rendezvous.0
+    let blocked_receiver = rendezvous.1
+    scope {
+        let child = spawn waiting_send(blocked_sender, 9)
+        yield_once()
+        let drained = blocked_receiver.close()
+        assert(drained.length() == 0)
+        let _ = await child
+    }
+}
+
+fn close_and_drain(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](2)?
+    var receiver = endpoints.1
+    let sender = endpoints.0
+    let other = receiver.fork()?
+    match sender.trySend(11) {
+        ok(_) => ()
+        err(_) => panic("drain setup failed")
+    }
+    match sender.trySend(12) {
+        ok(_) => ()
+        err(_) => panic("drain setup failed")
+    }
+    sender.close()
+    let first = receiver.close()
+    assert(first.length() == 0)
+    let last = other.close()
+    assert(last == [11, 12])
+}
+
+fn discardable_iteration(): !channel.ChannelError {
+    let endpoints = channel.bounded[Int](2)?
+    let sender = endpoints.0
+    let receiver = endpoints.1
+    match sender.trySend(1) {
+        ok(_) => ()
+        err(_) => panic("iteration setup failed")
+    }
+    match sender.trySend(2) {
+        ok(_) => ()
+        err(_) => panic("iteration setup failed")
+    }
+    sender.close()
+    var total = 0
+    for value in receiver {
+        total += value
+    }
+    assert(total == 3)
+}
+
+fn main(): !channel.ChannelError {
+    let _ = fan_out_fan_in()?
+    let _ = pipeline_backpressure()?
+    let _ = select_cancel_safe()?
+    let _ = close_and_drain()?
+    let _ = discardable_iteration()?
+    console.println("channel-doc-ok")
+}

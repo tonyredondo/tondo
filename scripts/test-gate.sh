@@ -153,6 +153,10 @@ run_step stdlib-channel-conformance-contract-tests \
     scripts/stdlib-channel-conformance-test.sh
 run_step stdlib-channel-conformance \
     scripts/stdlib-channel-conformance.sh
+run_step stdlib-channel-documentation-contract \
+    scripts/stdlib-channel-doc-check.sh
+run_step stdlib-channel-documentation-contract-tests \
+    scripts/stdlib-channel-doc-test.sh
 run_step stdlib-sync-contract \
     scripts/stdlib-sync-check.sh
 run_step stdlib-sync-contract-tests \

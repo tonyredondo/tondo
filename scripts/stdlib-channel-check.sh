@@ -162,9 +162,7 @@ jq -e '
   and .implementation.native_probe == {path:"crates/tondo-native-runtime/examples/channel_conformance.rs",status:"passed",cases:4,target_policy:"host-target-only-until-native-aot-channel-lowering"}
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-channel-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == [
-    "STD-CHANNEL-DOC-001"
-  ]
+  and .implementation.required_follow_ups == []
   and .performance == {
     task: "STD-CHANNEL-PERF-001",
     contract: "testing/stdlib-channel-performance.json",
@@ -184,10 +182,32 @@ jq -e '
     cases: 8,
     native_aot: "not-claimed"
   }
-  and .promotion.implementation_pending == [
-    "STD-CHANNEL-DOC-001"
-  ]
-  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
+  and .documentation == {
+    task: "STD-CHANNEL-DOC-001",
+    status: "verified",
+    document: "docs/contracts/stdlib-channel.md",
+    fixture: "tests/runtime/m11-std-channel-doc-001.to",
+    command: "scripts/stdlib-channel-doc-check.sh",
+    expected_stdout: "channel-doc-ok",
+    examples: [
+      "fan-out-fan-in",
+      "pipeline-backpressure",
+      "select-cancel-safe",
+      "close-and-drain",
+      "discardable-iteration"
+    ],
+    sections: [
+      "surface",
+      "ordering",
+      "closure",
+      "cancellation",
+      "fairness",
+      "costs",
+      "composition-examples"
+    ]
+  }
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-EXEC-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel contract"
 
 for path in \
@@ -196,6 +216,11 @@ for path in \
     docs/contracts/stdlib-channel-test.md \
     docs/contracts/stdlib-channel-performance.md \
     docs/contracts/stdlib-channel-conformance.md \
+    scripts/stdlib-channel-doc-check.sh \
+    scripts/stdlib-channel-doc-test.sh \
+    tests/runtime/m11-std-channel-doc-001.to \
+    tests/runtime/m11-std-channel-doc-001.stdout \
+    tests/runtime/m11-std-channel-doc-001.exit \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
@@ -211,7 +236,15 @@ for marker in \
     'channel.send.rollback' \
     'verified-scheduler-and-native-bridge' \
     'stdlib-channel-test.json' \
-    'STD-CHANNEL-IMPL-001'; do
+    'STD-CHANNEL-IMPL-001' \
+    'STD-CHANNEL-DOC-001' \
+    'STD-EXEC-IMPL-001' \
+    'stdlib-channel-doc-check.sh' \
+    'fan-out-fan-in' \
+    'pipeline-backpressure' \
+    'select-cancel-safe' \
+    'close-and-drain' \
+    'discardable-iteration'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-channel.md" \
         || die "contract document misses marker: $marker"
 done
@@ -222,5 +255,7 @@ grep -Fq 'testing/stdlib-channel-performance.json' "$root/TONDO_STANDARD_LIBRARY
     || die "main stdlib spec does not link the channel performance contract"
 grep -Fq 'testing/stdlib-channel-conformance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the channel conformance contract"
+grep -Fq 'stdlib-channel-doc-check.sh' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the channel documentation checker"
 
 echo "std.channel contract: OK (typed endpoints; bounded/unbounded backpressure; cancel-safe select; FIFO fairness)"

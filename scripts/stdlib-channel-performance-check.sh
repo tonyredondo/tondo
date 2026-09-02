@@ -128,9 +128,9 @@ jq -e '
   and .performance.workloads == 9
   and .performance.samples_per_workload == 27
   and .implementation.algorithmic_fast_paths == "deferred-to-native-targeted-performance-campaign"
-  and .implementation.required_follow_ups == ["STD-CHANNEL-DOC-001"]
-  and .promotion.implementation_pending == ["STD-CHANNEL-DOC-001"]
-  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
+  and .implementation.required_follow_ups == []
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-EXEC-IMPL-001"]
 ' testing/stdlib-channel.json >/dev/null || die "parent channel registry has a stale performance frontier"
 
 jq -e '

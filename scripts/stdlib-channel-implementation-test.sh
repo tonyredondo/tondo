@@ -40,7 +40,7 @@ expect_failure missing-native-case \
     env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/missing-native-case.json" \
     scripts/stdlib-channel-implementation-check.sh
 
-jq '.implementation.required_follow_ups = .implementation.required_follow_ups[1:]' \
+jq '.implementation.required_follow_ups = ["STD-CHANNEL-DOC-001"]' \
     testing/stdlib-channel.json >"$tmp_dir/missing-follow-up.json"
 expect_failure missing-follow-up \
     env TONDO_STDLIB_CHANNEL_CONTRACT="$tmp_dir/missing-follow-up.json" \

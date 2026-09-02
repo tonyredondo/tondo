@@ -6,8 +6,8 @@ The machine-readable contract is
 [`testing/stdlib-channel-async-iter.json`](../../testing/stdlib-channel-async-iter.json).
 The parent channel contract remains
 [`testing/stdlib-channel.json`](../../testing/stdlib-channel.json); channel
-model/fuzz, performance, conformance and public documentation leaves remain
-separate tracker tasks.
+model/fuzz, performance, conformance and executable documentation are separate
+tracker leaves, with `STD-CHANNEL-DOC-001` now closed.
 
 This leaf verifies the hosted VM path over the existing scheduler-owned channel
 state. It does not add a stream type, a `for await` spelling, a channel-specific

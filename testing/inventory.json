@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "b279acc05ebc07994ecdc43c0740b763246fc0946e46d34b06c8c5d1032bb346"
+      "sha256": "586fbc2363fb0499e89657f4f602af31ad6b748e27c8ecf50355077f249c2202"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,15 +34,15 @@
     }
   ],
   "summary": {
-    "logical_tests": 2732,
-    "repetitions": 3044,
-    "physical_sources": 567,
-    "unique_source_hashes": 919,
+    "logical_tests": 2733,
+    "repetitions": 3045,
+    "physical_sources": 568,
+    "unique_source_hashes": 920,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 69,
       "draft-contract": 38,
-      "fixture": 186,
+      "fixture": 187,
       "fuzz-target": 10,
       "rust-test": 1904,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 10,
       "draft-pending": 38,
-      "executable": 2662,
+      "executable": 2663,
       "non-executable": 22
     },
     "by_phase": {
@@ -71,7 +71,7 @@
       "protocol": 70,
       "reliability": 136,
       "resolution": 27,
-      "runtime": 328,
+      "runtime": 329,
       "semantic": 899,
       "testing": 38,
       "tooling": 4
@@ -15101,6 +15101,27 @@
         "tests/runtime/m11-std-channel-conformance-panic-001.codes",
         "tests/runtime/m11-std-channel-conformance-panic-001.exit",
         "tests/runtime/m11-std-channel-conformance-panic-001.stdout"
+      ]
+    },
+    {
+      "id": "fixture:runtime/m11-std-channel-doc-001",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "runtime",
+      "source": "tests/runtime/m11-std-channel-doc-001.to",
+      "fixture": "runtime/m11-std-channel-doc-001",
+      "group": "runtime",
+      "requirements": [],
+      "oracle": "exit+stdout+stderr+diagnostics",
+      "repetitions": 1,
+      "source_sha256": "d133ecb876b2789ffde3a577027b0c798eb2b04df50950cc83582daf64acb053",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "tests/runtime/m11-std-channel-doc-001.exit",
+        "tests/runtime/m11-std-channel-doc-001.stdout"
       ]
     },
     {

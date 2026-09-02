@@ -1,11 +1,13 @@
 # Contrato de `std.channel`
 
-**Estado:** contrato `contract-locked` para STD-0.1B, cerrado por
-`STD-CONC-001`. El registro machine-readable está en
+**Estado:** contrato `contract-locked` para STD-0.1B, con la guía ejecutable
+cerrada por `STD-CHANNEL-DOC-001`. El registro machine-readable está en
 [`testing/stdlib-channel.json`](../../testing/stdlib-channel.json) y la
 superficie canónica completa en
 [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
 Este cierre fija la semántica; no afirma que el runtime público exista todavía.
+La semántica base quedó sellada por `STD-CONC-001`; esta hoja añade la guía
+ejecutable sin cambiar ese contrato.
 
 `std.channel` es la única abstracción de productor/consumidor con backpressure
 de Tondo. Reutiliza el scheduler y la expresión núcleo `select`, no crea un
@@ -190,6 +192,78 @@ que el caller puede recuperar los mensajes pendientes en vez de perder
 ownership. No existe `for await`, `AsyncChannel`, materialización automática ni
 un `collect` específico del canal.
 
+## Costes y límites
+
+El coste de una operación que ya puede comprometerse es proporcional al
+trabajo de su cola local: `send`/`receive` sobre un buffer acotado hacen una
+inserción o extracción FIFO y `trySend`/`tryReceive` no crean una espera. El
+registro y la cancelación de waiters pueden recorrer la cola de operaciones
+compatibles; no se presenta esa ruta como una garantía de latencia constante.
+`select` inspecciona sus brazos en la rotación del núcleo y el coste crece con
+el número de brazos.
+
+La memoria lógica de un canal acotado queda limitada por su capacidad más los
+waiters registrados. `unbounded()` sigue estando sujeto al límite de recursos
+del runtime y devuelve `ResourceLimit(value)` antes de aceptar un payload que
+no pueda conservar. El cierre libera endpoints, waiters y valores pendientes
+según las reglas de `Cierre y estados`; no hay polling oculto, buffer infinito
+ni executor implícito.
+
+La campaña de rendimiento de
+[STD-CHANNEL-PERF-001](./stdlib-channel-performance.md) mide la VM hosted y
+no convierte estas reglas en una promesa de rendimiento nativo o AOT. Los
+costes del bridge nativo privado y de cualquier lowering Cranelift futuro deben
+medirse en un target comparable antes de promocionarse.
+
+## Ejemplos ejecutables de composición
+
+La guía de uso se verifica con
+[`tests/runtime/m11-std-channel-doc-001.to`](../../tests/runtime/m11-std-channel-doc-001.to)
+y sus sidecars `.stdout`/`.exit`. El fixture conserva una sola forma canónica:
+constructores `bounded`, endpoints explícitos, llamadas directas que esperan,
+`select` núcleo y `scope` para joins. Las cinco familias son:
+
+| ID | Función del fixture | Composición que fija |
+| --- | --- | --- |
+| `fan-out-fan-in` | `fan_out_fan_in` | `Sender.fork`, dos productores y un receiver que suma resultados |
+| `pipeline-backpressure` | `pipeline_backpressure` | dos canales acotados, etapa intermedia y backpressure de un elemento |
+| `select-cancel-safe` | `select_cancel_safe` | `select` sobre un envío listo y cierre que despierta un sender bloqueado |
+| `close-and-drain` | `close_and_drain` | último receiver, drenado FIFO y recuperación de ownership |
+| `discardable-iteration` | `discardable_iteration` | `for value in receiver`, cierre del sender y descarte seguro |
+
+Los ejemplos usan las firmas canónicas
+`pub fn Sender.send(ref self, value: T): Unit ! SendError[T] selectable`,
+`pub fn Receiver.receive(ref self): T? selectable`,
+`pub fn Sender.close(self): Unit` y
+`pub fn Receiver.close(self): Array[T]`. El primer ejemplo hace explícito el
+`fork` para que ningún endpoint se copie implícitamente; el pipeline muestra
+que el productor puede continuar mientras la etapa libera capacidad al
+consumidor. `close-and-drain` deja el array vacío para el primer receiver y
+devuelve `[11, 12]` al último, por lo que la regla de cierre no queda solo en
+prosa.
+
+`select-cancel-safe` verifica en la VM hosted el commit de un brazo listo y,
+en un rendezvous separado, que cerrar el receiver despierta el `send` pendiente
+con `Closed(value)` sin perder el payload. La preparación/rollback de varios
+brazos y la rotación de empates están cubiertas por el modelo independiente y
+la conformance; esta guía no inventa una API de selección ni afirma que el
+bridge nativo privado publique `select`.
+
+La comprobación reproducible es:
+
+~~~text
+scripts/stdlib-channel-doc-check.sh
+cargo run -q -p tondo-cli --locked -- run tests/runtime/m11-std-channel-doc-001.to
+channel-doc-ok
+~~~
+
+El checker valida el documento, el registro
+[`testing/stdlib-channel.json`](../../testing/stdlib-channel.json), las cinco
+funciones del fixture y los sidecars (`exit = 0`, stdout exacto
+`channel-doc-ok`). También exige que el siguiente bloque sea
+`STD-EXEC-IMPL-001`. Esta evidencia es una guía ejecutable de la VM hosted; no
+promociona símbolos runtime, un layout ABI ni lowering AOT.
+
 ## Reliability model and fuzzing
 
 STD-CHANNEL-TEST-001 is closed at the independent model and regression
@@ -210,9 +284,9 @@ with seed 4104.
 
 This evidence proves model robustness and the current hosted/native regression
 boundary only. It does not change native_aot_lowering: not-claimed or
-public_api_promoted: false, and it does not replace the separate PERF, CONF
-or DOC leaves. `STD-CHANNEL-PERF-001` and `STD-CHANNEL-CONF-001` are now
-closed; the executable documentation leaf remains.
+public_api_promoted: false, and it does not replace the separate PERF or CONF
+leaves. `STD-CHANNEL-PERF-001`, `STD-CHANNEL-CONF-001` and the executable
+documentation leaf `STD-CHANNEL-DOC-001` are now closed.
 
 ## VM/native conformance
 
@@ -275,8 +349,9 @@ El contrato excluye `sendAsync`/`receiveAsync`, `waitSend`/`waitReceive`,
 por defecto, clones implícitos, un executor propio y cualquier API pública de
 `select`. La keyword núcleo sigue siendo la única representación de selección.
 
-La implementación pública permanece pendiente de documentación ejecutable. El
-modelo/fuzzing, la línea base de rendimiento hosted de `STD-CHANNEL-PERF-001`
-y la conformance VM/native de `STD-CHANNEL-CONF-001` ya están cerrados. El
-siguiente bloque de promoción es `STD-CHANNEL-DOC-001`. El contrato ya puede alimentar
-`DIAG-RUNTIME-001`, pero no promociona símbolos runtime ni lowering AOT.
+La guía ejecutable de `STD-CHANNEL-DOC-001` queda cerrada: fija orden, cierre,
+cancelación, fairness, costes y cinco composiciones con fixture y sidecars
+verificados. El contrato ya puede alimentar `DIAG-RUNTIME-001`, pero no
+promociona símbolos runtime ni lowering AOT. El siguiente bloque secuencial es
+`STD-EXEC-IMPL-001`, que deberá reutilizar Group, async estructurado y channels
+sin crear un segundo tipo `Task` público.

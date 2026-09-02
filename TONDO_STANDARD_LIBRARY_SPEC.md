@@ -2286,7 +2286,7 @@ El modelo, las regresiones y el fuzzing acotado de
 [`testing/stdlib-channel-test.json`](./testing/stdlib-channel-test.json) y
 [`docs/contracts/stdlib-channel-test.md`](./docs/contracts/stdlib-channel-test.md)
 ya están verificados para `STD-CHANNEL-TEST-001`. La evidencia no reclama
-lowering AOT de canales ni cambia la obligación de cerrar CONF y DOC. La línea
+lowering AOT de canales y conserva cerradas las hojas CONF y DOC. La línea
 base target-qualified de rendimiento para `STD-CHANNEL-PERF-001` queda
 registrada en
 [`testing/stdlib-channel-performance.json`](./testing/stdlib-channel-performance.json)
@@ -2301,8 +2301,12 @@ contención nativa, fast paths algorítmicos ni lowering AOT; `native_aot` sigue
 y [`docs/contracts/stdlib-channel-conformance.md`](./docs/contracts/stdlib-channel-conformance.md):
 ocho casos sobre VM hosted y ABI nativo privado cubren FIFO, rendezvous,
 errores con payload intacto, drenado terminal, wakeups, cleanup diferido y el
-límite explícito de `select` nativo. El siguiente bloque es
-`STD-CHANNEL-DOC-001`.
+límite explícito de `select` nativo. La guía ejecutable de
+`STD-CHANNEL-DOC-001` queda cerrada en
+[`docs/contracts/stdlib-channel.md`](./docs/contracts/stdlib-channel.md), con
+cinco composiciones y el checker
+`scripts/stdlib-channel-doc-check.sh`. El siguiente bloque secuencial es
+`STD-EXEC-IMPL-001`.
 
 ~~~tondo pseudocode
 pub type Sender[T]

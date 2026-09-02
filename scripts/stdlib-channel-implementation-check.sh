@@ -36,15 +36,14 @@ jq -e '
   and .implementation.native_probe == {path:"crates/tondo-native-runtime/examples/channel_conformance.rs",status:"passed",cases:4,target_policy:"host-target-only-until-native-aot-channel-lowering"}
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-channel-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == [
-    "STD-CHANNEL-DOC-001"
-  ]
+  and .implementation.required_follow_ups == []
   and .promotion.implementation_pending == .implementation.required_follow_ups
   and .performance.task == "STD-CHANNEL-PERF-001"
   and .performance.status == "verified-hosted-vm-baseline"
   and .performance.target == "tondo-vm-hosted"
   and .performance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-EXEC-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel implementation contract"
 
 for path in \
@@ -79,6 +78,20 @@ for path in \
     scripts/stdlib-channel-conformance-test.sh \
     scripts/stdlib-channel-conformance.sh; do
     [[ -f "$root/$path" ]] || die "missing conformance boundary input: $path"
+done
+for path in \
+    docs/contracts/stdlib-channel.md \
+    scripts/stdlib-channel-doc-check.sh \
+    scripts/stdlib-channel-doc-test.sh \
+    tests/runtime/m11-std-channel-doc-001.to \
+    tests/runtime/m11-std-channel-doc-001.stdout \
+    tests/runtime/m11-std-channel-doc-001.exit; do
+    [[ -f "$root/$path" ]] || die "missing documentation boundary input: $path"
+done
+for script in \
+    scripts/stdlib-channel-doc-check.sh \
+    scripts/stdlib-channel-doc-test.sh; do
+    [[ -x "$root/$script" ]] || die "documentation runner is not executable: $script"
 done
 
 for script in \

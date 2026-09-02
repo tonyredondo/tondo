@@ -129,8 +129,9 @@ promueve fast paths nativos ni lowering AOT genérico. `STD-SYNC-CONF-001` y la
 conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
 con la guía ejecutable; `STD-CHANNEL-PERF-001` queda cerrado para la línea
 base de rendimiento hosted; `STD-CHANNEL-CONF-001` también queda cerrado para
-la equivalencia observable VM/native y el siguiente trabajo desbloqueado es
-`STD-CHANNEL-DOC-001`. El modelo y
+la equivalencia observable VM/native; `STD-CHANNEL-DOC-001` queda cerrado con
+la guía ejecutable de composición y el siguiente trabajo desbloqueado es
+`STD-EXEC-IMPL-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6816,10 +6817,22 @@ estas leaves.
   `testing/stdlib-channel-conformance.json`,
   `docs/contracts/stdlib-channel-conformance.md` y
   `target/reliability/evidence/stdlib-channel-conformance.json`; no reclama
-  lowering AOT ni layout nativo público. El siguiente bloque es
-  `STD-CHANNEL-DOC-001`.
-- [ ] **STD-CHANNEL-DOC-001 — Documentar canales.** Fijar orden, cierre,
-  cancelación, fairness, costes y ejemplos ejecutables de composición.
+  lowering AOT ni layout nativo público. La guía documental queda cerrada en
+  `STD-CHANNEL-DOC-001`; el siguiente bloque es `STD-EXEC-IMPL-001`.
+- [x] **STD-CHANNEL-DOC-001 — Documentar canales.** La guía normativa
+  [`docs/contracts/stdlib-channel.md`](./docs/contracts/stdlib-channel.md)
+  fija superficie, orden FIFO por commit, cierre, cancelación, fairness y
+  costes explícitos sin inventar APIs paralelas ni prometer lowering AOT. El
+  registro [`testing/stdlib-channel.json`](./testing/stdlib-channel.json)
+  enlaza el fixture
+  `tests/runtime/m11-std-channel-doc-001.to`, sus sidecars y
+  `scripts/stdlib-channel-doc-check.sh`; las cinco familias
+  `fan-out-fan-in`, `pipeline-backpressure`, `select-cancel-safe`,
+  `close-and-drain` y `discardable-iteration` producen `channel-doc-ok` en
+  la VM hosted. `scripts/stdlib-channel-doc-test.sh` rechaza secciones,
+  estado, ejemplos, stdout y promoción stale; el cierre es target-qualified,
+  no promociona símbolos runtime, ABI público ni lowering AOT. El siguiente
+  bloque es `STD-EXEC-IMPL-001`.
 
 #### 21.3.4 `std.executor`
 
@@ -7723,7 +7736,8 @@ cerrados para el corpus común VM/native-bridge y la guía ejecutable; la adapta
 hosted `Receiver[T] -> AsyncIterator[T]` de `STD-CHANNEL-ASYNC-ITER-001` también
 está cerrada; `STD-CHANNEL-TEST-001` queda cerrado para modelo, regresiones y
 fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
-el siguiente trabajo crítico es `STD-CHANNEL-DOC-001`. La
+`STD-CHANNEL-DOC-001` queda cerrado para la guía ejecutable de composición. El
+siguiente trabajo crítico es `STD-EXEC-IMPL-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

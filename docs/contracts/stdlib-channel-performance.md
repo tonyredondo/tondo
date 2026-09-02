@@ -80,6 +80,6 @@ TONDO_STDLIB_CHANNEL_PERF_ALLOW_DIRTY=1 \
 The runner writes
 `target/reliability/evidence/stdlib-channel-performance.json` and rejects a
 dirty workspace by default. CI runs the same runner from a clean checkout.
-The channel conformance and documentation leaves remain separate promotion
-gates, and this report does not claim native AOT or a completed Cranelift
-lowering.
+The channel conformance leaf and the executable documentation leaf are separate
+promotion gates; both are now closed alongside this baseline. This report does
+not claim native AOT or a completed Cranelift lowering.

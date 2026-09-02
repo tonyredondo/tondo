@@ -318,9 +318,7 @@
       "target_policy": "host-target-only-until-native-aot-channel-lowering"
     },
     "evidence_report": "target/reliability/evidence/stdlib-channel-implementation.json",
-    "required_follow_ups": [
-      "STD-CHANNEL-DOC-001"
-    ]
+    "required_follow_ups": []
   },
   "performance": {
     "task": "STD-CHANNEL-PERF-001",
@@ -341,10 +339,32 @@
     "cases": 8,
     "native_aot": "not-claimed"
   },
-  "promotion": {
-    "implementation_pending": [
-      "STD-CHANNEL-DOC-001"
+  "documentation": {
+    "task": "STD-CHANNEL-DOC-001",
+    "status": "verified",
+    "document": "docs/contracts/stdlib-channel.md",
+    "fixture": "tests/runtime/m11-std-channel-doc-001.to",
+    "command": "scripts/stdlib-channel-doc-check.sh",
+    "expected_stdout": "channel-doc-ok",
+    "examples": [
+      "fan-out-fan-in",
+      "pipeline-backpressure",
+      "select-cancel-safe",
+      "close-and-drain",
+      "discardable-iteration"
     ],
-    "next_blocks": ["STD-CHANNEL-DOC-001"]
+    "sections": [
+      "surface",
+      "ordering",
+      "closure",
+      "cancellation",
+      "fairness",
+      "costs",
+      "composition-examples"
+    ]
+  },
+  "promotion": {
+    "implementation_pending": [],
+    "next_blocks": ["STD-EXEC-IMPL-001"]
   }
 }

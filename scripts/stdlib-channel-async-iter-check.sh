@@ -145,7 +145,7 @@ jq -e '
   .iterator.contract == "testing/stdlib-channel-async-iter.json"
   and (.implementation.required_follow_ups | index("STD-CHANNEL-ASYNC-ITER-001")) == null
   and (.promotion.implementation_pending | index("STD-CHANNEL-ASYNC-ITER-001")) == null
-  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
+  and .promotion.next_blocks == ["STD-EXEC-IMPL-001"]
 ' testing/stdlib-channel.json >/dev/null || die "parent channel registry has a stale AsyncIterator frontier"
 
 jq -e '.iterator.channel_dependency == false' testing/stdlib-async.json >/dev/null \

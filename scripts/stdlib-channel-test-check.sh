@@ -123,10 +123,8 @@ done
 
 jq -e '
   .testing == "testing/stdlib-channel-test.json"
-  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
-  and .promotion.implementation_pending == [
-    "STD-CHANNEL-DOC-001"
-  ]
+  and .promotion.next_blocks == ["STD-EXEC-IMPL-001"]
+  and .promotion.implementation_pending == []
   and .implementation.required_follow_ups == .promotion.implementation_pending
 ' "$root/testing/stdlib-channel.json" >/dev/null \
     || die "parent channel registry does not expose the promoted testing boundary"

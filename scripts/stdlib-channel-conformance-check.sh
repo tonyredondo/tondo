@@ -146,8 +146,8 @@ jq -e '
   and .conformance.target == "tondo-vm-hosted-and-native-runtime-abi"
   and .conformance.native_aot == "not-claimed"
   and .conformance.cases == 8
-  and .promotion.implementation_pending == ["STD-CHANNEL-DOC-001"]
-  and .promotion.next_blocks == ["STD-CHANNEL-DOC-001"]
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-EXEC-IMPL-001"]
 ' "$root/testing/stdlib-channel.json" >/dev/null \
     || die "parent channel registry does not expose conformance promotion"
 
