@@ -18344,7 +18344,7 @@ mod tests {
     }
 
     fn select_perf_sample(arm_count: usize, pending: bool) -> Result<SelectPerfSample, VmError> {
-        let join_ty = BytecodeTypeId::new(19);
+        let join_ty = BytecodeTypeId::new(20);
         let program = select_perf_program(arm_count, join_ty);
         let trace = derive_trace_metadata(&program)
             .map_err(|error| VmError::invariant(error.to_string()))?;
@@ -18405,7 +18405,7 @@ mod tests {
     }
 
     fn direct_perf_sample() -> Result<SelectPerfSample, VmError> {
-        let join_ty = BytecodeTypeId::new(19);
+        let join_ty = BytecodeTypeId::new(20);
         let program = select_perf_program(1, join_ty);
         let trace = derive_trace_metadata(&program)
             .map_err(|error| VmError::invariant(error.to_string()))?;
