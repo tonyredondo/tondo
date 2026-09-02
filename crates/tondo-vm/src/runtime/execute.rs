@@ -11187,9 +11187,11 @@ impl Engine<'_, '_> {
             }
             (
                 terminal,
-                terminal
-                    .then(|| std::mem::take(&mut state.lifecycle_waiters))
-                    .unwrap_or_default(),
+                if terminal {
+                    std::mem::take(&mut state.lifecycle_waiters)
+                } else {
+                    Vec::new()
+                },
             )
         };
         if terminal {
