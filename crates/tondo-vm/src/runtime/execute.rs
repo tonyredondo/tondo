@@ -11455,6 +11455,24 @@ impl Engine<'_, '_> {
                     self.executor_result_ok(metadata.outcome, handle)?,
                 )));
             }
+            "std.executor.Actor.ref" => {
+                let [actor_value] = values.as_slice() else {
+                    return Err(VmError::invariant("Actor.ref has the wrong argument count"));
+                };
+                let actor =
+                    self.executor_handle(actor_value, RuntimeHostValueKind::ExecutorActor)?;
+                if !self.actors.contains_key(&actor) {
+                    return Err(VmError::invariant(
+                        "actor ref acquisition references an unknown actor",
+                    ));
+                }
+                return Ok(Some(OperationResult::Value(Value::Host(
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::ExecutorActorRef,
+                        id: actor,
+                    },
+                ))));
+            }
             "std.executor.Pool.shutdown" | "std.executor.Pool.cancel" => {
                 let [pool_value] = values.as_slice() else {
                     return Err(VmError::invariant(
@@ -27111,5 +27129,82 @@ mod tests {
             malformed_engine.executor_actor_error_result(types.actor_result, 0, Value::Integer(7)),
             Err(VmError::Invariant(message)) if message.contains("payload arity is not one")
         ));
+    }
+
+    #[test]
+    fn executor_actor_ref_projects_live_identity_and_rejects_invalid_handles() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.actors.insert(
+            7,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: BytecodeFunctionId::new(1),
+                step_arguments: Vec::new(),
+                capacity: 2,
+                mailbox: VecDeque::new(),
+                stopped: false,
+            },
+        );
+
+        let metadata = executor_metadata(
+            "std.executor.Actor.ref[Int, Int, String]",
+            types.actor_ref,
+            types.function_type,
+        );
+        let actor_handle = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorActor,
+            id: 7,
+        });
+        let projected = engine
+            .prepare_executor_call(&metadata, std::slice::from_ref(&actor_handle))
+            .unwrap()
+            .unwrap();
+        executor_assert!(matches!(
+            projected,
+            OperationResult::Value(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorActorRef,
+                id: 7,
+            }))
+        ));
+        executor_assert!(!engine.actors[&7].stopped);
+        executor_assert!(engine.actors[&7].mailbox.is_empty());
+
+        engine.executor_actor_stop(7, types.actor_result).unwrap();
+        let stopped_projection = engine
+            .prepare_executor_call(&metadata, std::slice::from_ref(&actor_handle))
+            .unwrap()
+            .unwrap();
+        executor_assert!(matches!(
+            stopped_projection,
+            OperationResult::Value(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorActorRef,
+                id: 7,
+            }))
+        ));
+
+        let wrong_kind = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorActorRef,
+            id: 7,
+        });
+        executor_assert!(matches!(
+            engine.prepare_executor_call(&metadata, std::slice::from_ref(&wrong_kind)),
+            Err(VmError::Invariant(message)) if message.contains("wrong kind")
+        ));
+        let unknown = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorActor,
+            id: 999,
+        });
+        executor_assert!(matches!(
+            engine.prepare_executor_call(&metadata, std::slice::from_ref(&unknown)),
+            Err(VmError::Invariant(message)) if message.contains("unknown actor")
+        ));
+        executor_assert!(matches!(
+            engine.prepare_executor_call(&metadata, &[Value::Integer(7)]),
+            Err(VmError::Invariant(message)) if message.contains("not opaque")
+        ));
+        executor_assert!(engine.prepare_executor_call(&metadata, &[]).is_err());
     }
 }

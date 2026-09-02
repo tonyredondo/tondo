@@ -113,6 +113,17 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | time.ClockError | S
             }
         }
         let actor = pool.actor(0, 1, actor_step)?
+        let actor_ref = actor.ref()
+        match actor_ref.trySend(1) {
+            ok(_) => {}
+            err(error) => match error {
+                executor.ActorSendError.Saturated(_) => assert(false)
+                executor.ActorSendError.Closed(_) => assert(false)
+                executor.ActorSendError.Cancelled(_) => assert(false)
+                executor.ActorSendError.Terminated(_) => assert(false)
+                executor.ActorSendError.ResourceLimit(_) => assert(false)
+            }
+        }
         actor.stop()?
     }
     pool.shutdown()

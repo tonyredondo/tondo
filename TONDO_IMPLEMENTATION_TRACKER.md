@@ -132,9 +132,9 @@ base de rendimiento hosted; `STD-CHANNEL-CONF-001` también queda cerrado para
 la equivalencia observable VM/native; `STD-CHANNEL-DOC-001` queda cerrado con
 la guía ejecutable de composición y el siguiente trabajo desbloqueado es
 `STD-EXEC-IMPL-001`. Ese bloque ya tiene una observación parcial de pool
-cooperativo en la VM hosted, pero sigue abierto porque actors, workers host y
-lowering native AOT no están promocionados y el contrato no define la
-adquisición canónica de `ActorRef`. El modelo y
+cooperativo y adquisición explícita de `ActorRef` en la VM hosted, pero sigue
+abierto porque la ejecución de handlers, los workers host y el lowering native
+AOT no están promocionados. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6844,11 +6844,10 @@ estas leaves.
   nombran explícitamente su ausencia de límite, y el bridge bloqueante retorna
   a scopes Tondo sin crear un segundo `Task` público. La observación parcial de
   `STD-EXEC-IMPL-001` ya verifica en la VM hosted la admisión cooperativa,
-  backpressure, `Join`, shutdown/cancel y la creación/stop de un actor; no
-  reclama ejecución de handlers, adquisición `ActorRef`, workers host ni
-  lowering native AOT. La decisión abierta queda registrada en
-  [`testing/stdlib-executor.json`](./testing/stdlib-executor.json) y en el
-  contrato del owner.
+  backpressure, `Join`, shutdown/cancel, la creación/stop de un actor y
+  `Actor.ref`; no reclama ejecución de handlers, workers host ni lowering
+  native AOT. La operación queda registrada como proyección explícita no
+  consumidora en el contrato y la evidencia hosted.
 - [ ] **STD-EXEC-HOST-001 — Implementar workers host.** Enlazar pools y wakeups
   fijados por target, con límites, shutdown y revocación sin heredar ambiente ni
   bloquear el progreso cooperativo.

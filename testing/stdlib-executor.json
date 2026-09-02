@@ -65,6 +65,12 @@
         "effect": "sync"
       },
       {
+        "id": "actor-ref",
+        "signature": "pub fn Actor.ref(ref self): ActorRef[M]",
+        "kind": "actor-ref-acquisition",
+        "effect": "sync"
+      },
+      {
         "id": "pool-shutdown",
         "signature": "pub fn Pool.shutdown(self): Unit suspends",
         "kind": "graceful-terminal",
@@ -205,6 +211,7 @@
     "handler_error": "actor-terminal-and-propagated-by-stop",
     "panic": "normal-unwind-after-mailbox-cleanup",
     "post_terminal_send": "Terminated(message)",
+    "ref_acquisition": "explicit-nonconsuming-identity-projection",
     "no_restart": true,
     "no_detached_actor": true
   },
@@ -319,11 +326,11 @@
     "observed": {
       "task": "STD-EXEC-IMPL-001",
       "status": "partial-hosted-cooperative-pool",
-      "hosted_vm": "verified-pool-admission-join-and-lifecycle",
+      "hosted_vm": "verified-pool-admission-join-lifecycle-and-actor-ref-acquisition",
       "native_runtime": "not-claimed",
       "native_aot_lowering": "not-claimed",
       "blocking_pool": "capability-missing-until-host-gate",
-      "actor": "handle-create-and-stop-only",
+      "actor": "handle-create-ref-and-stop-only",
       "public_api_promoted": false,
       "fixture": {
         "path": "tests/runtime/m11-std-executor-impl-001.to",
@@ -348,13 +355,13 @@
         "scripts/stdlib-executor-implementation-test.sh",
         "crates/tondo-vm/src/runtime/execute.rs::logical_join_value",
         "crates/tondo-vm/src/runtime/execute.rs::begin_executor_pool_lifecycle",
+        "crates/tondo-vm/src/runtime/execute.rs::executor_actor_ref_projects_live_identity_and_rejects_invalid_handles",
         "crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"
       ],
       "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
-      "open_decision": "The locked surface has Pool.actor -> Actor but no canonical Actor -> ActorRef acquisition operation",
+      "resolved_decision": "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor",
       "remaining": [
         "actor-mailbox-handler-execution",
-        "actor-ref-acquisition-contract-decision",
         "STD-EXEC-HOST-001",
         "STD-EXEC-TEST-001",
         "STD-EXEC-PERF-001",

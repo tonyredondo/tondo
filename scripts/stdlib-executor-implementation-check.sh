@@ -17,18 +17,18 @@ TONDO_STDLIB_EXECUTOR_CONTRACT="$contract" scripts/stdlib-executor-check.sh >/de
 jq -e '
   .implementation.observed.task == "STD-EXEC-IMPL-001"
   and .implementation.observed.status == "partial-hosted-cooperative-pool"
-  and .implementation.observed.hosted_vm == "verified-pool-admission-join-and-lifecycle"
+  and .implementation.observed.hosted_vm == "verified-pool-admission-join-lifecycle-and-actor-ref-acquisition"
   and .implementation.observed.native_runtime == "not-claimed"
   and .implementation.observed.native_aot_lowering == "not-claimed"
   and .implementation.observed.blocking_pool == "capability-missing-until-host-gate"
-  and .implementation.observed.actor == "handle-create-and-stop-only"
+  and .implementation.observed.actor == "handle-create-ref-and-stop-only"
   and .implementation.observed.public_api_promoted == false
   and .implementation.observed.fixture == {path:"tests/runtime/m11-std-executor-impl-001.to",stdout:"executor-ok",exit:0,status:"passed"}
   and .implementation.observed.evidence_report == "target/reliability/evidence/stdlib-executor-implementation.json"
-  and .implementation.observed.open_decision == "The locked surface has Pool.actor -> Actor but no canonical Actor -> ActorRef acquisition operation"
+  and .implementation.observed.resolved_decision == "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"
+  and (.implementation.observed.open_decision // null) == null
   and .implementation.observed.remaining == [
     "actor-mailbox-handler-execution",
-    "actor-ref-acquisition-contract-decision",
     "STD-EXEC-HOST-001",
     "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
@@ -84,6 +84,7 @@ for marker in \
     'executor_pool_capacity_available' \
     'executor_pool_constructor' \
     'executor_actor_error_result' \
+    'ExecutorActorRef' \
     'RuntimeHostValueKind::ExecutorPool' \
     'RuntimeActorState' \
     'executor_job_tasks' \
@@ -100,6 +101,10 @@ for marker in \
         "$root/crates/tondo-vm/src/runtime/execute.rs" \
         || die "compiler/VM executor anchor is missing: $marker"
 done
+
+grep -Fq 'executor_actor_ref_projects_live_identity_and_rejects_invalid_handles' \
+    "$root/crates/tondo-vm/src/runtime/execute.rs" \
+    || die "Actor.ref runtime regression test is missing"
 
 for marker in \
     'STD-EXEC-IMPL-001' \

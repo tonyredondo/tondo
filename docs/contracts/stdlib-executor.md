@@ -32,12 +32,12 @@ termina con `executor-ok` y exit `0`; el informe reproducible se escribe en
 
 Esta observación no promociona el owner completo. `Pool.actor` crea y conserva
 un handle afín y `Actor.stop` cierra su mailbox, pero la ejecución del handler y
-la entrega de mensajes aún no son ejecutables. El contrato expone
-`ActorRef[M].send`/`trySend`, pero no define una operación canónica para obtener
-un `ActorRef` desde el `Actor` que devuelve `Pool.actor`; esa decisión bloquea
-la implementación del mailbox y cualquier prueba de `selectable` sobre actors.
-No se inventa una conversión implícita ni un método adicional dentro de este
-bloque.
+la entrega de mensajes aún no son ejecutables. `Actor.ref(ref self)` es la
+operación explícita y no consumidora que proyecta ese owner a un
+`ActorRef[M]`; conserva únicamente la identidad del actor, no copia estado ni
+mailbox, y no introduce una conversión implícita. La VM hosted verifica esta
+proyección y la ruta de `ActorRef.trySend`, mientras el procesamiento del
+handler queda pendiente.
 
 `blockingPool` devuelve `ExecutorError.CapabilityMissing` en la VM hosted
 actual: el bridge de workers host queda reservado para `STD-EXEC-HOST-001` y
@@ -63,6 +63,7 @@ pub fn blockingPool(workers: Int, capacity: Int): BlockingPool ! ExecutorError
 pub fn Pool.submit[T, E](ref self, job: fn(): T ! E suspends): Join[T, E] ! SubmitError suspends
 pub fn Pool.trySubmit[T, E](ref self, job: fn(): T ! E suspends): Join[T, E] ! SubmitError
 pub fn Pool.actor[S: Send + Discard, M: Send + Discard, E](ref self, state: S, capacity: Int, step: fn(mut S, M): Unit ! E suspends): Actor[S, M, E] ! ExecutorError
+pub fn Actor.ref(ref self): ActorRef[M]
 pub fn Pool.shutdown(self): Unit suspends
 pub fn Pool.cancel(self): Unit suspends
 
@@ -138,8 +139,9 @@ son `Send + Discard` para que cancelación, shutdown y panic puedan drenar el
 estado y los mensajes sin perder ownership. El handler puede suspenderse, pero
 no crea un executor ni un task detached.
 
-`ActorRef[M]` es un handle `Copy + Send + Share` a la identidad del actor; copiar
-el handle no copia estado ni mailbox. `send` aplica backpressure y es
+`ActorRef[M]` es un handle `Copy + Send + Share` a la identidad del actor.
+`Actor.ref(ref self)` lo obtiene mediante un préstamo compartido no consumidor;
+copiar el handle no copia estado ni mailbox. `send` aplica backpressure y es
 `selectable`; `trySend` es inmediato. En un brazo perdedor de `select` no se
 mueve el mensaje. Un error de envío devuelve el mensaje en la variante
 correspondiente (`Saturated`, `Closed`, `Cancelled`, `Terminated` o
@@ -215,10 +217,9 @@ callbacks de completion, prioridades públicas, work-stealing observable,
 `submitAsync`, `runAsync`, `waitAsync`, conversión implícita a thread y
 fallback bloqueante dentro del scheduler cooperativo.
 
-La implementación completa queda pendiente de la ejecución de handlers y de
-la decisión `Actor`/`ActorRef`, además de `STD-EXEC-HOST-001`,
-`STD-EXEC-TEST-001`, `STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y
-`STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
+La implementación completa queda pendiente de la ejecución de handlers,
+`STD-EXEC-HOST-001`, `STD-EXEC-TEST-001`, `STD-EXEC-PERF-001`,
+`STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
 y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
 se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y
 sus leaves siguen la compuerta nativa.

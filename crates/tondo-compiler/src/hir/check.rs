@@ -19305,6 +19305,7 @@ impl<'a> ExpressionChecker<'a> {
             ("Pool", "submit") => HirBootstrapHostFunction::ExecutorPoolSubmit,
             ("Pool", "trySubmit") => HirBootstrapHostFunction::ExecutorPoolTrySubmit,
             ("Pool", "actor") => HirBootstrapHostFunction::ExecutorPoolActor,
+            ("Actor", "ref") => HirBootstrapHostFunction::ExecutorActorRef,
             ("Pool", "shutdown") => HirBootstrapHostFunction::ExecutorPoolShutdown,
             ("Pool", "cancel") => HirBootstrapHostFunction::ExecutorPoolCancel,
             ("ActorRef", "send") => HirBootstrapHostFunction::ExecutorActorSend,

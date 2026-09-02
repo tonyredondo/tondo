@@ -50,6 +50,7 @@ for marker in \
     'pub fn pool(workers: Int, capacity: Int): Pool ! ExecutorError' \
     'pub fn blockingPool(workers: Int, capacity: Int): BlockingPool ! ExecutorError' \
     'pub fn Pool.trySubmit[T, E]' \
+    'pub fn Actor.ref(ref self): ActorRef[M]' \
     'pub fn Pool.shutdown(self): Unit suspends' \
     'pub fn Pool.cancel(self): Unit suspends' \
     'pub fn Actor.stop(self): Unit ! E suspends' \

@@ -46,7 +46,7 @@ jq -e '
     "ActorSendError[M] = { Saturated(M), Closed(M), Cancelled(M), Terminated(M), ResourceLimit(M) }"
   ]
   and ([.surface.signatures[].id] | unique) == [
-    "actor-send", "actor-stop", "actor-try-send",
+    "actor-ref", "actor-send", "actor-stop", "actor-try-send",
     "blocking-cancel", "blocking-pool", "blocking-run", "blocking-shutdown",
     "pool", "pool-actor", "pool-cancel", "pool-shutdown", "pool-submit", "pool-try-submit"
   ]
@@ -138,6 +138,7 @@ jq -e '
   and .actor.handler_error == "actor-terminal-and-propagated-by-stop"
   and .actor.panic == "normal-unwind-after-mailbox-cleanup"
   and .actor.post_terminal_send == "Terminated(message)"
+  and .actor.ref_acquisition == "explicit-nonconsuming-identity-projection"
   and .actor.no_restart == true
   and .actor.no_detached_actor == true
   and .lifecycle.pool_states == ["open", "shutting-down", "cancelling", "drained"]
@@ -197,6 +198,7 @@ for marker in \
     'pub type BlockingPool' \
     'pub fn Pool.submit[T, E]' \
     'pub fn Pool.actor[S: Send + Discard' \
+    'pub fn Actor.ref(ref self): ActorRef[M]' \
     'pub fn ActorRef.send(ref self, message: M): Unit ! ActorSendError[M] selectable' \
     'pub fn BlockingPool.run[T, E]' \
     'required-after-native-gate'; do

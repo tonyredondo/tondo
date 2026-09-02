@@ -28,7 +28,7 @@ expect_failure aot-claimed \
     env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/aot-claimed.json" \
     scripts/stdlib-executor-implementation-check.sh
 
-jq '.implementation.observed.open_decision = ""' testing/stdlib-executor.json \
+jq '.implementation.observed.resolved_decision = ""' testing/stdlib-executor.json \
     >"$tmp_dir/missing-decision.json"
 expect_failure missing-decision \
     env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/missing-decision.json" \

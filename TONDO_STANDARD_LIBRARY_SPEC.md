@@ -2895,8 +2895,9 @@ capabilities y eventos privados. `STD-EXEC-IMPL-001` ya tiene una observación
 parcial en la VM hosted para pools cooperativos, `Join` y lifecycle; el informe
 queda en `target/reliability/evidence/stdlib-executor-implementation.json`.
 La observación no reclama runtime nativo ni lowering native AOT: el bridge de
-`BlockingPool` espera `STD-EXEC-HOST-001`, y la ejecución de handlers requiere
-resolver primero la adquisición canónica de `ActorRef` desde `Pool.actor`.
+`BlockingPool` espera `STD-EXEC-HOST-001`. La VM hosted ya verifica la
+adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de
+identidad no consumidora; la ejecución de handlers sigue pendiente.
 
 #### 14.4.6 Networking
 

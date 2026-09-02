@@ -2595,17 +2595,18 @@ impl<'a> TypeLowerer<'a> {
                 "Actor",
                 vec![generic_state, generic_message, generic_actor_error],
             )?;
+            let actor_ref_message = self.interner.generic_parameter(0)?;
             let actor_ref = self.bootstrap_nominal_type_with_args(
                 executor_module,
                 "ActorRef",
-                vec![generic_message],
+                vec![actor_ref_message],
             )?;
             let generic_value = self.interner.generic_parameter(0)?;
             let generic_error = self.interner.generic_parameter(1)?;
             let actor_error = self.bootstrap_nominal_type_with_args(
                 executor_module,
                 "ActorSendError",
-                vec![generic_message],
+                vec![actor_ref_message],
             )?;
             let join = self
                 .interner
@@ -2700,6 +2701,21 @@ impl<'a> TypeLowerer<'a> {
                 3,
                 actor_bounds,
             )?;
+            let actor_ref_state = self.interner.generic_parameter(1)?;
+            let actor_ref_error = self.interner.generic_parameter(2)?;
+            let actor_ref_owner = self.bootstrap_nominal_type_with_args(
+                executor_module,
+                "Actor",
+                vec![actor_ref_state, actor_ref_message, actor_ref_error],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorActorRef,
+                vec![(actor_ref_owner, ParameterMode::Ref, true)],
+                actor_ref,
+                3,
+                Vec::new(),
+            )?;
             self.push_bootstrap_generic_host_callable(
                 span,
                 HirBootstrapHostFunction::ExecutorPoolShutdown,
@@ -2722,7 +2738,7 @@ impl<'a> TypeLowerer<'a> {
                 HirBootstrapHostFunction::ExecutorActorSend,
                 vec![
                     (actor_ref, ParameterMode::Ref, true),
-                    (generic_message, ParameterMode::Value, false),
+                    (actor_ref_message, ParameterMode::Value, false),
                 ],
                 actor_send_result,
                 1,
@@ -2733,7 +2749,7 @@ impl<'a> TypeLowerer<'a> {
                 HirBootstrapHostFunction::ExecutorActorTrySend,
                 vec![
                     (actor_ref, ParameterMode::Ref, true),
-                    (generic_message, ParameterMode::Value, false),
+                    (actor_ref_message, ParameterMode::Value, false),
                 ],
                 actor_send_result,
                 1,
