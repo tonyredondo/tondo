@@ -45,7 +45,7 @@ hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
 lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
 siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-09-01
+**Última actualización:** 2026-09-02
 
 **Especificaciones normativas:**
 
@@ -131,7 +131,10 @@ con la guía ejecutable; `STD-CHANNEL-PERF-001` queda cerrado para la línea
 base de rendimiento hosted; `STD-CHANNEL-CONF-001` también queda cerrado para
 la equivalencia observable VM/native; `STD-CHANNEL-DOC-001` queda cerrado con
 la guía ejecutable de composición y el siguiente trabajo desbloqueado es
-`STD-EXEC-IMPL-001`. El modelo y
+`STD-EXEC-IMPL-001`. Ese bloque ya tiene una observación parcial de pool
+cooperativo en la VM hosted, pero sigue abierto porque actors, workers host y
+lowering native AOT no están promocionados y el contrato no define la
+adquisición canónica de `ActorRef`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6839,7 +6842,13 @@ estas leaves.
 - [ ] **STD-EXEC-IMPL-001 — Implementar executor, pools y actores.** Reutilizar
   Group, async estructurado, channels y sync; pools/mailboxes son acotados o
   nombran explícitamente su ausencia de límite, y el bridge bloqueante retorna
-  a scopes Tondo sin crear un segundo `Task` público.
+  a scopes Tondo sin crear un segundo `Task` público. La observación parcial de
+  `STD-EXEC-IMPL-001` ya verifica en la VM hosted la admisión cooperativa,
+  backpressure, `Join`, shutdown/cancel y la creación/stop de un actor; no
+  reclama ejecución de handlers, adquisición `ActorRef`, workers host ni
+  lowering native AOT. La decisión abierta queda registrada en
+  [`testing/stdlib-executor.json`](./testing/stdlib-executor.json) y en el
+  contrato del owner.
 - [ ] **STD-EXEC-HOST-001 — Implementar workers host.** Enlazar pools y wakeups
   fijados por target, con límites, shutdown y revocación sin heredar ambiente ni
   bloquear el progreso cooperativo.

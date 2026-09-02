@@ -2427,6 +2427,7 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.sync.Queue.")
                 && !callable.name.starts_with("std.channel.Sender.")
                 && !callable.name.starts_with("std.channel.Receiver.")
+                && !callable.name.starts_with("std.executor.")
                 && !callable.name.starts_with("std.testing.shrink")
             {
                 return Err(BytecodeVerificationError::new(
@@ -3533,6 +3534,12 @@ impl Verifier<'_> {
             let block_context = format!("{context} block#{index}");
             for slot in &live_out[index] {
                 let ty = self.slot(function, *slot, &block_context)?.ty;
+                // The compiler-owned Result[Join] temporary is consumed by
+                // the implicit await at this boundary. The Join slot remains
+                // subject to the normal affine and Send checks.
+                if self.is_temporary_join_result(function, *slot, ty, &block_context)? {
+                    continue;
+                }
                 if matches!(
                     self.ty(ty, &block_context)?.kind,
                     BytecodeTypeKind::Intrinsic {
@@ -3551,6 +3558,28 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn is_temporary_join_result(
+        &self,
+        function: &BytecodeFunction,
+        slot: BytecodeSlotId,
+        ty: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        if self.slot(function, slot, context)?.kind != BytecodeSlotKind::Temporary {
+            return Ok(false);
+        }
+        let BytecodeTypeKind::Result { success, .. } = self.ty(ty, context)?.kind else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.ty(success, context)?.kind,
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Join,
+                ..
+            }
+        ))
     }
 
     fn verify_instruction(

@@ -2891,8 +2891,12 @@ El contrato exhaustivo de este owner está en
 registro machine-readable en
 [`testing/stdlib-executor.json`](./testing/stdlib-executor.json). Ese registro
 fija capacidad, backpressure, actores, bridge bloqueante, lifecycle,
-capabilities y eventos privados sin promover todavía una implementación
-runtime.
+capabilities y eventos privados. `STD-EXEC-IMPL-001` ya tiene una observación
+parcial en la VM hosted para pools cooperativos, `Join` y lifecycle; el informe
+queda en `target/reliability/evidence/stdlib-executor-implementation.json`.
+La observación no reclama runtime nativo ni lowering native AOT: el bridge de
+`BlockingPool` espera `STD-EXEC-HOST-001`, y la ejecución de handlers requiere
+resolver primero la adquisición canónica de `ActorRef` desde `Pool.actor`.
 
 #### 14.4.6 Networking
 

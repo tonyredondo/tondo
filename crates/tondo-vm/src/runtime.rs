@@ -237,6 +237,10 @@ pub enum RuntimeHostValueKind {
     SyncQueue,
     ChannelSender,
     ChannelReceiver,
+    ExecutorPool,
+    ExecutorBlockingPool,
+    ExecutorActor,
+    ExecutorActorRef,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

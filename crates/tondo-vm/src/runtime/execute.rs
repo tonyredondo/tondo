@@ -669,6 +669,27 @@ enum TaskWait {
         outcome: BytecodeTypeId,
         probe: bool,
     },
+    PoolSubmit {
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    PoolJob {
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+    },
+    PoolLifecycle {
+        pool: u64,
+        cancel: bool,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
     Select {
         unwind: BytecodeBlockId,
     },
@@ -724,6 +745,39 @@ enum RuntimeGroupOperation {
     Settle,
     Next,
     Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimePoolLifecycle {
+    Open,
+    ShuttingDown,
+    Cancelling,
+    Closed,
+    Cancelled,
+}
+
+#[derive(Debug)]
+struct RuntimePoolState {
+    blocking: bool,
+    workers: usize,
+    capacity: usize,
+    running: usize,
+    queued: VecDeque<usize>,
+    submit_waiters: VecDeque<usize>,
+    lifecycle_waiters: Vec<usize>,
+    lifecycle: RuntimePoolLifecycle,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct RuntimeActorState {
+    pool: u64,
+    state: Value,
+    step: BytecodeFunctionId,
+    step_arguments: Vec<Value>,
+    capacity: usize,
+    mailbox: VecDeque<Value>,
+    stopped: bool,
 }
 
 #[derive(Debug)]
@@ -793,6 +847,10 @@ struct Engine<'program, 'host> {
     groups: BTreeMap<u64, RuntimeGroupState>,
     next_group_id: u64,
     onces: BTreeMap<u64, RuntimeOnceState>,
+    pools: BTreeMap<u64, RuntimePoolState>,
+    pool_running: BTreeMap<usize, u64>,
+    actors: BTreeMap<u64, RuntimeActorState>,
+    next_executor_id: u64,
     completion_order: BTreeMap<usize, u64>,
     next_completion_sequence: u64,
     statistics: VmStatistics,
@@ -840,6 +898,10 @@ impl<'program, 'host> Engine<'program, 'host> {
             groups: BTreeMap::new(),
             next_group_id: 1,
             onces: BTreeMap::new(),
+            pools: BTreeMap::new(),
+            pool_running: BTreeMap::new(),
+            actors: BTreeMap::new(),
+            next_executor_id: 1,
             completion_order: BTreeMap::new(),
             next_completion_sequence: 1,
             statistics: VmStatistics::default(),
@@ -1594,6 +1656,192 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                 }
             }
+            TaskWait::PoolJob {
+                pool,
+                function,
+                arguments,
+            } => {
+                if self.tasks[self.current_task].cancel_requested {
+                    self.finish_executor_job(self.current_task)?;
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    return Ok(false);
+                }
+                let can_start = self
+                    .pools
+                    .get(&pool)
+                    .ok_or_else(|| VmError::invariant("executor job references an unknown pool"))
+                    .map(|state| {
+                        state.lifecycle != RuntimePoolLifecycle::Cancelling
+                            && state.lifecycle != RuntimePoolLifecycle::Cancelled
+                            && state.lifecycle != RuntimePoolLifecycle::Closed
+                            && state.running < state.workers
+                    })?;
+                if !can_start {
+                    self.pools
+                        .get_mut(&pool)
+                        .ok_or_else(|| {
+                            VmError::invariant("executor job references an unknown pool")
+                        })?
+                        .queued
+                        .push_front(self.current_task);
+                    self.park_current(
+                        TaskWait::PoolJob {
+                            pool,
+                            function,
+                            arguments,
+                        },
+                        &[],
+                    )?;
+                    return Ok(false);
+                }
+                let parent_frames = std::mem::take(&mut self.frames);
+                let pushed = self.push_frame(function, arguments, None);
+                let job_frames = std::mem::take(&mut self.frames);
+                self.frames = parent_frames;
+                pushed?;
+                self.pools
+                    .get_mut(&pool)
+                    .ok_or_else(|| VmError::invariant("executor job references an unknown pool"))?
+                    .running += 1;
+                self.pool_running.insert(self.current_task, pool);
+                self.frames = job_frames;
+                Ok(true)
+            }
+            TaskWait::PoolSubmit {
+                pool,
+                function,
+                arguments,
+                outcome,
+                destination,
+                target,
+                unwind,
+            } => {
+                let frame = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| VmError::invariant("a resumed Pool.submit has no frame"))?;
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.pools
+                        .get_mut(&pool)
+                        .ok_or_else(|| {
+                            VmError::invariant("Pool.submit references an unknown pool")
+                        })?
+                        .submit_waiters
+                        .retain(|task| *task != self.current_task);
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                let lifecycle = self
+                    .pools
+                    .get(&pool)
+                    .ok_or_else(|| VmError::invariant("Pool.submit references an unknown pool"))?
+                    .lifecycle;
+                if lifecycle != RuntimePoolLifecycle::Open {
+                    self.pools
+                        .get_mut(&pool)
+                        .ok_or_else(|| {
+                            VmError::invariant("Pool.submit references an unknown pool")
+                        })?
+                        .submit_waiters
+                        .retain(|task| *task != self.current_task);
+                    let variant = match lifecycle {
+                        RuntimePoolLifecycle::ShuttingDown | RuntimePoolLifecycle::Closed => 1,
+                        RuntimePoolLifecycle::Cancelling | RuntimePoolLifecycle::Cancelled => 2,
+                        RuntimePoolLifecycle::Open => unreachable!(),
+                    };
+                    let value = self.executor_error_result(outcome, variant)?;
+                    self.write_place(frame, &destination, value)?;
+                    self.jump(frame, target);
+                    return Ok(true);
+                }
+                match self.admit_executor_submit(
+                    frame,
+                    pool,
+                    function,
+                    arguments.clone(),
+                    outcome,
+                )? {
+                    Some(value) => {
+                        self.write_place(frame, &destination, value)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                    None => {
+                        let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                            VmError::invariant("Pool.submit references an unknown pool")
+                        })?;
+                        if !state.submit_waiters.contains(&self.current_task) {
+                            state.submit_waiters.push_back(self.current_task);
+                        }
+                        self.park_current(
+                            TaskWait::PoolSubmit {
+                                pool,
+                                function,
+                                arguments,
+                                outcome,
+                                destination,
+                                target,
+                                unwind,
+                            },
+                            &[],
+                        )?;
+                        Ok(false)
+                    }
+                }
+            }
+            TaskWait::PoolLifecycle {
+                pool,
+                cancel,
+                destination,
+                target,
+                unwind,
+            } => {
+                let frame =
+                    self.frames.len().checked_sub(1).ok_or_else(|| {
+                        VmError::invariant("a resumed pool lifecycle has no frame")
+                    })?;
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                self.finish_executor_pool_lifecycle(pool)?;
+                let terminal = self
+                    .pools
+                    .get(&pool)
+                    .ok_or_else(|| VmError::invariant("pool lifecycle references an unknown pool"))?
+                    .lifecycle;
+                if matches!(
+                    terminal,
+                    RuntimePoolLifecycle::Closed | RuntimePoolLifecycle::Cancelled
+                ) {
+                    self.write_place(frame, &destination, Value::Unit)?;
+                    self.jump(frame, target);
+                    Ok(true)
+                } else {
+                    let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                        VmError::invariant("pool lifecycle references an unknown pool")
+                    })?;
+                    if !state.lifecycle_waiters.contains(&self.current_task) {
+                        state.lifecycle_waiters.push(self.current_task);
+                    }
+                    self.park_current(
+                        TaskWait::PoolLifecycle {
+                            pool,
+                            cancel,
+                            destination,
+                            target,
+                            unwind,
+                        },
+                        &[],
+                    )?;
+                    Ok(false)
+                }
+            }
             TaskWait::Select { unwind } => {
                 let frame = self
                     .frames
@@ -1701,10 +1949,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                     ));
                 }
                 let parent_scope = self.tasks[child].parent_scope;
+                let join_error = self.join_error_type(owner.ty)?;
                 let completion = self
                     .take_task_completion(child)?
                     .ok_or_else(|| VmError::invariant("woken Join has no completion"))?;
-                self.apply_join_completion(frame, completion, &destination, target, unwind)?;
+                self.apply_join_completion(
+                    frame,
+                    completion,
+                    &destination,
+                    target,
+                    unwind,
+                    join_error,
+                )?;
                 if let Some(scope) = parent_scope
                     && self.task_scopes.get(scope).is_some_and(Option::is_some)
                 {
@@ -1997,6 +2253,7 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn complete_task(&mut self, task: usize, completion: TaskCompletion) -> Result<(), VmError> {
+        self.finish_executor_job(task)?;
         self.assign_completion_order(task)?;
         let discard = self
             .tasks
@@ -2492,6 +2749,10 @@ impl<'program, 'host> Engine<'program, 'host> {
             | OperationResult::OnceWait { .. }
             | OperationResult::OneShotWait { .. }
             | OperationResult::GroupWait { .. }
+            | OperationResult::PoolSubmit { .. }
+            | OperationResult::PoolLifecycle { .. }
+            | OperationResult::ActorSend { .. }
+            | OperationResult::ActorStop { .. }
             | OperationResult::TestBoundaryCall { .. }
             | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
                 "AsyncIterator.next crossed an unsupported internal boundary",
@@ -2928,6 +3189,50 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(false)
     }
 
+    fn join_error_type(&self, join_ty: BytecodeTypeId) -> Result<BytecodeTypeId, VmError> {
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Join,
+            arguments,
+        } = &self
+            .program
+            .ty(join_ty)
+            .ok_or_else(|| VmError::invariant("Join type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("Join owner has a non-Join type"));
+        };
+        let [_, error] = arguments.as_slice() else {
+            return Err(VmError::invariant("Join type has the wrong arity"));
+        };
+        Ok(*error)
+    }
+
+    fn logical_join_value(&self, value: Value, error: BytecodeTypeId) -> Result<Value, VmError> {
+        if !matches!(
+            self.program.ty(error).map(|ty| &ty.kind),
+            Some(BytecodeTypeKind::Scalar(BytecodeScalarType::Never))
+        ) {
+            return Ok(value);
+        }
+        let Value::Heap(handle) = value else {
+            return Err(VmError::invariant(
+                "infallible Join completed with a non-Result value",
+            ));
+        };
+        match self.heap.get(handle)? {
+            HeapObject::ResultOk(Some(value)) => Ok(value.clone()),
+            HeapObject::ResultErr(Some(_)) => Err(VmError::invariant(
+                "infallible Join completed with an error result",
+            )),
+            HeapObject::ResultOk(None) | HeapObject::ResultErr(None) => Err(VmError::invariant(
+                "infallible Join returned a moved Result payload",
+            )),
+            _ => Err(VmError::invariant(
+                "infallible Join completed with a different heap object",
+            )),
+        }
+    }
+
     fn apply_join_completion(
         &mut self,
         frame: usize,
@@ -2935,9 +3240,11 @@ impl<'program, 'host> Engine<'program, 'host> {
         destination: &BytecodePlace,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
+        join_error: BytecodeTypeId,
     ) -> Result<(), VmError> {
         match completion {
             TaskCompletion::Returned(value) => {
+                let value = self.logical_join_value(value, join_error)?;
                 self.write_place(frame, destination, value)?;
                 self.jump(frame, target);
             }
@@ -3597,6 +3904,22 @@ impl<'program, 'host> Engine<'program, 'host> {
                         }
                         let scope = self.select_task_scope(frame)?;
                         self.spawn_group_task_with_scope(id, operation, outcome, scope, true)?
+                    }
+                    OperationResult::ActorSend {
+                        actor,
+                        message,
+                        outcome,
+                        wait: _,
+                    } => {
+                        let value = self.executor_actor_send(actor, message, outcome)?;
+                        self.spawn_select_value_task(value)?
+                    }
+                    OperationResult::PoolSubmit { .. }
+                    | OperationResult::PoolLifecycle { .. }
+                    | OperationResult::ActorStop { .. } => {
+                        return Err(VmError::invariant(
+                            "a non-selectable executor operation was registered in select",
+                        ));
                     }
                     OperationResult::OnceInit { .. } | OperationResult::OnceWait { .. } => {
                         return Err(VmError::invariant(
@@ -4860,6 +5183,11 @@ impl<'program, 'host> Engine<'program, 'host> {
             region.arms.get(winner_index).cloned().ok_or_else(|| {
                 VmError::invariant("select winner index is outside its arm table")
             })?;
+        let join_error = winner_arm
+            .owner
+            .as_ref()
+            .map(|owner| self.join_error_type(owner.ty))
+            .transpose()?;
         for (index, arm) in region.arms.into_iter().enumerate() {
             if index != winner_index && arm.owned {
                 self.discard_task_completion(arm.task)?;
@@ -4883,6 +5211,10 @@ impl<'program, 'host> Engine<'program, 'host> {
             .ok_or_else(|| VmError::invariant("select winner has no bytecode arm"))?;
         match completion {
             TaskCompletion::Returned(value) => {
+                let value = match join_error {
+                    Some(error) => self.logical_join_value(value, error)?,
+                    None => value,
+                };
                 if let Some(payload) = arm.payload() {
                     self.write_place(frame, payload, value)?;
                 }
@@ -5022,6 +5354,53 @@ impl<'program, 'host> Engine<'program, 'host> {
                     OperationResult::AsyncIteratorCollect { .. } => {
                         return Err(VmError::invariant(
                             "AsyncIterator.collect appeared in a synchronous invocation",
+                        ));
+                    }
+                    OperationResult::PoolSubmit {
+                        pool,
+                        function,
+                        arguments,
+                        outcome,
+                        wait,
+                    } => {
+                        if wait {
+                            return Err(VmError::invariant(
+                                "Pool.submit appeared in a synchronous invocation",
+                            ));
+                        }
+                        let value = self
+                            .admit_executor_submit(frame, pool, function, arguments, outcome)?
+                            .unwrap_or(self.executor_error_result(outcome, 0)?);
+                        if let Some(destination) = destination {
+                            self.write_place(frame, destination, value)?;
+                        }
+                        let target = target.ok_or_else(|| {
+                            VmError::invariant("executor submission has no normal target")
+                        })?;
+                        self.jump(frame, target);
+                    }
+                    OperationResult::ActorSend {
+                        actor,
+                        message,
+                        outcome,
+                        wait,
+                    } => {
+                        if wait {
+                            return Err(VmError::invariant(
+                                "ActorRef.send appeared in a synchronous invocation",
+                            ));
+                        }
+                        let value = self.executor_actor_send(actor, message, outcome)?;
+                        if let Some(destination) = destination {
+                            self.write_place(frame, destination, value)?;
+                        }
+                        let target = target
+                            .ok_or_else(|| VmError::invariant("actor send has no normal target"))?;
+                        self.jump(frame, target);
+                    }
+                    OperationResult::PoolLifecycle { .. } | OperationResult::ActorStop { .. } => {
+                        return Err(VmError::invariant(
+                            "an async executor operation appeared in a synchronous invocation",
                         ));
                     }
                     OperationResult::Panic(code, message) => {
@@ -5176,6 +5555,99 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     self.begin_propagated_panic(frame, panic, *unwind)?;
                                 }
                             },
+                            OperationResult::PoolSubmit {
+                                pool,
+                                function,
+                                arguments,
+                                outcome,
+                                wait,
+                            } => {
+                                if !wait {
+                                    let value = self
+                                        .admit_executor_submit(
+                                            frame, pool, function, arguments, outcome,
+                                        )?
+                                        .unwrap_or(self.executor_error_result(outcome, 0)?);
+                                    self.write_place(frame, destination, value)?;
+                                    self.jump(frame, *target);
+                                } else {
+                                    match self.admit_executor_submit(
+                                        frame,
+                                        pool,
+                                        function,
+                                        arguments.clone(),
+                                        outcome,
+                                    )? {
+                                        Some(value) => {
+                                            self.write_place(frame, destination, value)?;
+                                            self.jump(frame, *target);
+                                        }
+                                        None => {
+                                            let state =
+                                                self.pools.get_mut(&pool).ok_or_else(|| {
+                                                    VmError::invariant(
+                                                        "Pool.submit references an unknown pool",
+                                                    )
+                                                })?;
+                                            if !state.submit_waiters.contains(&self.current_task) {
+                                                state.submit_waiters.push_back(self.current_task);
+                                            }
+                                            self.park_current(
+                                                TaskWait::PoolSubmit {
+                                                    pool,
+                                                    function,
+                                                    arguments,
+                                                    outcome,
+                                                    destination: destination.clone(),
+                                                    target: *target,
+                                                    unwind: *unwind,
+                                                },
+                                                &[],
+                                            )?;
+                                        }
+                                    }
+                                }
+                            }
+                            OperationResult::PoolLifecycle { pool, cancel } => {
+                                if self.begin_executor_pool_lifecycle(pool, cancel)? {
+                                    self.write_place(frame, destination, Value::Unit)?;
+                                    self.jump(frame, *target);
+                                } else {
+                                    let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                                        VmError::invariant(
+                                            "pool lifecycle references an unknown pool",
+                                        )
+                                    })?;
+                                    if !state.lifecycle_waiters.contains(&self.current_task) {
+                                        state.lifecycle_waiters.push(self.current_task);
+                                    }
+                                    self.park_current(
+                                        TaskWait::PoolLifecycle {
+                                            pool,
+                                            cancel,
+                                            destination: destination.clone(),
+                                            target: *target,
+                                            unwind: *unwind,
+                                        },
+                                        &[],
+                                    )?;
+                                }
+                            }
+                            OperationResult::ActorSend {
+                                actor,
+                                message,
+                                outcome,
+                                wait: _,
+                            } => {
+                                let value = self.executor_actor_send(actor, message, outcome)?;
+                                self.write_place(frame, destination, value)?;
+                                self.jump(frame, *target);
+                            }
+                            OperationResult::ActorStop { actor, outcome } => {
+                                let value = self.executor_actor_stop(actor, outcome)?;
+                                self.write_place(frame, destination, value)?;
+                                self.jump(frame, *target);
+                            }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, *unwind)?;
                             }
@@ -5210,12 +5682,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                             }
                         }
                     }
-                    BytecodeAwaitable::Join(join) => {
-                        let BytecodeOperandKind::Move(owner) = &join.kind else {
+                    BytecodeAwaitable::Join(join_operand) => {
+                        let BytecodeOperandKind::Move(owner) = &join_operand.kind else {
                             return Err(VmError::invariant(
                                 "await did not consume its affine Join",
                             ));
                         };
+                        let join_error = self.join_error_type(join_operand.ty)?;
                         let value = self.read_place(frame, owner)?;
                         let Value::Join(join) = value else {
                             return Err(VmError::invariant(
@@ -5251,6 +5724,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 destination,
                                 *target,
                                 *unwind,
+                                join_error,
                             )?;
                             if let Some(scope) = parent_scope
                                 && self.task_scopes.get(scope).is_some_and(Option::is_some)
@@ -5398,6 +5872,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                             Value::Join(RuntimeJoin { task: child, scope }),
                         )?;
                         self.jump(frame, *target);
+                    }
+                    OperationResult::PoolSubmit { .. }
+                    | OperationResult::PoolLifecycle { .. }
+                    | OperationResult::ActorSend { .. }
+                    | OperationResult::ActorStop { .. } => {
+                        return Err(VmError::invariant(
+                            "executor operation cannot be spawned through this boundary",
+                        ));
                     }
                     OperationResult::Panic(code, message) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
@@ -5627,6 +6109,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                             OperationResult::AsyncIteratorCollect { .. } => {
                                 return Err(VmError::invariant(
                                     "AsyncIterator.collect cannot be deferred",
+                                ));
+                            }
+                            OperationResult::PoolSubmit { .. }
+                            | OperationResult::PoolLifecycle { .. }
+                            | OperationResult::ActorSend { .. }
+                            | OperationResult::ActorStop { .. } => {
+                                return Err(VmError::invariant(
+                                    "executor operation cannot be deferred",
                                 ));
                             }
                         }
@@ -5930,6 +6420,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                     return Err(VmError::invariant(
                         "AsyncIterator.collect cannot be deferred",
                     ));
+                }
+                OperationResult::PoolSubmit { .. }
+                | OperationResult::PoolLifecycle { .. }
+                | OperationResult::ActorSend { .. }
+                | OperationResult::ActorStop { .. } => {
+                    return Err(VmError::invariant("executor operation cannot be deferred"));
                 }
             }
         } else if self.pending_unwind.is_some() {
@@ -6411,6 +6907,20 @@ fn channel_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<Runti
     .then_some(kind)
 }
 
+fn executor_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<RuntimeHostValueKind> {
+    let kind = match nominal.name.as_str() {
+        "Pool" => RuntimeHostValueKind::ExecutorPool,
+        "BlockingPool" => RuntimeHostValueKind::ExecutorBlockingPool,
+        "Actor" => RuntimeHostValueKind::ExecutorActor,
+        "ActorRef" => RuntimeHostValueKind::ExecutorActorRef,
+        _ => return None,
+    };
+    let identity_suffix = format!("::executor::type::{}", nominal.name);
+    (nominal.identity.contains(":toolchain:std:0.1-bootstrap::")
+        && nominal.identity.ends_with(&identity_suffix))
+    .then_some(kind)
+}
+
 fn oneshot_handle(value: &Value, expected: RuntimeHostValueKind) -> Result<u64, VmError> {
     let Value::Host(RuntimeValue::Host { kind, id }) = value else {
         return Err(VmError::invariant("one-shot handle is not opaque"));
@@ -6486,6 +6996,27 @@ enum OperationResult {
     GroupWait {
         id: u64,
         operation: RuntimeGroupOperation,
+        outcome: BytecodeTypeId,
+    },
+    PoolSubmit {
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        outcome: BytecodeTypeId,
+        wait: bool,
+    },
+    PoolLifecycle {
+        pool: u64,
+        cancel: bool,
+    },
+    ActorSend {
+        actor: u64,
+        message: Value,
+        wait: bool,
+        outcome: BytecodeTypeId,
+    },
+    ActorStop {
+        actor: u64,
         outcome: BytecodeTypeId,
     },
     Panic(PanicCode, String),
@@ -6971,7 +7502,8 @@ impl Engine<'_, '_> {
             .program
             .ty(ty)
             .ok_or_else(|| VmError::invariant("collection has an unknown bytecode type"))?
-            .kind;
+            .kind
+            .clone();
         let BytecodeTypeKind::Intrinsic {
             constructor,
             arguments,
@@ -10289,6 +10821,671 @@ impl Engine<'_, '_> {
         result
     }
 
+    fn executor_handle(
+        &self,
+        value: &Value,
+        expected: RuntimeHostValueKind,
+    ) -> Result<u64, VmError> {
+        let Value::Host(RuntimeValue::Host { kind, id }) = value else {
+            return Err(VmError::invariant("executor handle is not opaque"));
+        };
+        if *kind != expected || *id == 0 {
+            return Err(VmError::invariant("executor handle has the wrong kind"));
+        }
+        Ok(*id)
+    }
+
+    fn executor_callable(
+        &self,
+        value: &Value,
+    ) -> Result<(BytecodeFunctionId, Vec<Value>), VmError> {
+        let (callable, arguments) = match value {
+            Value::Function { callable, .. } => (*callable, Vec::new()),
+            Value::Heap(handle) => {
+                let HeapObject::Closure { callable, .. } = self.heap.get(*handle)? else {
+                    return Err(VmError::invariant(
+                        "executor job is not a function or closure value",
+                    ));
+                };
+                (*callable, vec![Value::Heap(*handle)])
+            }
+            _ => {
+                return Err(VmError::invariant(
+                    "executor job is not a function or closure value",
+                ));
+            }
+        };
+        let metadata = self
+            .program
+            .callable(callable)
+            .ok_or_else(|| VmError::invariant("executor job callable metadata is invalid"))?;
+        let function = metadata
+            .implementation
+            .ok_or_else(|| VmError::UnsupportedHostCall("executor host job".into()))?;
+        Ok((function, arguments))
+    }
+
+    fn executor_result_ok(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        value: Value,
+    ) -> Result<Value, VmError> {
+        let kind = self
+            .program
+            .ty(result_ty)
+            .ok_or_else(|| VmError::invariant("executor result type is missing"))?
+            .kind
+            .clone();
+        if !matches!(kind, BytecodeTypeKind::Result { .. }) {
+            return Err(VmError::invariant(
+                "executor operation does not return Result",
+            ));
+        }
+        self.allocate(
+            result_ty,
+            HeapObject::ResultOk(Some(value.clone())),
+            std::slice::from_ref(&value),
+        )
+    }
+
+    fn executor_error_result(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        variant_index: usize,
+    ) -> Result<Value, VmError> {
+        let (_, error_ty) = self.result_parts(result_ty)?;
+        let trace = self.heap.type_descriptor(error_ty)?.clone();
+        let BytecodeTraceDescriptor::Variant { variants, .. } = trace else {
+            return Err(VmError::invariant("executor error is not an enum"));
+        };
+        let variant = variants.get(variant_index).ok_or_else(|| {
+            VmError::invariant("executor error variant index is outside its descriptor")
+        })?;
+        if !matches!(variant.payload, BytecodeVariantPayload::Unit) {
+            return Err(VmError::invariant(
+                "executor error variant unexpectedly carries a payload",
+            ));
+        }
+        let error = self.allocate(
+            error_ty,
+            HeapObject::Variant {
+                variant: variant.member,
+                payload: AggregatePayload::Unit,
+            },
+            &[],
+        )?;
+        self.oneshot_result(result_ty, Err(error))
+    }
+
+    fn executor_actor_error_result(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        variant_index: usize,
+        message: Value,
+    ) -> Result<Value, VmError> {
+        let (_, error_ty) = self.result_parts(result_ty)?;
+        let trace = self.heap.type_descriptor(error_ty)?.clone();
+        let BytecodeTraceDescriptor::Variant { variants, .. } = trace else {
+            return Err(VmError::invariant("actor send error is not an enum"));
+        };
+        let variant = variants.get(variant_index).ok_or_else(|| {
+            VmError::invariant("actor send error variant index is outside its descriptor")
+        })?;
+        let BytecodeVariantPayload::Tuple(types) = &variant.payload else {
+            return Err(VmError::invariant(
+                "actor send error variant has no message payload",
+            ));
+        };
+        if types.len() != 1 {
+            return Err(VmError::invariant(
+                "actor send error payload arity is not one",
+            ));
+        }
+        let error = self.allocate(
+            error_ty,
+            HeapObject::Variant {
+                variant: variant.member,
+                payload: AggregatePayload::Tuple(vec![Some(message.clone())]),
+            },
+            std::slice::from_ref(&message),
+        )?;
+        self.oneshot_result(result_ty, Err(error))
+    }
+
+    fn next_executor_id(&mut self) -> Result<u64, VmError> {
+        let id = self.next_executor_id;
+        self.next_executor_id =
+            self.next_executor_id
+                .checked_add(1)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "executor handles",
+                    limit: u64::MAX,
+                })?;
+        Ok(id)
+    }
+
+    fn executor_pool_constructor(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+        blocking: bool,
+    ) -> Result<OperationResult, VmError> {
+        let [Value::Integer(workers), Value::Integer(capacity)] = values else {
+            return Err(VmError::invariant(
+                "executor pool constructor arguments are not Int",
+            ));
+        };
+        if *workers <= 0 {
+            return Ok(OperationResult::Value(
+                self.executor_error_result(metadata.outcome, 0)?,
+            ));
+        }
+        if *capacity < 0 {
+            return Ok(OperationResult::Value(
+                self.executor_error_result(metadata.outcome, 1)?,
+            ));
+        }
+        let workers = match usize::try_from(*workers) {
+            Ok(workers) => workers,
+            Err(_) => {
+                return Ok(OperationResult::Value(
+                    self.executor_error_result(metadata.outcome, 2)?,
+                ));
+            }
+        };
+        let capacity = match usize::try_from(*capacity) {
+            Ok(capacity) => capacity,
+            Err(_) => {
+                return Ok(OperationResult::Value(
+                    self.executor_error_result(metadata.outcome, 2)?,
+                ));
+            }
+        };
+        if workers > 4096 || capacity > 1_000_000 {
+            return Ok(OperationResult::Value(
+                self.executor_error_result(metadata.outcome, 2)?,
+            ));
+        }
+        if blocking {
+            // The host-worker bridge is intentionally a separate block. The
+            // cooperative VM does not silently run blocking jobs inline.
+            return Ok(OperationResult::Value(
+                self.executor_error_result(metadata.outcome, 3)?,
+            ));
+        }
+        let id = self.next_executor_id()?;
+        self.pools.insert(
+            id,
+            RuntimePoolState {
+                blocking: false,
+                workers,
+                capacity,
+                running: 0,
+                queued: VecDeque::new(),
+                submit_waiters: VecDeque::new(),
+                lifecycle_waiters: Vec::new(),
+                lifecycle: RuntimePoolLifecycle::Open,
+            },
+        );
+        let handle = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ExecutorPool,
+            id,
+        });
+        self.record_resource(
+            &RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorPool,
+                id,
+            },
+            DiagnosticResourceState::Acquired,
+        )?;
+        Ok(OperationResult::Value(
+            self.executor_result_ok(metadata.outcome, handle)?,
+        ))
+    }
+
+    fn current_executor_scope(&self, frame: usize) -> Result<usize, VmError> {
+        self.select_task_scope(frame)?
+            .ok_or_else(|| VmError::invariant("executor submission has no active task scope"))
+    }
+
+    fn executor_pool_capacity_available(&self, pool: u64) -> Result<bool, VmError> {
+        let state = self
+            .pools
+            .get(&pool)
+            .ok_or_else(|| VmError::invariant("executor operation references an unknown pool"))?;
+        if state.lifecycle != RuntimePoolLifecycle::Open {
+            return Ok(false);
+        }
+        let admitted = state
+            .running
+            .saturating_add(state.queued.len())
+            .saturating_add(
+                self.tasks
+                    .iter()
+                    .filter(|task| {
+                        matches!(task.status, TaskStatus::Runnable)
+                            && matches!(
+                                task.resume,
+                                Some(TaskWait::PoolJob { pool: task_pool, .. })
+                                    if task_pool == pool
+                            )
+                    })
+                    .count(),
+            );
+        Ok(if state.capacity == 0 {
+            admitted < state.workers
+        } else {
+            admitted < state.capacity
+        })
+    }
+
+    fn spawn_pool_job(
+        &mut self,
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Waiting(TaskWait::PoolJob {
+                pool,
+                function,
+                arguments,
+            }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("executor job targets a missing task scope"))?
+            .children
+            .push(task);
+        self.pools
+            .get_mut(&pool)
+            .ok_or_else(|| VmError::invariant("executor job targets an unknown pool"))?
+            .queued
+            .push_back(task);
+        self.record_new_task(task, Some(scope), DiagnosticTaskState::Waiting)?;
+        self.service_executor_pool(pool).map(|_| task)
+    }
+
+    fn service_executor_pool(&mut self, pool: u64) -> Result<usize, VmError> {
+        let mut wake_jobs = Vec::new();
+        let terminal = {
+            let state = self
+                .pools
+                .get(&pool)
+                .ok_or_else(|| VmError::invariant("executor service references an unknown pool"))?;
+            matches!(
+                state.lifecycle,
+                RuntimePoolLifecycle::Cancelling
+                    | RuntimePoolLifecycle::Cancelled
+                    | RuntimePoolLifecycle::Closed
+            )
+        };
+        if terminal {
+            self.finish_executor_pool_lifecycle(pool)?;
+            return Ok(0);
+        }
+        {
+            let state = self
+                .pools
+                .get_mut(&pool)
+                .ok_or_else(|| VmError::invariant("executor service references an unknown pool"))?;
+            let slots = state.workers.saturating_sub(state.running);
+            for _ in 0..slots {
+                let Some(task) = state.queued.pop_front() else {
+                    break;
+                };
+                wake_jobs.push(task);
+            }
+        }
+        for task in &wake_jobs {
+            self.wake_task(*task)?;
+        }
+        let submit_waiter = if self.executor_pool_capacity_available(pool)? {
+            self.pools
+                .get_mut(&pool)
+                .and_then(|state| state.submit_waiters.pop_front())
+        } else {
+            None
+        };
+        if let Some(task) = submit_waiter {
+            self.wake_task(task)?;
+        }
+        self.finish_executor_pool_lifecycle(pool)?;
+        Ok(wake_jobs.len())
+    }
+
+    fn finish_executor_pool_lifecycle(&mut self, pool: u64) -> Result<(), VmError> {
+        let (terminal, waiters) = {
+            let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                VmError::invariant("executor lifecycle references an unknown pool")
+            })?;
+            let terminal = matches!(
+                state.lifecycle,
+                RuntimePoolLifecycle::ShuttingDown | RuntimePoolLifecycle::Cancelling
+            ) && state.running == 0
+                && state.queued.is_empty();
+            if terminal {
+                state.lifecycle = if state.lifecycle == RuntimePoolLifecycle::Cancelling {
+                    RuntimePoolLifecycle::Cancelled
+                } else {
+                    RuntimePoolLifecycle::Closed
+                };
+            }
+            (
+                terminal,
+                terminal
+                    .then(|| std::mem::take(&mut state.lifecycle_waiters))
+                    .unwrap_or_default(),
+            )
+        };
+        if terminal {
+            for task in waiters {
+                self.wake_task(task)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn begin_executor_pool_lifecycle(&mut self, pool: u64, cancel: bool) -> Result<bool, VmError> {
+        let (running, queued, submit_waiters) = {
+            let state = self
+                .pools
+                .get_mut(&pool)
+                .ok_or_else(|| VmError::invariant("pool lifecycle references an unknown pool"))?;
+            if state.blocking {
+                return Err(VmError::UnsupportedHostCall(
+                    "std.executor.BlockingPool.lifecycle".into(),
+                ));
+            }
+            if state.lifecycle != RuntimePoolLifecycle::Open
+                && !(cancel && state.lifecycle == RuntimePoolLifecycle::ShuttingDown)
+            {
+                return Err(VmError::invariant(
+                    "pool lifecycle operation is not terminally unique",
+                ));
+            }
+            state.lifecycle = if cancel {
+                RuntimePoolLifecycle::Cancelling
+            } else {
+                RuntimePoolLifecycle::ShuttingDown
+            };
+            let running = self
+                .pool_running
+                .iter()
+                .filter_map(|(task, owner)| (*owner == pool).then_some(*task))
+                .collect::<Vec<_>>();
+            let queued = state.queued.iter().copied().collect::<Vec<_>>();
+            let submit_waiters = std::mem::take(&mut state.submit_waiters);
+            (running, queued, submit_waiters)
+        };
+        for task in submit_waiters {
+            self.wake_task(task)?;
+        }
+        if cancel {
+            for task in running.into_iter().chain(queued) {
+                self.request_cancel(task)?;
+            }
+        } else {
+            self.service_executor_pool(pool)?;
+        }
+        self.finish_executor_pool_lifecycle(pool)?;
+        let lifecycle = self
+            .pools
+            .get(&pool)
+            .ok_or_else(|| VmError::invariant("pool lifecycle references an unknown pool"))?
+            .lifecycle;
+        Ok(matches!(
+            lifecycle,
+            RuntimePoolLifecycle::Closed | RuntimePoolLifecycle::Cancelled
+        ))
+    }
+
+    fn executor_actor_send(
+        &mut self,
+        actor: u64,
+        message: Value,
+        outcome: BytecodeTypeId,
+    ) -> Result<Value, VmError> {
+        let state = self
+            .actors
+            .get_mut(&actor)
+            .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?;
+        if state.stopped {
+            return self.executor_actor_error_result(outcome, 3, message);
+        }
+        if state.capacity == 0 || state.mailbox.len() >= state.capacity {
+            return self.executor_actor_error_result(outcome, 0, message);
+        }
+        state.mailbox.push_back(message);
+        self.executor_result_ok(outcome, Value::Unit)
+    }
+
+    fn executor_actor_stop(
+        &mut self,
+        actor: u64,
+        outcome: BytecodeTypeId,
+    ) -> Result<Value, VmError> {
+        let state = self
+            .actors
+            .get_mut(&actor)
+            .ok_or_else(|| VmError::invariant("actor stop references an unknown actor"))?;
+        state.stopped = true;
+        state.mailbox.clear();
+        self.executor_result_ok(outcome, Value::Unit)
+    }
+
+    fn finish_executor_job(&mut self, task: usize) -> Result<(), VmError> {
+        if let Some(pool) = self.pool_running.remove(&task) {
+            let state = self
+                .pools
+                .get_mut(&pool)
+                .ok_or_else(|| VmError::invariant("running executor job lost its pool"))?;
+            state.running = state.running.saturating_sub(1);
+            return self.service_executor_pool(pool).map(|_| ());
+        }
+        let affected = self
+            .pools
+            .iter_mut()
+            .filter_map(|(pool, state)| {
+                let before = state.queued.len();
+                state.queued.retain(|queued| *queued != task);
+                (before != state.queued.len()).then_some(*pool)
+            })
+            .collect::<Vec<_>>();
+        for pool in affected {
+            self.service_executor_pool(pool)?;
+        }
+        Ok(())
+    }
+
+    fn admit_executor_submit(
+        &mut self,
+        frame: usize,
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        outcome: BytecodeTypeId,
+    ) -> Result<Option<Value>, VmError> {
+        let scope = self.current_executor_scope(frame)?;
+        if !self.pools.contains_key(&pool) {
+            return Err(VmError::invariant(
+                "executor submission references an unknown pool",
+            ));
+        }
+        let lifecycle = self.pools[&pool].lifecycle;
+        if lifecycle != RuntimePoolLifecycle::Open {
+            let variant = match lifecycle {
+                RuntimePoolLifecycle::ShuttingDown | RuntimePoolLifecycle::Closed => 1,
+                RuntimePoolLifecycle::Cancelling | RuntimePoolLifecycle::Cancelled => 2,
+                RuntimePoolLifecycle::Open => unreachable!(),
+            };
+            return Ok(Some(self.executor_error_result(outcome, variant)?));
+        }
+        if !self.executor_pool_capacity_available(pool)? {
+            return Ok(None);
+        }
+        let task = self.spawn_pool_job(pool, function, arguments, scope)?;
+        let join = Value::Join(RuntimeJoin { task, scope });
+        Ok(Some(self.executor_result_ok(outcome, join)?))
+    }
+
+    fn prepare_executor_call(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+    ) -> Result<Option<OperationResult>, VmError> {
+        let values = values
+            .iter()
+            .map(|value| match value {
+                Value::Loan(loan) => self.read_task_place(loan.task, loan.frame, &loan.place),
+                value => Ok(value.clone()),
+            })
+            .collect::<Result<Vec<_>, VmError>>()?;
+        let name = metadata
+            .name
+            .split_once('[')
+            .map_or(metadata.name.as_str(), |(base, _)| base);
+        match name {
+            "std.executor.pool" => {
+                return Ok(Some(
+                    self.executor_pool_constructor(metadata, &values, false)?,
+                ));
+            }
+            "std.executor.blockingPool" => {
+                return Ok(Some(
+                    self.executor_pool_constructor(metadata, &values, true)?,
+                ));
+            }
+            "std.executor.Pool.submit" | "std.executor.Pool.trySubmit" => {
+                let [pool_value, job] = values.as_slice() else {
+                    return Err(VmError::invariant(
+                        "Pool.submit has the wrong argument count",
+                    ));
+                };
+                let pool = self.executor_handle(pool_value, RuntimeHostValueKind::ExecutorPool)?;
+                let (function, arguments) = self.executor_callable(job)?;
+                return Ok(Some(OperationResult::PoolSubmit {
+                    pool,
+                    function,
+                    arguments,
+                    outcome: metadata.outcome,
+                    wait: name.ends_with(".submit"),
+                }));
+            }
+            "std.executor.Pool.actor" => {
+                let [pool_value, state, capacity, step] = values.as_slice() else {
+                    return Err(VmError::invariant(
+                        "Pool.actor has the wrong argument count",
+                    ));
+                };
+                let pool = self.executor_handle(pool_value, RuntimeHostValueKind::ExecutorPool)?;
+                let Value::Integer(capacity) = capacity else {
+                    return Err(VmError::invariant("Pool.actor capacity is not Int"));
+                };
+                if *capacity < 0 {
+                    return Ok(Some(OperationResult::Value(
+                        self.executor_error_result(metadata.outcome, 1)?,
+                    )));
+                }
+                let capacity = match usize::try_from(*capacity) {
+                    Ok(capacity) => capacity,
+                    Err(_) => {
+                        return Ok(Some(OperationResult::Value(
+                            self.executor_error_result(metadata.outcome, 2)?,
+                        )));
+                    }
+                };
+                if capacity > 1_000_000 {
+                    return Ok(Some(OperationResult::Value(
+                        self.executor_error_result(metadata.outcome, 2)?,
+                    )));
+                }
+                let (step, step_arguments) = self.executor_callable(step)?;
+                let id = self.next_executor_id()?;
+                self.actors.insert(
+                    id,
+                    RuntimeActorState {
+                        pool,
+                        state: state.clone(),
+                        step,
+                        step_arguments,
+                        capacity,
+                        mailbox: VecDeque::new(),
+                        stopped: false,
+                    },
+                );
+                let handle = Value::Host(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ExecutorActor,
+                    id,
+                });
+                return Ok(Some(OperationResult::Value(
+                    self.executor_result_ok(metadata.outcome, handle)?,
+                )));
+            }
+            "std.executor.Pool.shutdown" | "std.executor.Pool.cancel" => {
+                let [pool_value] = values.as_slice() else {
+                    return Err(VmError::invariant(
+                        "Pool lifecycle method has the wrong argument count",
+                    ));
+                };
+                let pool = self.executor_handle(pool_value, RuntimeHostValueKind::ExecutorPool)?;
+                return Ok(Some(OperationResult::PoolLifecycle {
+                    pool,
+                    cancel: name.ends_with(".cancel"),
+                }));
+            }
+            "std.executor.ActorRef.send" | "std.executor.ActorRef.trySend" => {
+                let [actor_value, message] = values.as_slice() else {
+                    return Err(VmError::invariant(
+                        "ActorRef.send has the wrong argument count",
+                    ));
+                };
+                let actor =
+                    self.executor_handle(actor_value, RuntimeHostValueKind::ExecutorActorRef)?;
+                return Ok(Some(OperationResult::ActorSend {
+                    actor,
+                    message: message.clone(),
+                    wait: name.ends_with(".send"),
+                    outcome: metadata.outcome,
+                }));
+            }
+            "std.executor.Actor.stop" => {
+                let [actor_value] = values.as_slice() else {
+                    return Err(VmError::invariant(
+                        "Actor.stop has the wrong argument count",
+                    ));
+                };
+                let actor =
+                    self.executor_handle(actor_value, RuntimeHostValueKind::ExecutorActor)?;
+                return Ok(Some(OperationResult::ActorStop {
+                    actor,
+                    outcome: metadata.outcome,
+                }));
+            }
+            "std.executor.BlockingPool.run"
+            | "std.executor.BlockingPool.shutdown"
+            | "std.executor.BlockingPool.cancel" => {
+                return Err(VmError::UnsupportedHostCall(name.to_owned()));
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
     fn prepare_call(
         &mut self,
         frame: usize,
@@ -10480,6 +11677,11 @@ impl Engine<'_, '_> {
                 .collect::<Result<Vec<_>, _>>()?;
             if let Some(environment) = environment {
                 values.insert(0, environment);
+            }
+            if metadata.name.starts_with("std.executor.")
+                && let Some(result) = self.prepare_executor_call(&metadata, &values)?
+            {
+                return Ok(result);
             }
             if (metadata.name == "std.sync.once"
                 || metadata.name.starts_with("std.sync.once[")
@@ -12662,7 +13864,9 @@ impl Engine<'_, '_> {
                 .nominals
                 .get(nominal.index() as usize)
                 .and_then(|nominal| {
-                    sync_collection_host_kind(nominal).or_else(|| channel_host_kind(nominal))
+                    sync_collection_host_kind(nominal)
+                        .or_else(|| channel_host_kind(nominal))
+                        .or_else(|| executor_host_kind(nominal))
                 })
                 == Some(kind) =>
             {
@@ -13687,6 +14891,12 @@ impl Engine<'_, '_> {
                 OperationResult::AsyncIteratorCollect { .. } => Err(VmError::invariant(
                     "iterator callback attempted AsyncIterator.collect",
                 )),
+                OperationResult::PoolSubmit { .. }
+                | OperationResult::PoolLifecycle { .. }
+                | OperationResult::ActorSend { .. }
+                | OperationResult::ActorStop { .. } => {
+                    Err(VmError::invariant("executor operation is not synchronous"))
+                }
                 OperationResult::Call { .. } => unreachable!(),
             };
         };

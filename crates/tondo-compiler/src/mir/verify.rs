@@ -1351,6 +1351,13 @@ impl Verifier<'_> {
             let block_context = format!("{context} block#{index}");
             for local in &live_out[index] {
                 let ty = function.locals[local.index() as usize].ty;
+                // A direct suspendible bootstrap call materializes its
+                // Result[Join] wrapper before the implicit await. The Join
+                // itself is affine and checked below; the wrapper is only a
+                // compiler-owned transport temporary.
+                if self.is_temporary_join_result(function, *local, ty, &block_context)? {
+                    continue;
+                }
                 if matches!(
                     self.kind(ty, &block_context)?,
                     TypeKind::Intrinsic {
@@ -1364,6 +1371,31 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn is_temporary_join_result(
+        &self,
+        function: &MirFunction,
+        local: MirLocalId,
+        ty: TypeId,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        if !matches!(
+            function.local(local).map(|local| local.kind()),
+            Some(MirLocalKind::Temporary)
+        ) {
+            return Ok(false);
+        }
+        let TypeKind::Result { success, .. } = self.kind(ty, context)? else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.kind(*success, context)?,
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Join,
+                ..
+            }
+        ))
     }
 
     fn verify_closure_protocols(

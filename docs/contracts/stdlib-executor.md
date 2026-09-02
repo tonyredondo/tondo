@@ -19,6 +19,32 @@ admisión acotada, ciclo de vida de pools, actores y una frontera explícita par
 trabajo bloqueante. Ningún constructor crea un executor global ni hereda
 capabilities del ambiente.
 
+## Frontera de implementación observada (`STD-EXEC-IMPL-001`)
+
+La implementación actual se registra como
+`partial-hosted-cooperative-pool`. La VM hosted verifica la ruta compiler → HIR
+→ MIR → scheduler para el pool cooperativo: valida workers/capacity, aplica
+`trySubmit` inmediato, backpressure FIFO de `submit`, materializa el `Join`
+existente y drena `shutdown`/`cancel` con cancelación cooperativa. La fixture
+[`tests/runtime/m11-std-executor-impl-001.to`](../../tests/runtime/m11-std-executor-impl-001.to)
+termina con `executor-ok` y exit `0`; el informe reproducible se escribe en
+`target/reliability/evidence/stdlib-executor-implementation.json`.
+
+Esta observación no promociona el owner completo. `Pool.actor` crea y conserva
+un handle afín y `Actor.stop` cierra su mailbox, pero la ejecución del handler y
+la entrega de mensajes aún no son ejecutables. El contrato expone
+`ActorRef[M].send`/`trySend`, pero no define una operación canónica para obtener
+un `ActorRef` desde el `Actor` que devuelve `Pool.actor`; esa decisión bloquea
+la implementación del mailbox y cualquier prueba de `selectable` sobre actors.
+No se inventa una conversión implícita ni un método adicional dentro de este
+bloque.
+
+`blockingPool` devuelve `ExecutorError.CapabilityMissing` en la VM hosted
+actual: el bridge de workers host queda reservado para `STD-EXEC-HOST-001` y
+no se ejecuta trabajo bloqueante inline sobre el scheduler cooperativo. El
+runtime nativo y el lowering native AOT siguen `not-claimed`, y
+`public_api_promoted` permanece `false`.
+
 ## Superficie pública
 
 ```tondo
@@ -189,9 +215,10 @@ callbacks de completion, prioridades públicas, work-stealing observable,
 `submitAsync`, `runAsync`, `waitAsync`, conversión implícita a thread y
 fallback bloqueante dentro del scheduler cooperativo.
 
-La implementación queda pendiente de
-`STD-EXEC-IMPL-001`, `STD-EXEC-HOST-001`, `STD-EXEC-TEST-001`,
-`STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. Los contratos
-runtime-facing de `std.executor`, `std.net` y `std.time` civil ya están cerrados;
-`DIAG-RUNTIME-001` puede comenzar cuando se abra la compuerta de diagnóstico;
-el contrato `std.log` ya está cerrado y sus leaves siguen la compuerta nativa.
+La implementación completa queda pendiente de la ejecución de handlers y de
+la decisión `Actor`/`ActorRef`, además de `STD-EXEC-HOST-001`,
+`STD-EXEC-TEST-001`, `STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y
+`STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
+y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
+se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y
+sus leaves siguen la compuerta nativa.

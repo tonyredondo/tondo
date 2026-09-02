@@ -15685,6 +15685,10 @@ impl<'a> ExpressionChecker<'a> {
                 ("sync", Some("atomic")) => HirBootstrapHostFunction::SyncAtomic,
                 ("channel", Some("bounded")) => HirBootstrapHostFunction::ChannelBounded,
                 ("channel", Some("unbounded")) => HirBootstrapHostFunction::ChannelUnbounded,
+                ("executor", Some("pool")) => HirBootstrapHostFunction::ExecutorPool,
+                ("executor", Some("blockingPool")) => {
+                    HirBootstrapHostFunction::ExecutorBlockingPool
+                }
                 ("iter", Some("map")) => HirBootstrapHostFunction::IterMap,
                 ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
                 ("iter", Some("take")) => HirBootstrapHostFunction::IterTake,
@@ -18214,6 +18218,19 @@ impl<'a> ExpressionChecker<'a> {
         )? {
             return Ok(Some(call));
         }
+        if let Some(call) = self.check_executor_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            expected,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_process_method_call(
             file,
             range,
@@ -19225,6 +19242,84 @@ impl<'a> ExpressionChecker<'a> {
                 self.sources.span(file, bracket.range())?,
                 "E1104",
                 "std.channel endpoint methods do not declare explicit type arguments",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        if self
+            .program
+            .callable(HirCallableId::Host(function))
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            Some(receiver),
+            None,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_executor_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let TypeKind::Nominal {
+            identity,
+            arguments: _,
+        } = self.program.interner.kind(receiver_type)?
+        else {
+            return Ok(None);
+        };
+        if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.module().as_str() != "executor"
+        {
+            return Ok(None);
+        }
+        let owner = identity.declaration().to_string();
+        let function = match (owner.as_str(), member) {
+            ("Pool", "submit") => HirBootstrapHostFunction::ExecutorPoolSubmit,
+            ("Pool", "trySubmit") => HirBootstrapHostFunction::ExecutorPoolTrySubmit,
+            ("Pool", "actor") => HirBootstrapHostFunction::ExecutorPoolActor,
+            ("Pool", "shutdown") => HirBootstrapHostFunction::ExecutorPoolShutdown,
+            ("Pool", "cancel") => HirBootstrapHostFunction::ExecutorPoolCancel,
+            ("ActorRef", "send") => HirBootstrapHostFunction::ExecutorActorSend,
+            ("ActorRef", "trySend") => HirBootstrapHostFunction::ExecutorActorTrySend,
+            ("Actor", "stop") => HirBootstrapHostFunction::ExecutorActorStop,
+            ("BlockingPool", "run") => HirBootstrapHostFunction::ExecutorBlockingRun,
+            ("BlockingPool", "shutdown") => HirBootstrapHostFunction::ExecutorBlockingShutdown,
+            ("BlockingPool", "cancel") => HirBootstrapHostFunction::ExecutorBlockingCancel,
+            _ => return Ok(None),
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "std.executor methods do not declare explicit type arguments",
                 Vec::new(),
                 None,
             )?;

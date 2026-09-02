@@ -2741,6 +2741,19 @@ pub enum HirBootstrapHostFunction {
     ChannelReceiverAsyncIteratorAdopt,
     ChannelReceiverTryReceive,
     ChannelReceiverClose,
+    ExecutorPool,
+    ExecutorBlockingPool,
+    ExecutorPoolSubmit,
+    ExecutorPoolTrySubmit,
+    ExecutorPoolActor,
+    ExecutorPoolShutdown,
+    ExecutorPoolCancel,
+    ExecutorActorSend,
+    ExecutorActorTrySend,
+    ExecutorActorStop,
+    ExecutorBlockingRun,
+    ExecutorBlockingShutdown,
+    ExecutorBlockingCancel,
     SyncMemoryOrderRelaxed,
     SyncMemoryOrderAcquire,
     SyncMemoryOrderRelease,
@@ -3164,6 +3177,19 @@ impl HirBootstrapHostFunction {
             Self::ChannelReceiverAsyncIteratorAdopt => "std.channel.Receiver.__asyncIteratorAdopt",
             Self::ChannelReceiverTryReceive => "std.channel.Receiver.tryReceive",
             Self::ChannelReceiverClose => "std.channel.Receiver.close",
+            Self::ExecutorPool => "std.executor.pool",
+            Self::ExecutorBlockingPool => "std.executor.blockingPool",
+            Self::ExecutorPoolSubmit => "std.executor.Pool.submit",
+            Self::ExecutorPoolTrySubmit => "std.executor.Pool.trySubmit",
+            Self::ExecutorPoolActor => "std.executor.Pool.actor",
+            Self::ExecutorPoolShutdown => "std.executor.Pool.shutdown",
+            Self::ExecutorPoolCancel => "std.executor.Pool.cancel",
+            Self::ExecutorActorSend => "std.executor.ActorRef.send",
+            Self::ExecutorActorTrySend => "std.executor.ActorRef.trySend",
+            Self::ExecutorActorStop => "std.executor.Actor.stop",
+            Self::ExecutorBlockingRun => "std.executor.BlockingPool.run",
+            Self::ExecutorBlockingShutdown => "std.executor.BlockingPool.shutdown",
+            Self::ExecutorBlockingCancel => "std.executor.BlockingPool.cancel",
             Self::SyncMemoryOrderRelaxed => "intrinsic.sync.MemoryOrder.Relaxed",
             Self::SyncMemoryOrderAcquire => "intrinsic.sync.MemoryOrder.Acquire",
             Self::SyncMemoryOrderRelease => "intrinsic.sync.MemoryOrder.Release",
@@ -3560,6 +3586,14 @@ impl HirBootstrapHostFunction {
                 | Self::ChannelSenderSend
                 | Self::ChannelReceiverReceive
                 | Self::ChannelReceiverAsyncIteratorNext
+                | Self::ExecutorPoolSubmit
+                | Self::ExecutorPoolShutdown
+                | Self::ExecutorPoolCancel
+                | Self::ExecutorActorSend
+                | Self::ExecutorActorStop
+                | Self::ExecutorBlockingRun
+                | Self::ExecutorBlockingShutdown
+                | Self::ExecutorBlockingCancel
                 | Self::TimeSleep
                 | Self::TimerWait
                 | Self::TestingWithVirtualTime
@@ -3588,6 +3622,7 @@ impl HirBootstrapHostFunction {
                 | Self::AsyncGroupNext
                 | Self::ChannelSenderSend
                 | Self::ChannelReceiverReceive
+                | Self::ExecutorActorSend
                 | Self::TimeSleep
                 | Self::TimerWait
         )

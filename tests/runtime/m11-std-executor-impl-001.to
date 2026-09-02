@@ -1,0 +1,121 @@
+import std.console
+import std.executor
+import std.time
+
+fn compute(): Int ! Never suspends {
+    40 + 2
+}
+
+fn blocked(): Int ! time.ClockError suspends {
+    time.sleep(time.Duration.fromNanoseconds(1000000))?
+    42
+}
+
+fn submit_blocked(): Int ! Never suspends {
+    match time.sleep(time.Duration.fromNanoseconds(1000000)) {
+        ok(_) => 42
+        err(_) => panic("executor submit backpressure clock failed")
+    }
+}
+
+fn actor_step(state: mut Int, message: Int): Unit ! String suspends {
+    state += message
+}
+
+fn submit_pair(pool: ref executor.Pool): Unit ! Never suspends {
+    scope {
+        let first = match pool.submit(submit_blocked) {
+            ok(join) => join
+            err(_) => panic("executor submit rejected the first job")
+        }
+        let second = match pool.submit(compute) {
+            ok(join) => join
+            err(_) => panic("executor submit rejected the second job")
+        }
+        assert(await first == 42)
+        assert(await second == 42)
+    }
+}
+
+fn cancel_pool_with_job(): Unit ! (executor.ExecutorError | executor.SubmitError | time.ClockError) suspends {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let _job = pool.trySubmit(blocked)?
+        pool.cancel()
+        return
+    }
+}
+
+fn main(): !(executor.ExecutorError | executor.SubmitError | time.ClockError | String) {
+    match executor.blockingPool(1, 1) {
+        ok(_) => assert(false)
+        err(error) => match error {
+            executor.ExecutorError.InvalidWorkers => assert(false)
+            executor.ExecutorError.InvalidCapacity => assert(false)
+            executor.ExecutorError.ResourceLimit => assert(false)
+            executor.ExecutorError.CapabilityMissing => {}
+        }
+    }
+    match executor.pool(0, 1) {
+        ok(_) => assert(false)
+        err(error) => match error {
+            executor.ExecutorError.InvalidWorkers => {}
+            executor.ExecutorError.InvalidCapacity => assert(false)
+            executor.ExecutorError.ResourceLimit => assert(false)
+            executor.ExecutorError.CapabilityMissing => assert(false)
+        }
+    }
+    match executor.pool(1, -1) {
+        ok(_) => assert(false)
+        err(error) => match error {
+            executor.ExecutorError.InvalidWorkers => assert(false)
+            executor.ExecutorError.InvalidCapacity => {}
+            executor.ExecutorError.ResourceLimit => assert(false)
+            executor.ExecutorError.CapabilityMissing => assert(false)
+        }
+    }
+    match executor.pool(4097, 1) {
+        ok(_) => assert(false)
+        err(error) => match error {
+            executor.ExecutorError.InvalidWorkers => assert(false)
+            executor.ExecutorError.InvalidCapacity => assert(false)
+            executor.ExecutorError.ResourceLimit => {}
+            executor.ExecutorError.CapabilityMissing => assert(false)
+        }
+    }
+    let pool = executor.pool(1, 1)?
+    scope {
+        let first = pool.trySubmit(blocked)?
+        scope {
+            match pool.trySubmit(compute) {
+                ok(_) => {
+                    panic("executor pool accepted a saturated job")
+                }
+                err(error) => match error {
+                    executor.SubmitError.Saturated => {}
+                    executor.SubmitError.Closed => assert(false)
+                    executor.SubmitError.Cancelled => assert(false)
+                    executor.SubmitError.ResourceLimit => assert(false)
+                }
+            }
+        }
+        assert(await first? == 42)
+    }
+    let _ = submit_pair(ref pool)?
+    scope {
+        match pool.actor(0, -1, actor_step) {
+            ok(_) => panic("executor actor accepted a negative capacity")
+            err(error) => match error {
+                executor.ExecutorError.InvalidWorkers => assert(false)
+                executor.ExecutorError.InvalidCapacity => {}
+                executor.ExecutorError.ResourceLimit => assert(false)
+                executor.ExecutorError.CapabilityMissing => assert(false)
+            }
+        }
+        let actor = pool.actor(0, 1, actor_step)?
+        actor.stop()?
+    }
+    pool.shutdown()
+    cancel_pool_with_job()?
+    console.println("executor-ok")
+}

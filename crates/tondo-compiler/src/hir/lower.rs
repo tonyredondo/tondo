@@ -314,7 +314,8 @@ impl<'a> TypeLowerer<'a> {
         self.lower_bootstrap_protobuf_nominal_declarations()?;
         self.lower_bootstrap_async_nominal_declarations()?;
         self.lower_bootstrap_sync_nominal_declarations()?;
-        self.lower_bootstrap_channel_nominal_declarations()
+        self.lower_bootstrap_channel_nominal_declarations()?;
+        self.lower_bootstrap_executor_nominal_declarations()
     }
 
     fn lower_bootstrap_async_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -533,6 +534,105 @@ impl<'a> TypeLowerer<'a> {
                         .map(|position| HirGenericParameter {
                             local: LocalId::synthetic_host_generic(position as u32),
                             position: position as u32,
+                            bounds: Vec::new(),
+                        })
+                        .collect(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn lower_bootstrap_executor_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("executor")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let generic = self.interner.generic_parameter(0)?;
+        let generic_triple = [
+            generic,
+            self.interner.generic_parameter(1)?,
+            self.interner.generic_parameter(2)?,
+        ];
+        for name in [
+            "Pool",
+            "BlockingPool",
+            "Actor",
+            "ActorRef",
+            "ExecutorError",
+            "SubmitError",
+            "ActorSendError",
+        ] {
+            let type_name = Name::new(name).expect("bootstrap executor type names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("bootstrap executor nominal symbols are indexed");
+            let generic_count = match name {
+                "Actor" => 3,
+                "ActorRef" | "ActorSendError" => 1,
+                _ => 0,
+            };
+            let generic_args = match generic_count {
+                0 => Vec::new(),
+                1 => vec![generic],
+                3 => generic_triple.to_vec(),
+                _ => unreachable!("bootstrap executor generic arity is closed"),
+            };
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), generic_args)?;
+            let shape = match name {
+                "Pool" | "BlockingPool" | "Actor" | "ActorRef" => HirNominalShape::Newtype {
+                    underlying: self.interner.scalar(ScalarType::Unit),
+                },
+                "ExecutorError" => HirNominalShape::Enum {
+                    variants: [
+                        "InvalidWorkers",
+                        "InvalidCapacity",
+                        "ResourceLimit",
+                        "CapabilityMissing",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                },
+                "SubmitError" => HirNominalShape::Enum {
+                    variants: ["Saturated", "Closed", "Cancelled", "ResourceLimit"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                        .collect(),
+                },
+                "ActorSendError" => HirNominalShape::Enum {
+                    variants: [
+                        "Saturated",
+                        "Closed",
+                        "Cancelled",
+                        "Terminated",
+                        "ResourceLimit",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, vec![generic]))
+                    .collect(),
+                },
+                _ => unreachable!("bootstrap executor nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: (0..generic_count)
+                        .map(|position| HirGenericParameter {
+                            local: LocalId::synthetic_host_generic(position),
+                            position,
                             bounds: Vec::new(),
                         })
                         .collect(),
@@ -972,6 +1072,7 @@ impl<'a> TypeLowerer<'a> {
         let async_module = ModulePath::new("async")?;
         let sync = ModulePath::new("sync")?;
         let channel = ModulePath::new("channel")?;
+        let executor = ModulePath::new("executor")?;
         let bytes_module = self
             .packages
             .module(self.packages.standard(), &bytes_module);
@@ -981,6 +1082,7 @@ impl<'a> TypeLowerer<'a> {
             .module(self.packages.standard(), &async_module);
         let sync_module = self.packages.module(self.packages.standard(), &sync);
         let channel_module = self.packages.module(self.packages.standard(), &channel);
+        let executor_module = self.packages.module(self.packages.standard(), &executor);
         let time = ModulePath::new("time")?;
         let time_module = self.packages.module(self.packages.standard(), &time);
         let env = ModulePath::new("env")?;
@@ -1046,6 +1148,14 @@ impl<'a> TypeLowerer<'a> {
                 matches!(
                     reference.entity(),
                     ResolvedEntity::Module(module) if module == channel_module
+                )
+            })
+        });
+        let executor_referenced = executor_module.as_ref().is_some_and(|executor_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == executor_module
                 )
             })
         });
@@ -1166,6 +1276,7 @@ impl<'a> TypeLowerer<'a> {
             && !async_referenced
             && !sync_referenced
             && !channel_referenced
+            && !executor_referenced
             && !time_referenced
             && !env_referenced
             && !math_referenced
@@ -2465,6 +2576,210 @@ impl<'a> TypeLowerer<'a> {
                 array,
                 1,
                 send_bound,
+            )?;
+        }
+
+        if executor_referenced {
+            let executor_module = executor_module
+                .as_ref()
+                .expect("executor reference implies a bootstrap executor module");
+            let pool = self.bootstrap_nominal_type(executor_module, "Pool")?;
+            let blocking_pool = self.bootstrap_nominal_type(executor_module, "BlockingPool")?;
+            let executor_error = self.bootstrap_nominal_type(executor_module, "ExecutorError")?;
+            let submit_error = self.bootstrap_nominal_type(executor_module, "SubmitError")?;
+            let generic_state = self.interner.generic_parameter(0)?;
+            let generic_message = self.interner.generic_parameter(1)?;
+            let generic_actor_error = self.interner.generic_parameter(2)?;
+            let actor = self.bootstrap_nominal_type_with_args(
+                executor_module,
+                "Actor",
+                vec![generic_state, generic_message, generic_actor_error],
+            )?;
+            let actor_ref = self.bootstrap_nominal_type_with_args(
+                executor_module,
+                "ActorRef",
+                vec![generic_message],
+            )?;
+            let generic_value = self.interner.generic_parameter(0)?;
+            let generic_error = self.interner.generic_parameter(1)?;
+            let actor_error = self.bootstrap_nominal_type_with_args(
+                executor_module,
+                "ActorSendError",
+                vec![generic_message],
+            )?;
+            let join = self
+                .interner
+                .intrinsic(IntrinsicType::Join, vec![generic_value, generic_error])?;
+            let job_result = self.interner.result(generic_value, generic_error)?;
+            let suspendible_job = self.interner.function(FunctionType::with_effects(
+                true,
+                false,
+                false,
+                Vec::new(),
+                None,
+                job_result,
+            ))?;
+            let submit_result = self.interner.result(join, submit_error)?;
+            let executor_result = self.interner.result(pool, executor_error)?;
+            let blocking_result = self.interner.result(blocking_pool, executor_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorPool,
+                vec![(int, false), (int, false)],
+                None,
+                executor_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorBlockingPool,
+                vec![(int, false), (int, false)],
+                None,
+                blocking_result,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorPoolSubmit,
+                vec![
+                    (pool, ParameterMode::Ref, true),
+                    (suspendible_job, ParameterMode::Value, false),
+                ],
+                submit_result,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorPoolTrySubmit,
+                vec![
+                    (pool, ParameterMode::Ref, true),
+                    (suspendible_job, ParameterMode::Value, false),
+                ],
+                submit_result,
+                2,
+                Vec::new(),
+            )?;
+            let step_result = self.interner.result(unit, generic_actor_error)?;
+            let step = self.interner.function(FunctionType::with_effects(
+                true,
+                false,
+                false,
+                vec![
+                    FunctionParameter::new(ParameterMode::Mut, generic_state),
+                    FunctionParameter::new(ParameterMode::Value, generic_message),
+                ],
+                None,
+                step_result,
+            ))?;
+            let actor_constructor_result = self.interner.result(actor, executor_error)?;
+            let actor_bounds = vec![
+                (
+                    0,
+                    vec![
+                        self.prelude_trait_bound("Send"),
+                        self.prelude_trait_bound("Discard"),
+                    ],
+                ),
+                (
+                    1,
+                    vec![
+                        self.prelude_trait_bound("Send"),
+                        self.prelude_trait_bound("Discard"),
+                    ],
+                ),
+            ];
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorPoolActor,
+                vec![
+                    (pool, ParameterMode::Ref, true),
+                    (generic_state, ParameterMode::Value, false),
+                    (int, ParameterMode::Value, false),
+                    (step, ParameterMode::Value, false),
+                ],
+                actor_constructor_result,
+                3,
+                actor_bounds,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorPoolShutdown,
+                vec![(pool, ParameterMode::Value, true)],
+                unit,
+                0,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorPoolCancel,
+                vec![(pool, ParameterMode::Value, true)],
+                unit,
+                0,
+                Vec::new(),
+            )?;
+            let actor_send_result = self.interner.result(unit, actor_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorActorSend,
+                vec![
+                    (actor_ref, ParameterMode::Ref, true),
+                    (generic_message, ParameterMode::Value, false),
+                ],
+                actor_send_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorActorTrySend,
+                vec![
+                    (actor_ref, ParameterMode::Ref, true),
+                    (generic_message, ParameterMode::Value, false),
+                ],
+                actor_send_result,
+                1,
+                Vec::new(),
+            )?;
+            let actor_stop_result = self.interner.result(unit, generic_actor_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorActorStop,
+                vec![(actor, ParameterMode::Value, true)],
+                actor_stop_result,
+                3,
+                Vec::new(),
+            )?;
+            let blocking_job_result = self.interner.result(generic_value, generic_error)?;
+            let blocking_job = self.interner.function(FunctionType::new(
+                false,
+                false,
+                Vec::new(),
+                None,
+                blocking_job_result,
+            ))?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ExecutorBlockingRun,
+                vec![
+                    (blocking_pool, ParameterMode::Ref, true),
+                    (blocking_job, ParameterMode::Value, false),
+                ],
+                blocking_job_result,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::ExecutorBlockingShutdown,
+                vec![(blocking_pool, ParameterMode::Value, true)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::ExecutorBlockingCancel,
+                vec![(blocking_pool, ParameterMode::Value, true)],
+                None,
+                unit,
             )?;
         }
 

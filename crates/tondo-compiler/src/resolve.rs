@@ -746,6 +746,45 @@ fn bootstrap_channel_nominals() -> [(&'static str, SymbolKind, BootstrapNominalS
     ]
 }
 
+fn bootstrap_executor_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 7] {
+    [
+        ("Pool", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        (
+            "BlockingPool",
+            SymbolKind::Type,
+            BootstrapNominalShape::Newtype,
+        ),
+        ("Actor", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        ("ActorRef", SymbolKind::Type, BootstrapNominalShape::Newtype),
+        (
+            "ExecutorError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "InvalidWorkers",
+                "InvalidCapacity",
+                "ResourceLimit",
+                "CapabilityMissing",
+            ]),
+        ),
+        (
+            "SubmitError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Saturated", "Closed", "Cancelled", "ResourceLimit"]),
+        ),
+        (
+            "ActorSendError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "Saturated",
+                "Closed",
+                "Cancelled",
+                "Terminated",
+                "ResourceLimit",
+            ]),
+        ),
+    ]
+}
+
 fn bootstrap_messagepack_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 5] {
     [
         (
@@ -1020,6 +1059,12 @@ impl Resolver<'_> {
             program,
             "channel",
             &bootstrap_channel_nominals(),
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "executor",
+            &bootstrap_executor_nominals(),
         )
     }
 
@@ -1075,6 +1120,8 @@ impl Resolver<'_> {
                         "channel",
                         "Sender" | "Receiver" | "SendError" | "TrySendError" | "TryReceive",
                     ) => 1,
+                    ("executor", "Actor") => 3,
+                    ("executor", "ActorRef" | "ActorSendError") => 1,
                     _ => 0,
                 },
                 synthetic: true,

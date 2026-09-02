@@ -315,7 +315,52 @@
       "STD-EXEC-PERF-001",
       "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
-    ]
+    ],
+    "observed": {
+      "task": "STD-EXEC-IMPL-001",
+      "status": "partial-hosted-cooperative-pool",
+      "hosted_vm": "verified-pool-admission-join-and-lifecycle",
+      "native_runtime": "not-claimed",
+      "native_aot_lowering": "not-claimed",
+      "blocking_pool": "capability-missing-until-host-gate",
+      "actor": "handle-create-and-stop-only",
+      "public_api_promoted": false,
+      "fixture": {
+        "path": "tests/runtime/m11-std-executor-impl-001.to",
+        "stdout": "executor-ok",
+        "exit": 0,
+        "status": "passed"
+      },
+      "sources": [
+        "crates/tondo-compiler/src/hir.rs",
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-compiler/src/mir/verify.rs",
+        "crates/tondo-compiler/src/package.rs",
+        "crates/tondo-compiler/src/resolve.rs",
+        "crates/tondo-vm/src/bytecode/verify.rs",
+        "crates/tondo-vm/src/runtime.rs",
+        "crates/tondo-vm/src/runtime/execute.rs"
+      ],
+      "tests": [
+        "tests/runtime/m11-std-executor-impl-001.to",
+        "scripts/stdlib-executor-implementation-check.sh",
+        "scripts/stdlib-executor-implementation-test.sh",
+        "crates/tondo-vm/src/runtime/execute.rs::logical_join_value",
+        "crates/tondo-vm/src/runtime/execute.rs::begin_executor_pool_lifecycle"
+      ],
+      "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
+      "open_decision": "The locked surface has Pool.actor -> Actor but no canonical Actor -> ActorRef acquisition operation",
+      "remaining": [
+        "actor-mailbox-handler-execution",
+        "actor-ref-acquisition-contract-decision",
+        "STD-EXEC-HOST-001",
+        "STD-EXEC-TEST-001",
+        "STD-EXEC-PERF-001",
+        "STD-EXEC-CONF-001",
+        "STD-EXEC-DOC-001"
+      ]
+    }
   },
   "promotion": {
     "implementation_pending": [
