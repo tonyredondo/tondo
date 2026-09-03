@@ -4868,8 +4868,10 @@ mod tests {
              }\n",
         );
         bc::verify_bytecode(&program).expect("actor send select bytecode verifies");
-        let mut limits = VmLimits::default();
-        limits.initial_gc_threshold = 1;
+        let limits = VmLimits {
+            initial_gc_threshold: 1,
+            ..VmLimits::default()
+        };
         let mut host = RejectingHost;
         let execution =
             execute_with_limits(&program, function_id(&program, "run"), &mut host, limits)
