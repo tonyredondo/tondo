@@ -17,18 +17,19 @@ TONDO_STDLIB_EXECUTOR_CONTRACT="$contract" scripts/stdlib-executor-check.sh >/de
 jq -e '
   .implementation.observed.task == "STD-EXEC-IMPL-001"
   and .implementation.observed.status == "partial-hosted-cooperative-pool"
-  and .implementation.observed.hosted_vm == "verified-pool-admission-join-lifecycle-and-actor-ref-acquisition"
+  and .implementation.observed.hosted_vm == "verified-pool-admission-join-lifecycle-actor-ref-and-mailbox-handler"
   and .implementation.observed.native_runtime == "not-claimed"
   and .implementation.observed.native_aot_lowering == "not-claimed"
   and .implementation.observed.blocking_pool == "capability-missing-until-host-gate"
-  and .implementation.observed.actor == "handle-create-ref-and-stop-only"
+  and .implementation.observed.actor == "mailbox-handler-state-error-and-stop"
+  and .implementation.observed.selectable_actor_send == "not-claimed"
   and .implementation.observed.public_api_promoted == false
   and .implementation.observed.fixture == {path:"tests/runtime/m11-std-executor-impl-001.to",stdout:"executor-ok",exit:0,status:"passed"}
   and .implementation.observed.evidence_report == "target/reliability/evidence/stdlib-executor-implementation.json"
   and .implementation.observed.resolved_decision == "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"
   and (.implementation.observed.open_decision // null) == null
   and .implementation.observed.remaining == [
-    "actor-mailbox-handler-execution",
+    "actor-select-send-linearization",
     "STD-EXEC-HOST-001",
     "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
@@ -106,6 +107,14 @@ grep -Fq 'executor_actor_ref_projects_live_identity_and_rejects_invalid_handles'
     "$root/crates/tondo-vm/src/runtime/execute.rs" \
     || die "Actor.ref runtime regression test is missing"
 
+grep -Fq 'executor_actor_rejects_malformed_handler_before_message_commit' \
+    "$root/crates/tondo-vm/src/runtime/execute.rs" \
+    || die "actor handler validation regression test is missing"
+
+grep -Fq 'executor_actor_waits_resume_and_stop_paths_are_explicit' \
+    "$root/crates/tondo-vm/src/runtime/execute.rs" \
+    || die "actor wait and stop scheduler regression test is missing"
+
 for marker in \
     'STD-EXEC-IMPL-001' \
     'partial-hosted-cooperative-pool' \
@@ -117,4 +126,4 @@ for marker in \
         || die "implementation document misses marker: $marker"
 done
 
-echo "std.executor implementation: OK (partial hosted cooperative pool; actor/host/AOT boundaries explicit)"
+echo "std.executor implementation: OK (partial hosted cooperative pool and actor handlers; selectable/host/AOT boundaries explicit)"

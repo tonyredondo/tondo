@@ -31,13 +31,15 @@ termina con `executor-ok` y exit `0`; el informe reproducible se escribe en
 `target/reliability/evidence/stdlib-executor-implementation.json`.
 
 Esta observación no promociona el owner completo. `Pool.actor` crea y conserva
-un handle afín y `Actor.stop` cierra su mailbox, pero la ejecución del handler y
-la entrega de mensajes aún no son ejecutables. `Actor.ref(ref self)` es la
-operación explícita y no consumidora que proyecta ese owner a un
-`ActorRef[M]`; conserva únicamente la identidad del actor, no copia estado ni
-mailbox, y no introduce una conversión implícita. La VM hosted verifica esta
-proyección y la ruta de `ActorRef.trySend`, mientras el procesamiento del
-handler queda pendiente.
+un handle afín. La VM hosted ya ejecuta el handler como una task interna del
+pool, entrega los mensajes en orden FIFO de uno en uno, conserva el estado
+mutable al retorno normal y hace terminal al actor cuando el handler devuelve
+`E`; `Actor.stop` cierra la mailbox, cancela cooperativamente el handler y
+espera su drain. `Actor.ref(ref self)` es la operación explícita y no
+consumidora que proyecta ese owner a un `ActorRef[M]`; conserva únicamente la
+identidad del actor, no copia estado ni mailbox, y no introduce una conversión
+implícita. La ruta transaccional de `ActorRef.send` como brazo `selectable`
+queda fuera de esta observación y no se reclama como ejecutable.
 
 `blockingPool` devuelve `ExecutorError.CapabilityMissing` en la VM hosted
 actual: el bridge de workers host queda reservado para `STD-EXEC-HOST-001` y
@@ -217,9 +219,9 @@ callbacks de completion, prioridades públicas, work-stealing observable,
 `submitAsync`, `runAsync`, `waitAsync`, conversión implícita a thread y
 fallback bloqueante dentro del scheduler cooperativo.
 
-La implementación completa queda pendiente de la ejecución de handlers,
-`STD-EXEC-HOST-001`, `STD-EXEC-TEST-001`, `STD-EXEC-PERF-001`,
-`STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
+La implementación completa queda pendiente de la ruta transaccional
+`selectable` de `ActorRef.send`, `STD-EXEC-HOST-001`, `STD-EXEC-TEST-001`,
+`STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
 y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
 se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y
 sus leaves siguen la compuerta nativa.

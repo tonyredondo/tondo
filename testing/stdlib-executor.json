@@ -326,11 +326,12 @@
     "observed": {
       "task": "STD-EXEC-IMPL-001",
       "status": "partial-hosted-cooperative-pool",
-      "hosted_vm": "verified-pool-admission-join-lifecycle-and-actor-ref-acquisition",
+      "hosted_vm": "verified-pool-admission-join-lifecycle-actor-ref-and-mailbox-handler",
       "native_runtime": "not-claimed",
       "native_aot_lowering": "not-claimed",
       "blocking_pool": "capability-missing-until-host-gate",
-      "actor": "handle-create-ref-and-stop-only",
+      "actor": "mailbox-handler-state-error-and-stop",
+      "selectable_actor_send": "not-claimed",
       "public_api_promoted": false,
       "fixture": {
         "path": "tests/runtime/m11-std-executor-impl-001.to",
@@ -355,13 +356,15 @@
         "scripts/stdlib-executor-implementation-test.sh",
         "crates/tondo-vm/src/runtime/execute.rs::logical_join_value",
         "crates/tondo-vm/src/runtime/execute.rs::begin_executor_pool_lifecycle",
-        "crates/tondo-vm/src/runtime/execute.rs::executor_actor_ref_projects_live_identity_and_rejects_invalid_handles",
-        "crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"
+      "crates/tondo-vm/src/runtime/execute.rs::executor_actor_ref_projects_live_identity_and_rejects_invalid_handles",
+      "crates/tondo-vm/src/runtime/execute.rs::executor_actor_rejects_malformed_handler_before_message_commit",
+      "crates/tondo-vm/src/runtime/execute.rs::executor_actor_waits_resume_and_stop_paths_are_explicit",
+      "crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"
       ],
       "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
       "resolved_decision": "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor",
       "remaining": [
-        "actor-mailbox-handler-execution",
+        "actor-select-send-linearization",
         "STD-EXEC-HOST-001",
         "STD-EXEC-TEST-001",
         "STD-EXEC-PERF-001",

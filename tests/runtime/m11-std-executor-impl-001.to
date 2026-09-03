@@ -20,6 +20,28 @@ fn submit_blocked(): Int ! Never suspends {
 
 fn actor_step(state: mut Int, message: Int): Unit ! String suspends {
     state += message
+    if message == 2 {
+        assert(state == 3)
+    }
+}
+
+fn actor_fail(state: mut Int, message: Int): Unit ! String suspends {
+    if message == 9 {
+        err("actor-failed")
+    } else {
+        state += message
+    }
+}
+
+fn actor_slow(state: mut Int, message: Int): Unit ! String suspends {
+    match time.sleep(time.Duration.fromNanoseconds(1000000)) {
+        ok(_) => {
+            state += message
+        }
+        err(_) => {
+            err("actor-clock")
+        }
+    }
 }
 
 fn submit_pair(pool: ref executor.Pool): Unit ! Never suspends {
@@ -124,7 +146,57 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | time.ClockError | S
                 executor.ActorSendError.ResourceLimit(_) => assert(false)
             }
         }
+        time.sleep(time.Duration.fromNanoseconds(1000000))?
+        match actor_ref.trySend(2) {
+            ok(_) => {}
+            err(error) => match error {
+                executor.ActorSendError.Saturated(_) => assert(false)
+                executor.ActorSendError.Closed(_) => assert(false)
+                executor.ActorSendError.Cancelled(_) => assert(false)
+                executor.ActorSendError.Terminated(_) => assert(false)
+                executor.ActorSendError.ResourceLimit(_) => assert(false)
+            }
+        }
+        time.sleep(time.Duration.fromNanoseconds(1000000))?
         actor.stop()?
+    }
+    scope {
+        let failed_actor = pool.actor(0, 1, actor_fail)?
+        let failed_ref = failed_actor.ref()
+        match failed_ref.trySend(9) {
+            ok(_) => {}
+            err(_) => panic("executor actor failed to accept its error message")
+        }
+        time.sleep(time.Duration.fromNanoseconds(1000000))?
+        match failed_actor.stop() {
+            ok(_) => assert(false)
+            err(error) => assert(error == "actor-failed")
+        }
+        match failed_ref.trySend(9) {
+            ok(_) => assert(false)
+            err(error) => match error {
+                executor.ActorSendError.Saturated(_) => assert(false)
+                executor.ActorSendError.Closed(_) => assert(false)
+                executor.ActorSendError.Cancelled(_) => assert(false)
+                executor.ActorSendError.Terminated(message) => assert(message == 9)
+                executor.ActorSendError.ResourceLimit(_) => assert(false)
+            }
+        }
+    }
+    scope {
+        let busy = pool.submit(submit_blocked)?
+        let blocked_actor = pool.actor(0, 1, actor_slow)?
+        let blocked_ref = blocked_actor.ref()
+        match blocked_ref.send(1) {
+            ok(_) => {}
+            err(_) => panic("executor actor send rejected its first message")
+        }
+        match blocked_ref.send(2) {
+            ok(_) => {}
+            err(_) => panic("executor actor send did not resume after backpressure")
+        }
+        blocked_actor.stop()?
+        assert(await busy == 42)
     }
     pool.shutdown()
     cancel_pool_with_job()?

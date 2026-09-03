@@ -683,6 +683,24 @@ enum TaskWait {
         function: BytecodeFunctionId,
         arguments: Vec<Value>,
     },
+    ActorMessage {
+        actor: u64,
+    },
+    ActorSend {
+        actor: u64,
+        message: Value,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    ActorStop {
+        actor: u64,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
     PoolLifecycle {
         pool: u64,
         cancel: bool,
@@ -769,7 +787,6 @@ struct RuntimePoolState {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 struct RuntimeActorState {
     pool: u64,
     state: Value,
@@ -778,6 +795,28 @@ struct RuntimeActorState {
     capacity: usize,
     mailbox: VecDeque<Value>,
     stopped: bool,
+    stopping: bool,
+    handler_task: Option<usize>,
+    terminal: Option<RuntimeActorTermination>,
+    send_waiters: VecDeque<usize>,
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeActorTermination {
+    Error(Value),
+    Panic(VmPanic),
+}
+
+enum ActorStopPoll {
+    Ready(Value),
+    Pending(usize),
+    Panic(VmPanic),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActorHandlerTask {
+    actor: u64,
+    state_slot: BytecodeSlotId,
 }
 
 #[derive(Debug)]
@@ -851,6 +890,8 @@ struct Engine<'program, 'host> {
     pool_running: BTreeMap<usize, u64>,
     executor_job_tasks: BTreeSet<usize>,
     actors: BTreeMap<u64, RuntimeActorState>,
+    actor_handler_tasks: BTreeMap<usize, ActorHandlerTask>,
+    actor_handler_states: BTreeMap<usize, Value>,
     next_executor_id: u64,
     completion_order: BTreeMap<usize, u64>,
     next_completion_sequence: u64,
@@ -903,6 +944,8 @@ impl<'program, 'host> Engine<'program, 'host> {
             pool_running: BTreeMap::new(),
             executor_job_tasks: BTreeSet::new(),
             actors: BTreeMap::new(),
+            actor_handler_tasks: BTreeMap::new(),
+            actor_handler_states: BTreeMap::new(),
             next_executor_id: 1,
             completion_order: BTreeMap::new(),
             next_completion_sequence: 1,
@@ -1658,6 +1701,108 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                 }
             }
+            TaskWait::ActorMessage { actor } => self.resume_actor_message(actor),
+            TaskWait::ActorSend {
+                actor,
+                message,
+                outcome,
+                destination,
+                target,
+                unwind,
+            } => {
+                let frame = match self.frames.len().checked_sub(1) {
+                    Some(frame) => frame,
+                    None => {
+                        return Err(VmError::invariant("a resumed ActorRef.send has no frame"));
+                    }
+                };
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.remove_actor_send_waiter(actor, self.current_task)?;
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                match self.executor_actor_send_wait(actor, message.clone(), outcome)? {
+                    Some(value) => {
+                        self.write_place(frame, &destination, value)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                    None => {
+                        let state = match self.actors.get_mut(&actor) {
+                            Some(state) => state,
+                            None => {
+                                return Err(VmError::invariant(
+                                    "ActorRef.send references an unknown actor",
+                                ));
+                            }
+                        };
+                        if !state.send_waiters.contains(&self.current_task) {
+                            state.send_waiters.push_back(self.current_task);
+                        }
+                        self.park_current(
+                            TaskWait::ActorSend {
+                                actor,
+                                message,
+                                outcome,
+                                destination,
+                                target,
+                                unwind,
+                            },
+                            &[],
+                        )?;
+                        Ok(false)
+                    }
+                }
+            }
+            TaskWait::ActorStop {
+                actor,
+                outcome,
+                destination,
+                target,
+                unwind,
+            } => {
+                let frame = match self.frames.len().checked_sub(1) {
+                    Some(frame) => frame,
+                    None => {
+                        return Err(VmError::invariant("a resumed Actor.stop has no frame"));
+                    }
+                };
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                match self.poll_actor_stop(actor, outcome)? {
+                    ActorStopPoll::Ready(value) => {
+                        self.write_place(frame, &destination, value)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                    ActorStopPoll::Pending(task) => {
+                        if !self.tasks[task].waiters.contains(&self.current_task) {
+                            self.tasks[task].waiters.push(self.current_task);
+                        }
+                        self.park_current(
+                            TaskWait::ActorStop {
+                                actor,
+                                outcome,
+                                destination,
+                                target,
+                                unwind,
+                            },
+                            &[task],
+                        )?;
+                        Ok(false)
+                    }
+                    ActorStopPoll::Panic(panic) => {
+                        self.begin_propagated_panic(frame, panic, unwind)?;
+                        Ok(true)
+                    }
+                }
+            }
             TaskWait::PoolJob {
                 pool,
                 function,
@@ -1975,6 +2120,119 @@ impl<'program, 'host> Engine<'program, 'host> {
         }
     }
 
+    fn resume_actor_message(&mut self, actor: u64) -> Result<bool, VmError> {
+        if self.tasks[self.current_task].cancel_requested {
+            self.complete_current_task(TaskCompletion::Cancelled)?;
+            return Ok(false);
+        }
+        let (pool, function, arguments, message) = {
+            let state = match self.actors.get(&actor) {
+                Some(state) => state,
+                None => {
+                    return Err(VmError::invariant(
+                        "actor handler references an unknown actor",
+                    ));
+                }
+            };
+            if state.handler_task != Some(self.current_task) {
+                return Err(VmError::invariant(
+                    "actor handler task is not registered with its actor",
+                ));
+            }
+            if state.stopped || state.stopping {
+                self.complete_current_task(TaskCompletion::Cancelled)?;
+                return Ok(false);
+            }
+            let message = match state.mailbox.front().cloned() {
+                Some(message) => message,
+                None => {
+                    return Err(VmError::invariant("actor handler has no mailbox message"));
+                }
+            };
+            let mut arguments = state.step_arguments.clone();
+            arguments.push(state.state.clone());
+            arguments.push(message.clone());
+            (state.pool, state.step, arguments, message)
+        };
+        let lifecycle = match self.pools.get(&pool) {
+            Some(state) => state.lifecycle,
+            None => {
+                return Err(VmError::invariant(
+                    "actor handler references an unknown pool",
+                ));
+            }
+        };
+        if matches!(
+            lifecycle,
+            RuntimePoolLifecycle::Cancelling
+                | RuntimePoolLifecycle::Cancelled
+                | RuntimePoolLifecycle::Closed
+        ) {
+            self.complete_current_task(TaskCompletion::Cancelled)?;
+            return Ok(false);
+        }
+        let pool_state = match self.pools.get(&pool) {
+            Some(state) => state,
+            None => {
+                return Err(VmError::invariant(
+                    "actor handler references an unknown pool",
+                ));
+            }
+        };
+        let can_start = pool_state.running < pool_state.workers;
+        if !can_start {
+            let pool_state = match self.pools.get_mut(&pool) {
+                Some(state) => state,
+                None => {
+                    return Err(VmError::invariant(
+                        "actor handler references an unknown pool",
+                    ));
+                }
+            };
+            pool_state.queued.push_front(self.current_task);
+            self.park_current(TaskWait::ActorMessage { actor }, &[])?;
+            return Ok(false);
+        }
+
+        let parent_frames = std::mem::take(&mut self.frames);
+        let pushed = self.push_frame(function, arguments, None);
+        let handler_frames = std::mem::take(&mut self.frames);
+        self.frames = parent_frames;
+        pushed?;
+        let actor_state = match self.actors.get_mut(&actor) {
+            Some(state) => state,
+            None => {
+                return Err(VmError::invariant(
+                    "actor handler references an unknown actor",
+                ));
+            }
+        };
+        let consumed = match actor_state.mailbox.pop_front() {
+            Some(message) => message,
+            None => {
+                return Err(VmError::invariant("actor handler lost its mailbox message"));
+            }
+        };
+        if consumed != message {
+            return Err(VmError::invariant(
+                "actor mailbox changed while starting its handler",
+            ));
+        }
+        let pool_state = match self.pools.get_mut(&pool) {
+            Some(state) => state,
+            None => {
+                return Err(VmError::invariant(
+                    "actor handler references an unknown pool",
+                ));
+            }
+        };
+        pool_state.running += 1;
+        self.pool_running.insert(self.current_task, pool);
+        self.frames = handler_frames;
+        self.wake_actor_send_waiter(actor)?;
+        Ok(true)
+    }
+
     fn schedule_next(&mut self) -> Result<Option<VmExecution>, VmError> {
         if matches!(
             self.tasks.get(self.current_task).map(|task| &task.status),
@@ -2257,6 +2515,12 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn complete_task(&mut self, task: usize, completion: TaskCompletion) -> Result<(), VmError> {
+        if let Some(handler) = self.actor_handler_tasks.remove(&task) {
+            let state = self.actor_handler_states.remove(&task);
+            self.finish_executor_job(task)?;
+            self.finish_actor_handler(task, handler, state, completion)?;
+            return Ok(());
+        }
         self.finish_executor_job(task)?;
         self.assign_completion_order(task)?;
         let discard = self
@@ -5652,16 +5916,70 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 actor,
                                 message,
                                 outcome,
-                                wait: _,
+                                wait,
                             } => {
-                                let value = self.executor_actor_send(actor, message, outcome)?;
-                                self.write_place(frame, destination, value)?;
-                                self.jump(frame, *target);
+                                if !wait {
+                                    let value =
+                                        self.executor_actor_send(actor, message, outcome)?;
+                                    self.write_place(frame, destination, value)?;
+                                    self.jump(frame, *target);
+                                } else {
+                                    match self.executor_actor_send_wait(
+                                        actor,
+                                        message.clone(),
+                                        outcome,
+                                    )? {
+                                        Some(value) => {
+                                            self.write_place(frame, destination, value)?;
+                                            self.jump(frame, *target);
+                                        }
+                                        None => {
+                                            let state =
+                                                self.actors.get_mut(&actor).ok_or_else(|| {
+                                                    VmError::invariant(
+                                                        "ActorRef.send references an unknown actor",
+                                                    )
+                                                })?;
+                                            if !state.send_waiters.contains(&self.current_task) {
+                                                state.send_waiters.push_back(self.current_task);
+                                            }
+                                            self.park_current(
+                                                TaskWait::ActorSend {
+                                                    actor,
+                                                    message,
+                                                    outcome,
+                                                    destination: destination.clone(),
+                                                    target: *target,
+                                                    unwind: *unwind,
+                                                },
+                                                &[],
+                                            )?;
+                                        }
+                                    }
+                                }
                             }
                             OperationResult::ActorStop { actor, outcome } => {
-                                let value = self.executor_actor_stop(actor, outcome)?;
-                                self.write_place(frame, destination, value)?;
-                                self.jump(frame, *target);
+                                match self.request_actor_stop(actor, outcome)? {
+                                    ActorStopPoll::Ready(value) => {
+                                        self.write_place(frame, destination, value)?;
+                                        self.jump(frame, *target);
+                                    }
+                                    ActorStopPoll::Pending(task) => {
+                                        self.park_current(
+                                            TaskWait::ActorStop {
+                                                actor,
+                                                outcome,
+                                                destination: destination.clone(),
+                                                target: *target,
+                                                unwind: *unwind,
+                                            },
+                                            &[task],
+                                        )?;
+                                    }
+                                    ActorStopPoll::Panic(panic) => {
+                                        self.begin_propagated_panic(frame, panic, *unwind)?;
+                                    }
+                                }
                             }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, *unwind)?;
@@ -6168,6 +6486,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .program
                     .function(self.frames[frame].function)
                     .ok_or_else(|| VmError::invariant("returning frame has an invalid function"))?;
+                if let Some(state_slot) = self
+                    .actor_handler_tasks
+                    .get(&self.current_task)
+                    .map(|handler| handler.state_slot)
+                {
+                    let state = self.read_slot(frame, state_slot)?.clone();
+                    self.actor_handler_states.insert(self.current_task, state);
+                }
                 let mut value = self.take_slot(frame, function.return_slot)?;
                 let finished = self
                     .frames
@@ -6710,6 +7036,15 @@ impl<'program, 'host> Engine<'program, 'host> {
                 roots.push(value.clone());
             }
         }
+        for state in self.actors.values() {
+            roots.push(state.state.clone());
+            roots.extend(state.step_arguments.iter().cloned());
+            roots.extend(state.mailbox.iter().cloned());
+            if let Some(RuntimeActorTermination::Error(error)) = &state.terminal {
+                roots.push(error.clone());
+            }
+        }
+        roots.extend(self.actor_handler_states.values().cloned());
         Ok(roots)
     }
 
@@ -11273,38 +11608,356 @@ impl Engine<'_, '_> {
         ))
     }
 
+    fn actor_handler_slot(&self, actor: u64) -> Result<BytecodeSlotId, VmError> {
+        let step = self
+            .actors
+            .get(&actor)
+            .ok_or_else(|| VmError::invariant("actor handler references an unknown actor"))?
+            .step;
+        let function = self
+            .program
+            .function(step)
+            .ok_or_else(|| VmError::invariant("actor handler targets an invalid function"))?;
+        let callable = self
+            .program
+            .callable(function.callable)
+            .ok_or_else(|| VmError::invariant("actor handler callable metadata is invalid"))?;
+        if callable.parameters.len() != 2 {
+            return Err(VmError::invariant(
+                "actor handler must receive state and message parameters",
+            ));
+        }
+        if callable.parameters[0].mode != BytecodeParameterMode::Mut {
+            return Err(VmError::invariant(
+                "actor handler state parameter is not mutable",
+            ));
+        }
+        let environment = usize::from(callable.closure.is_some());
+        function
+            .parameters
+            .get(environment)
+            .copied()
+            .ok_or_else(|| VmError::invariant("actor handler has no state parameter slot"))
+    }
+
+    fn ensure_actor_handler(&mut self, actor: u64) -> Result<(), VmError> {
+        let (pool, should_start) = {
+            let state = self
+                .actors
+                .get(&actor)
+                .ok_or_else(|| VmError::invariant("actor handler references an unknown actor"))?;
+            (
+                state.pool,
+                !state.stopped && !state.stopping && state.handler_task.is_none(),
+            )
+        };
+        if !should_start {
+            return Ok(());
+        }
+        if !self.pools.contains_key(&pool) {
+            return Err(VmError::invariant(
+                "actor handler references an unknown pool",
+            ));
+        }
+        let state_slot = self.actor_handler_slot(actor)?;
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Waiting(TaskWait::ActorMessage { actor }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: None,
+            join_consumed: true,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        self.actor_handler_tasks
+            .insert(task, ActorHandlerTask { actor, state_slot });
+        self.actors
+            .get_mut(&actor)
+            .ok_or_else(|| VmError::invariant("actor handler references an unknown actor"))?
+            .handler_task = Some(task);
+        self.pools
+            .get_mut(&pool)
+            .ok_or_else(|| VmError::invariant("actor handler references an unknown pool"))?
+            .queued
+            .push_back(task);
+        self.record_new_task(task, None, DiagnosticTaskState::Waiting)?;
+        self.service_executor_pool(pool)?;
+        Ok(())
+    }
+
+    fn wake_actor_send_waiter(&mut self, actor: u64) -> Result<(), VmError> {
+        let task = {
+            let state = self
+                .actors
+                .get_mut(&actor)
+                .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?;
+            if state.stopped
+                || state.stopping
+                || state.capacity == 0
+                || state.mailbox.len() >= state.capacity
+            {
+                None
+            } else {
+                state.send_waiters.pop_front()
+            }
+        };
+        if let Some(task) = task {
+            self.wake_task(task)?;
+        }
+        Ok(())
+    }
+
+    fn remove_actor_send_waiter(&mut self, actor: u64, task: usize) -> Result<(), VmError> {
+        self.actors
+            .get_mut(&actor)
+            .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?
+            .send_waiters
+            .retain(|waiter| *waiter != task);
+        Ok(())
+    }
+
+    fn executor_actor_send_wait(
+        &mut self,
+        actor: u64,
+        message: Value,
+        outcome: BytecodeTypeId,
+    ) -> Result<Option<Value>, VmError> {
+        let (pool, stopped, stopping, capacity, mailbox_len) = {
+            let state = self
+                .actors
+                .get(&actor)
+                .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?;
+            (
+                state.pool,
+                state.stopped,
+                state.stopping,
+                state.capacity,
+                state.mailbox.len(),
+            )
+        };
+        if stopped || stopping {
+            return Ok(Some(self.executor_actor_error_result(outcome, 3, message)?));
+        }
+        let lifecycle = self
+            .pools
+            .get(&pool)
+            .ok_or_else(|| VmError::invariant("actor send references an unknown pool"))?
+            .lifecycle;
+        if lifecycle != RuntimePoolLifecycle::Open {
+            let variant = match lifecycle {
+                RuntimePoolLifecycle::ShuttingDown | RuntimePoolLifecycle::Closed => 1,
+                RuntimePoolLifecycle::Cancelling | RuntimePoolLifecycle::Cancelled => 2,
+                RuntimePoolLifecycle::Open => unreachable!(),
+            };
+            return Ok(Some(
+                self.executor_actor_error_result(outcome, variant, message)?,
+            ));
+        }
+        if capacity == 0 || mailbox_len >= capacity {
+            return Ok(None);
+        }
+        self.actor_handler_slot(actor)?;
+        self.actors
+            .get_mut(&actor)
+            .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?
+            .mailbox
+            .push_back(message);
+        self.ensure_actor_handler(actor)?;
+        Ok(Some(self.executor_result_ok(outcome, Value::Unit)?))
+    }
+
     fn executor_actor_send(
         &mut self,
         actor: u64,
         message: Value,
         outcome: BytecodeTypeId,
     ) -> Result<Value, VmError> {
-        let state = self
-            .actors
-            .get_mut(&actor)
-            .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?;
-        if state.stopped {
-            return self.executor_actor_error_result(outcome, 3, message);
+        match self.executor_actor_send_wait(actor, message.clone(), outcome)? {
+            Some(value) => Ok(value),
+            None => self.executor_actor_error_result(outcome, 0, message),
         }
-        if state.capacity == 0 || state.mailbox.len() >= state.capacity {
-            return self.executor_actor_error_result(outcome, 0, message);
-        }
-        state.mailbox.push_back(message);
-        self.executor_result_ok(outcome, Value::Unit)
     }
 
+    fn actor_stop_value(
+        &mut self,
+        outcome: BytecodeTypeId,
+        terminal: Option<RuntimeActorTermination>,
+    ) -> Result<ActorStopPoll, VmError> {
+        match terminal {
+            Some(RuntimeActorTermination::Error(error)) => Ok(ActorStopPoll::Ready(
+                self.oneshot_result(outcome, Err(error))?,
+            )),
+            Some(RuntimeActorTermination::Panic(panic)) => Ok(ActorStopPoll::Panic(panic)),
+            None => Ok(ActorStopPoll::Ready(
+                self.executor_result_ok(outcome, Value::Unit)?,
+            )),
+        }
+    }
+
+    fn poll_actor_stop(
+        &mut self,
+        actor: u64,
+        outcome: BytecodeTypeId,
+    ) -> Result<ActorStopPoll, VmError> {
+        let (handler, stopped, terminal) = {
+            let state = self
+                .actors
+                .get(&actor)
+                .ok_or_else(|| VmError::invariant("actor stop references an unknown actor"))?;
+            (state.handler_task, state.stopped, state.terminal.clone())
+        };
+        if let Some(task) = handler {
+            return Ok(ActorStopPoll::Pending(task));
+        }
+        if !stopped {
+            self.actors
+                .get_mut(&actor)
+                .ok_or_else(|| VmError::invariant("actor stop references an unknown actor"))?
+                .stopped = true;
+        }
+        self.actor_stop_value(outcome, terminal)
+    }
+
+    fn request_actor_stop(
+        &mut self,
+        actor: u64,
+        outcome: BytecodeTypeId,
+    ) -> Result<ActorStopPoll, VmError> {
+        let (handler, stopped, waiters) = {
+            let state = self
+                .actors
+                .get_mut(&actor)
+                .ok_or_else(|| VmError::invariant("actor stop references an unknown actor"))?;
+            if !state.stopped {
+                state.stopping = true;
+                state.mailbox.clear();
+            }
+            (
+                state.handler_task,
+                state.stopped,
+                std::mem::take(&mut state.send_waiters),
+            )
+        };
+        for task in waiters {
+            self.wake_task(task)?;
+        }
+        if stopped {
+            return self.poll_actor_stop(actor, outcome);
+        }
+        let Some(handler) = handler else {
+            self.actors
+                .get_mut(&actor)
+                .ok_or_else(|| VmError::invariant("actor stop references an unknown actor"))?
+                .stopped = true;
+            return self.poll_actor_stop(actor, outcome);
+        };
+        if !self.tasks[handler].waiters.contains(&self.current_task) {
+            self.tasks[handler].waiters.push(self.current_task);
+        }
+        self.request_cancel(handler)?;
+        Ok(ActorStopPoll::Pending(handler))
+    }
+
+    #[allow(dead_code)]
     fn executor_actor_stop(
         &mut self,
         actor: u64,
         outcome: BytecodeTypeId,
     ) -> Result<Value, VmError> {
-        let state = self
+        match self.request_actor_stop(actor, outcome)? {
+            ActorStopPoll::Ready(value) => Ok(value),
+            ActorStopPoll::Pending(_) => Err(VmError::invariant(
+                "actor stop requires suspension while its handler is running",
+            )),
+            ActorStopPoll::Panic(_) => Err(VmError::invariant(
+                "actor stop observed a handler panic outside an await",
+            )),
+        }
+    }
+
+    fn actor_handler_error_type(&self, actor: u64) -> Result<BytecodeTypeId, VmError> {
+        let step = self
             .actors
-            .get_mut(&actor)
-            .ok_or_else(|| VmError::invariant("actor stop references an unknown actor"))?;
-        state.stopped = true;
-        state.mailbox.clear();
-        self.executor_result_ok(outcome, Value::Unit)
+            .get(&actor)
+            .ok_or_else(|| VmError::invariant("actor handler references an unknown actor"))?
+            .step;
+        let function = self
+            .program
+            .function(step)
+            .ok_or_else(|| VmError::invariant("actor handler targets an invalid function"))?;
+        let callable = self
+            .program
+            .callable(function.callable)
+            .ok_or_else(|| VmError::invariant("actor handler callable metadata is invalid"))?;
+        let (_, error) = self.result_parts(callable.outcome)?;
+        Ok(error)
+    }
+
+    fn finish_actor_handler(
+        &mut self,
+        task: usize,
+        handler: ActorHandlerTask,
+        state_value: Option<Value>,
+        completion: TaskCompletion,
+    ) -> Result<(), VmError> {
+        let cancelled = matches!(completion, TaskCompletion::Cancelled);
+        let termination = match completion {
+            TaskCompletion::Returned(value) => {
+                match self
+                    .split_group_value(&value, self.actor_handler_error_type(handler.actor)?)?
+                {
+                    Ok(_) => None,
+                    Err(error) => Some(RuntimeActorTermination::Error(error)),
+                }
+            }
+            TaskCompletion::Panicked(panic) => Some(RuntimeActorTermination::Panic(panic)),
+            TaskCompletion::Cancelled => None,
+        };
+        let (next, send_waiters) = {
+            let state = self
+                .actors
+                .get_mut(&handler.actor)
+                .ok_or_else(|| VmError::invariant("actor handler references an unknown actor"))?;
+            if let Some(state_value) = state_value {
+                state.state = state_value;
+            }
+            state.handler_task = None;
+            let terminal = termination.is_some() || cancelled || state.stopping;
+            if terminal {
+                state.stopping = true;
+                state.stopped = true;
+                state.mailbox.clear();
+                state.terminal = termination;
+            }
+            let next = !terminal && !state.mailbox.is_empty();
+            let send_waiters = if terminal {
+                state.send_waiters.drain(..).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            (next, send_waiters)
+        };
+        self.tasks[task].status = TaskStatus::Consumed;
+        let owner = self.diagnostic_parent(task);
+        self.record_task(task, owner, DiagnosticTaskState::Consumed)?;
+        self.record_scheduler(task, DiagnosticSchedulerOperation::Complete)?;
+        let waiters = std::mem::take(&mut self.tasks[task].waiters);
+        for waiter in waiters {
+            self.wake_task(waiter)?;
+        }
+        for waiter in send_waiters {
+            self.wake_task(waiter)?;
+        }
+        if next {
+            self.ensure_actor_handler(handler.actor)?;
+        }
+        Ok(())
     }
 
     fn finish_executor_job(&mut self, task: usize) -> Result<(), VmError> {
@@ -11445,6 +12098,10 @@ impl Engine<'_, '_> {
                         capacity,
                         mailbox: VecDeque::new(),
                         stopped: false,
+                        stopping: false,
+                        handler_task: None,
+                        terminal: None,
+                        send_waiters: VecDeque::new(),
                     },
                 );
                 let handle = Value::Host(RuntimeValue::Host {
@@ -15780,15 +16437,15 @@ mod tests {
         Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter, OnceContinuation,
         OnceResolution, OneShotCompletion, OneShotState, OperationResult, PanicCode,
         PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeActorState,
-        RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation,
-        RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeOnceState,
-        RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm, RuntimeSelectRegion,
-        RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion,
-        TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits,
-        VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome,
-        clone_field, clone_index, clone_present, collection_length_fits_int, convert_numeric,
-        execute, execute_with_diagnostics, group_handle, initial_value, integer_bounds,
-        integer_shape, next_unicode_scalar, once_handle, operand_materialized_slot,
+        RuntimeActorTermination, RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild,
+        RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
+        RuntimeOnceState, RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm,
+        RuntimeSelectRegion, RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue, SlotState,
+        TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError,
+        VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind,
+        VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
+        convert_numeric, execute, execute_with_diagnostics, group_handle, initial_value,
+        integer_bounds, integer_shape, next_unicode_scalar, once_handle, operand_materialized_slot,
         operation_access_place, paths_overlap, present, queue_object_equality,
         queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
         snapshot_value, take_field, take_index, take_option,
@@ -18241,6 +18898,7 @@ mod tests {
     struct ExecutorTypes {
         int: BytecodeTypeId,
         string: BytecodeTypeId,
+        unit: BytecodeTypeId,
         never: BytecodeTypeId,
         pool: BytecodeTypeId,
         blocking_pool: BytecodeTypeId,
@@ -18257,6 +18915,9 @@ mod tests {
         actor_result: BytecodeTypeId,
         actor_constructor_result: BytecodeTypeId,
         function_type: BytecodeTypeId,
+        handler_result: BytecodeTypeId,
+        handler_function_type: BytecodeTypeId,
+        actor_handler: BytecodeFunctionId,
     }
 
     fn executor_program() -> (BytecodeProgram, ExecutorTypes) {
@@ -18449,6 +19110,7 @@ mod tests {
                 error: executor_error,
             },
         );
+        let unit = append_type("Unit", BytecodeTypeKind::Scalar(BytecodeScalarType::Unit));
         let function_type = append_type(
             "fn(): Int ! Never",
             BytecodeTypeKind::Function(BytecodeFunctionType {
@@ -18458,6 +19120,33 @@ mod tests {
                 parameters: Vec::new(),
                 variadic: None,
                 outcome: job_result,
+            }),
+        );
+        let handler_result = append_type(
+            "Unit ! String",
+            BytecodeTypeKind::Result {
+                success: unit,
+                error: string,
+            },
+        );
+        let handler_function_type = append_type(
+            "fn(mut Int, Int): Unit ! String",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: true,
+                is_selectable: false,
+                is_unsafe: false,
+                parameters: vec![
+                    BytecodeFunctionParameter {
+                        mode: BytecodeParameterMode::Mut,
+                        ty: int,
+                    },
+                    BytecodeFunctionParameter {
+                        mode: BytecodeParameterMode::Value,
+                        ty: int,
+                    },
+                ],
+                variadic: None,
+                outcome: handler_result,
             }),
         );
         let span = BytecodeSpan {
@@ -18514,11 +19203,130 @@ mod tests {
             implementation: None,
             closure: None,
         });
+        let actor_handler = BytecodeFunctionId::new(program.functions.len() as u32);
+        let actor_callable = BytecodeCallableId::new(program.callables.len() as u32);
+        let place = |slot: u32, ty| BytecodePlace {
+            slot: BytecodeSlotId::new(slot),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let state_place = place(0, int);
+        let message_place = place(1, int);
+        let return_place = place(2, handler_result);
+        program.callables.push(BytecodeCallable {
+            name: "actor_step".into(),
+            generic_arity: 0,
+            parameters: vec![
+                BytecodeParameter {
+                    mode: BytecodeParameterMode::Mut,
+                    ty: int,
+                    variadic_element: None,
+                    receiver: false,
+                },
+                BytecodeParameter {
+                    mode: BytecodeParameterMode::Value,
+                    ty: int,
+                    variadic_element: None,
+                    receiver: false,
+                },
+            ],
+            outcome: handler_result,
+            function_type: handler_function_type,
+            implementation: Some(actor_handler),
+            closure: None,
+        });
+        program.functions.push(BytecodeFunction {
+            callable: actor_callable,
+            source: span,
+            types: vec![int, handler_result, unit],
+            spans: vec![span],
+            slots: vec![
+                BytecodeSlot {
+                    ty: int,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Parameter { index: 0 },
+                },
+                BytecodeSlot {
+                    ty: int,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Parameter { index: 1 },
+                },
+                BytecodeSlot {
+                    ty: handler_result,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Return,
+                },
+            ],
+            loans: Vec::new(),
+            parameters: vec![BytecodeSlotId::new(0), BytecodeSlotId::new(1)],
+            return_slot: BytecodeSlotId::new(2),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(1),
+            blocks: vec![
+                BytecodeBlock {
+                    kind: BytecodeBlockKind::Normal,
+                    instructions: vec![
+                        BytecodeInstruction {
+                            span: crate::bytecode::BytecodeSpanId::new(0),
+                            kind: BytecodeInstructionKind::Store {
+                                destination: state_place.clone(),
+                                value: BytecodeRvalue {
+                                    ty: int,
+                                    kind: BytecodeRvalueKind::Binary {
+                                        operator: BytecodeBinaryOperator::Add,
+                                        left: BytecodeOperand {
+                                            ty: int,
+                                            kind: BytecodeOperandKind::Copy(state_place),
+                                        },
+                                        right: BytecodeOperand {
+                                            ty: int,
+                                            kind: BytecodeOperandKind::Copy(message_place),
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        BytecodeInstruction {
+                            span: crate::bytecode::BytecodeSpanId::new(0),
+                            kind: BytecodeInstructionKind::Store {
+                                destination: return_place,
+                                value: BytecodeRvalue {
+                                    ty: handler_result,
+                                    kind: BytecodeRvalueKind::Construct {
+                                        shape: BytecodeAggregateKind::ResultOk,
+                                        values: vec![BytecodeOperand {
+                                            ty: unit,
+                                            kind: BytecodeOperandKind::Constant(
+                                                BytecodeConstant::Unit,
+                                            ),
+                                        }],
+                                    },
+                                },
+                            },
+                        },
+                    ],
+                    terminator: BytecodeTerminator {
+                        span: crate::bytecode::BytecodeSpanId::new(0),
+                        kind: BytecodeTerminatorKind::Return,
+                    },
+                },
+                BytecodeBlock {
+                    kind: BytecodeBlockKind::Cleanup,
+                    instructions: Vec::new(),
+                    terminator: BytecodeTerminator {
+                        span: crate::bytecode::BytecodeSpanId::new(0),
+                        kind: BytecodeTerminatorKind::ResumePanic,
+                    },
+                },
+            ],
+        });
         (
             program,
             ExecutorTypes {
                 int,
                 string,
+                unit,
                 never,
                 pool,
                 blocking_pool,
@@ -18535,6 +19343,9 @@ mod tests {
                 actor_result,
                 actor_constructor_result,
                 function_type,
+                handler_result,
+                handler_function_type,
+                actor_handler,
             },
         )
     }
@@ -26058,6 +26869,7 @@ mod tests {
         let (program, types) = executor_program();
         let mut host = RejectingHost;
         let mut engine = executor_engine(&program, &mut host);
+        engine.pools.insert(1, open_executor_pool(1, 1));
         engine.actors.insert(
             8,
             RuntimeActorState {
@@ -26068,6 +26880,10 @@ mod tests {
                 capacity: 0,
                 mailbox: VecDeque::new(),
                 stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::new(),
             },
         );
         let result = engine
@@ -26075,6 +26891,40 @@ mod tests {
             .unwrap();
         executor_assert_eq!(result_error_variant(&engine, &result), 0);
         executor_assert!(engine.actors[&8].mailbox.is_empty());
+    }
+
+    #[test]
+    fn executor_actor_rejects_malformed_handler_before_message_commit() {
+        let (mut program, types) = executor_program();
+        let callable = program.functions[types.actor_handler.index() as usize].callable;
+        program.callables[callable.index() as usize].parameters[0].mode =
+            BytecodeParameterMode::Value;
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        engine.actors.insert(
+            9,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: types.actor_handler,
+                step_arguments: Vec::new(),
+                capacity: 1,
+                mailbox: VecDeque::new(),
+                stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::new(),
+            },
+        );
+        executor_assert!(matches!(
+            engine.executor_actor_send(9, Value::Integer(1), types.actor_result),
+            Err(VmError::Invariant(message)) if message.contains("state parameter is not mutable")
+        ));
+        executor_assert!(engine.actors[&9].mailbox.is_empty());
+        executor_assert!(engine.actors[&9].handler_task.is_none());
     }
 
     #[test]
@@ -26839,16 +27689,22 @@ mod tests {
         let (program, types) = executor_program();
         let mut host = RejectingHost;
         let mut engine = executor_engine(&program, &mut host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.pools.insert(1, open_executor_pool(1, 1));
         engine.actors.insert(
             7,
             RuntimeActorState {
                 pool: 1,
                 state: Value::Integer(0),
-                step: BytecodeFunctionId::new(1),
+                step: types.actor_handler,
                 step_arguments: Vec::new(),
                 capacity: 1,
                 mailbox: VecDeque::new(),
                 stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::new(),
             },
         );
         let sent = engine
@@ -26862,6 +27718,16 @@ mod tests {
             .executor_actor_send(7, Value::Integer(4), types.actor_result)
             .unwrap();
         executor_assert_eq!(result_error_variant(&engine, &saturated), 0);
+        let handler = engine.actors[&7]
+            .handler_task
+            .expect("accepted actor send must register a handler task");
+        executor_assert!(matches!(
+            engine.request_actor_stop(7, types.actor_result).unwrap(),
+            super::ActorStopPoll::Pending(task) if task == handler
+        ));
+        engine
+            .complete_task(handler, TaskCompletion::Cancelled)
+            .unwrap();
         engine.executor_actor_stop(7, types.actor_result).unwrap();
         let terminated = engine
             .executor_actor_send(7, Value::Integer(5), types.actor_result)
@@ -27132,6 +27998,187 @@ mod tests {
     }
 
     #[test]
+    fn executor_actor_waits_resume_and_stop_paths_are_explicit() {
+        let (program, types) = executor_program();
+        let place = |ty| BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let frame = || Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        };
+        let actor = |mailbox, stopped, handler_task, terminal| RuntimeActorState {
+            pool: 1,
+            state: Value::Integer(0),
+            step: types.actor_handler,
+            step_arguments: Vec::new(),
+            capacity: 1,
+            mailbox,
+            stopped,
+            stopping: false,
+            handler_task,
+            terminal,
+            send_waiters: VecDeque::new(),
+        };
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        engine.actors.insert(
+            7,
+            actor(VecDeque::from([Value::Integer(1)]), false, None, None),
+        );
+        engine.frames.push(frame());
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::ActorSend {
+                actor: 7,
+                message: Value::Integer(2),
+                outcome: types.actor_result,
+                destination: place(types.actor_result),
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+            })));
+        engine.wake_task(0).unwrap();
+        executor_assert!(!engine.resume_current_task().unwrap());
+        executor_assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Waiting(TaskWait::ActorSend { .. })
+        ));
+        engine.actors.get_mut(&7).unwrap().mailbox.pop_front();
+        engine.wake_actor_send_waiter(7).unwrap();
+        executor_assert!(engine.resume_current_task().unwrap());
+        executor_assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Heap(_))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        engine
+            .actors
+            .insert(7, actor(VecDeque::new(), false, None, None));
+        engine.frames.push(frame());
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::ActorSend {
+                actor: 7,
+                message: Value::Integer(2),
+                outcome: types.actor_result,
+                destination: place(types.actor_result),
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+            })));
+        engine.actors.get_mut(&7).unwrap().send_waiters.push_back(0);
+        engine.tasks[0].cancel_requested = true;
+        engine.wake_task(0).unwrap();
+        executor_assert!(engine.resume_current_task().unwrap());
+        executor_assert!(engine.actors[&7].send_waiters.is_empty());
+        executor_assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine
+            .actors
+            .insert(7, actor(VecDeque::new(), false, Some(1), None));
+        engine.frames.push(frame());
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::ActorStop {
+                actor: 7,
+                outcome: types.actor_result,
+                destination: place(types.actor_result),
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+            })));
+        engine.tasks.push(scheduler_task(TaskStatus::Waiting(
+            TaskWait::ActorMessage { actor: 7 },
+        )));
+        engine.wake_task(0).unwrap();
+        executor_assert!(!engine.resume_current_task().unwrap());
+        executor_assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Waiting(TaskWait::ActorStop { .. })
+        ));
+        executor_assert!(engine.tasks[1].waiters.contains(&0));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine
+            .actors
+            .insert(7, actor(VecDeque::new(), true, None, None));
+        engine.frames.push(frame());
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::ActorStop {
+                actor: 7,
+                outcome: types.actor_result,
+                destination: place(types.actor_result),
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+            })));
+        engine.wake_task(0).unwrap();
+        executor_assert!(engine.resume_current_task().unwrap());
+        executor_assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Heap(_))
+        ));
+
+        let panic = VmPanic {
+            code: PanicCode::ExplicitPanic,
+            message: "actor panic".into(),
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            stack: Vec::new(),
+            suppressed: Vec::new(),
+        };
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.actors.insert(
+            7,
+            actor(
+                VecDeque::new(),
+                true,
+                None,
+                Some(RuntimeActorTermination::Panic(panic)),
+            ),
+        );
+        engine.frames.push(frame());
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::ActorStop {
+                actor: 7,
+                outcome: types.actor_result,
+                destination: place(types.actor_result),
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+            })));
+        engine.wake_task(0).unwrap();
+        executor_assert!(engine.resume_current_task().unwrap());
+        executor_assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Panic(_))
+        ));
+    }
+
+    #[test]
     fn executor_actor_ref_projects_live_identity_and_rejects_invalid_handles() {
         let (program, types) = executor_program();
         let mut host = RejectingHost;
@@ -27146,6 +28193,10 @@ mod tests {
                 capacity: 2,
                 mailbox: VecDeque::new(),
                 stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::new(),
             },
         );
 

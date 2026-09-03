@@ -2897,7 +2897,10 @@ queda en `target/reliability/evidence/stdlib-executor-implementation.json`.
 La observación no reclama runtime nativo ni lowering native AOT: el bridge de
 `BlockingPool` espera `STD-EXEC-HOST-001`. La VM hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de
-identidad no consumidora; la ejecución de handlers sigue pendiente.
+identidad no consumidora y ejecuta handlers cooperativos con mailbox FIFO,
+estado mutable conservado y propagación terminal de `E` por `Actor.stop`.
+La ruta transaccional de `ActorRef.send` como brazo `selectable`, los workers
+host y el lowering native AOT siguen pendientes.
 
 #### 14.4.6 Networking
 
