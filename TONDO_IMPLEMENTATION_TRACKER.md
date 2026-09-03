@@ -45,7 +45,7 @@ hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
 lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
 siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-09-02
+**Última actualización:** 2026-09-03
 
 **Especificaciones normativas:**
 
@@ -130,11 +130,11 @@ conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
 con la guía ejecutable; `STD-CHANNEL-PERF-001` queda cerrado para la línea
 base de rendimiento hosted; `STD-CHANNEL-CONF-001` también queda cerrado para
 la equivalencia observable VM/native; `STD-CHANNEL-DOC-001` queda cerrado con
-la guía ejecutable de composición y el siguiente trabajo desbloqueado es
-`STD-EXEC-IMPL-001`. Ese bloque ya tiene una observación parcial de pool
-cooperativo, adquisición explícita de `ActorRef` y ejecución hosted de handlers
-en la VM, pero sigue abierto porque los workers host y el lowering native AOT
-no están promocionados. El modelo y
+la guía ejecutable de composición. `STD-EXEC-IMPL-001` queda cerrado para la
+implementación cooperativa hosted de pools, adquisición explícita de `ActorRef`,
+handlers y envíos `selectable`; el siguiente trabajo desbloqueado es
+`STD-EXEC-HOST-001`. Los workers host y el lowering native AOT siguen sin
+promocionarse. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6839,19 +6839,18 @@ estas leaves.
 
 #### 21.3.4 `std.executor`
 
-- [ ] **STD-EXEC-IMPL-001 — Implementar executor, pools y actores.** Reutilizar
-  Group, async estructurado, channels y sync; pools/mailboxes son acotados o
-  nombran explícitamente su ausencia de límite, y el bridge bloqueante retorna
-  a scopes Tondo sin crear un segundo `Task` público. La observación parcial de
-  `STD-EXEC-IMPL-001` ya verifica en la VM hosted la admisión cooperativa,
-  backpressure, `Join`, shutdown/cancel, la creación/stop de un actor,
-  `Actor.ref` y la ejecución hosted de handlers con estado, FIFO, cancelación y
-  propagación de error. El leaf hosted de la ruta transaccional
-  `selectable` de `ActorRef.send` también queda verificado: prepare observa el
+- [x] **STD-EXEC-IMPL-001 — Implementar la superficie cooperativa hosted de
+  executor, pools y actores.** Reutiliza Group, async estructurado, channels y
+  sync; pools y mailboxes son acotados y no crean un segundo `Task` público. La
+  VM hosted verifica la admisión cooperativa, backpressure, `Join`,
+  shutdown/cancel, la creación/stop de un actor, `Actor.ref` y handlers con
+  estado, FIFO, cancelación y propagación de error. La ruta transaccional
+  `selectable` de `ActorRef.send` también queda verificada: prepare observa el
   payload, commit hace una única linearización en mailbox y rollback conserva
-  el mensaje del caller y desregistra el waiter. El bloque no reclama workers
-  host ni lowering native AOT; la operación queda registrada como proyección
-  explícita no consumidora y como evidencia target-qualified de VM hosted.
+  el mensaje del caller y desregistra el waiter. El bridge de `BlockingPool`,
+  sus workers host y el lowering native AOT permanecen explícitamente en los
+  leaves posteriores; este cierre es target-qualified para la VM hosted y no
+  promociona una API pública.
 - [ ] **STD-EXEC-HOST-001 — Implementar workers host.** Enlazar pools y wakeups
   fijados por target, con límites, shutdown y revocación sin heredar ambiente ni
   bloquear el progreso cooperativo.
@@ -7541,6 +7540,7 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 | `STD-A-FUZZ-001` | **Cerrada** | Target owner-aware con 22 rutas, corpus y seeds reproducibles, límites de entrada/source/RSS/timeout, oráculos de no-panic e invariantes por owner, replay de minimizados y campañas smoke/nightly integradas; `FUZZ=verified` 22/22. |
 | `STD-CHANNEL-IMPL-001` | **Cerrada** | Compiler, VM hosted y bridge nativo privado verifican endpoints nominales, bounded/unbounded, FIFO, backpressure, fork, cierres, drenado terminal, cancelación y send/receive seleccionables; fixture y sonda nativa hash-bound, sin API pública ni lowering AOT. |
 | `STD-CHANNEL-ASYNC-ITER-001` | **Cerrada** | Witness privado `Receiver[T] -> AsyncIterator[T]` bajo `T: Discard`, lowering de `for` y `collect` genérico, scheduler FIFO, cleanup/cancelación y negativa affine `E1105` verificados en la VM hosted; ABI nativa y lowering AOT permanecen sin reclamar. |
+| `STD-EXEC-IMPL-001` | **Cerrada** | La VM hosted verifica la superficie cooperativa de pools y actores: admisión/backpressure FIFO, `Join`, lifecycle, handlers con estado, `Actor.ref` y `ActorRef.send` `selectable` con prepare/commit/rollback transaccional; workers host, runtime nativo y lowering AOT permanecen sin reclamar. |
 | `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
 | `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
 
@@ -7748,8 +7748,9 @@ cerrados para el corpus común VM/native-bridge y la guía ejecutable; la adapta
 hosted `Receiver[T] -> AsyncIterator[T]` de `STD-CHANNEL-ASYNC-ITER-001` también
 está cerrada; `STD-CHANNEL-TEST-001` queda cerrado para modelo, regresiones y
 fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
-`STD-CHANNEL-DOC-001` queda cerrado para la guía ejecutable de composición. El
-siguiente trabajo crítico es `STD-EXEC-IMPL-001`. La
+`STD-CHANNEL-DOC-001` queda cerrado para la guía ejecutable de composición.
+`STD-EXEC-IMPL-001` queda cerrado para la implementación cooperativa hosted de
+su superficie; el siguiente trabajo crítico es `STD-EXEC-HOST-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

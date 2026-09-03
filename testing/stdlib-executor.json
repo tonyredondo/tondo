@@ -316,7 +316,6 @@
     "public_api_promoted": false,
     "host": "required-after-native-gate",
     "required_follow_ups": [
-      "STD-EXEC-IMPL-001",
       "STD-EXEC-HOST-001",
       "STD-EXEC-TEST-001",
       "STD-EXEC-PERF-001",
@@ -325,7 +324,7 @@
     ],
     "observed": {
       "task": "STD-EXEC-IMPL-001",
-      "status": "partial-hosted-cooperative-pool",
+      "status": "verified-hosted-cooperative-pool-and-actors",
       "hosted_vm": "verified-pool-admission-join-lifecycle-actor-ref-mailbox-handler-and-selectable-actor-send",
       "native_runtime": "not-claimed",
       "native_aot_lowering": "not-claimed",
@@ -379,7 +378,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-EXEC-IMPL-001",
       "STD-EXEC-HOST-001",
       "STD-EXEC-TEST-001",
       "STD-EXEC-PERF-001",

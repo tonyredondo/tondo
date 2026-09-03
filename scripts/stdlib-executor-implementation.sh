@@ -56,7 +56,7 @@ jq -n \
     '{
       format:"tondo-stdlib-executor-implementation-evidence/1",
       task:"STD-EXEC-IMPL-001",
-      status:"passed-partial",
+      status:"passed-hosted-cooperative",
       source_revision:$revision,
       contract_sha256:("sha256:" + $contract_sha256),
       vm:{fixture:"tests/runtime/m11-std-executor-impl-001.to",fixture_sha256:("sha256:" + $fixture_sha256),exit:0,stdout:"executor-ok",status:"passed",log_sha256:("sha256:" + $vm_sha256)},
@@ -71,4 +71,4 @@ jq -n \
       divergences:[]
     }' >"$evidence_dir/stdlib-executor-implementation.json"
 
-echo "std.executor implementation: OK (partial hosted cooperative pool and actor handlers; report: $evidence_dir/stdlib-executor-implementation.json)"
+echo "std.executor implementation: OK (hosted cooperative pool and actors; report: $evidence_dir/stdlib-executor-implementation.json)"

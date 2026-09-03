@@ -16,10 +16,10 @@ expect_failure() {
     fi
 }
 
-jq '.implementation.observed.status = "verified"' testing/stdlib-executor.json \
-    >"$tmp_dir/complete.json"
-expect_failure partial-status \
-    env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/complete.json" \
+jq '.implementation.observed.status = "partial-hosted-cooperative-pool"' testing/stdlib-executor.json \
+    >"$tmp_dir/stale-partial.json"
+expect_failure stale-partial-status \
+    env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/stale-partial.json" \
     scripts/stdlib-executor-implementation-check.sh
 
 jq '.implementation.observed.native_aot_lowering = "verified"' testing/stdlib-executor.json \
@@ -59,4 +59,4 @@ bash -n \
 scripts/stdlib-executor-check.sh >/dev/null
 scripts/stdlib-executor-implementation-check.sh >/dev/null
 
-echo "std.executor implementation tests: OK (partial status, AOT boundary, decision and fixture negatives rejected)"
+echo "std.executor implementation tests: OK (stale partial status, AOT boundary, decision and fixture negatives rejected)"

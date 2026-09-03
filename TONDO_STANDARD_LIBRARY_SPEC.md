@@ -2891,10 +2891,11 @@ El contrato exhaustivo de este owner está en
 registro machine-readable en
 [`testing/stdlib-executor.json`](./testing/stdlib-executor.json). Ese registro
 fija capacidad, backpressure, actores, bridge bloqueante, lifecycle,
-capabilities y eventos privados. `STD-EXEC-IMPL-001` ya tiene una observación
-parcial en la VM hosted para pools cooperativos, `Join` y lifecycle; el informe
-queda en `target/reliability/evidence/stdlib-executor-implementation.json`.
-La observación no reclama runtime nativo ni lowering native AOT: el bridge de
+capabilities y eventos privados. `STD-EXEC-IMPL-001` queda cerrado para la
+implementación cooperativa hosted de pools, `Join`, lifecycle, actores y envíos
+`selectable`; el informe queda en
+`target/reliability/evidence/stdlib-executor-implementation.json`.
+El cierre no reclama runtime nativo ni lowering native AOT: el bridge de
 `BlockingPool` espera `STD-EXEC-HOST-001`. La VM hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de
 identidad no consumidora y ejecuta handlers cooperativos con mailbox FIFO,

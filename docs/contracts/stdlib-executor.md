@@ -22,7 +22,7 @@ capabilities del ambiente.
 ## Frontera de implementación observada (`STD-EXEC-IMPL-001`)
 
 La implementación actual se registra como
-`partial-hosted-cooperative-pool`. La VM hosted verifica la ruta compiler → HIR
+`verified-hosted-cooperative-pool-and-actors`. La VM hosted verifica la ruta compiler → HIR
 → MIR → scheduler para el pool cooperativo: valida workers/capacity, aplica
 `trySubmit` inmediato, backpressure FIFO de `submit`, materializa el `Join`
 existente y drena `shutdown`/`cancel` con cancelación cooperativa. La fixture
@@ -30,8 +30,9 @@ existente y drena `shutdown`/`cancel` con cancelación cooperativa. La fixture
 termina con `executor-ok` y exit `0`; el informe reproducible se escribe en
 `target/reliability/evidence/stdlib-executor-implementation.json`.
 
-Esta observación no promociona el owner completo. `Pool.actor` crea y conserva
-un handle afín. La VM hosted ya ejecuta el handler como una task interna del
+Este cierre cubre `STD-EXEC-IMPL-001` para la implementación cooperativa hosted;
+no promociona el owner completo ni los workers host. `Pool.actor` crea y conserva
+un handle afín. La VM hosted ejecuta el handler como una task interna del
 pool, entrega los mensajes en orden FIFO de uno en uno, conserva el estado
 mutable al retorno normal y hace terminal al actor cuando el handler devuelve
 `E`; `Actor.stop` cierra la mailbox, cancela cooperativamente el handler y

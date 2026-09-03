@@ -16,7 +16,7 @@ TONDO_STDLIB_EXECUTOR_CONTRACT="$contract" scripts/stdlib-executor-check.sh >/de
 
 jq -e '
   .implementation.observed.task == "STD-EXEC-IMPL-001"
-  and .implementation.observed.status == "partial-hosted-cooperative-pool"
+  and .implementation.observed.status == "verified-hosted-cooperative-pool-and-actors"
   and .implementation.observed.hosted_vm == "verified-pool-admission-join-lifecycle-actor-ref-mailbox-handler-and-selectable-actor-send"
   and .implementation.observed.native_runtime == "not-claimed"
   and .implementation.observed.native_aot_lowering == "not-claimed"
@@ -123,7 +123,7 @@ grep -Fq 'executor_actor_waits_resume_and_stop_paths_are_explicit' \
 
 for marker in \
     'STD-EXEC-IMPL-001' \
-    'partial-hosted-cooperative-pool' \
+    'verified-hosted-cooperative-pool-and-actors' \
     'VM hosted' \
     'native AOT' \
     'ActorRef' \
@@ -132,4 +132,4 @@ for marker in \
         || die "implementation document misses marker: $marker"
 done
 
-echo "std.executor implementation: OK (partial hosted cooperative pool and actor handlers; selectable/host/AOT boundaries explicit)"
+echo "std.executor implementation: OK (hosted cooperative pool and actors; selectable/host/AOT boundaries explicit)"

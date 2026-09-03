@@ -173,7 +173,6 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"
   and .implementation.required_follow_ups == [
-    "STD-EXEC-IMPL-001",
     "STD-EXEC-HOST-001",
     "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
