@@ -15,12 +15,12 @@ die() {
 TONDO_STDLIB_EXECUTOR_CONTRACT="$contract" scripts/stdlib-executor-check.sh >/dev/null
 
 jq -e '
-  .implementation.observed.task == "STD-EXEC-IMPL-001"
-  and .implementation.observed.status == "verified-hosted-cooperative-pool-and-actors"
-  and .implementation.observed.hosted_vm == "verified-pool-admission-join-lifecycle-actor-ref-mailbox-handler-and-selectable-actor-send"
-  and .implementation.observed.native_runtime == "not-claimed"
+  .implementation.observed.task == "STD-EXEC-HOST-001"
+  and .implementation.observed.status == "verified-hosted-blocking-and-native-token-bridge"
+  and .implementation.observed.hosted_vm == "verified-blocking-admission-isolated-child-engine-host-adapter-and-lifecycle"
+  and .implementation.observed.native_runtime == "verified-target-qualified-x86_64-linux-token-bridge"
   and .implementation.observed.native_aot_lowering == "not-claimed"
-  and .implementation.observed.blocking_pool == "capability-missing-until-host-gate"
+  and .implementation.observed.blocking_pool == "verified-hosted-isolated-workers-and-native-token-bridge"
   and .implementation.observed.actor == "mailbox-handler-state-error-stop-and-selectable-send"
   and .implementation.observed.selectable_actor_send == "verified-hosted-transactional"
   and .implementation.observed.public_api_promoted == false
@@ -29,7 +29,6 @@ jq -e '
   and .implementation.observed.resolved_decision == "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"
   and (.implementation.observed.open_decision // null) == null
   and .implementation.observed.remaining == [
-    "STD-EXEC-HOST-001",
     "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
     "STD-EXEC-CONF-001",
@@ -109,6 +108,18 @@ for marker in \
         || die "compiler/VM executor anchor is missing: $marker"
 done
 
+for marker in \
+    'NativeBlockingPool' \
+    'native_blocking_worker_loop' \
+    'tondo_rt_blocking_pool_new' \
+    'tondo_rt_blocking_pool_submit' \
+    'tondo_rt_blocking_job_wait' \
+    'native_blocking_pool_runs_bounded_jobs_and_transfers_payload_once' \
+    'native_blocking_queue_cancellation_is_atomic_before_worker_admission'; do
+    grep -Fq "$marker" "$root/crates/tondo-native-runtime/src/lib.rs" \
+        || die "native executor anchor is missing: $marker"
+done
+
 grep -Fq 'executor_actor_ref_projects_live_identity_and_rejects_invalid_handles' \
     "$root/crates/tondo-vm/src/runtime/execute.rs" \
     || die "Actor.ref runtime regression test is missing"
@@ -122,14 +133,28 @@ grep -Fq 'executor_actor_waits_resume_and_stop_paths_are_explicit' \
     || die "actor wait and stop scheduler regression test is missing"
 
 for marker in \
+    'BlockingExecutionBridge' \
+    'blocking_worker_loop' \
+    'BlockingWorkerHost' \
+    'resume_blocking_submit' \
+    'resume_blocking_call' \
+    'blocking_bridge_runs_verified_job_on_a_host_worker'; do
+    grep -Fq "$marker" "$root/crates/tondo-vm/src/runtime/execute.rs" \
+        || die "hosted blocking executor anchor is missing: $marker"
+done
+
+for marker in \
     'STD-EXEC-IMPL-001' \
-    'verified-hosted-cooperative-pool-and-actors' \
+    'STD-EXEC-HOST-001' \
+    'verified-hosted-blocking-and-native-token-bridge' \
     'VM hosted' \
+    'runtime nativo' \
     'native AOT' \
     'ActorRef' \
-    'STD-EXEC-HOST-001'; do
+    'BlockingPool' \
+    'x86_64-unknown-linux-gnu'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-executor.md" \
         || die "implementation document misses marker: $marker"
 done
 
-echo "std.executor implementation: OK (hosted cooperative pool and actors; selectable/host/AOT boundaries explicit)"
+echo "std.executor implementation: OK (hosted blocking bridge and target-qualified native token lane; AOT callable boundary explicit)"

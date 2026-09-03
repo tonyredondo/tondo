@@ -132,9 +132,12 @@ base de rendimiento hosted; `STD-CHANNEL-CONF-001` también queda cerrado para
 la equivalencia observable VM/native; `STD-CHANNEL-DOC-001` queda cerrado con
 la guía ejecutable de composición. `STD-EXEC-IMPL-001` queda cerrado para la
 implementación cooperativa hosted de pools, adquisición explícita de `ActorRef`,
-handlers y envíos `selectable`; el siguiente trabajo desbloqueado es
-`STD-EXEC-HOST-001`. Los workers host y el lowering native AOT siguen sin
-promocionarse. El modelo y
+handlers y envíos `selectable`. `STD-EXEC-HOST-001` también queda cerrado: la
+VM hosted ejecuta `BlockingPool.run` en workers aislados con bridge de host y
+el runtime nativo aporta una lane privada de tokens para
+`x86_64-unknown-linux-gnu`; el lowering native AOT de callables y la API pública
+siguen sin promocionarse. El siguiente trabajo desbloqueado es
+`STD-EXEC-TEST-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6851,9 +6854,16 @@ estas leaves.
   sus workers host y el lowering native AOT permanecen explícitamente en los
   leaves posteriores; este cierre es target-qualified para la VM hosted y no
   promociona una API pública.
-- [ ] **STD-EXEC-HOST-001 — Implementar workers host.** Enlazar pools y wakeups
-  fijados por target, con límites, shutdown y revocación sin heredar ambiente ni
-  bloquear el progreso cooperativo.
+- [x] **STD-EXEC-HOST-001 — Implementar workers host.** La VM hosted enlaza
+  `BlockingPool` a un bridge privado con workers OS, heaps hijos por job,
+  adaptador de host propietario, admisión FIFO acotada, shutdown con drain y
+  cancelación segura sin bloquear el scheduler cooperativo. El runtime nativo
+  añade una lane target-qualified de tokens opacos para
+  `x86_64-unknown-linux-gnu`, con lifecycle, wakeups, cancelación de cola y
+  ownership ARC; no se reclama lowering native AOT ni ABI público. Evidencia:
+  `scripts/stdlib-executor-implementation.sh` y
+  `target/reliability/evidence/stdlib-executor-implementation.json`. El
+  siguiente bloque es `STD-EXEC-TEST-001`.
 - [ ] **STD-EXEC-TEST-001 — Modelar y endurecer executor.** Cubrir fairness,
   starvation, saturación, cancelación, pánicos, actores muertos, rechazo de
   trabajo, shutdown drenado, límites y races con schedulers deterministas y
@@ -7750,7 +7760,9 @@ está cerrada; `STD-CHANNEL-TEST-001` queda cerrado para modelo, regresiones y
 fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
 `STD-CHANNEL-DOC-001` queda cerrado para la guía ejecutable de composición.
 `STD-EXEC-IMPL-001` queda cerrado para la implementación cooperativa hosted de
-su superficie; el siguiente trabajo crítico es `STD-EXEC-HOST-001`. La
+su superficie y `STD-EXEC-HOST-001` queda cerrado para el bridge hosted y la
+lane nativa target-qualified; el siguiente trabajo crítico es
+`STD-EXEC-TEST-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

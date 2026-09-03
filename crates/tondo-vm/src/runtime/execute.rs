@@ -1,22 +1,25 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crate::bytecode::{
     ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeAwaitable,
     BytecodeBinaryOperator, BytecodeBlockId, BytecodeBootstrapHostFunction, BytecodeCallArgument,
-    BytecodeCallArgumentTarget, BytecodeCallable, BytecodeCoercion, BytecodeConstant,
-    BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
-    BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess,
-    BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
-    BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion,
+    BytecodeCallArgumentTarget, BytecodeCallable, BytecodeCallableId, BytecodeCoercion,
+    BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
+    BytecodeConstantVariantValue, BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId,
+    BytecodeIndexAccess, BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType,
+    BytecodeLoanId, BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion,
     BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind, BytecodeOperation,
     BytecodeOperationKind, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
     BytecodeProgram, BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
     BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSelectRegistration,
     BytecodeSlotId, BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind,
     BytecodeTraceDescriptor, BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind,
-    BytecodeVariantPayload, BytecodeVerificationLimits, normalize_array_index,
-    normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
+    BytecodeVariantPayload, BytecodeVerificationLimits, derive_trace_metadata,
+    normalize_array_index, normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
 };
 use crate::literal;
 
@@ -364,6 +367,28 @@ fn validate_limits(limits: VmLimits) -> Result<(), VmError> {
     Ok(())
 }
 
+fn run_blocking_job(
+    program: &BytecodeProgram,
+    trace: &BytecodeTraceMetadata,
+    limits: VmLimits,
+    copy_strategy: ValueCopyStrategy,
+    job: BlockingJob,
+    host: &mut BlockingWorkerHost,
+) -> BlockingCompletion {
+    let mut engine = Engine::new(program, host, limits, copy_strategy, trace.clone());
+    let arguments = match engine.materialize_blocking_arguments(job.function, job.arguments) {
+        Ok(arguments) => arguments,
+        Err(error) => return BlockingCompletion::Failed(error),
+    };
+    match engine.run(job.function, arguments) {
+        Ok(execution) => match execution.outcome {
+            VmOutcome::Returned(value) => BlockingCompletion::Returned(value),
+            VmOutcome::Panicked(panic) => BlockingCompletion::Panicked(panic),
+        },
+        Err(error) => BlockingCompletion::Failed(error),
+    }
+}
+
 #[derive(Debug, Clone)]
 enum SlotState {
     Dead,
@@ -655,6 +680,23 @@ enum TaskWait {
         call: u64,
         outcome: BytecodeTypeId,
     },
+    BlockingSubmit {
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        outcome: BytecodeTypeId,
+        destination: Option<BytecodePlace>,
+        target: Option<BytecodeBlockId>,
+        unwind: BytecodeBlockId,
+    },
+    BlockingCall {
+        call: u64,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+        completion: Option<BlockingCompletion>,
+    },
     Once {
         id: u64,
         outcome: BytecodeTypeId,
@@ -801,6 +843,453 @@ enum RuntimePoolLifecycle {
     Cancelled,
 }
 
+#[derive(Debug, Clone)]
+struct BlockingArgument {
+    ty: BytecodeTypeId,
+    value: RuntimeValue,
+}
+
+#[derive(Debug)]
+struct BlockingJob {
+    id: u64,
+    function: BytecodeFunctionId,
+    arguments: Vec<BlockingArgument>,
+}
+
+#[derive(Debug)]
+enum BlockingCompletion {
+    Returned(RuntimeValue),
+    Panicked(VmPanic),
+    Failed(VmError),
+    Cancelled,
+}
+
+#[derive(Debug)]
+struct BlockingHostRequest {
+    worker: usize,
+    name: String,
+    arguments: Vec<RuntimeValue>,
+    reply: mpsc::Sender<Result<RuntimeValue, VmError>>,
+}
+
+#[derive(Debug)]
+struct BlockingBridgeState {
+    lifecycle: RuntimePoolLifecycle,
+    workers: usize,
+    capacity: usize,
+    next_job: u64,
+    queue: VecDeque<BlockingJob>,
+    active: usize,
+    host_requests_pending: usize,
+    completions: BTreeMap<u64, BlockingCompletion>,
+}
+
+const BLOCKING_CALL_TAG: u64 = 1 << 63;
+const BLOCKING_WORKER_UNIT_TAG: u64 = 1 << 62;
+
+/// Private host-worker bridge used by `BlockingPool`.
+///
+/// The bridge owns only detached envelopes. Every worker gets a fresh VM heap
+/// and a host adapter that can request a synchronous, parent-owned host call;
+/// no VM handle, loan, or frame is sent through this structure.
+struct BlockingExecutionBridge {
+    state: Arc<(Mutex<BlockingBridgeState>, Condvar)>,
+    host_wake: Arc<Condvar>,
+    host_requests: Mutex<mpsc::Receiver<BlockingHostRequest>>,
+    workers: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl std::fmt::Debug for BlockingExecutionBridge {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BlockingExecutionBridge")
+            .field("state", &self.state)
+            .finish_non_exhaustive()
+    }
+}
+
+impl BlockingExecutionBridge {
+    fn new(
+        program: &BytecodeProgram,
+        trace: &BytecodeTraceMetadata,
+        limits: VmLimits,
+        copy_strategy: ValueCopyStrategy,
+        workers: usize,
+        capacity: usize,
+    ) -> Result<Arc<Self>, VmError> {
+        let (host_sender, host_receiver) = mpsc::channel();
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers,
+                capacity,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let host_wake = Arc::new(Condvar::new());
+        let bridge = Arc::new(Self {
+            state: Arc::clone(&state),
+            host_wake: Arc::clone(&host_wake),
+            host_requests: Mutex::new(host_receiver),
+            workers: Mutex::new(Vec::with_capacity(workers)),
+        });
+        let program = Arc::new(program.clone());
+        let trace = Arc::new(trace.clone());
+        for worker in 0..workers {
+            let state = Arc::clone(&state);
+            let program = Arc::clone(&program);
+            let trace = Arc::clone(&trace);
+            let host_sender = host_sender.clone();
+            let host_wake = Arc::clone(&host_wake);
+            let name = format!("tondo-blocking-{worker}");
+            let handle = thread::Builder::new()
+                .name(name)
+                .spawn(move || {
+                    blocking_worker_loop(
+                        worker,
+                        state,
+                        program,
+                        trace,
+                        limits,
+                        copy_strategy,
+                        host_sender,
+                        host_wake,
+                    )
+                })
+                .map_err(|error| {
+                    VmError::Host(format!("failed to start blocking worker: {error}"))
+                })?;
+            bridge
+                .workers
+                .lock()
+                .map_err(|_| VmError::invariant("blocking worker handle lock was poisoned"))?
+                .push(handle);
+        }
+        Ok(bridge)
+    }
+
+    fn submit(
+        &self,
+        function: BytecodeFunctionId,
+        arguments: Vec<BlockingArgument>,
+    ) -> Result<BlockingAdmission, VmError> {
+        let (lock, wake) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        if state.lifecycle != RuntimePoolLifecycle::Open {
+            return Ok(match state.lifecycle {
+                RuntimePoolLifecycle::ShuttingDown | RuntimePoolLifecycle::Closed => {
+                    BlockingAdmission::Closed
+                }
+                RuntimePoolLifecycle::Cancelling | RuntimePoolLifecycle::Cancelled => {
+                    BlockingAdmission::Cancelled
+                }
+                RuntimePoolLifecycle::Open => unreachable!(),
+            });
+        }
+        let admitted = state.active.saturating_add(state.queue.len());
+        let limit = if state.capacity == 0 {
+            state.workers
+        } else {
+            state.capacity
+        };
+        if admitted >= limit {
+            return Ok(BlockingAdmission::Pending);
+        }
+        let id = state.next_job;
+        state.next_job = state
+            .next_job
+            .checked_add(1)
+            .ok_or(VmError::ResourceLimit {
+                resource: "blocking executor jobs",
+                limit: u64::MAX,
+            })?;
+        state.queue.push_back(BlockingJob {
+            id,
+            function,
+            arguments,
+        });
+        wake.notify_one();
+        Ok(BlockingAdmission::Accepted(id))
+    }
+
+    fn poll(&self, id: u64) -> Result<Option<BlockingCompletion>, VmError> {
+        let (lock, _) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        Ok(state.completions.remove(&id))
+    }
+
+    fn can_admit(&self) -> Result<bool, VmError> {
+        let (lock, _) = &*self.state;
+        let state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        if state.lifecycle != RuntimePoolLifecycle::Open {
+            return Ok(false);
+        }
+        let admitted = state.active.saturating_add(state.queue.len());
+        let limit = if state.capacity == 0 {
+            state.workers
+        } else {
+            state.capacity
+        };
+        Ok(admitted < limit)
+    }
+
+    fn lifecycle(&self) -> Result<RuntimePoolLifecycle, VmError> {
+        let (lock, _) = &*self.state;
+        Ok(lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?
+            .lifecycle)
+    }
+
+    fn shutdown(&self) -> Result<(), VmError> {
+        let (lock, wake) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        if state.lifecycle == RuntimePoolLifecycle::Open {
+            state.lifecycle = RuntimePoolLifecycle::ShuttingDown;
+        }
+        if state.lifecycle == RuntimePoolLifecycle::ShuttingDown
+            && state.active == 0
+            && state.queue.is_empty()
+        {
+            state.lifecycle = RuntimePoolLifecycle::Closed;
+        }
+        wake.notify_all();
+        self.host_wake.notify_all();
+        Ok(())
+    }
+
+    fn cancel(&self) -> Result<(), VmError> {
+        let (lock, wake) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        if state.lifecycle == RuntimePoolLifecycle::Open
+            || state.lifecycle == RuntimePoolLifecycle::ShuttingDown
+        {
+            state.lifecycle = RuntimePoolLifecycle::Cancelling;
+            let queued = state.queue.drain(..).map(|job| job.id).collect::<Vec<_>>();
+            for id in queued {
+                state.completions.insert(id, BlockingCompletion::Cancelled);
+            }
+        }
+        if state.lifecycle == RuntimePoolLifecycle::Cancelling && state.active == 0 {
+            state.lifecycle = RuntimePoolLifecycle::Cancelled;
+        }
+        wake.notify_all();
+        self.host_wake.notify_all();
+        Ok(())
+    }
+
+    fn cancel_job(&self, id: u64) -> Result<(), VmError> {
+        let (lock, wake) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        if let Some(position) = state.queue.iter().position(|job| job.id == id) {
+            state.queue.remove(position);
+            state.completions.insert(id, BlockingCompletion::Cancelled);
+            wake.notify_all();
+            self.host_wake.notify_all();
+        }
+        Ok(())
+    }
+
+    fn wait(&self) -> Result<(), VmError> {
+        let (lock, _) = &*self.state;
+        let state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        if state.completions.is_empty()
+            && state.host_requests_pending == 0
+            && !(state.active == 0
+                && state.queue.is_empty()
+                && matches!(
+                    state.lifecycle,
+                    RuntimePoolLifecycle::Closed | RuntimePoolLifecycle::Cancelled
+                ))
+        {
+            drop(
+                self.host_wake
+                    .wait(state)
+                    .map_err(|_| VmError::invariant("blocking bridge wait was poisoned"))?,
+            );
+        }
+        Ok(())
+    }
+
+    fn try_host_request(&self) -> Result<Option<BlockingHostRequest>, VmError> {
+        let receiver = self
+            .host_requests
+            .lock()
+            .map_err(|_| VmError::invariant("blocking host request lock was poisoned"))?;
+        match receiver.try_recv() {
+            Ok(request) => Ok(Some(request)),
+            Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => Ok(None),
+        }
+    }
+
+    fn finish_host_request(&self) -> Result<(), VmError> {
+        let (lock, _) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        state.host_requests_pending = state.host_requests_pending.saturating_sub(1);
+        Ok(())
+    }
+}
+
+impl Drop for BlockingExecutionBridge {
+    fn drop(&mut self) {
+        let _ = self.cancel();
+        if let Ok(mut workers) = self.workers.lock() {
+            for worker in workers.drain(..) {
+                let _ = worker.join();
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockingAdmission {
+    Accepted(u64),
+    Pending,
+    Closed,
+    Cancelled,
+}
+
+struct BlockingWorkerHost {
+    worker: usize,
+    sender: mpsc::Sender<BlockingHostRequest>,
+    state: Arc<(Mutex<BlockingBridgeState>, Condvar)>,
+    wake: Arc<Condvar>,
+}
+
+impl VmHost for BlockingWorkerHost {
+    fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+        let (reply, response) = mpsc::channel();
+        let (lock, _) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        self.sender
+            .send(BlockingHostRequest {
+                worker: self.worker,
+                name: name.to_owned(),
+                arguments: arguments.to_vec(),
+                reply,
+            })
+            .map_err(|_| VmError::Host("blocking host adapter is closed".into()))?;
+        state.host_requests_pending = state.host_requests_pending.saturating_add(1);
+        drop(state);
+        self.wake.notify_all();
+        loop {
+            match response.recv_timeout(Duration::from_millis(10)) {
+                Ok(result) => return result,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let lifecycle = self
+                        .state
+                        .0
+                        .lock()
+                        .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?
+                        .lifecycle;
+                    if matches!(
+                        lifecycle,
+                        RuntimePoolLifecycle::Cancelling | RuntimePoolLifecycle::Cancelled
+                    ) {
+                        return Err(VmError::Host("blocking host call was cancelled".into()));
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(VmError::Host(
+                        "blocking host adapter did not receive a response".into(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+// The worker loop receives each immutable bridge component explicitly so a
+// worker cannot accidentally borrow the parent engine or retain VM state.
+#[allow(clippy::too_many_arguments)]
+fn blocking_worker_loop(
+    worker: usize,
+    state: Arc<(Mutex<BlockingBridgeState>, Condvar)>,
+    program: Arc<BytecodeProgram>,
+    trace: Arc<BytecodeTraceMetadata>,
+    limits: VmLimits,
+    copy_strategy: ValueCopyStrategy,
+    host_sender: mpsc::Sender<BlockingHostRequest>,
+    host_wake: Arc<Condvar>,
+) {
+    loop {
+        let job = {
+            let (lock, wake) = &*state;
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            loop {
+                if let Some(job) = state.queue.pop_front() {
+                    state.active = state.active.saturating_add(1);
+                    break job;
+                }
+                if matches!(
+                    state.lifecycle,
+                    RuntimePoolLifecycle::Closed | RuntimePoolLifecycle::Cancelled
+                ) {
+                    return;
+                }
+                if state.lifecycle == RuntimePoolLifecycle::ShuttingDown && state.active == 0 {
+                    state.lifecycle = RuntimePoolLifecycle::Closed;
+                    wake.notify_all();
+                    return;
+                }
+                state = match wake.wait(state) {
+                    Ok(state) => state,
+                    Err(_) => return,
+                };
+            }
+        };
+        let mut host = BlockingWorkerHost {
+            worker,
+            sender: host_sender.clone(),
+            state: Arc::clone(&state),
+            wake: Arc::clone(&host_wake),
+        };
+        let job_id = job.id;
+        let completion = run_blocking_job(&program, &trace, limits, copy_strategy, job, &mut host);
+        let (lock, wake) = &*state;
+        let Ok(mut state) = lock.lock() else {
+            return;
+        };
+        state.active = state.active.saturating_sub(1);
+        state.completions.insert(job_id, completion);
+        if state.active == 0 && state.queue.is_empty() {
+            state.lifecycle = match state.lifecycle {
+                RuntimePoolLifecycle::ShuttingDown => RuntimePoolLifecycle::Closed,
+                RuntimePoolLifecycle::Cancelling => RuntimePoolLifecycle::Cancelled,
+                lifecycle => lifecycle,
+            };
+        }
+        wake.notify_all();
+        host_wake.notify_all();
+    }
+}
+
 #[derive(Debug)]
 struct RuntimePoolState {
     blocking: bool,
@@ -914,6 +1403,9 @@ struct Engine<'program, 'host> {
     next_group_id: u64,
     onces: BTreeMap<u64, RuntimeOnceState>,
     pools: BTreeMap<u64, RuntimePoolState>,
+    blocking_bridges: BTreeMap<u64, Arc<BlockingExecutionBridge>>,
+    blocking_calls: BTreeMap<u64, BlockingCallRecord>,
+    next_blocking_call: u64,
     pool_running: BTreeMap<usize, u64>,
     executor_job_tasks: BTreeSet<usize>,
     actors: BTreeMap<u64, RuntimeActorState>,
@@ -926,6 +1418,13 @@ struct Engine<'program, 'host> {
     callable_names: Vec<String>,
     nominal_names: Vec<String>,
     select_rotation: u64,
+}
+
+#[derive(Clone)]
+struct BlockingCallRecord {
+    pool: u64,
+    bridge: Arc<BlockingExecutionBridge>,
+    job: u64,
 }
 
 impl<'program, 'host> Engine<'program, 'host> {
@@ -968,6 +1467,9 @@ impl<'program, 'host> Engine<'program, 'host> {
             next_group_id: 1,
             onces: BTreeMap::new(),
             pools: BTreeMap::new(),
+            blocking_bridges: BTreeMap::new(),
+            blocking_calls: BTreeMap::new(),
+            next_blocking_call: 1,
             pool_running: BTreeMap::new(),
             executor_job_tasks: BTreeSet::new(),
             actors: BTreeMap::new(),
@@ -1280,6 +1782,99 @@ impl<'program, 'host> Engine<'program, 'host> {
             frame,
         )?;
         Ok(call)
+    }
+
+    fn snapshot_blocking_arguments(
+        &self,
+        function: BytecodeFunctionId,
+        arguments: &[Value],
+    ) -> Result<Vec<BlockingArgument>, VmError> {
+        let function_info = self
+            .program
+            .function(function)
+            .ok_or_else(|| VmError::invariant("blocking job function is invalid"))?;
+        if function_info.parameters.len() != arguments.len() {
+            return Err(VmError::invariant(
+                "blocking job argument count does not match its implementation",
+            ));
+        }
+        function_info
+            .parameters
+            .iter()
+            .copied()
+            .zip(arguments)
+            .map(|(slot, value)| {
+                let ty = function_info
+                    .slot(slot)
+                    .ok_or_else(|| VmError::invariant("blocking job parameter slot is invalid"))?
+                    .ty;
+                let value =
+                    snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)?;
+                Ok(BlockingArgument { ty, value })
+            })
+            .collect()
+    }
+
+    fn admit_blocking_job(
+        &mut self,
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+    ) -> Result<BlockingAdmission, VmError> {
+        let bridge =
+            self.blocking_bridges.get(&pool).cloned().ok_or_else(|| {
+                VmError::invariant("blocking submission references an unknown pool")
+            })?;
+        let arguments = self.snapshot_blocking_arguments(function, &arguments)?;
+        let admission = bridge.submit(function, arguments)?;
+        let BlockingAdmission::Accepted(job) = admission else {
+            return Ok(admission);
+        };
+        let call = BLOCKING_CALL_TAG
+            | self
+                .next_blocking_call
+                .checked_add(0)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "blocking executor calls",
+                    limit: u64::MAX,
+                })?;
+        self.next_blocking_call =
+            self.next_blocking_call
+                .checked_add(1)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "blocking executor calls",
+                    limit: u64::MAX,
+                })?;
+        self.blocking_calls
+            .insert(call, BlockingCallRecord { pool, bridge, job });
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::HostStart,
+            None,
+            None,
+        )?;
+        Ok(BlockingAdmission::Accepted(call))
+    }
+
+    fn service_blocking_host_requests(&mut self) -> Result<usize, VmError> {
+        let bridges = self.blocking_bridges.values().cloned().collect::<Vec<_>>();
+        let mut serviced = 0;
+        for bridge in bridges {
+            while let Some(request) = bridge.try_host_request()? {
+                self.host.set_execution_unit(
+                    BLOCKING_WORKER_UNIT_TAG.saturating_add(request.worker as u64),
+                );
+                let result = self.host.invoke(&request.name, &request.arguments);
+                let _ = request.reply.send(result);
+                bridge.finish_host_request()?;
+                serviced += 1;
+            }
+        }
+        Ok(serviced)
+    }
+
+    fn blocking_call_record(&self, call: u64) -> Option<BlockingCallRecord> {
+        self.blocking_calls.get(&call).cloned()
     }
 
     fn invoke_host(
@@ -2049,6 +2644,31 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 Ok(true)
             }
+            TaskWait::BlockingSubmit {
+                pool,
+                function,
+                arguments,
+                outcome,
+                destination,
+                target,
+                unwind,
+            } => self.resume_blocking_submit(
+                pool,
+                function,
+                arguments,
+                outcome,
+                destination,
+                target,
+                unwind,
+            ),
+            TaskWait::BlockingCall {
+                call,
+                outcome,
+                destination,
+                target,
+                unwind,
+                completion,
+            } => self.resume_blocking_call(call, outcome, destination, target, unwind, completion),
             TaskWait::HostCall {
                 call,
                 outcome,
@@ -2164,6 +2784,154 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 Ok(true)
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resume_blocking_submit(
+        &mut self,
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        outcome: BytecodeTypeId,
+        destination: Option<BytecodePlace>,
+        target: Option<BytecodeBlockId>,
+        unwind: BytecodeBlockId,
+    ) -> Result<bool, VmError> {
+        let spawned = destination.is_none();
+        if self.tasks[self.current_task].cancel_requested {
+            if let Some(state) = self.pools.get_mut(&pool) {
+                state
+                    .submit_waiters
+                    .retain(|waiter| *waiter != self.current_task);
+            }
+            if spawned {
+                self.complete_current_task(TaskCompletion::Cancelled)?;
+                return Ok(false);
+            }
+            let frame =
+                self.frames.len().checked_sub(1).ok_or_else(|| {
+                    VmError::invariant("cancelled blocking submission has no frame")
+                })?;
+            self.begin_cancel(frame, unwind)?;
+            return Ok(true);
+        }
+        match self.admit_blocking_job(pool, function, arguments.clone())? {
+            BlockingAdmission::Accepted(call) => {
+                if spawned {
+                    self.tasks[self.current_task].status =
+                        TaskStatus::Waiting(TaskWait::HostTask { call, outcome });
+                    return Ok(false);
+                }
+                let destination = destination
+                    .ok_or_else(|| VmError::invariant("blocking await lost its destination"))?;
+                let target =
+                    target.ok_or_else(|| VmError::invariant("blocking await lost its target"))?;
+                self.park_current(
+                    TaskWait::BlockingCall {
+                        call,
+                        outcome,
+                        destination,
+                        target,
+                        unwind,
+                        completion: None,
+                    },
+                    &[],
+                )?;
+                Ok(false)
+            }
+            BlockingAdmission::Pending => {
+                let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                    VmError::invariant("blocking submission references an unknown pool")
+                })?;
+                if !state.submit_waiters.contains(&self.current_task) {
+                    state.submit_waiters.push_back(self.current_task);
+                }
+                self.park_current(
+                    TaskWait::BlockingSubmit {
+                        pool,
+                        function,
+                        arguments,
+                        outcome,
+                        destination,
+                        target,
+                        unwind,
+                    },
+                    &[],
+                )?;
+                Ok(false)
+            }
+            BlockingAdmission::Closed => {
+                if spawned {
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    Ok(false)
+                } else {
+                    Err(VmError::Host("blocking pool is closed".into()))
+                }
+            }
+            BlockingAdmission::Cancelled => {
+                if spawned {
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    Ok(false)
+                } else {
+                    let frame = self.frames.len().checked_sub(1).ok_or_else(|| {
+                        VmError::invariant("cancelled blocking submission has no frame")
+                    })?;
+                    self.begin_cancel(frame, unwind)?;
+                    Ok(true)
+                }
+            }
+        }
+    }
+
+    fn resume_blocking_call(
+        &mut self,
+        call: u64,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+        completion: Option<BlockingCompletion>,
+    ) -> Result<bool, VmError> {
+        let frame = self
+            .frames
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| VmError::invariant("a resumed blocking await has no frame"))?;
+        let Some(completion) = completion else {
+            return Err(VmError::invariant(format!(
+                "blocking call #{call} resumed before completion"
+            )));
+        };
+        match completion {
+            BlockingCompletion::Returned(value) => {
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.cleanup_host_value(&value)?;
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                let value = self.materialize_host_value(outcome, value)?;
+                self.write_place(frame, &destination, value)?;
+                self.jump(frame, target);
+                Ok(true)
+            }
+            BlockingCompletion::Panicked(panic) => {
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, unwind)?;
+                } else {
+                    self.begin_propagated_panic(frame, panic, unwind)?;
+                }
+                Ok(true)
+            }
+            BlockingCompletion::Cancelled => {
+                self.begin_cancel(frame, unwind)?;
+                Ok(true)
+            }
+            BlockingCompletion::Failed(error) => Err(error),
         }
     }
 
@@ -2297,6 +3065,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             task.pending_unwind = self.pending_unwind.take();
         }
 
+        self.service_blocking_host_requests()?;
         self.poll_host_calls()?;
         loop {
             while let Some(next) = self.runnable.pop_front() {
@@ -2319,12 +3088,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 return Ok(None);
             }
 
+            self.service_blocking_host_requests()?;
             if matches!(
                 self.tasks.first().map(|task| &task.status),
                 Some(TaskStatus::Complete(_))
             ) {
                 return self.finish_root_task().map(Some);
             }
+            self.poll_host_calls()?;
             let calls = self.pending_host_calls();
             if calls.is_empty() {
                 self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::Begin)?;
@@ -2333,13 +3104,27 @@ impl<'program, 'host> Engine<'program, 'host> {
                 ));
             }
             self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::Begin)?;
-            let (call, value) = self.host.wait_async(&calls)?;
-            if !calls.contains(&call) {
-                return Err(VmError::Host(format!(
-                    "host completed unknown async call #{call}"
-                )));
+            let host_calls = calls
+                .iter()
+                .copied()
+                .filter(|call| self.blocking_call_record(*call).is_none())
+                .collect::<Vec<_>>();
+            if host_calls.is_empty() {
+                let call = calls[0];
+                let record = self.blocking_call_record(call).ok_or_else(|| {
+                    VmError::invariant("blocking wait lost its bridge call record")
+                })?;
+                record.bridge.wait()?;
+            } else {
+                let (call, value) = self.host.wait_async(&host_calls)?;
+                if !host_calls.contains(&call) {
+                    return Err(VmError::Host(format!(
+                        "host completed unknown async call #{call}"
+                    )));
+                }
+                self.complete_host_call(call, value)?;
             }
-            self.complete_host_call(call, value)?;
+            self.service_blocking_host_requests()?;
             self.poll_host_calls()?;
             let roots = self.roots(&[])?;
             self.record_roots(&roots)?;
@@ -2357,6 +3142,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                     ..
                 })
                 | TaskStatus::Waiting(TaskWait::DeferredHostCall {
+                    call,
+                    completion: None,
+                    ..
+                })
+                | TaskStatus::Waiting(TaskWait::BlockingCall {
                     call,
                     completion: None,
                     ..
@@ -2395,6 +3185,12 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn poll_host_calls(&mut self) -> Result<(), VmError> {
         for call in self.pending_host_calls() {
+            if let Some(record) = self.blocking_call_record(call) {
+                if let Some(completion) = record.bridge.poll(record.job)? {
+                    self.complete_blocking_call(call, completion)?;
+                }
+                continue;
+            }
             if self.host.is_virtual_quiescence_call(call) && !self.runnable.is_empty() {
                 continue;
             }
@@ -2410,6 +3206,87 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn complete_blocking_call(
+        &mut self,
+        call: u64,
+        completion: BlockingCompletion,
+    ) -> Result<(), VmError> {
+        let record = self
+            .blocking_calls
+            .remove(&call)
+            .ok_or_else(|| VmError::Host(format!("blocking call #{call} completed twice")))?;
+        let task = self
+            .tasks
+            .iter()
+            .position(|task| {
+                matches!(
+                    &task.status,
+                    TaskStatus::Waiting(TaskWait::BlockingCall {
+                        call: pending,
+                        completion: None,
+                        ..
+                    }) if *pending == call
+                ) || matches!(
+                    &task.status,
+                    TaskStatus::Waiting(TaskWait::HostTask { call: pending, .. })
+                        if *pending == call
+                )
+            })
+            .ok_or_else(|| VmError::Host(format!("blocking call #{call} has no waiter")))?;
+        match completion {
+            completion @ (BlockingCompletion::Panicked(_) | BlockingCompletion::Cancelled)
+                if matches!(
+                    self.tasks[task].status,
+                    TaskStatus::Waiting(TaskWait::HostTask { .. })
+                ) =>
+            {
+                let completion = match completion {
+                    BlockingCompletion::Panicked(panic) if !self.tasks[task].cancel_requested => {
+                        TaskCompletion::Panicked(panic)
+                    }
+                    BlockingCompletion::Cancelled
+                    | BlockingCompletion::Panicked(_)
+                    | BlockingCompletion::Returned(_)
+                    | BlockingCompletion::Failed(_) => TaskCompletion::Cancelled,
+                };
+                self.complete_task(task, completion)?;
+            }
+            BlockingCompletion::Returned(value)
+                if matches!(
+                    self.tasks[task].status,
+                    TaskStatus::Waiting(TaskWait::HostTask { .. })
+                ) =>
+            {
+                if self.tasks[task].cancel_requested {
+                    self.cleanup_host_value(&value)?;
+                    self.complete_task(task, TaskCompletion::Cancelled)?;
+                } else {
+                    let outcome = match self.tasks[task].status {
+                        TaskStatus::Waiting(TaskWait::HostTask { outcome, .. }) => outcome,
+                        _ => unreachable!("blocking host task status was checked"),
+                    };
+                    let value = self.materialize_host_value(outcome, value)?;
+                    self.complete_task(task, TaskCompletion::Returned(value))?;
+                }
+            }
+            BlockingCompletion::Failed(error) => return Err(error),
+            completion => {
+                let TaskStatus::Waiting(TaskWait::BlockingCall {
+                    completion: slot, ..
+                }) = &mut self.tasks[task].status
+                else {
+                    return Err(VmError::invariant(
+                        "blocking completion target changed status",
+                    ));
+                };
+                *slot = Some(completion);
+                self.wake_task(task)?;
+            }
+        }
+        self.service_executor_pool(record.pool)?;
         Ok(())
     }
 
@@ -2673,7 +3550,7 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn request_cancel(&mut self, task: usize) -> Result<(), VmError> {
-        let host_call = {
+        let (host_call, blocking_call, blocking_submit) = {
             let record = self
                 .tasks
                 .get_mut(task)
@@ -2686,17 +3563,44 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
             record.cancel_requested = true;
             match &record.status {
-                TaskStatus::Waiting(TaskWait::HostCall { call, .. })
-                | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => Some(*call),
+                TaskStatus::Waiting(TaskWait::HostCall { call, .. }) => (Some(*call), None, None),
+                TaskStatus::Waiting(TaskWait::BlockingCall { call, .. })
+                | TaskStatus::Waiting(TaskWait::HostTask { call, .. })
+                    if self.blocking_calls.contains_key(call) =>
+                {
+                    (None, Some(*call), None)
+                }
+                TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => (Some(*call), None, None),
+                TaskStatus::Waiting(TaskWait::BlockingSubmit { pool, .. }) => {
+                    (None, None, Some(*pool))
+                }
                 // A cleanup that is already in flight is not cooperatively
                 // cancelled by the unwind which initiated it.
                 TaskStatus::Waiting(TaskWait::DeferredHostCall { .. }) => return Ok(()),
-                _ => None,
+                _ => (None, None, None),
             }
         };
         let parent = self.diagnostic_parent(task);
         self.record_task(task, parent, DiagnosticTaskState::CancelRequested)?;
+        if let Some(call) = blocking_call {
+            if let Some(record) = self.blocking_call_record(call) {
+                record.bridge.cancel_job(record.job)?;
+            }
+            self.record_sync(task, DiagnosticSynchronization::HostCancel, None, None)?;
+            return Ok(());
+        }
+        if let Some(pool) = blocking_submit {
+            if let Some(state) = self.pools.get_mut(&pool) {
+                state.submit_waiters.retain(|waiter| *waiter != task);
+            }
+            return self.wake_task(task);
+        }
         if let Some(call) = host_call {
+            if let Some(record) = self.blocking_call_record(call) {
+                record.bridge.cancel_job(record.job)?;
+                self.record_sync(task, DiagnosticSynchronization::HostCancel, None, None)?;
+                return Ok(());
+            }
             self.record_sync(task, DiagnosticSynchronization::HostCancel, None, None)?;
             return self.host.cancel_async(call);
         }
@@ -3073,6 +3977,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             | OperationResult::OneShotWait { .. }
             | OperationResult::GroupWait { .. }
             | OperationResult::PoolSubmit { .. }
+            | OperationResult::BlockingRun { .. }
             | OperationResult::PoolLifecycle { .. }
             | OperationResult::ActorSend { .. }
             | OperationResult::ActorStop { .. }
@@ -3252,6 +4157,53 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .push(task);
         }
         self.record_new_task(task, scope, DiagnosticTaskState::Waiting)?;
+        Ok(task)
+    }
+
+    fn spawn_blocking_submit_task(
+        &mut self,
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        outcome: BytecodeTypeId,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Waiting(TaskWait::BlockingSubmit {
+                pool,
+                function,
+                arguments,
+                outcome,
+                destination: None,
+                target: None,
+                unwind: BytecodeBlockId::new(0),
+            }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("blocking submission targets a missing task scope"))?
+            .children
+            .push(task);
+        self.executor_job_tasks.insert(task);
+        let state = self
+            .pools
+            .get_mut(&pool)
+            .ok_or_else(|| VmError::invariant("blocking submission references an unknown pool"))?;
+        state.submit_waiters.push_back(task);
+        self.record_new_task(task, Some(scope), DiagnosticTaskState::Waiting)?;
         Ok(task)
     }
 
@@ -4297,6 +5249,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         task
                     }
                     OperationResult::PoolSubmit { .. }
+                    | OperationResult::BlockingRun { .. }
                     | OperationResult::PoolLifecycle { .. }
                     | OperationResult::ActorStop { .. } => {
                         return Err(VmError::invariant(
@@ -5841,6 +6794,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             "an async executor operation appeared in a synchronous invocation",
                         ));
                     }
+                    OperationResult::BlockingRun { .. } => {
+                        return Err(VmError::invariant(
+                            "BlockingPool.run appeared in a synchronous invocation",
+                        ));
+                    }
                     OperationResult::Panic(code, message) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
                     }
@@ -5939,6 +6897,58 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     },
                                     &[],
                                 )?;
+                            }
+                            OperationResult::BlockingRun {
+                                pool,
+                                function,
+                                arguments,
+                                outcome,
+                            } => {
+                                match self.admit_blocking_job(pool, function, arguments.clone())? {
+                                    BlockingAdmission::Accepted(call) => {
+                                        self.park_current(
+                                            TaskWait::BlockingCall {
+                                                call,
+                                                outcome,
+                                                destination: destination.clone(),
+                                                target: *target,
+                                                unwind: *unwind,
+                                                completion: None,
+                                            },
+                                            &[],
+                                        )?;
+                                    }
+                                    BlockingAdmission::Pending => {
+                                        let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                                            VmError::invariant(
+                                                "BlockingPool.run references an unknown pool",
+                                            )
+                                        })?;
+                                        if !state.submit_waiters.contains(&self.current_task) {
+                                            state.submit_waiters.push_back(self.current_task);
+                                        }
+                                        self.park_current(
+                                            TaskWait::BlockingSubmit {
+                                                pool,
+                                                function,
+                                                arguments,
+                                                outcome,
+                                                destination: Some(destination.clone()),
+                                                target: Some(*target),
+                                                unwind: *unwind,
+                                            },
+                                            &[],
+                                        )?;
+                                    }
+                                    BlockingAdmission::Closed => {
+                                        return Err(VmError::Host(
+                                            "blocking pool is closed".into(),
+                                        ));
+                                    }
+                                    BlockingAdmission::Cancelled => {
+                                        self.begin_cancel(frame, *unwind)?;
+                                    }
+                                }
                             }
                             OperationResult::OneShotWait { id, outcome } => {
                                 let cancelled = self
@@ -6321,6 +7331,34 @@ impl<'program, 'host> Engine<'program, 'host> {
                         )?;
                         self.jump(frame, *target);
                     }
+                    OperationResult::BlockingRun {
+                        pool,
+                        function,
+                        arguments,
+                        outcome,
+                    } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child =
+                            match self.admit_blocking_job(pool, function, arguments.clone())? {
+                                BlockingAdmission::Accepted(call) => {
+                                    let child = self.spawn_host_task(call, outcome, scope)?;
+                                    self.executor_job_tasks.insert(child);
+                                    child
+                                }
+                                BlockingAdmission::Pending => self.spawn_blocking_submit_task(
+                                    pool, function, arguments, outcome, scope,
+                                )?,
+                                BlockingAdmission::Closed | BlockingAdmission::Cancelled => {
+                                    self.spawn_cancelled_task_with_scope(Some(scope))?
+                                }
+                            };
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
                     OperationResult::AsyncIteratorCollect {
                         cursor,
                         next,
@@ -6606,6 +7644,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 ));
                             }
                             OperationResult::PoolSubmit { .. }
+                            | OperationResult::BlockingRun { .. }
                             | OperationResult::PoolLifecycle { .. }
                             | OperationResult::ActorSend { .. }
                             | OperationResult::ActorStop { .. } => {
@@ -6924,6 +7963,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     ));
                 }
                 OperationResult::PoolSubmit { .. }
+                | OperationResult::BlockingRun { .. }
                 | OperationResult::PoolLifecycle { .. }
                 | OperationResult::ActorSend { .. }
                 | OperationResult::ActorStop { .. } => {
@@ -7515,6 +8555,12 @@ enum OperationResult {
         arguments: Vec<Value>,
         outcome: BytecodeTypeId,
         wait: bool,
+    },
+    BlockingRun {
+        pool: u64,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        outcome: BytecodeTypeId,
     },
     PoolLifecycle {
         pool: u64,
@@ -11387,6 +12433,44 @@ impl Engine<'_, '_> {
         Ok((function, arguments))
     }
 
+    fn validate_blocking_callable(&self, value: &Value) -> Result<(), VmError> {
+        let callable = match value {
+            Value::Function { callable, .. } => *callable,
+            Value::Heap(handle) => match self.heap.get(*handle)? {
+                HeapObject::Closure { callable, .. } => *callable,
+                _ => {
+                    return Err(VmError::invariant(
+                        "blocking job is not a function or closure value",
+                    ));
+                }
+            },
+            _ => {
+                return Err(VmError::invariant(
+                    "blocking job is not a function or closure value",
+                ));
+            }
+        };
+        let metadata = self
+            .program
+            .callable(callable)
+            .ok_or_else(|| VmError::invariant("blocking job callable metadata is invalid"))?;
+        let signature = self
+            .program
+            .ty(metadata.function_type)
+            .ok_or_else(|| VmError::invariant("blocking job function type is invalid"))?;
+        let BytecodeTypeKind::Function(signature) = &signature.kind else {
+            return Err(VmError::invariant(
+                "blocking job callable is not a function",
+            ));
+        };
+        if signature.is_async || signature.is_selectable {
+            return Err(VmError::UnsupportedHostCall(
+                "blocking job is suspendible".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn executor_result_ok(
         &mut self,
         result_ty: BytecodeTypeId,
@@ -11528,18 +12612,23 @@ impl Engine<'_, '_> {
                 self.executor_error_result(metadata.outcome, 2)?,
             ));
         }
-        if blocking {
-            // The host-worker bridge is intentionally a separate block. The
-            // cooperative VM does not silently run blocking jobs inline.
-            return Ok(OperationResult::Value(
-                self.executor_error_result(metadata.outcome, 3)?,
-            ));
-        }
         let id = self.next_executor_id()?;
+        if blocking {
+            let trace = derive_trace_metadata(self.program)?;
+            let bridge = BlockingExecutionBridge::new(
+                self.program,
+                &trace,
+                self.limits,
+                self.copy_strategy,
+                workers,
+                capacity,
+            )?;
+            self.blocking_bridges.insert(id, bridge);
+        }
         self.pools.insert(
             id,
             RuntimePoolState {
-                blocking: false,
+                blocking,
                 workers,
                 capacity,
                 running: 0,
@@ -11550,12 +12639,20 @@ impl Engine<'_, '_> {
             },
         );
         let handle = Value::Host(RuntimeValue::Host {
-            kind: RuntimeHostValueKind::ExecutorPool,
+            kind: if blocking {
+                RuntimeHostValueKind::ExecutorBlockingPool
+            } else {
+                RuntimeHostValueKind::ExecutorPool
+            },
             id,
         });
         self.record_resource(
             &RuntimeValue::Host {
-                kind: RuntimeHostValueKind::ExecutorPool,
+                kind: if blocking {
+                    RuntimeHostValueKind::ExecutorBlockingPool
+                } else {
+                    RuntimeHostValueKind::ExecutorPool
+                },
                 id,
             },
             DiagnosticResourceState::Acquired,
@@ -11577,6 +12674,13 @@ impl Engine<'_, '_> {
             .ok_or_else(|| VmError::invariant("executor operation references an unknown pool"))?;
         if state.lifecycle != RuntimePoolLifecycle::Open {
             return Ok(false);
+        }
+        if state.blocking {
+            return self
+                .blocking_bridges
+                .get(&pool)
+                .ok_or_else(|| VmError::invariant("blocking pool has no execution bridge"))?
+                .can_admit();
         }
         let admitted = state
             .running
@@ -11661,6 +12765,25 @@ impl Engine<'_, '_> {
             self.finish_executor_pool_lifecycle(pool)?;
             return Ok(0);
         }
+        if self
+            .pools
+            .get(&pool)
+            .ok_or_else(|| VmError::invariant("executor service references an unknown pool"))?
+            .blocking
+        {
+            if self.executor_pool_capacity_available(pool)? {
+                let waiter = self
+                    .pools
+                    .get_mut(&pool)
+                    .and_then(|state| state.submit_waiters.pop_front());
+                if let Some(task) = waiter {
+                    self.wake_task(task)?;
+                    return Ok(1);
+                }
+            }
+            self.finish_executor_pool_lifecycle(pool)?;
+            return Ok(0);
+        }
         {
             let state = self
                 .pools
@@ -11692,6 +12815,36 @@ impl Engine<'_, '_> {
     }
 
     fn finish_executor_pool_lifecycle(&mut self, pool: u64) -> Result<(), VmError> {
+        let blocking = self
+            .pools
+            .get(&pool)
+            .ok_or_else(|| VmError::invariant("executor lifecycle references an unknown pool"))?
+            .blocking;
+        if blocking {
+            let bridge = self
+                .blocking_bridges
+                .get(&pool)
+                .cloned()
+                .ok_or_else(|| VmError::invariant("blocking pool has no execution bridge"))?;
+            let lifecycle = bridge.lifecycle()?;
+            let terminal = matches!(
+                lifecycle,
+                RuntimePoolLifecycle::Closed | RuntimePoolLifecycle::Cancelled
+            );
+            let waiters = if terminal {
+                let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                    VmError::invariant("executor lifecycle references an unknown pool")
+                })?;
+                state.lifecycle = lifecycle;
+                std::mem::take(&mut state.lifecycle_waiters)
+            } else {
+                Vec::new()
+            };
+            for task in waiters {
+                self.wake_task(task)?;
+            }
+            return Ok(());
+        }
         let (terminal, waiters) = {
             let state = self.pools.get_mut(&pool).ok_or_else(|| {
                 VmError::invariant("executor lifecycle references an unknown pool")
@@ -11741,16 +12894,59 @@ impl Engine<'_, '_> {
     }
 
     fn begin_executor_pool_lifecycle(&mut self, pool: u64, cancel: bool) -> Result<bool, VmError> {
+        let blocking = self
+            .pools
+            .get(&pool)
+            .ok_or_else(|| VmError::invariant("pool lifecycle references an unknown pool"))?
+            .blocking;
+        if blocking {
+            let (waiters, bridge) = {
+                let state = self.pools.get_mut(&pool).ok_or_else(|| {
+                    VmError::invariant("pool lifecycle references an unknown pool")
+                })?;
+                if state.lifecycle != RuntimePoolLifecycle::Open
+                    && !(cancel && state.lifecycle == RuntimePoolLifecycle::ShuttingDown)
+                {
+                    return Err(VmError::invariant(
+                        "pool lifecycle operation is not terminally unique",
+                    ));
+                }
+                state.lifecycle = if cancel {
+                    RuntimePoolLifecycle::Cancelling
+                } else {
+                    RuntimePoolLifecycle::ShuttingDown
+                };
+                (
+                    std::mem::take(&mut state.submit_waiters),
+                    self.blocking_bridges.get(&pool).cloned().ok_or_else(|| {
+                        VmError::invariant("blocking pool has no execution bridge")
+                    })?,
+                )
+            };
+            for task in waiters {
+                self.wake_task(task)?;
+            }
+            if cancel {
+                bridge.cancel()?;
+            } else {
+                bridge.shutdown()?;
+            }
+            self.finish_executor_pool_lifecycle(pool)?;
+            let lifecycle = self
+                .pools
+                .get(&pool)
+                .ok_or_else(|| VmError::invariant("pool lifecycle references an unknown pool"))?
+                .lifecycle;
+            return Ok(matches!(
+                lifecycle,
+                RuntimePoolLifecycle::Closed | RuntimePoolLifecycle::Cancelled
+            ));
+        }
         let (running, queued, submit_waiters) = {
             let state = self
                 .pools
                 .get_mut(&pool)
                 .ok_or_else(|| VmError::invariant("pool lifecycle references an unknown pool"))?;
-            if state.blocking {
-                return Err(VmError::UnsupportedHostCall(
-                    "std.executor.BlockingPool.lifecycle".into(),
-                ));
-            }
             if state.lifecycle != RuntimePoolLifecycle::Open
                 && !(cancel && state.lifecycle == RuntimePoolLifecycle::ShuttingDown)
             {
@@ -12409,10 +13605,35 @@ impl Engine<'_, '_> {
                     outcome: metadata.outcome,
                 }));
             }
-            "std.executor.BlockingPool.run"
-            | "std.executor.BlockingPool.shutdown"
-            | "std.executor.BlockingPool.cancel" => {
-                return Err(VmError::UnsupportedHostCall(name.to_owned()));
+            "std.executor.BlockingPool.run" => {
+                let [pool_value, job] = values.as_slice() else {
+                    return Err(VmError::invariant(
+                        "BlockingPool.run has the wrong argument count",
+                    ));
+                };
+                let pool =
+                    self.executor_handle(pool_value, RuntimeHostValueKind::ExecutorBlockingPool)?;
+                self.validate_blocking_callable(job)?;
+                let (function, arguments) = self.executor_callable(job)?;
+                return Ok(Some(OperationResult::BlockingRun {
+                    pool,
+                    function,
+                    arguments,
+                    outcome: metadata.outcome,
+                }));
+            }
+            "std.executor.BlockingPool.shutdown" | "std.executor.BlockingPool.cancel" => {
+                let [pool_value] = values.as_slice() else {
+                    return Err(VmError::invariant(
+                        "BlockingPool lifecycle method has the wrong argument count",
+                    ));
+                };
+                let pool =
+                    self.executor_handle(pool_value, RuntimeHostValueKind::ExecutorBlockingPool)?;
+                return Ok(Some(OperationResult::PoolLifecycle {
+                    pool,
+                    cancel: name.ends_with(".cancel"),
+                }));
             }
             _ => {}
         }
@@ -14753,6 +15974,111 @@ impl Engine<'_, '_> {
         Ok((*success, item))
     }
 
+    fn materialize_blocking_arguments(
+        &mut self,
+        function: BytecodeFunctionId,
+        arguments: Vec<BlockingArgument>,
+    ) -> Result<Vec<Value>, VmError> {
+        let function_info = self
+            .program
+            .function(function)
+            .ok_or_else(|| VmError::InvalidEntry("blocking job function is invalid".into()))?;
+        if function_info.parameters.len() != arguments.len() {
+            return Err(VmError::InvalidEntry(format!(
+                "blocking job requires {} arguments, got {}",
+                function_info.parameters.len(),
+                arguments.len()
+            )));
+        }
+        function_info
+            .parameters
+            .iter()
+            .copied()
+            .zip(arguments)
+            .map(|(slot, argument)| {
+                let expected = function_info
+                    .slot(slot)
+                    .ok_or_else(|| VmError::invariant("blocking job parameter slot is invalid"))?
+                    .ty;
+                if expected != argument.ty {
+                    return Err(VmError::invariant(
+                        "blocking job argument type changed across the host bridge",
+                    ));
+                }
+                self.materialize_blocking_value(expected, argument.value)
+            })
+            .collect()
+    }
+
+    fn materialize_blocking_value(
+        &mut self,
+        ty: BytecodeTypeId,
+        value: RuntimeValue,
+    ) -> Result<Value, VmError> {
+        match value {
+            RuntimeValue::Closure { callable, captures } => {
+                let callable = BytecodeCallableId::new(callable);
+                let metadata = self.program.callable(callable).ok_or_else(|| {
+                    VmError::Host("blocking closure references an unknown callable".into())
+                })?;
+                let closure = metadata.closure.as_ref().ok_or_else(|| {
+                    VmError::Host("blocking closure references a non-closure callable".into())
+                })?;
+                if closure.environment != ty || closure.captures.len() != captures.len() {
+                    return Err(VmError::Host(
+                        "blocking closure environment does not match its verified type".into(),
+                    ));
+                }
+                let mut values = Vec::with_capacity(captures.len());
+                for (capture_ty, capture) in closure.captures.iter().copied().zip(captures) {
+                    let value = self.materialize_blocking_value(capture_ty, capture)?;
+                    self.retain_temporary(&value);
+                    values.push(Some(value));
+                }
+                self.allocate(
+                    ty,
+                    HeapObject::Closure {
+                        callable,
+                        captures: values,
+                    },
+                    &[],
+                )
+            }
+            RuntimeValue::Function {
+                name,
+                type_arguments,
+            } => {
+                let callable = self
+                    .program
+                    .callables
+                    .iter()
+                    .enumerate()
+                    .find(|(_, callable)| callable.name == name)
+                    .map(|(index, _)| BytecodeCallableId::new(index as u32))
+                    .ok_or_else(|| {
+                        VmError::Host("blocking function references an unknown callable".into())
+                    })?;
+                let metadata = self.program.callable(callable).ok_or_else(|| {
+                    VmError::invariant("blocking function callable metadata disappeared")
+                })?;
+                if metadata.closure.is_some() || metadata.implementation.is_none() {
+                    return Err(VmError::Host(
+                        "blocking function is not a bytecode callable".into(),
+                    ));
+                }
+                let arguments = type_arguments
+                    .into_iter()
+                    .map(BytecodeTypeId::new)
+                    .collect();
+                Ok(Value::Function {
+                    callable,
+                    arguments,
+                })
+            }
+            value => self.materialize_host_value(ty, value),
+        }
+    }
+
     fn materialize_host_value(
         &mut self,
         ty: BytecodeTypeId,
@@ -15868,6 +17194,7 @@ impl Engine<'_, '_> {
                     "iterator callback attempted AsyncIterator.collect",
                 )),
                 OperationResult::PoolSubmit { .. }
+                | OperationResult::BlockingRun { .. }
                 | OperationResult::PoolLifecycle { .. }
                 | OperationResult::ActorSend { .. }
                 | OperationResult::ActorStop { .. } => {
@@ -16689,8 +18016,10 @@ fn collection_length_fits_int(length: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
     use std::hint::black_box;
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
+    use std::thread;
     use std::time::Instant;
 
     use crate::bytecode::{
@@ -16714,7 +18043,8 @@ mod tests {
     };
 
     use super::{
-        AggregatePayload, CallContinuation, DeferredOperation, DeferredValue, DiagnosticConfig,
+        AggregatePayload, BlockingBridgeState, BlockingCompletion, BlockingExecutionBridge,
+        BlockingWorkerHost, CallContinuation, DeferredOperation, DeferredValue, DiagnosticConfig,
         DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine,
         Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter, OnceContinuation,
         OnceResolution, OneShotCompletion, OneShotState, OperationResult, PanicCode,
@@ -19197,6 +20527,7 @@ mod tests {
         actor_result: BytecodeTypeId,
         actor_constructor_result: BytecodeTypeId,
         function_type: BytecodeTypeId,
+        blocking_function_type: BytecodeTypeId,
         handler_result: BytecodeTypeId,
         handler_function_type: BytecodeTypeId,
         actor_handler: BytecodeFunctionId,
@@ -19404,6 +20735,17 @@ mod tests {
                 outcome: job_result,
             }),
         );
+        let blocking_function_type = append_type(
+            "fn(): Int ! Never",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_selectable: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: job_result,
+            }),
+        );
         let handler_result = append_type(
             "Unit ! String",
             BytecodeTypeKind::Result {
@@ -19484,6 +20826,64 @@ mod tests {
             function_type,
             implementation: None,
             closure: None,
+        });
+        let blocking_callable = BytecodeCallableId::new(program.callables.len() as u32);
+        let blocking_function = BytecodeFunctionId::new(program.functions.len() as u32);
+        let blocking_return = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: job_result,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        program.callables.push(BytecodeCallable {
+            name: "blocking_executor_job".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: job_result,
+            function_type: blocking_function_type,
+            implementation: Some(blocking_function),
+            closure: None,
+        });
+        program.functions.push(BytecodeFunction {
+            callable: blocking_callable,
+            source: span,
+            types: vec![job_result, int],
+            spans: vec![span],
+            slots: vec![BytecodeSlot {
+                ty: job_result,
+                span: crate::bytecode::BytecodeSpanId::new(0),
+                kind: BytecodeSlotKind::Return,
+            }],
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: vec![BytecodeBlock {
+                kind: BytecodeBlockKind::Normal,
+                instructions: vec![BytecodeInstruction {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeInstructionKind::Store {
+                        destination: blocking_return,
+                        value: BytecodeRvalue {
+                            ty: job_result,
+                            kind: BytecodeRvalueKind::Construct {
+                                shape: BytecodeAggregateKind::ResultOk,
+                                values: vec![BytecodeOperand {
+                                    ty: int,
+                                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer(
+                                        "42".into(),
+                                    )),
+                                }],
+                            },
+                        },
+                    },
+                }],
+                terminator: BytecodeTerminator {
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeTerminatorKind::Return,
+                },
+            }],
         });
         let actor_handler = BytecodeFunctionId::new(program.functions.len() as u32);
         let actor_callable = BytecodeCallableId::new(program.callables.len() as u32);
@@ -19625,6 +21025,7 @@ mod tests {
                 actor_result,
                 actor_constructor_result,
                 function_type,
+                blocking_function_type,
                 handler_result,
                 handler_function_type,
                 actor_handler,
@@ -19644,6 +21045,189 @@ mod tests {
             ValueCopyStrategy::default(),
             trace,
         )
+    }
+
+    #[test]
+    fn blocking_bridge_runs_verified_job_on_a_host_worker() {
+        let (program, types) = executor_program();
+        let trace =
+            derive_trace_metadata(&program).expect("executor test program has valid traces");
+        let bridge = BlockingExecutionBridge::new(
+            &program,
+            &trace,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            1,
+            1,
+        )
+        .expect("blocking bridge should start its bounded worker");
+        let job = match bridge
+            .submit(BytecodeFunctionId::new(2), Vec::new())
+            .expect("blocking submission should lock the bridge")
+        {
+            super::BlockingAdmission::Accepted(job) => job,
+            admission => panic!("expected immediate blocking admission, got {admission:?}"),
+        };
+        bridge
+            .wait()
+            .expect("worker completion should wake the bridge");
+        let completion = bridge
+            .poll(job)
+            .expect("blocking poll should lock the bridge")
+            .expect("accepted job should produce one completion");
+        assert!(matches!(
+            completion,
+            BlockingCompletion::Returned(RuntimeValue::ResultOk(value))
+                if *value == RuntimeValue::Integer(42)
+        ));
+        bridge
+            .shutdown()
+            .expect("blocking shutdown should be graceful");
+        assert_eq!(
+            bridge
+                .lifecycle()
+                .expect("blocking lifecycle should be readable"),
+            RuntimePoolLifecycle::Closed
+        );
+        let _ = types;
+    }
+
+    #[test]
+    fn blocking_bridge_services_host_requests_without_deadlocking_wait() {
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 1,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let host_wake = Arc::new(Condvar::new());
+        let (sender, receiver) = mpsc::channel();
+        let bridge = BlockingExecutionBridge {
+            state: Arc::clone(&state),
+            host_wake: Arc::clone(&host_wake),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        };
+        let worker_state = Arc::clone(&state);
+        let worker_wake = Arc::clone(&host_wake);
+        let worker = thread::spawn(move || {
+            let mut host = BlockingWorkerHost {
+                worker: 0,
+                sender,
+                state: worker_state,
+                wake: worker_wake,
+            };
+            host.invoke("blocking.test", &[])
+        });
+        let mut pending = false;
+        for _ in 0..1000 {
+            pending = state
+                .0
+                .lock()
+                .expect("blocking state should not be poisoned")
+                .host_requests_pending
+                != 0;
+            if pending {
+                break;
+            }
+            thread::yield_now();
+        }
+        assert!(
+            pending,
+            "worker should publish its host request before waiting"
+        );
+        bridge
+            .wait()
+            .expect("a pending host request must wake the owner wait");
+        let request = bridge
+            .try_host_request()
+            .expect("host request queue should be readable")
+            .expect("worker request should be present");
+        assert_eq!(request.name, "blocking.test");
+        request
+            .reply
+            .send(Ok(RuntimeValue::Integer(9)))
+            .expect("worker reply receiver should still be alive");
+        bridge
+            .finish_host_request()
+            .expect("host request counter should drain");
+        assert_eq!(
+            worker.join().expect("worker should return").unwrap(),
+            RuntimeValue::Integer(9)
+        );
+    }
+
+    #[test]
+    fn blocking_bridge_shutdown_keeps_idle_workers_until_active_jobs_drain() {
+        let (program, _) = executor_program();
+        let trace = derive_trace_metadata(&program).expect("executor test program has valid traces");
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::ShuttingDown,
+                workers: 2,
+                capacity: 2,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 1,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let host_wake = Arc::new(Condvar::new());
+        let (host_sender, host_receiver) = mpsc::channel();
+        drop(host_receiver);
+        let worker_state = Arc::clone(&state);
+        let worker = thread::spawn(move || {
+            super::blocking_worker_loop(
+                0,
+                worker_state,
+                Arc::new(program),
+                Arc::new(trace),
+                pressure_limits(),
+                ValueCopyStrategy::default(),
+                host_sender,
+                host_wake,
+            );
+        });
+
+        for _ in 0..1000 {
+            assert_eq!(
+                state
+                    .0
+                    .lock()
+                    .expect("blocking state should not be poisoned")
+                    .lifecycle,
+                RuntimePoolLifecycle::ShuttingDown,
+                "an idle worker must not close a pool while another job is active"
+            );
+            thread::yield_now();
+        }
+
+        {
+            let (lock, wake) = &*state;
+            let mut guard = lock
+                .lock()
+                .expect("blocking state should not be poisoned");
+            guard.active = 0;
+            wake.notify_all();
+        }
+        worker.join().expect("idle worker should exit after the drain");
+        assert_eq!(
+            state
+                .0
+                .lock()
+                .expect("blocking state should not be poisoned")
+                .lifecycle,
+            RuntimePoolLifecycle::Closed
+        );
     }
 
     fn executor_metadata(
@@ -27310,15 +28894,21 @@ mod tests {
             types.blocking_result,
             types.function_type,
         );
-        executor_assert_eq!(
-            constructor_error_variant(
-                &mut engine,
-                &blocking,
-                &[Value::Integer(1), Value::Integer(1)],
-                true,
-            ),
-            3
+        let created_blocking = operation_value(
+            engine
+                .executor_pool_constructor(&blocking, &[Value::Integer(1), Value::Integer(1)], true)
+                .unwrap(),
         );
+        executor_assert!(matches!(
+            engine
+                .heap
+                .get(created_blocking.heap_handle().unwrap())
+                .unwrap(),
+            HeapObject::ResultOk(Some(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorBlockingPool,
+                ..
+            })))
+        ));
         let created = operation_value(
             engine
                 .executor_pool_constructor(&pool, &[Value::Integer(1), Value::Integer(0)], false)
@@ -27382,7 +28972,7 @@ mod tests {
     }
 
     #[test]
-    fn executor_host_bridge_defaults_remain_explicit_until_the_host_block() {
+    fn executor_host_defaults_remain_explicit_outside_the_blocking_bridge() {
         let mut host = RejectingHost;
         executor_assert!(matches!(
             host.start_async("executor blocking job", &[]),
@@ -28161,7 +29751,7 @@ mod tests {
         );
         executor_assert!(matches!(
             engine.begin_executor_pool_lifecycle(3, false),
-            Err(VmError::UnsupportedHostCall(name)) if name.contains("BlockingPool.lifecycle")
+            Err(VmError::Invariant(message)) if message.contains("no execution bridge")
         ));
 
         engine.pools.insert(4, open_executor_pool(1, 1));
@@ -28507,14 +30097,66 @@ mod tests {
         ));
         executor_assert!(engine.prepare_executor_call(&stop, &[]).is_err());
 
-        let blocking_run = executor_metadata(
-            "std.executor.BlockingPool.run[Int, Never]",
-            types.submit_result,
+        let blocking_pool_metadata = executor_metadata(
+            "std.executor.blockingPool[Int]",
+            types.blocking_result,
             types.function_type,
         );
+        let blocking_pool_result = operation_value(
+            engine
+                .prepare_executor_call(
+                    &blocking_pool_metadata,
+                    &[Value::Integer(1), Value::Integer(1)],
+                )
+                .unwrap()
+                .unwrap(),
+        );
+        let blocking_pool_value = result_ok_value(&engine, &blocking_pool_result);
+        let blocking_job = Value::Function {
+            callable: BytecodeCallableId::new(3),
+            arguments: Vec::new(),
+        };
+        let blocking_run = executor_metadata(
+            "std.executor.BlockingPool.run[Int, Never]",
+            types.job_result,
+            types.blocking_function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(
+                    &blocking_run,
+                    &[blocking_pool_value.clone(), blocking_job.clone()],
+                )
+                .unwrap(),
+            Some(OperationResult::BlockingRun {
+                pool: _,
+                function,
+                arguments,
+                outcome,
+            }) if function == BytecodeFunctionId::new(2)
+                && arguments.is_empty()
+                && outcome == types.job_result
+        ));
         executor_assert!(matches!(
             engine.prepare_executor_call(&blocking_run, &[]),
-            Err(VmError::UnsupportedHostCall(name)) if name.contains("BlockingPool.run")
+            Err(VmError::Invariant(message)) if message.contains("BlockingPool.run")
+        ));
+        let blocking_shutdown = executor_metadata(
+            "std.executor.BlockingPool.shutdown[Int]",
+            types.int,
+            types.blocking_function_type,
+        );
+        executor_assert!(matches!(
+            engine
+                .prepare_executor_call(
+                    &blocking_shutdown,
+                    std::slice::from_ref(&blocking_pool_value),
+                )
+                .unwrap(),
+            Some(OperationResult::PoolLifecycle {
+                pool: _,
+                cancel: false
+            })
         ));
         let unknown = executor_metadata("std.executor.unknown", types.int, types.function_type);
         executor_assert!(

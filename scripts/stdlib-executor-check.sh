@@ -34,8 +34,8 @@ jq -e '
   and .capability.missing_threads == "static-capability-error"
   and .capability.ambient_lookup == false
   and .capability.scheduler_blocking == "forbidden"
-  and .host.status == "required-after-native-gate"
-  and .host.reason == "std.executor needs bounded scheduler admission, worker wakeups and a threads capability for the blocking bridge; it must not block cooperative workers or inherit ambient host state"
+  and .host.status == "verified-hosted-and-target-qualified-native-bridge"
+  and .host.reason == "std.executor has bounded hosted worker admission plus a private x86_64 Linux native token bridge; public API promotion and generic AOT callable lowering remain closed"
   and .surface.types == [
     "Pool",
     "BlockingPool",
@@ -169,11 +169,10 @@ jq -e '
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 31
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "verified-hosted-blocking-and-native-bridge"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
+  and .implementation.host == "verified-hosted-and-target-qualified-native-bridge"
   and .implementation.required_follow_ups == [
-    "STD-EXEC-HOST-001",
     "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
     "STD-EXEC-CONF-001",
@@ -200,7 +199,7 @@ for marker in \
     'pub fn Actor.ref(ref self): ActorRef[M]' \
     'pub fn ActorRef.send(ref self, message: M): Unit ! ActorSendError[M] selectable' \
     'pub fn BlockingPool.run[T, E]' \
-    'required-after-native-gate'; do
+    'verified-hosted-and-target-qualified-native-bridge'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-executor.md" \
         || die "contract document misses marker: $marker"
 done

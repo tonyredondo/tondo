@@ -20,8 +20,8 @@
     "scheduler_blocking": "forbidden"
   },
   "host": {
-    "status": "required-after-native-gate",
-    "reason": "std.executor needs bounded scheduler admission, worker wakeups and a threads capability for the blocking bridge; it must not block cooperative workers or inherit ambient host state"
+    "status": "verified-hosted-and-target-qualified-native-bridge",
+    "reason": "std.executor has bounded hosted worker admission plus a private x86_64 Linux native token bridge; public API promotion and generic AOT callable lowering remain closed"
   },
   "surface": {
     "types": [
@@ -312,23 +312,22 @@
     "diagnostics-publish-user-payloads"
   ],
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "verified-hosted-blocking-and-native-bridge",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
+    "host": "verified-hosted-and-target-qualified-native-bridge",
     "required_follow_ups": [
-      "STD-EXEC-HOST-001",
       "STD-EXEC-TEST-001",
       "STD-EXEC-PERF-001",
       "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
     ],
     "observed": {
-      "task": "STD-EXEC-IMPL-001",
-      "status": "verified-hosted-cooperative-pool-and-actors",
-      "hosted_vm": "verified-pool-admission-join-lifecycle-actor-ref-mailbox-handler-and-selectable-actor-send",
-      "native_runtime": "not-claimed",
+      "task": "STD-EXEC-HOST-001",
+      "status": "verified-hosted-blocking-and-native-token-bridge",
+      "hosted_vm": "verified-blocking-admission-isolated-child-engine-host-adapter-and-lifecycle",
+      "native_runtime": "verified-target-qualified-x86_64-linux-token-bridge",
       "native_aot_lowering": "not-claimed",
-      "blocking_pool": "capability-missing-until-host-gate",
+      "blocking_pool": "verified-hosted-isolated-workers-and-native-token-bridge",
       "actor": "mailbox-handler-state-error-stop-and-selectable-send",
       "selectable_actor_send": "verified-hosted-transactional",
       "public_api_promoted": false,
@@ -349,12 +348,19 @@
         "crates/tondo-compiler/src/resolve.rs",
         "crates/tondo-vm/src/bytecode/verify.rs",
         "crates/tondo-vm/src/runtime.rs",
-        "crates/tondo-vm/src/runtime/execute.rs"
+        "crates/tondo-vm/src/runtime/execute.rs",
+        "crates/tondo-native-runtime/src/lib.rs"
       ],
       "tests": [
         "tests/runtime/m11-std-executor-impl-001.to",
         "scripts/stdlib-executor-implementation-check.sh",
         "scripts/stdlib-executor-implementation-test.sh",
+        "crates/tondo-vm/src/runtime/execute.rs::blocking_bridge_runs_verified_job_on_a_host_worker",
+        "crates/tondo-vm/src/runtime/execute.rs::blocking_bridge_services_host_requests_without_deadlocking_wait",
+        "crates/tondo-vm/src/runtime/execute.rs::runnable_tasks_poll_host_completions_without_blocking_the_executor",
+        "crates/tondo-native-runtime/src/lib.rs::native_blocking_pool_runs_bounded_jobs_and_transfers_payload_once",
+        "crates/tondo-native-runtime/src/lib.rs::native_blocking_pool_preserves_managed_payloads_and_rejects_invalid_budget",
+        "crates/tondo-native-runtime/src/lib.rs::native_blocking_queue_cancellation_is_atomic_before_worker_admission",
         "crates/tondo-vm/src/runtime/execute.rs::logical_join_value",
         "crates/tondo-vm/src/runtime/execute.rs::begin_executor_pool_lifecycle",
         "crates/tondo-vm/src/runtime/execute.rs::executor_actor_ref_projects_live_identity_and_rejects_invalid_handles",
@@ -368,7 +374,6 @@
       "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
       "resolved_decision": "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor",
       "remaining": [
-        "STD-EXEC-HOST-001",
         "STD-EXEC-TEST-001",
         "STD-EXEC-PERF-001",
         "STD-EXEC-CONF-001",
@@ -378,7 +383,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-EXEC-HOST-001",
       "STD-EXEC-TEST-001",
       "STD-EXEC-PERF-001",
       "STD-EXEC-CONF-001",

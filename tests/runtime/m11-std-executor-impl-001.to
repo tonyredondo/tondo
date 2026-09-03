@@ -8,6 +8,10 @@ fn compute(): Int ! Never suspends {
     40 + 2
 }
 
+fn blocking_compute(): Int ! Never {
+    42
+}
+
 fn blocked(): Int ! time.ClockError suspends {
     time.sleep(time.Duration.fromNanoseconds(1000000))?
     42
@@ -76,15 +80,15 @@ fn cancel_pool_with_job(): Unit ! (executor.ExecutorError | executor.SubmitError
 }
 
 fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendError[Int] | time.ClockError | fs.FsError | path.PathError | String) {
-    match executor.blockingPool(1, 1) {
-        ok(_) => assert(false)
-        err(error) => match error {
-            executor.ExecutorError.InvalidWorkers => assert(false)
-            executor.ExecutorError.InvalidCapacity => assert(false)
-            executor.ExecutorError.ResourceLimit => assert(false)
-            executor.ExecutorError.CapabilityMissing => {}
-        }
+    let blocking_pool = executor.blockingPool(1, 1)?
+    assert(blocking_pool.run(blocking_compute)? == 42)
+    scope {
+        let first = spawn blocking_pool.run(blocking_compute)
+        let second = spawn blocking_pool.run(blocking_compute)
+        assert(await first == 42)
+        assert(await second == 42)
     }
+    blocking_pool.shutdown()
     match executor.pool(0, 1) {
         ok(_) => assert(false)
         err(error) => match error {

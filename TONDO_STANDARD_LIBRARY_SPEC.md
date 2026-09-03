@@ -2893,18 +2893,22 @@ registro machine-readable en
 fija capacidad, backpressure, actores, bridge bloqueante, lifecycle,
 capabilities y eventos privados. `STD-EXEC-IMPL-001` queda cerrado para la
 implementación cooperativa hosted de pools, `Join`, lifecycle, actores y envíos
-`selectable`; el informe queda en
+`selectable`; `STD-EXEC-HOST-001` queda cerrado para el bridge hosted de
+`BlockingPool` y la lane privada de tokens del runtime nativo target-qualified
+`x86_64-unknown-linux-gnu`; el informe queda en
 `target/reliability/evidence/stdlib-executor-implementation.json`.
-El cierre no reclama runtime nativo ni lowering native AOT: el bridge de
-`BlockingPool` espera `STD-EXEC-HOST-001`. La VM hosted ya verifica la
+El cierre no reclama ABI público ni lowering native AOT de callables. La VM
+hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de
 identidad no consumidora y ejecuta handlers cooperativos con mailbox FIFO,
 estado mutable conservado y propagación terminal de `E` por `Actor.stop`.
 También verifica `ActorRef.send` como operación `selectable` transaccional:
 `prepare` no muta ni consume el mensaje, un único `commit` lo linealiza en la
 mailbox y `rollback` desregistra el waiter conservando el payload afín para el
-perdedor o `else`. Esta observación es hosted y no promociona los workers host
-ni el lowering native AOT, que siguen pendientes.
+perdedor o `else`. Esta observación mantiene la frontera target-qualified: el
+runtime nativo sólo intercambia tokens opacos y los workers host ejecutan cada
+job en un `Engine` hijo aislado; el lowering native AOT de callables y la
+promoción pública siguen pendientes.
 
 #### 14.4.6 Networking
 

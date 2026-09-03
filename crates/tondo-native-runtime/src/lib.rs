@@ -61,6 +61,19 @@ const STATUS_CHANNEL_INVALID_CAPACITY: u64 = 20;
 const STATUS_CHANNEL_FULL: u64 = 21;
 /// A non-blocking receive found an open channel without a committed value.
 const STATUS_CHANNEL_EMPTY: u64 = 22;
+/// Blocking executor construction was requested on a target without the
+/// promoted target-qualified worker lane.
+const STATUS_BLOCKING_UNSUPPORTED_TARGET: u64 = 23;
+/// Blocking executor worker count is outside the closed native budget.
+const STATUS_BLOCKING_INVALID_WORKERS: u64 = 24;
+/// Blocking executor queue capacity is outside the closed native budget.
+const STATUS_BLOCKING_INVALID_CAPACITY: u64 = 25;
+/// A blocking handle was used with the wrong native object kind.
+const STATUS_BLOCKING_INVALID_HANDLE: u64 = 26;
+/// A blocking job is still queued or running and has no result to take.
+const STATUS_BLOCKING_NOT_READY: u64 = 27;
+/// A blocking pool lifecycle transition is not valid for its current state.
+const STATUS_BLOCKING_INVALID_TRANSITION: u64 = 28;
 const STATUS_DIAG_CLEAN: u64 = 0;
 const STATUS_DIAG_FINDING: u64 = 1;
 const STATUS_DIAG_CAPTURED: u64 = 2;
@@ -93,12 +106,21 @@ const HOST_CAP_CONSOLE: u64 = 0;
 const HOST_CAP_FILESYSTEM: u64 = 1;
 const HOST_CAP_PROCESS: u64 = 2;
 const HOST_CAP_CLOCK: u64 = 3;
+/// Private host-object tags reserved for the target-qualified blocking ABI.
+/// They intentionally do not participate in the public host capability set.
+const HOST_CAP_BLOCKING_POOL: u64 = 4;
+const HOST_CAP_BLOCKING_JOB: u64 = 5;
 const HOST_MAX_BYTES: usize = 1 << 20;
 
 const WORKER_STARTING: u64 = 0;
 const WORKER_RUNNING: u64 = 1;
 const WORKER_COMPLETED: u64 = 2;
 const WORKER_CANCELLED: u64 = 3;
+const BLOCKING_JOB_QUEUED: u64 = 0;
+const BLOCKING_JOB_RUNNING: u64 = 1;
+const BLOCKING_JOB_COMPLETED: u64 = 2;
+const BLOCKING_JOB_CANCELLED: u64 = 3;
+const BLOCKING_JOB_TAKEN: u64 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Object {
@@ -370,6 +392,336 @@ impl WorkerSignal {
             .lock()
             .expect("native worker signal is not poisoned")
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeBlockingLifecycle {
+    Open,
+    ShuttingDown,
+    Cancelling,
+    Closed,
+    Cancelled,
+}
+
+impl NativeBlockingLifecycle {
+    fn terminal(self) -> bool {
+        matches!(self, Self::Closed | Self::Cancelled)
+    }
+
+    fn code(self) -> u64 {
+        match self {
+            Self::Open => 0,
+            Self::ShuttingDown => 1,
+            Self::Cancelling => 2,
+            Self::Closed => 3,
+            Self::Cancelled => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeBlockingJobState {
+    Queued,
+    Running,
+    Completed,
+    Cancelled,
+    Taken,
+}
+
+impl NativeBlockingJobState {
+    fn code(self) -> u64 {
+        match self {
+            Self::Queued => BLOCKING_JOB_QUEUED,
+            Self::Running => BLOCKING_JOB_RUNNING,
+            Self::Completed => BLOCKING_JOB_COMPLETED,
+            Self::Cancelled => BLOCKING_JOB_CANCELLED,
+            Self::Taken => BLOCKING_JOB_TAKEN,
+        }
+    }
+
+    fn terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled | Self::Taken)
+    }
+}
+
+#[derive(Debug)]
+struct NativeBlockingJobCell {
+    state: Mutex<NativeBlockingJob>,
+    wake: Condvar,
+}
+
+#[derive(Debug)]
+struct NativeBlockingJob {
+    payload: u64,
+    pool: u64,
+    state: NativeBlockingJobState,
+    worker: u64,
+}
+
+type NativeBlockingJobRef = Arc<NativeBlockingJobCell>;
+
+#[derive(Debug)]
+struct NativeBlockingPoolState {
+    lifecycle: NativeBlockingLifecycle,
+    workers: usize,
+    capacity: usize,
+    queue: VecDeque<NativeBlockingJobRef>,
+    active: usize,
+}
+
+type NativeBlockingPoolCell = Arc<(Mutex<NativeBlockingPoolState>, Condvar)>;
+
+/// Target-qualified native worker bridge for the blocking executor.
+///
+/// The current native ABI transports one opaque value token through a bounded
+/// OS-worker queue.  It deliberately has no callback or function-pointer ABI:
+/// AOT callable lowering remains a separate contract.  This lane proves the
+/// physical worker, admission, wakeup and lifecycle semantics without exposing
+/// layout or host pointers.
+#[derive(Debug)]
+struct NativeBlockingPool {
+    state: NativeBlockingPoolCell,
+    workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
+}
+
+impl NativeBlockingPool {
+    fn new(workers: usize, capacity: usize) -> Result<Arc<Self>, u64> {
+        let state = Arc::new((
+            Mutex::new(NativeBlockingPoolState {
+                lifecycle: NativeBlockingLifecycle::Open,
+                workers,
+                capacity,
+                queue: VecDeque::new(),
+                active: 0,
+            }),
+            Condvar::new(),
+        ));
+        let pool = Arc::new(Self {
+            state: Arc::clone(&state),
+            workers: Mutex::new(Vec::with_capacity(workers)),
+        });
+        for worker in 0..workers {
+            let state = Arc::clone(&state);
+            let name = format!("tondo-blocking-native-{worker}");
+            let handle = std::thread::Builder::new()
+                .name(name)
+                .spawn(move || native_blocking_worker_loop(worker as u64, state))
+                .map_err(|_| STATUS_INVALID_TRANSITION)?;
+            pool.workers
+                .lock()
+                .map_err(|_| STATUS_INVALID_TRANSITION)?
+                .push(handle);
+        }
+        Ok(pool)
+    }
+
+    fn can_admit(&self) -> Result<bool, u64> {
+        let state = self.state.0.lock().map_err(|_| STATUS_INVALID_TRANSITION)?;
+        if state.lifecycle != NativeBlockingLifecycle::Open {
+            return Ok(false);
+        }
+        let admitted = state.active.saturating_add(state.queue.len());
+        let limit = if state.capacity == 0 {
+            state.workers
+        } else {
+            state.capacity
+        };
+        Ok(admitted < limit)
+    }
+
+    fn submit(&self, job: NativeBlockingJobRef) -> Result<bool, u64> {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().map_err(|_| STATUS_INVALID_TRANSITION)?;
+        if state.lifecycle != NativeBlockingLifecycle::Open {
+            return Ok(false);
+        }
+        let admitted = state.active.saturating_add(state.queue.len());
+        let limit = if state.capacity == 0 {
+            state.workers
+        } else {
+            state.capacity
+        };
+        if admitted >= limit {
+            return Ok(false);
+        }
+        state.queue.push_back(job);
+        wake.notify_one();
+        Ok(true)
+    }
+
+    fn shutdown(&self, cancel: bool) -> u64 {
+        let (lock, wake) = &*self.state;
+        let mut state = match lock.lock() {
+            Ok(state) => state,
+            Err(_) => return STATUS_INVALID_TRANSITION,
+        };
+        if state.lifecycle.terminal()
+            || (state.lifecycle != NativeBlockingLifecycle::Open
+                && !(cancel && state.lifecycle == NativeBlockingLifecycle::ShuttingDown))
+        {
+            return STATUS_BLOCKING_INVALID_TRANSITION;
+        }
+        state.lifecycle = if cancel {
+            NativeBlockingLifecycle::Cancelling
+        } else {
+            NativeBlockingLifecycle::ShuttingDown
+        };
+        if cancel {
+            while let Some(job) = state.queue.pop_front() {
+                let mut job_state = match job.state.lock() {
+                    Ok(job_state) => job_state,
+                    Err(_) => return STATUS_INVALID_TRANSITION,
+                };
+                if job_state.state == NativeBlockingJobState::Queued {
+                    job_state.state = NativeBlockingJobState::Cancelled;
+                    job.wake.notify_all();
+                }
+            }
+        }
+        if state.active == 0 && state.queue.is_empty() {
+            state.lifecycle = if cancel {
+                NativeBlockingLifecycle::Cancelled
+            } else {
+                NativeBlockingLifecycle::Closed
+            };
+        }
+        wake.notify_all();
+        while !state.lifecycle.terminal() {
+            state = match wake.wait(state) {
+                Ok(state) => state,
+                Err(_) => return STATUS_INVALID_TRANSITION,
+            };
+        }
+        drop(state);
+        self.join_workers();
+        if cancel { STATUS_CANCELLED } else { STATUS_OK }
+    }
+
+    fn cancel_job(&self, job: &NativeBlockingJobRef) -> u64 {
+        let (lock, wake) = &*self.state;
+        let mut state = match lock.lock() {
+            Ok(state) => state,
+            Err(_) => return STATUS_INVALID_TRANSITION,
+        };
+        let Some(position) = state
+            .queue
+            .iter()
+            .position(|candidate| Arc::ptr_eq(candidate, job))
+        else {
+            return STATUS_OK;
+        };
+        let job = state
+            .queue
+            .remove(position)
+            .expect("blocking queue position exists");
+        let mut job_state = match job.state.lock() {
+            Ok(job_state) => job_state,
+            Err(_) => return STATUS_INVALID_TRANSITION,
+        };
+        if job_state.state == NativeBlockingJobState::Queued {
+            job_state.state = NativeBlockingJobState::Cancelled;
+            job.wake.notify_all();
+        }
+        wake.notify_all();
+        STATUS_OK
+    }
+
+    fn join_workers(&self) {
+        if let Ok(mut workers) = self.workers.lock() {
+            for worker in workers.drain(..) {
+                let _ = worker.join();
+            }
+        }
+    }
+}
+
+impl Drop for NativeBlockingPool {
+    fn drop(&mut self) {
+        let _ = self.shutdown(true);
+        self.join_workers();
+    }
+}
+
+fn native_blocking_worker_loop(worker: u64, state: NativeBlockingPoolCell) {
+    loop {
+        let job = {
+            let (lock, wake) = &*state;
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            loop {
+                if let Some(job) = state.queue.pop_front() {
+                    state.active = state.active.saturating_add(1);
+                    break job;
+                }
+                match state.lifecycle {
+                    NativeBlockingLifecycle::Closed | NativeBlockingLifecycle::Cancelled => {
+                        return;
+                    }
+                    NativeBlockingLifecycle::ShuttingDown => {
+                        state.lifecycle = NativeBlockingLifecycle::Closed;
+                        wake.notify_all();
+                        return;
+                    }
+                    NativeBlockingLifecycle::Open | NativeBlockingLifecycle::Cancelling => {
+                        state = match wake.wait(state) {
+                            Ok(state) => state,
+                            Err(_) => return,
+                        };
+                    }
+                }
+            }
+        };
+        {
+            let mut job_state = match job.state.lock() {
+                Ok(job_state) => job_state,
+                Err(_) => return,
+            };
+            if job_state.state != NativeBlockingJobState::Queued {
+                let (lock, wake) = &*state;
+                if let Ok(mut state) = lock.lock() {
+                    state.active = state.active.saturating_sub(1);
+                    wake.notify_all();
+                }
+                continue;
+            }
+            job_state.state = NativeBlockingJobState::Running;
+            job_state.worker = worker;
+            job.wake.notify_all();
+        }
+        // The token-only lane intentionally performs no user callback.  The
+        // worker boundary itself is the target-qualified evidence until AOT
+        // callable lowering defines a separate envelope.
+        std::thread::yield_now();
+        {
+            let mut job_state = match job.state.lock() {
+                Ok(job_state) => job_state,
+                Err(_) => return,
+            };
+            if job_state.state == NativeBlockingJobState::Running {
+                job_state.state = NativeBlockingJobState::Completed;
+                job.wake.notify_all();
+            }
+        }
+        let (lock, wake) = &*state;
+        let Ok(mut state) = lock.lock() else {
+            return;
+        };
+        state.active = state.active.saturating_sub(1);
+        if state.active == 0 && state.queue.is_empty() {
+            state.lifecycle = match state.lifecycle {
+                NativeBlockingLifecycle::ShuttingDown => NativeBlockingLifecycle::Closed,
+                NativeBlockingLifecycle::Cancelling => NativeBlockingLifecycle::Cancelled,
+                lifecycle => lifecycle,
+            };
+        }
+        wake.notify_all();
+    }
+}
+
+fn native_blocking_supported() -> bool {
+    cfg!(all(target_arch = "x86_64", target_os = "linux"))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -852,6 +1204,8 @@ struct State {
     last_status: u64,
     select_rotation: u64,
     thread_workers: BTreeMap<u64, Arc<WorkerSignal>>,
+    blocking_pools: BTreeMap<u64, Arc<NativeBlockingPool>>,
+    blocking_jobs: BTreeMap<u64, NativeBlockingJobRef>,
     atomics: BTreeMap<u64, Arc<std::sync::atomic::AtomicU64>>,
     parks: BTreeMap<u64, Arc<ParkingSignal>>,
     sync_arrays: BTreeMap<u64, SyncArrayCell>,
@@ -1220,6 +1574,8 @@ impl State {
         if remove {
             self.objects.remove(&target);
             self.thread_workers.remove(&target);
+            self.blocking_pools.remove(&target);
+            self.blocking_jobs.remove(&target);
             self.atomics.remove(&target);
             self.parks.remove(&target);
             self.channels.remove(&target);
@@ -1254,6 +1610,8 @@ impl State {
             if remove {
                 self.objects.remove(&handle);
                 self.thread_workers.remove(&handle);
+                self.blocking_pools.remove(&handle);
+                self.blocking_jobs.remove(&handle);
                 self.atomics.remove(&handle);
                 self.parks.remove(&handle);
                 self.channels.remove(&handle);
@@ -1333,6 +1691,14 @@ impl State {
                 self.channel_cleanup_endpoint(*channel, false, *closed, pending);
             }
             Object::ChannelDrain { .. } => {}
+            Object::Host { capability, .. } if *capability == HOST_CAP_BLOCKING_POOL => {
+                if let Some(pool) = self.blocking_pools.remove(&handle) {
+                    let _ = pool.shutdown(true);
+                }
+            }
+            Object::Host { capability, .. } if *capability == HOST_CAP_BLOCKING_JOB => {
+                self.cleanup_blocking_job(handle, pending);
+            }
             _ => {}
         }
     }
@@ -1540,6 +1906,14 @@ impl State {
                     self.channel_cleanup_endpoint(*channel, false, *closed, &mut pending);
                 }
                 Object::ChannelDrain { .. } => {}
+                Object::Host { capability, .. } if *capability == HOST_CAP_BLOCKING_POOL => {
+                    if let Some(pool) = self.blocking_pools.remove(&handle) {
+                        let _ = pool.shutdown(true);
+                    }
+                }
+                Object::Host { capability, .. } if *capability == HOST_CAP_BLOCKING_JOB => {
+                    self.cleanup_blocking_job(handle, &mut pending);
+                }
                 _ => {}
             }
             let children = Self::strong_children_of(&object);
@@ -1557,6 +1931,8 @@ impl State {
             {
                 self.objects.remove(&handle);
                 self.thread_workers.remove(&handle);
+                self.blocking_pools.remove(&handle);
+                self.blocking_jobs.remove(&handle);
                 self.channels.remove(&handle);
             }
         }
@@ -1978,6 +2354,301 @@ impl State {
     fn thread_worker_distinct(&self, task: u64) -> u64 {
         self.thread_worker_snapshot(task)
             .map_or(u64::MAX, |snapshot| u64::from(snapshot.distinct_thread))
+    }
+
+    fn blocking_pool_ref(&mut self, handle: u64) -> Result<Arc<NativeBlockingPool>, u64> {
+        match self.object(handle) {
+            Some(Object::Host { capability, .. }) if *capability == HOST_CAP_BLOCKING_POOL => self
+                .blocking_pools
+                .get(&handle)
+                .cloned()
+                .ok_or(STATUS_BLOCKING_INVALID_HANDLE),
+            _ => Err(STATUS_BLOCKING_INVALID_HANDLE),
+        }
+    }
+
+    fn blocking_job_ref(&mut self, handle: u64) -> Result<NativeBlockingJobRef, u64> {
+        match self.object(handle) {
+            Some(Object::Host { capability, .. }) if *capability == HOST_CAP_BLOCKING_JOB => self
+                .blocking_jobs
+                .get(&handle)
+                .cloned()
+                .ok_or(STATUS_BLOCKING_INVALID_HANDLE),
+            _ => Err(STATUS_BLOCKING_INVALID_HANDLE),
+        }
+    }
+
+    fn blocking_pool_new(&mut self, workers: i64, capacity: i64) -> u64 {
+        if !native_blocking_supported() {
+            self.status(STATUS_BLOCKING_UNSUPPORTED_TARGET);
+            return 0;
+        }
+        let Ok(workers) = usize::try_from(workers) else {
+            self.status(STATUS_BLOCKING_INVALID_WORKERS);
+            return 0;
+        };
+        if workers == 0 || workers > 4096 {
+            self.status(STATUS_BLOCKING_INVALID_WORKERS);
+            return 0;
+        }
+        let Ok(capacity) = usize::try_from(capacity) else {
+            self.status(STATUS_BLOCKING_INVALID_CAPACITY);
+            return 0;
+        };
+        if capacity > 1_000_000 {
+            self.status(STATUS_BLOCKING_INVALID_CAPACITY);
+            return 0;
+        }
+        let pool = match NativeBlockingPool::new(workers, capacity) {
+            Ok(pool) => pool,
+            Err(status) => {
+                self.status(status);
+                return 0;
+            }
+        };
+        let handle = self.alloc(
+            Object::Host {
+                capability: HOST_CAP_BLOCKING_POOL,
+                state: HostState::Open,
+                input: Vec::new(),
+                cursor: 0,
+                output: Vec::new(),
+            },
+            ObjectKind::Host,
+        );
+        if handle == 0 {
+            drop(pool);
+            return 0;
+        }
+        self.blocking_pools.insert(handle, pool);
+        handle
+    }
+
+    fn blocking_pool_submit(&mut self, pool_handle: u64, payload: u64) -> u64 {
+        if !native_blocking_supported() {
+            self.status(STATUS_BLOCKING_UNSUPPORTED_TARGET);
+            return 0;
+        }
+        let pool = match self.blocking_pool_ref(pool_handle) {
+            Ok(pool) => pool,
+            Err(status) => {
+                self.status(status);
+                return 0;
+            }
+        };
+        if Self::valid_handle(payload) && !self.live_handle(payload) {
+            self.status(STATUS_BLOCKING_INVALID_HANDLE);
+            return 0;
+        }
+        match pool.can_admit() {
+            Ok(true) => {}
+            Ok(false) => {
+                self.status(STATUS_BLOCKING_NOT_READY);
+                return 0;
+            }
+            Err(status) => {
+                self.status(status);
+                return 0;
+            }
+        }
+        if self.retain(pool_handle) != STATUS_OK {
+            return 0;
+        }
+        if Self::valid_handle(payload) && self.retain(payload) != STATUS_OK {
+            let _ = self.release(pool_handle);
+            return 0;
+        }
+        let job = Arc::new(NativeBlockingJobCell {
+            state: Mutex::new(NativeBlockingJob {
+                payload,
+                pool: pool_handle,
+                state: NativeBlockingJobState::Queued,
+                worker: u64::MAX,
+            }),
+            wake: Condvar::new(),
+        });
+        if !pool.submit(Arc::clone(&job)).unwrap_or(false) {
+            let mut pending = VecDeque::new();
+            if Self::valid_handle(payload) {
+                self.release_strong_edge(payload, &mut pending);
+            }
+            self.release_strong_edge(pool_handle, &mut pending);
+            self.drain_destruction(&mut pending);
+            self.status(STATUS_BLOCKING_NOT_READY);
+            return 0;
+        }
+        let handle = self.alloc(
+            Object::Host {
+                capability: HOST_CAP_BLOCKING_JOB,
+                state: HostState::Open,
+                input: Vec::new(),
+                cursor: 0,
+                output: Vec::new(),
+            },
+            ObjectKind::Host,
+        );
+        if handle == 0 {
+            let _ = pool.cancel_job(&job);
+            let mut pending = VecDeque::new();
+            if Self::valid_handle(payload) {
+                self.release_strong_edge(payload, &mut pending);
+            }
+            self.release_strong_edge(pool_handle, &mut pending);
+            self.drain_destruction(&mut pending);
+            return 0;
+        }
+        self.blocking_jobs.insert(handle, job);
+        handle
+    }
+
+    fn blocking_pool_status(&mut self, handle: u64) -> u64 {
+        let pool = match self.blocking_pool_ref(handle) {
+            Ok(pool) => pool,
+            Err(status) => return self.status(status),
+        };
+        let (lock, _) = &*pool.state;
+        match lock.lock() {
+            Ok(state) => state.lifecycle.code(),
+            Err(_) => self.status(STATUS_BLOCKING_INVALID_TRANSITION),
+        }
+    }
+
+    fn blocking_pool_shutdown(&mut self, handle: u64, cancel: bool) -> u64 {
+        if !native_blocking_supported() {
+            return self.status(STATUS_BLOCKING_UNSUPPORTED_TARGET);
+        }
+        let pool = match self.blocking_pool_ref(handle) {
+            Ok(pool) => pool,
+            Err(status) => return self.status(status),
+        };
+        self.status(pool.shutdown(cancel))
+    }
+
+    fn blocking_job_status(&mut self, handle: u64) -> u64 {
+        let job = match self.blocking_job_ref(handle) {
+            Ok(job) => job,
+            Err(status) => return self.status(status),
+        };
+        match job.state.lock() {
+            Ok(state) => state.state.code(),
+            Err(_) => self.status(STATUS_BLOCKING_INVALID_TRANSITION),
+        }
+    }
+
+    fn blocking_job_worker(&mut self, handle: u64) -> u64 {
+        let job = match self.blocking_job_ref(handle) {
+            Ok(job) => job,
+            Err(status) => return self.status(status),
+        };
+        match job.state.lock() {
+            Ok(state) => state.worker,
+            Err(_) => self.status(STATUS_BLOCKING_INVALID_TRANSITION),
+        }
+    }
+
+    fn blocking_job_wait(&mut self, handle: u64) -> u64 {
+        let job = match self.blocking_job_ref(handle) {
+            Ok(job) => job,
+            Err(status) => return self.status(status),
+        };
+        let (state_lock, wake) = (&job.state, &job.wake);
+        let mut state = match state_lock.lock() {
+            Ok(state) => state,
+            Err(_) => return self.status(STATUS_BLOCKING_INVALID_TRANSITION),
+        };
+        while !state.state.terminal() {
+            state = match wake.wait(state) {
+                Ok(state) => state,
+                Err(_) => return self.status(STATUS_BLOCKING_INVALID_TRANSITION),
+            };
+        }
+        match state.state {
+            NativeBlockingJobState::Cancelled => self.status(STATUS_CANCELLED),
+            NativeBlockingJobState::Completed | NativeBlockingJobState::Taken => STATUS_OK,
+            NativeBlockingJobState::Queued | NativeBlockingJobState::Running => {
+                self.status(STATUS_BLOCKING_NOT_READY)
+            }
+        }
+    }
+
+    fn blocking_job_take(&mut self, handle: u64) -> u64 {
+        let job = match self.blocking_job_ref(handle) {
+            Ok(job) => job,
+            Err(status) => {
+                self.status(status);
+                return 0;
+            }
+        };
+        let mut state = match job.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                self.status(STATUS_BLOCKING_INVALID_TRANSITION);
+                return 0;
+            }
+        };
+        match state.state {
+            NativeBlockingJobState::Completed => {
+                let payload = state.payload;
+                if Self::valid_handle(payload) && self.retain(payload) != STATUS_OK {
+                    return 0;
+                }
+                state.state = NativeBlockingJobState::Taken;
+                job.wake.notify_all();
+                payload
+            }
+            NativeBlockingJobState::Cancelled => {
+                self.status(STATUS_CANCELLED);
+                0
+            }
+            NativeBlockingJobState::Queued | NativeBlockingJobState::Running => {
+                self.status(STATUS_BLOCKING_NOT_READY);
+                0
+            }
+            NativeBlockingJobState::Taken => {
+                self.status(STATUS_BLOCKING_INVALID_TRANSITION);
+                0
+            }
+        }
+    }
+
+    fn blocking_job_cancel(&mut self, handle: u64) -> u64 {
+        let job = match self.blocking_job_ref(handle) {
+            Ok(job) => job,
+            Err(status) => return self.status(status),
+        };
+        let (state, pool_handle) = match job.state.lock() {
+            Ok(state) => (state.state, state.pool),
+            Err(_) => return self.status(STATUS_BLOCKING_INVALID_TRANSITION),
+        };
+        let status = match state {
+            NativeBlockingJobState::Queued | NativeBlockingJobState::Running => {
+                let pool = match self.blocking_pool_ref(pool_handle) {
+                    Ok(pool) => pool,
+                    Err(status) => return self.status(status),
+                };
+                pool.cancel_job(&job)
+            }
+            NativeBlockingJobState::Cancelled
+            | NativeBlockingJobState::Completed
+            | NativeBlockingJobState::Taken => STATUS_BLOCKING_INVALID_TRANSITION,
+        };
+        self.status(status)
+    }
+
+    fn cleanup_blocking_job(&mut self, handle: u64, pending: &mut VecDeque<u64>) {
+        let Some(job) = self.blocking_jobs.remove(&handle) else {
+            return;
+        };
+        let (payload, pool) = match job.state.lock() {
+            Ok(state) => (state.payload, state.pool),
+            Err(_) => return,
+        };
+        if Self::valid_handle(payload) && self.live_handle(payload) {
+            self.release_strong_edge(payload, pending);
+        }
+        if self.live_handle(pool) {
+            self.release_strong_edge(pool, pending);
+        }
     }
 
     fn task_wake(&mut self, task: u64) -> u64 {
@@ -2713,6 +3384,9 @@ impl State {
             return self.host_error(STATUS_HOST_LIMIT);
         }
         let (chunk, status) = match self.object_mut(handle) {
+            Some(Object::Host { capability, .. }) if *capability >= HOST_CAP_BLOCKING_POOL => {
+                (None, STATUS_BLOCKING_INVALID_HANDLE)
+            }
             Some(Object::Host {
                 state,
                 input,
@@ -2758,6 +3432,9 @@ impl State {
             None => return self.host_error(STATUS_INVALID_HANDLE),
         };
         let status = match self.object_mut(handle) {
+            Some(Object::Host { capability, .. }) if *capability >= HOST_CAP_BLOCKING_POOL => {
+                STATUS_BLOCKING_INVALID_HANDLE
+            }
             Some(Object::Host { state, output, .. }) => match state {
                 HostState::Open => {
                     if output.len().saturating_add(bytes.len()) > HOST_MAX_BYTES {
@@ -2780,6 +3457,9 @@ impl State {
 
     fn host_output(&mut self, handle: u64) -> u64 {
         let bytes = match self.object(handle) {
+            Some(Object::Host { capability, .. }) if *capability >= HOST_CAP_BLOCKING_POOL => {
+                return self.host_error(STATUS_BLOCKING_INVALID_HANDLE);
+            }
             Some(Object::Host { output, .. }) => output.clone(),
             Some(_) | None => return self.host_error(STATUS_INVALID_HANDLE),
         };
@@ -2794,6 +3474,9 @@ impl State {
 
     fn host_cancel(&mut self, handle: u64) -> u64 {
         let status = match self.object_mut(handle) {
+            Some(Object::Host { capability, .. }) if *capability >= HOST_CAP_BLOCKING_POOL => {
+                STATUS_BLOCKING_INVALID_HANDLE
+            }
             Some(Object::Host { state, .. }) => match state {
                 HostState::Open => {
                     *state = HostState::Cancelled;
@@ -2808,6 +3491,9 @@ impl State {
 
     fn host_close(&mut self, handle: u64) -> u64 {
         let status = match self.object_mut(handle) {
+            Some(Object::Host { capability, .. }) if *capability >= HOST_CAP_BLOCKING_POOL => {
+                STATUS_BLOCKING_INVALID_HANDLE
+            }
             Some(Object::Host {
                 state,
                 input,
@@ -2834,6 +3520,10 @@ impl State {
 
     fn host_state(&mut self, handle: u64) -> u64 {
         match self.object(handle) {
+            Some(Object::Host { capability, .. }) if *capability >= HOST_CAP_BLOCKING_POOL => {
+                self.last_status = STATUS_BLOCKING_INVALID_HANDLE;
+                u64::MAX
+            }
             Some(Object::Host { state, .. }) => match state {
                 HostState::Open => 0,
                 HostState::Cancelled => 1,
@@ -6176,6 +6866,63 @@ pub extern "C" fn tondo_rt_thread_worker_wait(task: u64) -> u64 {
     }
 }
 
+/// Creates the private target-qualified blocking worker lane.  The ABI only
+/// returns opaque process-local tokens; it does not expose worker pointers or
+/// an AOT callback convention.
+pub extern "C" fn tondo_rt_blocking_pool_new(workers: i64, capacity: i64) -> u64 {
+    with_state(|state| state.blocking_pool_new(workers, capacity))
+}
+
+/// Submits one opaque value token to a bounded blocking lane.  A zero return
+/// means admission failed; `tondo_rt_last_status` distinguishes saturation,
+/// an invalid handle and an unsupported target.
+pub extern "C" fn tondo_rt_blocking_pool_submit(pool: u64, payload: u64) -> u64 {
+    with_state(|state| state.blocking_pool_submit(pool, payload))
+}
+
+/// Returns the private pool lifecycle code: open=0, shutting_down=1,
+/// cancelling=2, closed=3 and cancelled=4.
+pub extern "C" fn tondo_rt_blocking_pool_status(pool: u64) -> u64 {
+    with_state(|state| state.blocking_pool_status(pool))
+}
+
+/// Drains already admitted jobs and joins the worker lane.
+pub extern "C" fn tondo_rt_blocking_pool_shutdown(pool: u64) -> u64 {
+    with_state(|state| state.blocking_pool_shutdown(pool, false))
+}
+
+/// Cancels queued jobs, lets a running token finish safely, and joins workers.
+pub extern "C" fn tondo_rt_blocking_pool_cancel(pool: u64) -> u64 {
+    with_state(|state| state.blocking_pool_shutdown(pool, true))
+}
+
+/// Returns the private job state: queued=0, running=1, completed=2,
+/// cancelled=3 and taken=4.
+pub extern "C" fn tondo_rt_blocking_job_status(job: u64) -> u64 {
+    with_state(|state| state.blocking_job_status(job))
+}
+
+/// Returns the zero-based native worker index after a job starts.
+pub extern "C" fn tondo_rt_blocking_job_worker(job: u64) -> u64 {
+    with_state(|state| state.blocking_job_worker(job))
+}
+
+/// Waits for a job to reach a terminal state without consuming its payload.
+pub extern "C" fn tondo_rt_blocking_job_wait(job: u64) -> u64 {
+    with_state(|state| state.blocking_job_wait(job))
+}
+
+/// Transfers the completed opaque payload token to the caller exactly once.
+pub extern "C" fn tondo_rt_blocking_job_take(job: u64) -> u64 {
+    with_state(|state| state.blocking_job_take(job))
+}
+
+/// Cancels a queued job.  Running work is never force-killed and therefore
+/// returns success while it completes normally.
+pub extern "C" fn tondo_rt_blocking_job_cancel(job: u64) -> u64 {
+    with_state(|state| state.blocking_job_cancel(job))
+}
+
 fn wait_for_thread_worker(task: u64) -> Option<WorkerSnapshot> {
     let signal = with_state(|state| state.thread_worker_signal(task));
     signal.map(|signal| signal.wait())
@@ -6620,6 +7367,120 @@ mod tests {
         let snapshot = cancelled_before_start.snapshot();
         assert_eq!(snapshot.state, WorkerState::Cancelled);
         assert_eq!(snapshot.runs, 0);
+    }
+
+    #[test]
+    fn native_blocking_pool_runs_bounded_jobs_and_transfers_payload_once() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        if !native_blocking_supported() {
+            assert_eq!(
+                tondo_rt_blocking_pool_new(1, 1),
+                0,
+                "unsupported targets must not expose the native lane"
+            );
+            assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_UNSUPPORTED_TARGET);
+            return;
+        }
+
+        let pool = tondo_rt_blocking_pool_new(1, 2);
+        assert_ne!(pool, 0);
+        assert_eq!(tondo_rt_blocking_pool_status(pool), 0);
+        let job = tondo_rt_blocking_pool_submit(pool, 42);
+        assert_ne!(job, 0);
+        assert_eq!(tondo_rt_blocking_job_wait(job), STATUS_OK);
+        assert_eq!(tondo_rt_blocking_job_status(job), BLOCKING_JOB_COMPLETED);
+        assert_eq!(tondo_rt_blocking_job_worker(job), 0);
+        assert_eq!(tondo_rt_blocking_job_take(job), 42);
+        assert_eq!(tondo_rt_blocking_job_status(job), BLOCKING_JOB_TAKEN);
+        assert_eq!(tondo_rt_blocking_job_take(job), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_TRANSITION);
+        assert_eq!(
+            tondo_rt_blocking_job_cancel(job),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_blocking_pool_shutdown(pool), STATUS_OK);
+        assert_eq!(tondo_rt_blocking_pool_status(pool), 3);
+        assert_eq!(
+            tondo_rt_blocking_pool_shutdown(pool),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_release(job), STATUS_OK);
+        assert_eq!(tondo_rt_release(pool), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_blocking_pool_preserves_managed_payloads_and_rejects_invalid_budget() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        assert_eq!(tondo_rt_blocking_pool_new(0, 1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_WORKERS);
+        assert_eq!(tondo_rt_blocking_pool_new(1, -1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_CAPACITY);
+        if !native_blocking_supported() {
+            return;
+        }
+
+        let pool = tondo_rt_blocking_pool_new(1, 1);
+        let value = tondo_rt_result_new(RESULT_OK, 7, 1);
+        assert_eq!(
+            tondo_rt_blocking_pool_submit(HANDLE_BIT | 999_999, value),
+            0,
+            "invalid pool admission must return no job handle"
+        );
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_HANDLE);
+        assert_eq!(
+            tondo_rt_blocking_pool_submit(pool, HANDLE_BIT | 999_999),
+            0,
+            "invalid payload admission must return no job handle"
+        );
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_HANDLE);
+        let job = tondo_rt_blocking_pool_submit(pool, value);
+        assert_ne!(job, 0);
+        assert_eq!(tondo_rt_release(value), STATUS_OK);
+        assert_eq!(tondo_rt_blocking_job_wait(job), STATUS_OK);
+        let transferred = tondo_rt_blocking_job_take(job);
+        assert_ne!(transferred, 0);
+        assert_eq!(tondo_rt_result_tag(transferred), RESULT_OK);
+        assert_eq!(tondo_rt_result_payload(transferred), 7);
+        assert_eq!(tondo_rt_blocking_pool_cancel(pool), STATUS_CANCELLED);
+        assert_eq!(tondo_rt_blocking_pool_status(pool), 4);
+        assert_eq!(tondo_rt_release(job), STATUS_OK);
+        assert_eq!(tondo_rt_release(transferred), STATUS_OK);
+        assert_eq!(tondo_rt_release(pool), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_blocking_queue_cancellation_is_atomic_before_worker_admission() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        if !native_blocking_supported() {
+            return;
+        }
+        let pool = NativeBlockingPool::new(1, 1).expect("native target has workers");
+        let job = Arc::new(NativeBlockingJobCell {
+            state: Mutex::new(NativeBlockingJob {
+                payload: 11,
+                pool: HANDLE_BIT | 91,
+                state: NativeBlockingJobState::Queued,
+                worker: u64::MAX,
+            }),
+            wake: Condvar::new(),
+        });
+        let (lock, wake) = &*pool.state;
+        let mut state = lock.lock().expect("pool state is not poisoned");
+        state.queue.push_back(Arc::clone(&job));
+        assert_eq!(state.active, 0);
+        drop(state);
+        assert_eq!(pool.cancel_job(&job), STATUS_OK);
+        assert_eq!(
+            job.state.lock().expect("job state is not poisoned").state,
+            NativeBlockingJobState::Cancelled
+        );
+        wake.notify_all();
+        assert_eq!(pool.shutdown(true), STATUS_CANCELLED);
     }
 
     #[test]

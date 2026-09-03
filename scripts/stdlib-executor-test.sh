@@ -65,7 +65,7 @@ for marker in \
     'one-message-at-a-time' \
     'close-mailbox-cancel-handler-drain-cleanup' \
     'without-blocking-cooperative-worker' \
-    'required-after-native-gate' \
+    'verified-hosted-and-target-qualified-native-bridge' \
     'blocking-cooperative-fallback' \
     'pool.submit.accept'; do
     grep -Fq "$marker" testing/stdlib-executor.json

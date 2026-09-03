@@ -6,11 +6,15 @@
 superficie común se enlaza desde
 [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
 Este cierre fija la política y la frontera de ejecución; no afirma que el
-runtime público de pools o actores esté implementado.
+runtime público de pools o actores esté promocionado.
 
-La frontera HOST tiene estado `required-after-native-gate`: el contrato puede
-cerrarse ahora para alimentar el diseño del runtime, pero sus workers y
-adaptadores no se promocionan antes del backend nativo.
+La frontera HOST tiene estado `verified-hosted-and-target-qualified-native-bridge`;
+la observación de implementación queda registrada como
+`verified-hosted-blocking-and-native-token-bridge`:
+la VM hosted ejecuta jobs bloqueantes en workers aislados y el runtime nativo
+expone únicamente un bridge privado de tokens para `x86_64-unknown-linux-gnu`.
+La API pública, el layout ABI y el lowering AOT genérico siguen sin
+promocionarse.
 
 `std.executor` no añade un segundo modelo async. `scope`, `spawn`,
 `spawn thread`, `Join`, `Group`, `std.channel` y `std.sync` siguen siendo las
@@ -31,7 +35,8 @@ termina con `executor-ok` y exit `0`; el informe reproducible se escribe en
 `target/reliability/evidence/stdlib-executor-implementation.json`.
 
 Este cierre cubre `STD-EXEC-IMPL-001` para la implementación cooperativa hosted;
-no promociona el owner completo ni los workers host. `Pool.actor` crea y conserva
+la implementación de `BlockingPool` queda cerrada por `STD-EXEC-HOST-001`, sin
+promover la API pública. `Pool.actor` crea y conserva
 un handle afín. La VM hosted ejecuta el handler como una task interna del
 pool, entrega los mensajes en orden FIFO de uno en uno, conserva el estado
 mutable al retorno normal y hace terminal al actor cuando el handler devuelve
@@ -43,14 +48,19 @@ implícita. La VM hosted también verifica la ruta transaccional de
 `ActorRef.send` como brazo `selectable`: `prepare` observa el mensaje sin
 mutarlo, `commit` linealiza una sola admisión en la mailbox y `rollback`
 desregistra el waiter sin consumir el payload. La misma regla se aplica a un
-`fs.File` afín y a un brazo `else`; el runtime nativo/AOT y los workers host no
-se promocionan por esta observación.
+`fs.File` afín y a un brazo `else`; el lowering native AOT de callables no se
+promociona por esta observación.
 
-`blockingPool` devuelve `ExecutorError.CapabilityMissing` en la VM hosted
-actual: el bridge de workers host queda reservado para `STD-EXEC-HOST-001` y
-no se ejecuta trabajo bloqueante inline sobre el scheduler cooperativo. El
-runtime nativo y el lowering native AOT siguen `not-claimed`, y
-`public_api_promoted` permanece `false`.
+`blockingPool` ya tiene una implementación hosted verificable: cada job se
+ejecuta en un worker del sistema operativo con un `Engine` hijo, heap y
+adaptador host propios; la tarea cooperativa sólo espera la admisión y el
+envelope de resultado. El bridge conserva FIFO, límites, cancelación segura,
+shutdown con drain y ausencia de handles/loans del VM en la frontera. En el
+runtime nativo, la lane promovida para `x86_64-unknown-linux-gnu` transporta
+tokens opacos a workers acotados y prueba admisión, wakeups y lifecycle, pero no
+ejecuta callbacks ni define todavía el lowering AOT de callables. No se
+promociona API pública ni ABI de layout y `public_api_promoted` permanece
+`false`.
 
 ## Superficie pública
 
@@ -100,14 +110,16 @@ descartarse implícitamente: debe consumirse con `shutdown`, `cancel` o
 transferirse a un scope que mantenga su obligación terminal.
 
 `blockingPool` crea una cola separada de workers del sistema operativo y exige
-la capability `threads`. `run` recibe una función no suspendible: no puede
-llamar operaciones `suspends`, `spawn`, `select` ni capturar préstamos locales.
-La llamada pública sí es suspendible porque espera la admisión y el resultado
-sin bloquear el worker cooperativo. Se puede escribir `spawn
-blocking_pool.run(job)` para solapar varias operaciones; el resultado sigue
-siendo un `Join` normal cuando se hace spawn. `blockingPool` no puede matar un
-job bloqueado de forma forzosa: `cancel` cancela lo que aún no empezó y espera
-la finalización segura de los jobs host que ya están en ejecución.
+la capability `threads`. En la VM hosted, `run` recibe una función no
+suspendible: no puede llamar operaciones `suspends`, `spawn`, `select` ni
+capturar préstamos locales. La llamada pública sí es suspendible porque espera
+la admisión y el resultado sin bloquear el worker cooperativo. Se puede
+escribir `spawn blocking_pool.run(job)` para solapar varias operaciones; el
+resultado sigue siendo un `Join` normal cuando se hace spawn. El runtime nativo
+mantiene una lane equivalente de tokens, target-qualified y privada; no
+pretende ser todavía el lowering native AOT de ese callable. `blockingPool` no puede
+matar un job bloqueado de forma forzosa: `cancel` cancela lo que aún no empezó
+y espera la finalización segura de los jobs host que ya están en ejecución.
 
 Los dos tipos de pool son deliberadamente distintos. Esto no duplica una API
 síncrona/async: separa una política cooperativa que ejecuta Tondo de una
@@ -199,11 +211,13 @@ no consulta environment, número de CPUs, variables del proceso ni scheduler
 host para elegir defaults. Los números de workers y capacidad son argumentos
 del programa o constantes explícitas del caller.
 
-El bridge host solo cruza valores que cumplan las reglas de `Send` y no deja
-préstamos, handles de VM, `Ref` locales ni `Pointer` unsafe sin el contrato
-explícito correspondiente. La frontera convierte panics, cancelación y errores
-host al envelope normal del runtime y libera sus reservas exactamente una vez.
-No se ofrece FFI, ABI de layout ni prioridad de worker pública en este bloque.
+El bridge hosted solo cruza valores que cumplan las reglas de `Send` y no deja
+préstamos, handles de VM, `Ref` locales ni `Pointer` unsafe. Cada worker crea un
+heap hijo y devuelve un envelope tipado; las llamadas host se serializan a
+través del owner de la VM y observan cancelación sin bloquear un worker
+cooperativo. La lane nativa intercambia exclusivamente tokens opacos y no
+ofrece callbacks, punteros ni layout ABI. Ninguna de las dos superficies
+publica prioridad o identidad física de worker.
 
 ## Eventos privados de diagnóstico
 
@@ -227,9 +241,11 @@ callbacks de completion, prioridades públicas, work-stealing observable,
 `submitAsync`, `runAsync`, `waitAsync`, conversión implícita a thread y
 fallback bloqueante dentro del scheduler cooperativo.
 
-La implementación completa queda pendiente de `STD-EXEC-HOST-001`,
+`STD-EXEC-HOST-001` queda cerrado para la implementación hosted y el bridge
+nativo target-qualified descritos arriba. La hardening de comportamiento,
+rendimiento, conformance y documentación de uso queda pendiente de
 `STD-EXEC-TEST-001`, `STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y
-`STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
+`STD-EXEC-DOC-001`; el lowering AOT de callables sigue `not-claimed`. Los contratos runtime-facing de `std.executor`, `std.net`
 y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
 se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y
 sus leaves siguen la compuerta nativa.
