@@ -4848,6 +4848,39 @@ mod tests {
     }
 
     #[test]
+    fn select_runtime_actor_send_preserves_a_heap_message_until_rollback() {
+        let program = lowered(
+            "import std.executor\n\
+             fn actor_step(state: mut Int, message: String): Unit ! String suspends {\n\
+                 let _ = message\n\
+                 state += 1\n\
+             }\n\
+             fn run(): Bool ! (executor.ExecutorError | executor.ActorSendError[String] | String) {\n\
+                 let pool = executor.pool(1, 1)?\n\
+                 let actor = pool.actor(0, 0, actor_step)?\n\
+                 let actor_ref = actor.ref()\n\
+                 let selected = select {\n\
+                     actor_ref.send(\"payload\") => false\n\
+                     else => true\n\
+                 }\n\
+                 actor.stop()?\n\
+                 selected\n\
+             }\n",
+        );
+        bc::verify_bytecode(&program).expect("actor send select bytecode verifies");
+        let mut limits = VmLimits::default();
+        limits.initial_gc_threshold = 1;
+        let mut host = RejectingHost;
+        let execution =
+            execute_with_limits(&program, function_id(&program, "run"), &mut host, limits)
+                .expect("a saturated actor send must roll back without losing its message");
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(true))))
+        );
+    }
+
+    #[test]
     fn select_runtime_waits_for_a_selectable_call_and_consumes_only_the_winner() {
         let program = lowered(
             "fn work(): Int selectable { 4 }\n\

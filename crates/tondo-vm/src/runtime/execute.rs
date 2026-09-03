@@ -20930,6 +20930,65 @@ mod tests {
     }
 
     #[test]
+    fn selectable_actor_send_roots_and_probe_creation_are_explicit() {
+        let (program, types) = executor_program();
+        let region = RuntimeSelectRegion {
+            capacity: 1,
+            registered: 1,
+            arms: vec![RuntimeSelectArm {
+                task: 0,
+                owned: true,
+                owner: None,
+                reservation: Some(RuntimeSelectReservation::ActorSend {
+                    actor: 7,
+                    message: Value::Integer(9),
+                    message_place: None,
+                    outcome: types.actor_result,
+                }),
+            }],
+        };
+        let mut roots = Vec::new();
+        region.roots(&mut roots);
+        assert_eq!(roots, vec![Value::Integer(9)]);
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        let task = engine.spawn_actor_select_send_task(7).unwrap();
+        assert_eq!(task, 0);
+        assert!(matches!(
+            engine.tasks[task].status,
+            TaskStatus::Waiting(TaskWait::ActorSelectSend { actor: 7 })
+        ));
+
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        engine.actors.insert(
+            7,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: types.actor_handler,
+                step_arguments: Vec::new(),
+                capacity: 1,
+                mailbox: VecDeque::from([Value::Integer(1)]),
+                stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::new(),
+            },
+        );
+        engine.tasks[task].status =
+            TaskStatus::Complete(Some(TaskCompletion::Returned(Value::Unit)));
+        engine.completion_order.insert(task, 1);
+        engine.demote_actor_select_send_task(7, task).unwrap();
+        assert!(matches!(
+            engine.tasks[task].status,
+            TaskStatus::Waiting(TaskWait::ActorSelectSend { actor: 7 })
+        ));
+        assert_eq!(engine.actors[&7].send_waiters, VecDeque::from([task]));
+    }
+
+    #[test]
     fn selectable_actor_send_rollback_unregisters_waiter_and_retains_message() {
         let (program, types) = executor_program();
         let message_place = BytecodePlace {
