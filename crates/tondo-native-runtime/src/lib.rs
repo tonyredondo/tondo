@@ -7483,6 +7483,294 @@ mod tests {
         assert_eq!(pool.shutdown(true), STATUS_CANCELLED);
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct NativeExecutorPerfObservation {
+        nanos: u128,
+        operations: u64,
+        accepted: u64,
+        pending: u64,
+        waits: u64,
+        bridge_events: u64,
+        queued_peak: u64,
+        active_peak: u64,
+        worker_starts: u64,
+        logical_memory_bytes: u64,
+        live_handles: u64,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum NativeExecutorPerfWorkload {
+        Startup,
+        Roundtrip1,
+        Roundtrip4,
+        Throughput4,
+        Saturation1,
+        Drain4,
+    }
+
+    impl NativeExecutorPerfWorkload {
+        fn id(self) -> &'static str {
+            match self {
+                Self::Startup => "native-startup-1",
+                Self::Roundtrip1 => "native-roundtrip-1",
+                Self::Roundtrip4 => "native-roundtrip-4",
+                Self::Throughput4 => "native-throughput-4",
+                Self::Saturation1 => "native-saturation-1",
+                Self::Drain4 => "native-drain-4",
+            }
+        }
+
+        fn operation(self) -> &'static str {
+            match self {
+                Self::Startup => "startup",
+                Self::Roundtrip1 | Self::Roundtrip4 => "roundtrip",
+                Self::Throughput4 => "throughput",
+                Self::Saturation1 => "saturation",
+                Self::Drain4 => "drain",
+            }
+        }
+
+        fn workers(self) -> usize {
+            match self {
+                Self::Startup | Self::Roundtrip1 | Self::Saturation1 => 1,
+                Self::Roundtrip4 | Self::Throughput4 | Self::Drain4 => 4,
+            }
+        }
+
+        fn capacity(self) -> usize {
+            match self {
+                Self::Startup | Self::Roundtrip1 | Self::Saturation1 => 1,
+                Self::Roundtrip4 => 4,
+                Self::Throughput4 => 32,
+                Self::Drain4 => 8,
+            }
+        }
+
+        fn operations(self) -> usize {
+            match self {
+                Self::Startup | Self::Roundtrip1 => 1,
+                Self::Roundtrip4 => 4,
+                Self::Throughput4 => 32,
+                Self::Saturation1 | Self::Drain4 => 8,
+            }
+        }
+    }
+
+    const NATIVE_EXECUTOR_PERF_WARMUPS: usize = 3;
+    const NATIVE_EXECUTOR_PERF_SAMPLES: usize = 9;
+    const NATIVE_EXECUTOR_PERF_WORKLOADS: [NativeExecutorPerfWorkload; 6] = [
+        NativeExecutorPerfWorkload::Startup,
+        NativeExecutorPerfWorkload::Roundtrip1,
+        NativeExecutorPerfWorkload::Roundtrip4,
+        NativeExecutorPerfWorkload::Throughput4,
+        NativeExecutorPerfWorkload::Saturation1,
+        NativeExecutorPerfWorkload::Drain4,
+    ];
+
+    fn native_executor_perf_logical_memory_bytes(workers: usize, capacity: usize) -> u64 {
+        let limit = if capacity == 0 { workers } else { capacity };
+        (std::mem::size_of::<NativeBlockingPoolState>()
+            + workers * std::mem::size_of::<std::thread::JoinHandle<()>>()
+            + limit * std::mem::size_of::<NativeBlockingJobRef>()) as u64
+    }
+
+    fn native_executor_perf_snapshot(pool: u64) -> (usize, usize) {
+        with_state(|state| {
+            state
+                .blocking_pools
+                .get(&pool)
+                .and_then(|pool| {
+                    pool.state
+                        .0
+                        .lock()
+                        .ok()
+                        .map(|state| (state.queue.len(), state.active))
+                })
+                .unwrap_or((0, 0))
+        })
+    }
+
+    fn native_executor_perf_record_peak(pool: u64, queued_peak: &mut u64, active_peak: &mut u64) {
+        let (queued, active) = native_executor_perf_snapshot(pool);
+        *queued_peak = (*queued_peak).max(queued as u64);
+        *active_peak = (*active_peak).max(active as u64);
+    }
+
+    fn native_executor_perf_take(job: u64, waits: &mut u64, bridge_events: &mut u64) {
+        assert_eq!(tondo_rt_blocking_job_wait(job), STATUS_OK);
+        *waits = waits.saturating_add(1);
+        assert_eq!(tondo_rt_blocking_job_status(job), BLOCKING_JOB_COMPLETED);
+        assert_eq!(tondo_rt_blocking_job_take(job), 42);
+        assert_eq!(tondo_rt_release(job), STATUS_OK);
+        *bridge_events = bridge_events.saturating_add(1);
+    }
+
+    fn native_executor_perf_sample(
+        workload: NativeExecutorPerfWorkload,
+    ) -> NativeExecutorPerfObservation {
+        let workers = workload.workers();
+        let capacity = workload.capacity();
+        let operations = workload.operations() as u64;
+        let logical_memory_bytes = native_executor_perf_logical_memory_bytes(workers, capacity);
+        tondo_rt_reset();
+
+        if matches!(workload, NativeExecutorPerfWorkload::Startup) {
+            let start = std::time::Instant::now();
+            let pool = tondo_rt_blocking_pool_new(workers as i64, capacity as i64);
+            assert_ne!(
+                pool, 0,
+                "native performance startup must admit the target lane"
+            );
+            assert_eq!(tondo_rt_blocking_pool_shutdown(pool), STATUS_OK);
+            assert_eq!(tondo_rt_blocking_pool_status(pool), 3);
+            assert_eq!(tondo_rt_release(pool), STATUS_OK);
+            let live_handles = tondo_rt_live_objects();
+            let observation = NativeExecutorPerfObservation {
+                nanos: start.elapsed().as_nanos().max(1),
+                operations,
+                accepted: 0,
+                pending: 0,
+                waits: 0,
+                bridge_events: 0,
+                queued_peak: 0,
+                active_peak: 0,
+                worker_starts: workers as u64,
+                logical_memory_bytes,
+                live_handles,
+            };
+            tondo_rt_reset();
+            return observation;
+        }
+
+        let pool = tondo_rt_blocking_pool_new(workers as i64, capacity as i64);
+        assert_ne!(pool, 0, "native performance pool must be admitted");
+        let mut jobs = Vec::with_capacity(workload.operations());
+        let mut accepted = 0_u64;
+        let mut pending = 0_u64;
+        let mut waits = 0_u64;
+        let mut bridge_events = 0_u64;
+        let mut queued_peak = 0_u64;
+        let mut active_peak = 0_u64;
+
+        let drain = matches!(workload, NativeExecutorPerfWorkload::Drain4);
+        let start = if drain {
+            while accepted < operations {
+                let job = tondo_rt_blocking_pool_submit(pool, 42);
+                if job != 0 {
+                    accepted += 1;
+                    jobs.push(job);
+                    native_executor_perf_record_peak(pool, &mut queued_peak, &mut active_peak);
+                } else {
+                    assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_NOT_READY);
+                    pending = pending.saturating_add(1);
+                    if let Some(job) = jobs.first().copied() {
+                        jobs.remove(0);
+                        native_executor_perf_take(job, &mut waits, &mut bridge_events);
+                    } else {
+                        std::thread::yield_now();
+                    }
+                }
+            }
+            std::time::Instant::now()
+        } else {
+            std::time::Instant::now()
+        };
+
+        if !drain {
+            while accepted < operations {
+                let job = tondo_rt_blocking_pool_submit(pool, 42);
+                if job != 0 {
+                    accepted += 1;
+                    jobs.push(job);
+                    native_executor_perf_record_peak(pool, &mut queued_peak, &mut active_peak);
+                } else {
+                    assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_NOT_READY);
+                    pending = pending.saturating_add(1);
+                    if let Some(job) = jobs.first().copied() {
+                        jobs.remove(0);
+                        native_executor_perf_take(job, &mut waits, &mut bridge_events);
+                    } else {
+                        std::thread::yield_now();
+                    }
+                }
+            }
+        }
+
+        if drain {
+            assert_eq!(tondo_rt_blocking_pool_shutdown(pool), STATUS_OK);
+        } else {
+            for job in jobs.drain(..) {
+                native_executor_perf_take(job, &mut waits, &mut bridge_events);
+            }
+        }
+        let nanos = start.elapsed().as_nanos().max(1);
+        if drain {
+            for job in jobs.drain(..) {
+                native_executor_perf_take(job, &mut waits, &mut bridge_events);
+            }
+        }
+        assert_eq!(accepted, operations);
+        assert_eq!(bridge_events, operations);
+        if drain {
+            assert_eq!(tondo_rt_blocking_pool_status(pool), 3);
+        } else {
+            assert_eq!(tondo_rt_blocking_pool_shutdown(pool), STATUS_OK);
+        }
+        assert_eq!(tondo_rt_release(pool), STATUS_OK);
+        let live_handles = tondo_rt_live_objects();
+        tondo_rt_reset();
+        NativeExecutorPerfObservation {
+            nanos,
+            operations,
+            accepted,
+            pending,
+            waits,
+            bridge_events,
+            queued_peak,
+            active_peak,
+            worker_starts: workers as u64,
+            logical_memory_bytes,
+            live_handles,
+        }
+    }
+
+    #[test]
+    fn native_blocking_performance_probe() {
+        let _guard = test_guard();
+        if !native_blocking_supported() {
+            println!("TONDO_EXECUTOR_PERF_UNSUPPORTED\tnative-runtime\tx86_64-unknown-linux-gnu");
+            return;
+        }
+        for _ in 0..NATIVE_EXECUTOR_PERF_WARMUPS {
+            for workload in NATIVE_EXECUTOR_PERF_WORKLOADS {
+                let _ = native_executor_perf_sample(workload);
+            }
+        }
+        for _ in 0..NATIVE_EXECUTOR_PERF_SAMPLES {
+            for workload in NATIVE_EXECUTOR_PERF_WORKLOADS {
+                let observation = native_executor_perf_sample(workload);
+                println!(
+                    "TONDO_EXECUTOR_PERF\tnative-runtime\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    workload.id(),
+                    workload.operation(),
+                    workload.workers(),
+                    workload.capacity(),
+                    observation.nanos,
+                    observation.operations,
+                    observation.accepted,
+                    observation.pending,
+                    observation.waits,
+                    observation.bridge_events,
+                    observation.queued_peak,
+                    observation.active_peak,
+                    observation.worker_starts,
+                    observation.logical_memory_bytes,
+                    observation.live_handles,
+                );
+            }
+        }
+    }
+
     #[test]
     fn await_and_cancellation_reject_invalid_task_transitions() {
         let _guard = test_guard();

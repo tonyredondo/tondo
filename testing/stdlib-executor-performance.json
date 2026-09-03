@@ -1,0 +1,114 @@
+{
+  "format": "tondo-stdlib-executor-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-EXEC-PERF-001",
+  "owner": "std.executor",
+  "status": "verified-hosted-vm-and-native-token-x86_64-linux",
+  "targets": {
+    "hosted_vm": {
+      "target": "tondo-vm-hosted",
+      "backend": "bytecode-vm",
+      "profile": "test",
+      "probe": {
+        "path": "crates/tondo-vm/src/runtime/execute.rs",
+        "test": "runtime::execute::tests::executor_performance::executor_performance_probe",
+        "sha256": "dd53bdd962d8588d1fe6bc991cb445de3ab5007380d4e7f0b6d2a363f44458b9"
+      }
+    },
+    "native_runtime": {
+      "target": "x86_64-unknown-linux-gnu",
+      "backend": "native-runtime-private-token-lane",
+      "profile": "test",
+      "probe": {
+        "path": "crates/tondo-native-runtime/src/lib.rs",
+        "test": "tests::native_blocking_performance_probe",
+        "sha256": "d35fba1fe42bfdfcdf774ceeb09fba89b21ee20e93fddb38c3d00c59e04bd7cd"
+      }
+    }
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 1,
+    "deterministic_seed": "tondo-stdlib-executor-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-operation-latency; included-in-logical-memory-and-worker-start-counters"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "path",
+    "pid",
+    "timestamp"
+  ],
+  "metrics": [
+    "latency",
+    "tail_latency",
+    "throughput",
+    "startup",
+    "scheduling",
+    "backpressure",
+    "wakeup_bridge",
+    "queued_peak",
+    "active_peak",
+    "logical_memory_bytes",
+    "live_handles"
+  ],
+  "strategy": {
+    "hosted_vm": "actual-child-engine-blocking-job-and-owner-bridge",
+    "native_runtime": "private-opaque-token-worker-lane-x86_64-linux",
+    "native_aot": "not-claimed",
+    "aggregation": "target-and-backend-separated",
+    "wakeup_measurement": "owner-wait-and-completion-observations-not-kernel-wakeup-counts"
+  },
+  "workloads": [
+    {"id": "hosted-startup-1", "target": "hosted-vm", "operation": "startup", "workers": 1, "capacity": 1, "operations": 1},
+    {"id": "hosted-roundtrip-1", "target": "hosted-vm", "operation": "roundtrip", "workers": 1, "capacity": 1, "operations": 1},
+    {"id": "hosted-roundtrip-4", "target": "hosted-vm", "operation": "roundtrip", "workers": 4, "capacity": 4, "operations": 4},
+    {"id": "hosted-throughput-4", "target": "hosted-vm", "operation": "throughput", "workers": 4, "capacity": 32, "operations": 32},
+    {"id": "hosted-saturation-1", "target": "hosted-vm", "operation": "saturation", "workers": 1, "capacity": 1, "operations": 8},
+    {"id": "hosted-drain-4", "target": "hosted-vm", "operation": "drain", "workers": 4, "capacity": 8, "operations": 8},
+    {"id": "native-startup-1", "target": "native-runtime", "operation": "startup", "workers": 1, "capacity": 1, "operations": 1},
+    {"id": "native-roundtrip-1", "target": "native-runtime", "operation": "roundtrip", "workers": 1, "capacity": 1, "operations": 1},
+    {"id": "native-roundtrip-4", "target": "native-runtime", "operation": "roundtrip", "workers": 4, "capacity": 4, "operations": 4},
+    {"id": "native-throughput-4", "target": "native-runtime", "operation": "throughput", "workers": 4, "capacity": 32, "operations": 32},
+    {"id": "native-saturation-1", "target": "native-runtime", "operation": "saturation", "workers": 1, "capacity": 1, "operations": 8},
+    {"id": "native-drain-4", "target": "native-runtime", "operation": "drain", "workers": 4, "capacity": 8, "operations": 8}
+  ],
+  "invariants": {
+    "operations": "stable-per-workload-across-all-27-samples",
+    "admission": "accepted-equals-declared-operations-and-pending-is-explicit",
+    "worker_limit": "active-peak-never-exceeds-workers",
+    "queue_limit": "queued-peak-never-exceeds-capacity",
+    "wakeup_bridge": "wait-and-completion-counters-are-observations-not-kernel-wakeup-claims",
+    "memory": "logical-state-worker-and-envelope-capacity; allocator-overhead-and-rss-excluded",
+    "cleanup": "hosted-bridge-closes-and-native-live-handles-return-to-zero",
+    "quantiles": "median-less-than-or-equal-p95-less-than-or-equal-p99",
+    "target_isolation": "hosted-vm-and-native-token-lane-are-never-aggregated",
+    "aot_boundary": "native-aot-callable-lowering-and-public-abi-remain-not-claimed"
+  },
+  "oracle": {
+    "source": [
+      "crates/tondo-reliability/src/executor_model.rs",
+      "crates/tondo-reliability/tests/models.rs"
+    ],
+    "command": "cargo test -p tondo-reliability --test models executor_model_sequences_are_bounded_replayable_and_cleanup_complete --locked",
+    "kind": "independent-bounded-executor-model-and-runtime-invariant-checks"
+  },
+  "report": "target/reliability/evidence/stdlib-executor-performance.json"
+}

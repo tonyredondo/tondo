@@ -262,9 +262,10 @@ fallback bloqueante dentro del scheduler cooperativo.
 
 `STD-EXEC-HOST-001` queda cerrado para la implementación hosted y el bridge
 nativo target-qualified descritos arriba. La hardening de comportamiento,
-rendimiento, conformance y documentación de uso queda pendiente de
-`STD-EXEC-TEST-001`, `STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y
-`STD-EXEC-DOC-001`; el lowering AOT de callables sigue `not-claimed`. Los contratos runtime-facing de `std.executor`, `std.net`
+rendimiento, conformance y documentación de uso queda registrada en
+`testing/stdlib-executor-performance.json` y
+`docs/contracts/stdlib-executor-performance.md` para `STD-EXEC-PERF-001`;
+siguen pendientes `STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. El lowering AOT de callables sigue `not-claimed`. Los contratos runtime-facing de `std.executor`, `std.net`
 y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
 se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y
 sus leaves siguen la compuerta nativa.

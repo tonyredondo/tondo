@@ -138,7 +138,9 @@ el runtime nativo aporta una lane privada de tokens para
 `x86_64-unknown-linux-gnu`; el lowering native AOT de callables y la API pública
 siguen sin promocionarse. `STD-EXEC-TEST-001` queda cerrado con el modelo
 acotado, replay de 4.096 semillas, stress real del bridge y smoke fuzz
-reproducible; el siguiente trabajo desbloqueado es `STD-EXEC-PERF-001`. El modelo y
+reproducible. `STD-EXEC-PERF-001` queda cerrado con una campaña 3 x 9
+target-qualified para la VM hosted y la lane privada nativa de tokens; el
+siguiente trabajo desbloqueado es `STD-EXEC-CONF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6876,8 +6878,18 @@ estas leaves.
   `crates/tondo-vm/src/runtime/execute.rs` y
   `scripts/stdlib-executor-fuzz.sh`. El siguiente bloque es
   `STD-EXEC-PERF-001`.
-- [ ] **STD-EXEC-PERF-001 — Medir executor.** Fijar scheduling latency,
-  throughput, tail, memoria, startup y coste de wakeup/bridge por target.
+- [x] **STD-EXEC-PERF-001 — Medir executor.** La campaña reproducible `3 x 9`
+  cubre startup, roundtrip, throughput, saturación y drain en seis workloads
+  hosted y seis de la lane privada nativa `x86_64-unknown-linux-gnu`. Conserva
+  muestras, mediana/P95/P99, backpressure, esperas/completions del bridge,
+  picos de cola/workers, memoria lógica y handles vivos, con el modelo
+  independiente como oracle. Evidencia:
+  `testing/stdlib-executor-performance.json`,
+  `docs/contracts/stdlib-executor-performance.md`,
+  `scripts/stdlib-executor-performance.sh` y
+  `target/reliability/evidence/stdlib-executor-performance.json`. El siguiente
+  bloque es `STD-EXEC-CONF-001`; native AOT y ABI público siguen
+  `not-claimed`.
 - [ ] **STD-EXEC-CONF-001 — Conformar executor.** Comparar observaciones VM y
   nativo y validar capabilities `threads` sin stubs silenciosos.
 - [ ] **STD-EXEC-DOC-001 — Documentar executor.** Explicar scopes, pools,
@@ -7770,8 +7782,9 @@ fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
 `STD-EXEC-IMPL-001` queda cerrado para la implementación cooperativa hosted de
 su superficie y `STD-EXEC-HOST-001` queda cerrado para el bridge hosted y la
 lane nativa target-qualified; `STD-EXEC-TEST-001` queda cerrado con el modelo,
-replay, stress y fuzz acotados; el siguiente trabajo crítico es
-`STD-EXEC-PERF-001`. La
+replay, stress y fuzz acotados. `STD-EXEC-PERF-001` queda cerrado por la
+campaña target-qualified hosted/native 3 x 9 y su presupuesto reproducible; el
+siguiente trabajo crítico es `STD-EXEC-CONF-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

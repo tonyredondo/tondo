@@ -2900,9 +2900,13 @@ implementación cooperativa hosted de pools, `Join`, lifecycle, actores y envío
 `STD-EXEC-TEST-001` queda cerrado para el modelo independiente, las regresiones
 hosted, el stress de workers y el smoke fuzz acotado; su manifiesto es
 [`testing/stdlib-executor-test.json`](./testing/stdlib-executor-test.json).
-El siguiente leaf es `STD-EXEC-PERF-001`; sus mediciones deben mantener
-separados el target hosted, el lane nativo privado y cualquier lowering AOT que
-todavía no esté promocionado.
+`STD-EXEC-PERF-001` queda cerrado por el presupuesto
+[`docs/contracts/stdlib-executor-performance.md`](./docs/contracts/stdlib-executor-performance.md)
+y el registro
+[`testing/stdlib-executor-performance.json`](./testing/stdlib-executor-performance.json):
+sus 27 muestras por workload mantienen separados el target hosted, el lane
+nativo privado y cualquier lowering AOT que todavía no esté promocionado. El
+siguiente leaf del owner es `STD-EXEC-CONF-001`.
 El cierre no reclama ABI público ni lowering native AOT de callables. La VM
 hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de

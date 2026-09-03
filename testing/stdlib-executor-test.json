@@ -119,7 +119,6 @@
   "promotion": {
     "model_test_fuzz_complete": true,
     "remaining": [
-      "STD-EXEC-PERF-001",
       "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
     ],

@@ -46,7 +46,7 @@ expect_failure stale-fixture \
     env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/stale-fixture.json" \
     scripts/stdlib-executor-implementation-check.sh
 
-jq '.implementation.observed.remaining = ["STD-EXEC-DOC-001"]' testing/stdlib-executor.json \
+jq '.implementation.observed.remaining = ["STD-EXEC-CONF-001"]' testing/stdlib-executor.json \
     >"$tmp_dir/missing-followups.json"
 expect_failure missing-followups \
     env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/missing-followups.json" \

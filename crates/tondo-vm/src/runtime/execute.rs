@@ -18047,24 +18047,28 @@ mod tests {
 
     use super::{
         AggregatePayload, BlockingAdmission, BlockingBridgeState, BlockingCompletion,
-        BlockingExecutionBridge, BlockingWorkerHost, CallContinuation, DeferredOperation,
-        DeferredValue, DiagnosticConfig, DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource,
-        DiagnosticThreadState, Engine, Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter,
-        OnceContinuation, OnceResolution, OneShotCompletion, OneShotState, OperationResult,
-        PanicCode, PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath,
-        RuntimeActorState, RuntimeActorTermination, RuntimeCleanup, RuntimeDefer, RuntimeFallback,
-        RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind,
-        RuntimeJoin, RuntimeLoan, RuntimeOnceState, RuntimePoolLifecycle, RuntimePoolState,
-        RuntimeSelectArm, RuntimeSelectRegion, RuntimeSelectReservation, RuntimeTaskScope,
-        RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion, TaskRecord,
-        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome,
-        VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field,
-        clone_index, clone_present, collection_length_fits_int, convert_numeric, execute,
-        execute_with_diagnostics, group_handle, initial_value, integer_bounds, integer_shape,
-        next_unicode_scalar, once_handle, operand_materialized_slot, operation_access_place,
-        paths_overlap, present, queue_object_equality, queue_payload_equality, runtime_host_kind,
-        set_field, set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
+        BlockingExecutionBridge, BlockingJob, BlockingWorkerHost, CallContinuation,
+        DeferredOperation, DeferredValue, DiagnosticConfig, DiagnosticEvent,
+        DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, GroupPoll,
+        HeapHandle, HeapObject, IteratorAdapter, OnceContinuation, OnceResolution,
+        OneShotCompletion, OneShotState, OperationResult, PanicCode, PlaceComponent, PlaceFailure,
+        RejectingHost, ResolvedPlacePath, RuntimeActorState, RuntimeActorTermination,
+        RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation,
+        RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeOnceState,
+        RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm, RuntimeSelectRegion,
+        RuntimeSelectReservation, RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue,
+        SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy,
+        VmError, VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind,
+        VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
+        convert_numeric, execute, execute_with_diagnostics, group_handle, initial_value,
+        integer_bounds, integer_shape, next_unicode_scalar, once_handle, operand_materialized_slot,
+        operation_access_place, paths_overlap, present, queue_object_equality,
+        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
+        snapshot_value, take_field, take_index, take_option,
     };
+
+    #[path = "../../executor_performance.rs"]
+    mod executor_performance;
 
     fn root_pressure_program() -> BytecodeProgram {
         let string = BytecodeTypeId::new(0);
