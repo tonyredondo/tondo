@@ -316,7 +316,6 @@
     "public_api_promoted": false,
     "host": "verified-hosted-and-target-qualified-native-bridge",
     "required_follow_ups": [
-      "STD-EXEC-TEST-001",
       "STD-EXEC-PERF-001",
       "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
@@ -374,7 +373,6 @@
       "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
       "resolved_decision": "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor",
       "remaining": [
-        "STD-EXEC-TEST-001",
         "STD-EXEC-PERF-001",
         "STD-EXEC-CONF-001",
         "STD-EXEC-DOC-001"
@@ -383,7 +381,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-EXEC-TEST-001",
       "STD-EXEC-PERF-001",
       "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"

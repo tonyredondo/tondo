@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+#[path = "../src/executor_model.rs"]
+mod executor_model;
 #[path = "../src/group_model.rs"]
 mod group_model;
 
@@ -11,6 +13,9 @@ use tondo_reliability::workspace_root;
 use tondo_vm::bytecode::{ArraySliceError, normalize_array_index, normalize_array_slice_indices};
 use tondo_vm::runtime::conformance::{MemoryScenario, run_memory_scenario};
 
+use executor_model::{
+    MAX_FUZZ_STEPS as EXECUTOR_MAX_FUZZ_STEPS, run_fuzz_case as run_executor_fuzz_case,
+};
 use group_model::{MAX_FUZZ_STEPS, run_fuzz_case};
 
 #[test]
@@ -399,6 +404,28 @@ fn group_model_sequences_are_bounded_replayable_and_cleanup_complete() {
     assert_eq!(empty.steps, 1);
     assert!(empty.snapshot.consumed);
     assert_eq!(empty.snapshot.pending_children, 0);
+}
+
+#[test]
+fn executor_model_sequences_are_bounded_replayable_and_cleanup_complete() {
+    for seed in 0..4_096_u64 {
+        let mut generator = Generator::new(0xe7ec_7000 + seed);
+        let input = generator.bytes(256);
+        let first = run_executor_fuzz_case(&input).unwrap();
+        let second = run_executor_fuzz_case(&input).unwrap();
+        assert_eq!(first, second, "executor replay diverged for seed {seed}");
+        assert!(first.steps <= EXECUTOR_MAX_FUZZ_STEPS);
+        assert_eq!(first.snapshot.queued, 0);
+        assert_eq!(first.snapshot.running, 0);
+        assert!(matches!(
+            first.snapshot.lifecycle,
+            executor_model::Lifecycle::Closed | executor_model::Lifecycle::Cancelled
+        ));
+    }
+
+    let empty = run_executor_fuzz_case(&[]).unwrap();
+    assert_eq!(empty.steps, 1);
+    assert_eq!(empty.snapshot.consumed, 0);
 }
 
 fn int_array(values: &[i64]) -> String {

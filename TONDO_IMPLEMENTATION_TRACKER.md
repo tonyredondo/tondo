@@ -136,8 +136,9 @@ handlers y envíos `selectable`. `STD-EXEC-HOST-001` también queda cerrado: la
 VM hosted ejecuta `BlockingPool.run` en workers aislados con bridge de host y
 el runtime nativo aporta una lane privada de tokens para
 `x86_64-unknown-linux-gnu`; el lowering native AOT de callables y la API pública
-siguen sin promocionarse. El siguiente trabajo desbloqueado es
-`STD-EXEC-TEST-001`. El modelo y
+siguen sin promocionarse. `STD-EXEC-TEST-001` queda cerrado con el modelo
+acotado, replay de 4.096 semillas, stress real del bridge y smoke fuzz
+reproducible; el siguiente trabajo desbloqueado es `STD-EXEC-PERF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6863,11 +6864,18 @@ estas leaves.
   ownership ARC; no se reclama lowering native AOT ni ABI público. Evidencia:
   `scripts/stdlib-executor-implementation.sh` y
   `target/reliability/evidence/stdlib-executor-implementation.json`. El
-  siguiente bloque es `STD-EXEC-TEST-001`.
-- [ ] **STD-EXEC-TEST-001 — Modelar y endurecer executor.** Cubrir fairness,
-  starvation, saturación, cancelación, pánicos, actores muertos, rechazo de
-  trabajo, shutdown drenado, límites y races con schedulers deterministas y
-  stress real.
+  siguiente bloque es `STD-EXEC-PERF-001`.
+- [x] **STD-EXEC-TEST-001 — Modelar y endurecer executor.** El modelo
+  independiente cubre fairness, starvation, saturación, cancelación, pánicos,
+  actores muertos, rechazo de trabajo, shutdown drenado, límites y races con
+  schedulers deterministas; el replay de 4.096 semillas, el stress hosted de
+  4 workers/32 jobs y el smoke libFuzzer de 128 ejecuciones (seed 4103, entrada
+  máxima 4 KiB, 1.024 pasos) pasan. Evidencia: `testing/stdlib-executor-test.json`,
+  `crates/tondo-reliability/src/executor_model.rs`,
+  `crates/tondo-reliability/tests/models.rs`,
+  `crates/tondo-vm/src/runtime/execute.rs` y
+  `scripts/stdlib-executor-fuzz.sh`. El siguiente bloque es
+  `STD-EXEC-PERF-001`.
 - [ ] **STD-EXEC-PERF-001 — Medir executor.** Fijar scheduling latency,
   throughput, tail, memoria, startup y coste de wakeup/bridge por target.
 - [ ] **STD-EXEC-CONF-001 — Conformar executor.** Comparar observaciones VM y
@@ -7761,8 +7769,9 @@ fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
 `STD-CHANNEL-DOC-001` queda cerrado para la guía ejecutable de composición.
 `STD-EXEC-IMPL-001` queda cerrado para la implementación cooperativa hosted de
 su superficie y `STD-EXEC-HOST-001` queda cerrado para el bridge hosted y la
-lane nativa target-qualified; el siguiente trabajo crítico es
-`STD-EXEC-TEST-001`. La
+lane nativa target-qualified; `STD-EXEC-TEST-001` queda cerrado con el modelo,
+replay, stress y fuzz acotados; el siguiente trabajo crítico es
+`STD-EXEC-PERF-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

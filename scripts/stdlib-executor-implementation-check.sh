@@ -29,7 +29,6 @@ jq -e '
   and .implementation.observed.resolved_decision == "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"
   and (.implementation.observed.open_decision // null) == null
   and .implementation.observed.remaining == [
-    "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
     "STD-EXEC-CONF-001",
     "STD-EXEC-DOC-001"

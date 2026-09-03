@@ -2897,6 +2897,12 @@ implementación cooperativa hosted de pools, `Join`, lifecycle, actores y envío
 `BlockingPool` y la lane privada de tokens del runtime nativo target-qualified
 `x86_64-unknown-linux-gnu`; el informe queda en
 `target/reliability/evidence/stdlib-executor-implementation.json`.
+`STD-EXEC-TEST-001` queda cerrado para el modelo independiente, las regresiones
+hosted, el stress de workers y el smoke fuzz acotado; su manifiesto es
+[`testing/stdlib-executor-test.json`](./testing/stdlib-executor-test.json).
+El siguiente leaf es `STD-EXEC-PERF-001`; sus mediciones deben mantener
+separados el target hosted, el lane nativo privado y cualquier lowering AOT que
+todavía no esté promocionado.
 El cierre no reclama ABI público ni lowering native AOT de callables. La VM
 hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de

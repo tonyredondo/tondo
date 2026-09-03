@@ -173,7 +173,6 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "verified-hosted-and-target-qualified-native-bridge"
   and .implementation.required_follow_ups == [
-    "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
     "STD-EXEC-CONF-001",
     "STD-EXEC-DOC-001"

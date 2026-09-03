@@ -71,6 +71,78 @@ for marker in \
     grep -Fq "$marker" testing/stdlib-executor.json
 done
 
+for path in \
+    crates/tondo-reliability/src/executor_model.rs \
+    crates/tondo-reliability/tests/models.rs \
+    fuzz/fuzz_targets/stdlib_executor.rs \
+    fuzz/corpus/stdlib_executor/seed \
+    scripts/stdlib-executor-fuzz.sh \
+    testing/stdlib-executor-test.json; do
+    [[ -e "$path" ]] || {
+        echo "std.executor tests: missing evidence path $path" >&2
+        exit 1
+    }
+done
+[[ -x scripts/stdlib-executor-fuzz.sh ]] || {
+    echo "std.executor tests: fuzz runner is not executable" >&2
+    exit 1
+}
+grep -Fq 'name = "stdlib_executor"' fuzz/Cargo.toml
+
+jq -e '
+  .format == "tondo-stdlib-executor-testing/1"
+  and .edition == "0.1"
+  and .phase == "STD-0.1B"
+  and .owner == "std.executor"
+  and .task == "STD-EXEC-TEST-001"
+  and .status == "verified"
+  and .contract == "testing/stdlib-executor.json"
+  and .limits.max_workers == 8
+  and .limits.max_capacity == 16
+  and .limits.max_jobs == 64
+  and .limits.max_actor_messages == 64
+  and .limits.max_fuzz_input_bytes == 4096
+  and .limits.max_fuzz_steps == 1024
+  and .limits.model_seed_count == 4096
+  and .limits.stress_workers == 4
+  and .limits.stress_jobs == 32
+  and .model.status == "verified"
+  and (.model.laws | type == "array" and length >= 10)
+  and .model.sequence_seeds == 4096
+  and .test.status == "verified"
+  and (.test.sources | type == "array" and length > 0)
+  and (.test.commands | type == "array" and length > 0)
+  and (.test.cases | type == "array" and length >= 10)
+  and .test.runtime_output == "executor-ok"
+  and .test.stress.status == "verified"
+  and .test.stress.workers == 4
+  and .test.stress.jobs == 32
+  and .fuzz.target == "stdlib_executor"
+  and .fuzz.source == "fuzz/fuzz_targets/stdlib_executor.rs"
+  and .fuzz.corpus == "fuzz/corpus/stdlib_executor/seed"
+  and .fuzz.input_limit_bytes == 4096
+  and .fuzz.step_limit == 1024
+  and .fuzz.status == "verified"
+  and .fuzz.smoke.result == "passed"
+  and .promotion.model_test_fuzz_complete == true
+  and .promotion.remaining[0] == "STD-EXEC-PERF-001"
+' testing/stdlib-executor-test.json >/dev/null
+
+jq -e '
+  .task == "STD-EXEC-001"
+  and .implementation.public_api_promoted == false
+  and .pool.starvation == "forbidden-by-default-under-cooperative-scheduler"
+  and .blocking.cancel_running == "wait-for-safe-host-return"
+  and .actor.handler_concurrency == "one-message-at-a-time"
+  and .actor.pending_messages == "discarded-under-M-Discard"
+  and .lifecycle.drain_before_success == true
+' testing/stdlib-executor.json >/dev/null
+
+cargo test -q -p tondo-reliability --test models executor_model::tests:: --locked
+cargo test -q -p tondo-reliability --test models executor_model_sequences_are_bounded_replayable_and_cleanup_complete --locked
+cargo test -q -p tondo-vm --lib runtime::execute::tests::blocking_bridge_ --locked
+cargo test -q -p tondo-vm --lib runtime::execute::tests::blocking_worker_host_ --locked
+
 jq -e '
   .task == "STD-EXEC-001"
   and .surface.selectable_operations == ["actor-send"]

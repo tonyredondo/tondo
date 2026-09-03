@@ -1,0 +1,128 @@
+{
+  "format": "tondo-stdlib-executor-testing/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.executor",
+  "task": "STD-EXEC-TEST-001",
+  "status": "verified",
+  "contract": "testing/stdlib-executor.json",
+  "limits": {
+    "max_workers": 8,
+    "max_capacity": 16,
+    "max_jobs": 64,
+    "max_actor_messages": 64,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 1024,
+    "model_seed_count": 4096,
+    "model_max_generated_bytes": 256,
+    "stress_workers": 4,
+    "stress_jobs": 32
+  },
+  "model": {
+    "status": "verified",
+    "source": [
+      "crates/tondo-reliability/src/executor_model.rs",
+      "crates/tondo-reliability/tests/models.rs"
+    ],
+    "laws": [
+      "worker slots never exceed the declared worker limit",
+      "admission counts running and queued jobs and rejects saturation without consuming payload",
+      "accepted jobs retain FIFO admission order and deterministic worker rotation",
+      "backpressured submit waits through a worker turn without losing the caller payload",
+      "shutdown rejects new work and closes only after every accepted job drains",
+      "cancel rejects new work, cancels queued jobs, and waits for running cancellation",
+      "completion, cancellation, and consumption reject duplicate or stale transitions",
+      "actor mailbox commits messages FIFO and processes at most one message at a time",
+      "actor error, panic, stop, and dead-ref paths drain payloads exactly once",
+      "bounded replay is deterministic and invariant failures remain observable"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded state machine with deterministic replay and invariant checks",
+    "command": "cargo test -p tondo-reliability --test models executor_model_sequences_are_bounded_replayable_and_cleanup_complete --locked"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/src/executor_model.rs",
+      "crates/tondo-reliability/tests/models.rs",
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "tests/runtime/m11-std-executor-impl-001.to"
+    ],
+    "commands": [
+      "scripts/stdlib-executor-check.sh",
+      "cargo test -p tondo-reliability --test models executor_model::tests:: --locked",
+      "cargo test -p tondo-reliability --test models executor_model_sequences_are_bounded_replayable_and_cleanup_complete --locked",
+      "cargo test -p tondo-vm --lib runtime::execute::tests::blocking_bridge_ --locked",
+      "cargo test -p tondo-vm --lib runtime::execute::tests::blocking_worker_host_ --locked",
+      "cargo test -p tondo-vm --lib runtime::execute::tests::blocking_bridge_stress_drains_bounded_fifo_admission --locked",
+      "cargo run -q -p tondo-cli --locked -- run tests/runtime/m11-std-executor-impl-001.to"
+    ],
+    "cases": [
+      "invalid-worker-and-capacity-limits",
+      "bounded-admission-and-saturation",
+      "fifo-admission-and-round-robin-workers",
+      "backpressured-submit-retains-payload",
+      "graceful-shutdown-drains-before-closed",
+      "cancellation-drains-queued-and-running-work",
+      "duplicate-completion-and-consumption-races",
+      "worker-panic-and-declared-error-terminal-outcomes",
+      "actor-fifo-mailbox-and-single-message-handler",
+      "dead-actor-message-return-and-stop-drain",
+      "real-worker-stress-and-bounded-shutdown"
+    ],
+    "oracle": "runtime output, VM lifecycle invariants, and independent model observations agree",
+    "runtime_output": "executor-ok",
+    "stress": {
+      "status": "verified",
+      "workers": 4,
+      "jobs": 32,
+      "capacity": 32,
+      "assertions": [
+        "sequential admission ids",
+        "one completion per accepted job",
+        "returned values preserve the VM result envelope",
+        "shutdown publishes Closed only after drain"
+      ],
+      "command": "cargo test -p tondo-vm --lib runtime::execute::tests::blocking_bridge_stress_drains_bounded_fifo_admission --locked"
+    }
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_executor",
+    "source": "fuzz/fuzz_targets/stdlib_executor.rs",
+    "corpus": "fuzz/corpus/stdlib_executor/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 1024,
+    "smoke": {
+      "runs": 128,
+      "seed": 4103,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "oracle": "panic-free bounded replay, terminal pool cleanup, dead-actor drain, and deterministic snapshot",
+    "command": "TONDO_EXECUTOR_FUZZ_RUNS=128 scripts/stdlib-executor-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_executor fuzz/corpus/stdlib_executor -- -runs=0 -max_len=4096"
+  },
+  "invariants": {
+    "worker_limit_is_closed": true,
+    "admission_is_bounded": true,
+    "fifo_and_round_robin_are_deterministic": true,
+    "saturation_retains_payload": true,
+    "terminal_consumers_are_exhaustive": true,
+    "actor_is_single_message_and_fifo": true,
+    "cleanup_is_exactly_once": true,
+    "race_transitions_fail_closed": true,
+    "bounded_input_and_steps": true,
+    "fuzz_replay_is_identical": true,
+    "real_worker_stress_is_bounded": true
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "remaining": [
+      "STD-EXEC-PERF-001",
+      "STD-EXEC-CONF-001",
+      "STD-EXEC-DOC-001"
+    ],
+    "native_runtime": "implementation-boundary-unchanged"
+  }
+}

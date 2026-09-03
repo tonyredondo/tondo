@@ -18023,7 +18023,7 @@ mod tests {
     use std::hint::black_box;
     use std::sync::{Arc, Condvar, Mutex, mpsc};
     use std::thread;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use crate::bytecode::{
         BytecodeAggregateKind, BytecodeAwaitable, BytecodeBinaryOperator, BytecodeBlock,
@@ -18046,24 +18046,24 @@ mod tests {
     };
 
     use super::{
-        AggregatePayload, BlockingBridgeState, BlockingCompletion, BlockingExecutionBridge,
-        BlockingWorkerHost, CallContinuation, DeferredOperation, DeferredValue, DiagnosticConfig,
-        DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine,
-        Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter, OnceContinuation,
-        OnceResolution, OneShotCompletion, OneShotState, OperationResult, PanicCode,
-        PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeActorState,
-        RuntimeActorTermination, RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild,
-        RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
-        RuntimeOnceState, RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm,
-        RuntimeSelectRegion, RuntimeSelectReservation, RuntimeTaskScope, RuntimeType,
-        RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait,
-        Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame,
-        VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
-        collection_length_fits_int, convert_numeric, execute, execute_with_diagnostics,
-        group_handle, initial_value, integer_bounds, integer_shape, next_unicode_scalar,
-        once_handle, operand_materialized_slot, operation_access_place, paths_overlap, present,
-        queue_object_equality, queue_payload_equality, runtime_host_kind, set_field, set_index,
-        slice_indices, snapshot_value, take_field, take_index, take_option,
+        AggregatePayload, BlockingAdmission, BlockingBridgeState, BlockingCompletion,
+        BlockingExecutionBridge, BlockingWorkerHost, CallContinuation, DeferredOperation,
+        DeferredValue, DiagnosticConfig, DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource,
+        DiagnosticThreadState, Engine, Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter,
+        OnceContinuation, OnceResolution, OneShotCompletion, OneShotState, OperationResult,
+        PanicCode, PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath,
+        RuntimeActorState, RuntimeActorTermination, RuntimeCleanup, RuntimeDefer, RuntimeFallback,
+        RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind,
+        RuntimeJoin, RuntimeLoan, RuntimeOnceState, RuntimePoolLifecycle, RuntimePoolState,
+        RuntimeSelectArm, RuntimeSelectRegion, RuntimeSelectReservation, RuntimeTaskScope,
+        RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion, TaskRecord,
+        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome,
+        VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field,
+        clone_index, clone_present, collection_length_fits_int, convert_numeric, execute,
+        execute_with_diagnostics, group_handle, initial_value, integer_bounds, integer_shape,
+        next_unicode_scalar, once_handle, operand_materialized_slot, operation_access_place,
+        paths_overlap, present, queue_object_equality, queue_payload_equality, runtime_host_kind,
+        set_field, set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -21232,6 +21232,331 @@ mod tests {
                 .lifecycle,
             RuntimePoolLifecycle::Closed
         );
+    }
+
+    #[test]
+    fn blocking_bridge_admission_and_terminal_transitions_are_bounded() {
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 1,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let host_wake = Arc::new(Condvar::new());
+        let (_sender, receiver) = mpsc::channel();
+        let bridge = BlockingExecutionBridge {
+            state: Arc::clone(&state),
+            host_wake: Arc::clone(&host_wake),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        };
+
+        assert!(!bridge.can_admit().unwrap());
+        assert_eq!(
+            bridge
+                .submit(BytecodeFunctionId::new(2), Vec::new())
+                .unwrap(),
+            BlockingAdmission::Pending
+        );
+        state.0.lock().unwrap().active = 0;
+        let first = match bridge
+            .submit(BytecodeFunctionId::new(2), Vec::new())
+            .unwrap()
+        {
+            BlockingAdmission::Accepted(id) => id,
+            admission => panic!("expected an accepted job, got {admission:?}"),
+        };
+        assert_eq!(
+            bridge
+                .submit(BytecodeFunctionId::new(2), Vec::new())
+                .unwrap(),
+            BlockingAdmission::Pending
+        );
+        assert!(!bridge.can_admit().unwrap());
+        bridge.cancel_job(first + 99).unwrap();
+        bridge.cancel_job(first).unwrap();
+        assert!(matches!(
+            bridge.poll(first).unwrap(),
+            Some(BlockingCompletion::Cancelled)
+        ));
+        assert!(bridge.poll(first).unwrap().is_none());
+
+        let second = match bridge
+            .submit(BytecodeFunctionId::new(2), Vec::new())
+            .unwrap()
+        {
+            BlockingAdmission::Accepted(id) => id,
+            admission => panic!("expected a second accepted job, got {admission:?}"),
+        };
+        bridge.cancel().unwrap();
+        assert_eq!(bridge.lifecycle().unwrap(), RuntimePoolLifecycle::Cancelled);
+        assert!(matches!(
+            bridge.poll(second).unwrap(),
+            Some(BlockingCompletion::Cancelled)
+        ));
+        assert_eq!(
+            bridge
+                .submit(BytecodeFunctionId::new(2), Vec::new())
+                .unwrap(),
+            BlockingAdmission::Cancelled
+        );
+        bridge.cancel().unwrap();
+
+        let closed_state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 2,
+                capacity: 0,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (_sender, receiver) = mpsc::channel();
+        let closed_bridge = BlockingExecutionBridge {
+            state: Arc::clone(&closed_state),
+            host_wake: Arc::new(Condvar::new()),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        };
+        assert!(closed_bridge.can_admit().unwrap());
+        closed_bridge.shutdown().unwrap();
+        assert_eq!(
+            closed_bridge.lifecycle().unwrap(),
+            RuntimePoolLifecycle::Closed
+        );
+        assert_eq!(
+            closed_bridge
+                .submit(BytecodeFunctionId::new(2), Vec::new())
+                .unwrap(),
+            BlockingAdmission::Closed
+        );
+
+        let overflow_state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: u64::MAX,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (_sender, receiver) = mpsc::channel();
+        let overflow_bridge = BlockingExecutionBridge {
+            state: overflow_state,
+            host_wake: Arc::new(Condvar::new()),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        };
+        assert!(matches!(
+            overflow_bridge
+                .submit(BytecodeFunctionId::new(2), Vec::new())
+                .unwrap_err(),
+            VmError::ResourceLimit {
+                resource: "blocking executor jobs",
+                limit: u64::MAX
+            }
+        ));
+    }
+
+    #[test]
+    fn blocking_bridge_reports_worker_failures_and_cancelled_exit() {
+        let (program, _) = executor_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let bridge = BlockingExecutionBridge::new(
+            &program,
+            &trace,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            1,
+            1,
+        )
+        .unwrap();
+        let job = match bridge
+            .submit(BytecodeFunctionId::new(999), Vec::new())
+            .unwrap()
+        {
+            BlockingAdmission::Accepted(id) => id,
+            admission => panic!("expected an accepted invalid job, got {admission:?}"),
+        };
+        bridge.wait().unwrap();
+        let completion = bridge.poll(job).unwrap();
+        assert!(
+            matches!(
+                &completion,
+                Some(BlockingCompletion::Failed(VmError::InvalidEntry(message)))
+                    if message.contains("blocking job function is invalid")
+            ),
+            "unexpected worker completion: {completion:?}"
+        );
+        bridge.shutdown().unwrap();
+        assert_eq!(bridge.lifecycle().unwrap(), RuntimePoolLifecycle::Closed);
+
+        let cancelled_state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Cancelled,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (host_sender, host_receiver) = mpsc::channel();
+        drop(host_receiver);
+        let worker = thread::spawn({
+            let state = Arc::clone(&cancelled_state);
+            let host_wake = Arc::new(Condvar::new());
+            move || {
+                super::blocking_worker_loop(
+                    0,
+                    state,
+                    Arc::new(program),
+                    Arc::new(trace),
+                    pressure_limits(),
+                    ValueCopyStrategy::default(),
+                    host_sender,
+                    host_wake,
+                );
+            }
+        });
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn blocking_bridge_stress_drains_bounded_fifo_admission() {
+        let (program, _) = executor_program();
+        let trace =
+            derive_trace_metadata(&program).expect("executor test program has valid traces");
+        let bridge = BlockingExecutionBridge::new(
+            &program,
+            &trace,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            4,
+            32,
+        )
+        .expect("bounded stress bridge should start workers");
+        let mut jobs = Vec::new();
+        for _ in 0..32 {
+            jobs.push(
+                match bridge
+                    .submit(BytecodeFunctionId::new(2), Vec::new())
+                    .expect("stress admission should lock the bridge")
+                {
+                    BlockingAdmission::Accepted(id) => id,
+                    admission => panic!("expected stress admission, got {admission:?}"),
+                },
+            );
+        }
+        assert_eq!(jobs, (1..=32).collect::<Vec<_>>());
+
+        let mut completions = BTreeMap::new();
+        while completions.len() < jobs.len() {
+            bridge
+                .wait()
+                .expect("stress completion should wake the owner");
+            for id in &jobs {
+                if let Some(completion) = bridge.poll(*id).expect("stress poll should lock bridge")
+                {
+                    assert!(
+                        completions.insert(*id, completion).is_none(),
+                        "a stress job completed more than once"
+                    );
+                }
+            }
+            thread::yield_now();
+        }
+        assert!(completions.values().all(|completion| matches!(
+            completion,
+            BlockingCompletion::Returned(RuntimeValue::ResultOk(value))
+                if **value == RuntimeValue::Integer(42)
+        )));
+        bridge
+            .shutdown()
+            .expect("stress bridge should drain gracefully");
+        assert_eq!(bridge.lifecycle().unwrap(), RuntimePoolLifecycle::Closed);
+    }
+
+    #[test]
+    fn blocking_worker_host_handles_closed_cancelled_and_disconnected_replies() {
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (_sender, receiver) = mpsc::channel();
+        let mut closed_host = BlockingWorkerHost {
+            worker: 0,
+            sender: _sender,
+            state: Arc::clone(&state),
+            wake: Arc::new(Condvar::new()),
+        };
+        drop(receiver);
+        assert!(matches!(
+            closed_host.invoke("closed", &[]),
+            Err(VmError::Host(message)) if message.contains("adapter is closed")
+        ));
+
+        let (sender, receiver) = mpsc::channel();
+        let cancellation_state = Arc::clone(&state);
+        let cancellation_wake = Arc::new(Condvar::new());
+        let cancellation_thread = thread::spawn(move || {
+            let mut host = BlockingWorkerHost {
+                worker: 1,
+                sender,
+                state: cancellation_state,
+                wake: cancellation_wake,
+            };
+            host.invoke("cancelled", &[])
+        });
+        let _request = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        state.0.lock().unwrap().lifecycle = RuntimePoolLifecycle::Cancelling;
+        cancellation_thread.join().unwrap().unwrap_err();
+        state.0.lock().unwrap().lifecycle = RuntimePoolLifecycle::Open;
+
+        let (sender, receiver) = mpsc::channel();
+        let disconnected_state = Arc::clone(&state);
+        let disconnected_thread = thread::spawn(move || {
+            let mut host = BlockingWorkerHost {
+                worker: 2,
+                sender,
+                state: disconnected_state,
+                wake: Arc::new(Condvar::new()),
+            };
+            host.invoke("disconnected", &[])
+        });
+        let request = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        drop(request.reply);
+        assert!(matches!(
+            disconnected_thread.join().unwrap(),
+            Err(VmError::Host(message)) if message.contains("did not receive a response")
+        ));
     }
 
     fn executor_metadata(
@@ -25370,15 +25695,15 @@ mod tests {
                 self.polls += 1;
                 Ok((call == 7 && self.polls == 2).then_some(RuntimeValue::Integer(42)))
             }
-
-            fn wait_async(&mut self, _calls: &[u64]) -> Result<(u64, RuntimeValue), VmError> {
-                panic!("the delayed completion must be observed by the second poll")
-            }
         }
 
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = DelayedHost::default();
+        assert!(matches!(
+            host.invoke("unsupported", &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "unsupported"
+        ));
         {
             let mut engine = Engine::new(
                 &program,

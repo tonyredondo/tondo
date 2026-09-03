@@ -75,7 +75,7 @@ jq -n \
       regressions:["crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"],
       resolved_decisions:["Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"],
       open_decisions:[],
-      remaining:["STD-EXEC-TEST-001","STD-EXEC-PERF-001","STD-EXEC-CONF-001","STD-EXEC-DOC-001"],
+      remaining:["STD-EXEC-PERF-001","STD-EXEC-CONF-001","STD-EXEC-DOC-001"],
       divergences:[]
     }' >"$evidence_dir/stdlib-executor-implementation.json"
 

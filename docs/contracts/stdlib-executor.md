@@ -62,6 +62,25 @@ ejecuta callbacks ni define todavía el lowering AOT de callables. No se
 promociona API pública ni ABI de layout y `public_api_promoted` permanece
 `false`.
 
+## Hardening observable (`STD-EXEC-TEST-001`)
+
+The testing owner is recorded in
+[`testing/stdlib-executor-test.json`](../../testing/stdlib-executor-test.json).
+Its independent bounded model covers worker limits, FIFO admission, deterministic
+round-robin assignment, backpressure, graceful shutdown, cancellation, duplicate
+completion races, declared errors, panics, actor mailbox serialization, dead
+actors, and exact payload cleanup. The model consumes at most 8 workers, 16 queue
+slots, 64 jobs or actor messages, 4 KiB of fuzz input, and 1,024 transitions per
+replay; the 4,096-seed campaign must produce the same snapshot on two replays.
+
+The hosted VM adds a real-worker stress case with four workers and 32 admitted
+jobs. It asserts sequential admission identifiers, one result envelope per job,
+and `Closed` only after graceful drain. The nightly fuzz smoke uses the same
+bounded state machine and corpus, and fails on a panic, an invariant violation,
+non-terminal work, or a replay divergence. These tests harden the observed hosted
+bridge and do not promote a public executor API, native callable lowering, or a
+native layout ABI.
+
 ## Superficie pública
 
 ```tondo
