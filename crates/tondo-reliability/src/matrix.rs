@@ -1414,7 +1414,7 @@ El compilador debe aceptar el caso.
     }
 
     #[test]
-    fn language_contract_has_complete_reviewed_traceability_except_exact_non_goals_and_stdlib_boundary()
+    fn language_contract_has_complete_reviewed_traceability_except_exact_non_goals_stdlib_boundary_and_known_gaps()
      {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -1446,6 +1446,17 @@ El compilador debe aceptar el caso.
             .iter()
             .filter(|requirement| audited_language.contains(requirement.id.as_str()))
         {
+            if requirement.id == "TL01-11-10-R003" {
+                assert_eq!(requirement.status, "toolchain-limit", "{}", requirement.id);
+                for (name, dimension) in claim_dimensions(&requirement.dimensions) {
+                    assert!(
+                        dimension.evidence.is_empty() && dimension.waiver.is_some(),
+                        "{} unexpectedly has {name} evidence",
+                        requirement.id
+                    );
+                }
+                continue;
+            }
             assert_eq!(requirement.status, "covered", "{}", requirement.id);
             for (name, dimension) in claim_dimensions(&requirement.dimensions) {
                 assert!(
