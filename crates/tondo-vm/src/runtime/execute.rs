@@ -21167,7 +21167,8 @@ mod tests {
     #[test]
     fn blocking_bridge_shutdown_keeps_idle_workers_until_active_jobs_drain() {
         let (program, _) = executor_program();
-        let trace = derive_trace_metadata(&program).expect("executor test program has valid traces");
+        let trace =
+            derive_trace_metadata(&program).expect("executor test program has valid traces");
         let state = Arc::new((
             Mutex::new(BlockingBridgeState {
                 lifecycle: RuntimePoolLifecycle::ShuttingDown,
@@ -21213,13 +21214,13 @@ mod tests {
 
         {
             let (lock, wake) = &*state;
-            let mut guard = lock
-                .lock()
-                .expect("blocking state should not be poisoned");
+            let mut guard = lock.lock().expect("blocking state should not be poisoned");
             guard.active = 0;
             wake.notify_all();
         }
-        worker.join().expect("idle worker should exit after the drain");
+        worker
+            .join()
+            .expect("idle worker should exit after the drain");
         assert_eq!(
             state
                 .0
