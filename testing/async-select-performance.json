@@ -8,7 +8,7 @@
   "probe": {
     "path": "crates/tondo-vm/src/runtime/execute.rs",
     "test": "runtime::execute::tests::select_performance_probe",
-      "sha256": "f191ce3ea569dcd1eae71d7795bdb1550870e32bbc1b43c1ad1f824ead723133"
+      "sha256": "22c4b331b7d3f4c692fc998339a6d8dc8f76f055d75434ed93f033aed7dcf313"
   },
   "protocol": {
     "clock": "monotonic",
