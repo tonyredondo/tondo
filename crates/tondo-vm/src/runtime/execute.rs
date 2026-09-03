@@ -3096,6 +3096,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                 return self.finish_root_task().map(Some);
             }
             self.poll_host_calls()?;
+            if !self.runnable.is_empty() {
+                continue;
+            }
             let calls = self.pending_host_calls();
             if calls.is_empty() {
                 self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::Begin)?;
@@ -25345,6 +25348,70 @@ mod tests {
             assert_eq!(engine.current_task, 0);
         }
         assert_eq!(host.polls, 1);
+    }
+
+    #[test]
+    fn late_host_completion_is_scheduled_before_quiescence() {
+        #[derive(Default)]
+        struct DelayedHost {
+            polls: usize,
+        }
+
+        impl VmHost for DelayedHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+
+            fn poll_async(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
+                self.polls += 1;
+                Ok((call == 7 && self.polls == 2).then_some(RuntimeValue::Integer(42)))
+            }
+
+            fn wait_async(&mut self, _calls: &[u64]) -> Result<(u64, RuntimeValue), VmError> {
+                panic!("the delayed completion must be observed by the second poll")
+            }
+        }
+
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = DelayedHost::default();
+        {
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                VmLimits::default(),
+                ValueCopyStrategy::default(),
+                trace,
+            );
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::Scope)));
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::HostCall {
+                    call: 7,
+                    outcome: BytecodeTypeId::new(5),
+                    destination: BytecodePlace {
+                        slot: BytecodeSlotId::new(0),
+                        ty: BytecodeTypeId::new(5),
+                        projections: Vec::new(),
+                        source_loan: None,
+                    },
+                    target: BytecodeBlockId::new(0),
+                    unwind: BytecodeBlockId::new(0),
+                    completion: None,
+                })));
+
+            assert!(engine.schedule_next().unwrap().is_none());
+            assert_eq!(engine.current_task, 1);
+            assert!(matches!(engine.tasks[1].status, TaskStatus::Running));
+            assert!(engine.runnable.is_empty());
+        }
+        assert_eq!(host.polls, 2);
     }
 
     #[test]
