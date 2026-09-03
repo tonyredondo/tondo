@@ -28,6 +28,12 @@ expect_failure aot-claimed \
     env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/aot-claimed.json" \
     scripts/stdlib-executor-implementation-check.sh
 
+jq '.implementation.observed.selectable_actor_send = "not-claimed"' testing/stdlib-executor.json \
+    >"$tmp_dir/selectable-not-claimed.json"
+expect_failure selectable-not-claimed \
+    env TONDO_STDLIB_EXECUTOR_CONTRACT="$tmp_dir/selectable-not-claimed.json" \
+    scripts/stdlib-executor-implementation-check.sh
+
 jq '.implementation.observed.resolved_decision = ""' testing/stdlib-executor.json \
     >"$tmp_dir/missing-decision.json"
 expect_failure missing-decision \

@@ -2899,8 +2899,11 @@ La observación no reclama runtime nativo ni lowering native AOT: el bridge de
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de
 identidad no consumidora y ejecuta handlers cooperativos con mailbox FIFO,
 estado mutable conservado y propagación terminal de `E` por `Actor.stop`.
-La ruta transaccional de `ActorRef.send` como brazo `selectable`, los workers
-host y el lowering native AOT siguen pendientes.
+También verifica `ActorRef.send` como operación `selectable` transaccional:
+`prepare` no muta ni consume el mensaje, un único `commit` lo linealiza en la
+mailbox y `rollback` desregistra el waiter conservando el payload afín para el
+perdedor o `else`. Esta observación es hosted y no promociona los workers host
+ni el lowering native AOT, que siguen pendientes.
 
 #### 14.4.6 Networking
 

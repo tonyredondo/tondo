@@ -3159,6 +3159,30 @@ impl<'a> FunctionBuilder<'a> {
         outcome: TypeId,
         block: MirBlockId,
     ) -> Result<Option<(MirBlockId, MirOperation)>, MirError> {
+        self.lower_call_operation_with_mode(
+            callee,
+            arguments,
+            signature,
+            protocol,
+            unsafe_call,
+            outcome,
+            false,
+            block,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_call_operation_with_mode(
+        &mut self,
+        callee: HirExpressionId,
+        arguments: &[crate::hir::HirCallArgument],
+        signature: TypeId,
+        protocol: HirCallProtocol,
+        unsafe_call: bool,
+        outcome: TypeId,
+        preserve_place_moves: bool,
+        block: MirBlockId,
+    ) -> Result<Option<(MirBlockId, MirOperation)>, MirError> {
         let span = self.expression(callee)?.span();
         let Some((mut current, callee)) = self.lower_callee(callee, protocol, block)? else {
             return Ok(None);
@@ -3167,7 +3191,20 @@ impl<'a> FunctionBuilder<'a> {
         let mut lowered = Vec::with_capacity(arguments.len());
         for argument in arguments {
             let result = if argument.mode() == crate::types::ParameterMode::Value {
-                self.lower_value(argument.value(), current)?
+                if preserve_place_moves
+                    && self.expression(argument.value())?.category() == HirValueCategory::Place
+                {
+                    let Some((next, place)) = self.lower_place(argument.value(), current)? else {
+                        self.active_loans.truncate(loan_depth);
+                        return Ok(None);
+                    };
+                    Some((
+                        next,
+                        self.transfer_place(place, self.expression(argument.value())?.span())?,
+                    ))
+                } else {
+                    self.lower_value(argument.value(), current)?
+                }
             } else {
                 self.lower_loan_value(argument.value(), argument.mode(), current)?
             };
@@ -4637,6 +4674,7 @@ impl<'a> FunctionBuilder<'a> {
             let operation = self.expression(piece.operation())?.clone();
             let (inner_id, _wrappers) = self.select_registration(piece.operation())?;
             let inner = self.expression(inner_id)?.clone();
+            let preserves_moves = self.select_preserves_moves(inner_id)?;
             enum EitherRegistration {
                 Call(MirOperation),
                 Join(MirPlace),
@@ -4649,21 +4687,28 @@ impl<'a> FunctionBuilder<'a> {
                     protocol,
                     unsafe_call,
                 } => {
-                    let Some((next, registered)) = self.lower_call_operation(
+                    let Some((next, registered)) = self.lower_call_operation_with_mode(
                         *callee,
                         arguments,
                         *signature,
                         *protocol,
                         *unsafe_call,
                         inner.ty(),
+                        preserves_moves,
                         current,
                     )?
                     else {
                         return Ok(None);
                     };
                     current = next;
-                    for place in operation_move_places(&registered) {
-                        self.push_statement(current, span, MirStatementKind::DisarmCleanup(place))?;
+                    if !preserves_moves {
+                        for place in operation_move_places(&registered) {
+                            self.push_statement(
+                                current,
+                                span,
+                                MirStatementKind::DisarmCleanup(place),
+                            )?;
+                        }
                     }
                     EitherRegistration::Call(registered)
                 }
@@ -4833,6 +4878,24 @@ impl<'a> FunctionBuilder<'a> {
             current = value;
         }
         Ok((current, wrappers))
+    }
+
+    fn select_preserves_moves(&self, expression: HirExpressionId) -> Result<bool, MirError> {
+        let expression = self.expression(expression)?;
+        let callee = match expression.kind() {
+            HirExpressionKind::Call { callee, .. }
+            | HirExpressionKind::AsyncCall { callee, .. } => *callee,
+            _ => return Ok(false),
+        };
+        let host = match self.expression(callee)?.kind() {
+            HirExpressionKind::Function(HirCallableId::Host(function))
+            | HirExpressionKind::SpecializedFunction {
+                callable: HirCallableId::Host(function),
+                ..
+            } => *function,
+            _ => return Ok(false),
+        };
+        Ok(host == HirBootstrapHostFunction::ExecutorActorSend)
     }
 
     fn lower_propagate_option(

@@ -420,6 +420,7 @@ struct Analyzer<'a, 'f> {
     continue_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
     structured_scope_depth: u32,
     structured_scopes: Vec<HirExpressionId>,
+    preserve_select_moves: bool,
     findings: &'f mut BTreeSet<AvailabilityFinding>,
 }
 
@@ -454,6 +455,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             continue_liveness: BTreeMap::new(),
             structured_scope_depth: 0,
             structured_scopes: Vec::new(),
+            preserve_select_moves: false,
             findings,
         }
     }
@@ -796,7 +798,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     .map(|state| state.loans.keys().copied().collect::<BTreeSet<_>>())
                     .unwrap_or_default();
                 for (argument, live_after) in arguments.iter().zip(&argument_live_after) {
-                    let demand = if argument.mode() == ParameterMode::Value {
+                    let preserve_move = self.preserve_select_moves
+                        && host_function == Some(HirBootstrapHostFunction::ExecutorActorSend);
+                    let demand = if argument.mode() == ParameterMode::Value && !preserve_move {
                         Demand::Transfer
                     } else {
                         Demand::Observe
@@ -1429,6 +1433,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let mut accumulated = AvailabilityFlow::default();
         let mut current = state;
         let mut join_owners = Vec::with_capacity(arms.len());
+        let mut actor_send_arms = Vec::with_capacity(arms.len());
         for piece in arms {
             // Registration must not consume a pending `Join`: descend past
             // propagate wrappers and observe the operand instead of letting
@@ -1449,27 +1454,33 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 let Some(next) = next else { break };
                 root = next;
             }
-            let mut operation_flow = match self
+            let actor_send = self.select_preserves_moves(root);
+            let previous_preserve = self.preserve_select_moves;
+            self.preserve_select_moves = actor_send;
+            let operation_flow = match self
                 .program
                 .expression(root)
                 .map(super::HirExpression::kind)
             {
                 Some(HirExpressionKind::Await { operation }) => {
-                    self.expression(*operation, current, Demand::Observe, &BTreeSet::new())?
+                    self.expression(*operation, current, Demand::Observe, &BTreeSet::new())
                 }
                 _ => self.expression(
                     piece.operation(),
                     current,
                     Demand::Observe,
                     &BTreeSet::new(),
-                )?,
+                ),
             };
+            self.preserve_select_moves = previous_preserve;
+            let mut operation_flow = operation_flow?;
             let Some(next) = operation_flow.normal.take() else {
                 accumulated.merge(operation_flow);
                 return Ok(accumulated);
             };
             accumulated.merge(operation_flow);
             current = next;
+            actor_send_arms.push(actor_send);
             join_owners.push(
                 match self
                     .program
@@ -1481,7 +1492,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 },
             );
         }
-        for (piece, join_owner) in arms.iter().zip(join_owners) {
+        for ((piece, join_owner), actor_send) in arms.iter().zip(join_owners).zip(actor_send_arms) {
             let branch_entry = if let Some(join_owner) = join_owner {
                 let transfer_flow = self.expression(
                     join_owner,
@@ -1489,6 +1500,24 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     Demand::Transfer,
                     &BTreeSet::new(),
                 )?;
+                match transfer_flow.normal {
+                    Some(transfer) => transfer,
+                    None => {
+                        accumulated.merge(transfer_flow);
+                        continue;
+                    }
+                }
+            } else if actor_send {
+                let previous_preserve = self.preserve_select_moves;
+                self.preserve_select_moves = false;
+                let transfer_flow = self.expression(
+                    piece.operation(),
+                    current.clone(),
+                    Demand::Transfer,
+                    &BTreeSet::new(),
+                );
+                self.preserve_select_moves = previous_preserve;
+                let transfer_flow = transfer_flow?;
                 match transfer_flow.normal {
                     Some(transfer) => transfer,
                     None => {
@@ -3736,6 +3765,24 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 ..
             } => Some(*function),
             _ => None,
+        }
+    }
+
+    fn select_preserves_moves(&self, expression: HirExpressionId) -> bool {
+        let Some(expression) = self.program.expression(expression) else {
+            return false;
+        };
+        match expression.kind() {
+            HirExpressionKind::Call { callee, .. }
+            | HirExpressionKind::AsyncCall { callee, .. } => {
+                self.host_function(*callee) == Some(HirBootstrapHostFunction::ExecutorActorSend)
+            }
+            HirExpressionKind::PropagateOption { value }
+            | HirExpressionKind::PropagateResult { value, .. } => {
+                self.select_preserves_moves(*value)
+            }
+            HirExpressionKind::Await { operation } => self.select_preserves_moves(*operation),
+            _ => false,
         }
     }
 

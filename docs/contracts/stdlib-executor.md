@@ -38,8 +38,12 @@ mutable al retorno normal y hace terminal al actor cuando el handler devuelve
 espera su drain. `Actor.ref(ref self)` es la operación explícita y no
 consumidora que proyecta ese owner a un `ActorRef[M]`; conserva únicamente la
 identidad del actor, no copia estado ni mailbox, y no introduce una conversión
-implícita. La ruta transaccional de `ActorRef.send` como brazo `selectable`
-queda fuera de esta observación y no se reclama como ejecutable.
+implícita. La VM hosted también verifica la ruta transaccional de
+`ActorRef.send` como brazo `selectable`: `prepare` observa el mensaje sin
+mutarlo, `commit` linealiza una sola admisión en la mailbox y `rollback`
+desregistra el waiter sin consumir el payload. La misma regla se aplica a un
+`fs.File` afín y a un brazo `else`; el runtime nativo/AOT y los workers host no
+se promocionan por esta observación.
 
 `blockingPool` devuelve `ExecutorError.CapabilityMissing` en la VM hosted
 actual: el bridge de workers host queda reservado para `STD-EXEC-HOST-001` y
@@ -145,9 +149,12 @@ no crea un executor ni un task detached.
 `Actor.ref(ref self)` lo obtiene mediante un préstamo compartido no consumidor;
 copiar el handle no copia estado ni mailbox. `send` aplica backpressure y es
 `selectable`; `trySend` es inmediato. En un brazo perdedor de `select` no se
-mueve el mensaje. Un error de envío devuelve el mensaje en la variante
-correspondiente (`Saturated`, `Closed`, `Cancelled`, `Terminated` o
-`ResourceLimit`).
+mueve el mensaje: el registro conserva una reserva del payload, el único brazo
+ganador lo mueve al commit y la selección `else`, la cancelación o un perdedor
+desregistran el waiter y dejan el valor en el binding del caller. Un error de
+envío devuelve el mensaje en la variante correspondiente (`Saturated`, `Closed`,
+`Cancelled`, `Terminated` o `ResourceLimit`). Esta garantía está observada en
+la VM hosted cooperativa; no afirma una implementación equivalente en AOT.
 
 El actor es afín y debe terminarse con `stop`. `stop` cierra la mailbox,
 solicita cancelación cooperativa, drena el cleanup y espera la finalización del
@@ -219,9 +226,9 @@ callbacks de completion, prioridades públicas, work-stealing observable,
 `submitAsync`, `runAsync`, `waitAsync`, conversión implícita a thread y
 fallback bloqueante dentro del scheduler cooperativo.
 
-La implementación completa queda pendiente de la ruta transaccional
-`selectable` de `ActorRef.send`, `STD-EXEC-HOST-001`, `STD-EXEC-TEST-001`,
-`STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
+La implementación completa queda pendiente de `STD-EXEC-HOST-001`,
+`STD-EXEC-TEST-001`, `STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y
+`STD-EXEC-DOC-001`. Los contratos runtime-facing de `std.executor`, `std.net`
 y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
 se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y
 sus leaves siguen la compuerta nativa.

@@ -4,7 +4,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "fa2297d5c434287f25d81666ea5495fc13f0846d522f22c0f94311b821aff33c"
+      "sha256": "a224356e50508c17c2ca833bbe94e56f1e3852245ad9908aac7559865ab14e16"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -1480,8 +1480,8 @@
     },
     {
       "requirements": [
-        "TL01-11-10-R005",
-        "TL01-11-10-R006"
+        "TL01-11-10-R006",
+        "TL01-11-10-R007"
       ],
       "dimensions": {
         "positive": {

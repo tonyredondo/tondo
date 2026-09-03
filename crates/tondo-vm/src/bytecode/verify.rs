@@ -2518,13 +2518,15 @@ impl Verifier<'_> {
             )
         });
         let moves_capture = function.blocks.iter().any(|block| {
-            local_events(function, block).into_iter().any(|event| {
-                matches!(
-                    event,
-                    LocalEvent::Move(access)
-                        if closure_capture_access(function, callable_id, &access)
-                )
-            })
+            local_events(self.program, function, block)
+                .into_iter()
+                .any(|event| {
+                    matches!(
+                        event,
+                        LocalEvent::Move(access)
+                            if closure_capture_access(function, callable_id, &access)
+                    )
+                })
         });
         let mut required_transfers = BTreeSet::new();
         let closure = callable
@@ -2588,7 +2590,7 @@ impl Verifier<'_> {
             if block.kind != BytecodeBlockKind::Normal {
                 continue;
             }
-            for event in local_events(function, block) {
+            for event in local_events(self.program, function, block) {
                 match event {
                     LocalEvent::Move(access) => {
                         if let Some(index) =
@@ -3457,7 +3459,7 @@ impl Verifier<'_> {
         let mut uses = vec![BTreeSet::<BytecodeSlotId>::new(); function.blocks.len()];
         let mut definitions = vec![BTreeSet::<BytecodeSlotId>::new(); function.blocks.len()];
         for (index, block) in function.blocks.iter().enumerate() {
-            for event in local_events(function, block) {
+            for event in local_events(self.program, function, block) {
                 match event {
                     LocalEvent::Read(access)
                     | LocalEvent::Resolve(access)
@@ -7020,7 +7022,7 @@ impl Verifier<'_> {
         let events = function
             .blocks
             .iter()
-            .map(|block| local_events(function, block))
+            .map(|block| local_events(self.program, function, block))
             .collect::<Vec<_>>();
         let successors = function
             .blocks
@@ -7314,7 +7316,7 @@ impl Verifier<'_> {
             queued[block_id.index() as usize] = false;
             let block = &function.blocks[block_id.index() as usize];
             let block_context = format!("{context} block#{}", block_id.index());
-            let block_events = local_events(function, block);
+            let block_events = local_events(self.program, function, block);
             let mut outgoing = BTreeSet::new();
             for mut state in incoming[block_id.index() as usize].clone() {
                 self.consume_dataflow_step(context)?;
@@ -7965,7 +7967,7 @@ impl Verifier<'_> {
         let events = function
             .blocks
             .iter()
-            .map(|block| bytecode_loan_events(function, block))
+            .map(|block| bytecode_loan_events(self.program, function, block))
             .collect::<Vec<_>>();
         let static_integers = static_integer_slots(self.program, function);
         let mut reservations = vec![0_u32; function.loans.len()];
@@ -9150,6 +9152,20 @@ impl Verifier<'_> {
                     &events[predecessor.index() as usize],
                     slot,
                 );
+                for access in
+                    select_actor_send_moves_on_edge(self.program, function, *predecessor, edge)
+                        .into_iter()
+                        .filter(|access| access.slot == slot)
+                {
+                    if !edge_state.live || !path_is_available(&edge_state.unavailable, &access.path)
+                    {
+                        return Err(BytecodeVerificationError::new(
+                            format!("{context} block#{}", predecessor.index()),
+                            unavailable_move_message(slot, &access.path),
+                        ));
+                    }
+                    move_path_unchecked(&mut edge_state.unavailable, access.path);
+                }
                 if let Some(write) = edge.writes.as_ref().filter(|place| place.slot == slot)
                     && edge_state.live
                 {
@@ -10294,6 +10310,42 @@ fn select_registration_moves_defer_guard(
     })
 }
 
+/// Select registration prepares an actor message without consuming it.  The
+/// message is consumed only on the commit edge of the winning arm; all other
+/// arms must retain the caller-owned value for rollback or `else` execution.
+fn select_actor_send_move_places(
+    program: &BytecodeProgram,
+    operation: &BytecodeOperation,
+) -> Vec<LocalAccess> {
+    let BytecodeOperationKind::Call {
+        callee, arguments, ..
+    } = &operation.kind
+    else {
+        return Vec::new();
+    };
+    let BytecodeOperandKind::Function { callable, .. } = callee.kind else {
+        return Vec::new();
+    };
+    let Some(callable) = program.callable(callable) else {
+        return Vec::new();
+    };
+    let name = callable
+        .name
+        .split_once('[')
+        .map_or(callable.name.as_str(), |(base, _)| base);
+    if name != "std.executor.ActorRef.send" {
+        return Vec::new();
+    }
+    arguments
+        .iter()
+        .filter(|argument| argument.mode == BytecodeParameterMode::Value)
+        .filter_map(|argument| match &argument.value.kind {
+            BytecodeOperandKind::Move(place) => Some(LocalAccess::from_place(place)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn preceding_store_copies_complete_sum_payload(
     block: &BytecodeBlock,
     instruction: usize,
@@ -10520,7 +10572,11 @@ fn operand_materialized_slot(
     }
 }
 
-fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<LoanEvent> {
+fn bytecode_loan_events(
+    program: &BytecodeProgram,
+    function: &BytecodeFunction,
+    block: &BytecodeBlock,
+) -> Vec<LoanEvent> {
     let mut events = Vec::new();
     for instruction in &block.instructions {
         match &instruction.kind {
@@ -10568,7 +10624,7 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
             BytecodeInstructionKind::RegisterSelectArm { registration, .. } => {
                 let mut local = Vec::new();
                 if let BytecodeSelectRegistration::Call(operation) = registration {
-                    push_operation_events(operation, &mut local);
+                    push_select_operation_events(program, operation, &mut local);
                 }
                 events.extend(local.into_iter().map(LoanEvent::Local));
                 if let BytecodeSelectRegistration::Call(operation) = registration
@@ -10694,6 +10750,7 @@ struct SuccessorEdge {
     target: BytecodeBlockId,
     refinement: Option<TagFact>,
     writes: Option<BytecodePlace>,
+    select_arm: Option<usize>,
 }
 
 fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
@@ -10701,6 +10758,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
         target,
         refinement: None,
         writes: None,
+        select_arm: None,
     };
     match terminator {
         BytecodeTerminatorKind::Goto { target } => vec![edge(*target)],
@@ -10726,6 +10784,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
                     target: *target,
                     refinement: place.clone().map(|place| TagFact { place, tag: *tag }),
                     writes: None,
+                    select_arm: None,
                 })
                 .chain(std::iter::once(SuccessorEdge {
                     target: *otherwise,
@@ -10734,6 +10793,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
                         .flatten()
                         .and_then(|tag| place.clone().map(|place| TagFact { place, tag })),
                     writes: None,
+                    select_arm: None,
                 }))
                 .collect()
         }
@@ -10748,6 +10808,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
                 target: *target,
                 refinement: None,
                 writes: destination.clone(),
+                select_arm: None,
             })
             .chain(std::iter::once(edge(*unwind)))
             .collect(),
@@ -10767,6 +10828,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
                 target: *target,
                 refinement: None,
                 writes: Some(destination.clone()),
+                select_arm: None,
             },
             edge(*unwind),
         ],
@@ -10781,6 +10843,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
                 target: *has_value,
                 refinement: None,
                 writes: Some(destination.clone()),
+                select_arm: None,
             },
             edge(*exhausted),
             edge(*unwind),
@@ -10797,15 +10860,21 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
             unwind,
         } => {
             let mut successors = Vec::new();
-            for arm in arms {
+            for (index, arm) in arms.iter().enumerate() {
                 if let Some(payload) = arm.payload() {
                     successors.push(SuccessorEdge {
                         target: arm.target(),
                         refinement: None,
                         writes: Some(payload.clone()),
+                        select_arm: Some(index),
                     });
                 } else {
-                    successors.push(edge(arm.target()));
+                    successors.push(SuccessorEdge {
+                        target: arm.target(),
+                        refinement: None,
+                        writes: None,
+                        select_arm: Some(index),
+                    });
                 }
             }
             for target in else_target.iter().copied() {
@@ -10818,6 +10887,40 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
         BytecodeTerminatorKind::Return
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => Vec::new(),
+    }
+}
+
+fn select_actor_send_moves_on_edge(
+    program: &BytecodeProgram,
+    function: &BytecodeFunction,
+    predecessor: BytecodeBlockId,
+    edge: &SuccessorEdge,
+) -> Vec<LocalAccess> {
+    let Some(index) = edge.select_arm else {
+        return Vec::new();
+    };
+    let Some(block) = function.blocks.get(predecessor.index() as usize) else {
+        return Vec::new();
+    };
+    if !matches!(
+        block.terminator.kind,
+        BytecodeTerminatorKind::CommitSelect { .. }
+    ) {
+        return Vec::new();
+    }
+    let registration = block
+        .instructions
+        .iter()
+        .filter_map(|instruction| match &instruction.kind {
+            BytecodeInstructionKind::RegisterSelectArm { registration, .. } => Some(registration),
+            _ => None,
+        })
+        .nth(index);
+    match registration {
+        Some(BytecodeSelectRegistration::Call(operation)) => {
+            select_actor_send_move_places(program, operation)
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -11543,7 +11646,11 @@ fn unavailable_move_message(slot: BytecodeSlotId, path: &[MovePathComponent]) ->
     }
 }
 
-fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<LocalEvent> {
+fn local_events(
+    program: &BytecodeProgram,
+    function: &BytecodeFunction,
+    block: &BytecodeBlock,
+) -> Vec<LocalEvent> {
     let mut events = Vec::new();
     for instruction in &block.instructions {
         match &instruction.kind {
@@ -11575,7 +11682,7 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             | BytecodeInstructionKind::BeginSelect { .. } => {}
             BytecodeInstructionKind::RegisterSelectArm { registration, .. } => match registration {
                 BytecodeSelectRegistration::Call(operation) => {
-                    push_operation_events(operation, &mut events);
+                    push_select_operation_events(program, operation, &mut events);
                 }
                 BytecodeSelectRegistration::Join(_) => {}
             },
@@ -12148,6 +12255,31 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
             for argument in arguments {
                 push_operand_events(argument, events);
             }
+        }
+    }
+}
+
+fn push_select_operation_events(
+    program: &BytecodeProgram,
+    operation: &BytecodeOperation,
+    events: &mut Vec<LocalEvent>,
+) {
+    let preserved_moves = select_actor_send_move_places(program, operation);
+    if preserved_moves.is_empty() {
+        push_operation_events(operation, events);
+        return;
+    }
+    for operand in operation_operands(operation) {
+        let is_preserved_move = matches!(&operand.kind, BytecodeOperandKind::Move(place)
+            if preserved_moves.contains(&LocalAccess::from_place(place)));
+        if is_preserved_move {
+            let BytecodeOperandKind::Move(place) = &operand.kind else {
+                unreachable!("the preserved move predicate only matches Move operands");
+            };
+            push_projection_index_events(place, events);
+            events.push(LocalEvent::Read(LocalAccess::from_place(place)));
+        } else {
+            push_operand_events(operand, events);
         }
     }
 }

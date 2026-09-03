@@ -62,12 +62,12 @@ jq -n \
       vm:{fixture:"tests/runtime/m11-std-executor-impl-001.to",fixture_sha256:("sha256:" + $fixture_sha256),exit:0,stdout:"executor-ok",status:"passed",log_sha256:("sha256:" + $vm_sha256)},
       hosted:{compiler_vm_check:"passed",log_sha256:("sha256:" + $check_sha256),pool_admission:true,pool_submit_backpressure:true,join_result_projection:true,pool_shutdown:true,pool_cancel_drain:true,actor_create:true,actor_ref_acquisition:true,actor_stop:true,actor_mailbox_handler:true},
       blocking_pool:{status:"capability-missing-until-host-gate",host_workers:false},
-      actor:{mailbox_handler_execution:true,actor_ref_acquisition:true,actor_ref_identity_preserved:true,handler_error_propagation:true,stop_waits_for_handler:true,selectable_send_linearization:"not-claimed"},
+      actor:{mailbox_handler_execution:true,actor_ref_acquisition:true,actor_ref_identity_preserved:true,handler_error_propagation:true,stop_waits_for_handler:true,selectable_send_linearization:"verified-hosted-transactional",selectable_send_prepare:"no-state-or-message-mutation",selectable_send_commit:"one-mailbox-linearization",selectable_send_rollback:"unregister-with-message-still-owned-by-sender"},
       public_boundary:{api_promoted:false,native_runtime:"not-claimed",native_aot_lowering:"not-claimed"},
       regressions:["crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"],
       resolved_decisions:["Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"],
       open_decisions:[],
-      remaining:["actor-select-send-linearization","STD-EXEC-HOST-001","STD-EXEC-TEST-001","STD-EXEC-PERF-001","STD-EXEC-CONF-001","STD-EXEC-DOC-001"],
+      remaining:["STD-EXEC-HOST-001","STD-EXEC-TEST-001","STD-EXEC-PERF-001","STD-EXEC-CONF-001","STD-EXEC-DOC-001"],
       divergences:[]
     }' >"$evidence_dir/stdlib-executor-implementation.json"
 

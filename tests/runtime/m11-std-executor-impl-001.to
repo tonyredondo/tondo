@@ -1,5 +1,7 @@
 import std.console
 import std.executor
+import std.fs
+import std.path
 import std.time
 
 fn compute(): Int ! Never suspends {
@@ -44,6 +46,11 @@ fn actor_slow(state: mut Int, message: Int): Unit ! String suspends {
     }
 }
 
+fn actor_select_file(state: mut Int, message: fs.File): Unit ! Never suspends {
+    let _ = message
+    state += 1
+}
+
 fn submit_pair(pool: ref executor.Pool): Unit ! Never suspends {
     scope {
         let first = match pool.submit(submit_blocked) {
@@ -68,7 +75,7 @@ fn cancel_pool_with_job(): Unit ! (executor.ExecutorError | executor.SubmitError
     }
 }
 
-fn main(): !(executor.ExecutorError | executor.SubmitError | time.ClockError | String) {
+fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendError[Int] | time.ClockError | fs.FsError | path.PathError | String) {
     match executor.blockingPool(1, 1) {
         ok(_) => assert(false)
         err(error) => match error {
@@ -197,6 +204,52 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | time.ClockError | S
         }
         blocked_actor.stop()?
         assert(await busy == 42)
+    }
+    scope {
+        let selected_actor = pool.actor(0, 1, actor_step)?
+        let selected_ref = selected_actor.ref()
+        let selected = select {
+            selected_ref.send(4) => true
+            else => false
+        }
+        assert(selected)
+        selected_actor.stop()?
+    }
+    scope {
+        let empty_actor = pool.actor(0, 0, actor_step)?
+        let empty_ref = empty_actor.ref()
+        let selected = select {
+            empty_ref.send(5) => false
+            else => true
+        }
+        assert(selected)
+        empty_actor.stop()?
+    }
+    scope {
+        let waiting_actor = pool.actor(0, 1, actor_slow)?
+        let waiting_ref = waiting_actor.ref()
+        waiting_ref.send(1)?
+        waiting_ref.send(2)?
+        let selected = select {
+            waiting_ref.send(3) => true
+        }
+        assert(selected)
+        waiting_actor.stop()?
+    }
+    scope {
+        let affine_actor = pool.actor(0, 0, actor_select_file)?
+        let affine_ref = affine_actor.ref()
+        let file_path = path.fromString("Cargo.toml")?
+        let message = fs.open(file_path, fs.OpenMode.Read())?
+        let selected = select {
+            affine_ref.send(message) => false
+            else => {
+                let _ = message
+                true
+            }
+        }
+        assert(selected)
+        affine_actor.stop()?
     }
     pool.shutdown()
     cancel_pool_with_job()?

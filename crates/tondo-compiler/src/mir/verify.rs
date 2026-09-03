@@ -563,6 +563,36 @@ fn select_registration_moves_defer_guard(
     })
 }
 
+/// Select registration prepares an actor message without consuming it.  The
+/// message is consumed only on the commit edge of the winning arm; all other
+/// arms must retain the caller-owned value for rollback or `else` execution.
+fn select_actor_send_move_places(operation: &MirOperation) -> Vec<LocalAccess> {
+    let MirOperationKind::Call {
+        callee, arguments, ..
+    } = operation.kind()
+    else {
+        return Vec::new();
+    };
+    let MirOperandKind::Function {
+        callable: HirCallableId::Host(function),
+        ..
+    } = callee.kind()
+    else {
+        return Vec::new();
+    };
+    if *function != HirBootstrapHostFunction::ExecutorActorSend {
+        return Vec::new();
+    }
+    arguments
+        .iter()
+        .filter(|argument| argument.mode() == ParameterMode::Value)
+        .filter_map(|argument| match argument.value().kind() {
+            MirOperandKind::Move(place) => Some(LocalAccess::from_place(place)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn preceding_assignment_copies_complete_sum_payload(
     block: &MirBasicBlock,
     statement: usize,
@@ -945,6 +975,7 @@ struct SuccessorEdge {
     target: MirBlockId,
     refinement: Option<TagFact>,
     writes: Option<MirPlace>,
+    select_arm: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7968,6 +7999,19 @@ impl Verifier<'_> {
                     &events[predecessor.0 as usize],
                     local,
                 );
+                for access in select_actor_send_moves_on_edge(function, *predecessor, edge)
+                    .into_iter()
+                    .filter(|access| access.local == local)
+                {
+                    if !edge_state.live || !path_is_available(&edge_state.unavailable, &access.path)
+                    {
+                        return Err(MirInvariantError::new(
+                            format!("{context} block#{}", predecessor.0),
+                            unavailable_move_message(local, &access.path),
+                        ));
+                    }
+                    move_path_unchecked(&mut edge_state.unavailable, access.path);
+                }
                 if let Some(write) = edge.writes.as_ref().filter(|place| place.local == local)
                     && edge_state.live
                 {
@@ -8241,7 +8285,7 @@ impl Verifier<'_> {
                 | MirStatementKind::BeginSelect { .. } => {}
                 MirStatementKind::RegisterSelectArm { registration, .. } => match registration {
                     MirSelectRegistration::Call(operation) => {
-                        push_operation_events(operation, &mut events);
+                        push_select_operation_events(operation, &mut events);
                     }
                     MirSelectRegistration::Join(place) => {
                         push_destination_reads(place, false, &mut events);
@@ -8590,7 +8634,7 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
                 let mut local = Vec::new();
                 match registration {
                     MirSelectRegistration::Call(operation) => {
-                        push_operation_events(operation, &mut local);
+                        push_select_operation_events(operation, &mut local);
                     }
                     MirSelectRegistration::Join(_) => {}
                 }
@@ -9069,6 +9113,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
         target,
         refinement: None,
         writes: None,
+        select_arm: None,
     };
     match terminator {
         MirTerminatorKind::Goto { target } => vec![edge(*target)],
@@ -9102,6 +9147,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
                     target: *target,
                     refinement: place.clone().map(|place| TagFact { place, tag: *tag }),
                     writes: None,
+                    select_arm: None,
                 })
                 .chain(std::iter::once(SuccessorEdge {
                     target: *otherwise,
@@ -9110,6 +9156,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
                         .flatten()
                         .and_then(|tag| place.clone().map(|place| TagFact { place, tag })),
                     writes: None,
+                    select_arm: None,
                 }))
                 .collect()
         }
@@ -9124,6 +9171,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
                 target: *target,
                 refinement: None,
                 writes: destination.clone(),
+                select_arm: None,
             })
             .chain(std::iter::once(edge(*unwind)))
             .collect(),
@@ -9143,6 +9191,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
                 target: *target,
                 refinement: None,
                 writes: Some(destination.clone()),
+                select_arm: None,
             },
             edge(*unwind),
         ],
@@ -9152,11 +9201,12 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
             unwind,
         } => {
             let mut successors = Vec::new();
-            for arm in arms {
+            for (index, arm) in arms.iter().enumerate() {
                 successors.push(SuccessorEdge {
                     target: arm.target(),
                     refinement: None,
                     writes: arm.payload().cloned(),
+                    select_arm: Some(index),
                 });
             }
             for target in else_target.iter().copied() {
@@ -9176,6 +9226,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
                 target: *has_value,
                 refinement: None,
                 writes: Some(destination.clone()),
+                select_arm: None,
             },
             edge(*exhausted),
             edge(*unwind),
@@ -9190,6 +9241,37 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
         MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => Vec::new(),
+    }
+}
+
+fn select_actor_send_moves_on_edge(
+    function: &MirFunction,
+    predecessor: MirBlockId,
+    edge: &SuccessorEdge,
+) -> Vec<LocalAccess> {
+    let Some(index) = edge.select_arm else {
+        return Vec::new();
+    };
+    let Some(block) = function.blocks.get(predecessor.0 as usize) else {
+        return Vec::new();
+    };
+    if !matches!(
+        block.terminator.kind,
+        MirTerminatorKind::CommitSelect { .. }
+    ) {
+        return Vec::new();
+    }
+    let registration = block
+        .statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            MirStatementKind::RegisterSelectArm { registration, .. } => Some(registration),
+            _ => None,
+        })
+        .nth(index);
+    match registration {
+        Some(MirSelectRegistration::Call(operation)) => select_actor_send_move_places(operation),
+        _ => Vec::new(),
     }
 }
 
@@ -9756,6 +9838,24 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
             if let Some(display) = display {
                 push_operand_events(display, events);
             }
+        }
+    }
+}
+
+fn push_select_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>) {
+    let preserved_moves = select_actor_send_move_places(operation);
+    if preserved_moves.is_empty() {
+        push_operation_events(operation, events);
+        return;
+    }
+    for operand in operation_operands(operation) {
+        if let MirOperandKind::Move(place) = operand.kind()
+            && preserved_moves.contains(&LocalAccess::from_place(place))
+        {
+            push_projection_index_events(place, events);
+            events.push(LocalEvent::Read(LocalAccess::from_place(place)));
+        } else {
+            push_operand_events(operand, events);
         }
     }
 }

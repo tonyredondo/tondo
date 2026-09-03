@@ -6846,10 +6846,12 @@ estas leaves.
   `STD-EXEC-IMPL-001` ya verifica en la VM hosted la admisión cooperativa,
   backpressure, `Join`, shutdown/cancel, la creación/stop de un actor,
   `Actor.ref` y la ejecución hosted de handlers con estado, FIFO, cancelación y
-  propagación de error; no reclama workers host, la ruta transaccional
-  `selectable` de `ActorRef.send` ni lowering native AOT. La operación queda
-  registrada como proyección explícita no consumidora en el contrato y la
-  evidencia hosted.
+  propagación de error. El leaf hosted de la ruta transaccional
+  `selectable` de `ActorRef.send` también queda verificado: prepare observa el
+  payload, commit hace una única linearización en mailbox y rollback conserva
+  el mensaje del caller y desregistra el waiter. El bloque no reclama workers
+  host ni lowering native AOT; la operación queda registrada como proyección
+  explícita no consumidora y como evidencia target-qualified de VM hosted.
 - [ ] **STD-EXEC-HOST-001 — Implementar workers host.** Enlazar pools y wakeups
   fijados por target, con límites, shutdown y revocación sin heredar ambiente ni
   bloquear el progreso cooperativo.

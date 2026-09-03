@@ -17,19 +17,18 @@ TONDO_STDLIB_EXECUTOR_CONTRACT="$contract" scripts/stdlib-executor-check.sh >/de
 jq -e '
   .implementation.observed.task == "STD-EXEC-IMPL-001"
   and .implementation.observed.status == "partial-hosted-cooperative-pool"
-  and .implementation.observed.hosted_vm == "verified-pool-admission-join-lifecycle-actor-ref-and-mailbox-handler"
+  and .implementation.observed.hosted_vm == "verified-pool-admission-join-lifecycle-actor-ref-mailbox-handler-and-selectable-actor-send"
   and .implementation.observed.native_runtime == "not-claimed"
   and .implementation.observed.native_aot_lowering == "not-claimed"
   and .implementation.observed.blocking_pool == "capability-missing-until-host-gate"
-  and .implementation.observed.actor == "mailbox-handler-state-error-and-stop"
-  and .implementation.observed.selectable_actor_send == "not-claimed"
+  and .implementation.observed.actor == "mailbox-handler-state-error-stop-and-selectable-send"
+  and .implementation.observed.selectable_actor_send == "verified-hosted-transactional"
   and .implementation.observed.public_api_promoted == false
   and .implementation.observed.fixture == {path:"tests/runtime/m11-std-executor-impl-001.to",stdout:"executor-ok",exit:0,status:"passed"}
   and .implementation.observed.evidence_report == "target/reliability/evidence/stdlib-executor-implementation.json"
   and .implementation.observed.resolved_decision == "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"
   and (.implementation.observed.open_decision // null) == null
   and .implementation.observed.remaining == [
-    "actor-select-send-linearization",
     "STD-EXEC-HOST-001",
     "STD-EXEC-TEST-001",
     "STD-EXEC-PERF-001",
@@ -91,7 +90,14 @@ for marker in \
     'executor_job_tasks' \
     'join_error_type' \
     'logical_join_value' \
-    'is_temporary_join_result'; do
+    'is_temporary_join_result' \
+    'RuntimeSelectReservation' \
+    'ActorSelectSend' \
+    'actor_select_send_ready' \
+    'select_actor_send_move_places' \
+    'selectable_actor_send_commit_consumes_message_once' \
+    'selectable_actor_send_rollback_unregisters_waiter_and_retains_message' \
+    'selectable_actor_send_waiter_wakes_only_after_capacity_opens'; do
     grep -Fq "$marker" \
         "$root/crates/tondo-compiler/src/hir.rs" \
         "$root/crates/tondo-compiler/src/hir/check.rs" \

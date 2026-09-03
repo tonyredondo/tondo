@@ -3829,6 +3829,13 @@ no se infiere transitivamente: una función que llama normalmente a una operaci�
 protocolo atómico. Una implementación que no pueda desregistrarse sin consumir
 el resultado, perder un wakeup o abandonar un payload produce `E1614`.
 
+Cuando una operación `selectable` recibe un argumento afín por valor, la fase
+de `prepare`/registro solo observa ese place y conserva su ownership. El
+verificador aplica el movimiento únicamente en la arista del brazo ganador;
+los perdedores, `else`, cancelación y unwind deben dejar el valor disponible y
+retirar su waiter. Esta regla es parte del protocolo de selección, no una
+variante sintáctica ni una autorización para duplicar el argumento.
+
 Una operación `selectable` puede debilitarse contextualmente a un callable
 `suspends` cuando una API solo necesita esperarla. La conversión inversa no
 existe. Un método que implementa un requisito de trait conserva exactamente

@@ -5,7 +5,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "fa2297d5c434287f25d81666ea5495fc13f0846d522f22c0f94311b821aff33c"
+      "sha256": "a224356e50508c17c2ca833bbe94e56f1e3852245ad9908aac7559865ab14e16"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -17,10 +17,10 @@
     }
   ],
   "summary": {
-    "total": 374,
+    "total": 375,
     "by_outcome": {
       "absent": 14,
-      "implemented-without-trace": 358,
+      "implemented-without-trace": 359,
       "not-applicable": 2
     }
   },
@@ -724,21 +724,41 @@
     },
     {
       "requirement": "TL01-11-10-R003",
-      "text_sha256": "8b403cf77c9ba36db18da08d6c23b2264eaf4990e576620ef5c4f226602c41fa",
-      "outcome": "absent",
-      "reason": "TL01-11-10-R003 extends spawn eligibility to selectable calls; implementation is tracked by the ASYNC-SELECT semantic and lowering tasks.",
-      "implementation": [],
-      "tests": [],
-      "follow_up": "CONF-GAP-IMPL-001:TL01-11-10-R003"
+      "text_sha256": "51cc4240b2f93f4bae53bc1dd3e233870319a4f55a3d8ca33332402e40606613",
+      "outcome": "implemented-without-trace",
+      "reason": "TL01-11-10-R003 has compiler and hosted VM verification for transactional affine ActorRef.send registration, commit, rollback, and waiter cleanup; its six-dimension normative trace remains incomplete because the public conformance and native/AOT boundaries are not promoted.",
+      "implementation": [
+        "crates/tondo-compiler/src/hir/availability.rs",
+        "crates/tondo-compiler/src/mir/lower.rs",
+        "crates/tondo-compiler/src/mir/verify.rs",
+        "crates/tondo-vm/src/bytecode/verify.rs",
+        "crates/tondo-vm/src/runtime/execute.rs"
+      ],
+      "tests": [
+        "fixture:runtime/m11-std-executor-impl-001",
+        "rust:tondo-vm:src::runtime::execute:selectable_actor_send_commit_consumes_message_once",
+        "rust:tondo-vm:src::runtime::execute:selectable_actor_send_rollback_unregisters_waiter_and_retains_message",
+        "rust:tondo-vm:src::runtime::execute:selectable_actor_send_waiter_wakes_only_after_capacity_opens"
+      ],
+      "follow_up": null
     },
     {
       "requirement": "TL01-11-10-R004",
-      "text_sha256": "c87edf320da7d11ef51be269efbc0d90c9632f4b60a99d2006eb6a84c69d4708",
+      "text_sha256": "8b403cf77c9ba36db18da08d6c23b2264eaf4990e576620ef5c4f226602c41fa",
       "outcome": "absent",
-      "reason": "TL01-11-10-R004 extends the closed sync-context rejection to selectable calls; implementation is tracked by the ASYNC-SELECT semantic task.",
+      "reason": "TL01-11-10-R004 extends spawn eligibility to selectable calls; implementation is tracked by the ASYNC-SELECT semantic and lowering tasks.",
       "implementation": [],
       "tests": [],
       "follow_up": "CONF-GAP-IMPL-001:TL01-11-10-R004"
+    },
+    {
+      "requirement": "TL01-11-10-R005",
+      "text_sha256": "c87edf320da7d11ef51be269efbc0d90c9632f4b60a99d2006eb6a84c69d4708",
+      "outcome": "absent",
+      "reason": "TL01-11-10-R005 extends the closed sync-context rejection to selectable calls; implementation is tracked by the ASYNC-SELECT semantic task.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-11-10-R005"
     },
     {
       "requirement": "TL01-11-11-R001",

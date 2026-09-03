@@ -560,10 +560,31 @@ struct RuntimeSelectRegion {
 }
 
 #[derive(Debug, Clone)]
+enum RuntimeSelectReservation {
+    ActorSend {
+        actor: u64,
+        message: Value,
+        message_place: Option<BytecodePlace>,
+        outcome: BytecodeTypeId,
+    },
+}
+
+#[derive(Debug, Clone)]
 struct RuntimeSelectArm {
     task: usize,
     owned: bool,
     owner: Option<BytecodePlace>,
+    reservation: Option<RuntimeSelectReservation>,
+}
+
+impl RuntimeSelectRegion {
+    fn roots(&self, output: &mut Vec<Value>) {
+        for arm in &self.arms {
+            if let Some(RuntimeSelectReservation::ActorSend { message, .. }) = &arm.reservation {
+                output.push(message.clone());
+            }
+        }
+    }
 }
 
 impl Frame {
@@ -584,6 +605,9 @@ impl Frame {
         );
         for cleanup in &self.cleanups {
             cleanup.roots(output);
+        }
+        if let Some(select) = &self.select {
+            select.roots(output);
         }
     }
 }
@@ -693,6 +717,9 @@ enum TaskWait {
         destination: BytecodePlace,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
+    },
+    ActorSelectSend {
+        actor: u64,
     },
     ActorStop {
         actor: u64,
@@ -1756,6 +1783,26 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                 }
             }
+            TaskWait::ActorSelectSend { actor } => {
+                if self.tasks[self.current_task].cancel_requested {
+                    self.remove_actor_send_waiter(actor, self.current_task)?;
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    return Ok(false);
+                }
+                if self.actor_select_send_ready(actor)? {
+                    self.remove_actor_send_waiter(actor, self.current_task)?;
+                    self.complete_current_task(TaskCompletion::Returned(Value::Unit))?;
+                    return Ok(false);
+                }
+                let state = self.actors.get_mut(&actor).ok_or_else(|| {
+                    VmError::invariant("ActorRef.send references an unknown actor")
+                })?;
+                if !state.send_waiters.contains(&self.current_task) {
+                    state.send_waiters.push_back(self.current_task);
+                }
+                self.park_current(TaskWait::ActorSelectSend { actor }, &[])?;
+                Ok(false)
+            }
             TaskWait::ActorStop {
                 actor,
                 outcome,
@@ -2657,11 +2704,19 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn discard_task_completion(&mut self, task: usize) -> Result<(), VmError> {
-        let status = &self
+        let actor_waiter = match &self
             .tasks
             .get(task)
             .ok_or_else(|| VmError::invariant("cannot discard an invalid task"))?
-            .status;
+            .status
+        {
+            TaskStatus::Waiting(TaskWait::ActorSelectSend { actor }) => Some(*actor),
+            _ => None,
+        };
+        if let Some(actor) = actor_waiter {
+            self.remove_actor_send_waiter(actor, task)?;
+        }
+        let status = &self.tasks[task].status;
         if matches!(status, TaskStatus::Complete(_)) {
             self.take_task_completion(task)?;
         } else if matches!(status, TaskStatus::Consumed) {
@@ -3248,6 +3303,29 @@ impl<'program, 'host> Engine<'program, 'host> {
         });
         self.assign_completion_order(task)?;
         self.record_new_task(task, None, DiagnosticTaskState::Complete)?;
+        Ok(task)
+    }
+
+    /// Creates the scheduler-owned probe used by a selectable actor send.
+    /// The message stays in the select reservation until commit; this task
+    /// only tracks mailbox readiness and therefore never owns user payload.
+    fn spawn_actor_select_send_task(&mut self, actor: u64) -> Result<usize, VmError> {
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Waiting(TaskWait::ActorSelectSend { actor }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: None,
+            join_consumed: true,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        self.record_new_task(task, None, DiagnosticTaskState::Waiting)?;
         Ok(task)
     }
 
@@ -4092,7 +4170,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             ));
         }
 
-        let (task, owned, owner) = match registration {
+        let (task, owned, owner, reservation) = match registration {
             BytecodeSelectRegistration::Join(owner) => {
                 let value = self.read_place(frame, owner)?;
                 let Value::Join(join) = value else {
@@ -4115,10 +4193,16 @@ impl<'program, 'host> Engine<'program, 'host> {
                         "select Join was consumed twice or belongs to the wrong task scope",
                     ));
                 }
-                (join.task, false, Some(owner.clone()))
+                (join.task, false, Some(owner.clone()), None)
             }
             BytecodeSelectRegistration::Call(operation) => {
-                let result = self.evaluate_operation(frame, operation, span)?;
+                let result = self.evaluate_operation_with_mode(
+                    frame,
+                    operation,
+                    span,
+                    self.select_preserves_moves(operation),
+                )?;
+                let mut reservation = None;
                 let task = match result {
                     OperationResult::Call {
                         function,
@@ -4183,10 +4267,34 @@ impl<'program, 'host> Engine<'program, 'host> {
                         actor,
                         message,
                         outcome,
-                        wait: _,
+                        wait,
+                        message_place,
                     } => {
-                        let value = self.executor_actor_send(actor, message, outcome)?;
-                        self.spawn_select_value_task(value)?
+                        if !wait {
+                            return Err(VmError::invariant(
+                                "ActorRef.trySend appeared in a selectable registration",
+                            ));
+                        }
+                        let send_reservation = RuntimeSelectReservation::ActorSend {
+                            actor,
+                            message,
+                            message_place,
+                            outcome,
+                        };
+                        let task = if self.actor_select_send_ready(actor)? {
+                            self.spawn_select_value_task(Value::Unit)?
+                        } else {
+                            let task = self.spawn_actor_select_send_task(actor)?;
+                            let state = self.actors.get_mut(&actor).ok_or_else(|| {
+                                VmError::invariant("ActorRef.send references an unknown actor")
+                            })?;
+                            if !state.send_waiters.contains(&task) {
+                                state.send_waiters.push_back(task);
+                            }
+                            task
+                        };
+                        reservation = Some(send_reservation);
+                        task
                     }
                     OperationResult::PoolSubmit { .. }
                     | OperationResult::PoolLifecycle { .. }
@@ -4217,7 +4325,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         ));
                     }
                 };
-                (task, true, None)
+                (task, true, None, reservation)
             }
         };
 
@@ -4237,7 +4345,12 @@ impl<'program, 'host> Engine<'program, 'host> {
             .select
             .as_mut()
             .ok_or_else(|| VmError::invariant("select region disappeared during registration"))?;
-        region.arms.push(RuntimeSelectArm { task, owned, owner });
+        region.arms.push(RuntimeSelectArm {
+            task,
+            owned,
+            owner,
+            reservation,
+        });
         region.registered += 1;
         self.statistics.select_registrations =
             self.statistics.select_registrations.saturating_add(1);
@@ -4248,6 +4361,23 @@ impl<'program, 'host> Engine<'program, 'host> {
             Some(frame),
         )?;
         Ok(())
+    }
+
+    fn select_preserves_moves(&self, operation: &BytecodeOperation) -> bool {
+        let BytecodeOperationKind::Call { callee, .. } = &operation.kind else {
+            return false;
+        };
+        let BytecodeOperandKind::Function { callable, .. } = callee.kind else {
+            return false;
+        };
+        let Some(callable) = self.program.callable(callable) else {
+            return false;
+        };
+        callable
+            .name
+            .split_once('[')
+            .map_or(callable.name.as_str(), |(name, _)| name)
+            == "std.executor.ActorRef.send"
     }
 
     fn capture_defer(
@@ -5419,6 +5549,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 };
                 let is_panic = matches!(completion, TaskCompletion::Panicked(_));
                 if is_panic == panic_only {
+                    if !is_panic
+                        && let Some(RuntimeSelectReservation::ActorSend { actor, .. }) =
+                            &runtime_arms[index].reservation
+                        && !self.actor_select_send_ready(*actor)?
+                    {
+                        self.demote_actor_select_send_task(*actor, task)?;
+                        continue;
+                    }
                     winner = Some(index);
                     break;
                 }
@@ -5457,6 +5595,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             region.arms.get(winner_index).cloned().ok_or_else(|| {
                 VmError::invariant("select winner index is outside its arm table")
             })?;
+        let reservation = winner_arm.reservation.clone();
         let join_error = winner_arm
             .owner
             .as_ref()
@@ -5486,13 +5625,32 @@ impl<'program, 'host> Engine<'program, 'host> {
             .ok_or_else(|| VmError::invariant("select winner has no bytecode arm"))?;
         match completion {
             TaskCompletion::Returned(value) => {
-                let value = if executor_job {
-                    match join_error {
+                let value = match reservation {
+                    Some(RuntimeSelectReservation::ActorSend {
+                        actor,
+                        message,
+                        message_place,
+                        outcome,
+                    }) => {
+                        if !matches!(value, Value::Unit) {
+                            return Err(VmError::invariant(
+                                "actor send readiness task returned a payload",
+                            ));
+                        }
+                        let message = if let Some(place) = message_place {
+                            let message = self.take_place(frame, &place)?;
+                            self.disarm_cleanup(frame, &place)?;
+                            message
+                        } else {
+                            message
+                        };
+                        self.executor_actor_send(actor, message, outcome)?
+                    }
+                    None if executor_job => match join_error {
                         Some(error) => self.logical_join_value(value, error)?,
                         None => value,
-                    }
-                } else {
-                    value
+                    },
+                    None => value,
                 };
                 if let Some(payload) = arm.payload() {
                     self.write_place(frame, payload, value)?;
@@ -5663,6 +5821,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         message,
                         outcome,
                         wait,
+                        ..
                     } => {
                         if wait {
                             return Err(VmError::invariant(
@@ -5917,6 +6076,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 message,
                                 outcome,
                                 wait,
+                                ..
                             } => {
                                 if !wait {
                                     let value =
@@ -7365,6 +7525,7 @@ enum OperationResult {
         message: Value,
         wait: bool,
         outcome: BytecodeTypeId,
+        message_place: Option<BytecodePlace>,
     },
     ActorStop {
         actor: u64,
@@ -9911,7 +10072,17 @@ impl Engine<'_, '_> {
         &mut self,
         frame: usize,
         operation: &BytecodeOperation,
+        span: BytecodeSpan,
+    ) -> Result<OperationResult, VmError> {
+        self.evaluate_operation_with_mode(frame, operation, span, false)
+    }
+
+    fn evaluate_operation_with_mode(
+        &mut self,
+        frame: usize,
+        operation: &BytecodeOperation,
         _span: BytecodeSpan,
+        preserve_moves: bool,
     ) -> Result<OperationResult, VmError> {
         match &operation.kind {
             BytecodeOperationKind::CheckedPrefix { operator, operand } => {
@@ -10073,7 +10244,7 @@ impl Engine<'_, '_> {
                 callee, arguments, ..
             } => {
                 let callee = self.evaluate_operand(frame, callee)?;
-                self.prepare_call(frame, callee, arguments)
+                self.prepare_call_with_mode(frame, callee, arguments, preserve_moves)
             }
             BytecodeOperationKind::Display { argument } => Ok(OperationResult::Value(
                 self.intrinsic_display(frame, operation.ty, argument)?,
@@ -11547,11 +11718,26 @@ impl Engine<'_, '_> {
             )
         };
         if terminal {
-            for task in waiters {
+            let actor_waiters = self.take_actor_send_waiters_for_pool(pool)?;
+            for task in waiters.into_iter().chain(actor_waiters) {
                 self.wake_task(task)?;
             }
         }
         Ok(())
+    }
+
+    fn take_actor_send_waiters_for_pool(&mut self, pool: u64) -> Result<Vec<usize>, VmError> {
+        if !self.pools.contains_key(&pool) {
+            return Err(VmError::invariant(
+                "actor waiter drain references an unknown pool",
+            ));
+        }
+        Ok(self
+            .actors
+            .values_mut()
+            .filter(|state| state.pool == pool)
+            .flat_map(|state| std::mem::take(&mut state.send_waiters))
+            .collect())
     }
 
     fn begin_executor_pool_lifecycle(&mut self, pool: u64, cancel: bool) -> Result<bool, VmError> {
@@ -11586,7 +11772,8 @@ impl Engine<'_, '_> {
             let submit_waiters = std::mem::take(&mut state.submit_waiters);
             (running, queued, submit_waiters)
         };
-        for task in submit_waiters {
+        let actor_waiters = self.take_actor_send_waiters_for_pool(pool)?;
+        for task in submit_waiters.into_iter().chain(actor_waiters) {
             self.wake_task(task)?;
         }
         if cancel {
@@ -11691,22 +11878,73 @@ impl Engine<'_, '_> {
         Ok(())
     }
 
-    fn wake_actor_send_waiter(&mut self, actor: u64) -> Result<(), VmError> {
-        let task = {
+    fn actor_select_send_ready(&self, actor: u64) -> Result<bool, VmError> {
+        let (pool, stopped, stopping, capacity, mailbox_len) = {
             let state = self
                 .actors
-                .get_mut(&actor)
+                .get(&actor)
                 .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?;
-            if state.stopped
-                || state.stopping
-                || state.capacity == 0
-                || state.mailbox.len() >= state.capacity
-            {
-                None
-            } else {
-                state.send_waiters.pop_front()
-            }
+            (
+                state.pool,
+                state.stopped,
+                state.stopping,
+                state.capacity,
+                state.mailbox.len(),
+            )
         };
+        if stopped || stopping {
+            return Ok(true);
+        }
+        let lifecycle = self
+            .pools
+            .get(&pool)
+            .ok_or_else(|| VmError::invariant("actor send references an unknown pool"))?
+            .lifecycle;
+        if lifecycle != RuntimePoolLifecycle::Open {
+            return Ok(true);
+        }
+        Ok(capacity != 0 && mailbox_len < capacity)
+    }
+
+    fn demote_actor_select_send_task(&mut self, actor: u64, task: usize) -> Result<(), VmError> {
+        let completion = self
+            .tasks
+            .get_mut(task)
+            .ok_or_else(|| VmError::invariant("select references an invalid actor send task"))?;
+        let TaskStatus::Complete(Some(TaskCompletion::Returned(value))) = &completion.status else {
+            return Err(VmError::invariant(
+                "actor send readiness task completed with an invalid status",
+            ));
+        };
+        if !matches!(value, Value::Unit) {
+            return Err(VmError::invariant(
+                "actor send readiness task completed with a payload",
+            ));
+        }
+        completion.status = TaskStatus::Waiting(TaskWait::ActorSelectSend { actor });
+        completion.resume = None;
+        self.completion_order.remove(&task);
+        let parent = self.diagnostic_parent(task);
+        self.record_task(task, parent, DiagnosticTaskState::Waiting)?;
+        self.record_scheduler(task, DiagnosticSchedulerOperation::Park)?;
+        let state = self
+            .actors
+            .get_mut(&actor)
+            .ok_or_else(|| VmError::invariant("actor send references an unknown actor"))?;
+        if !state.send_waiters.contains(&task) {
+            state.send_waiters.push_back(task);
+        }
+        Ok(())
+    }
+
+    fn wake_actor_send_waiter(&mut self, actor: u64) -> Result<(), VmError> {
+        let ready = self.actor_select_send_ready(actor)?;
+        let task = ready.then(|| {
+            self.actors
+                .get_mut(&actor)
+                .and_then(|state| state.send_waiters.pop_front())
+        });
+        let task = task.flatten();
         if let Some(task) = task {
             self.wake_task(task)?;
         }
@@ -12155,6 +12393,7 @@ impl Engine<'_, '_> {
                     message: message.clone(),
                     wait: name.ends_with(".send"),
                     outcome: metadata.outcome,
+                    message_place: None,
                 }));
             }
             "std.executor.Actor.stop" => {
@@ -12180,20 +12419,32 @@ impl Engine<'_, '_> {
         Ok(None)
     }
 
-    fn prepare_call(
+    fn prepare_call_with_mode(
         &mut self,
         frame: usize,
         callee: Value,
         arguments: &[BytecodeCallArgument],
+        preserve_moves: bool,
     ) -> Result<OperationResult, VmError> {
         let marker = self.temporary_roots.len();
         self.temporary_roots.push(callee.clone());
         let result = (|| {
             let mut consumed_loans = Vec::new();
+            let mut preserved_moves = Vec::new();
             let mut evaluated = Vec::with_capacity(arguments.len());
             for argument in arguments {
                 let value = if argument.mode == BytecodeParameterMode::Value {
-                    self.evaluate_operand(frame, &argument.value)?
+                    if preserve_moves {
+                        if let BytecodeOperandKind::Move(place) = &argument.value.kind {
+                            let value = self.read_place(frame, place)?;
+                            preserved_moves.push(place.clone());
+                            value
+                        } else {
+                            self.evaluate_operand(frame, &argument.value)?
+                        }
+                    } else {
+                        self.evaluate_operand(frame, &argument.value)?
+                    }
                 } else {
                     let BytecodeOperandKind::Loan(id) = &argument.value.kind else {
                         return Err(VmError::invariant(
@@ -12261,7 +12512,38 @@ impl Engine<'_, '_> {
                     ));
                 }
             }
-            self.prepare_evaluated_call(callee, evaluated)
+            let result = self.prepare_evaluated_call(callee, evaluated)?;
+            match result {
+                OperationResult::ActorSend {
+                    actor,
+                    message,
+                    wait,
+                    outcome,
+                    ..
+                } => {
+                    if !preserve_moves && !preserved_moves.is_empty() {
+                        return Err(VmError::invariant(
+                            "a non-transactional call retained a move operand",
+                        ));
+                    }
+                    if preserved_moves.len() > 1 {
+                        return Err(VmError::invariant(
+                            "ActorRef.send retained more than one move operand",
+                        ));
+                    }
+                    Ok(OperationResult::ActorSend {
+                        actor,
+                        message,
+                        wait,
+                        outcome,
+                        message_place: preserved_moves.into_iter().next(),
+                    })
+                }
+                result if !preserved_moves.is_empty() => Err(VmError::invariant(
+                    "a selectable call retained a move operand without a transaction",
+                )),
+                result => Ok(result),
+            }
         })();
         self.temporary_roots.truncate(marker);
         result
@@ -16440,15 +16722,15 @@ mod tests {
         RuntimeActorTermination, RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild,
         RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
         RuntimeOnceState, RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm,
-        RuntimeSelectRegion, RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue, SlotState,
-        TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError,
-        VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind,
-        VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
-        convert_numeric, execute, execute_with_diagnostics, group_handle, initial_value,
-        integer_bounds, integer_shape, next_unicode_scalar, once_handle, operand_materialized_slot,
-        operation_access_place, paths_overlap, present, queue_object_equality,
-        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
-        snapshot_value, take_field, take_index, take_option,
+        RuntimeSelectRegion, RuntimeSelectReservation, RuntimeTaskScope, RuntimeType,
+        RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait,
+        Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame,
+        VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
+        collection_length_fits_int, convert_numeric, execute, execute_with_diagnostics,
+        group_handle, initial_value, integer_bounds, integer_shape, next_unicode_scalar,
+        once_handle, operand_materialized_slot, operation_access_place, paths_overlap, present,
+        queue_object_equality, queue_payload_equality, runtime_host_kind, set_field, set_index,
+        slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -20212,11 +20494,13 @@ mod tests {
                     task: 1,
                     owned: true,
                     owner: None,
+                    reservation: None,
                 },
                 RuntimeSelectArm {
                     task: 2,
                     owned: true,
                     owner: None,
+                    reservation: None,
                 },
             ],
         }));
@@ -20261,11 +20545,13 @@ mod tests {
                     task: 1,
                     owned: true,
                     owner: None,
+                    reservation: None,
                 },
                 RuntimeSelectArm {
                     task: 2,
                     owned: true,
                     owner: None,
+                    reservation: None,
                 },
             ],
         }));
@@ -20301,6 +20587,7 @@ mod tests {
                 task: 1,
                 owned: true,
                 owner: None,
+                reservation: None,
             }],
         }));
         engine.abort_select(0).unwrap();
@@ -20330,6 +20617,7 @@ mod tests {
                 task: 1,
                 owned: true,
                 owner: None,
+                reservation: None,
             }],
         }));
         let arms = vec![BytecodeSelectArm::new(None, BytecodeBlockId::new(3))];
@@ -20361,6 +20649,7 @@ mod tests {
                     task: 1,
                     owned: true,
                     owner: None,
+                    reservation: None,
                 }],
             }));
         else_engine
@@ -20399,6 +20688,7 @@ mod tests {
                     task: 1,
                     owned: true,
                     owner: None,
+                    reservation: None,
                 }],
             }));
         cancelled_engine
@@ -20432,6 +20722,7 @@ mod tests {
                     task: 1,
                     owned: false,
                     owner: None,
+                    reservation: None,
                 }],
             }));
         winner_engine
@@ -20545,6 +20836,218 @@ mod tests {
         });
         assert!(detached_engine.resume_current_task().unwrap());
         assert!(detached_engine.pending_unwind.is_some());
+    }
+
+    #[test]
+    fn selectable_actor_send_commit_consumes_message_once() {
+        let (program, types) = executor_program();
+        let message_place = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: types.int,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let result_place = BytecodePlace {
+            slot: BytecodeSlotId::new(1),
+            ty: types.actor_result,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(Value::Unit),
+        ))));
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        engine.actors.insert(
+            7,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: types.actor_handler,
+                step_arguments: Vec::new(),
+                capacity: 1,
+                mailbox: VecDeque::new(),
+                stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::new(),
+            },
+        );
+        let mut frame = select_test_frame(RuntimeSelectRegion {
+            capacity: 1,
+            registered: 1,
+            arms: vec![RuntimeSelectArm {
+                task: 1,
+                owned: true,
+                owner: None,
+                reservation: Some(RuntimeSelectReservation::ActorSend {
+                    actor: 7,
+                    message: Value::Integer(9),
+                    message_place: Some(message_place.clone()),
+                    outcome: types.actor_result,
+                }),
+            }],
+        });
+        frame.slots = vec![
+            SlotState::Value(Value::Integer(9)),
+            SlotState::Uninitialized,
+        ];
+        frame
+            .cleanups
+            .push(RuntimeCleanup::Fallback(RuntimeFallback {
+                scope: BytecodeScopeId::new(0),
+                owner: message_place.clone(),
+            }));
+        engine.frames.push(frame);
+
+        let arms = vec![BytecodeSelectArm::new(
+            Some(result_place),
+            BytecodeBlockId::new(7),
+        )];
+        engine
+            .execute_select_commit(0, &arms, None, BytecodeBlockId::new(8))
+            .unwrap();
+
+        assert_eq!(engine.frames[0].block, BytecodeBlockId::new(7));
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Uninitialized
+        ));
+        assert!(engine.frames[0].cleanups.is_empty());
+        assert_eq!(engine.actors[&7].mailbox.front(), Some(&Value::Integer(9)));
+        assert!(engine.actors[&7].handler_task.is_some());
+        assert!(matches!(engine.tasks[1].status, TaskStatus::Consumed));
+        let result = match &engine.frames[0].slots[1] {
+            SlotState::Value(value) => value,
+            SlotState::Dead | SlotState::Uninitialized => {
+                panic!("select commit did not write ActorRef.send result")
+            }
+        };
+        assert_eq!(result_ok_value(&engine, result), Value::Unit);
+    }
+
+    #[test]
+    fn selectable_actor_send_rollback_unregisters_waiter_and_retains_message() {
+        let (program, types) = executor_program();
+        let message_place = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: types.int,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Waiting(
+            TaskWait::ActorSelectSend { actor: 7 },
+        )));
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        engine.actors.insert(
+            7,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: types.actor_handler,
+                step_arguments: Vec::new(),
+                capacity: 1,
+                mailbox: VecDeque::from([Value::Integer(1)]),
+                stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::from([1]),
+            },
+        );
+        let mut frame = select_test_frame(RuntimeSelectRegion {
+            capacity: 1,
+            registered: 1,
+            arms: vec![RuntimeSelectArm {
+                task: 1,
+                owned: true,
+                owner: None,
+                reservation: Some(RuntimeSelectReservation::ActorSend {
+                    actor: 7,
+                    message: Value::Integer(9),
+                    message_place: Some(message_place.clone()),
+                    outcome: types.actor_result,
+                }),
+            }],
+        });
+        frame.slots = vec![SlotState::Value(Value::Integer(9))];
+        engine.frames.push(frame);
+
+        let arms = vec![BytecodeSelectArm::new(None, BytecodeBlockId::new(7))];
+        engine
+            .execute_select_commit(
+                0,
+                &arms,
+                Some(BytecodeBlockId::new(6)),
+                BytecodeBlockId::new(8),
+            )
+            .unwrap();
+
+        assert_eq!(engine.frames[0].block, BytecodeBlockId::new(6));
+        assert_eq!(engine.actors[&7].mailbox.front(), Some(&Value::Integer(1)));
+        assert!(engine.actors[&7].send_waiters.is_empty());
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Integer(9))
+        ));
+        assert!(matches!(engine.tasks[1].status, TaskStatus::Runnable));
+        assert!(engine.tasks[1].cancel_requested);
+        assert!(matches!(
+            engine.tasks[1].resume,
+            Some(TaskWait::ActorSelectSend { actor: 7 })
+        ));
+    }
+
+    #[test]
+    fn selectable_actor_send_waiter_wakes_only_after_capacity_opens() {
+        let (program, types) = executor_program();
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Waiting(
+            TaskWait::ActorSelectSend { actor: 7 },
+        )));
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        engine.actors.insert(
+            7,
+            RuntimeActorState {
+                pool: 1,
+                state: Value::Integer(0),
+                step: types.actor_handler,
+                step_arguments: Vec::new(),
+                capacity: 1,
+                mailbox: VecDeque::from([Value::Integer(1)]),
+                stopped: false,
+                stopping: false,
+                handler_task: None,
+                terminal: None,
+                send_waiters: VecDeque::from([1]),
+            },
+        );
+
+        engine.wake_actor_send_waiter(7).unwrap();
+        assert!(matches!(
+            engine.tasks[1].status,
+            TaskStatus::Waiting(TaskWait::ActorSelectSend { actor: 7 })
+        ));
+        assert_eq!(engine.actors[&7].send_waiters, VecDeque::from([1]));
+
+        engine.actors.get_mut(&7).unwrap().mailbox.pop_front();
+        engine.wake_actor_send_waiter(7).unwrap();
+        assert!(matches!(engine.tasks[1].status, TaskStatus::Runnable));
+        assert!(engine.actors[&7].send_waiters.is_empty());
+        engine.current_task = 1;
+        assert!(!engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.tasks[1].status,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(Value::Unit)))
+        ));
     }
 
     #[test]
