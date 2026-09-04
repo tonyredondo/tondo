@@ -62,7 +62,7 @@ jq -e '
   and (.negative_cases | length == 14)
   and (([.negative_cases[]] | unique | length) == (.negative_cases | length))
   and .report == "target/reliability/evidence/stdlib-executor-conformance.json"
-  and .next_blocks == ["STD-EXEC-DOC-001"]
+  and .next_blocks == ["DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable conformance contract"
 
 for path in \
@@ -161,12 +161,12 @@ jq -e '
   and .conformance.native_aot == "not-claimed"
   and .conformance.cases == 8
   and .conformance.static_capability == "blockingPool-requires-explicit-threads-with-E1008"
-  and .promotion.implementation_pending == ["STD-EXEC-DOC-001"]
+  and .promotion.implementation_pending == []
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' "$root/testing/stdlib-executor.json" >/dev/null \
     || die "parent executor registry does not expose conformance promotion"
 
-jq -e '.promotion.remaining == ["STD-EXEC-DOC-001"]' \
+jq -e '.promotion.remaining == []' \
     "$root/testing/stdlib-executor-test.json" >/dev/null \
     || die "executor test registry has a stale conformance frontier"
 

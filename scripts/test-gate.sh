@@ -225,6 +225,10 @@ run_step stdlib-executor-conformance-contract-tests \
     scripts/stdlib-executor-conformance-test.sh
 run_step stdlib-executor-conformance \
     scripts/stdlib-executor-conformance.sh
+run_step stdlib-executor-documentation-contract \
+    scripts/stdlib-executor-doc-check.sh
+run_step stdlib-executor-documentation-contract-tests \
+    scripts/stdlib-executor-doc-test.sh
 run_step stdlib-net-contract \
     scripts/stdlib-net-check.sh
 run_step stdlib-net-contract-tests \

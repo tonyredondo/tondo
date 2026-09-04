@@ -172,9 +172,8 @@ jq -e '
   and .implementation.status == "verified-hosted-blocking-and-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "verified-hosted-and-target-qualified-native-bridge"
-  and .implementation.required_follow_ups == [
-    "STD-EXEC-DOC-001"
-  ]
+  and .implementation.required_follow_ups == []
+  and .implementation.observed.remaining == []
   and .performance.task == "STD-EXEC-PERF-001"
   and .performance.status == "verified-hosted-vm-and-native-token-x86_64-linux"
   and .performance.contract == "testing/stdlib-executor-performance.json"
@@ -182,9 +181,33 @@ jq -e '
   and .performance.evidence_report == "target/reliability/evidence/stdlib-executor-performance.json"
   and .performance.target_isolation == "hosted-vm-and-native-runtime-are-never-aggregated"
   and .performance.native_aot == "not-claimed"
-  and .performance.remaining == [
-    "STD-EXEC-DOC-001"
-  ]
+  and .performance.remaining == []
+  and .conformance.remaining == []
+  and .documentation == {
+    task: "STD-EXEC-DOC-001",
+    status: "verified",
+    document: "docs/contracts/stdlib-executor.md",
+    fixture: "tests/runtime/m11-std-executor-doc-001.to",
+    command: "scripts/stdlib-executor-doc-check.sh",
+    expected_stdout: "executor-doc-ok",
+    examples: [
+      "scoped-join",
+      "bounded-backpressure",
+      "actor-mailbox",
+      "blocking-bridge",
+      "cancel-and-drain"
+    ],
+    sections: [
+      "scopes",
+      "pools",
+      "actors",
+      "blocking",
+      "cancellation",
+      "shutdown",
+      "costs",
+      "composition-examples"
+    ]
+  }
   and .promotion.implementation_pending == .implementation.required_follow_ups
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable executor contract"
@@ -192,9 +215,19 @@ jq -e '
 for path in \
     docs/contracts/stdlib-executor.md \
     docs/contracts/stdlib-executor-performance.md \
+    docs/contracts/stdlib-executor-conformance.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_LANGUAGE_SPEC.md \
-    TONDO_IMPLEMENTATION_TRACKER.md; do
+    TONDO_IMPLEMENTATION_TRACKER.md \
+    testing/stdlib-executor-test.json \
+    testing/stdlib-executor-performance.json \
+    testing/stdlib-executor-conformance.json \
+    scripts/stdlib-executor-doc-check.sh \
+    scripts/stdlib-executor-doc-test.sh \
+    tests/runtime/m11-std-executor-doc-001.to \
+    tests/runtime/m11-std-executor-doc-001.stdout \
+    tests/runtime/m11-std-executor-doc-001.exit \
+    tests/runtime/m11-std-executor-doc-001.capabilities; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -207,7 +240,17 @@ for marker in \
     'pub fn Actor.ref(ref self): ActorRef[M]' \
     'pub fn ActorRef.send(ref self, message: M): Unit ! ActorSendError[M] selectable' \
     'pub fn BlockingPool.run[T, E]' \
-    'verified-hosted-and-target-qualified-native-bridge'; do
+    'verified-hosted-and-target-qualified-native-bridge' \
+    'STD-EXEC-DOC-001' \
+    '## Scopes y pools' \
+    '## Costes y límites' \
+    '## Ejemplos ejecutables de composición' \
+    'scoped-join' \
+    'bounded-backpressure' \
+    'actor-mailbox' \
+    'blocking-bridge' \
+    'cancel-and-drain' \
+    'DIAG-RUNTIME-001'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-executor.md" \
         || die "contract document misses marker: $marker"
 done

@@ -149,5 +149,5 @@
     "cleanup-live-handles"
   ],
   "report": "target/reliability/evidence/stdlib-executor-conformance.json",
-  "next_blocks": ["STD-EXEC-DOC-001"]
+  "next_blocks": ["DIAG-RUNTIME-001"]
 }

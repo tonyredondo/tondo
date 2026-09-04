@@ -141,7 +141,8 @@ acotado, replay de 4.096 semillas, stress real del bridge y smoke fuzz
 reproducible. `STD-EXEC-PERF-001` queda cerrado con una campaña 3 x 9
 target-qualified para la VM hosted y la lane privada nativa de tokens; el
 `STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la capability
-estática `threads`; el siguiente trabajo desbloqueado es `STD-EXEC-DOC-001`. El modelo y
+estática `threads`; `STD-EXEC-DOC-001` queda cerrado por la guía ejecutable y
+sus cinco composiciones; el siguiente trabajo desbloqueado es `DIAG-RUNTIME-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6899,10 +6900,21 @@ estas leaves.
   `docs/contracts/stdlib-executor-conformance.md`,
   `scripts/stdlib-executor-conformance.sh` y
   `target/reliability/evidence/stdlib-executor-conformance.json`; el native
-  AOT de callables y ABI público siguen `not-claimed`. El siguiente bloque es
-  `STD-EXEC-DOC-001`.
-- [ ] **STD-EXEC-DOC-001 — Documentar executor.** Explicar scopes, pools,
-  actores, bloqueo, cancelación, shutdown, costes y ejemplos ejecutables.
+  AOT de callables y ABI público siguen `not-claimed`; la guía documental
+  ejecutable queda cerrada en el siguiente bloque.
+- [x] **STD-EXEC-DOC-001 — Documentar executor.** La guía canónica cubre
+  scopes y pools, actores y mailboxes, trabajo bloqueante, cancelación,
+  shutdown, costes lógicos y los cinco patrones `scoped-join`,
+  `bounded-backpressure`, `actor-mailbox`, `blocking-bridge` y
+  `cancel-and-drain`. La fixture
+  `tests/runtime/m11-std-executor-doc-001.to` se ejecuta en un proyecto que
+  declara `clock` y `threads`, termina con `executor-doc-ok` y exit `0`; el contrato
+  `testing/stdlib-executor.json`, los sidecars y
+  `scripts/stdlib-executor-doc-check.sh` /
+  `scripts/stdlib-executor-doc-test.sh` verifican la guía, sus enlaces y sus
+  negativos. Esto documenta comportamiento y costes observados en VM hosted y
+  en la lane nativa target-qualified sin promocionar API pública, ABI de layout
+  ni lowering native AOT. El siguiente bloque owner es `DIAG-RUNTIME-001`.
 
 #### 21.3.5 Calendario civil de `std.time`
 
@@ -7794,7 +7806,8 @@ lane nativa target-qualified; `STD-EXEC-TEST-001` queda cerrado con el modelo,
 replay, stress y fuzz acotados. `STD-EXEC-PERF-001` queda cerrado por la
 campaña target-qualified hosted/native 3 x 9 y su presupuesto reproducible;
 `STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la capability
-estática `threads`; el siguiente trabajo crítico es `STD-EXEC-DOC-001`. La
+estática `threads`; `STD-EXEC-DOC-001` queda cerrado por su guía ejecutable,
+fixture y negativos; el siguiente trabajo crítico es `DIAG-RUNTIME-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

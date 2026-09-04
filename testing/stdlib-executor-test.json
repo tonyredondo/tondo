@@ -118,9 +118,7 @@
   },
   "promotion": {
     "model_test_fuzz_complete": true,
-    "remaining": [
-      "STD-EXEC-DOC-001"
-    ],
+    "remaining": [],
     "native_runtime": "implementation-boundary-unchanged"
   }
 }

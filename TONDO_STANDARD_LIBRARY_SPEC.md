@@ -2910,7 +2910,13 @@ nativo privado y cualquier lowering AOT que todavía no esté promocionado. El
 estática de `threads`, con contrato
 [`testing/stdlib-executor-conformance.json`](./testing/stdlib-executor-conformance.json)
 y guía [`docs/contracts/stdlib-executor-conformance.md`](./docs/contracts/stdlib-executor-conformance.md).
-El siguiente leaf del owner es `STD-EXEC-DOC-001`.
+`STD-EXEC-DOC-001` queda cerrado por la guía ejecutable de scopes, pools,
+actores, trabajo bloqueante, cancelación, shutdown, costes y cinco patrones de
+composición. El contrato machine-readable, la fixture
+`tests/runtime/m11-std-executor-doc-001.to`, sus sidecars y los checkers
+`scripts/stdlib-executor-doc-check.sh` y
+`scripts/stdlib-executor-doc-test.sh` mantienen la salida `executor-doc-ok`.
+El siguiente leaf del owner es `DIAG-RUNTIME-001`.
 El cierre no reclama ABI público ni lowering native AOT de callables. La VM
 hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de

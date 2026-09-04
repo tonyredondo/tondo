@@ -315,9 +315,7 @@
     "status": "verified-hosted-blocking-and-native-bridge",
     "public_api_promoted": false,
     "host": "verified-hosted-and-target-qualified-native-bridge",
-    "required_follow_ups": [
-      "STD-EXEC-DOC-001"
-    ],
+    "required_follow_ups": [],
     "observed": {
       "task": "STD-EXEC-HOST-001",
       "status": "verified-hosted-blocking-and-native-token-bridge",
@@ -370,9 +368,7 @@
       ],
       "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
       "resolved_decision": "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor",
-      "remaining": [
-        "STD-EXEC-DOC-001"
-      ]
+      "remaining": []
     }
   },
   "conformance": {
@@ -386,9 +382,7 @@
     "static_capability": "blockingPool-requires-explicit-threads-with-E1008",
     "comparison": "same-case-id-hosted-lines-and-normalized-native-observables",
     "evidence_report": "target/reliability/evidence/stdlib-executor-conformance.json",
-    "remaining": [
-      "STD-EXEC-DOC-001"
-    ]
+    "remaining": []
   },
   "performance": {
     "task": "STD-EXEC-PERF-001",
@@ -398,14 +392,35 @@
     "evidence_report": "target/reliability/evidence/stdlib-executor-performance.json",
     "target_isolation": "hosted-vm-and-native-runtime-are-never-aggregated",
     "native_aot": "not-claimed",
-    "remaining": [
-      "STD-EXEC-DOC-001"
+    "remaining": []
+  },
+  "documentation": {
+    "task": "STD-EXEC-DOC-001",
+    "status": "verified",
+    "document": "docs/contracts/stdlib-executor.md",
+    "fixture": "tests/runtime/m11-std-executor-doc-001.to",
+    "command": "scripts/stdlib-executor-doc-check.sh",
+    "expected_stdout": "executor-doc-ok",
+    "examples": [
+      "scoped-join",
+      "bounded-backpressure",
+      "actor-mailbox",
+      "blocking-bridge",
+      "cancel-and-drain"
+    ],
+    "sections": [
+      "scopes",
+      "pools",
+      "actors",
+      "blocking",
+      "cancellation",
+      "shutdown",
+      "costs",
+      "composition-examples"
     ]
   },
   "promotion": {
-    "implementation_pending": [
-      "STD-EXEC-DOC-001"
-    ],
+    "implementation_pending": [],
     "next_blocks": ["DIAG-RUNTIME-001"]
   }
 }

@@ -125,7 +125,7 @@ jq -e '
   and .fuzz.status == "verified"
   and .fuzz.smoke.result == "passed"
   and .promotion.model_test_fuzz_complete == true
-  and .promotion.remaining == ["STD-EXEC-DOC-001"]
+  and .promotion.remaining == []
 ' testing/stdlib-executor-test.json >/dev/null
 
 jq -e '

@@ -1,0 +1,89 @@
+import std.console
+import std.executor
+import std.time
+
+fn compute(): Int ! Never suspends {
+    42
+}
+
+fn blocking_compute(): Int ! Never {
+    42
+}
+
+fn blocked(): Int ! time.ClockError suspends {
+    time.sleep(time.Duration.fromNanoseconds(1000000))?
+    42
+}
+
+fn actor_step(state: mut Int, message: Int): Unit ! Never suspends {
+    state += message
+    if message == 2 {
+        assert(state == 3)
+    }
+}
+
+fn scoped_join(): !(executor.ExecutorError | executor.SubmitError) {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let job = pool.submit(compute)?
+        assert(await job == 42)
+    }
+    pool.shutdown()
+}
+
+fn bounded_backpressure(): !(executor.ExecutorError | executor.SubmitError | time.ClockError) suspends {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let first = pool.trySubmit(blocked)?
+        match pool.trySubmit(compute) {
+            ok(_) => panic("executor documentation accepted saturated work")
+            err(error) => match error {
+                executor.SubmitError.Saturated => {}
+                executor.SubmitError.Closed => panic("executor documentation closed too early")
+                executor.SubmitError.Cancelled => panic("executor documentation cancelled too early")
+                executor.SubmitError.ResourceLimit => panic("executor documentation hit a resource limit")
+            }
+        }
+        assert(await first? == 42)
+    }
+    pool.shutdown()
+}
+
+fn actor_mailbox(): !(executor.ExecutorError | executor.ActorSendError[Int]) {
+    let pool = executor.pool(1, 2)?
+    let actor = pool.actor(0, 2, actor_step)?
+    let actor_ref = actor.ref()
+    actor_ref.trySend(1)?
+    actor_ref.trySend(2)?
+    actor.stop()?
+    pool.shutdown()
+}
+
+fn blocking_bridge(): !(executor.ExecutorError | executor.SubmitError) {
+    let pool = executor.blockingPool(1, 1)?
+    scope {
+        let first = spawn pool.run(blocking_compute)
+        let second = spawn pool.run(blocking_compute)
+        assert(await first == 42)
+        assert(await second == 42)
+    }
+    pool.shutdown()
+}
+
+fn cancel_and_drain(): !(executor.ExecutorError | executor.SubmitError) {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let _job = pool.trySubmit(compute)?
+        pool.cancel()
+        return
+    }
+}
+
+fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendError[Int] | time.ClockError) {
+    let _ = scoped_join()?
+    let _ = bounded_backpressure()?
+    let _ = actor_mailbox()?
+    let _ = blocking_bridge()?
+    let _ = cancel_and_drain()?
+    console.println("executor-doc-ok")
+}

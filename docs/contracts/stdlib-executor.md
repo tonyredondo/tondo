@@ -23,6 +23,28 @@ admisión acotada, ciclo de vida de pools, actores y una frontera explícita par
 trabajo bloqueante. Ningún constructor crea un executor global ni hereda
 capabilities del ambiente.
 
+La guía ejecutable de este contrato queda cerrada por `STD-EXEC-DOC-001`. Sus
+cinco composiciones se mantienen en
+`tests/runtime/m11-std-executor-doc-001.to`, con salida esperada
+`executor-doc-ok`; el checker documental reproduce el proyecto temporal con
+las capabilities declaradas por el fixture y comprueba también sus sidecars.
+
+## Scopes y pools
+
+Un pool vive dentro del scope que posee su obligación terminal. La forma
+canónica es crear el pool, admitir los jobs, consumir cada `Join` y cerrar o
+cancelar el pool antes de abandonar el scope. `scope` no oculta el drain:
+simplemente hace visible al compilador qué handles, jobs y pools deben quedar
+consumidos. Un pool que va a sobrevivir al scope se transfiere de forma
+explícita; no se copia ni se descarta implícitamente.
+
+`submit` espera una plaza y devuelve el `Join` existente; `trySubmit` solo
+observa la capacidad inmediata. Las dos operaciones usan la misma admisión y
+la misma semántica de ownership, por lo que un caller no necesita una familia
+paralela de APIs async. El pool cooperativo ejecuta funciones Tondo mediante
+el scheduler ya existente; `blockingPool` es la única frontera que reserva
+workers host y exige `threads`.
+
 ## Frontera de implementación observada (`STD-EXEC-IMPL-001`)
 
 La implementación actual se registra como
@@ -249,6 +271,140 @@ Los jobs que todavía están en cola no empiezan; los que ya están en un worker
 terminan de forma normal o devuelven su error host. El pool espera ambos casos
 antes de publicar éxito de `cancel`.
 
+## Costes y límites
+
+La ruta rápida de admisión solo comprueba el estado del pool y reserva un slot
+del límite finito; su coste lógico es constante por intento. La cola conserva
+como máximo `capacity` trabajos admitidos después de los slots activos, y una
+admisión bloqueante puede suspender al caller mientras espera una plaza o un
+estado terminal. `trySubmit` no realiza polling oculto: un pool saturado
+devuelve inmediatamente `SubmitError.Saturated`.
+
+Cada job admitido conserva un envelope y un `Join` hasta su consumo. El coste
+de scheduling, wakeups y cleanup crece con el número de jobs y mensajes, no
+con una cola ambiental ilimitada. Una mailbox de actor tiene el mismo límite
+finito, mantiene FIFO por commit y ejecuta un handler cada vez; el mensaje se
+retiene hasta la linealización o se devuelve dentro del error. Las cifras
+físicas de threads, latencia, RSS y allocator no forman parte de este
+contrato: el presupuesto reproducible de rendimiento está separado por target
+en `stdlib-executor-performance.md`.
+
+`BlockingPool` añade el coste de una reserva y un worker host acotado por job;
+la llamada cooperativa paga además la espera del envelope de resultado. La
+cancelación no puede ahorrar ese coste para una llamada ya iniciada: espera su
+retorno seguro y solo evita iniciar trabajos todavía en cola. Los límites
+inrepresentables fallan con `ResourceLimit` antes de reservar estado.
+
+Estas son cotas lógicas y reglas de ownership, no una promesa de tiempos
+deterministas ni una afirmación de lowering native AOT. La evidencia observada
+es VM hosted y una lane privada target-qualified de tokens nativos; el ABI de
+layout y la API pública continúan `not-claimed`.
+
+## Ejemplos ejecutables de composición
+
+Los siguientes patrones son las cinco familias mínimas que cubre la fixture
+documental. Cada ejemplo usa la misma superficie canónica y termina sus
+consumidores terminales; no introduce wrappers sync/async duplicados.
+
+### `scoped-join`
+
+`scoped_join` mantiene el pool dentro de un `scope`, espera el `Join` y luego
+consume el pool con `shutdown`:
+
+```tondo
+fn scoped_join(): !(executor.ExecutorError | executor.SubmitError) {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let job = pool.submit(compute)?
+        assert(await job == 42)
+    }
+    pool.shutdown()
+}
+```
+
+### `bounded-backpressure`
+
+`bounded_backpressure` llena de forma deliberada un pool `1, 1`. El segundo
+`trySubmit` debe fallar con `Saturated`; el primer job se espera antes del
+drain y no se pierde ningún payload:
+
+```tondo
+fn bounded_backpressure(): !(executor.ExecutorError | executor.SubmitError | time.ClockError) suspends {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let first = pool.trySubmit(blocked)?
+        match pool.trySubmit(compute) {
+            ok(_) => panic("executor documentation accepted saturated work")
+            err(executor.SubmitError.Saturated) => {}
+            err(error) => panic("unexpected admission error: {error}")
+        }
+        assert(await first? == 42)
+    }
+    pool.shutdown()
+}
+```
+
+### `actor-mailbox`
+
+`actor_mailbox` proyecta explícitamente un `ActorRef`, envía dos mensajes en
+orden y termina el owner con `stop`; el handler conserva el estado serializado
+de la mailbox:
+
+```tondo
+fn actor_mailbox(): !(executor.ExecutorError | executor.ActorSendError[Int]) {
+    let pool = executor.pool(1, 2)?
+    let actor = pool.actor(0, 2, actor_step)?
+    let actor_ref = actor.ref()
+    actor_ref.trySend(1)?
+    actor_ref.trySend(2)?
+    actor.stop()?
+    pool.shutdown()
+}
+```
+
+### `blocking-bridge`
+
+`blocking_bridge` usa la capability `threads` y el `spawn` ordinario para
+solapar dos llamadas no suspendibles. El resultado sigue siendo un `Join`
+normal y el pool bloqueante se cierra después del scope:
+
+```tondo
+fn blocking_bridge(): !(executor.ExecutorError | executor.SubmitError) {
+    let pool = executor.blockingPool(1, 1)?
+    scope {
+        let first = spawn pool.run(blocking_compute)
+        let second = spawn pool.run(blocking_compute)
+        assert(await first == 42)
+        assert(await second == 42)
+    }
+    pool.shutdown()
+}
+```
+
+### `cancel-and-drain`
+
+`cancel_and_drain` muestra el consumidor terminal alternativo: la cancelación
+rechaza nuevas admisiones, solicita cancelación cooperativa y espera el drain
+antes de abandonar el scope:
+
+```tondo
+fn cancel_and_drain(): !(executor.ExecutorError | executor.SubmitError) {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let _job = pool.trySubmit(compute)?
+        pool.cancel()
+        return
+    }
+}
+```
+
+La fixture completa combina esas cinco funciones, imprime una única línea
+`executor-doc-ok` y termina con exit `0`. Se puede reproducir con
+`scripts/stdlib-executor-doc-check.sh`; la comprobación valida además
+`testing/stdlib-executor.json`, los contratos de rendimiento y conformance,
+los sidecars `.stdout`, `.exit` y `.capabilities`, y la presencia de las
+capabilities `clock` y `threads` en el proyecto temporal.
+
 ## Capabilities y frontera host
 
 El pool cooperativo no requiere `threads`. `blockingPool` requiere la
@@ -293,7 +449,9 @@ rendimiento, conformance y documentación de uso queda registrada en
 `testing/stdlib-executor-performance.json` y
 `docs/contracts/stdlib-executor-performance.md` para `STD-EXEC-PERF-001`;
 `STD-EXEC-CONF-001` está cerrado en
-`testing/stdlib-executor-conformance.json`; sigue pendiente `STD-EXEC-DOC-001`.
+`testing/stdlib-executor-conformance.json`; `STD-EXEC-DOC-001` queda cerrado
+por esta guía y su fixture ejecutable. El siguiente bloque owner es
+`DIAG-RUNTIME-001`.
 El lowering AOT de callables sigue `not-claimed`. Los contratos runtime-facing de `std.executor`, `std.net`
 y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
 se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y

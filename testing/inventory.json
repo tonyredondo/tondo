@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "eaa3c564f1f610046e6c8c1a1b020ddd3e1ce8dbe6bc41f44be0f4585e478ffa"
+      "sha256": "4d1e5c02382ad0f696c0e78edd16fd8e8ce9b02a40c83e23f83832c33fda4c0f"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,15 +34,15 @@
     }
   ],
   "summary": {
-    "logical_tests": 2788,
-    "repetitions": 3100,
-    "physical_sources": 574,
-    "unique_source_hashes": 926,
+    "logical_tests": 2789,
+    "repetitions": 3101,
+    "physical_sources": 575,
+    "unique_source_hashes": 927,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 69,
       "draft-contract": 38,
-      "fixture": 190,
+      "fixture": 191,
       "fuzz-target": 11,
       "rust-test": 1955,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 11,
       "draft-pending": 38,
-      "executable": 2717,
+      "executable": 2718,
       "non-executable": 22
     },
     "by_phase": {
@@ -71,7 +71,7 @@
       "protocol": 70,
       "reliability": 144,
       "resolution": 27,
-      "runtime": 366,
+      "runtime": 367,
       "semantic": 903,
       "testing": 38,
       "tooling": 4
@@ -15292,6 +15292,28 @@
         "tests/runtime/m11-std-executor-conformance-001.capabilities",
         "tests/runtime/m11-std-executor-conformance-001.exit",
         "tests/runtime/m11-std-executor-conformance-001.stdout"
+      ]
+    },
+    {
+      "id": "fixture:runtime/m11-std-executor-doc-001",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "runtime",
+      "source": "tests/runtime/m11-std-executor-doc-001.to",
+      "fixture": "runtime/m11-std-executor-doc-001",
+      "group": "runtime",
+      "requirements": [],
+      "oracle": "exit+stdout+stderr+diagnostics",
+      "repetitions": 1,
+      "source_sha256": "37d5f855f7e783b9ba9e3957d0560ae2518bf300b1b7c5979659d0137676df19",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "tests/runtime/m11-std-executor-doc-001.capabilities",
+        "tests/runtime/m11-std-executor-doc-001.exit",
+        "tests/runtime/m11-std-executor-doc-001.stdout"
       ]
     },
     {

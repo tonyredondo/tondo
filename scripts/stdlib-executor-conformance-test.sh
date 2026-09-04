@@ -55,7 +55,7 @@ jq '.cases[7].native_expected.native_aot = "verified"' testing/stdlib-executor-c
 expect_failure aot-claim env TONDO_STDLIB_EXECUTOR_CONFORMANCE_CONTRACT="$tmp_dir/aot-claim.json" \
     scripts/stdlib-executor-conformance-check.sh
 
-jq '.next_blocks = ["DIAG-RUNTIME-001"]' testing/stdlib-executor-conformance.json >"$tmp_dir/stale-next.json"
+jq '.next_blocks = ["STD-EXEC-DOC-001"]' testing/stdlib-executor-conformance.json >"$tmp_dir/stale-next.json"
 expect_failure stale-next env TONDO_STDLIB_EXECUTOR_CONFORMANCE_CONTRACT="$tmp_dir/stale-next.json" \
     scripts/stdlib-executor-conformance-check.sh
 
