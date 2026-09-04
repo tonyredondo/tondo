@@ -29,7 +29,6 @@ jq -e '
   and .implementation.observed.resolved_decision == "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"
   and (.implementation.observed.open_decision // null) == null
   and .implementation.observed.remaining == [
-    "STD-EXEC-CONF-001",
     "STD-EXEC-DOC-001"
   ]
 ' "$contract" >/dev/null || die "invalid observed executor implementation contract"

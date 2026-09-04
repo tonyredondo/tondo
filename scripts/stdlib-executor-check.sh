@@ -173,7 +173,6 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "verified-hosted-and-target-qualified-native-bridge"
   and .implementation.required_follow_ups == [
-    "STD-EXEC-CONF-001",
     "STD-EXEC-DOC-001"
   ]
   and .performance.task == "STD-EXEC-PERF-001"
@@ -184,7 +183,6 @@ jq -e '
   and .performance.target_isolation == "hosted-vm-and-native-runtime-are-never-aggregated"
   and .performance.native_aot == "not-claimed"
   and .performance.remaining == [
-    "STD-EXEC-CONF-001",
     "STD-EXEC-DOC-001"
   ]
   and .promotion.implementation_pending == .implementation.required_follow_ups

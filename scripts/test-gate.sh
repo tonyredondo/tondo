@@ -219,6 +219,12 @@ run_step stdlib-executor-performance-contract-tests \
     scripts/stdlib-executor-performance-test.sh
 run_step stdlib-executor-performance \
     scripts/stdlib-executor-performance.sh
+run_step stdlib-executor-conformance-contract \
+    scripts/stdlib-executor-conformance-check.sh
+run_step stdlib-executor-conformance-contract-tests \
+    scripts/stdlib-executor-conformance-test.sh
+run_step stdlib-executor-conformance \
+    scripts/stdlib-executor-conformance.sh
 run_step stdlib-net-contract \
     scripts/stdlib-net-check.sh
 run_step stdlib-net-contract-tests \

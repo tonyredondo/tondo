@@ -32,9 +32,20 @@ CARGO_TARGET_DIR="$target_dir" cargo test -q -p tondo-native-runtime --locked na
 
 vm_stdout_file="$logs_dir/vm.stdout"
 vm_stderr_file="$logs_dir/vm.stderr"
+project_dir="$(mktemp -d "${TMPDIR:-/tmp}/tondo-stdlib-executor-implementation.XXXXXX")"
+trap 'rm -rf -- "$project_dir"' EXIT
+mkdir -p "$project_dir/src"
+cp tests/runtime/m11-std-executor-impl-001.to "$project_dir/src/main.to"
+printf '%s\n' \
+    '[package]' \
+    'name = "executorimplementation"' \
+    '' \
+    '[target]' \
+    'capabilities = ["console", "process", "clock", "environment", "filesystem", "threads"]' \
+    >"$project_dir/tondo.toml"
 set +e
 CARGO_TARGET_DIR="$target_dir" cargo run -q -p tondo-cli --locked -- \
-    run tests/runtime/m11-std-executor-impl-001.to \
+    run --project "$project_dir" \
     >"$vm_stdout_file" 2>"$vm_stderr_file"
 vm_exit=$?
 set -e
@@ -75,7 +86,7 @@ jq -n \
       regressions:["crates/tondo-cli/tests/acceptance_projects.rs::acceptance_project_is_relocatable_and_reports_canonical_observations"],
       resolved_decisions:["Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor"],
       open_decisions:[],
-      remaining:["STD-EXEC-CONF-001","STD-EXEC-DOC-001"],
+      remaining:["STD-EXEC-DOC-001"],
       divergences:[]
     }' >"$evidence_dir/stdlib-executor-implementation.json"
 

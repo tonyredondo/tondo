@@ -1,0 +1,6 @@
+import std.executor
+
+fn main(): !executor.ExecutorError {
+    let pool = executor.blockingPool(1, 1)?
+    pool.shutdown()
+}

@@ -1,0 +1,83 @@
+import std.console
+import std.executor
+import std.time
+
+fn compute(): Int ! Never suspends {
+    42
+}
+
+fn blocking_compute(): Int ! Never {
+    42
+}
+
+fn slow_compute(): Int ! time.ClockError suspends {
+    time.sleep(time.Duration.fromNanoseconds(1000000))?
+    42
+}
+
+fn actor_step(state: mut Int, message: Int): Unit ! Never suspends {
+    state += message
+    if message == 2 {
+        assert(state == 3)
+    }
+}
+
+fn actor_fail(state: mut Int, message: Int): Unit ! String suspends {
+    if message == 9 {
+        err("actor-failed")
+    } else {
+        state += message
+    }
+}
+
+fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendError[Int] | time.ClockError | String) {
+    let pool = executor.pool(1, 1)?
+    scope {
+        let first = pool.trySubmit(slow_compute)?
+        match pool.trySubmit(compute) {
+            ok(_) => panic("executor conformance accepted saturated work")
+            err(_) => {}
+        }
+        assert(await first? == 42)
+    }
+    console.println("pool-admission:42:ready")
+    pool.shutdown()
+    console.println("pool-saturation:saturated:drained")
+
+    let blocking = executor.blockingPool(1, 1)?
+    assert(blocking.run(blocking_compute)? == 42)
+    console.println("blocking-transfer:42:worker")
+    blocking.cancel()
+    console.println("blocking-cancel:cancelled:drained")
+
+    let actor_pool = executor.pool(1, 2)?
+    let actor = actor_pool.actor(0, 2, actor_step)?
+    let actor_ref = actor.ref()
+    actor_ref.trySend(1)?
+    actor_ref.trySend(2)?
+    actor.stop()?
+    console.println("actor-fifo:3:stopped")
+    actor_pool.shutdown()
+
+    let failing_pool = executor.pool(1, 1)?
+    let failed_actor = failing_pool.actor(0, 1, actor_fail)?
+    let failed_ref = failed_actor.ref()
+    failed_ref.trySend(9)?
+    match failed_actor.stop() {
+        ok(_) => panic("executor conformance lost actor error")
+        err(error) => assert(error == "actor-failed")
+    }
+    match failed_ref.trySend(9) {
+        ok(_) => panic("executor conformance revived terminated actor")
+        err(error) => match error {
+            executor.ActorSendError.Terminated(message) => assert(message == 9)
+            _ => panic("executor conformance returned the wrong terminal actor error")
+        }
+    }
+    console.println("actor-terminal:terminated:9")
+    failing_pool.shutdown()
+
+    console.println("threads-capability:declared")
+    console.println("aot-boundary:private-token")
+    console.println("executor-conformance-ok")
+}

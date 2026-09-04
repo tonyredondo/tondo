@@ -2906,7 +2906,11 @@ y el registro
 [`testing/stdlib-executor-performance.json`](./testing/stdlib-executor-performance.json):
 sus 27 muestras por workload mantienen separados el target hosted, el lane
 nativo privado y cualquier lowering AOT que todavía no esté promocionado. El
-siguiente leaf del owner es `STD-EXEC-CONF-001`.
+`STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la frontera
+estática de `threads`, con contrato
+[`testing/stdlib-executor-conformance.json`](./testing/stdlib-executor-conformance.json)
+y guía [`docs/contracts/stdlib-executor-conformance.md`](./docs/contracts/stdlib-executor-conformance.md).
+El siguiente leaf del owner es `STD-EXEC-DOC-001`.
 El cierre no reclama ABI público ni lowering native AOT de callables. La VM
 hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de

@@ -316,7 +316,6 @@
     "public_api_promoted": false,
     "host": "verified-hosted-and-target-qualified-native-bridge",
     "required_follow_ups": [
-      "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
     ],
     "observed": {
@@ -372,10 +371,24 @@
       "evidence_report": "target/reliability/evidence/stdlib-executor-implementation.json",
       "resolved_decision": "Expose Actor.ref(ref self): ActorRef[M] as the explicit non-consuming identity projection; keep Pool.actor returning Actor",
       "remaining": [
-        "STD-EXEC-CONF-001",
         "STD-EXEC-DOC-001"
       ]
     }
+  },
+  "conformance": {
+    "task": "STD-EXEC-CONF-001",
+    "status": "verified",
+    "contract": "testing/stdlib-executor-conformance.json",
+    "document": "docs/contracts/stdlib-executor-conformance.md",
+    "target": "tondo-vm-hosted-and-native-runtime-abi",
+    "native_aot": "not-claimed",
+    "cases": 8,
+    "static_capability": "blockingPool-requires-explicit-threads-with-E1008",
+    "comparison": "same-case-id-hosted-lines-and-normalized-native-observables",
+    "evidence_report": "target/reliability/evidence/stdlib-executor-conformance.json",
+    "remaining": [
+      "STD-EXEC-DOC-001"
+    ]
   },
   "performance": {
     "task": "STD-EXEC-PERF-001",
@@ -386,13 +399,11 @@
     "target_isolation": "hosted-vm-and-native-runtime-are-never-aggregated",
     "native_aot": "not-claimed",
     "remaining": [
-      "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
     ]
   },
   "promotion": {
     "implementation_pending": [
-      "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
     ],
     "next_blocks": ["DIAG-RUNTIME-001"]

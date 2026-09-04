@@ -55,7 +55,7 @@
       "cargo test -p tondo-vm --lib runtime::execute::tests::blocking_bridge_ --locked",
       "cargo test -p tondo-vm --lib runtime::execute::tests::blocking_worker_host_ --locked",
       "cargo test -p tondo-vm --lib runtime::execute::tests::blocking_bridge_stress_drains_bounded_fifo_admission --locked",
-      "cargo run -q -p tondo-cli --locked -- run tests/runtime/m11-std-executor-impl-001.to"
+      "scripts/stdlib-executor-implementation.sh"
     ],
     "cases": [
       "invalid-worker-and-capacity-limits",
@@ -119,7 +119,6 @@
   "promotion": {
     "model_test_fuzz_complete": true,
     "remaining": [
-      "STD-EXEC-CONF-001",
       "STD-EXEC-DOC-001"
     ],
     "native_runtime": "implementation-boundary-unchanged"

@@ -1,0 +1,152 @@
+{
+  "format": "tondo-stdlib-executor-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.executor",
+  "task": "STD-EXEC-CONF-001",
+  "status": "verified",
+  "contract": "testing/stdlib-executor.json",
+  "document": "docs/contracts/stdlib-executor-conformance.md",
+  "vm": {
+    "fixture": "tests/runtime/m11-std-executor-conformance-001.to",
+    "command": "scripts/stdlib-executor-conformance.sh",
+    "expected_exit": 0,
+    "expected_stdout": [
+      "pool-admission:42:ready",
+      "pool-saturation:saturated:drained",
+      "blocking-transfer:42:worker",
+      "blocking-cancel:cancelled:drained",
+      "actor-fifo:3:stopped",
+      "actor-terminal:terminated:9",
+      "threads-capability:declared",
+      "aot-boundary:private-token",
+      "executor-conformance-ok"
+    ],
+    "oracle": "hosted-VM-executor-observable-lines"
+  },
+  "native": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "probe": "crates/tondo-native-runtime/examples/executor_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example executor_conformance --locked",
+    "status": "verified-native-runtime-abi",
+    "target_policy": "host-target-only-until-native-aot-executor-lowering",
+    "oracle": "same-case-id-and-normalized-executor-observables"
+  },
+  "static_capability": {
+    "fixture": "tests/compile-fail/m11-std-executor-conf-missing-threads.to",
+    "codes": ["E1008"],
+    "driver_test": "blocking_pool_requires_an_explicit_threads_target_capability",
+    "rule": "blockingPool-requires-explicit-threads-target-capability"
+  },
+  "rules": {
+    "same_corpus": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "observable": "ordered-VM-lines-plus-native-result-tags",
+    "pool": "bounded-admission-and-terminal-drain",
+    "blocking": "opaque-token-transfer-safe-cancel-and-worker-boundary",
+    "actors": "hosted-mailbox-and-terminal-error-with-native-boundary",
+    "capability": "threads-is-explicit-static-rejection-without-ambient-lookup",
+    "cleanup": "zero-live-native-handles-before-each-case-result",
+    "native_aot": "not-claimed"
+  },
+  "cases": [
+    {
+      "id": "pool-admission",
+      "vm_observable": "pool-admission:42:ready",
+      "native_expected": {
+        "status": "passed",
+        "payload": 42,
+        "worker": 0,
+        "lifecycle": "closed",
+        "cleanup": true
+      }
+    },
+    {
+      "id": "pool-saturation",
+      "vm_observable": "pool-saturation:saturated:drained",
+      "native_expected": {
+        "status": "passed",
+        "delegated": "hosted-pool-saturation",
+        "native_abi": "blocking-admission-only"
+      }
+    },
+    {
+      "id": "blocking-transfer",
+      "vm_observable": "blocking-transfer:42:worker",
+      "native_expected": {
+        "status": "passed",
+        "result_tag": 2,
+        "result_payload": 7,
+        "managed_transfer": true,
+        "cleanup": true
+      }
+    },
+    {
+      "id": "blocking-cancel",
+      "vm_observable": "blocking-cancel:cancelled:drained",
+      "native_expected": {
+        "status": "passed",
+        "pool_cancelled": true,
+        "force_kill": false,
+        "lifecycle": "cancelled",
+        "cleanup": true
+      }
+    },
+    {
+      "id": "actor-fifo",
+      "vm_observable": "actor-fifo:3:stopped",
+      "native_expected": {
+        "status": "passed",
+        "delegated": "hosted-actor-mailbox",
+        "native_abi": "blocking-token-only"
+      }
+    },
+    {
+      "id": "actor-terminal",
+      "vm_observable": "actor-terminal:terminated:9",
+      "native_expected": {
+        "status": "passed",
+        "delegated": "hosted-actor-lifecycle",
+        "native_abi": "blocking-token-only"
+      }
+    },
+    {
+      "id": "threads-capability",
+      "vm_observable": "threads-capability:declared",
+      "native_expected": {
+        "status": "passed",
+        "target": "x86_64-unknown-linux-gnu",
+        "declared": true,
+        "static_rejection": "vm-compile-fail"
+      }
+    },
+    {
+      "id": "aot-boundary",
+      "vm_observable": "aot-boundary:private-token",
+      "native_expected": {
+        "status": "passed",
+        "native_aot": "not-claimed",
+        "private_lane": "opaque-token"
+      }
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-vm-fixture",
+    "missing-native-probe",
+    "corpus-id-drift",
+    "native-case-missing",
+    "native-case-duplicate",
+    "observable-line-drift",
+    "missing-threads-diagnostic",
+    "ambient-capability-lookup",
+    "blocking-cancel-force-kill",
+    "actor-native-api-claim",
+    "physical-path-in-evidence",
+    "native-aot-lowering-claim",
+    "cleanup-live-handles"
+  ],
+  "report": "target/reliability/evidence/stdlib-executor-conformance.json",
+  "next_blocks": ["STD-EXEC-DOC-001"]
+}

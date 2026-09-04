@@ -140,7 +140,8 @@ siguen sin promocionarse. `STD-EXEC-TEST-001` queda cerrado con el modelo
 acotado, replay de 4.096 semillas, stress real del bridge y smoke fuzz
 reproducible. `STD-EXEC-PERF-001` queda cerrado con una campaña 3 x 9
 target-qualified para la VM hosted y la lane privada nativa de tokens; el
-siguiente trabajo desbloqueado es `STD-EXEC-CONF-001`. El modelo y
+`STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la capability
+estática `threads`; el siguiente trabajo desbloqueado es `STD-EXEC-DOC-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6890,8 +6891,16 @@ estas leaves.
   `target/reliability/evidence/stdlib-executor-performance.json`. El siguiente
   bloque es `STD-EXEC-CONF-001`; native AOT y ABI público siguen
   `not-claimed`.
-- [ ] **STD-EXEC-CONF-001 — Conformar executor.** Comparar observaciones VM y
-  nativo y validar capabilities `threads` sin stubs silenciosos.
+- [x] **STD-EXEC-CONF-001 — Conformar executor.** El corpus común de ocho
+  casos compara líneas observables de la VM hosted con resultados normalizados
+  del bridge native privado, cubre lifecycle, transferencia ARC, cancelación
+  segura, actores y la frontera explícita de `threads` (`E1008`) sin lookup
+  ambiental ni stubs silenciosos. Evidencia: `testing/stdlib-executor-conformance.json`,
+  `docs/contracts/stdlib-executor-conformance.md`,
+  `scripts/stdlib-executor-conformance.sh` y
+  `target/reliability/evidence/stdlib-executor-conformance.json`; el native
+  AOT de callables y ABI público siguen `not-claimed`. El siguiente bloque es
+  `STD-EXEC-DOC-001`.
 - [ ] **STD-EXEC-DOC-001 — Documentar executor.** Explicar scopes, pools,
   actores, bloqueo, cancelación, shutdown, costes y ejemplos ejecutables.
 
@@ -7783,8 +7792,9 @@ fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
 su superficie y `STD-EXEC-HOST-001` queda cerrado para el bridge hosted y la
 lane nativa target-qualified; `STD-EXEC-TEST-001` queda cerrado con el modelo,
 replay, stress y fuzz acotados. `STD-EXEC-PERF-001` queda cerrado por la
-campaña target-qualified hosted/native 3 x 9 y su presupuesto reproducible; el
-siguiente trabajo crítico es `STD-EXEC-CONF-001`. La
+campaña target-qualified hosted/native 3 x 9 y su presupuesto reproducible;
+`STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la capability
+estática `threads`; el siguiente trabajo crítico es `STD-EXEC-DOC-001`. La
 implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de

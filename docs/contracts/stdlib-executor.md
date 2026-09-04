@@ -81,6 +81,30 @@ non-terminal work, or a replay divergence. These tests harden the observed hoste
 bridge and do not promote a public executor API, native callable lowering, or a
 native layout ABI.
 
+## VM/native conformance (`STD-EXEC-CONF-001`)
+
+The shared conformance contract is recorded in
+[`testing/stdlib-executor-conformance.json`](../../testing/stdlib-executor-conformance.json)
+and its executable explanation in
+[`stdlib-executor-conformance.md`](./stdlib-executor-conformance.md). Eight
+case IDs are replayed on the hosted VM and on the private native bridge. The
+VM fixture runs from a temporary project manifest that explicitly declares
+`threads`; the standalone source path does not inherit that capability.
+
+The corpus observes bounded pool admission and saturation, blocking result
+transfer, safe cancellation and drain, actor FIFO and terminal errors, the
+static capability boundary, and the native AOT boundary. Native observations
+for cooperative pools and actors are marked `delegated` because no public
+native ABI exists for them. This is an explicit target boundary, not a hidden
+stub. The native token lane checks worker lifecycle, managed payload ownership,
+safe cancellation and zero live handles on `x86_64-unknown-linux-gnu`.
+
+The missing-capability fixture and driver test require `E1008` for
+`executor.blockingPool` without an explicit `threads` target capability. The
+conformance report contains source and input hashes, exact VM lines, normalized
+native observations, cleanup status and no physical paths, addresses, process
+IDs or timestamps. Native AOT callable lowering remains `not-claimed`.
+
 ## Superficie pública
 
 ```tondo
@@ -265,7 +289,9 @@ nativo target-qualified descritos arriba. La hardening de comportamiento,
 rendimiento, conformance y documentación de uso queda registrada en
 `testing/stdlib-executor-performance.json` y
 `docs/contracts/stdlib-executor-performance.md` para `STD-EXEC-PERF-001`;
-siguen pendientes `STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. El lowering AOT de callables sigue `not-claimed`. Los contratos runtime-facing de `std.executor`, `std.net`
+`STD-EXEC-CONF-001` está cerrado en
+`testing/stdlib-executor-conformance.json`; sigue pendiente `STD-EXEC-DOC-001`.
+El lowering AOT de callables sigue `not-claimed`. Los contratos runtime-facing de `std.executor`, `std.net`
 y `std.time` civil ya están cerrados; `DIAG-RUNTIME-001` puede comenzar cuando
 se abra la compuerta de diagnóstico; el contrato `std.log` ya está cerrado y
 sus leaves siguen la compuerta nativa.

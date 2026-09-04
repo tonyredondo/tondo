@@ -12,8 +12,9 @@ use crate::diagnostics::{
     Related, Severity,
 };
 use crate::hir::{
-    ExpressionCheckLimits, HirCallableId, HirDiscardStatus, HirError, HirExpressionKind,
-    HirProgram, HirSpawnKind, TypeLoweringLimits, check_expressions_configured, lower_types,
+    ExpressionCheckLimits, HirBootstrapHostFunction, HirCallableId, HirDiscardStatus, HirError,
+    HirExpressionKind, HirProgram, HirSpawnKind, TypeLoweringLimits, check_expressions_configured,
+    lower_types,
 };
 use crate::mir::{MirError, MirLoweringLimits, MirSummary, lower_to_mir};
 pub use crate::package::Edition;
@@ -1197,7 +1198,8 @@ fn execute_with_derives(
         .capabilities
         .iter()
         .any(|capability| capability.as_str() == "threads")
-        && let Some(expression) = hir_program.expressions().find(|expression| {
+    {
+        if let Some(expression) = hir_program.expressions().find(|expression| {
             matches!(
                 expression.kind(),
                 HirExpressionKind::Spawn {
@@ -1205,14 +1207,42 @@ fn execute_with_derives(
                     ..
                 }
             )
-        })
-    {
-        expression_diagnostics.push(Diagnostic::new(
-            Severity::Error,
-            DiagnosticCode::new("E1008")?,
-            "capability `threads` is missing for `spawn thread`",
-            PrimaryLocation::Source(expression.span()),
-        )?);
+        }) {
+            expression_diagnostics.push(Diagnostic::new(
+                Severity::Error,
+                DiagnosticCode::new("E1008")?,
+                "capability `threads` is missing for `spawn thread`",
+                PrimaryLocation::Source(expression.span()),
+            )?);
+        }
+        if let Some(expression) =
+            hir_program
+                .expressions()
+                .find(|expression| match expression.kind() {
+                    HirExpressionKind::BootstrapHostCall { function, .. } => {
+                        *function == HirBootstrapHostFunction::ExecutorBlockingPool
+                    }
+                    HirExpressionKind::Call { callee, .. }
+                    | HirExpressionKind::AsyncCall { callee, .. } => {
+                        hir_program.expression(*callee).is_some_and(|callee| {
+                            matches!(
+                                callee.kind(),
+                                HirExpressionKind::Function(HirCallableId::Host(
+                                    HirBootstrapHostFunction::ExecutorBlockingPool
+                                ))
+                            )
+                        })
+                    }
+                    _ => false,
+                })
+        {
+            expression_diagnostics.push(Diagnostic::new(
+                Severity::Error,
+                DiagnosticCode::new("E1008")?,
+                "capability `threads` is missing for `executor.blockingPool`",
+                PrimaryLocation::Source(expression.span()),
+            )?);
+        }
     }
 
     if expression_diagnostics
@@ -4837,6 +4867,45 @@ fn main() {
             diagnostic
                 .message()
                 .contains("capability `threads` is missing")
+        );
+
+        let accepted = execute(operation_request_with_capabilities(
+            Operation::Check,
+            source,
+            SourceForm::Script,
+            ResourceLimits::default(),
+            BTreeSet::from([CapabilityName::new("threads").unwrap()]),
+        ))
+        .unwrap();
+        assert_eq!(accepted.status(), CompilationStatus::Success);
+        assert!(accepted.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn blocking_pool_requires_an_explicit_threads_target_capability() {
+        let source = b"import std.executor\n\
+                      fn main(): !executor.ExecutorError {\n\
+                          let pool = executor.blockingPool(1, 1)?\n\
+                          pool.shutdown()\n\
+                      }\n";
+        let rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            source,
+            SourceForm::Script,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = rejected
+            .diagnostics()
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.code() == "E1008")
+            .expect("missing threads diagnostic");
+        assert_eq!(
+            diagnostic.message(),
+            "capability `threads` is missing for `executor.blockingPool`"
         );
 
         let accepted = execute(operation_request_with_capabilities(

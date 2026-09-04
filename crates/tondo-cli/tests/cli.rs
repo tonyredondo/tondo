@@ -35,6 +35,26 @@ fn source_file() -> std::path::PathBuf {
     source_file_with(b"fn main() {}\n")
 }
 
+fn project_with_source_and_threads(bytes: &[u8]) -> std::path::PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must follow the Unix epoch")
+        .as_nanos();
+    let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "tondo-cli-executor-{}-{nonce}-{id}",
+        std::process::id()
+    ));
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(directory.join("src/main.to"), bytes).unwrap();
+    fs::write(
+        directory.join("tondo.toml"),
+        "[package]\nname = \"executordemo\"\n\n[target]\ncapabilities = [\"console\", \"process\", \"clock\", \"environment\", \"filesystem\", \"threads\"]\n",
+    )
+    .unwrap();
+    directory
+}
+
 fn markdown_file_with(bytes: &[u8]) -> std::path::PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -122,11 +142,13 @@ fn json_public_surface_runs_through_the_cli() {
 fn std_executor_public_surface_runs_through_the_cli() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/runtime/m11-std-executor-impl-001.to");
+    let project = project_with_source_and_threads(&fs::read(source).unwrap());
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .arg("run")
-        .arg(source)
+        .args(["run", "--project"])
+        .arg(&project)
         .output()
         .unwrap();
+    fs::remove_dir_all(project).unwrap();
 
     assert!(
         output.status.success(),
@@ -141,11 +163,13 @@ fn std_executor_public_surface_runs_through_the_cli() {
 fn std_executor_public_surface_with_diagnostics_runs_through_the_cli() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/runtime/m11-std-executor-impl-001.to");
+    let project = project_with_source_and_threads(&fs::read(source).unwrap());
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .args(["run", "--diagnostics=all"])
-        .arg(source)
+        .args(["run", "--diagnostics=all", "--project"])
+        .arg(&project)
         .output()
         .unwrap();
+    fs::remove_dir_all(project).unwrap();
 
     assert!(
         output.status.success(),
@@ -158,7 +182,7 @@ fn std_executor_public_surface_with_diagnostics_runs_through_the_cli() {
 
 #[test]
 fn std_executor_blocking_worker_can_request_a_host_call() {
-    let source = source_file_with(
+    let project = project_with_source_and_threads(
         br#"import std.console
 import std.executor
 
@@ -176,11 +200,11 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | console.ConsoleErro
 "#,
     );
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .arg("run")
-        .arg(&source)
+        .args(["run", "--project"])
+        .arg(&project)
         .output()
         .unwrap();
-    fs::remove_file(source).unwrap();
+    fs::remove_dir_all(project).unwrap();
 
     assert!(
         output.status.success(),
