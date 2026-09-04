@@ -18067,7 +18067,7 @@ mod tests {
         set_field, set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
-    #[path = "../../executor_performance.rs"]
+    #[path = "executor_performance.rs"]
     mod executor_performance;
 
     fn root_pressure_program() -> BytecodeProgram {
