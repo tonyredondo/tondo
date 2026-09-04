@@ -9,6 +9,7 @@
   "document": "docs/contracts/stdlib-executor-conformance.md",
   "vm": {
     "fixture": "tests/runtime/m11-std-executor-conformance-001.to",
+    "capabilities_sidecar": "tests/runtime/m11-std-executor-conformance-001.capabilities",
     "command": "scripts/stdlib-executor-conformance.sh",
     "expected_exit": 0,
     "expected_stdout": [

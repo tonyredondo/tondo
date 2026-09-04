@@ -31,7 +31,8 @@ La implementación actual se registra como
 `trySubmit` inmediato, backpressure FIFO de `submit`, materializa el `Join`
 existente y drena `shutdown`/`cancel` con cancelación cooperativa. La fixture
 [`tests/runtime/m11-std-executor-impl-001.to`](../../tests/runtime/m11-std-executor-impl-001.to)
-termina con `executor-ok` y exit `0`; el informe reproducible se escribe en
+termina con `executor-ok` y exit `0`; su `.capabilities` sidecar declara
+explícitamente `threads`; el informe reproducible se escribe en
 `target/reliability/evidence/stdlib-executor-implementation.json`.
 
 Este cierre cubre `STD-EXEC-IMPL-001` para la implementación cooperativa hosted;
@@ -89,7 +90,9 @@ and its executable explanation in
 [`stdlib-executor-conformance.md`](./stdlib-executor-conformance.md). Eight
 case IDs are replayed on the hosted VM and on the private native bridge. The
 VM fixture runs from a temporary project manifest that explicitly declares
-`threads`; the standalone source path does not inherit that capability.
+`threads`; the repository fixture carries the same declaration in its
+`.capabilities` sidecar, and the standalone source path does not inherit that
+capability.
 
 The corpus observes bounded pool admission and saturation, blocking result
 transfer, safe cancellation and drain, actor FIFO and terminal errors, the

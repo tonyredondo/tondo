@@ -4,8 +4,9 @@ This contract closes `STD-EXEC-CONF-001`. The machine-readable authority is
 [`testing/stdlib-executor-conformance.json`](../../testing/stdlib-executor-conformance.json).
 It replays one eight-case observable corpus on the hosted VM and the private
 native executor bridge. The VM fixture runs through a temporary project whose
-manifest declares `threads`; no standalone source invocation receives an
-ambient capability.
+manifest declares `threads`; its repository fixture also records the same
+declaration in `m11-std-executor-conformance-001.capabilities` so no standalone
+source invocation receives an ambient capability.
 
 The shared cases cover bounded pool admission and saturation, blocking result
 transfer, safe cancellation and drain, actor FIFO and terminal error behavior,

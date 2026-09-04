@@ -4,8 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use tondo_compiler::driver::{
-    BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, Edition, HostProfile,
-    Operation, ResourceLimits, SourceForm, WarningProfile, execute,
+    BuildTarget, CapabilityName, CompilationRequest, CompilationStatus, DiagnosticFormat, Edition,
+    HostProfile, Operation, ResourceLimits, SourceForm, WarningProfile, execute,
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
@@ -83,7 +83,7 @@ impl Fixture {
             Edition::V0_1,
             BuildTarget::vm_hosted(),
             HostProfile::Hosted,
-            BuildTarget::vm_hosted_capabilities(),
+            read_capabilities(self)?,
             DiagnosticFormat::Json,
             source_form,
             limits,
@@ -264,6 +264,59 @@ fn read_warning_profiles(path: &Path) -> Result<Vec<WarningProfile>, String> {
         ));
     }
     Ok(profiles.into_iter().collect())
+}
+
+fn read_capabilities(fixture: &Fixture) -> Result<BTreeSet<CapabilityName>, String> {
+    let path = fixture.sidecar("capabilities");
+    let mut capabilities = BuildTarget::vm_hosted_capabilities();
+    if !path.exists() {
+        return Ok(capabilities);
+    }
+    if fixture.kind != FixtureKind::Runtime {
+        return Err(format!(
+            "{} declares capabilities outside a runtime fixture",
+            path.display()
+        ));
+    }
+    let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+    if bytes.is_empty() || !bytes.ends_with(b"\n") || bytes.contains(&b'\r') {
+        return Err(format!(
+            "{} must use non-empty, LF-terminated canonical text",
+            path.display()
+        ));
+    }
+    let contents = std::str::from_utf8(&bytes)
+        .map_err(|error| format!("{} is not valid UTF-8: {error}", path.display()))?;
+    let target = BuildTarget::vm_hosted();
+    for (index, name) in contents.split_terminator('\n').enumerate() {
+        if name.is_empty() {
+            return Err(format!(
+                "{} contains an empty capability on line {}",
+                path.display(),
+                index + 1
+            ));
+        }
+        let capability = CapabilityName::new(name).map_err(|error| {
+            format!(
+                "{} contains invalid capability `{name}` on line {}: {error}",
+                path.display(),
+                index + 1
+            )
+        })?;
+        if !target.supported_capabilities().contains(&capability) {
+            return Err(format!(
+                "{} declares capability `{name}` unsupported by the hosted VM target",
+                path.display()
+            ));
+        }
+        if !capabilities.insert(capability) {
+            return Err(format!(
+                "{} declares capability `{name}` more than once",
+                path.display()
+            ));
+        }
+    }
+    Ok(capabilities)
 }
 
 fn read_program_arguments(fixture: &Fixture) -> Result<Vec<String>, String> {
@@ -518,6 +571,43 @@ mod tests {
             read_program_arguments(&runtime)
                 .unwrap_err()
                 .contains("LF-terminated")
+        );
+        remove_fixture(&fixture);
+    }
+
+    #[test]
+    fn capability_sidecars_are_runtime_only_and_canonical() {
+        let fixture = temporary_fixture(FixtureKind::Runtime);
+        let default = read_capabilities(&fixture).unwrap();
+        assert!(!default.contains(&CapabilityName::new("threads").unwrap()));
+
+        fs::write(fixture.sidecar("capabilities"), b"threads\n").unwrap();
+        let declared = read_capabilities(&fixture).unwrap();
+        assert!(declared.contains(&CapabilityName::new("threads").unwrap()));
+
+        fs::write(fixture.sidecar("capabilities"), b"threads\nthreads\n").unwrap();
+        assert!(
+            read_capabilities(&fixture)
+                .unwrap_err()
+                .contains("more than once")
+        );
+
+        fs::write(fixture.sidecar("capabilities"), b"threads").unwrap();
+        assert!(
+            read_capabilities(&fixture)
+                .unwrap_err()
+                .contains("LF-terminated")
+        );
+
+        let compile_pass = Fixture {
+            kind: FixtureKind::CompilePass,
+            source: fixture.source.clone(),
+        };
+        fs::write(compile_pass.sidecar("capabilities"), b"threads\n").unwrap();
+        assert!(
+            read_capabilities(&compile_pass)
+                .unwrap_err()
+                .contains("outside a runtime fixture")
         );
         remove_fixture(&fixture);
     }

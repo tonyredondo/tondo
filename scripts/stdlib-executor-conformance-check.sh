@@ -34,6 +34,7 @@ jq -e '
   and .vm.expected_stdout[6] == "threads-capability:declared"
   and .vm.expected_stdout[7] == "aot-boundary:private-token"
   and .vm.expected_stdout[8] == "executor-conformance-ok"
+  and .vm.capabilities_sidecar == "tests/runtime/m11-std-executor-conformance-001.capabilities"
   and .native.status == "verified-native-runtime-abi"
   and .native.target_policy == "host-target-only-until-native-aot-executor-lowering"
   and .static_capability.fixture == "tests/compile-fail/m11-std-executor-conf-missing-threads.to"
@@ -75,6 +76,7 @@ for path in \
     tests/runtime/m11-std-executor-conformance-001.to \
     tests/runtime/m11-std-executor-conformance-001.stdout \
     tests/runtime/m11-std-executor-conformance-001.exit \
+    tests/runtime/m11-std-executor-conformance-001.capabilities \
     tests/compile-fail/m11-std-executor-conf-missing-threads.to \
     tests/compile-fail/m11-std-executor-conf-missing-threads.codes \
     crates/tondo-compiler/src/driver.rs \
@@ -129,6 +131,8 @@ done
 
 [[ "$(tr -d '\r\n' <tests/runtime/m11-std-executor-conformance-001.exit)" == "0" ]] \
     || die "positive fixture exit sidecar is not zero"
+[[ "$(tr -d '\r\n' <tests/runtime/m11-std-executor-conformance-001.capabilities)" == "threads" ]] \
+    || die "positive fixture capabilities sidecar must declare threads"
 mapfile -t expected_lines < <(jq -r '.vm.expected_stdout[]' "$contract")
 mapfile -t sidecar_lines < <(tr -d '\r' <tests/runtime/m11-std-executor-conformance-001.stdout | sed '/^$/d')
 [[ "${expected_lines[*]}" == "${sidecar_lines[*]}" ]] \

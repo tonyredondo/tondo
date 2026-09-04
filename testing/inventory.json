@@ -34,8 +34,8 @@
     }
   ],
   "summary": {
-    "logical_tests": 2786,
-    "repetitions": 3098,
+    "logical_tests": 2788,
+    "repetitions": 3100,
     "physical_sources": 574,
     "unique_source_hashes": 926,
     "by_kind": {
@@ -44,13 +44,13 @@
       "draft-contract": 38,
       "fixture": 190,
       "fuzz-target": 11,
-      "rust-test": 1953,
+      "rust-test": 1955,
       "spec-fence": 319
     },
     "by_status": {
       "campaign": 11,
       "draft-pending": 38,
-      "executable": 2715,
+      "executable": 2717,
       "non-executable": 22
     },
     "by_phase": {
@@ -69,10 +69,10 @@
       "mir": 88,
       "parser": 67,
       "protocol": 70,
-      "reliability": 143,
+      "reliability": 144,
       "resolution": 27,
       "runtime": 366,
-      "semantic": 902,
+      "semantic": 903,
       "testing": 38,
       "tooling": 4
     }
@@ -15289,6 +15289,7 @@
       "edition": "0.1",
       "status": "executable",
       "sidecars": [
+        "tests/runtime/m11-std-executor-conformance-001.capabilities",
         "tests/runtime/m11-std-executor-conformance-001.exit",
         "tests/runtime/m11-std-executor-conformance-001.stdout"
       ]
@@ -15310,6 +15311,7 @@
       "edition": "0.1",
       "status": "executable",
       "sidecars": [
+        "tests/runtime/m11-std-executor-impl-001.capabilities",
         "tests/runtime/m11-std-executor-impl-001.exit",
         "tests/runtime/m11-std-executor-impl-001.stdout"
       ]
@@ -42628,6 +42630,24 @@
       "sidecars": []
     },
     {
+      "id": "rust:tondo-compiler:tests::support::mod:capability_sidecars_are_runtime_only_and_canonical",
+      "kind": "rust-test",
+      "crate_name": "tondo-compiler",
+      "phase": "semantic",
+      "source": "crates/tondo-compiler/tests/support/mod.rs",
+      "fixture": null,
+      "group": "integration",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "bb7b7565a4b93883bf361e465b37ac0805405920a4fa6140ac4def601d7040cf",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
       "id": "rust:tondo-compiler:tests::support::mod:fixtures_without_platform_arguments_receive_an_empty_argument_list",
       "kind": "rust-test",
       "crate_name": "tondo-compiler",
@@ -42638,7 +42658,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "53e92d1eb52e25ecd84a0f699690917bc212cf1c3e0bda0d64ffec9813c2b6dd",
+      "source_sha256": "bb7b7565a4b93883bf361e465b37ac0805405920a4fa6140ac4def601d7040cf",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -42656,7 +42676,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "53e92d1eb52e25ecd84a0f699690917bc212cf1c3e0bda0d64ffec9813c2b6dd",
+      "source_sha256": "bb7b7565a4b93883bf361e465b37ac0805405920a4fa6140ac4def601d7040cf",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -42674,7 +42694,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "53e92d1eb52e25ecd84a0f699690917bc212cf1c3e0bda0d64ffec9813c2b6dd",
+      "source_sha256": "bb7b7565a4b93883bf361e465b37ac0805405920a4fa6140ac4def601d7040cf",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -42692,7 +42712,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "53e92d1eb52e25ecd84a0f699690917bc212cf1c3e0bda0d64ffec9813c2b6dd",
+      "source_sha256": "bb7b7565a4b93883bf361e465b37ac0805405920a4fa6140ac4def601d7040cf",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -45346,6 +45366,24 @@
       "sidecars": []
     },
     {
+      "id": "rust:tondo-reliability:src::inventory:capability_sidecars_are_runtime_scoped",
+      "kind": "rust-test",
+      "crate_name": "tondo-reliability",
+      "phase": "reliability",
+      "source": "crates/tondo-reliability/src/inventory.rs",
+      "fixture": null,
+      "group": "unit",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
       "id": "rust:tondo-reliability:src::inventory:first_case",
       "kind": "rust-test",
       "crate_name": "tondo-reliability",
@@ -45356,7 +45394,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "06bf1fae98501704579cd85ef46920d1c2deee6be12e618616e41f05c1f671f0",
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -45374,7 +45412,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "06bf1fae98501704579cd85ef46920d1c2deee6be12e618616e41f05c1f671f0",
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -45392,7 +45430,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "06bf1fae98501704579cd85ef46920d1c2deee6be12e618616e41f05c1f671f0",
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -45410,7 +45448,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "06bf1fae98501704579cd85ef46920d1c2deee6be12e618616e41f05c1f671f0",
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -45428,7 +45466,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "06bf1fae98501704579cd85ef46920d1c2deee6be12e618616e41f05c1f671f0",
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -45446,7 +45484,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "06bf1fae98501704579cd85ef46920d1c2deee6be12e618616e41f05c1f671f0",
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -45464,7 +45502,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "06bf1fae98501704579cd85ef46920d1c2deee6be12e618616e41f05c1f671f0",
+      "source_sha256": "0016ac11222edd4d3e66901454e79c93ed5b18e0eac07084dc1ac30a1c18c541",
       "target": "host-rust",
       "document": null,
       "edition": "host",

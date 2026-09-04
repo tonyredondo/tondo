@@ -562,6 +562,7 @@ fn validate_fixture_sidecars(root: &Path) -> Result<(), String> {
                     | "runtime-stderr"
                     | "exit"
                     | "profiles"
+                    | "capabilities"
             )
         ) {
             return Err(format!("unknown fixture sidecar `{}`", path.display()));
@@ -593,6 +594,17 @@ fn validate_fixture_sidecars(root: &Path) -> Result<(), String> {
             if !relative.starts_with("runtime") {
                 return Err(format!(
                     "platform argument sidecar `{}` belongs to a non-runtime fixture",
+                    path.display()
+                ));
+            }
+        }
+        if extension == Some("capabilities") {
+            let relative = source
+                .strip_prefix(&tests)
+                .map_err(|error| error.to_string())?;
+            if !relative.starts_with("runtime") {
+                return Err(format!(
+                    "capability sidecar `{}` belongs to a non-runtime fixture",
                     path.display()
                 ));
             }
@@ -990,6 +1002,28 @@ ignored
         fs::write(compile_pass.join("case.to"), b"fn main() {}\n").unwrap();
         fs::write(compile_pass.join("case.args-unix"), b"unix\n").unwrap();
         fs::write(compile_pass.join("case.args-windows"), b"windows\n").unwrap();
+        let error = validate_fixture_sidecars(&path).unwrap_err();
+        assert!(error.contains("non-runtime fixture"));
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn capability_sidecars_are_runtime_scoped() {
+        let path = std::env::temp_dir().join(format!(
+            "tondo-inventory-{}-{}",
+            std::process::id(),
+            TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let runtime = path.join("tests/runtime");
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(runtime.join("case.to"), b"fn main() {}\n").unwrap();
+        fs::write(runtime.join("case.capabilities"), b"threads\n").unwrap();
+        validate_fixture_sidecars(&path).unwrap();
+
+        let compile_pass = path.join("tests/compile-pass");
+        fs::create_dir_all(&compile_pass).unwrap();
+        fs::write(compile_pass.join("case.to"), b"fn main() {}\n").unwrap();
+        fs::write(compile_pass.join("case.capabilities"), b"threads\n").unwrap();
         let error = validate_fixture_sidecars(&path).unwrap_err();
         assert!(error.contains("non-runtime fixture"));
         fs::remove_dir_all(path).unwrap();

@@ -66,10 +66,13 @@ fixture_root="${root}/${fixture_path%.to}"
 [[ -f "$root/$fixture_path" ]] || die "missing implementation fixture: $fixture_path"
 [[ -f "${fixture_root}.stdout" ]] || die "missing fixture stdout sidecar: ${fixture_root}.stdout"
 [[ -f "${fixture_root}.exit" ]] || die "missing fixture exit sidecar: ${fixture_root}.exit"
+[[ -f "${fixture_root}.capabilities" ]] || die "missing fixture capabilities sidecar: ${fixture_root}.capabilities"
 [[ "$(tr -d '\r\n' <"${fixture_root}.exit")" == "0" ]] \
     || die "fixture exit sidecar is not zero"
 [[ "$(tr -d '\r' <"${fixture_root}.stdout" | sed '/^$/d' | tail -n 1)" == "executor-ok" ]] \
     || die "fixture stdout sidecar is not executor-ok"
+[[ "$(tr -d '\r\n' <"${fixture_root}.capabilities")" == "threads" ]] \
+    || die "fixture capabilities sidecar must declare threads"
 
 for marker in \
     'ExecutorPoolSubmit' \
