@@ -309,6 +309,7 @@ impl<'a> TypeLowerer<'a> {
                 },
             );
         }
+        self.lower_bootstrap_encoding_nominal_declarations()?;
         self.lower_bootstrap_serialization_nominal_declarations()?;
         self.lower_bootstrap_messagepack_nominal_declarations()?;
         self.lower_bootstrap_protobuf_nominal_declarations()?;
@@ -316,6 +317,132 @@ impl<'a> TypeLowerer<'a> {
         self.lower_bootstrap_sync_nominal_declarations()?;
         self.lower_bootstrap_channel_nominal_declarations()?;
         self.lower_bootstrap_executor_nominal_declarations()
+    }
+
+    fn lower_bootstrap_encoding_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("encoding")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let first_name = Name::new("Base64Alphabet").expect("encoding nominal names are valid");
+        if self
+            .resolved
+            .bootstrap_nominal(&module, &first_name)
+            .is_none()
+        {
+            return Ok(());
+        }
+        let int = self.interner.scalar(ScalarType::Int);
+        let io_error = self
+            .interner
+            .intrinsic(IntrinsicType::IoError, Vec::new())?;
+        let base64_alphabet = self.bootstrap_nominal_type(&module, "Base64Alphabet")?;
+        let base64_padding = self.bootstrap_nominal_type(&module, "Base64Padding")?;
+        let hex_case = self.bootstrap_nominal_type(&module, "HexCase")?;
+        let error_kind = self.bootstrap_nominal_type(&module, "EncodingErrorKind")?;
+        let limits = self.bootstrap_nominal_type(&module, "EncodingLimits")?;
+
+        for name in [
+            "Base64Alphabet",
+            "Base64Padding",
+            "HexCase",
+            "EncodingErrorKind",
+            "EncodingError",
+            "EncodingLimits",
+            "Base64Options",
+            "HexOptions",
+            "Base64Encoder",
+            "Base64Decoder",
+            "HexEncoder",
+            "HexDecoder",
+        ] {
+            let type_name = Name::new(name).expect("encoding nominal names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("encoding nominal symbols are indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name {
+                "Base64Alphabet" => HirNominalShape::Enum {
+                    variants: ["Standard", "UrlSafe"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                        .collect(),
+                },
+                "Base64Padding" => HirNominalShape::Enum {
+                    variants: ["Required", "Omitted"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                        .collect(),
+                },
+                "HexCase" => HirNominalShape::Enum {
+                    variants: ["Lower", "Upper", "Any"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                        .collect(),
+                },
+                "EncodingErrorKind" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "InvalidLimit", Vec::new()),
+                        self.bootstrap_variant(symbol, "InvalidCharacter", Vec::new()),
+                        self.bootstrap_variant(symbol, "InvalidLength", Vec::new()),
+                        self.bootstrap_variant(symbol, "InvalidPadding", Vec::new()),
+                        self.bootstrap_variant(symbol, "NonCanonical", Vec::new()),
+                        self.bootstrap_variant(symbol, "ResourceLimit", Vec::new()),
+                        self.bootstrap_variant(symbol, "Io", vec![io_error]),
+                        self.bootstrap_variant(symbol, "Closed", Vec::new()),
+                        self.bootstrap_variant(symbol, "NoProgress", Vec::new()),
+                    ],
+                },
+                "EncodingError" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "kind", error_kind),
+                        self.bootstrap_field(symbol, "offset", int),
+                    ],
+                },
+                "EncodingLimits" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "maxInputBytes", int),
+                        self.bootstrap_field(symbol, "maxOutputBytes", int),
+                    ],
+                },
+                "Base64Options" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "alphabet", base64_alphabet),
+                        self.bootstrap_field(symbol, "padding", base64_padding),
+                        self.bootstrap_field(symbol, "limits", limits),
+                    ],
+                },
+                "HexOptions" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "case", hex_case),
+                        self.bootstrap_field(symbol, "limits", limits),
+                    ],
+                },
+                "Base64Encoder" | "Base64Decoder" | "HexEncoder" | "HexDecoder" => {
+                    HirNominalShape::Newtype { underlying: int }
+                }
+                _ => unreachable!("the bootstrap encoding nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
     }
 
     fn lower_bootstrap_async_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -1095,6 +1222,8 @@ impl<'a> TypeLowerer<'a> {
         let testing_module = self.packages.module(self.packages.standard(), &testing);
         let json = ModulePath::new("json")?;
         let json_module = self.packages.module(self.packages.standard(), &json);
+        let encoding = ModulePath::new("encoding")?;
+        let encoding_module = self.packages.module(self.packages.standard(), &encoding);
         let serialization = ModulePath::new("serialization")?;
         let serialization_module = self
             .packages
@@ -1228,6 +1357,11 @@ impl<'a> TypeLowerer<'a> {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
         });
+        let encoding_referenced = encoding_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
         let serialization_referenced = serialization_module.as_ref().is_some_and(|module| {
             self.resolved.references().any(|reference| {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
@@ -1286,6 +1420,7 @@ impl<'a> TypeLowerer<'a> {
             && !format_referenced
             && !testing_referenced
             && !json_referenced
+            && !encoding_referenced
             && !messagepack_referenced
             && !protobuf_referenced
             && !path_referenced
@@ -3598,6 +3733,292 @@ impl<'a> TypeLowerer<'a> {
                     float,
                 )?;
             }
+        }
+
+        if encoding_referenced {
+            let encoding_module = encoding_module
+                .as_ref()
+                .expect("referenced encoding module is installed");
+            let base64_alphabet = self.bootstrap_nominal_type(encoding_module, "Base64Alphabet")?;
+            let base64_padding = self.bootstrap_nominal_type(encoding_module, "Base64Padding")?;
+            let hex_case = self.bootstrap_nominal_type(encoding_module, "HexCase")?;
+            let encoding_error_kind =
+                self.bootstrap_nominal_type(encoding_module, "EncodingErrorKind")?;
+            let encoding_error = self.bootstrap_nominal_type(encoding_module, "EncodingError")?;
+            let encoding_limits = self.bootstrap_nominal_type(encoding_module, "EncodingLimits")?;
+            let base64_options = self.bootstrap_nominal_type(encoding_module, "Base64Options")?;
+            let hex_options = self.bootstrap_nominal_type(encoding_module, "HexOptions")?;
+            let base64_encoder = self.bootstrap_nominal_type(encoding_module, "Base64Encoder")?;
+            let base64_decoder = self.bootstrap_nominal_type(encoding_module, "Base64Decoder")?;
+            let hex_encoder = self.bootstrap_nominal_type(encoding_module, "HexEncoder")?;
+            let hex_decoder = self.bootstrap_nominal_type(encoding_module, "HexDecoder")?;
+            let encoding_bytes = self.interner.result(bytes, encoding_error)?;
+            let encoding_unit = self.interner.result(unit, encoding_error)?;
+            let encoding_limits_result = self.interner.result(encoding_limits, encoding_error)?;
+            let base64_encoder_result = self.interner.result(base64_encoder, encoding_error)?;
+            let base64_decoder_result = self.interner.result(base64_decoder, encoding_error)?;
+            let hex_encoder_result = self.interner.result(hex_encoder, encoding_error)?;
+            let hex_decoder_result = self.interner.result(hex_decoder, encoding_error)?;
+
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::EncodingBase64AlphabetStandard,
+                    base64_alphabet,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64AlphabetUrlSafe,
+                    base64_alphabet,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64PaddingRequired,
+                    base64_padding,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64PaddingOmitted,
+                    base64_padding,
+                ),
+                (HirBootstrapHostFunction::EncodingHexCaseLower, hex_case),
+                (HirBootstrapHostFunction::EncodingHexCaseUpper, hex_case),
+                (HirBootstrapHostFunction::EncodingHexCaseAny, hex_case),
+            ] {
+                self.push_bootstrap_host_callable(span, function, Vec::new(), None, outcome)?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::EncodingLimitsDefaults,
+                Vec::new(),
+                None,
+                encoding_limits,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::EncodingLimitsCreate,
+                vec![(int, false), (int, false)],
+                None,
+                encoding_limits_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::EncodingBase64OptionsCreate,
+                vec![
+                    (base64_alphabet, false),
+                    (base64_padding, false),
+                    (encoding_limits, false),
+                ],
+                None,
+                base64_options,
+            )?;
+            for function in [
+                HirBootstrapHostFunction::EncodingBase64OptionsStandard,
+                HirBootstrapHostFunction::EncodingBase64OptionsUrlSafe,
+                HirBootstrapHostFunction::EncodingBase64OptionsUrlSafeUnpadded,
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(encoding_limits, false)],
+                    None,
+                    base64_options,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::EncodingHexOptionsCreate,
+                vec![(hex_case, false), (encoding_limits, false)],
+                None,
+                hex_options,
+            )?;
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsLower,
+                    hex_options,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsUpper,
+                    hex_options,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsAnyCase,
+                    hex_options,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(encoding_limits, false)],
+                    None,
+                    outcome,
+                )?;
+            }
+
+            for (function, receiver, outcome) in [
+                (
+                    HirBootstrapHostFunction::EncodingBase64OptionsEncode,
+                    base64_options,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64OptionsDecode,
+                    base64_options,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64OptionsEncoder,
+                    base64_options,
+                    base64_encoder_result,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64OptionsDecoder,
+                    base64_options,
+                    base64_decoder_result,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsEncode,
+                    hex_options,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsDecode,
+                    hex_options,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsEncoder,
+                    hex_options,
+                    hex_encoder_result,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsDecoder,
+                    hex_options,
+                    hex_decoder_result,
+                ),
+            ] {
+                let fixed = if matches!(
+                    function,
+                    HirBootstrapHostFunction::EncodingBase64OptionsEncode
+                        | HirBootstrapHostFunction::EncodingBase64OptionsDecode
+                        | HirBootstrapHostFunction::EncodingHexOptionsEncode
+                        | HirBootstrapHostFunction::EncodingHexOptionsDecode
+                ) {
+                    vec![(receiver, true), (bytes, false)]
+                } else {
+                    vec![(receiver, true)]
+                };
+                self.push_bootstrap_host_callable(span, function, fixed, None, outcome)?;
+            }
+            for (function, receiver) in [
+                (
+                    HirBootstrapHostFunction::EncodingBase64OptionsEncodeTo,
+                    base64_options,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64OptionsDecodeFrom,
+                    base64_options,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsEncodeTo,
+                    hex_options,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexOptionsDecodeFrom,
+                    hex_options,
+                ),
+            ] {
+                let input = if matches!(
+                    function,
+                    HirBootstrapHostFunction::EncodingBase64OptionsDecodeFrom
+                        | HirBootstrapHostFunction::EncodingHexOptionsDecodeFrom
+                ) {
+                    reader
+                } else {
+                    bytes
+                };
+                let output = if matches!(
+                    function,
+                    HirBootstrapHostFunction::EncodingBase64OptionsDecodeFrom
+                        | HirBootstrapHostFunction::EncodingHexOptionsDecodeFrom
+                ) {
+                    encoding_bytes
+                } else {
+                    encoding_unit
+                };
+                let fixed = if matches!(
+                    function,
+                    HirBootstrapHostFunction::EncodingBase64OptionsDecodeFrom
+                        | HirBootstrapHostFunction::EncodingHexOptionsDecodeFrom
+                ) {
+                    vec![
+                        (receiver, ParameterMode::Value, true),
+                        (input, ParameterMode::Var, false),
+                    ]
+                } else {
+                    vec![
+                        (receiver, ParameterMode::Value, true),
+                        (input, ParameterMode::Value, false),
+                        (writer, ParameterMode::Var, false),
+                    ]
+                };
+                self.push_bootstrap_host_callable_with_modes(span, function, fixed, None, output)?;
+            }
+            for (function, receiver, outcome) in [
+                (
+                    HirBootstrapHostFunction::EncodingBase64EncoderPush,
+                    base64_encoder,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64EncoderFinish,
+                    base64_encoder,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64DecoderPush,
+                    base64_decoder,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingBase64DecoderFinish,
+                    base64_decoder,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexEncoderPush,
+                    hex_encoder,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexEncoderFinish,
+                    hex_encoder,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexDecoderPush,
+                    hex_decoder,
+                    encoding_bytes,
+                ),
+                (
+                    HirBootstrapHostFunction::EncodingHexDecoderFinish,
+                    hex_decoder,
+                    encoding_bytes,
+                ),
+            ] {
+                let fixed = if matches!(
+                    function,
+                    HirBootstrapHostFunction::EncodingBase64EncoderPush
+                        | HirBootstrapHostFunction::EncodingBase64DecoderPush
+                        | HirBootstrapHostFunction::EncodingHexEncoderPush
+                        | HirBootstrapHostFunction::EncodingHexDecoderPush
+                ) {
+                    vec![
+                        (receiver, ParameterMode::Var, true),
+                        (bytes, ParameterMode::Value, false),
+                    ]
+                } else {
+                    vec![(receiver, ParameterMode::Var, true)]
+                };
+                self.push_bootstrap_host_callable_with_modes(span, function, fixed, None, outcome)?;
+            }
+            let _ = encoding_error_kind;
         }
 
         let codec_bytes = self.interner.result(bytes, bytes_error)?;

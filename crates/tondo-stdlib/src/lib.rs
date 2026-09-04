@@ -3,6 +3,7 @@
 //! The VM owns capabilities and resource accounting; this crate deliberately
 //! contains only deterministic, allocation-bounded value transformations.
 
+pub mod encoding;
 pub mod format;
 pub mod io;
 pub mod json;

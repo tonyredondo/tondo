@@ -37,6 +37,12 @@ expect_failure selectable env TONDO_STDLIB_ENCODING_CONTRACT="$tmp_dir/selectabl
 jq '.implementation.public_api_promoted = true' testing/stdlib-encoding.json > "$tmp_dir/premature-promotion.json"
 expect_failure premature-promotion env TONDO_STDLIB_ENCODING_CONTRACT="$tmp_dir/premature-promotion.json" scripts/stdlib-encoding-check.sh
 
+jq '.implementation.native_aot_lowering = "verified"' testing/stdlib-encoding.json > "$tmp_dir/unverified-native-claim.json"
+expect_failure unverified-native-claim env TONDO_STDLIB_ENCODING_CONTRACT="$tmp_dir/unverified-native-claim.json" scripts/stdlib-encoding-check.sh
+
+jq '.implementation.status = "pending-after-native-gate"' testing/stdlib-encoding.json > "$tmp_dir/pending-implementation.json"
+expect_failure pending-implementation env TONDO_STDLIB_ENCODING_CONTRACT="$tmp_dir/pending-implementation.json" scripts/stdlib-encoding-check.sh
+
 jq '.corpora += [.corpora[0]]' testing/stdlib-encoding.json > "$tmp_dir/duplicate-corpus.json"
 expect_failure duplicate-corpus env TONDO_STDLIB_ENCODING_CONTRACT="$tmp_dir/duplicate-corpus.json" scripts/stdlib-encoding-check.sh
 
@@ -73,7 +79,11 @@ jq -e '
   and .performance.scalar_oracle == true
   and .performance.simd_allowed_after_equivalence == true
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.status == "verified-hosted-vm"
+  and .implementation.host == "verified-hosted-vm-scalar-bridge"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and .implementation.required_follow_ups == ["STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-TEST-001"]
 ' testing/stdlib-encoding.json >/dev/null
 
 echo "std.encoding tests: OK (policy negatives; canonicality; chunking; limits; lifecycle; promotion boundary)"

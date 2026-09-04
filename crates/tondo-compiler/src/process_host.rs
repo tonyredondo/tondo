@@ -19,7 +19,8 @@ use tondo_stdlib::testing::{
     FloatTolerance, Generator, MAX_SHRINK_CANDIDATES, TextDiff, diff_text,
 };
 use tondo_stdlib::{
-    io as stdlib_io, json, math, messagepack, path, protobuf, serialization as stdlib_serialization,
+    encoding, io as stdlib_io, json, math, messagepack, path, protobuf,
+    serialization as stdlib_serialization,
 };
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
@@ -460,6 +461,10 @@ enum HostValue {
         error: Option<json::JsonErrorKind>,
         finished: bool,
     },
+    EncodingBase64Encoder(encoding::Base64Encoder),
+    EncodingBase64Decoder(encoding::Base64Decoder),
+    EncodingHexEncoder(encoding::HexEncoder),
+    EncodingHexDecoder(encoding::HexDecoder),
     MessagePackValue(messagepack::MessagePackValue),
     #[allow(dead_code)]
     MessagePackValueView(Vec<u8>),
@@ -559,6 +564,50 @@ enum StreamKind {
     Stdin,
     Stdout,
     Stderr,
+}
+
+struct EncodingReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl stdlib_io::Reader for EncodingReader<'_> {
+    fn read(&mut self, maximum: usize) -> Result<stdlib_io::ReadResult, stdlib_io::IoError> {
+        if maximum == 0 {
+            return Err(stdlib_io::IoError::InvalidData);
+        }
+        if self.offset >= self.bytes.len() {
+            return Ok(stdlib_io::ReadResult::Eof);
+        }
+        let end = self.offset.saturating_add(maximum).min(self.bytes.len());
+        let chunk = self.bytes[self.offset..end].to_vec();
+        self.offset = end;
+        Ok(stdlib_io::ReadResult::Data(chunk))
+    }
+}
+
+struct EncodingWriter<'a> {
+    bytes: &'a mut Vec<u8>,
+    max_bytes: u64,
+}
+
+impl stdlib_io::Writer for EncodingWriter<'_> {
+    fn write(&mut self, data: &[u8]) -> Result<usize, stdlib_io::IoError> {
+        let next = self
+            .bytes
+            .len()
+            .checked_add(data.len())
+            .ok_or(stdlib_io::IoError::ResourceLimit)?;
+        if u64::try_from(next).map_or(true, |value| value > self.max_bytes) {
+            return Err(stdlib_io::IoError::ResourceLimit);
+        }
+        self.bytes.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> Result<(), stdlib_io::IoError> {
+        Ok(())
+    }
 }
 
 fn json_error_kind_ordinal(kind: json::JsonErrorKind) -> u32 {
@@ -2922,6 +2971,270 @@ impl BootstrapHost {
             .ok_or_else(|| VmError::Host("Bytes token is stale".into()))
     }
 
+    fn encoding_error_kind_value(&mut self, kind: &encoding::EncodingErrorKind) -> RuntimeValue {
+        let (variant, values) = match kind {
+            encoding::EncodingErrorKind::InvalidLimit => (0, Vec::new()),
+            encoding::EncodingErrorKind::InvalidCharacter => (1, Vec::new()),
+            encoding::EncodingErrorKind::InvalidLength => (2, Vec::new()),
+            encoding::EncodingErrorKind::InvalidPadding => (3, Vec::new()),
+            encoding::EncodingErrorKind::NonCanonical => (4, Vec::new()),
+            encoding::EncodingErrorKind::ResourceLimit => (5, Vec::new()),
+            encoding::EncodingErrorKind::Io(error) => {
+                (6, vec![self.io_error(format!("{error:?}"))])
+            }
+            encoding::EncodingErrorKind::Closed => (7, Vec::new()),
+            encoding::EncodingErrorKind::NoProgress => (8, Vec::new()),
+        };
+        RuntimeValue::Variant {
+            name: "EncodingErrorKind".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn encoding_error_value(&mut self, error: &encoding::EncodingError) -> RuntimeValue {
+        RuntimeValue::Record {
+            name: "EncodingError".into(),
+            values: vec![
+                self.encoding_error_kind_value(&error.kind),
+                RuntimeValue::Integer(error.offset as i128),
+            ],
+        }
+    }
+
+    fn encoding_result_error(&mut self, error: &encoding::EncodingError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.encoding_error_value(error)))
+    }
+
+    fn encoding_error_kind_result(&mut self, kind: encoding::EncodingErrorKind) -> RuntimeValue {
+        self.encoding_result_error(&encoding::EncodingError { kind, offset: 0 })
+    }
+
+    fn encoding_variant(
+        &self,
+        value: &RuntimeValue,
+        expected_name: &str,
+    ) -> Result<(u32, usize), VmError> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = value
+        else {
+            return Err(VmError::Host(format!("{expected_name} value is invalid")));
+        };
+        if name != expected_name {
+            return Err(VmError::Host(format!("{expected_name} name is invalid")));
+        }
+        Ok((*variant, values.len()))
+    }
+
+    fn encoding_alphabet(&self, value: &RuntimeValue) -> Result<encoding::Base64Alphabet, VmError> {
+        match self.encoding_variant(value, "Base64Alphabet")? {
+            (0, 0) => Ok(encoding::Base64Alphabet::Standard),
+            (1, 0) => Ok(encoding::Base64Alphabet::UrlSafe),
+            _ => Err(VmError::Host("Base64Alphabet variant is invalid".into())),
+        }
+    }
+
+    fn encoding_padding(&self, value: &RuntimeValue) -> Result<encoding::Base64Padding, VmError> {
+        match self.encoding_variant(value, "Base64Padding")? {
+            (0, 0) => Ok(encoding::Base64Padding::Required),
+            (1, 0) => Ok(encoding::Base64Padding::Omitted),
+            _ => Err(VmError::Host("Base64Padding variant is invalid".into())),
+        }
+    }
+
+    fn encoding_case(&self, value: &RuntimeValue) -> Result<encoding::HexCase, VmError> {
+        match self.encoding_variant(value, "HexCase")? {
+            (0, 0) => Ok(encoding::HexCase::Lower),
+            (1, 0) => Ok(encoding::HexCase::Upper),
+            (2, 0) => Ok(encoding::HexCase::Any),
+            _ => Err(VmError::Host("HexCase variant is invalid".into())),
+        }
+    }
+
+    fn encoding_limits(&self, value: &RuntimeValue) -> Result<encoding::EncodingLimits, VmError> {
+        let RuntimeValue::Record { name, values } = value else {
+            return Err(VmError::Host("EncodingLimits value is invalid".into()));
+        };
+        if name != "EncodingLimits" {
+            return Err(VmError::Host("EncodingLimits name is invalid".into()));
+        }
+        let [max_input, max_output] = values.as_slice() else {
+            return Err(VmError::Host("EncodingLimits fields are invalid".into()));
+        };
+        let to_usize = |value: &RuntimeValue| match value {
+            RuntimeValue::Integer(value) => usize::try_from(*value).map_err(|_| {
+                VmError::Host("EncodingLimits values must be non-negative Ints".into())
+            }),
+            _ => Err(VmError::Host("EncodingLimits values must be Ints".into())),
+        };
+        encoding::EncodingLimits::create(to_usize(max_input)?, to_usize(max_output)?)
+            .map_err(|error| VmError::Host(format!("invalid EncodingLimits: {error}")))
+    }
+
+    fn encoding_base64_options(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<encoding::Base64Options, VmError> {
+        let RuntimeValue::Record { name, values } = value else {
+            return Err(VmError::Host("Base64Options value is invalid".into()));
+        };
+        if name != "Base64Options" {
+            return Err(VmError::Host("Base64Options name is invalid".into()));
+        }
+        let [alphabet, padding, limits] = values.as_slice() else {
+            return Err(VmError::Host("Base64Options fields are invalid".into()));
+        };
+        Ok(encoding::Base64Options::create(
+            self.encoding_alphabet(alphabet)?,
+            self.encoding_padding(padding)?,
+            self.encoding_limits(limits)?,
+        ))
+    }
+
+    fn encoding_hex_options(&self, value: &RuntimeValue) -> Result<encoding::HexOptions, VmError> {
+        let RuntimeValue::Record { name, values } = value else {
+            return Err(VmError::Host("HexOptions value is invalid".into()));
+        };
+        if name != "HexOptions" {
+            return Err(VmError::Host("HexOptions name is invalid".into()));
+        }
+        let [case, limits] = values.as_slice() else {
+            return Err(VmError::Host("HexOptions fields are invalid".into()));
+        };
+        Ok(encoding::HexOptions::create(
+            self.encoding_case(case)?,
+            self.encoding_limits(limits)?,
+        ))
+    }
+
+    fn encoding_stream_id(
+        &self,
+        value: &RuntimeValue,
+        expected_kind: RuntimeHostValueKind,
+    ) -> Result<u64, VmError> {
+        let RuntimeValue::Host { kind, id } = value else {
+            return Err(VmError::Host("encoding stream value is invalid".into()));
+        };
+        if *kind != expected_kind {
+            return Err(VmError::Host("encoding stream kind is invalid".into()));
+        }
+        let valid = match (expected_kind, self.values.get(id)) {
+            (
+                RuntimeHostValueKind::EncodingBase64Encoder,
+                Some(HostValue::EncodingBase64Encoder(_)),
+            )
+            | (
+                RuntimeHostValueKind::EncodingBase64Decoder,
+                Some(HostValue::EncodingBase64Decoder(_)),
+            )
+            | (RuntimeHostValueKind::EncodingHexEncoder, Some(HostValue::EncodingHexEncoder(_)))
+            | (RuntimeHostValueKind::EncodingHexDecoder, Some(HostValue::EncodingHexDecoder(_))) => {
+                true
+            }
+            _ => false,
+        };
+        valid
+            .then_some(*id)
+            .ok_or_else(|| VmError::Host("encoding stream token is stale".into()))
+    }
+
+    fn encoding_bytes_result(
+        &mut self,
+        result: Result<stdlib_serialization::Bytes, encoding::EncodingError>,
+    ) -> Result<RuntimeValue, VmError> {
+        match result {
+            Ok(bytes) => {
+                if self.ensure_bytes_len(bytes.as_slice().len()).is_err() {
+                    return Ok(
+                        self.encoding_error_kind_result(encoding::EncodingErrorKind::ResourceLimit)
+                    );
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(bytes.into_vec()),
+                ))))
+            }
+            Err(error) => Ok(self.encoding_result_error(&error)),
+        }
+    }
+
+    fn encoding_unit_result(
+        &mut self,
+        result: Result<(), encoding::EncodingError>,
+    ) -> Result<RuntimeValue, VmError> {
+        match result {
+            Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+            Err(error) => Ok(self.encoding_result_error(&error)),
+        }
+    }
+
+    fn encoding_input(&self, value: &RuntimeValue) -> Result<stdlib_serialization::Bytes, VmError> {
+        let bytes = self.bytes(value)?;
+        self.ensure_bytes_len(bytes.len()).map_err(VmError::Host)?;
+        Ok(stdlib_serialization::Bytes::from_slice(bytes))
+    }
+
+    fn encoding_stream_push(
+        &mut self,
+        receiver: &RuntimeValue,
+        chunk: &RuntimeValue,
+        expected_kind: RuntimeHostValueKind,
+    ) -> Result<RuntimeValue, VmError> {
+        let id = self.encoding_stream_id(receiver, expected_kind)?;
+        let input = self.encoding_input(chunk)?;
+        let result = match (expected_kind, self.values.get_mut(&id)) {
+            (
+                RuntimeHostValueKind::EncodingBase64Encoder,
+                Some(HostValue::EncodingBase64Encoder(encoder)),
+            ) => encoder.push(&input),
+            (
+                RuntimeHostValueKind::EncodingBase64Decoder,
+                Some(HostValue::EncodingBase64Decoder(decoder)),
+            ) => decoder.push(&input),
+            (
+                RuntimeHostValueKind::EncodingHexEncoder,
+                Some(HostValue::EncodingHexEncoder(encoder)),
+            ) => encoder.push(&input),
+            (
+                RuntimeHostValueKind::EncodingHexDecoder,
+                Some(HostValue::EncodingHexDecoder(decoder)),
+            ) => decoder.push(&input),
+            _ => return Err(VmError::Host("encoding stream token is stale".into())),
+        };
+        self.encoding_bytes_result(result)
+    }
+
+    fn encoding_stream_finish(
+        &mut self,
+        receiver: &RuntimeValue,
+        expected_kind: RuntimeHostValueKind,
+    ) -> Result<RuntimeValue, VmError> {
+        let id = self.encoding_stream_id(receiver, expected_kind)?;
+        let result = match (expected_kind, self.values.get_mut(&id)) {
+            (
+                RuntimeHostValueKind::EncodingBase64Encoder,
+                Some(HostValue::EncodingBase64Encoder(encoder)),
+            ) => encoder.finish(),
+            (
+                RuntimeHostValueKind::EncodingBase64Decoder,
+                Some(HostValue::EncodingBase64Decoder(decoder)),
+            ) => decoder.finish(),
+            (
+                RuntimeHostValueKind::EncodingHexEncoder,
+                Some(HostValue::EncodingHexEncoder(encoder)),
+            ) => encoder.finish(),
+            (
+                RuntimeHostValueKind::EncodingHexDecoder,
+                Some(HostValue::EncodingHexDecoder(decoder)),
+            ) => decoder.finish(),
+            _ => return Err(VmError::Host("encoding stream token is stale".into())),
+        };
+        self.encoding_bytes_result(result)
+    }
+
     fn json_value(&self, value: &RuntimeValue) -> Result<&json::JsonValue, VmError> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::JsonValue,
@@ -4598,6 +4911,389 @@ impl VmHost for BootstrapHost {
                     return Ok(self.io_result_error("stdin is not writable"));
                 }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("intrinsic.encoding.Base64Alphabet.Standard", []) => Ok(RuntimeValue::Variant {
+                name: "Base64Alphabet".into(),
+                variant: 0,
+                values: Vec::new(),
+            }),
+            ("intrinsic.encoding.Base64Alphabet.UrlSafe", []) => Ok(RuntimeValue::Variant {
+                name: "Base64Alphabet".into(),
+                variant: 1,
+                values: Vec::new(),
+            }),
+            ("intrinsic.encoding.Base64Padding.Required", []) => Ok(RuntimeValue::Variant {
+                name: "Base64Padding".into(),
+                variant: 0,
+                values: Vec::new(),
+            }),
+            ("intrinsic.encoding.Base64Padding.Omitted", []) => Ok(RuntimeValue::Variant {
+                name: "Base64Padding".into(),
+                variant: 1,
+                values: Vec::new(),
+            }),
+            ("intrinsic.encoding.HexCase.Lower", []) => Ok(RuntimeValue::Variant {
+                name: "HexCase".into(),
+                variant: 0,
+                values: Vec::new(),
+            }),
+            ("intrinsic.encoding.HexCase.Upper", []) => Ok(RuntimeValue::Variant {
+                name: "HexCase".into(),
+                variant: 1,
+                values: Vec::new(),
+            }),
+            ("intrinsic.encoding.HexCase.Any", []) => Ok(RuntimeValue::Variant {
+                name: "HexCase".into(),
+                variant: 2,
+                values: Vec::new(),
+            }),
+            ("intrinsic.encoding.EncodingLimits.defaults", []) => {
+                let limits = encoding::EncodingLimits::default();
+                Ok(RuntimeValue::Record {
+                    name: "EncodingLimits".into(),
+                    values: vec![
+                        RuntimeValue::Integer(i128::try_from(limits.max_input_bytes).map_err(
+                            |_| {
+                                VmError::Host("default encoding input limit is out of range".into())
+                            },
+                        )?),
+                        RuntimeValue::Integer(i128::try_from(limits.max_output_bytes).map_err(
+                            |_| {
+                                VmError::Host(
+                                    "default encoding output limit is out of range".into(),
+                                )
+                            },
+                        )?),
+                    ],
+                })
+            }
+            (
+                "intrinsic.encoding.EncodingLimits.create",
+                [
+                    RuntimeValue::Integer(max_input),
+                    RuntimeValue::Integer(max_output),
+                ],
+            ) => {
+                let (Ok(max_input), Ok(max_output)) =
+                    (usize::try_from(*max_input), usize::try_from(*max_output))
+                else {
+                    return Ok(
+                        self.encoding_error_kind_result(encoding::EncodingErrorKind::InvalidLimit)
+                    );
+                };
+                let limits = encoding::EncodingLimits::create(max_input, max_output)
+                    .map_err(|error| VmError::Host(format!("invalid encoding limits: {error}")))?;
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Record {
+                    name: "EncodingLimits".into(),
+                    values: vec![
+                        RuntimeValue::Integer(i128::try_from(limits.max_input_bytes).map_err(
+                            |_| VmError::Host("encoding input limit is out of range".into()),
+                        )?),
+                        RuntimeValue::Integer(i128::try_from(limits.max_output_bytes).map_err(
+                            |_| VmError::Host("encoding output limit is out of range".into()),
+                        )?),
+                    ],
+                })))
+            }
+            ("intrinsic.encoding.Base64Options.create", [alphabet, padding, limits]) => {
+                self.encoding_alphabet(alphabet)?;
+                self.encoding_padding(padding)?;
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "Base64Options".into(),
+                    values: vec![alphabet.clone(), padding.clone(), limits.clone()],
+                })
+            }
+            ("intrinsic.encoding.Base64Options.standard", [limits]) => {
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "Base64Options".into(),
+                    values: vec![
+                        RuntimeValue::Variant {
+                            name: "Base64Alphabet".into(),
+                            variant: 0,
+                            values: Vec::new(),
+                        },
+                        RuntimeValue::Variant {
+                            name: "Base64Padding".into(),
+                            variant: 0,
+                            values: Vec::new(),
+                        },
+                        limits.clone(),
+                    ],
+                })
+            }
+            ("intrinsic.encoding.Base64Options.urlSafe", [limits]) => {
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "Base64Options".into(),
+                    values: vec![
+                        RuntimeValue::Variant {
+                            name: "Base64Alphabet".into(),
+                            variant: 1,
+                            values: Vec::new(),
+                        },
+                        RuntimeValue::Variant {
+                            name: "Base64Padding".into(),
+                            variant: 0,
+                            values: Vec::new(),
+                        },
+                        limits.clone(),
+                    ],
+                })
+            }
+            ("intrinsic.encoding.Base64Options.urlSafeUnpadded", [limits]) => {
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "Base64Options".into(),
+                    values: vec![
+                        RuntimeValue::Variant {
+                            name: "Base64Alphabet".into(),
+                            variant: 1,
+                            values: Vec::new(),
+                        },
+                        RuntimeValue::Variant {
+                            name: "Base64Padding".into(),
+                            variant: 1,
+                            values: Vec::new(),
+                        },
+                        limits.clone(),
+                    ],
+                })
+            }
+            ("intrinsic.encoding.HexOptions.create", [case, limits]) => {
+                self.encoding_case(case)?;
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "HexOptions".into(),
+                    values: vec![case.clone(), limits.clone()],
+                })
+            }
+            ("intrinsic.encoding.HexOptions.lower", [limits]) => {
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "HexOptions".into(),
+                    values: vec![
+                        RuntimeValue::Variant {
+                            name: "HexCase".into(),
+                            variant: 0,
+                            values: Vec::new(),
+                        },
+                        limits.clone(),
+                    ],
+                })
+            }
+            ("intrinsic.encoding.HexOptions.upper", [limits]) => {
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "HexOptions".into(),
+                    values: vec![
+                        RuntimeValue::Variant {
+                            name: "HexCase".into(),
+                            variant: 1,
+                            values: Vec::new(),
+                        },
+                        limits.clone(),
+                    ],
+                })
+            }
+            ("intrinsic.encoding.HexOptions.anyCase", [limits]) => {
+                self.encoding_limits(limits)?;
+                Ok(RuntimeValue::Record {
+                    name: "HexOptions".into(),
+                    values: vec![
+                        RuntimeValue::Variant {
+                            name: "HexCase".into(),
+                            variant: 2,
+                            values: Vec::new(),
+                        },
+                        limits.clone(),
+                    ],
+                })
+            }
+            ("std.encoding.Base64Options.encode", [options, input]) => {
+                let options = self.encoding_base64_options(options)?;
+                let input = self.encoding_input(input)?;
+                self.encoding_bytes_result(options.encode(&input))
+            }
+            ("std.encoding.Base64Options.decode", [options, input]) => {
+                let options = self.encoding_base64_options(options)?;
+                let input = self.encoding_input(input)?;
+                self.encoding_bytes_result(options.decode(&input))
+            }
+            ("std.encoding.HexOptions.encode", [options, input]) => {
+                let options = self.encoding_hex_options(options)?;
+                let input = self.encoding_input(input)?;
+                self.encoding_bytes_result(options.encode(&input))
+            }
+            ("std.encoding.HexOptions.decode", [options, input]) => {
+                let options = self.encoding_hex_options(options)?;
+                let input = self.encoding_input(input)?;
+                self.encoding_bytes_result(options.decode(&input))
+            }
+            ("std.encoding.Base64Options.encodeTo", [options, input, writer]) => {
+                let options = self.encoding_base64_options(options)?;
+                let input = self.encoding_input(input)?;
+                let stream = self.writer_stream(writer)?;
+                let result = match stream {
+                    StreamKind::Stdout => {
+                        let mut writer = EncodingWriter {
+                            bytes: &mut self.stdout,
+                            max_bytes: self.max_bytes,
+                        };
+                        options.encode_to(&input, &mut writer)
+                    }
+                    StreamKind::Stderr => {
+                        let mut writer = EncodingWriter {
+                            bytes: &mut self.stderr,
+                            max_bytes: self.max_bytes,
+                        };
+                        options.encode_to(&input, &mut writer)
+                    }
+                    StreamKind::Stdin => Err(encoding::EncodingError {
+                        kind: encoding::EncodingErrorKind::Io(stdlib_io::IoError::InvalidData),
+                        offset: 0,
+                    }),
+                };
+                self.encoding_unit_result(result)
+            }
+            ("std.encoding.HexOptions.encodeTo", [options, input, writer]) => {
+                let options = self.encoding_hex_options(options)?;
+                let input = self.encoding_input(input)?;
+                let stream = self.writer_stream(writer)?;
+                let result = match stream {
+                    StreamKind::Stdout => {
+                        let mut writer = EncodingWriter {
+                            bytes: &mut self.stdout,
+                            max_bytes: self.max_bytes,
+                        };
+                        options.encode_to(&input, &mut writer)
+                    }
+                    StreamKind::Stderr => {
+                        let mut writer = EncodingWriter {
+                            bytes: &mut self.stderr,
+                            max_bytes: self.max_bytes,
+                        };
+                        options.encode_to(&input, &mut writer)
+                    }
+                    StreamKind::Stdin => Err(encoding::EncodingError {
+                        kind: encoding::EncodingErrorKind::Io(stdlib_io::IoError::InvalidData),
+                        offset: 0,
+                    }),
+                };
+                self.encoding_unit_result(result)
+            }
+            ("std.encoding.Base64Options.decodeFrom", [options, reader]) => {
+                let options = self.encoding_base64_options(options)?;
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.encoding_result_error(&encoding::EncodingError {
+                        kind: encoding::EncodingErrorKind::Io(stdlib_io::IoError::InvalidData),
+                        offset: 0,
+                    }));
+                }
+                let (result, new_offset) = {
+                    let mut reader = EncodingReader {
+                        bytes: &self.stdin,
+                        offset,
+                    };
+                    let result = options.decode_from(&mut reader);
+                    (result, reader.offset)
+                };
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = new_offset;
+                }
+                self.encoding_bytes_result(result)
+            }
+            ("std.encoding.HexOptions.decodeFrom", [options, reader]) => {
+                let options = self.encoding_hex_options(options)?;
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.encoding_result_error(&encoding::EncodingError {
+                        kind: encoding::EncodingErrorKind::Io(stdlib_io::IoError::InvalidData),
+                        offset: 0,
+                    }));
+                }
+                let (result, new_offset) = {
+                    let mut reader = EncodingReader {
+                        bytes: &self.stdin,
+                        offset,
+                    };
+                    let result = options.decode_from(&mut reader);
+                    (result, reader.offset)
+                };
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = new_offset;
+                }
+                self.encoding_bytes_result(result)
+            }
+            ("std.encoding.Base64Options.encoder", [options]) => {
+                let options = self.encoding_base64_options(options)?;
+                let encoder = options.encoder().map_err(|error| {
+                    VmError::Host(format!("failed to create Base64 encoder: {error}"))
+                })?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::EncodingBase64Encoder,
+                    HostValue::EncodingBase64Encoder(encoder),
+                ))))
+            }
+            ("std.encoding.Base64Options.decoder", [options]) => {
+                let options = self.encoding_base64_options(options)?;
+                let decoder = options.decoder().map_err(|error| {
+                    VmError::Host(format!("failed to create Base64 decoder: {error}"))
+                })?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::EncodingBase64Decoder,
+                    HostValue::EncodingBase64Decoder(decoder),
+                ))))
+            }
+            ("std.encoding.HexOptions.encoder", [options]) => {
+                let options = self.encoding_hex_options(options)?;
+                let encoder = options.encoder().map_err(|error| {
+                    VmError::Host(format!("failed to create hexadecimal encoder: {error}"))
+                })?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::EncodingHexEncoder,
+                    HostValue::EncodingHexEncoder(encoder),
+                ))))
+            }
+            ("std.encoding.HexOptions.decoder", [options]) => {
+                let options = self.encoding_hex_options(options)?;
+                let decoder = options.decoder().map_err(|error| {
+                    VmError::Host(format!("failed to create hexadecimal decoder: {error}"))
+                })?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::EncodingHexDecoder,
+                    HostValue::EncodingHexDecoder(decoder),
+                ))))
+            }
+            ("std.encoding.Base64Encoder.push", [receiver, chunk]) => self.encoding_stream_push(
+                receiver,
+                chunk,
+                RuntimeHostValueKind::EncodingBase64Encoder,
+            ),
+            ("std.encoding.Base64Encoder.finish", [receiver]) => {
+                self.encoding_stream_finish(receiver, RuntimeHostValueKind::EncodingBase64Encoder)
+            }
+            ("std.encoding.Base64Decoder.push", [receiver, chunk]) => self.encoding_stream_push(
+                receiver,
+                chunk,
+                RuntimeHostValueKind::EncodingBase64Decoder,
+            ),
+            ("std.encoding.Base64Decoder.finish", [receiver]) => {
+                self.encoding_stream_finish(receiver, RuntimeHostValueKind::EncodingBase64Decoder)
+            }
+            ("std.encoding.HexEncoder.push", [receiver, chunk]) => {
+                self.encoding_stream_push(receiver, chunk, RuntimeHostValueKind::EncodingHexEncoder)
+            }
+            ("std.encoding.HexEncoder.finish", [receiver]) => {
+                self.encoding_stream_finish(receiver, RuntimeHostValueKind::EncodingHexEncoder)
+            }
+            ("std.encoding.HexDecoder.push", [receiver, chunk]) => {
+                self.encoding_stream_push(receiver, chunk, RuntimeHostValueKind::EncodingHexDecoder)
+            }
+            ("std.encoding.HexDecoder.finish", [receiver]) => {
+                self.encoding_stream_finish(receiver, RuntimeHostValueKind::EncodingHexDecoder)
             }
             ("std.math.floor", [RuntimeValue::Float(value)]) => {
                 Ok(RuntimeValue::Float(math::floor(*value)))
@@ -9079,6 +9775,10 @@ impl VmHost for BootstrapHost {
                 | "std.io.Writer.flush"
                 | "std.io.readAll"
                 | "std.io.writeAll"
+                | "std.encoding.Base64Options.encodeTo"
+                | "std.encoding.Base64Options.decodeFrom"
+                | "std.encoding.HexOptions.encodeTo"
+                | "std.encoding.HexOptions.decodeFrom"
                 | "std.fs.open"
                 | "std.fs.openDirectory"
                 | "std.fs.readAll"
@@ -9417,6 +10117,10 @@ impl VmHost for BootstrapHost {
             RuntimeHostValueKind::ProcessHandle
             | RuntimeHostValueKind::Reader
             | RuntimeHostValueKind::Writer
+            | RuntimeHostValueKind::EncodingBase64Encoder
+            | RuntimeHostValueKind::EncodingBase64Decoder
+            | RuntimeHostValueKind::EncodingHexEncoder
+            | RuntimeHostValueKind::EncodingHexDecoder
             | RuntimeHostValueKind::File
             | RuntimeHostValueKind::Directory => {
                 self.values.remove(id);
@@ -15311,6 +16015,224 @@ mod tests {
             panic!("expected successful bytes result");
         };
         *value
+    }
+
+    fn encoding_limits(host: &mut BootstrapHost, input: i128, output: i128) -> RuntimeValue {
+        ok(host
+            .invoke(
+                "intrinsic.encoding.EncodingLimits.create",
+                &[RuntimeValue::Integer(input), RuntimeValue::Integer(output)],
+            )
+            .unwrap())
+    }
+
+    fn encoding_error_variant(value: &RuntimeValue) -> u32 {
+        let RuntimeValue::ResultErr(error) = value else {
+            panic!("expected encoding error result");
+        };
+        let RuntimeValue::Record { values, .. } = error.as_ref() else {
+            panic!("expected EncodingError record");
+        };
+        let RuntimeValue::Variant { variant, .. } = &values[0] else {
+            panic!("expected EncodingErrorKind variant");
+        };
+        *variant
+    }
+
+    #[test]
+    fn encoding_host_materialized_and_streaming_contract() {
+        let mut host = BootstrapHost::default();
+        let limits = encoding_limits(&mut host, 64, 64);
+        let standard = host
+            .invoke(
+                "intrinsic.encoding.Base64Options.standard",
+                &[limits.clone()],
+            )
+            .unwrap();
+        let source = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("fo".into())],
+            )
+            .unwrap(),
+        );
+        let encoded = ok(host
+            .invoke(
+                "std.encoding.Base64Options.encode",
+                &[standard.clone(), source.clone()],
+            )
+            .unwrap());
+        assert_eq!(host.bytes(&encoded).unwrap(), b"Zm8=");
+        let decoded = bytes_ok(
+            host.invoke(
+                "std.encoding.Base64Options.decode",
+                &[standard.clone(), encoded],
+            )
+            .unwrap(),
+        );
+        assert_eq!(host.bytes(&decoded).unwrap(), b"fo");
+
+        let upper = host
+            .invoke("intrinsic.encoding.HexOptions.upper", &[limits.clone()])
+            .unwrap();
+        let hex = ok(host
+            .invoke(
+                "std.encoding.HexOptions.encode",
+                &[upper.clone(), source.clone()],
+            )
+            .unwrap());
+        assert_eq!(host.bytes(&hex).unwrap(), b"666F");
+        let round_trip = bytes_ok(
+            host.invoke("std.encoding.HexOptions.decode", &[upper, hex])
+                .unwrap(),
+        );
+        assert_eq!(host.bytes(&round_trip).unwrap(), b"fo");
+
+        let unpadded = host
+            .invoke(
+                "intrinsic.encoding.Base64Options.urlSafeUnpadded",
+                &[limits],
+            )
+            .unwrap();
+        let encoder = ok(host
+            .invoke(
+                "std.encoding.Base64Options.encoder",
+                std::slice::from_ref(&unpadded),
+            )
+            .unwrap());
+        let first_chunk = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("f".into())],
+            )
+            .unwrap(),
+        );
+        let first = bytes_ok(
+            host.invoke(
+                "std.encoding.Base64Encoder.push",
+                &[encoder.clone(), first_chunk],
+            )
+            .unwrap(),
+        );
+        assert!(host.bytes(&first).unwrap().is_empty());
+        let second_chunk = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("o".into())],
+            )
+            .unwrap(),
+        );
+        let second = bytes_ok(
+            host.invoke(
+                "std.encoding.Base64Encoder.push",
+                &[encoder.clone(), second_chunk],
+            )
+            .unwrap(),
+        );
+        assert!(host.bytes(&second).unwrap().is_empty());
+        let tail = bytes_ok(
+            host.invoke(
+                "std.encoding.Base64Encoder.finish",
+                std::slice::from_ref(&encoder),
+            )
+            .unwrap(),
+        );
+        assert_eq!(host.bytes(&tail).unwrap(), b"Zm8");
+        let empty = bytes_ok(host.invoke("std.bytes.empty", &[]).unwrap());
+        let closed = host
+            .invoke("std.encoding.Base64Encoder.push", &[encoder.clone(), empty])
+            .unwrap();
+        assert_eq!(encoding_error_variant(&closed), 7);
+
+        let invalid = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("Zg=".into())],
+            )
+            .unwrap(),
+        );
+        let invalid_result = host
+            .invoke("std.encoding.Base64Options.decode", &[standard, invalid])
+            .unwrap();
+        assert_eq!(encoding_error_variant(&invalid_result), 2);
+    }
+
+    #[test]
+    fn encoding_host_io_limits_and_affine_cleanup() {
+        let mut host = BootstrapHost::default();
+        let limits = encoding_limits(&mut host, 64, 64);
+        let standard = host
+            .invoke("intrinsic.encoding.Base64Options.standard", &[limits])
+            .unwrap();
+        let source = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("fo".into())],
+            )
+            .unwrap(),
+        );
+        let writer = ok(host.invoke("std.console.stdout", &[]).unwrap());
+        let call = host
+            .start_async(
+                "std.encoding.Base64Options.encodeTo",
+                &[standard.clone(), source, writer],
+            )
+            .unwrap();
+        let (_, result) = host.wait_async(&[call]).unwrap();
+        assert!(matches!(result, RuntimeValue::ResultOk(value) if *value == RuntimeValue::Unit));
+        assert_eq!(host.take_stdout(), b"Zm8=");
+
+        let mut reader_host = BootstrapHost::with_stdin(b"Zm8=".to_vec());
+        let limits = encoding_limits(&mut reader_host, 64, 64);
+        let standard = reader_host
+            .invoke("intrinsic.encoding.Base64Options.standard", &[limits])
+            .unwrap();
+        let reader = ok(reader_host.invoke("std.console.stdin", &[]).unwrap());
+        let call = reader_host
+            .start_async("std.encoding.Base64Options.decodeFrom", &[standard, reader])
+            .unwrap();
+        let (_, result) = reader_host.wait_async(&[call]).unwrap();
+        let decoded = bytes_ok(result);
+        assert_eq!(reader_host.bytes(&decoded).unwrap(), b"fo");
+
+        let mut limited = BootstrapHost::with_max_bytes(Vec::new(), 2);
+        let limits = encoding_limits(&mut limited, 64, 64);
+        let standard = limited
+            .invoke("intrinsic.encoding.Base64Options.standard", &[limits])
+            .unwrap();
+        let source = bytes_ok(
+            limited
+                .invoke(
+                    "intrinsic.Bytes.fromString",
+                    &[RuntimeValue::String("fo".into())],
+                )
+                .unwrap(),
+        );
+        let result = limited
+            .invoke("std.encoding.Base64Options.encode", &[standard, source])
+            .unwrap();
+        assert_eq!(encoding_error_variant(&result), 5);
+
+        let limits = encoding_limits(&mut host, 64, 64);
+        let standard = host
+            .invoke("intrinsic.encoding.Base64Options.standard", &[limits])
+            .unwrap();
+        let stream = ok(host
+            .invoke("std.encoding.Base64Options.encoder", &[standard])
+            .unwrap());
+        let RuntimeValue::Host { id, .. } = stream.clone() else {
+            panic!("expected encoding stream host token");
+        };
+        host.cleanup(&stream).unwrap();
+        assert!(!host.values.contains_key(&id));
+
+        let negative = host
+            .invoke(
+                "intrinsic.encoding.EncodingLimits.create",
+                &[RuntimeValue::Integer(-1), RuntimeValue::Integer(4)],
+            )
+            .unwrap();
+        assert_eq!(encoding_error_variant(&negative), 0);
     }
 
     #[test]

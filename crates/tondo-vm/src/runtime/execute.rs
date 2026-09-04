@@ -8461,6 +8461,20 @@ fn channel_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<Runti
     .then_some(kind)
 }
 
+fn encoding_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<RuntimeHostValueKind> {
+    let kind = match nominal.name.as_str() {
+        "Base64Encoder" => RuntimeHostValueKind::EncodingBase64Encoder,
+        "Base64Decoder" => RuntimeHostValueKind::EncodingBase64Decoder,
+        "HexEncoder" => RuntimeHostValueKind::EncodingHexEncoder,
+        "HexDecoder" => RuntimeHostValueKind::EncodingHexDecoder,
+        _ => return None,
+    };
+    let identity_suffix = format!("::encoding::type::{}", nominal.name);
+    (nominal.identity.contains(":toolchain:std:0.1-bootstrap::")
+        && nominal.identity.ends_with(&identity_suffix))
+    .then_some(kind)
+}
+
 fn executor_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<RuntimeHostValueKind> {
     let kind = match nominal.name.as_str() {
         "Pool" => RuntimeHostValueKind::ExecutorPool,
@@ -16171,6 +16185,7 @@ impl Engine<'_, '_> {
                 .and_then(|nominal| {
                     sync_collection_host_kind(nominal)
                         .or_else(|| channel_host_kind(nominal))
+                        .or_else(|| encoding_host_kind(nominal))
                         .or_else(|| executor_host_kind(nominal))
                 })
                 == Some(kind) =>
@@ -30504,6 +30519,24 @@ mod tests {
             super::channel_host_kind(&channel_sender),
             Some(RuntimeHostValueKind::ChannelSender)
         );
+        let encoding_identity =
+            |name: &str| format!("pkg:toolchain:std:0.1-bootstrap::encoding::type::{name}");
+        for (name, kind) in [
+            ("Base64Encoder", RuntimeHostValueKind::EncodingBase64Encoder),
+            ("Base64Decoder", RuntimeHostValueKind::EncodingBase64Decoder),
+            ("HexEncoder", RuntimeHostValueKind::EncodingHexEncoder),
+            ("HexDecoder", RuntimeHostValueKind::EncodingHexDecoder),
+        ] {
+            let nominal = BytecodeNominal {
+                name: name.into(),
+                identity: encoding_identity(name),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Newtype {
+                    underlying: types.int,
+                },
+            };
+            assert_eq!(super::encoding_host_kind(&nominal), Some(kind));
+        }
         let executor_pool = BytecodeNominal {
             name: "Pool".into(),
             identity: "pkg:toolchain:std:0.1-bootstrap::executor::type::Pool".into(),

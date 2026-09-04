@@ -228,7 +228,17 @@ fallback de locale, buffers ilimitados ni una capability de host. Esas
 funcionalidades requerirían owners y policies explícitos; no se agregan como
 booleanos a esta API.
 
-La implementación, host, tests de corpus, performance, conformance y
-documentación de uso permanecen pendientes de
-`STD-ENCODING-IMPL-001`, `STD-ENCODING-TEST-001`, `STD-ENCODING-PERF-001`,
-`STD-ENCODING-CONF-001` y `STD-ENCODING-DOC-001` después de `NATIVE-001`.
+La ruta escalar de
+`crates/tondo-stdlib/src/encoding.rs` y el bridge de la VM hosted ya están
+verificados por `STD-ENCODING-IMPL-001`: cubren las operaciones materializadas,
+los adapters `Reader`/`Writer`, los handles afines y la traducción de errores
+tipados en la superficie del compilador. La fixture
+`tests/runtime/m11-std-encoding-impl-001.to` produce `Zm8=encoding-ok` con
+salida y estado hash-bound en la evidencia de implementación.
+
+Esta implementación es un cierre de la ruta hosted y del oráculo scalar, no una
+afirmación de runtime nativo ni de lowering AOT genérico:
+`native_aot_lowering: not-claimed`. Los bloques
+`STD-ENCODING-TEST-001`, `STD-ENCODING-PERF-001`, `STD-ENCODING-CONF-001` y
+`STD-ENCODING-DOC-001` permanecen pendientes y deben conservar la misma
+frontera de una única semántica.

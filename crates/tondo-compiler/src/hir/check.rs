@@ -15399,6 +15399,36 @@ impl<'a> ExpressionChecker<'a> {
             {
                 (module_token, function_token, 20_u8)
             }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("Base64Alphabet") =>
+            {
+                (module_token, function_token, 21_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("Base64Padding") =>
+            {
+                (module_token, function_token, 22_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("HexCase") =>
+            {
+                (module_token, function_token, 23_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("EncodingLimits") =>
+            {
+                (module_token, function_token, 24_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("Base64Options") =>
+            {
+                (module_token, function_token, 25_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("HexOptions") =>
+            {
+                (module_token, function_token, 26_u8)
+            }
             _ => return Ok(None),
         };
         let Some(module_reference) = self.resolved.reference(file, module_token.range()) else {
@@ -15584,6 +15614,65 @@ impl<'a> ExpressionChecker<'a> {
                 ("sync", Some("SeqCst")) => HirBootstrapHostFunction::SyncMemoryOrderSeqCst,
                 _ => return Ok(None),
             }
+        } else if static_type == 21 {
+            match (module.path().as_str(), function_name) {
+                ("encoding", Some("Standard")) => {
+                    HirBootstrapHostFunction::EncodingBase64AlphabetStandard
+                }
+                ("encoding", Some("UrlSafe")) => {
+                    HirBootstrapHostFunction::EncodingBase64AlphabetUrlSafe
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 22 {
+            match (module.path().as_str(), function_name) {
+                ("encoding", Some("Required")) => {
+                    HirBootstrapHostFunction::EncodingBase64PaddingRequired
+                }
+                ("encoding", Some("Omitted")) => {
+                    HirBootstrapHostFunction::EncodingBase64PaddingOmitted
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 23 {
+            match (module.path().as_str(), function_name) {
+                ("encoding", Some("Lower")) => HirBootstrapHostFunction::EncodingHexCaseLower,
+                ("encoding", Some("Upper")) => HirBootstrapHostFunction::EncodingHexCaseUpper,
+                ("encoding", Some("Any")) => HirBootstrapHostFunction::EncodingHexCaseAny,
+                _ => return Ok(None),
+            }
+        } else if static_type == 24 {
+            match (module.path().as_str(), function_name) {
+                ("encoding", Some("defaults")) => HirBootstrapHostFunction::EncodingLimitsDefaults,
+                ("encoding", Some("create")) => HirBootstrapHostFunction::EncodingLimitsCreate,
+                _ => return Ok(None),
+            }
+        } else if static_type == 25 {
+            match (module.path().as_str(), function_name) {
+                ("encoding", Some("create")) => {
+                    HirBootstrapHostFunction::EncodingBase64OptionsCreate
+                }
+                ("encoding", Some("standard")) => {
+                    HirBootstrapHostFunction::EncodingBase64OptionsStandard
+                }
+                ("encoding", Some("urlSafe")) => {
+                    HirBootstrapHostFunction::EncodingBase64OptionsUrlSafe
+                }
+                ("encoding", Some("urlSafeUnpadded")) => {
+                    HirBootstrapHostFunction::EncodingBase64OptionsUrlSafeUnpadded
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 26 {
+            match (module.path().as_str(), function_name) {
+                ("encoding", Some("create")) => HirBootstrapHostFunction::EncodingHexOptionsCreate,
+                ("encoding", Some("lower")) => HirBootstrapHostFunction::EncodingHexOptionsLower,
+                ("encoding", Some("upper")) => HirBootstrapHostFunction::EncodingHexOptionsUpper,
+                ("encoding", Some("anyCase")) => {
+                    HirBootstrapHostFunction::EncodingHexOptionsAnyCase
+                }
+                _ => return Ok(None),
+            }
         } else {
             match (module.path().as_str(), function_name) {
                 ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
@@ -15759,6 +15848,7 @@ impl<'a> ExpressionChecker<'a> {
                 | ("json", Some(name))
                 | ("messagepack", Some(name))
                 | ("protobuf", Some(name))
+                | ("encoding", Some(name))
                 | ("iter", Some(name))
                 | ("sync", Some(name))
                 | ("channel", Some(name))
@@ -19384,6 +19474,63 @@ impl<'a> ExpressionChecker<'a> {
                 "toUpperAscii" => HirBootstrapHostFunction::TextUpperAscii,
                 _ => return Ok(None),
             },
+            TypeKind::Nominal { identity, .. }
+                if identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                    && identity.module().as_str() == "encoding" =>
+            {
+                let owner = identity.declaration().to_string();
+                match (owner.as_str(), member) {
+                    ("Base64Options", "encode") => {
+                        HirBootstrapHostFunction::EncodingBase64OptionsEncode
+                    }
+                    ("Base64Options", "decode") => {
+                        HirBootstrapHostFunction::EncodingBase64OptionsDecode
+                    }
+                    ("Base64Options", "encodeTo") => {
+                        HirBootstrapHostFunction::EncodingBase64OptionsEncodeTo
+                    }
+                    ("Base64Options", "decodeFrom") => {
+                        HirBootstrapHostFunction::EncodingBase64OptionsDecodeFrom
+                    }
+                    ("Base64Options", "encoder") => {
+                        HirBootstrapHostFunction::EncodingBase64OptionsEncoder
+                    }
+                    ("Base64Options", "decoder") => {
+                        HirBootstrapHostFunction::EncodingBase64OptionsDecoder
+                    }
+                    ("HexOptions", "encode") => HirBootstrapHostFunction::EncodingHexOptionsEncode,
+                    ("HexOptions", "decode") => HirBootstrapHostFunction::EncodingHexOptionsDecode,
+                    ("HexOptions", "encodeTo") => {
+                        HirBootstrapHostFunction::EncodingHexOptionsEncodeTo
+                    }
+                    ("HexOptions", "decodeFrom") => {
+                        HirBootstrapHostFunction::EncodingHexOptionsDecodeFrom
+                    }
+                    ("HexOptions", "encoder") => {
+                        HirBootstrapHostFunction::EncodingHexOptionsEncoder
+                    }
+                    ("HexOptions", "decoder") => {
+                        HirBootstrapHostFunction::EncodingHexOptionsDecoder
+                    }
+                    ("Base64Encoder", "push") => {
+                        HirBootstrapHostFunction::EncodingBase64EncoderPush
+                    }
+                    ("Base64Encoder", "finish") => {
+                        HirBootstrapHostFunction::EncodingBase64EncoderFinish
+                    }
+                    ("Base64Decoder", "push") => {
+                        HirBootstrapHostFunction::EncodingBase64DecoderPush
+                    }
+                    ("Base64Decoder", "finish") => {
+                        HirBootstrapHostFunction::EncodingBase64DecoderFinish
+                    }
+                    ("HexEncoder", "push") => HirBootstrapHostFunction::EncodingHexEncoderPush,
+                    ("HexEncoder", "finish") => HirBootstrapHostFunction::EncodingHexEncoderFinish,
+                    ("HexDecoder", "push") => HirBootstrapHostFunction::EncodingHexDecoderPush,
+                    ("HexDecoder", "finish") => HirBootstrapHostFunction::EncodingHexDecoderFinish,
+                    _ => return Ok(None),
+                }
+            }
             TypeKind::Intrinsic { constructor, .. } => match (*constructor, member) {
                 (IntrinsicType::Command, "start") => HirBootstrapHostFunction::CommandStart,
                 (IntrinsicType::Command, "status") => HirBootstrapHostFunction::CommandStatus,
@@ -19743,6 +19890,14 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::JsonWriterBufferWrite
                 | HirBootstrapHostFunction::JsonWriterBufferWriteBase64
                 | HirBootstrapHostFunction::JsonWriterBufferFinish
+                | HirBootstrapHostFunction::EncodingBase64EncoderPush
+                | HirBootstrapHostFunction::EncodingBase64EncoderFinish
+                | HirBootstrapHostFunction::EncodingBase64DecoderPush
+                | HirBootstrapHostFunction::EncodingBase64DecoderFinish
+                | HirBootstrapHostFunction::EncodingHexEncoderPush
+                | HirBootstrapHostFunction::EncodingHexEncoderFinish
+                | HirBootstrapHostFunction::EncodingHexDecoderPush
+                | HirBootstrapHostFunction::EncodingHexDecoderFinish
                 | HirBootstrapHostFunction::JsonReaderSerializationPeek
                 | HirBootstrapHostFunction::JsonReaderSerializationNext
                 | HirBootstrapHostFunction::JsonReaderSerializationNextBase64

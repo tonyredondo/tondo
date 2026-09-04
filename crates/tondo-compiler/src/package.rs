@@ -671,6 +671,7 @@ pub(crate) fn bootstrap_standard_modules() -> Result<Vec<ModulePath>, PackageGra
         "serialization",
         "__json_typed",
         "json",
+        "encoding",
         "messagepack",
         "protobuf",
         "path",

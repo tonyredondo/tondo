@@ -206,10 +206,49 @@
     "unbounded-stream-buffer"
   ],
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "verified-hosted-vm",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
-    "required_follow_ups": ["STD-ENCODING-IMPL-001", "STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+    "host": "verified-hosted-vm-scalar-bridge",
+    "native_aot_lowering": "not-claimed",
+    "sources": [
+      "crates/tondo-stdlib/src/encoding.rs",
+      "crates/tondo-stdlib/src/lib.rs",
+      "crates/tondo-compiler/src/package.rs",
+      "crates/tondo-compiler/src/resolve.rs",
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/mir/lower.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-vm/src/bytecode/verify.rs",
+      "crates/tondo-vm/src/runtime.rs",
+      "crates/tondo-vm/src/runtime/execute.rs"
+    ],
+    "tests": [
+      "crates/tondo-stdlib/src/encoding.rs::base64_policies_match_rfc4648_and_url_safe_vectors",
+      "crates/tondo-stdlib/src/encoding.rs::base64_decoder_rejects_alphabet_padding_and_noncanonical_bits",
+      "crates/tondo-stdlib/src/encoding.rs::base64_streaming_is_chunk_invariant_and_terminal",
+      "crates/tondo-stdlib/src/encoding.rs::base64_limits_are_atomic_and_empty_zero_limit_is_valid",
+      "crates/tondo-stdlib/src/encoding.rs::hexadecimal_policies_are_strict_and_any_case_is_lowercase",
+      "crates/tondo-stdlib/src/encoding.rs::hexadecimal_streaming_and_chunk_limits_are_stable",
+      "crates/tondo-stdlib/src/encoding.rs::reader_and_writer_paths_preserve_stream_semantics",
+      "crates/tondo-stdlib/src/encoding.rs::writer_no_progress_and_io_errors_are_terminal",
+      "crates/tondo-compiler/src/process_host.rs::encoding_host_materialized_and_streaming_contract",
+      "crates/tondo-compiler/src/process_host.rs::encoding_host_io_limits_and_affine_cleanup",
+      "crates/tondo-vm/src/runtime/execute.rs::default_host_and_closed_runtime_helpers_have_explicit_boundaries",
+      "tests/runtime/m11-std-encoding-impl-001.to",
+      "scripts/stdlib-encoding-implementation-check.sh",
+      "scripts/stdlib-encoding-implementation-test.sh"
+    ],
+    "proof": "STD-ENCODING-IMPL-001 verifies the scalar Base64 and hexadecimal machines in stdlib, their typed compiler/bootstrap surface, and the hosted VM bridge for materialized, Reader/Writer and affine streaming calls. Native runtime and generic native AOT lowering remain explicitly unclaimed; later test, performance, conformance and documentation leaves remain separate.",
+    "fixture": {
+      "path": "tests/runtime/m11-std-encoding-impl-001.to",
+      "stdout": "Zm8=encoding-ok",
+      "exit": 0,
+      "status": "passed"
+    },
+    "evidence_report": "target/reliability/evidence/stdlib-encoding-implementation.json",
+    "required_follow_ups": ["STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
   },
   "promotion": {
     "gates": [
@@ -219,6 +258,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-ENCODING-TEST-001"]
   }
 }

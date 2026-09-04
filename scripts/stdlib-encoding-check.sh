@@ -109,12 +109,18 @@ jq -e '
   and ([.corpora[].id] | unique | length) == (.corpora | length)
   and all(.corpora[]; .source == "owner-generated" and .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
-  and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .implementation.status == "pending-after-native-gate"
-  and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
-  and .implementation.required_follow_ups == ["STD-ENCODING-IMPL-001", "STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+ and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
+  and .implementation.status == "verified-hosted-vm"
+ and .implementation.public_api_promoted == false
+  and .implementation.host == "verified-hosted-vm-scalar-bridge"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and (.implementation.sources | type == "array" and length == 12)
+  and (.implementation.tests | type == "array" and length == 14)
+  and .implementation.fixture == {path:"tests/runtime/m11-std-encoding-impl-001.to",stdout:"Zm8=encoding-ok",exit:0,status:"passed"}
+  and .implementation.evidence_report == "target/reliability/evidence/stdlib-encoding-implementation.json"
+  and (.implementation.proof | type == "string" and length > 0)
+  and .implementation.required_follow_ups == ["STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-TEST-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable encoding contract"
 
 for path in \

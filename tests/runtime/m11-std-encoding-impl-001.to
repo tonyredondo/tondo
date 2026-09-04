@@ -1,0 +1,31 @@
+import std.bytes
+import std.console
+import std.encoding
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
+    let limits = encoding.EncodingLimits.defaults()
+    let standard = encoding.Base64Options.standard(limits)
+    let source = bytes.Bytes("fo")?
+    let encoded = standard.encode(source)?
+    assert(String(encoded)? == "Zm8=")
+    let decoded = standard.decode(encoded)?
+    assert(String(decoded)? == "fo")
+
+    let hex = encoding.HexOptions.upper(limits)
+    let encoded_hex = hex.encode(source)?
+    assert(String(encoded_hex)? == "666F")
+    let decoded_hex = hex.decode(encoded_hex)?
+    assert(String(decoded_hex)? == "fo")
+
+    var encoder = encoding.Base64Options.urlSafeUnpadded(limits).encoder()?
+    let first = encoder.push(bytes.Bytes("f")?)?
+    assert(first.length() == 0)
+    let second = encoder.push(bytes.Bytes("o")?)?
+    assert(second.length() == 0)
+    let tail = encoder.finish()?
+    assert(String(tail)? == "Zm8")
+
+    var output = console.stdout()?
+    standard.encodeTo(source, var output)?
+    console.println("encoding-ok")
+}

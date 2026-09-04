@@ -2979,9 +2979,13 @@ El contrato machine-readable y sus checks negativos viven en
 [`testing/stdlib-encoding.json`](./testing/stdlib-encoding.json),
 [`docs/contracts/stdlib-encoding.md`](./docs/contracts/stdlib-encoding.md),
 [`scripts/stdlib-encoding-check.sh`](./scripts/stdlib-encoding-check.sh) y
-[`scripts/stdlib-encoding-test.sh`](./scripts/stdlib-encoding-test.sh). Esos
-artefactos cierran el diseño B0, no promocionan todavía una implementación
-runtime ni un backend nativo.
+[`scripts/stdlib-encoding-test.sh`](./scripts/stdlib-encoding-test.sh). La
+implementación hosted queda registrada además por
+[`scripts/stdlib-encoding-implementation-check.sh`](./scripts/stdlib-encoding-implementation-check.sh),
+[`scripts/stdlib-encoding-implementation-test.sh`](./scripts/stdlib-encoding-implementation-test.sh),
+[`scripts/stdlib-encoding-implementation.sh`](./scripts/stdlib-encoding-implementation.sh)
+y la fixture de VM. Estos artefactos cierran el diseño B0 y la ruta scalar
+hosted, pero no promocionan una API pública ni un backend nativo.
 
 La superficie canónica es:
 
@@ -3038,9 +3042,9 @@ ni operaciones `selectable`.
 
 La ruta escalar es el oráculo. SIMD y multiversionado solo pueden promoverse
 después de demostrar equivalencia de bytes, errores, offsets, límites y
-terminalidad. La implementación y sus celdas `HOST`, `TEST`, `PERF`, `CONF` y
-`DOC` permanecen pendientes de `NATIVE-001` y de las leaves
-`STD-ENCODING-IMPL-001` a `STD-ENCODING-DOC-001`.
+terminalidad. `STD-ENCODING-IMPL-001` ya verifica la ruta hosted scalar; las
+celdas `TEST`, `PERF`, `CONF` y `DOC` permanecen separadas y no se confunden
+con native AOT, que sigue explícitamente sin reclamar.
 
 ### 14.5 Contratos cerrados de los owners STD-0.1A
 

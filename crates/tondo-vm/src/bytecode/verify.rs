@@ -2403,6 +2403,7 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.protobuf.ProtoReader.")
                 && !callable.name.starts_with("std.protobuf.ProtoWriter.")
                 && !callable.name.starts_with("std.protobuf.UnknownFields.")
+                && !callable.name.starts_with("std.encoding.")
                 && !callable.name.starts_with("intrinsic.json.JsonReader.")
                 && !callable.name.starts_with("intrinsic.json.JsonWriter.")
                 && !callable.name.starts_with("std.collections.")

@@ -626,6 +626,81 @@ fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShap
     ]
 }
 
+fn bootstrap_encoding_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 12] {
+    [
+        (
+            "Base64Alphabet",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Standard", "UrlSafe"]),
+        ),
+        (
+            "Base64Padding",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Required", "Omitted"]),
+        ),
+        (
+            "HexCase",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Lower", "Upper", "Any"]),
+        ),
+        (
+            "EncodingErrorKind",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "InvalidLimit",
+                "InvalidCharacter",
+                "InvalidLength",
+                "InvalidPadding",
+                "NonCanonical",
+                "ResourceLimit",
+                "Io",
+                "Closed",
+                "NoProgress",
+            ]),
+        ),
+        (
+            "EncodingError",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["kind", "offset"]),
+        ),
+        (
+            "EncodingLimits",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["maxInputBytes", "maxOutputBytes"]),
+        ),
+        (
+            "Base64Options",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["alphabet", "padding", "limits"]),
+        ),
+        (
+            "HexOptions",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["case", "limits"]),
+        ),
+        (
+            "Base64Encoder",
+            SymbolKind::Type,
+            BootstrapNominalShape::Newtype,
+        ),
+        (
+            "Base64Decoder",
+            SymbolKind::Type,
+            BootstrapNominalShape::Newtype,
+        ),
+        (
+            "HexEncoder",
+            SymbolKind::Type,
+            BootstrapNominalShape::Newtype,
+        ),
+        (
+            "HexDecoder",
+            SymbolKind::Type,
+            BootstrapNominalShape::Newtype,
+        ),
+    ]
+}
+
 fn bootstrap_serialization_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 2] {
     [
         (
@@ -1029,6 +1104,12 @@ impl Resolver<'_> {
             return Ok(());
         };
         self.install_bootstrap_module_nominals(file, program, "json", &bootstrap_json_nominals())?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "encoding",
+            &bootstrap_encoding_nominals(),
+        )?;
         self.install_bootstrap_module_nominals(
             file,
             program,

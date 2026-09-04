@@ -241,6 +241,12 @@ run_step stdlib-encoding-contract \
     scripts/stdlib-encoding-check.sh
 run_step stdlib-encoding-contract-tests \
     scripts/stdlib-encoding-test.sh
+run_step stdlib-encoding-implementation-contract \
+    scripts/stdlib-encoding-implementation-check.sh
+run_step stdlib-encoding-implementation-contract-tests \
+    scripts/stdlib-encoding-implementation-test.sh
+run_step stdlib-encoding-implementation \
+    scripts/stdlib-encoding-implementation.sh
 run_step stdlib-yaml-contract \
     scripts/stdlib-yaml-check.sh
 run_step stdlib-yaml-contract-tests \

@@ -45,7 +45,7 @@ hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
 lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
 siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-09-03
+**Última actualización:** 2026-09-04
 
 **Especificaciones normativas:**
 
@@ -142,7 +142,11 @@ reproducible. `STD-EXEC-PERF-001` queda cerrado con una campaña 3 x 9
 target-qualified para la VM hosted y la lane privada nativa de tokens; el
 `STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la capability
 estática `threads`; `STD-EXEC-DOC-001` queda cerrado por la guía ejecutable y
-sus cinco composiciones; el siguiente trabajo desbloqueado es `DIAG-RUNTIME-001`. El modelo y
+sus cinco composiciones. `STD-ENCODING-IMPL-001` queda cerrado para la ruta
+scalar de la stdlib y el bridge VM hosted, con materialización, `Reader`/`Writer`,
+handles afines y errores tipados; `native_aot_lowering: not-claimed` permanece
+explícito. El siguiente trabajo desbloqueado de ese slice es
+`STD-ENCODING-TEST-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6937,9 +6941,14 @@ estas leaves.
 
 #### 21.3.6 `std.encoding`
 
-- [ ] **STD-ENCODING-IMPL-001 — Implementar Base64 y hexadecimal.** Publicar
-  APIs materializadas e incrementales bytes-first, con decode atómico, policies
-  exactas y kernels SIMD solo tras equivalencia escalar.
+- [x] **STD-ENCODING-IMPL-001 — Implementar Base64 y hexadecimal.** Cerrada la
+  ruta scalar bytes-first de `std.encoding` y su integración en la VM hosted:
+  APIs materializadas e incrementales, policies Base64/hex estrictas, decode
+  atómico, adapters `std.io.Reader`/`Writer`, límites, errores tipados,
+  terminalidad y cleanup afín. La fixture
+  `tests/runtime/m11-std-encoding-impl-001.to` y los tests directos del kernel,
+  compiler host y materialización nominal VM pasan. No se reclama runtime nativo,
+  SIMD ni lowering AOT; esas fronteras siguen sujetas a sus leaves posteriores.
 - [ ] **STD-ENCODING-TEST-001 — Probar y fuzzear encodings.** Cubrir vectores
   oficiales, cada frontera de chunk, padding/case inválidos, límites y errores
   byte-exactos.
@@ -7592,6 +7601,7 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 | `STD-CHANNEL-IMPL-001` | **Cerrada** | Compiler, VM hosted y bridge nativo privado verifican endpoints nominales, bounded/unbounded, FIFO, backpressure, fork, cierres, drenado terminal, cancelación y send/receive seleccionables; fixture y sonda nativa hash-bound, sin API pública ni lowering AOT. |
 | `STD-CHANNEL-ASYNC-ITER-001` | **Cerrada** | Witness privado `Receiver[T] -> AsyncIterator[T]` bajo `T: Discard`, lowering de `for` y `collect` genérico, scheduler FIFO, cleanup/cancelación y negativa affine `E1105` verificados en la VM hosted; ABI nativa y lowering AOT permanecen sin reclamar. |
 | `STD-EXEC-IMPL-001` | **Cerrada** | La VM hosted verifica la superficie cooperativa de pools y actores: admisión/backpressure FIFO, `Join`, lifecycle, handlers con estado, `Actor.ref` y `ActorRef.send` `selectable` con prepare/commit/rollback transaccional; workers host, runtime nativo y lowering AOT permanecen sin reclamar. |
+| `STD-ENCODING-IMPL-001` | **Cerrada** | El kernel scalar verifica Base64/hex materializado e incremental, canonicalidad estricta, límites y terminalidad; el compiler y la VM hosted verifican options, `Reader`/`Writer`, handles afines, errores y fixture `m11-std-encoding-impl-001`. Runtime nativo, SIMD y lowering AOT permanecen sin reclamar. |
 | `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
 | `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
 
