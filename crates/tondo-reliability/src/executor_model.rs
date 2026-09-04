@@ -911,6 +911,267 @@ mod tests {
     }
 
     #[test]
+    fn negative_transitions_and_invariant_failures_are_explicit() {
+        assert_eq!(
+            ActorModel::new(MAX_ACTOR_MESSAGES + 1),
+            Err(ModelError::ActorLimit)
+        );
+        let mut actor = ActorModel::new(1).unwrap();
+        assert_eq!(
+            actor.finish(ActorOutcome::Success),
+            Err(ModelError::ActorNotReady)
+        );
+        actor.send(1);
+        assert_eq!(actor.start(), Ok(Some(1)));
+        assert_eq!(actor.start(), Err(ModelError::InvalidTransition));
+        assert_eq!(actor.cancel(), Ok(()));
+        assert_eq!(actor.send(2), ActorSendResult::Cancelled(2));
+
+        let mut stopping = ActorModel::new(1).unwrap();
+        stopping.send(3);
+        assert_eq!(stopping.start(), Ok(Some(3)));
+        assert_eq!(stopping.stop(), Ok(()));
+        assert_eq!(stopping.send(4), ActorSendResult::Closed(4));
+        assert_eq!(stopping.finish(ActorOutcome::Cancelled), Ok(()));
+        assert_eq!(stopping.snapshot().lifecycle, "stopped");
+
+        let mut failed = ActorModel::new(1).unwrap();
+        failed.lifecycle = ActorLifecycle::Terminated("failed");
+        assert_eq!(failed.send(5), ActorSendResult::Terminated(5));
+        assert_eq!(failed.start(), Err(ModelError::ActorNotReady));
+
+        let mut stopping_success = ActorModel::new(1).unwrap();
+        stopping_success.lifecycle = ActorLifecycle::Stopping;
+        stopping_success.in_flight = Some(6);
+        assert_eq!(
+            stopping_success.finish(ActorOutcome::Success),
+            Err(ModelError::InvalidTransition)
+        );
+        assert_eq!(stopping_success.finish(ActorOutcome::Cancelled), Ok(()));
+
+        let mut mailbox = ActorModel::new(1).unwrap();
+        mailbox.mailbox.push_back(7);
+        mailbox.mailbox.push_back(8);
+        assert_eq!(
+            mailbox.assert_invariants(),
+            Err(ModelError::Invariant("actor mailbox exceeded capacity"))
+        );
+        let mut retained = ActorModel::new(1).unwrap();
+        retained.lifecycle = ActorLifecycle::Terminated("failed");
+        retained.in_flight = Some(8);
+        assert_eq!(
+            retained.assert_invariants(),
+            Err(ModelError::Invariant("terminated actor retained work"))
+        );
+        let mut cleanup = ActorModel::new(1).unwrap();
+        cleanup.processed.push(9);
+        assert_eq!(
+            cleanup.assert_invariants(),
+            Err(ModelError::Invariant("actor cleanup count diverged"))
+        );
+
+        let mut model = ExecutorModel::new(1, 1).unwrap();
+        assert_eq!(model.advance(JobOutcome::Success(0)), Ok(None));
+        assert_eq!(model.consume(99), Err(ModelError::UnknownJob));
+        assert_eq!(model.actor_send(1), Err(ModelError::ActorMissing));
+        assert_eq!(model.actor_start(), Err(ModelError::ActorMissing));
+        assert_eq!(
+            model.actor_finish(ActorOutcome::Success),
+            Err(ModelError::ActorMissing)
+        );
+        assert_eq!(model.actor_stop(), Err(ModelError::ActorMissing));
+        assert_eq!(model.actor_cancel(), Err(ModelError::ActorMissing));
+        assert_eq!(model.create_actor(-1), Err(ModelError::ActorLimit));
+        assert_eq!(
+            model.create_actor((MAX_ACTOR_MESSAGES + 1) as i64),
+            Err(ModelError::ActorLimit)
+        );
+
+        let mut overflow = ExecutorModel::new(1, 1).unwrap();
+        overflow.next_job = usize::MAX;
+        assert_eq!(overflow.try_submit(1), Err(ModelError::ResourceLimit));
+
+        let mut saturated_without_worker = ExecutorModel::new(1, 1).unwrap();
+        saturated_without_worker.queue.push_back(42);
+        assert_eq!(
+            saturated_without_worker.submit(1),
+            Err(ModelError::InvalidTransition)
+        );
+
+        let mut queued = ExecutorModel::new(1, 2).unwrap();
+        let running = match queued.try_submit(1).unwrap() {
+            SubmitResult::Accepted(id) => id,
+            result => panic!("expected running job, got {result:?}"),
+        };
+        let queued_id = match queued.try_submit(2).unwrap() {
+            SubmitResult::Accepted(id) => id,
+            result => panic!("expected queued job, got {result:?}"),
+        };
+        assert_eq!(
+            queued.complete(queued_id, JobOutcome::Success(0)),
+            Err(ModelError::InvalidTransition)
+        );
+        assert_eq!(queued.cancel_job(queued_id), Ok(()));
+        assert_eq!(queued.consume(queued_id), Ok(JobOutcome::Cancelled));
+        assert_eq!(queued.consume(running), Err(ModelError::InvalidTransition));
+
+        let mut missing_queue = ExecutorModel::new(1, 1).unwrap();
+        missing_queue.jobs.insert(
+            7,
+            Job {
+                payload: 0,
+                state: JobState::Queued,
+            },
+        );
+        assert_eq!(
+            missing_queue.cancel_job(7),
+            Err(ModelError::Invariant("queued job missing from queue"))
+        );
+
+        let mut lost_worker = ExecutorModel::new(1, 1).unwrap();
+        let lost_id = match lost_worker.try_submit(1).unwrap() {
+            SubmitResult::Accepted(id) => id,
+            result => panic!("expected accepted job, got {result:?}"),
+        };
+        lost_worker.worker_jobs[0] = None;
+        assert_eq!(
+            lost_worker.cancel_job(lost_id),
+            Err(ModelError::Invariant("running job lost its worker"))
+        );
+        assert_eq!(
+            lost_worker.complete(lost_id, JobOutcome::Success(0)),
+            Err(ModelError::Invariant("worker slot lost its job"))
+        );
+
+        let mut cancelled = ExecutorModel::new(1, 1).unwrap();
+        let cancelled_id = match cancelled.try_submit(1).unwrap() {
+            SubmitResult::Accepted(id) => id,
+            result => panic!("expected accepted job, got {result:?}"),
+        };
+        cancelled.cancel_job(cancelled_id).unwrap();
+        assert_eq!(cancelled.cancel_job(cancelled_id), Err(ModelError::Race));
+        cancelled
+            .complete(cancelled_id, JobOutcome::Success(0))
+            .unwrap();
+        assert_eq!(cancelled.consume(cancelled_id), Ok(JobOutcome::Cancelled));
+        assert_eq!(cancelled.consume(cancelled_id), Err(ModelError::Race));
+        cancelled.cancel().unwrap();
+        assert_eq!(cancelled.shutdown(), Err(ModelError::InvalidLifecycle));
+
+        let mut duplicate_queue = ExecutorModel::new(1, 2).unwrap();
+        duplicate_queue.jobs.insert(
+            1,
+            Job {
+                payload: 0,
+                state: JobState::Queued,
+            },
+        );
+        duplicate_queue.queue.extend([1, 1]);
+        assert_eq!(
+            duplicate_queue.assert_invariants(),
+            Err(ModelError::Invariant("duplicate queued job"))
+        );
+
+        let mut queue_mismatch = ExecutorModel::new(1, 2).unwrap();
+        queue_mismatch.jobs.insert(
+            1,
+            Job {
+                payload: 0,
+                state: JobState::Terminal(JobOutcome::Success(0)),
+            },
+        );
+        queue_mismatch.queue.push_back(1);
+        assert_eq!(
+            queue_mismatch.assert_invariants(),
+            Err(ModelError::Invariant("queue state mismatch"))
+        );
+
+        let mut duplicate_workers = ExecutorModel::new(2, 2).unwrap();
+        duplicate_workers.jobs.insert(
+            1,
+            Job {
+                payload: 0,
+                state: JobState::Running { worker: 0 },
+            },
+        );
+        duplicate_workers.worker_jobs = vec![Some(1), Some(1)];
+        duplicate_workers.max_running = 2;
+        assert_eq!(
+            duplicate_workers.assert_invariants(),
+            Err(ModelError::Invariant("job assigned to two workers"))
+        );
+
+        let mut worker_mismatch = ExecutorModel::new(2, 2).unwrap();
+        worker_mismatch.jobs.insert(
+            1,
+            Job {
+                payload: 0,
+                state: JobState::Running { worker: 1 },
+            },
+        );
+        worker_mismatch.worker_jobs[0] = Some(1);
+        assert_eq!(
+            worker_mismatch.assert_invariants(),
+            Err(ModelError::Invariant("worker state mismatch"))
+        );
+
+        let mut admission_overflow = ExecutorModel::new(1, 1).unwrap();
+        admission_overflow.jobs.insert(
+            1,
+            Job {
+                payload: 0,
+                state: JobState::Queued,
+            },
+        );
+        admission_overflow.jobs.insert(
+            2,
+            Job {
+                payload: 0,
+                state: JobState::Queued,
+            },
+        );
+        admission_overflow.queue.extend([1, 2]);
+        assert_eq!(
+            admission_overflow.assert_invariants(),
+            Err(ModelError::Invariant("admission limit exceeded"))
+        );
+
+        let mut running_overflow = ExecutorModel::new(1, 1).unwrap();
+        running_overflow.jobs.insert(
+            1,
+            Job {
+                payload: 0,
+                state: JobState::Running { worker: 0 },
+            },
+        );
+        running_overflow.worker_jobs[0] = Some(1);
+        assert_eq!(
+            running_overflow.assert_invariants(),
+            Err(ModelError::Invariant("running limit violated"))
+        );
+
+        let mut terminal_work = ExecutorModel::new(1, 1).unwrap();
+        terminal_work.lifecycle = Lifecycle::Closed;
+        terminal_work.jobs.insert(
+            1,
+            Job {
+                payload: 0,
+                state: JobState::Running { worker: 0 },
+            },
+        );
+        terminal_work.worker_jobs[0] = Some(1);
+        terminal_work.max_running = 1;
+        assert_eq!(
+            terminal_work.assert_invariants(),
+            Err(ModelError::Invariant("terminal pool retained work"))
+        );
+        assert_eq!(
+            terminal_work.finalize(),
+            Err(ModelError::Invariant("finalize left live work"))
+        );
+    }
+
+    #[test]
     fn fuzz_replay_is_bounded_and_cleanup_is_exact() {
         for seed in 0..256_u64 {
             let mut bytes = [0_u8; 48];

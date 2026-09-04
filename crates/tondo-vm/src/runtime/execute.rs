@@ -18046,25 +18046,25 @@ mod tests {
     };
 
     use super::{
-        AggregatePayload, BlockingAdmission, BlockingBridgeState, BlockingCompletion,
-        BlockingExecutionBridge, BlockingJob, BlockingWorkerHost, CallContinuation,
-        DeferredOperation, DeferredValue, DiagnosticConfig, DiagnosticEvent,
-        DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, GroupPoll,
-        HeapHandle, HeapObject, IteratorAdapter, OnceContinuation, OnceResolution,
-        OneShotCompletion, OneShotState, OperationResult, PanicCode, PlaceComponent, PlaceFailure,
-        RejectingHost, ResolvedPlacePath, RuntimeActorState, RuntimeActorTermination,
-        RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation,
-        RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeOnceState,
-        RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm, RuntimeSelectRegion,
-        RuntimeSelectReservation, RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue,
-        SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy,
-        VmError, VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind,
-        VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
-        convert_numeric, execute, execute_with_diagnostics, group_handle, initial_value,
-        integer_bounds, integer_shape, next_unicode_scalar, once_handle, operand_materialized_slot,
-        operation_access_place, paths_overlap, present, queue_object_equality,
-        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
-        snapshot_value, take_field, take_index, take_option,
+        AggregatePayload, BLOCKING_CALL_TAG, BlockingAdmission, BlockingBridgeState,
+        BlockingCallRecord, BlockingCompletion, BlockingExecutionBridge, BlockingHostRequest,
+        BlockingJob, BlockingWorkerHost, CallContinuation, DeferredOperation, DeferredValue,
+        DiagnosticConfig, DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource,
+        DiagnosticThreadState, Engine, Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter,
+        OnceContinuation, OnceResolution, OneShotCompletion, OneShotState, OperationResult,
+        PanicCode, PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath,
+        RuntimeActorState, RuntimeActorTermination, RuntimeCleanup, RuntimeDefer, RuntimeFallback,
+        RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind,
+        RuntimeJoin, RuntimeLoan, RuntimeOnceState, RuntimePoolLifecycle, RuntimePoolState,
+        RuntimeSelectArm, RuntimeSelectRegion, RuntimeSelectReservation, RuntimeTaskScope,
+        RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion, TaskRecord,
+        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome,
+        VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field,
+        clone_index, clone_present, collection_length_fits_int, convert_numeric, execute,
+        execute_with_diagnostics, group_handle, initial_value, integer_bounds, integer_shape,
+        next_unicode_scalar, once_handle, operand_materialized_slot, operation_access_place,
+        paths_overlap, present, queue_object_equality, queue_payload_equality, runtime_host_kind,
+        set_field, set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     #[path = "../../executor_performance.rs"]
@@ -21500,6 +21500,76 @@ mod tests {
     }
 
     #[test]
+    fn blocking_bridge_poisoned_locks_fail_closed() {
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (_sender, receiver) = mpsc::channel();
+        let bridge = BlockingExecutionBridge {
+            state: Arc::clone(&state),
+            host_wake: Arc::new(Condvar::new()),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        };
+        let poison_state = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = state.0.lock().unwrap();
+            panic!("poison blocking bridge state");
+        }));
+        assert!(poison_state.is_err());
+
+        let assert_state_poisoned = |result: Result<(), VmError>| {
+            assert!(matches!(
+                result,
+                Err(VmError::Invariant(message))
+                    if message == "blocking bridge state lock was poisoned"
+            ));
+        };
+        assert_state_poisoned(
+            bridge
+                .submit(BytecodeFunctionId::new(2), Vec::new())
+                .map(|_| ()),
+        );
+        assert_state_poisoned(bridge.poll(1).map(|_| ()));
+        assert_state_poisoned(bridge.can_admit().map(|_| ()));
+        assert_state_poisoned(bridge.lifecycle().map(|_| ()));
+        assert_state_poisoned(bridge.shutdown());
+        assert_state_poisoned(bridge.cancel());
+        assert_state_poisoned(bridge.cancel_job(1));
+        assert_state_poisoned(bridge.wait());
+        assert_state_poisoned(bridge.finish_host_request());
+
+        let (sender, _receiver) = mpsc::channel();
+        let mut host = BlockingWorkerHost {
+            worker: 0,
+            sender,
+            state,
+            wake: Arc::clone(&bridge.host_wake),
+        };
+        assert_state_poisoned(host.invoke("poisoned", &[]).map(|_| ()));
+
+        let poison_requests = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = bridge.host_requests.lock().unwrap();
+            panic!("poison blocking host request lock");
+        }));
+        assert!(poison_requests.is_err());
+        assert!(matches!(
+            bridge.try_host_request(),
+            Err(VmError::Invariant(message))
+                if message == "blocking host request lock was poisoned"
+        ));
+    }
+
+    #[test]
     fn blocking_worker_host_handles_closed_cancelled_and_disconnected_replies() {
         let state = Arc::new((
             Mutex::new(BlockingBridgeState {
@@ -21560,6 +21630,825 @@ mod tests {
         assert!(matches!(
             disconnected_thread.join().unwrap(),
             Err(VmError::Host(message)) if message.contains("did not receive a response")
+        ));
+    }
+
+    #[test]
+    fn blocking_bridge_and_resume_edges_are_explicitly_executable() {
+        let (program, types) = executor_program();
+        let bridge_for = |lifecycle, workers, capacity, active| {
+            let state = Arc::new((
+                Mutex::new(BlockingBridgeState {
+                    lifecycle,
+                    workers,
+                    capacity,
+                    next_job: 1,
+                    queue: VecDeque::new(),
+                    active,
+                    host_requests_pending: 0,
+                    completions: BTreeMap::new(),
+                }),
+                Condvar::new(),
+            ));
+            let (_sender, receiver) = mpsc::channel();
+            Arc::new(BlockingExecutionBridge {
+                state,
+                host_wake: Arc::new(Condvar::new()),
+                host_requests: Mutex::new(receiver),
+                workers: Mutex::new(Vec::new()),
+            })
+        };
+
+        let open = bridge_for(RuntimePoolLifecycle::Open, 2, 0, 0);
+        assert!(format!("{open:?}").contains("BlockingExecutionBridge"));
+        assert!(open.can_admit().unwrap());
+        let accepted = open.submit(BytecodeFunctionId::new(2), Vec::new()).unwrap();
+        assert!(matches!(accepted, BlockingAdmission::Accepted(1)));
+        assert!(matches!(
+            open.submit(BytecodeFunctionId::new(2), Vec::new()).unwrap(),
+            BlockingAdmission::Accepted(2)
+        ));
+        assert!(!open.can_admit().unwrap());
+        open.shutdown().unwrap();
+        assert_eq!(
+            open.lifecycle().unwrap(),
+            RuntimePoolLifecycle::ShuttingDown
+        );
+        assert_eq!(
+            open.submit(BytecodeFunctionId::new(2), Vec::new()).unwrap(),
+            BlockingAdmission::Closed
+        );
+        open.cancel().unwrap();
+        assert_eq!(open.lifecycle().unwrap(), RuntimePoolLifecycle::Cancelled);
+        assert!(!open.can_admit().unwrap());
+        assert!(open.try_host_request().unwrap().is_none());
+        assert!(matches!(
+            open.poll(1).unwrap(),
+            Some(BlockingCompletion::Cancelled)
+        ));
+        assert!(matches!(
+            open.poll(2).unwrap(),
+            Some(BlockingCompletion::Cancelled)
+        ));
+        open.wait().unwrap();
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 0);
+        engine.pools.insert(
+            7,
+            RuntimePoolState {
+                blocking: true,
+                workers: 1,
+                capacity: 1,
+                running: 0,
+                queued: VecDeque::new(),
+                submit_waiters: VecDeque::new(),
+                lifecycle_waiters: Vec::new(),
+                lifecycle: RuntimePoolLifecycle::Open,
+            },
+        );
+        engine.blocking_bridges.insert(7, Arc::clone(&bridge));
+        assert!(
+            !engine
+                .resume_blocking_submit(
+                    7,
+                    BytecodeFunctionId::new(2),
+                    Vec::new(),
+                    types.job_result,
+                    None,
+                    None,
+                    BytecodeBlockId::new(0),
+                )
+                .unwrap()
+        );
+        let call = match engine.tasks[0].status {
+            TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => call,
+            ref status => panic!("unexpected accepted blocking status: {status:?}"),
+        };
+        engine
+            .complete_blocking_call(
+                call,
+                BlockingCompletion::Returned(RuntimeValue::ResultOk(Box::new(
+                    RuntimeValue::Integer(42),
+                ))),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(_)))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 1);
+        engine.pools.insert(
+            8,
+            RuntimePoolState {
+                blocking: true,
+                workers: 1,
+                capacity: 1,
+                running: 0,
+                queued: VecDeque::new(),
+                submit_waiters: VecDeque::new(),
+                lifecycle_waiters: Vec::new(),
+                lifecycle: RuntimePoolLifecycle::Open,
+            },
+        );
+        engine.blocking_bridges.insert(8, Arc::clone(&bridge));
+        let place = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: types.job_result,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        assert!(
+            !engine
+                .resume_blocking_submit(
+                    8,
+                    BytecodeFunctionId::new(2),
+                    Vec::new(),
+                    types.job_result,
+                    Some(place.clone()),
+                    Some(BytecodeBlockId::new(0)),
+                    BytecodeBlockId::new(0),
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Waiting(TaskWait::BlockingSubmit { .. })
+        ));
+        bridge.state.0.lock().unwrap().active = 0;
+        engine.tasks[0].cancel_requested = true;
+        engine.wake_task(0).unwrap();
+        assert!(engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Closed, 1, 1, 0);
+        engine.pools.insert(
+            9,
+            RuntimePoolState {
+                blocking: true,
+                workers: 1,
+                capacity: 1,
+                running: 0,
+                queued: VecDeque::new(),
+                submit_waiters: VecDeque::new(),
+                lifecycle_waiters: Vec::new(),
+                lifecycle: RuntimePoolLifecycle::Closed,
+            },
+        );
+        engine.blocking_bridges.insert(9, Arc::clone(&bridge));
+        assert!(
+            !engine
+                .resume_blocking_submit(
+                    9,
+                    BytecodeFunctionId::new(2),
+                    Vec::new(),
+                    types.job_result,
+                    None,
+                    None,
+                    BytecodeBlockId::new(0),
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Cancelled, 1, 1, 0);
+        engine.pools.insert(
+            10,
+            RuntimePoolState {
+                blocking: true,
+                workers: 1,
+                capacity: 1,
+                running: 0,
+                queued: VecDeque::new(),
+                submit_waiters: VecDeque::new(),
+                lifecycle_waiters: Vec::new(),
+                lifecycle: RuntimePoolLifecycle::Cancelled,
+            },
+        );
+        engine.blocking_bridges.insert(10, Arc::clone(&bridge));
+        assert!(
+            !engine
+                .resume_blocking_submit(
+                    10,
+                    BytecodeFunctionId::new(2),
+                    Vec::new(),
+                    types.job_result,
+                    None,
+                    None,
+                    BytecodeBlockId::new(0),
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        engine.frames[0].slots[0] = SlotState::Uninitialized;
+        assert!(matches!(
+            engine.resume_blocking_call(
+                BLOCKING_CALL_TAG | 1,
+                types.job_result,
+                place.clone(),
+                BytecodeBlockId::new(0),
+                BytecodeBlockId::new(0),
+                None,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("resumed before completion")
+        ));
+        assert!(matches!(
+            engine.resume_blocking_call(
+                BLOCKING_CALL_TAG | 1,
+                types.job_result,
+                place.clone(),
+                BytecodeBlockId::new(0),
+                BytecodeBlockId::new(0),
+                Some(BlockingCompletion::Failed(VmError::Host("failed".into()))),
+            ),
+            Err(VmError::Host(message)) if message == "failed"
+        ));
+        engine.tasks[0].cancel_requested = true;
+        assert!(
+            engine
+                .resume_blocking_call(
+                    BLOCKING_CALL_TAG | 1,
+                    types.job_result,
+                    place.clone(),
+                    BytecodeBlockId::new(0),
+                    BytecodeBlockId::new(0),
+                    Some(BlockingCompletion::Cancelled),
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        assert!(
+            engine
+                .resume_blocking_call(
+                    BLOCKING_CALL_TAG | 2,
+                    types.job_result,
+                    place.clone(),
+                    BytecodeBlockId::new(0),
+                    BytecodeBlockId::new(0),
+                    Some(BlockingCompletion::Returned(RuntimeValue::ResultOk(
+                        Box::new(RuntimeValue::Integer(42),)
+                    ))),
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Heap(_))
+        ));
+
+        let panic = VmPanic {
+            code: PanicCode::ExplicitPanic,
+            message: "blocking panic".into(),
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            stack: Vec::new(),
+            suppressed: Vec::new(),
+        };
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        assert!(
+            engine
+                .resume_blocking_call(
+                    BLOCKING_CALL_TAG | 3,
+                    types.job_result,
+                    place.clone(),
+                    BytecodeBlockId::new(0),
+                    BytecodeBlockId::new(0),
+                    Some(BlockingCompletion::Panicked(panic.clone())),
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Panic(_))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        engine.tasks[0].cancel_requested = true;
+        assert!(
+            engine
+                .resume_blocking_call(
+                    BLOCKING_CALL_TAG | 4,
+                    types.job_result,
+                    place,
+                    BytecodeBlockId::new(0),
+                    BytecodeBlockId::new(0),
+                    Some(BlockingCompletion::Panicked(panic)),
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn blocking_executor_snapshot_service_and_completion_edges_are_explicitly_executable() {
+        let (program, types) = executor_program();
+        let bridge_for = |lifecycle, workers, capacity, active| {
+            let state = Arc::new((
+                Mutex::new(BlockingBridgeState {
+                    lifecycle,
+                    workers,
+                    capacity,
+                    next_job: 1,
+                    queue: VecDeque::new(),
+                    active,
+                    host_requests_pending: 0,
+                    completions: BTreeMap::new(),
+                }),
+                Condvar::new(),
+            ));
+            let (_sender, receiver) = mpsc::channel();
+            Arc::new(BlockingExecutionBridge {
+                state,
+                host_wake: Arc::new(Condvar::new()),
+                host_requests: Mutex::new(receiver),
+                workers: Mutex::new(Vec::new()),
+            })
+        };
+        let pool_state = || RuntimePoolState {
+            blocking: true,
+            workers: 1,
+            capacity: 1,
+            running: 0,
+            queued: VecDeque::new(),
+            submit_waiters: VecDeque::new(),
+            lifecycle_waiters: Vec::new(),
+            lifecycle: RuntimePoolLifecycle::Open,
+        };
+        let place = || BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: types.job_result,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+
+        let mut argument_program = program.clone();
+        argument_program.functions[2].parameters = vec![BytecodeSlotId::new(1)];
+        argument_program.functions[2].slots.push(BytecodeSlot {
+            ty: types.int,
+            span: crate::bytecode::BytecodeSpanId::new(0),
+            kind: BytecodeSlotKind::Parameter { index: 0 },
+        });
+        let mut host = RejectingHost;
+        let engine = executor_engine(&argument_program, &mut host);
+        assert!(matches!(
+            engine.snapshot_blocking_arguments(BytecodeFunctionId::new(999), &[]),
+            Err(VmError::Invariant(message)) if message.contains("function is invalid")
+        ));
+        assert!(matches!(
+            engine.snapshot_blocking_arguments(BytecodeFunctionId::new(2), &[]),
+            Err(VmError::Invariant(message)) if message.contains("argument count")
+        ));
+        argument_program.functions[2].parameters = vec![BytecodeSlotId::new(99)];
+        let mut host = RejectingHost;
+        let invalid_slot_engine = executor_engine(&argument_program, &mut host);
+        assert!(matches!(
+            invalid_slot_engine
+                .snapshot_blocking_arguments(BytecodeFunctionId::new(2), &[Value::Integer(7)]),
+            Err(VmError::Invariant(message)) if message.contains("parameter slot is invalid")
+        ));
+        argument_program.functions[2].parameters = vec![BytecodeSlotId::new(1)];
+        let mut host = RejectingHost;
+        let mut valid_slot_engine = executor_engine(&argument_program, &mut host);
+        let arguments = valid_slot_engine
+            .snapshot_blocking_arguments(BytecodeFunctionId::new(2), &[Value::Integer(7)])
+            .unwrap();
+        assert_eq!(arguments.len(), 1);
+        assert_eq!(arguments[0].ty, types.int);
+        assert_eq!(arguments[0].value, RuntimeValue::Integer(7));
+        assert!(matches!(
+            valid_slot_engine.admit_blocking_job(999, BytecodeFunctionId::new(2), Vec::new()),
+            Err(VmError::Invariant(message)) if message.contains("unknown pool")
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 1,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (sender, receiver) = mpsc::channel();
+        let bridge = Arc::new(BlockingExecutionBridge {
+            state: Arc::clone(&state),
+            host_wake: Arc::new(Condvar::new()),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        });
+        engine.blocking_bridges.insert(1, Arc::clone(&bridge));
+        let (reply, response) = mpsc::channel();
+        sender
+            .send(BlockingHostRequest {
+                worker: 3,
+                name: "missing.host".into(),
+                arguments: Vec::new(),
+                reply,
+            })
+            .unwrap();
+        assert_eq!(engine.service_blocking_host_requests().unwrap(), 1);
+        assert!(matches!(
+            response.recv().unwrap(),
+            Err(VmError::UnsupportedHostCall(name)) if name == "missing.host"
+        ));
+        assert_eq!(state.0.lock().unwrap().host_requests_pending, 0);
+        assert_eq!(engine.service_blocking_host_requests().unwrap(), 0);
+
+        let panic = VmPanic {
+            code: PanicCode::ExplicitPanic,
+            message: "blocking panic".into(),
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            stack: Vec::new(),
+            suppressed: Vec::new(),
+        };
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 0);
+        engine.pools.insert(1, pool_state());
+        engine.blocking_bridges.insert(1, Arc::clone(&bridge));
+        let call = BLOCKING_CALL_TAG | 20;
+        engine.blocking_calls.insert(
+            call,
+            BlockingCallRecord {
+                pool: 1,
+                bridge: Arc::clone(&bridge),
+                job: 1,
+            },
+        );
+        engine.tasks[0].status = TaskStatus::Waiting(TaskWait::HostTask {
+            call,
+            outcome: types.job_result,
+        });
+        engine
+            .complete_blocking_call(call, BlockingCompletion::Panicked(panic.clone()))
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Complete(Some(TaskCompletion::Panicked(_)))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 0);
+        engine.pools.insert(1, pool_state());
+        engine.blocking_bridges.insert(1, Arc::clone(&bridge));
+        let call = BLOCKING_CALL_TAG | 21;
+        engine.blocking_calls.insert(
+            call,
+            BlockingCallRecord {
+                pool: 1,
+                bridge: Arc::clone(&bridge),
+                job: 1,
+            },
+        );
+        engine.tasks[0].cancel_requested = true;
+        engine.tasks[0].status = TaskStatus::Waiting(TaskWait::HostTask {
+            call,
+            outcome: types.job_result,
+        });
+        engine
+            .complete_blocking_call(
+                call,
+                BlockingCompletion::Returned(RuntimeValue::ResultOk(Box::new(
+                    RuntimeValue::Integer(42),
+                ))),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 0);
+        engine.pools.insert(1, pool_state());
+        engine.blocking_bridges.insert(1, Arc::clone(&bridge));
+        let call = BLOCKING_CALL_TAG | 22;
+        engine.blocking_calls.insert(
+            call,
+            BlockingCallRecord {
+                pool: 1,
+                bridge: Arc::clone(&bridge),
+                job: 1,
+            },
+        );
+        engine.tasks[0].status = TaskStatus::Waiting(TaskWait::BlockingCall {
+            call,
+            outcome: types.job_result,
+            destination: place(),
+            target: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            completion: None,
+        });
+        engine
+            .complete_blocking_call(
+                call,
+                BlockingCompletion::Returned(RuntimeValue::ResultOk(Box::new(
+                    RuntimeValue::Integer(42),
+                ))),
+            )
+            .unwrap();
+        assert!(matches!(engine.tasks[0].status, TaskStatus::Runnable));
+        assert!(engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Heap(_))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 0);
+        engine.pools.insert(1, pool_state());
+        engine.blocking_bridges.insert(1, Arc::clone(&bridge));
+        let call = BLOCKING_CALL_TAG | 23;
+        engine.blocking_calls.insert(
+            call,
+            BlockingCallRecord {
+                pool: 1,
+                bridge: Arc::clone(&bridge),
+                job: 1,
+            },
+        );
+        engine.tasks[0].status = TaskStatus::Waiting(TaskWait::BlockingCall {
+            call,
+            outcome: types.job_result,
+            destination: place(),
+            target: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            completion: None,
+        });
+        engine
+            .complete_blocking_call(call, BlockingCompletion::Panicked(panic))
+            .unwrap();
+        assert!(matches!(engine.tasks[0].status, TaskStatus::Runnable));
+        assert!(engine.resume_current_task().unwrap());
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Panic(_))
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 0);
+        engine.pools.insert(1, pool_state());
+        engine.blocking_bridges.insert(1, Arc::clone(&bridge));
+        let call = BLOCKING_CALL_TAG | 24;
+        engine.blocking_calls.insert(
+            call,
+            BlockingCallRecord {
+                pool: 1,
+                bridge,
+                job: 1,
+            },
+        );
+        engine.tasks[0].status = TaskStatus::Waiting(TaskWait::HostTask {
+            call,
+            outcome: types.job_result,
+        });
+        assert!(matches!(
+            engine.complete_blocking_call(
+                call,
+                BlockingCompletion::Failed(VmError::Host("blocking failure".into())),
+            ),
+            Err(VmError::Host(message)) if message == "blocking failure"
+        ));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let bridge = bridge_for(RuntimePoolLifecycle::Open, 1, 1, 0);
+        engine.pools.insert(1, pool_state());
+        engine.blocking_bridges.insert(1, bridge);
+        assert!(matches!(
+            engine.complete_blocking_call(
+                BLOCKING_CALL_TAG | 25,
+                BlockingCompletion::Cancelled,
+            ),
+            Err(VmError::Host(message)) if message.contains("completed twice")
+        ));
+    }
+
+    #[test]
+    fn blocking_run_terminator_admission_is_bounded_and_explicit() {
+        let (mut program, types) = executor_program();
+        let method_callable = BytecodeCallableId::new(program.callables.len() as u32);
+        program.callables.push(BytecodeCallable {
+            name: "std.executor.BlockingPool.run[Int, Never]".into(),
+            generic_arity: 0,
+            parameters: vec![
+                BytecodeParameter {
+                    mode: BytecodeParameterMode::Value,
+                    ty: types.blocking_pool,
+                    variadic_element: None,
+                    receiver: true,
+                },
+                BytecodeParameter {
+                    mode: BytecodeParameterMode::Value,
+                    ty: types.blocking_function_type,
+                    variadic_element: None,
+                    receiver: false,
+                },
+            ],
+            outcome: types.job_result,
+            function_type: types.blocking_function_type,
+            implementation: None,
+            closure: None,
+        });
+        let place = |slot: u32, ty| BytecodePlace {
+            slot: BytecodeSlotId::new(slot),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let operation = || BytecodeOperation {
+            ty: types.job_result,
+            kind: BytecodeOperationKind::Call {
+                callee: BytecodeOperand {
+                    ty: types.blocking_function_type,
+                    kind: BytecodeOperandKind::Function {
+                        callable: method_callable,
+                        arguments: Vec::new(),
+                    },
+                },
+                arguments: vec![
+                    BytecodeCallArgument {
+                        mode: BytecodeParameterMode::Value,
+                        target: BytecodeCallArgumentTarget::Receiver,
+                        value: BytecodeOperand {
+                            ty: types.blocking_pool,
+                            kind: BytecodeOperandKind::Move(place(0, types.blocking_pool)),
+                        },
+                    },
+                    BytecodeCallArgument {
+                        mode: BytecodeParameterMode::Value,
+                        target: BytecodeCallArgumentTarget::Fixed(1),
+                        value: BytecodeOperand {
+                            ty: types.blocking_function_type,
+                            kind: BytecodeOperandKind::Move(place(1, types.blocking_function_type)),
+                        },
+                    },
+                ],
+                signature: types.blocking_function_type,
+                protocol: BytecodeCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        let terminator = |kind| BytecodeTerminator {
+            span: crate::bytecode::BytecodeSpanId::new(0),
+            kind,
+        };
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 1,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (_sender, receiver) = mpsc::channel();
+        let bridge = Arc::new(BlockingExecutionBridge {
+            state,
+            host_wake: Arc::new(Condvar::new()),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        });
+        engine.pools.insert(
+            1,
+            RuntimePoolState {
+                blocking: true,
+                workers: 1,
+                capacity: 1,
+                running: 0,
+                queued: VecDeque::new(),
+                submit_waiters: VecDeque::new(),
+                lifecycle_waiters: Vec::new(),
+                lifecycle: RuntimePoolLifecycle::Open,
+            },
+        );
+        engine.blocking_bridges.insert(1, bridge);
+        engine.frames[0].slots = vec![
+            SlotState::Value(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorBlockingPool,
+                id: 1,
+            })),
+            SlotState::Value(Value::Function {
+                callable: BytecodeCallableId::new(3),
+                arguments: Vec::new(),
+            }),
+            SlotState::Uninitialized,
+        ];
+        let destination = place(2, types.job_result);
+        let awaiting = terminator(BytecodeTerminatorKind::Await {
+            awaitable: BytecodeAwaitable::Call(operation()),
+            destination: destination.clone(),
+            target: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+        });
+        assert!(engine.execute_terminator(0, &awaiting).unwrap().is_none());
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Waiting(TaskWait::BlockingSubmit { .. })
+        ));
+        assert_eq!(engine.pools[&1].submit_waiters, vec![0]);
+
+        let mut synchronous_host = RejectingHost;
+        let mut synchronous = executor_engine_with_scope(&program, &mut synchronous_host);
+        synchronous.pools.insert(1, open_executor_pool(1, 1));
+        synchronous.pools.get_mut(&1).unwrap().blocking = true;
+        let state = Arc::new((
+            Mutex::new(BlockingBridgeState {
+                lifecycle: RuntimePoolLifecycle::Open,
+                workers: 1,
+                capacity: 1,
+                next_job: 1,
+                queue: VecDeque::new(),
+                active: 0,
+                host_requests_pending: 0,
+                completions: BTreeMap::new(),
+            }),
+            Condvar::new(),
+        ));
+        let (_sender, receiver) = mpsc::channel();
+        synchronous.blocking_bridges.insert(
+            1,
+            Arc::new(BlockingExecutionBridge {
+                state,
+                host_wake: Arc::new(Condvar::new()),
+                host_requests: Mutex::new(receiver),
+                workers: Mutex::new(Vec::new()),
+            }),
+        );
+        synchronous.frames[0].slots = vec![
+            SlotState::Value(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ExecutorBlockingPool,
+                id: 1,
+            })),
+            SlotState::Value(Value::Function {
+                callable: BytecodeCallableId::new(3),
+                arguments: Vec::new(),
+            }),
+            SlotState::Uninitialized,
+        ];
+        let invoking = terminator(BytecodeTerminatorKind::Invoke {
+            operation: operation(),
+            destination: Some(destination),
+            target: Some(BytecodeBlockId::new(0)),
+            unwind: BytecodeBlockId::new(0),
+        });
+        assert!(matches!(
+            synchronous.execute_terminator(0, &invoking),
+            Err(VmError::Invariant(message)) if message.contains("BlockingPool.run appeared")
         ));
     }
 
@@ -29382,7 +30271,582 @@ mod tests {
         ));
         executor_assert!(host.cancel_async(1).is_ok());
         executor_assert!(host.cleanup(&RuntimeValue::Unit).is_ok());
+        executor_assert!(matches!(
+            host.begin_virtual_time(),
+            Err(VmError::UnsupportedHostCall(name))
+                if name == "std.testing.withVirtualTime"
+        ));
+        executor_assert!(matches!(
+            host.finish_virtual_time(&RuntimeValue::Unit),
+            Err(VmError::UnsupportedHostCall(name))
+                if name == "std.testing.withVirtualTime"
+        ));
         executor_assert!(!host.is_virtual_quiescence_call(1));
+        executor_assert!(matches!(
+            host.begin_test_node(VmTestNodeKind::Leaf, "executor::leaf"),
+            Err(VmError::UnsupportedHostCall(name)) if name == "test node `executor::leaf`"
+        ));
+        executor_assert!(matches!(
+            host.finish_test_node(
+                VmTestNodeKind::Suite,
+                "executor::suite",
+                VmTestNodeOutcome::Passed,
+            ),
+            Err(VmError::UnsupportedHostCall(name)) if name == "test node `executor::suite`"
+        ));
+        executor_assert!(matches!(
+            host.begin_test_suite_cleanup(),
+            Err(VmError::UnsupportedHostCall(name)) if name == "test suite cleanup"
+        ));
+    }
+
+    #[test]
+    fn executor_validation_edges_cover_runtime_helpers() {
+        let (program, types) = executor_program();
+
+        let mut entry_host = RejectingHost;
+        let entry_result = super::execute_with_arguments(
+            &program,
+            BytecodeFunctionId::new(2),
+            Vec::new(),
+            &mut entry_host,
+        );
+        assert!(matches!(entry_result, Err(VmError::InvalidBytecode(_))));
+
+        let mut host = RejectingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let place = |ty| BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+
+        let task = engine
+            .spawn_task(BytecodeFunctionId::new(1), Vec::new(), 0)
+            .unwrap();
+        assert!(matches!(engine.tasks[task].status, TaskStatus::Runnable));
+        let detached = engine
+            .spawn_task_with_scope(BytecodeFunctionId::new(1), Vec::new(), None)
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[detached].status,
+            TaskStatus::Runnable
+        ));
+        let host_task = engine.spawn_host_task(7, types.int, 0).unwrap();
+        assert!(matches!(
+            engine.tasks[host_task].status,
+            TaskStatus::Waiting(TaskWait::HostTask { call: 7, .. })
+        ));
+        engine.pools.insert(1, open_executor_pool(1, 1));
+        let blocking_task = engine
+            .spawn_blocking_submit_task(1, BytecodeFunctionId::new(1), Vec::new(), types.int, 0)
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[blocking_task].status,
+            TaskStatus::Waiting(TaskWait::BlockingSubmit { pool: 1, .. })
+        ));
+
+        let completed = engine
+            .allocate(
+                types.job_result,
+                HeapObject::ResultOk(Some(Value::Integer(7))),
+                &[Value::Integer(7)],
+            )
+            .unwrap();
+        assert_eq!(
+            engine.logical_join_value(completed, types.never).unwrap(),
+            Value::Integer(7)
+        );
+        engine
+            .apply_join_completion(
+                0,
+                TaskCompletion::Returned(Value::Integer(9)),
+                &place(types.int),
+                BytecodeBlockId::new(0),
+                BytecodeBlockId::new(0),
+                types.string,
+                false,
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Integer(9))
+        ));
+
+        let returned_task = engine.tasks.len();
+        engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+        engine.tasks[returned_task].join_consumed = false;
+        engine.tasks[returned_task].parent_scope = Some(0);
+        engine
+            .task_scopes
+            .get_mut(0)
+            .and_then(Option::as_mut)
+            .unwrap()
+            .children
+            .push(returned_task);
+        engine.frames[0].slots[0] = SlotState::Value(Value::Join(RuntimeJoin {
+            task: returned_task,
+            scope: 0,
+        }));
+        engine.transfer_return_join(0, 0).unwrap();
+        assert!(matches!(
+            engine.frames[0].slots[0],
+            SlotState::Value(Value::Join(RuntimeJoin {
+                task,
+                scope: super::TRANSFERRED_JOIN_SCOPE,
+            })) if task == returned_task
+        ));
+        assert!(engine.drain_task_scopes(0, &[]).unwrap());
+        engine.teardown_scope_join_fallbacks(0, 0).unwrap();
+
+        let invalid_defer = BytecodeOperation {
+            ty: types.unit,
+            kind: BytecodeOperationKind::ExplicitPanic {
+                message: BytecodeOperand {
+                    ty: types.string,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::String(
+                        "\"defer\"".into(),
+                    )),
+                },
+            },
+        };
+        assert!(
+            engine
+                .capture_defer(
+                    0,
+                    BytecodeScopeId::new(0),
+                    BytecodeSpan {
+                        file: 0,
+                        start: 0,
+                        end: 0,
+                    },
+                    &invalid_defer,
+                    None,
+                )
+                .is_err()
+        );
+        let mut guard_uses = 0;
+        assert!(
+            engine
+                .capture_deferred_value(
+                    0,
+                    &BytecodeOperand {
+                        ty: types.int,
+                        kind: BytecodeOperandKind::Loan(BytecodeLoanId::new(0)),
+                    },
+                    None,
+                    &mut guard_uses,
+                )
+                .is_err()
+        );
+        engine
+            .retarget_cleanup(0, &place(types.job_result), &place(types.job_result))
+            .unwrap();
+        engine
+            .register_fallback(0, BytecodeScopeId::new(0), &place(types.job_result))
+            .unwrap();
+        engine
+            .replace_fallback_with_explicit(0, &place(types.job_result))
+            .unwrap();
+        assert!(engine.frames[0].cleanups.is_empty());
+        assert!(engine.reserve_loan(0, BytecodeLoanId::new(0)).is_err());
+        assert!(engine.release_loan(0, BytecodeLoanId::new(0)).is_err());
+        engine
+            .drain_explicit_scopes(0, &[], BytecodeBlockId::new(0), BytecodeBlockId::new(0))
+            .unwrap();
+        engine
+            .begin_panic(
+                0,
+                PanicCode::ExplicitPanic,
+                "executor test panic".into(),
+                BytecodeSpan {
+                    file: 0,
+                    start: 0,
+                    end: 0,
+                },
+                BytecodeBlockId::new(0),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.pending_unwind,
+            Some(RuntimeUnwind::Panic(_))
+        ));
+        engine.pending_unwind = None;
+
+        let identity = |name: &str| format!("pkg:toolchain:std:0.1-bootstrap::sync::type::{name}");
+        for (name, kind) in [
+            ("Array", RuntimeHostValueKind::SyncArray),
+            ("Map", RuntimeHostValueKind::SyncMap),
+            ("Set", RuntimeHostValueKind::SyncSet),
+            ("Stack", RuntimeHostValueKind::SyncStack),
+            ("Queue", RuntimeHostValueKind::SyncQueue),
+        ] {
+            let nominal = BytecodeNominal {
+                name: name.into(),
+                identity: identity(name),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Newtype {
+                    underlying: types.int,
+                },
+            };
+            assert_eq!(super::sync_collection_host_kind(&nominal), Some(kind));
+        }
+        let channel_sender = BytecodeNominal {
+            name: "Sender".into(),
+            identity: "pkg:toolchain:std:0.1-bootstrap::channel::type::Sender".into(),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Newtype {
+                underlying: types.int,
+            },
+        };
+        assert_eq!(
+            super::channel_host_kind(&channel_sender),
+            Some(RuntimeHostValueKind::ChannelSender)
+        );
+        let executor_pool = BytecodeNominal {
+            name: "Pool".into(),
+            identity: "pkg:toolchain:std:0.1-bootstrap::executor::type::Pool".into(),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Newtype {
+                underlying: types.int,
+            },
+        };
+        assert_eq!(
+            super::executor_host_kind(&executor_pool),
+            Some(RuntimeHostValueKind::ExecutorPool)
+        );
+
+        let array = engine
+            .allocate(
+                BytecodeTypeId::new(6),
+                HeapObject::Array(vec![Some(Value::Integer(1))].into()),
+                &[Value::Integer(1)],
+            )
+            .unwrap();
+        engine.retain_temporary(&array);
+        assert!(
+            engine
+                .collection_buffer_is_shareable(array.heap_handle().unwrap())
+                .unwrap()
+        );
+        assert!(engine.shallow_value_is_shareable(types.int).unwrap());
+        assert!(
+            !engine
+                .shallow_value_is_shareable(BytecodeTypeId::new(6))
+                .unwrap()
+        );
+        assert!(engine.copy_map_entries(&[]).unwrap().is_empty());
+        assert!(engine.copy_record_fields(&[]).unwrap().is_empty());
+        assert!(matches!(
+            engine.copy_payload(&AggregatePayload::Unit).unwrap(),
+            AggregatePayload::Unit
+        ));
+        assert_eq!(
+            engine
+                .pure_prefix(
+                    BytecodePrefixOperator::BitwiseNot,
+                    types.int,
+                    Value::Integer(0),
+                )
+                .unwrap(),
+            Value::Integer(-1)
+        );
+        let converted = engine
+            .numeric_conversion(
+                types.job_result,
+                BytecodeScalarType::Int,
+                crate::bytecode::BytecodeNumericConversion::Checked,
+                Value::Integer(3),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.heap.get(converted.heap_handle().unwrap()).unwrap(),
+            HeapObject::ResultOk(Some(Value::Integer(3)))
+        ));
+        let text = engine
+            .allocate(types.string, HeapObject::String("abc".into()), &[])
+            .unwrap();
+        assert_eq!(engine.length(&text).unwrap(), 3);
+        assert!(
+            engine
+                .read_projection(
+                    0,
+                    Value::Integer(1),
+                    &crate::bytecode::BytecodeProjection {
+                        ty: types.int,
+                        kind: crate::bytecode::BytecodeProjectionKind::TupleField(0),
+                    },
+                )
+                .is_err()
+        );
+        assert!(
+            engine
+                .take_projection(
+                    0,
+                    Value::Integer(1),
+                    &crate::bytecode::BytecodeProjection {
+                        ty: types.int,
+                        kind: crate::bytecode::BytecodeProjectionKind::TupleField(0),
+                    },
+                )
+                .is_err()
+        );
+        assert!(
+            engine
+                .write_projection(
+                    0,
+                    Value::Integer(1),
+                    &crate::bytecode::BytecodeProjection {
+                        ty: types.int,
+                        kind: crate::bytecode::BytecodeProjectionKind::TupleField(0),
+                    },
+                    Value::Integer(2),
+                )
+                .is_err()
+        );
+        assert!(engine.validate_places(0, &[], &[], &[], false).is_ok());
+        assert!(
+            engine
+                .validate_loan(0, BytecodeLoanId::new(0), &[])
+                .is_err()
+        );
+        engine.frames[0].slots[0] = SlotState::Value(Value::Integer(1));
+        assert_eq!(engine.integer_slot(0, BytecodeSlotId::new(0)).unwrap(), 1);
+        assert_eq!(
+            engine.find_map_entry(&[], &Value::Integer(1)).unwrap(),
+            None
+        );
+        assert_eq!(
+            engine
+                .slice_indices_from_slots(0, None, None, None, 2)
+                .unwrap(),
+            vec![0, 1]
+        );
+        let deferred = RuntimeDefer {
+            scope: BytecodeScopeId::new(0),
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            operation: DeferredOperation::Assert {
+                condition: DeferredValue::Captured(Value::Bool(true)),
+                condition_repr: "condition".into(),
+                message_parts: Vec::new(),
+            },
+            guard: None,
+            async_cleanup: false,
+        };
+        assert!(matches!(
+            engine.evaluate_deferred_operation(0, deferred).unwrap(),
+            OperationResult::Value(Value::Unit)
+        ));
+        assert_eq!(
+            engine.assert_message("condition", &[]).unwrap(),
+            "assertion failed: condition"
+        );
+        assert!(
+            engine
+                .interpolate(types.string, &["value".into()], &[])
+                .is_ok()
+        );
+        assert_eq!(
+            engine
+                .format_display_value_with_type(Value::Integer(4), types.int, None)
+                .unwrap(),
+            "4"
+        );
+        assert!(
+            engine
+                .intrinsic_display(
+                    0,
+                    types.string,
+                    &BytecodeCallArgument {
+                        mode: BytecodeParameterMode::Ref,
+                        target: BytecodeCallArgumentTarget::Receiver,
+                        value: BytecodeOperand {
+                            ty: types.int,
+                            kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer(
+                                "1".into()
+                            )),
+                        },
+                    },
+                )
+                .is_err()
+        );
+        let repeated = engine
+            .array_sequence(
+                BytecodeTypeId::new(6),
+                crate::bytecode::BytecodeArraySequenceKind::Repeat,
+                array.clone(),
+                Value::Integer(1),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(engine.array_length(&repeated).unwrap(), 1);
+        assert!(matches!(
+            engine
+                .index_value(
+                    types.int,
+                    array.clone(),
+                    Value::Integer(0),
+                    crate::bytecode::BytecodeIndexAccess::Array,
+                )
+                .unwrap(),
+            Ok(Value::Integer(1))
+        ));
+        assert!(
+            engine
+                .map_remove(types.int, Value::Integer(1), &Value::Integer(1))
+                .is_err()
+        );
+        assert!(
+            engine
+                .copy_array_snapshot(BytecodeTypeId::new(6), &[Some(Value::Integer(1))], &[0])
+                .is_ok()
+        );
+        assert!(engine.actor_handler_error_type(999).is_err());
+        assert!(engine.collection_error_result(types.job_result).is_ok());
+        let metadata = executor_metadata("std.collections.Array.length", types.int, types.int);
+        assert!(
+            engine
+                .prepare_collection_call(&metadata, &[])
+                .unwrap()
+                .is_none()
+        );
+        assert!(engine.prepare_iterator_call(&metadata, &[]).is_err());
+        assert_eq!(
+            engine
+                .materialize_blocking_value(types.int, RuntimeValue::Integer(5))
+                .unwrap(),
+            Value::Integer(5)
+        );
+        assert!(
+            engine
+                .sync_cursor_step(
+                    &Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::SyncArray,
+                        id: 1,
+                    }),
+                    types.int,
+                    0,
+                    0,
+                    "std.sync.Array",
+                )
+                .is_err()
+        );
+        assert_eq!(
+            Engine::sync_cursor_host_name(&Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::SyncQueue,
+                id: 1,
+            })),
+            Some("std.sync.Queue")
+        );
+        assert!(
+            engine
+                .invoke_sync_value(Value::Integer(1), Vec::new())
+                .is_err()
+        );
+        let hash = super::diagnostic_path_hash(&[
+            PlaceComponent::Field(1),
+            PlaceComponent::Variant(2),
+            PlaceComponent::Index(-3),
+            PlaceComponent::MapKey(RuntimeValue::String("key".into())),
+            PlaceComponent::Slice(vec![0, 2]),
+        ]);
+        assert_ne!(hash, 0);
+        assert!(super::place_contains(&place(types.int), &place(types.int)));
+
+        assert!(engine.resume_actor_message(999).is_err());
+        assert!(
+            engine
+                .validate_task_place(999, 0, &place(types.int), false)
+                .is_err()
+        );
+        assert!(
+            engine
+                .ensure_mut_array_extent(0, &place(types.int), &Value::Integer(1))
+                .is_err()
+        );
+        assert!(
+            engine
+                .validate_runtime_access(0, &place(types.int), &[])
+                .is_ok()
+        );
+        assert!(
+            engine
+                .resolve_place_component(
+                    0,
+                    &Value::Integer(1),
+                    &crate::bytecode::BytecodeProjection {
+                        ty: types.int,
+                        kind: crate::bytecode::BytecodeProjectionKind::TupleField(0),
+                    },
+                    false,
+                )
+                .is_err()
+        );
+        let array_ty = BytecodeTypeId::new(6);
+        let array_for_binary = engine
+            .allocate(
+                array_ty,
+                HeapObject::Array(vec![Some(Value::Integer(1))].into()),
+                &[Value::Integer(1)],
+            )
+            .unwrap();
+        let checked = engine
+            .checked_array_binary(
+                crate::bytecode::BytecodeBinaryOperator::Add,
+                array_ty,
+                array_ty,
+                array_ty,
+                array_for_binary.clone(),
+                array_for_binary.clone(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(engine.array_length(&checked).unwrap(), 1);
+        assert!(
+            engine
+                .validate_rooted_array_binary_shape(
+                    array_ty,
+                    array_ty,
+                    &array_for_binary,
+                    &array_for_binary,
+                )
+                .unwrap()
+                .is_ok()
+        );
+        assert!(
+            engine
+                .checked_rooted_array_binary(
+                    crate::bytecode::BytecodeBinaryOperator::Add,
+                    array_ty,
+                    array_ty,
+                    array_ty,
+                    array_for_binary.clone(),
+                    array_for_binary.clone(),
+                )
+                .unwrap()
+                .is_ok()
+        );
+        assert!(
+            engine
+                .checked_rooted_binary(
+                    crate::bytecode::BytecodeBinaryOperator::Add,
+                    types.int,
+                    types.int,
+                    types.int,
+                    Value::Integer(1),
+                    Value::Integer(2),
+                )
+                .unwrap()
+                .is_ok()
+        );
+        assert!(engine.sync_cursor_host_descriptor(types.int).is_none());
+        assert!(engine.executor_actor_stop(999, types.actor_result).is_err());
+        assert_eq!(engine.type_name(BytecodeTypeId::new(999)), "<invalid-type>");
     }
 
     #[test]

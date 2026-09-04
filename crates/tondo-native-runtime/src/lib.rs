@@ -7416,7 +7416,13 @@ mod tests {
         tondo_rt_reset();
         assert_eq!(tondo_rt_blocking_pool_new(0, 1), 0);
         assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_WORKERS);
+        assert_eq!(tondo_rt_blocking_pool_new(-1, 1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_WORKERS);
+        assert_eq!(tondo_rt_blocking_pool_new(4097, 1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_WORKERS);
         assert_eq!(tondo_rt_blocking_pool_new(1, -1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_CAPACITY);
+        assert_eq!(tondo_rt_blocking_pool_new(1, 1_000_001), 0);
         assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_CAPACITY);
         if !native_blocking_supported() {
             return;
@@ -7481,6 +7487,356 @@ mod tests {
         );
         wake.notify_all();
         assert_eq!(pool.shutdown(true), STATUS_CANCELLED);
+    }
+
+    #[test]
+    fn native_blocking_handles_close_invalid_and_pending_states_explicitly() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let invalid = HANDLE_BIT | 999_999;
+        assert_eq!(
+            tondo_rt_blocking_pool_status(invalid),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(
+            tondo_rt_blocking_pool_shutdown(invalid),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(
+            tondo_rt_blocking_pool_cancel(invalid),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(
+            tondo_rt_blocking_pool_submit(invalid, 42),
+            0,
+            "an unknown pool cannot admit work"
+        );
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_HANDLE);
+        assert_eq!(
+            tondo_rt_blocking_job_status(invalid),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(
+            tondo_rt_blocking_job_worker(invalid),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(
+            tondo_rt_blocking_job_wait(invalid),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(tondo_rt_blocking_job_take(invalid), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_HANDLE);
+        assert_eq!(
+            tondo_rt_blocking_job_cancel(invalid),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+
+        if !native_blocking_supported() {
+            return;
+        }
+
+        let wrong_kind = tondo_rt_result_new(RESULT_OK, 1, 1);
+        assert_eq!(
+            tondo_rt_blocking_pool_status(wrong_kind),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(
+            tondo_rt_blocking_job_status(wrong_kind),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(tondo_rt_release(wrong_kind), STATUS_OK);
+
+        let pool = NativeBlockingPool::new(0, 1).expect("a zero-worker test pool is deterministic");
+        let (pool_handle, job_handle, job_ref) = with_state(|state| {
+            let pool_handle = state.alloc(
+                Object::Host {
+                    capability: HOST_CAP_BLOCKING_POOL,
+                    state: HostState::Open,
+                    input: Vec::new(),
+                    cursor: 0,
+                    output: Vec::new(),
+                },
+                ObjectKind::Host,
+            );
+            state.blocking_pools.insert(pool_handle, Arc::clone(&pool));
+            let job_ref = Arc::new(NativeBlockingJobCell {
+                state: Mutex::new(NativeBlockingJob {
+                    payload: 42,
+                    pool: pool_handle,
+                    state: NativeBlockingJobState::Queued,
+                    worker: u64::MAX,
+                }),
+                wake: Condvar::new(),
+            });
+            let job_handle = state.alloc(
+                Object::Host {
+                    capability: HOST_CAP_BLOCKING_JOB,
+                    state: HostState::Open,
+                    input: Vec::new(),
+                    cursor: 0,
+                    output: Vec::new(),
+                },
+                ObjectKind::Host,
+            );
+            state.retain(pool_handle);
+            state.blocking_jobs.insert(job_handle, Arc::clone(&job_ref));
+            let (lock, wake) = &*pool.state;
+            lock.lock()
+                .expect("test pool state is not poisoned")
+                .queue
+                .push_back(Arc::clone(&job_ref));
+            wake.notify_all();
+            (pool_handle, job_handle, job_ref)
+        });
+
+        assert_eq!(tondo_rt_blocking_pool_status(pool_handle), 0);
+        assert_eq!(
+            tondo_rt_blocking_pool_submit(pool_handle, 42),
+            0,
+            "a full queue reports backpressure before allocation"
+        );
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_NOT_READY);
+        assert_eq!(
+            tondo_rt_blocking_job_status(job_handle),
+            BLOCKING_JOB_QUEUED
+        );
+        assert_eq!(tondo_rt_blocking_job_worker(job_handle), u64::MAX);
+        assert_eq!(tondo_rt_blocking_job_take(job_handle), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_NOT_READY);
+        assert_eq!(tondo_rt_blocking_job_cancel(job_handle), STATUS_OK);
+        assert_eq!(
+            tondo_rt_blocking_job_status(job_handle),
+            BLOCKING_JOB_CANCELLED
+        );
+        assert_eq!(tondo_rt_blocking_job_wait(job_handle), STATUS_CANCELLED);
+        assert_eq!(tondo_rt_blocking_job_take(job_handle), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_CANCELLED);
+        assert_eq!(
+            tondo_rt_blocking_job_cancel(job_handle),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(pool.cancel_job(&job_ref), STATUS_OK);
+        assert_eq!(tondo_rt_blocking_pool_cancel(pool_handle), STATUS_CANCELLED);
+        assert_eq!(tondo_rt_blocking_pool_status(pool_handle), 4);
+        assert_eq!(
+            tondo_rt_blocking_pool_shutdown(pool_handle),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_release(job_handle), STATUS_OK);
+        assert_eq!(tondo_rt_release(pool_handle), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let retain_failure_pool = tondo_rt_blocking_pool_new(1, 1);
+        with_state(|state| {
+            state
+                .entry_mut(retain_failure_pool)
+                .expect("pool entry exists")
+                .strong = StrongCount::Local(0);
+        });
+        assert_eq!(tondo_rt_blocking_pool_submit(retain_failure_pool, 42), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+
+        let payload_failure_pool = tondo_rt_blocking_pool_new(1, 1);
+        let payload_failure = tondo_rt_result_new(RESULT_OK, 7, 1);
+        with_state(|state| {
+            state
+                .entry_mut(payload_failure)
+                .expect("payload entry exists")
+                .strong = StrongCount::Local(u32::MAX);
+        });
+        assert_eq!(
+            tondo_rt_blocking_pool_submit(payload_failure_pool, payload_failure),
+            0
+        );
+        assert_eq!(tondo_rt_last_status(), STATUS_COUNT_OVERFLOW);
+
+        let poisoned_pool =
+            NativeBlockingPool::new(0, 1).expect("poison test pool is deterministic");
+        let poisoned_pool_state = Arc::clone(&poisoned_pool.state);
+        let poison_pool_thread = std::thread::spawn(move || {
+            let _guard = poisoned_pool_state
+                .0
+                .lock()
+                .expect("poison test pool lock is initially healthy");
+            panic!("intentional pool lock poison");
+        });
+        assert!(poison_pool_thread.join().is_err());
+        let poisoned_pool_handle = with_state(|state| {
+            let handle = state.alloc(
+                Object::Host {
+                    capability: HOST_CAP_BLOCKING_POOL,
+                    state: HostState::Open,
+                    input: Vec::new(),
+                    cursor: 0,
+                    output: Vec::new(),
+                },
+                ObjectKind::Host,
+            );
+            state
+                .blocking_pools
+                .insert(handle, Arc::clone(&poisoned_pool));
+            handle
+        });
+        assert_eq!(
+            tondo_rt_blocking_pool_status(poisoned_pool_handle),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_blocking_pool_submit(poisoned_pool_handle, 42), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_TRANSITION);
+        assert_eq!(
+            tondo_rt_blocking_pool_shutdown(poisoned_pool_handle),
+            STATUS_INVALID_TRANSITION
+        );
+        assert_eq!(
+            poisoned_pool.cancel_job(&job_ref),
+            STATUS_INVALID_TRANSITION
+        );
+
+        let poisoned_job = Arc::new(NativeBlockingJobCell {
+            state: Mutex::new(NativeBlockingJob {
+                payload: 42,
+                pool: poisoned_pool_handle,
+                state: NativeBlockingJobState::Queued,
+                worker: u64::MAX,
+            }),
+            wake: Condvar::new(),
+        });
+        let poisoned_job_ref = Arc::clone(&poisoned_job);
+        let poison_job_thread = std::thread::spawn(move || {
+            let _guard = poisoned_job_ref
+                .state
+                .lock()
+                .expect("poison test job lock is initially healthy");
+            panic!("intentional job lock poison");
+        });
+        assert!(poison_job_thread.join().is_err());
+        let poisoned_job_handle = with_state(|state| {
+            let handle = state.alloc(
+                Object::Host {
+                    capability: HOST_CAP_BLOCKING_JOB,
+                    state: HostState::Open,
+                    input: Vec::new(),
+                    cursor: 0,
+                    output: Vec::new(),
+                },
+                ObjectKind::Host,
+            );
+            state
+                .blocking_jobs
+                .insert(handle, Arc::clone(&poisoned_job));
+            handle
+        });
+        assert_eq!(
+            tondo_rt_blocking_job_status(poisoned_job_handle),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(
+            tondo_rt_blocking_job_worker(poisoned_job_handle),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(
+            tondo_rt_blocking_job_wait(poisoned_job_handle),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_blocking_job_take(poisoned_job_handle), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_BLOCKING_INVALID_TRANSITION);
+        assert_eq!(
+            tondo_rt_blocking_job_cancel(poisoned_job_handle),
+            STATUS_BLOCKING_INVALID_TRANSITION
+        );
+        with_state(|state| state.cleanup_blocking_job(invalid, &mut VecDeque::new()));
+        with_state(|state| state.cleanup_blocking_job(poisoned_job_handle, &mut VecDeque::new()));
+        assert_eq!(tondo_rt_release(poisoned_job_handle), STATUS_OK);
+        assert_eq!(tondo_rt_release(poisoned_pool_handle), STATUS_OK);
+        tondo_rt_reset();
+
+        let zero_capacity_pool = tondo_rt_blocking_pool_new(1, 0);
+        let zero_capacity_job = tondo_rt_blocking_pool_submit(zero_capacity_pool, 42);
+        assert_ne!(zero_capacity_job, 0);
+        assert_eq!(tondo_rt_blocking_job_wait(zero_capacity_job), STATUS_OK);
+        assert_eq!(tondo_rt_blocking_job_take(zero_capacity_job), 42);
+        assert_eq!(tondo_rt_blocking_job_wait(zero_capacity_job), STATUS_OK);
+        assert_eq!(tondo_rt_release(zero_capacity_job), STATUS_OK);
+        assert_eq!(
+            tondo_rt_blocking_pool_shutdown(zero_capacity_pool),
+            STATUS_OK
+        );
+        assert_eq!(tondo_rt_blocking_pool_status(zero_capacity_pool), 3);
+        assert_eq!(tondo_rt_release(zero_capacity_pool), STATUS_OK);
+
+        let queued_pool = NativeBlockingPool::new(0, 2).expect("queued test pool is deterministic");
+        let queued_job = Arc::new(NativeBlockingJobCell {
+            state: Mutex::new(NativeBlockingJob {
+                payload: 42,
+                pool: 0,
+                state: NativeBlockingJobState::Queued,
+                worker: u64::MAX,
+            }),
+            wake: Condvar::new(),
+        });
+        assert!(
+            queued_pool
+                .submit(Arc::clone(&queued_job))
+                .expect("open queue accepts the synthetic job")
+        );
+        assert_eq!(queued_pool.shutdown(true), STATUS_CANCELLED);
+        assert_eq!(
+            queued_job
+                .state
+                .lock()
+                .expect("queued job state is healthy")
+                .state,
+            NativeBlockingJobState::Cancelled
+        );
+
+        let cancel_poison_pool =
+            NativeBlockingPool::new(0, 1).expect("cancel poison pool is deterministic");
+        let cancel_poison_job = Arc::new(NativeBlockingJobCell {
+            state: Mutex::new(NativeBlockingJob {
+                payload: 42,
+                pool: 0,
+                state: NativeBlockingJobState::Queued,
+                worker: u64::MAX,
+            }),
+            wake: Condvar::new(),
+        });
+        assert!(
+            cancel_poison_pool
+                .submit(Arc::clone(&cancel_poison_job))
+                .expect("open queue accepts the poison job")
+        );
+        let cancel_poison_ref = Arc::clone(&cancel_poison_job);
+        let poison_cancel_thread = std::thread::spawn(move || {
+            let _guard = cancel_poison_ref
+                .state
+                .lock()
+                .expect("cancel poison job state is initially healthy");
+            panic!("intentional cancel job lock poison");
+        });
+        assert!(poison_cancel_thread.join().is_err());
+        assert_eq!(
+            cancel_poison_pool.cancel_job(&cancel_poison_job),
+            STATUS_INVALID_TRANSITION
+        );
+
+        let closed = NativeBlockingPool::new(0, 1).expect("a second test pool is deterministic");
+        assert_eq!(closed.shutdown(false), STATUS_OK);
+        assert!(!closed.can_admit().expect("closed pool state is readable"));
+        let unused_job = Arc::new(NativeBlockingJobCell {
+            state: Mutex::new(NativeBlockingJob {
+                payload: 0,
+                pool: 0,
+                state: NativeBlockingJobState::Queued,
+                worker: u64::MAX,
+            }),
+            wake: Condvar::new(),
+        });
+        assert!(
+            !closed
+                .submit(unused_job)
+                .expect("closed pool rejects without poisoning")
+        );
+        assert_eq!(closed.shutdown(true), STATUS_BLOCKING_INVALID_TRANSITION);
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -7608,9 +7964,17 @@ mod tests {
     fn native_executor_perf_sample(
         workload: NativeExecutorPerfWorkload,
     ) -> NativeExecutorPerfObservation {
+        native_executor_perf_sample_with_options(workload, workload.operations(), false)
+    }
+
+    fn native_executor_perf_sample_with_options(
+        workload: NativeExecutorPerfWorkload,
+        operation_count: usize,
+        force_initial_pending: bool,
+    ) -> NativeExecutorPerfObservation {
         let workers = workload.workers();
         let capacity = workload.capacity();
-        let operations = workload.operations() as u64;
+        let operations = operation_count as u64;
         let logical_memory_bytes = native_executor_perf_logical_memory_bytes(workers, capacity);
         tondo_rt_reset();
 
@@ -7644,7 +8008,24 @@ mod tests {
 
         let pool = tondo_rt_blocking_pool_new(workers as i64, capacity as i64);
         assert_ne!(pool, 0, "native performance pool must be admitted");
-        let mut jobs = Vec::with_capacity(workload.operations());
+        if force_initial_pending {
+            with_state(|state| {
+                let pool_ref = state
+                    .blocking_pools
+                    .get(&pool)
+                    .cloned()
+                    .expect("performance pool must remain registered");
+                let (lock, _) = &*pool_ref.state;
+                let mut pool_state = lock.lock().expect("performance pool is not poisoned");
+                let limit = if pool_state.capacity == 0 {
+                    pool_state.workers
+                } else {
+                    pool_state.capacity
+                };
+                pool_state.active = limit;
+            });
+        }
+        let mut jobs = Vec::with_capacity(operation_count);
         let mut accepted = 0_u64;
         let mut pending = 0_u64;
         let mut waits = 0_u64;
@@ -7666,6 +8047,20 @@ mod tests {
                     if let Some(job) = jobs.first().copied() {
                         jobs.remove(0);
                         native_executor_perf_take(job, &mut waits, &mut bridge_events);
+                    } else if force_initial_pending && pending == 1 {
+                        std::thread::yield_now();
+                        with_state(|state| {
+                            let pool_ref = state
+                                .blocking_pools
+                                .get(&pool)
+                                .cloned()
+                                .expect("performance pool must remain registered");
+                            let (lock, wake) = &*pool_ref.state;
+                            let mut pool_state =
+                                lock.lock().expect("performance pool is not poisoned");
+                            pool_state.active = 0;
+                            wake.notify_all();
+                        });
                     } else {
                         std::thread::yield_now();
                     }
@@ -7689,6 +8084,20 @@ mod tests {
                     if let Some(job) = jobs.first().copied() {
                         jobs.remove(0);
                         native_executor_perf_take(job, &mut waits, &mut bridge_events);
+                    } else if force_initial_pending && pending == 1 {
+                        std::thread::yield_now();
+                        with_state(|state| {
+                            let pool_ref = state
+                                .blocking_pools
+                                .get(&pool)
+                                .cloned()
+                                .expect("performance pool must remain registered");
+                            let (lock, wake) = &*pool_ref.state;
+                            let mut pool_state =
+                                lock.lock().expect("performance pool is not poisoned");
+                            pool_state.active = 0;
+                            wake.notify_all();
+                        });
                     } else {
                         std::thread::yield_now();
                     }
@@ -7769,6 +8178,16 @@ mod tests {
                 );
             }
         }
+        let forced_backpressure =
+            native_executor_perf_sample_with_options(NativeExecutorPerfWorkload::Drain4, 16, true);
+        assert_eq!(forced_backpressure.operations, 16);
+        assert_eq!(forced_backpressure.accepted, 16);
+        assert!(forced_backpressure.pending > 0);
+        assert_eq!(forced_backpressure.bridge_events, 16);
+        assert!(
+            native_executor_perf_logical_memory_bytes(2, 0)
+                > native_executor_perf_logical_memory_bytes(2, 1)
+        );
     }
 
     #[test]
@@ -9079,6 +9498,24 @@ mod tests {
         assert_eq!(tondo_rt_group_remaining(group), 0);
         assert_eq!(tondo_rt_release(thread), STATUS_OK);
         assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_syncs_a_cancelled_thread_without_retaining_its_payload() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let (task, signal) = with_state(|state| {
+            let task = state.task_spawn_with_kind(None, 66, true, TaskKind::Thread);
+            let signal = Arc::new(WorkerSignal::new(std::thread::current().id()));
+            signal.cancel();
+            state.thread_workers.insert(task, Arc::clone(&signal));
+            (task, signal)
+        });
+        with_state(|state| state.sync_group_thread(task));
+        assert_eq!(signal.snapshot().state, WorkerState::Cancelled);
+        assert_eq!(tondo_rt_task_poll(task), 2);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
         assert_eq!(tondo_rt_live_objects(), 0);
     }
 

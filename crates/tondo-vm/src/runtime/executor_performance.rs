@@ -212,9 +212,16 @@ fn submit_hosted_job(
 }
 
 fn hosted_sample(workload: HostedWorkload) -> Result<ExecutorPerfObservation, VmError> {
+    hosted_sample_with_operations(workload, workload.operations())
+}
+
+fn hosted_sample_with_operations(
+    workload: HostedWorkload,
+    operation_count: usize,
+) -> Result<ExecutorPerfObservation, VmError> {
     let workers = workload.workers();
     let capacity = workload.capacity();
-    let operations = workload.operations() as u64;
+    let operations = operation_count as u64;
     let logical_memory_bytes = hosted_logical_memory_bytes(workers, capacity);
 
     if matches!(workload, HostedWorkload::Startup) {
@@ -259,7 +266,7 @@ fn hosted_sample(workload: HostedWorkload) -> Result<ExecutorPerfObservation, Vm
         workers,
         capacity,
     )?;
-    let mut jobs = Vec::with_capacity(workload.operations());
+    let mut jobs = Vec::with_capacity(operation_count);
     let mut completed = BTreeSet::new();
     let mut waits = 0_u64;
     let mut bridge_events = 0;
@@ -268,7 +275,7 @@ fn hosted_sample(workload: HostedWorkload) -> Result<ExecutorPerfObservation, Vm
     let mut active_peak = 0;
 
     if matches!(workload, HostedWorkload::Drain4) {
-        for _ in 0..workload.operations() {
+        for _ in 0..operation_count {
             loop {
                 match submit_hosted_job(&bridge, &mut jobs, &mut queued_peak, &mut active_peak)? {
                     BlockingAdmission::Accepted(_) => break,
@@ -318,7 +325,7 @@ fn hosted_sample(workload: HostedWorkload) -> Result<ExecutorPerfObservation, Vm
     }
 
     let start = Instant::now();
-    while jobs.len() < workload.operations() {
+    while jobs.len() < operation_count {
         match submit_hosted_job(&bridge, &mut jobs, &mut queued_peak, &mut active_peak)? {
             BlockingAdmission::Accepted(_) => {}
             BlockingAdmission::Pending => {
@@ -401,5 +408,33 @@ fn executor_performance_probe() {
                 hosted_sample(workload).expect("hosted executor performance sample should pass");
             print_hosted_observation(workload, observation);
         }
+    }
+
+    let forced_backpressure = hosted_sample_with_operations(HostedWorkload::Drain4, 16)
+        .expect("hosted executor backpressure edge should pass");
+    assert_eq!(forced_backpressure.operations, 16);
+    assert_eq!(forced_backpressure.accepted, 16);
+    assert!(forced_backpressure.pending > 0);
+    assert_eq!(forced_backpressure.bridge_events, 16);
+    assert!(hosted_logical_memory_bytes(2, 0) > hosted_logical_memory_bytes(2, 1));
+
+    let panic = VmPanic {
+        code: PanicCode::ExplicitPanic,
+        message: "performance edge".into(),
+        span: BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        },
+        stack: Vec::new(),
+        suppressed: Vec::new(),
+    };
+    for completion in [
+        BlockingCompletion::Panicked(panic),
+        BlockingCompletion::Failed(VmError::Host("performance edge".into())),
+        BlockingCompletion::Cancelled,
+        BlockingCompletion::Returned(RuntimeValue::Integer(7)),
+    ] {
+        assert!(validate_hosted_completion(completion).is_err());
     }
 }

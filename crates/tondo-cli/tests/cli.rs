@@ -119,6 +119,79 @@ fn json_public_surface_runs_through_the_cli() {
 }
 
 #[test]
+fn std_executor_public_surface_runs_through_the_cli() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/runtime/m11-std-executor-impl-001.to");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("run")
+        .arg(source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"executor-ok\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn std_executor_public_surface_with_diagnostics_runs_through_the_cli() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/runtime/m11-std-executor-impl-001.to");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--diagnostics=all"])
+        .arg(source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"executor-ok\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn std_executor_blocking_worker_can_request_a_host_call() {
+    let source = source_file_with(
+        br#"import std.console
+import std.executor
+
+fn blocking_host(): Int ! console.ConsoleError {
+    console.print("blocking-host\n")
+    42
+}
+
+fn main(): !(executor.ExecutorError | executor.SubmitError | console.ConsoleError) {
+    let pool = executor.blockingPool(1, 1)?
+    assert(pool.run(blocking_host)? == 42)
+    pool.shutdown()
+    console.println("executor-host-ok")
+}
+"#,
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+    fs::remove_file(source).unwrap();
+
+    assert!(
+        output.status.success(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"blocking-host\nexecutor-host-ok\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn check_and_run_accept_a_conventional_project_without_json_configuration() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

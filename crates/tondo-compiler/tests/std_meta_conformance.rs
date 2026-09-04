@@ -11,6 +11,9 @@ use tondo_vm::bytecode::{
     BytecodeFunctionId, BytecodeFunctionType, BytecodeProgram, BytecodeScalarType, BytecodeType,
     BytecodeTypeId, BytecodeTypeKind,
 };
+use tondo_vm::runtime::{
+    RejectingHost, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
+};
 
 fn request(output_bytes: u64) -> MetaRequest {
     MetaRequest::new(
@@ -156,6 +159,52 @@ fn meta_target_admits_no_ambient_or_unsafe_surface() {
             MetaVmLimits::default(),
         ),
         Err(MetaVmError::ForbiddenType("unsafe function"))
+    ));
+}
+
+#[test]
+fn rejecting_host_defaults_are_closed_for_external_consumers() {
+    let mut host = RejectingHost;
+    assert!(matches!(
+        host.start_async("work", &[]),
+        Err(VmError::UnsupportedHostCall(name)) if name == "work"
+    ));
+    assert_eq!(host.poll_async(7).unwrap(), None);
+    assert!(matches!(
+        host.wait_async(&[]),
+        Err(VmError::Invariant(message)) if message.contains("no calls")
+    ));
+    assert!(matches!(
+        host.wait_async(&[7]),
+        Err(VmError::UnsupportedHostCall(name)) if name == "async host call #7"
+    ));
+    host.set_execution_unit(7);
+    host.cancel_async(7).unwrap();
+    host.cleanup(&RuntimeValue::Unit).unwrap();
+    assert!(matches!(
+        host.begin_virtual_time(),
+        Err(VmError::UnsupportedHostCall(name)) if name == "std.testing.withVirtualTime"
+    ));
+    assert!(matches!(
+        host.finish_virtual_time(&RuntimeValue::Unit),
+        Err(VmError::UnsupportedHostCall(name)) if name == "std.testing.withVirtualTime"
+    ));
+    assert!(!host.is_virtual_quiescence_call(7));
+    assert!(matches!(
+        host.begin_test_node(VmTestNodeKind::Leaf, "meta::leaf"),
+        Err(VmError::UnsupportedHostCall(name)) if name == "test node `meta::leaf`"
+    ));
+    assert!(matches!(
+        host.finish_test_node(
+            VmTestNodeKind::Suite,
+            "meta::suite",
+            VmTestNodeOutcome::Passed,
+        ),
+        Err(VmError::UnsupportedHostCall(name)) if name == "test node `meta::suite`"
+    ));
+    assert!(matches!(
+        host.begin_test_suite_cleanup(),
+        Err(VmError::UnsupportedHostCall(name)) if name == "test suite cleanup"
     ));
 }
 
