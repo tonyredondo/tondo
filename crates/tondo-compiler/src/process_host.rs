@@ -3121,21 +3121,22 @@ impl BootstrapHost {
         if *kind != expected_kind {
             return Err(VmError::Host("encoding stream kind is invalid".into()));
         }
-        let valid = match (expected_kind, self.values.get(id)) {
+        let valid = matches!(
+            (expected_kind, self.values.get(id)),
             (
                 RuntimeHostValueKind::EncodingBase64Encoder,
                 Some(HostValue::EncodingBase64Encoder(_)),
-            )
-            | (
+            ) | (
                 RuntimeHostValueKind::EncodingBase64Decoder,
                 Some(HostValue::EncodingBase64Decoder(_)),
+            ) | (
+                RuntimeHostValueKind::EncodingHexEncoder,
+                Some(HostValue::EncodingHexEncoder(_))
+            ) | (
+                RuntimeHostValueKind::EncodingHexDecoder,
+                Some(HostValue::EncodingHexDecoder(_))
             )
-            | (RuntimeHostValueKind::EncodingHexEncoder, Some(HostValue::EncodingHexEncoder(_)))
-            | (RuntimeHostValueKind::EncodingHexDecoder, Some(HostValue::EncodingHexDecoder(_))) => {
-                true
-            }
-            _ => false,
-        };
+        );
         valid
             .then_some(*id)
             .ok_or_else(|| VmError::Host("encoding stream token is stale".into()))
@@ -16046,7 +16047,7 @@ mod tests {
         let standard = host
             .invoke(
                 "intrinsic.encoding.Base64Options.standard",
-                &[limits.clone()],
+                std::slice::from_ref(&limits),
             )
             .unwrap();
         let source = bytes_ok(
@@ -16073,7 +16074,10 @@ mod tests {
         assert_eq!(host.bytes(&decoded).unwrap(), b"fo");
 
         let upper = host
-            .invoke("intrinsic.encoding.HexOptions.upper", &[limits.clone()])
+            .invoke(
+                "intrinsic.encoding.HexOptions.upper",
+                std::slice::from_ref(&limits),
+            )
             .unwrap();
         let hex = ok(host
             .invoke(
