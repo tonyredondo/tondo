@@ -7,6 +7,9 @@ documento se integra desde [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDA
 La evidencia de tests y fuzz del mismo owner está en
 [`testing/stdlib-encoding-test.json`](../../testing/stdlib-encoding-test.json)
 y [`docs/contracts/stdlib-encoding-test.md`](./stdlib-encoding-test.md).
+El baseline reproducible de performance hosted está en
+[`testing/stdlib-encoding-performance.json`](../../testing/stdlib-encoding-performance.json)
+y [`docs/contracts/stdlib-encoding-performance.md`](./stdlib-encoding-performance.md).
 El cierre fija la semántica portable de Base64 y hexadecimal; no afirma que
 los adaptadores runtime de VM o nativo ya estén publicados.
 
@@ -222,6 +225,22 @@ collector de esta misma máquina. Los benchmarks posteriores medirán throughput
 tail latency, bytes copiados, allocations, tamaño de código y crossover SIMD,
 separando input vacío, pequeño, grande, restos de quantum y errores.
 
+`STD-ENCODING-PERF-001` cierra ahora el baseline de la VM hosted para 16
+workloads materializados e incrementales. El probe mide la ruta scalar del
+bridge con tres procesos independientes, tres warmups y nueve repeticiones
+medidas, y conserva todas las muestras para calcular mediana/P95/P99. Registra
+copias lógicas del bridge, identidades de valores host, memoria lógica del
+registro y handles vivos; la memoria lógica no es RSS y excluye la sobrecarga
+del allocator. El dispatch reportado es siempre `scalar-fixed-target`, con
+clases `empty`, `quantum`, `small` y `large`.
+
+El reporte no mide tamaño de código, crossover SIMD, ABI runtime nativo ni
+lowering AOT. Por eso `native_aot` permanece `not-claimed`,
+`simd` permanece `not-measured-no-optimized-route` y
+`multiversion_dispatch` solo describe la dimensión declarada del target, sin
+afirmar una ruta optimizada. La interoperabilidad VM/nativo y la igualdad
+scalar/SIMD siguen siendo el trabajo de `STD-ENCODING-CONF-001`.
+
 ## Exclusiones deliberadas
 
 Este contrato no incluye MIME Base64, saltos de línea configurables, whitespace
@@ -244,7 +263,8 @@ afirmación de runtime nativo ni de lowering AOT genérico:
 `native_aot_lowering: not-claimed`. Los bloques
 `STD-ENCODING-TEST-001` ya cierra el modelo independiente, los vectores,
 las fronteras de chunk, los límites, los errores byte-exactos y el fuzz
-acotado sin promover una API pública ni un backend adicional. Permanecen
-pendientes `STD-ENCODING-PERF-001`, `STD-ENCODING-CONF-001` y
+acotado sin promover una API pública ni un backend adicional.
+`STD-ENCODING-PERF-001` cierra el baseline scalar hosted descrito arriba.
+Permanecen pendientes `STD-ENCODING-CONF-001` y
 `STD-ENCODING-DOC-001`; deben conservar la misma frontera de una única
 semántica.

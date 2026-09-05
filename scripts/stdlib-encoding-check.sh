@@ -105,6 +105,17 @@ jq -e '
   and .performance.simd_allowed_after_equivalence == true
   and .performance.dispatch == "target-declared-and-size-based"
   and .performance.claims_before_perf_gate == "forbidden"
+  and .performance.task == "STD-ENCODING-PERF-001"
+  and .performance.contract == "testing/stdlib-encoding-performance.json"
+  and .performance.document == "docs/contracts/stdlib-encoding-performance.md"
+  and .performance.status == "verified-hosted-vm-baseline"
+  and .performance.target == "tondo-vm-hosted"
+  and .performance.workloads == 16
+  and .performance.samples_per_workload == 27
+  and .performance.native_aot == "not-claimed"
+  and .performance.dispatch_mode == "scalar-only"
+  and .performance.code_size == "not-measured-by-hosted-report"
+  and .performance.simd_crossover == "not-applicable-no-optimized-route"
   and ([.test_matrix[].id] | unique) == ["base64-canonical", "fragmentation", "hex-canonical", "lifecycle-and-errors", "limits-and-atomicity", "policy-catalog", "scalar-and-optimized-equivalence"]
   and all(.test_matrix[]; .required == true and (.observables | length) > 0)
   and ([.corpora[].id] | unique) == ["base64-invalid", "base64-rfc4648", "fragmentation-and-limits", "hex-vectors"]
@@ -122,7 +133,7 @@ jq -e '
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-encoding-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-ENCODING-PERF-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-CONF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable encoding contract"
 
 for path in \

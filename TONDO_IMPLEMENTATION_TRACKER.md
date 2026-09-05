@@ -45,7 +45,7 @@ hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
 lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
 siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-09-04
+**Última actualización:** 2026-09-05
 
 **Especificaciones normativas:**
 
@@ -66,6 +66,9 @@ siendo una capacidad declarada por target.
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
 - [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
+- [Contrato de owner de `std.encoding`](./docs/contracts/stdlib-encoding.md)
+- [Contrato de tests de `std.encoding`](./docs/contracts/stdlib-encoding-test.md)
+- [Contrato de rendimiento de `std.encoding`](./docs/contracts/stdlib-encoding-performance.md)
 - [Contrato de owner de `std.yaml`](./docs/contracts/stdlib-yaml.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
@@ -145,8 +148,12 @@ estática `threads`; `STD-EXEC-DOC-001` queda cerrado por la guía ejecutable y
 sus cinco composiciones. `STD-ENCODING-IMPL-001` queda cerrado para la ruta
 scalar de la stdlib y el bridge VM hosted, con materialización, `Reader`/`Writer`,
 handles afines y errores tipados; `native_aot_lowering: not-claimed` permanece
-explícito. `STD-ENCODING-TEST-001` queda cerrado y el siguiente trabajo
-desbloqueado de ese slice es `STD-ENCODING-PERF-001`. El modelo y
+explícito. `STD-ENCODING-TEST-001` queda cerrado. `STD-ENCODING-PERF-001`
+queda cerrado con un baseline scalar de la VM hosted: 16 workloads
+materializados e incrementales, 3 warmups, 9 repeticiones y 3 procesos
+independientes, con mediana/P95/P99, bytes copiados, allocations, memoria
+lógica y cleanup de handles. El siguiente trabajo desbloqueado de ese slice
+es `STD-ENCODING-CONF-001`; el modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6955,8 +6962,17 @@ estas leaves.
   terminalidad y errores byte-exactos; el target `stdlib_encoding` queda
   acotado a 4.096 bytes/512 pasos con smoke reproducible de 128 ejecuciones.
   No se reclama runtime nativo público, SIMD ni lowering AOT.
-- [ ] **STD-ENCODING-PERF-001 — Medir encodings.** Fijar throughput, tail,
-  allocations, memoria y dispatch multiversion por tamaño/target.
+- [x] **STD-ENCODING-PERF-001 — Medir encodings.** Fijar throughput, tail,
+  allocations, memoria y dispatch multiversion por tamaño/target. Cerrado el
+  baseline hosted scalar con
+  `testing/stdlib-encoding-performance.json`,
+  `docs/contracts/stdlib-encoding-performance.md`,
+  `scripts/stdlib-encoding-performance-check.sh`,
+  `scripts/stdlib-encoding-performance-test.sh` y
+  `scripts/stdlib-encoding-performance.sh`. El probe real cubre 16 workloads,
+  tres procesos independientes, 27 muestras por workload y exige
+  `scalar-fixed-target`; native ABI, SIMD, tamaño de código y lowering AOT
+  permanecen explícitamente no medidos.
 - [ ] **STD-ENCODING-CONF-001 — Conformar encodings.** Verificar
   interoperabilidad, streaming y equivalencia scalar/SIMD en VM/nativo.
 - [ ] **STD-ENCODING-DOC-001 — Documentar encodings.** Publicar una única forma

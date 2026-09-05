@@ -16239,6 +16239,550 @@ mod tests {
         assert_eq!(encoding_error_variant(&negative), 0);
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct EncodingPerformanceWorkload {
+        id: &'static str,
+        codec: &'static str,
+        operation: &'static str,
+        policy: &'static str,
+        size_class: &'static str,
+        payload_bytes: usize,
+        chunk_bytes: usize,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct EncodingPerformanceSample {
+        nanos: u64,
+        input_bytes: u64,
+        output_bytes: u64,
+        operations: u64,
+        bytes_copied: u64,
+        allocations: u64,
+        logical_memory_bytes: u64,
+        live_handles: u64,
+        dispatch: &'static str,
+        size_class: &'static str,
+    }
+
+    const ENCODING_PERF_BATCH: usize = 64;
+    const ENCODING_PERF_DISPATCH: &str = "scalar-fixed-target";
+    const ENCODING_PERF_MAX_BYTES: i128 = 16_384;
+
+    fn encoding_performance_workloads() -> [EncodingPerformanceWorkload; 16] {
+        [
+            EncodingPerformanceWorkload {
+                id: "base64-standard-encode-empty",
+                codec: "base64",
+                operation: "materialized-encode",
+                policy: "standard",
+                size_class: "empty",
+                payload_bytes: 0,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-standard-encode-quantum",
+                codec: "base64",
+                operation: "materialized-encode",
+                policy: "standard",
+                size_class: "quantum",
+                payload_bytes: 3,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-standard-encode-small",
+                codec: "base64",
+                operation: "materialized-encode",
+                policy: "standard",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-standard-encode-large",
+                codec: "base64",
+                operation: "materialized-encode",
+                policy: "standard",
+                size_class: "large",
+                payload_bytes: 4096,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-standard-decode-small",
+                codec: "base64",
+                operation: "materialized-decode",
+                policy: "standard",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-url-unpadded-decode-large",
+                codec: "base64",
+                operation: "materialized-decode",
+                policy: "url-safe-unpadded",
+                size_class: "large",
+                payload_bytes: 4096,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-stream-encode-byte",
+                codec: "base64",
+                operation: "stream-encode",
+                policy: "standard",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 1,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-stream-decode-quantum",
+                codec: "base64",
+                operation: "stream-decode",
+                policy: "standard",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 4,
+            },
+            EncodingPerformanceWorkload {
+                id: "hex-lower-encode-small",
+                codec: "hex",
+                operation: "materialized-encode",
+                policy: "lower",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "hex-lower-encode-large",
+                codec: "hex",
+                operation: "materialized-encode",
+                policy: "lower",
+                size_class: "large",
+                payload_bytes: 4096,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "hex-upper-decode-small",
+                codec: "hex",
+                operation: "materialized-decode",
+                policy: "upper",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "hex-any-decode-large",
+                codec: "hex",
+                operation: "materialized-decode",
+                policy: "any-case",
+                size_class: "large",
+                payload_bytes: 4096,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "hex-stream-encode-byte",
+                codec: "hex",
+                operation: "stream-encode",
+                policy: "lower",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 1,
+            },
+            EncodingPerformanceWorkload {
+                id: "hex-stream-decode-nibble",
+                codec: "hex",
+                operation: "stream-decode",
+                policy: "lower",
+                size_class: "small",
+                payload_bytes: 64,
+                chunk_bytes: 1,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-url-encode-large",
+                codec: "base64",
+                operation: "materialized-encode",
+                policy: "url-safe",
+                size_class: "large",
+                payload_bytes: 4096,
+                chunk_bytes: 0,
+            },
+            EncodingPerformanceWorkload {
+                id: "base64-standard-stream-encode-large",
+                codec: "base64",
+                operation: "stream-encode",
+                policy: "standard",
+                size_class: "large",
+                payload_bytes: 4096,
+                chunk_bytes: 64,
+            },
+        ]
+    }
+
+    fn encoding_performance_limits() -> encoding::EncodingLimits {
+        encoding::EncodingLimits::create(
+            ENCODING_PERF_MAX_BYTES as usize,
+            ENCODING_PERF_MAX_BYTES as usize,
+        )
+        .expect("encoding performance limits are valid")
+    }
+
+    fn encoding_performance_raw_payload(length: usize) -> Vec<u8> {
+        (0..length)
+            .map(|index| ((index as u64 * 31 + 7) & 0xff) as u8)
+            .collect()
+    }
+
+    fn encoding_performance_encoded_fixture(policy: &str, raw: &[u8]) -> Vec<u8> {
+        let source = stdlib_serialization::Bytes::new(raw.to_vec());
+        let limits = encoding_performance_limits();
+        let mut encoded = match policy {
+            "standard" => encoding::Base64Options::standard(limits)
+                .encode(&source)
+                .expect("standard Base64 fixture"),
+            "url-safe" => encoding::Base64Options::url_safe(limits)
+                .encode(&source)
+                .expect("URL-safe Base64 fixture"),
+            "url-safe-unpadded" => encoding::Base64Options::url_safe_unpadded(limits)
+                .encode(&source)
+                .expect("unpadded Base64 fixture"),
+            "lower" => encoding::HexOptions::lower(limits)
+                .encode(&source)
+                .expect("lower hexadecimal fixture"),
+            "upper" => encoding::HexOptions::upper(limits)
+                .encode(&source)
+                .expect("upper hexadecimal fixture"),
+            "any-case" => encoding::HexOptions::any_case(limits)
+                .encode(&source)
+                .expect("any-case hexadecimal fixture"),
+            other => panic!("unknown encoding performance policy: {other}"),
+        }
+        .into_vec();
+        if policy == "any-case" {
+            for (index, byte) in encoded.iter_mut().enumerate() {
+                if index % 3 == 0 && byte.is_ascii_lowercase() {
+                    *byte = byte.to_ascii_uppercase();
+                }
+            }
+        }
+        encoded
+    }
+
+    fn encoding_performance_expected_output(
+        workload: EncodingPerformanceWorkload,
+        input: &[u8],
+        raw: &[u8],
+    ) -> Vec<u8> {
+        if workload.operation.ends_with("decode") {
+            return raw.to_vec();
+        }
+        encoding_performance_encoded_fixture(workload.policy, input)
+    }
+
+    fn encoding_performance_host_options(host: &mut BootstrapHost, policy: &str) -> RuntimeValue {
+        let limits = encoding_limits(host, ENCODING_PERF_MAX_BYTES, ENCODING_PERF_MAX_BYTES);
+        let intrinsic = match policy {
+            "standard" => "intrinsic.encoding.Base64Options.standard",
+            "url-safe" => "intrinsic.encoding.Base64Options.urlSafe",
+            "url-safe-unpadded" => "intrinsic.encoding.Base64Options.urlSafeUnpadded",
+            "lower" => "intrinsic.encoding.HexOptions.lower",
+            "upper" => "intrinsic.encoding.HexOptions.upper",
+            "any-case" => "intrinsic.encoding.HexOptions.anyCase",
+            other => panic!("unknown encoding performance policy: {other}"),
+        };
+        host.invoke(intrinsic, &[limits]).unwrap()
+    }
+
+    fn encoding_performance_logical_bytes(host: &BootstrapHost) -> u64 {
+        let values = host
+            .values
+            .len()
+            .saturating_mul(std::mem::size_of::<HostValue>());
+        let payload = host
+            .values
+            .values()
+            .map(|value| match value {
+                HostValue::Bytes(bytes) => bytes.capacity(),
+                _ => 0,
+            })
+            .sum::<usize>();
+        u64::try_from(values.saturating_add(payload))
+            .expect("logical encoding state size fits in u64")
+    }
+
+    fn encoding_performance_live_handles(host: &BootstrapHost) -> u64 {
+        u64::try_from(
+            host.values
+                .values()
+                .filter(|value| {
+                    matches!(
+                        value,
+                        HostValue::EncodingBase64Encoder(_)
+                            | HostValue::EncodingBase64Decoder(_)
+                            | HostValue::EncodingHexEncoder(_)
+                            | HostValue::EncodingHexDecoder(_)
+                    )
+                })
+                .count(),
+        )
+        .expect("encoding handle count fits in u64")
+    }
+
+    fn encoding_performance_observe(host: &BootstrapHost, peak: &mut u64) {
+        *peak = (*peak).max(encoding_performance_logical_bytes(host));
+    }
+
+    fn encoding_performance_take_bytes(host: &mut BootstrapHost, value: RuntimeValue) -> Vec<u8> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Bytes,
+            id,
+        } = value
+        else {
+            panic!("encoding performance result is not a Bytes host value");
+        };
+        match host.values.remove(&id) {
+            Some(HostValue::Bytes(bytes)) => bytes,
+            _ => panic!("encoding performance result Bytes token is stale"),
+        }
+    }
+
+    fn encoding_performance_take_result_bytes(
+        host: &mut BootstrapHost,
+        result: RuntimeValue,
+        peak: &mut u64,
+    ) -> Vec<u8> {
+        let value = ok(result);
+        encoding_performance_observe(host, peak);
+        encoding_performance_take_bytes(host, value)
+    }
+
+    fn encoding_performance_chunks(
+        host: &mut BootstrapHost,
+        input: &[u8],
+        chunk_bytes: usize,
+    ) -> Vec<RuntimeValue> {
+        assert!(chunk_bytes > 0);
+        input
+            .chunks(chunk_bytes)
+            .map(|chunk| {
+                host.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(chunk.to_vec()),
+                )
+            })
+            .collect()
+    }
+
+    fn encoding_performance_stream_method(
+        workload: EncodingPerformanceWorkload,
+        finish: bool,
+    ) -> &'static str {
+        match (
+            workload.codec,
+            workload.operation.ends_with("encode"),
+            finish,
+        ) {
+            ("base64", true, false) => "std.encoding.Base64Encoder.push",
+            ("base64", true, true) => "std.encoding.Base64Encoder.finish",
+            ("base64", false, false) => "std.encoding.Base64Decoder.push",
+            ("base64", false, true) => "std.encoding.Base64Decoder.finish",
+            ("hex", true, false) => "std.encoding.HexEncoder.push",
+            ("hex", true, true) => "std.encoding.HexEncoder.finish",
+            ("hex", false, false) => "std.encoding.HexDecoder.push",
+            ("hex", false, true) => "std.encoding.HexDecoder.finish",
+            _ => panic!("unknown encoding performance stream"),
+        }
+    }
+
+    fn encoding_performance_stream_constructor(
+        workload: EncodingPerformanceWorkload,
+    ) -> &'static str {
+        match (workload.codec, workload.operation.ends_with("encode")) {
+            ("base64", true) => "std.encoding.Base64Options.encoder",
+            ("base64", false) => "std.encoding.Base64Options.decoder",
+            ("hex", true) => "std.encoding.HexOptions.encoder",
+            ("hex", false) => "std.encoding.HexOptions.decoder",
+            _ => panic!("unknown encoding performance stream"),
+        }
+    }
+
+    fn encoding_performance_materialized_method(
+        workload: EncodingPerformanceWorkload,
+    ) -> &'static str {
+        match (workload.codec, workload.operation) {
+            ("base64", "materialized-encode") => "std.encoding.Base64Options.encode",
+            ("base64", "materialized-decode") => "std.encoding.Base64Options.decode",
+            ("hex", "materialized-encode") => "std.encoding.HexOptions.encode",
+            ("hex", "materialized-decode") => "std.encoding.HexOptions.decode",
+            _ => panic!("unknown encoding performance materialized operation"),
+        }
+    }
+
+    fn encoding_performance_workload(
+        workload: EncodingPerformanceWorkload,
+    ) -> EncodingPerformanceSample {
+        let raw = encoding_performance_raw_payload(workload.payload_bytes);
+        let input_data = if workload.operation.ends_with("decode") {
+            encoding_performance_encoded_fixture(workload.policy, &raw)
+        } else {
+            raw.clone()
+        };
+        let expected = encoding_performance_expected_output(workload, &input_data, &raw);
+        let mut host = BootstrapHost::default();
+        let initial_allocations = host.next_value;
+        let options = encoding_performance_host_options(&mut host, workload.policy);
+        let input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(input_data.clone()),
+        );
+        let chunks = if workload.operation.starts_with("stream-") {
+            encoding_performance_chunks(&mut host, &input_data, workload.chunk_bytes)
+        } else {
+            Vec::new()
+        };
+        let mut streams = Vec::new();
+        if workload.operation.starts_with("stream-") {
+            let constructor = encoding_performance_stream_constructor(workload);
+            for _ in 0..ENCODING_PERF_BATCH {
+                streams.push(ok(host
+                    .invoke(constructor, std::slice::from_ref(&options))
+                    .unwrap()));
+            }
+        }
+
+        let mut peak_logical_bytes = 0;
+        encoding_performance_observe(&host, &mut peak_logical_bytes);
+        let started = Instant::now();
+        let mut bytes_copied = 0usize;
+        if workload.operation.starts_with("materialized-") {
+            let method = encoding_performance_materialized_method(workload);
+            for _ in 0..ENCODING_PERF_BATCH {
+                let result = host
+                    .invoke(method, &[options.clone(), input.clone()])
+                    .unwrap();
+                let output = encoding_performance_take_result_bytes(
+                    &mut host,
+                    result,
+                    &mut peak_logical_bytes,
+                );
+                assert_eq!(output, expected);
+                bytes_copied = bytes_copied
+                    .saturating_add(input_data.len())
+                    .saturating_add(output.len());
+                std::hint::black_box(output);
+            }
+        } else {
+            let push_method = encoding_performance_stream_method(workload, false);
+            let finish_method = encoding_performance_stream_method(workload, true);
+            for stream in &streams {
+                let mut output = Vec::with_capacity(expected.len());
+                for chunk in &chunks {
+                    let chunk_len = host.bytes(chunk).unwrap().len();
+                    let result = host
+                        .invoke(push_method, &[stream.clone(), chunk.clone()])
+                        .unwrap();
+                    let produced = encoding_performance_take_result_bytes(
+                        &mut host,
+                        result,
+                        &mut peak_logical_bytes,
+                    );
+                    bytes_copied = bytes_copied
+                        .saturating_add(chunk_len)
+                        .saturating_add(produced.len());
+                    output.extend_from_slice(&produced);
+                    std::hint::black_box(&output);
+                }
+                let result = host
+                    .invoke(finish_method, std::slice::from_ref(stream))
+                    .unwrap();
+                let produced = encoding_performance_take_result_bytes(
+                    &mut host,
+                    result,
+                    &mut peak_logical_bytes,
+                );
+                bytes_copied = bytes_copied.saturating_add(produced.len());
+                output.extend_from_slice(&produced);
+                assert_eq!(output, expected);
+                std::hint::black_box(output);
+            }
+        }
+        let nanos = started.elapsed().as_nanos().max(1);
+
+        for stream in streams {
+            host.cleanup(&stream).unwrap();
+        }
+        host.values.remove(&match input {
+            RuntimeValue::Host { id, .. } => id,
+            _ => unreachable!("encoding performance input is a host value"),
+        });
+        for chunk in chunks {
+            host.values.remove(&match chunk {
+                RuntimeValue::Host { id, .. } => id,
+                _ => unreachable!("encoding performance chunk is a host value"),
+            });
+        }
+        assert_eq!(encoding_performance_live_handles(&host), 0);
+
+        EncodingPerformanceSample {
+            nanos: u64::try_from(nanos).expect("encoding performance duration fits in u64"),
+            input_bytes: u64::try_from(input_data.len())
+                .expect("encoding performance input length fits in u64"),
+            output_bytes: u64::try_from(expected.len())
+                .expect("encoding performance output length fits in u64"),
+            operations: ENCODING_PERF_BATCH as u64,
+            bytes_copied: u64::try_from(bytes_copied)
+                .expect("encoding performance copied bytes fit in u64"),
+            allocations: host.next_value.saturating_sub(initial_allocations),
+            logical_memory_bytes: peak_logical_bytes,
+            live_handles: encoding_performance_live_handles(&host),
+            dispatch: ENCODING_PERF_DISPATCH,
+            size_class: workload.size_class,
+        }
+    }
+
+    #[test]
+    fn encoding_performance_probe() {
+        let workloads = encoding_performance_workloads();
+        for _ in 0..3 {
+            for workload in workloads {
+                let sample = encoding_performance_workload(workload);
+                assert!(sample.nanos > 0);
+                assert_eq!(sample.operations, ENCODING_PERF_BATCH as u64);
+                assert!(sample.allocations > 0);
+                assert!(sample.logical_memory_bytes > 0);
+                assert_eq!(sample.live_handles, 0);
+                assert_eq!(sample.dispatch, ENCODING_PERF_DISPATCH);
+            }
+        }
+        for _ in 0..9 {
+            for workload in workloads {
+                let sample = encoding_performance_workload(workload);
+                assert!(sample.nanos > 0);
+                assert_eq!(sample.operations, ENCODING_PERF_BATCH as u64);
+                assert!(sample.allocations > 0);
+                assert!(sample.logical_memory_bytes > 0);
+                assert_eq!(sample.live_handles, 0);
+                assert_eq!(sample.dispatch, ENCODING_PERF_DISPATCH);
+                println!(
+                    "TONDO_ENCODING_PERF\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    workload.id,
+                    workload.codec,
+                    workload.operation,
+                    workload.policy,
+                    sample.size_class,
+                    sample.input_bytes,
+                    sample.output_bytes,
+                    workload.chunk_bytes,
+                    sample.dispatch,
+                    sample.nanos,
+                    sample.operations,
+                    sample.bytes_copied,
+                    sample.allocations,
+                    sample.logical_memory_bytes,
+                    sample.live_handles,
+                );
+            }
+        }
+    }
+
     #[test]
     fn text_owner_builds_scalars_and_rejects_invalid_boundaries_atomically() {
         let mut host = BootstrapHost::default();

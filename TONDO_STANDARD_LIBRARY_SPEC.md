@@ -2992,6 +2992,15 @@ implementación hosted queda registrada además por
 [`scripts/stdlib-encoding-implementation.sh`](./scripts/stdlib-encoding-implementation.sh)
 y la fixture de VM. Estos artefactos cierran el diseño B0 y la ruta scalar
 hosted, pero no promocionan una API pública ni un backend nativo.
+El baseline de performance queda registrado por
+[`testing/stdlib-encoding-performance.json`](./testing/stdlib-encoding-performance.json),
+[`docs/contracts/stdlib-encoding-performance.md`](./docs/contracts/stdlib-encoding-performance.md),
+[`scripts/stdlib-encoding-performance-check.sh`](./scripts/stdlib-encoding-performance-check.sh),
+[`scripts/stdlib-encoding-performance-test.sh`](./scripts/stdlib-encoding-performance-test.sh) y
+[`scripts/stdlib-encoding-performance.sh`](./scripts/stdlib-encoding-performance.sh).
+Mide únicamente la ruta scalar del bridge VM hosted en 16 workloads; declara
+explícitamente como no medidos el ABI nativo, SIMD, multiversionado, tamaño de
+código y lowering AOT.
 
 La superficie canónica es:
 

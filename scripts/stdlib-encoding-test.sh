@@ -83,7 +83,7 @@ jq -e '
   and .implementation.host == "verified-hosted-vm-scalar-bridge"
   and .implementation.native_aot_lowering == "not-claimed"
   and .implementation.required_follow_ups == ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-ENCODING-PERF-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-CONF-001"]
 ' testing/stdlib-encoding.json >/dev/null
 
 echo "std.encoding tests: OK (policy negatives; canonicality; chunking; limits; lifecycle; promotion boundary)"

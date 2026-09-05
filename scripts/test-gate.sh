@@ -251,6 +251,10 @@ run_step stdlib-encoding-testing-contract \
     scripts/stdlib-encoding-test-check.sh
 run_step stdlib-encoding-testing-contract-tests \
     scripts/stdlib-encoding-test-test.sh
+run_step stdlib-encoding-performance-contract \
+    scripts/stdlib-encoding-performance-check.sh
+run_step stdlib-encoding-performance-contract-tests \
+    scripts/stdlib-encoding-performance-test.sh
 run_step stdlib-yaml-contract \
     scripts/stdlib-yaml-check.sh
 run_step stdlib-yaml-contract-tests \

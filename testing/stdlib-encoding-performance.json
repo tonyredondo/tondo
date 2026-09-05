@@ -1,0 +1,250 @@
+{
+  "format": "tondo-stdlib-encoding-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-ENCODING-PERF-001",
+  "owner": "std.encoding",
+  "status": "verified-hosted-vm-baseline",
+  "target": "tondo-vm-hosted",
+  "backend": "bytecode-vm",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-compiler/src/process_host.rs",
+    "test": "process_host::tests::encoding_performance_probe",
+    "sha256": "682c72fb1f9b85c44d45c98c6d2b167cda3bf813fa7cb25f6d18077fac47a3d3"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 64,
+    "deterministic_seed": "tondo-stdlib-encoding-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-timed-latency; included-in-allocation-and-memory-counters"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "path",
+    "pid",
+    "timestamp"
+  ],
+  "metrics": [
+    "allocations",
+    "bytes_copied",
+    "dispatch",
+    "latency",
+    "live_handles",
+    "logical_memory_bytes",
+    "tail_latency",
+    "throughput"
+  ],
+  "workloads": [
+    {
+      "id": "base64-standard-encode-empty",
+      "codec": "base64",
+      "operation": "materialized-encode",
+      "policy": "standard",
+      "size_class": "empty",
+      "payload_bytes": 0,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-standard-encode-quantum",
+      "codec": "base64",
+      "operation": "materialized-encode",
+      "policy": "standard",
+      "size_class": "quantum",
+      "payload_bytes": 3,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-standard-encode-small",
+      "codec": "base64",
+      "operation": "materialized-encode",
+      "policy": "standard",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-standard-encode-large",
+      "codec": "base64",
+      "operation": "materialized-encode",
+      "policy": "standard",
+      "size_class": "large",
+      "payload_bytes": 4096,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-standard-decode-small",
+      "codec": "base64",
+      "operation": "materialized-decode",
+      "policy": "standard",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-url-unpadded-decode-large",
+      "codec": "base64",
+      "operation": "materialized-decode",
+      "policy": "url-safe-unpadded",
+      "size_class": "large",
+      "payload_bytes": 4096,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-stream-encode-byte",
+      "codec": "base64",
+      "operation": "stream-encode",
+      "policy": "standard",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 1,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-stream-decode-quantum",
+      "codec": "base64",
+      "operation": "stream-decode",
+      "policy": "standard",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 4,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "hex-lower-encode-small",
+      "codec": "hex",
+      "operation": "materialized-encode",
+      "policy": "lower",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "hex-lower-encode-large",
+      "codec": "hex",
+      "operation": "materialized-encode",
+      "policy": "lower",
+      "size_class": "large",
+      "payload_bytes": 4096,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "hex-upper-decode-small",
+      "codec": "hex",
+      "operation": "materialized-decode",
+      "policy": "upper",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "hex-any-decode-large",
+      "codec": "hex",
+      "operation": "materialized-decode",
+      "policy": "any-case",
+      "size_class": "large",
+      "payload_bytes": 4096,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "hex-stream-encode-byte",
+      "codec": "hex",
+      "operation": "stream-encode",
+      "policy": "lower",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 1,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "hex-stream-decode-nibble",
+      "codec": "hex",
+      "operation": "stream-decode",
+      "policy": "lower",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "chunk_bytes": 1,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-url-encode-large",
+      "codec": "base64",
+      "operation": "materialized-encode",
+      "policy": "url-safe",
+      "size_class": "large",
+      "payload_bytes": 4096,
+      "chunk_bytes": 0,
+      "dispatch": "scalar-fixed-target"
+    },
+    {
+      "id": "base64-standard-stream-encode-large",
+      "codec": "base64",
+      "operation": "stream-encode",
+      "policy": "standard",
+      "size_class": "large",
+      "payload_bytes": 4096,
+      "chunk_bytes": 64,
+      "dispatch": "scalar-fixed-target"
+    }
+  ],
+  "strategy": {
+    "hosted_vm": "scalar-kernel-host-bridge-baseline",
+    "native_runtime_abi": "not-measured-by-this-hosted-report",
+    "native_aot": "not-claimed",
+    "simd": "not-measured-no-optimized-route",
+    "multiversion_dispatch": "scalar-fixed-target; size classes reported; optimized dispatch not claimed",
+    "selection": "hosted-scalar-baseline",
+    "selection_reason": "The only executable encoding route is the scalar stdlib kernel through the hosted VM bridge; this report measures it without implying native, SIMD or AOT readiness."
+  },
+  "dispatch": {
+    "mode": "scalar-only",
+    "selection": "target-declared-and-size-class",
+    "selected_route": "scalar",
+    "multiversion": "not-claimed",
+    "size_classes": ["empty", "quantum", "small", "large"]
+  },
+  "invariants": {
+    "operations": "stable-per-workload-across-all-27-samples",
+    "bytes_copied": "bridge-input-plus-published-output; stream chunks counted once",
+    "logical_memory": "host-value-registry-and-Bytes-capacity; RSS-and-allocator-overhead-excluded",
+    "cleanup": "no-live-encoding-handle-before-probe-return",
+    "dispatch": "every-sample-reports-scalar-fixed-target",
+    "target_isolation": "reports-never-combine-targets-or-backends",
+    "oracle": "independent-bounded-encoding-model-plus-exact-host-output-checks"
+  },
+  "oracle": {
+    "kind": "independent-bounded-encoding-model-and-host-invariant-checks",
+    "sources": [
+      "crates/tondo-reliability/src/encoding_model.rs",
+      "crates/tondo-reliability/tests/encoding_models.rs"
+    ]
+  },
+  "report": "target/reliability/evidence/stdlib-encoding-performance.json"
+}

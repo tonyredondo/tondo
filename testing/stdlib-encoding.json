@@ -176,7 +176,18 @@
     "input_copy_policy": "no-retained-input-alias",
     "streaming_allocation": "bounded-by-chunk-and-limits",
     "required_measurements": ["throughput", "tail-latency", "bytes-copied", "allocations", "code-size", "simd-crossover"],
-    "claims_before_perf_gate": "forbidden"
+    "claims_before_perf_gate": "forbidden",
+    "task": "STD-ENCODING-PERF-001",
+    "contract": "testing/stdlib-encoding-performance.json",
+    "document": "docs/contracts/stdlib-encoding-performance.md",
+    "status": "verified-hosted-vm-baseline",
+    "target": "tondo-vm-hosted",
+    "workloads": 16,
+    "samples_per_workload": 27,
+    "native_aot": "not-claimed",
+    "dispatch_mode": "scalar-only",
+    "code_size": "not-measured-by-hosted-report",
+    "simd_crossover": "not-applicable-no-optimized-route"
   },
   "test_matrix": [
     {"id":"policy-catalog","required":true,"observables":["all-alphabets","all-padding-modes","hex-case-policies","closed-signatures"]},
@@ -260,6 +271,7 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-ENCODING-PERF-001"]
+    "next_blocks": ["STD-ENCODING-CONF-001"],
+    "implementation_pending": []
   }
 }

@@ -31,7 +31,7 @@ jq -e '
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-encoding-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-ENCODING-PERF-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-CONF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable implementation state"
 
 for path in \
