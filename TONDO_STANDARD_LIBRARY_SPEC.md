@@ -3010,6 +3010,12 @@ La conformance VM/native queda registrada por
 la fixture/sonda compartidas. Cierra seis casos de bytes, streaming, errores,
 límites y cleanup sobre VM hosted y el ABI nativo privado; no promociona
 Cranelift/AOT, layout FFI ni una ruta SIMD.
+La documentación de uso queda registrada por
+[`scripts/stdlib-encoding-doc-check.sh`](./scripts/stdlib-encoding-doc-check.sh),
+[`scripts/stdlib-encoding-doc-test.sh`](./scripts/stdlib-encoding-doc-test.sh) y
+la fixture `tests/runtime/m11-std-encoding-doc-001.to`; `STD-ENCODING-DOC-001`
+cierra una única forma por policy, errores, costes y ejemplos materializados o
+streaming sin cambiar la frontera hosted/native.
 
 La superficie canónica es:
 
@@ -3073,8 +3079,9 @@ fronteras de chunk, los límites, los errores byte-exactos y el fuzz acotado.
 `STD-ENCODING-CONF-001` verifica interoperabilidad VM/native mediante handles
 opacos y el mismo kernel scalar. Como no existe una ruta SIMD optimizada,
 `simd` permanece `not-measured-no-optimized-route`; native AOT sigue
-explícitamente sin reclamar. La celda `DOC` permanece separada y es el
-siguiente bloque del owner.
+explícitamente sin reclamar. `STD-ENCODING-DOC-001` queda cerrado por la guía
+ejecutable y sus seis familias de ejemplos; el siguiente bloque del owner es
+`STD-YAML-IMPL-001`.
 
 ### 14.5 Contratos cerrados de los owners STD-0.1A
 

@@ -192,7 +192,7 @@ incompleto; uno sin padding solo puede terminar con restos de dos o tres
 caracteres. Un decoder hexadecimal no puede terminar con un nibble pendiente.
 
 Tras `finish` o cualquier error, el handle queda terminal y una operación
-posterior devuelve `Closed`. Un error de input puede haber observado un prefijo,
+posterior devuelve `encoding.EncodingErrorKind.Closed`. Un error de input puede haber observado un prefijo,
 pero no publica un `Bytes` parcial y no permite reintentar el mismo estado. Si
 una policy de límite falla durante `push`, la operación es atómica para el
 estado: no consume el chunk ni cambia el carry. Las APIs `encodeTo` y
@@ -257,8 +257,136 @@ La comparación verifica bytes, policies, chunk boundaries, kind/offset de
 errores, publicación atómica ante límites y cero handles vivos por caso. No
 existe aún una ruta SIMD optimizada, por lo que el reporte conserva
 `simd: not-measured-no-optimized-route`; `native_aot_lowering: not-claimed`
-continúa sin cambios. El siguiente bloque del owner es únicamente
-`STD-ENCODING-DOC-001`.
+continúa sin cambios. `STD-ENCODING-DOC-001` cierra ahora la guía ejecutable;
+el siguiente bloque del slice es `STD-YAML-IMPL-001`.
+
+## Guía ejecutable de `std.encoding`
+
+`STD-ENCODING-DOC-001` cierra la guía de uso de este owner sin crear una API
+paralela. La ficha documental vive en el campo `documentation` de
+[`testing/stdlib-encoding.json`](../../testing/stdlib-encoding.json); la fixture
+[`tests/runtime/m11-std-encoding-doc-001.to`](../../tests/runtime/m11-std-encoding-doc-001.to)
+ejecuta los mismos contratos en la VM hosted y termina con
+`encoding-doc-ok`. La guía describe la semántica observada, no una publicación
+del runtime nativo ni una release.
+
+### Una forma por policy
+
+Selecciona la policy una sola vez y conserva ese valor para todas las
+operaciones. `Base64Options.standard`, `urlSafe` y `urlSafeUnpadded` hacen
+visible el alfabeto y el padding; para cualquier otra combinación se usa
+`Base64Options.create` de forma explícita. `HexOptions.lower`, `upper` y
+`anyCase` hacen visible la policy de case. No hay autodetección, defaults
+ambientales, `encodeAsync`, `tryEncode` ni una segunda API basada en `String`.
+
+```tondo
+let limits = encoding.EncodingLimits.defaults()
+let policy = encoding.Base64Options.standard(limits)
+let input = bytes.Bytes("fo")?
+let encoded = policy.encode(input)?
+assert(String(encoded)? == "Zm8=")
+```
+
+### Errores observables
+
+Todas las operaciones devuelven `EncodingError` con `kind` y `offset`. Un
+decoder estricto usa `InvalidCharacter`, `InvalidLength`, `InvalidPadding` o
+`NonCanonical` según la regla que se viola; un límite usa `ResourceLimit` sin
+publicar un resultado parcial. Después de `finish` o de cualquier error el
+handle es terminal y la siguiente operación produce `encoding.EncodingErrorKind.Closed`. El offset es el
+número de bytes observados antes del fallo, no una posición del host.
+
+```tondo
+match policy.decode(bytes.Bytes("Zh==")?) {
+    ok(_) => assert(false)
+    err(error) => match error.kind {
+        encoding.EncodingErrorKind.NonCanonical => assert(error.offset == 0)
+        _ => assert(false)
+    }
+}
+```
+
+### Costes y límites
+
+La operación materializada es un collector de la máquina incremental y tiene
+coste lineal en los bytes de entrada. Base64 produce `4 * ceil(n / 3)` bytes
+con padding y hexadecimal produce `2 * n`; el cálculo prospectivo y los
+límites `maxInputBytes`/`maxOutputBytes` se comprueban antes de publicar. Un
+stream conserva solo el `bounded-carry` de un quantum (como máximo dos bytes de entrada
+Base64, tres caracteres pendientes del decoder o un nibble hexadecimal), no
+reserva por byte y no retiene un alias de la entrada. `encodeTo` escribe por
+chunks mediante `std.io.Writer`; no materializa el documento completo.
+
+El baseline reproducible de esos costes está en
+[`stdlib-encoding-performance.md`](./stdlib-encoding-performance.md). Mide la
+ruta scalar del bridge hosted, no RSS, SIMD, tamaño de código ni una ruta AOT;
+por eso `simd: not-measured-no-optimized-route` y
+`native_aot_lowering: not-claimed` siguen siendo parte del contrato.
+
+### Ejemplos materializados
+
+La forma materializada es la elección por defecto para payloads pequeños o
+cuando el consumidor necesita un `Bytes` completo. El encoder y el decoder
+comparten las mismas policies y errores:
+
+```tondo
+let limits = encoding.EncodingLimits.defaults()
+let source = bytes.Bytes("fo")?
+let standard = encoding.Base64Options.standard(limits)
+let encoded = standard.encode(source)?
+let decoded = standard.decode(encoded)?
+assert(String(decoded)? == "fo")
+let hex = encoding.HexOptions.upper(limits).encode(source)?
+assert(String(hex)? == "666F")
+```
+
+La fixture identifica este caso como `materialized_examples` y además prueba
+que `HexOptions.anyCase` acepta la case explícita sin cambiar la salida
+canónica.
+
+### Ejemplos streaming
+
+Usa un handle affine cuando el input llega por fragmentos. `push` publica solo
+quanta completos; `finish` valida el carry restante y cierra el handle. El
+corte entre chunks no cambia el resultado:
+
+```tondo
+let limits = encoding.EncodingLimits.defaults()
+var encoder = encoding.Base64Options.urlSafeUnpadded(limits).encoder()?
+let first = encoder.push(bytes.Bytes("f")?)?
+let second = encoder.push(bytes.Bytes("o")?)?
+assert(first.length() == 0)
+assert(second.length() == 0)
+let tail = encoder.finish()?
+assert(String(tail)? == "Zm8")
+```
+
+Para un destino `Writer`, declara la capacidad suspendible del helper y deja
+que la llamada ordinaria se espere automáticamente; no existe una pareja
+`encodeAsync`:
+
+```tondo
+fn write_example(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) suspends {
+    let limits = encoding.EncodingLimits.defaults()
+    let policy = encoding.Base64Options.standard(limits)
+    let input = bytes.Bytes("fo")?
+    var output = console.stdout()?
+    policy.encodeTo(input, var output)?
+}
+```
+
+### Verificación ejecutable
+
+La guía se comprueba con
+[`scripts/stdlib-encoding-doc-check.sh`](../../scripts/stdlib-encoding-doc-check.sh),
+y sus mutaciones negativas con
+[`scripts/stdlib-encoding-doc-test.sh`](../../scripts/stdlib-encoding-doc-test.sh).
+La fixture cubre `policy_selection`, `materialized_examples`,
+`streaming_examples`, `errors_and_limits`, `costs_and_ownership` y
+`writer_example`; sus sidecars exigen el marcador final
+`Zm8=encoding-doc-ok` y exit `0`.
+Los contratos de performance y conformance permanecen separados y enlazados;
+este cierre documental no cambia sus targets ni sus fronteras.
 
 ## Exclusiones deliberadas
 
@@ -285,6 +413,6 @@ las fronteras de chunk, los límites, los errores byte-exactos y el fuzz
 acotado sin promover una API pública ni un backend adicional.
 `STD-ENCODING-PERF-001` cierra el baseline scalar hosted descrito arriba y
 `STD-ENCODING-CONF-001` cierra la interoperabilidad VM/native descrita en la
-sección anterior. Permanece pendiente únicamente
-`STD-ENCODING-DOC-001`; debe conservar la misma frontera de una única
-semántica.
+sección anterior y `STD-ENCODING-DOC-001` cierra esta guía ejecutable. La
+semántica sigue siendo una sola en la VM hosted, el kernel scalar y la lane
+nativa privada; `native_aot_lowering: not-claimed` permanece explícito.

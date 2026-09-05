@@ -261,7 +261,7 @@
       "status": "passed"
     },
     "evidence_report": "target/reliability/evidence/stdlib-encoding-implementation.json",
-    "required_follow_ups": ["STD-ENCODING-DOC-001"]
+    "required_follow_ups": []
   },
   "conformance": {
     "task": "STD-ENCODING-CONF-001",
@@ -273,6 +273,32 @@
     "native_aot": "not-claimed",
     "simd": "not-measured-no-optimized-route"
   },
+  "documentation": {
+    "task": "STD-ENCODING-DOC-001",
+    "status": "verified",
+    "document": "docs/contracts/stdlib-encoding.md",
+    "fixture": "tests/runtime/m11-std-encoding-doc-001.to",
+    "command": "scripts/stdlib-encoding-doc-check.sh",
+    "expected_stdout": "Zm8=encoding-doc-ok",
+    "examples": [
+      "policy-selection",
+      "materialized-round-trip",
+      "streaming-chunk-invariance",
+      "strict-errors-and-limits",
+      "costs-and-ownership",
+      "writer-boundary"
+    ],
+    "sections": [
+      "surface",
+      "policies",
+      "errors",
+      "costs",
+      "ownership",
+      "materialized-examples",
+      "streaming-examples",
+      "executable-verification"
+    ]
+  },
   "promotion": {
     "gates": [
       {"id":"design","required":true},
@@ -281,7 +307,7 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-ENCODING-DOC-001"],
+    "next_blocks": ["STD-YAML-IMPL-001"],
     "implementation_pending": []
   }
 }

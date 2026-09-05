@@ -132,14 +132,43 @@ jq -e '
   and .implementation.fixture == {path:"tests/runtime/m11-std-encoding-impl-001.to",stdout:"Zm8=encoding-ok",exit:0,status:"passed"}
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-encoding-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-ENCODING-DOC-001"]
+  and .implementation.required_follow_ups == []
+  and .documentation == {
+    task: "STD-ENCODING-DOC-001",
+    status: "verified",
+    document: "docs/contracts/stdlib-encoding.md",
+    fixture: "tests/runtime/m11-std-encoding-doc-001.to",
+    command: "scripts/stdlib-encoding-doc-check.sh",
+    expected_stdout: "Zm8=encoding-doc-ok",
+    examples: [
+      "policy-selection",
+      "materialized-round-trip",
+      "streaming-chunk-invariance",
+      "strict-errors-and-limits",
+      "costs-and-ownership",
+      "writer-boundary"
+    ],
+    sections: [
+      "surface",
+      "policies",
+      "errors",
+      "costs",
+      "ownership",
+      "materialized-examples",
+      "streaming-examples",
+      "executable-verification"
+    ]
+  }
+  and .promotion.next_blocks == ["STD-YAML-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable encoding contract"
 
 for path in \
     docs/contracts/stdlib-encoding.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
-    TONDO_IMPLEMENTATION_TRACKER.md; do
+    TONDO_IMPLEMENTATION_TRACKER.md \
+    tests/runtime/m11-std-encoding-doc-001.to \
+    tests/runtime/m11-std-encoding-doc-001.stdout \
+    tests/runtime/m11-std-encoding-doc-001.exit; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -170,5 +199,12 @@ grep -Fq 'testing/stdlib-encoding-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.
     || die "main stdlib spec does not link the encoding testing registry"
 grep -Fq 'stdlib-encoding-test.md' "$root/docs/contracts/stdlib-encoding.md" \
     || die "encoding document does not link the testing contract"
+grep -Fq 'stdlib-encoding-doc-check.sh' "$root/docs/contracts/stdlib-encoding.md" \
+    || die "encoding document does not link the documentation checker"
+[[ -x "$root/scripts/stdlib-encoding-doc-check.sh" ]] \
+    || die "encoding documentation checker is not executable"
+[[ -x "$root/scripts/stdlib-encoding-doc-test.sh" ]] \
+    || die "encoding documentation contract test is not executable"
+scripts/stdlib-encoding-doc-check.sh >/dev/null
 
 echo "std.encoding contract: OK (Base64/hex policies; strict canonicality; bounded streaming; scalar/SIMD boundary)"

@@ -93,5 +93,5 @@
     "nonzero-live-objects"
   ],
   "report": "target/reliability/evidence/stdlib-encoding-conformance.json",
-  "next_blocks": ["STD-ENCODING-DOC-001"]
+  "next_blocks": ["STD-YAML-IMPL-001"]
 }

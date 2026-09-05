@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "5df2324c957c21d6fd4ee4992ba9e0010b82052f6c9169eff8ed41769855bd89"
+      "sha256": "eade6b0f6154cb8bdd0a52dad74959ad6309805a106b5efb9876172a7bbaaaa0"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,15 +34,15 @@
     }
   ],
   "summary": {
-    "logical_tests": 2812,
-    "repetitions": 3124,
-    "physical_sources": 580,
-    "unique_source_hashes": 932,
+    "logical_tests": 2813,
+    "repetitions": 3125,
+    "physical_sources": 581,
+    "unique_source_hashes": 933,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 69,
       "draft-contract": 38,
-      "fixture": 193,
+      "fixture": 194,
       "fuzz-target": 12,
       "rust-test": 1975,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 12,
       "draft-pending": 38,
-      "executable": 2740,
+      "executable": 2741,
       "non-executable": 22
     },
     "by_phase": {
@@ -71,7 +71,7 @@
       "protocol": 70,
       "reliability": 149,
       "resolution": 27,
-      "runtime": 372,
+      "runtime": 373,
       "semantic": 915,
       "testing": 38,
       "tooling": 4
@@ -15291,6 +15291,27 @@
       "sidecars": [
         "tests/runtime/m11-std-encoding-conformance-001.exit",
         "tests/runtime/m11-std-encoding-conformance-001.stdout"
+      ]
+    },
+    {
+      "id": "fixture:runtime/m11-std-encoding-doc-001",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "runtime",
+      "source": "tests/runtime/m11-std-encoding-doc-001.to",
+      "fixture": "runtime/m11-std-encoding-doc-001",
+      "group": "runtime",
+      "requirements": [],
+      "oracle": "exit+stdout+stderr+diagnostics",
+      "repetitions": 1,
+      "source_sha256": "a3add5db1d1cfa2c89cf50b242a1abd637c2b75237507d63508701b1cdc9951a",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "tests/runtime/m11-std-encoding-doc-001.exit",
+        "tests/runtime/m11-std-encoding-doc-001.stdout"
       ]
     },
     {

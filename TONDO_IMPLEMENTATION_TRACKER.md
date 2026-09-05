@@ -157,8 +157,9 @@ lógica y cleanup de handles. `STD-ENCODING-CONF-001` queda cerrado por una
 corpus común VM/native de seis casos, con interoperabilidad, streaming,
 errores/offsets, límites y cleanup hash-bound; la sonda usa el mismo kernel
 scalar y mantiene `native_aot_lowering: not-claimed` y
-`simd: not-measured-no-optimized-route`. El siguiente bloque de ese slice es
-`STD-ENCODING-DOC-001`; el modelo y
+`simd: not-measured-no-optimized-route`. `STD-ENCODING-DOC-001` queda cerrado
+por la guía ejecutable de policies, errores, costes y ejemplos; el siguiente
+bloque de ese slice es `STD-YAML-IMPL-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6984,8 +6985,15 @@ estas leaves.
   atómicos, terminalidad y cleanup de handles. El runtime nativo usa el
   kernel scalar de `std.encoding` mediante un ABI privado target-qualified;
   no se reclaman SIMD optimizado, Cranelift/AOT ni layout FFI.
-- [ ] **STD-ENCODING-DOC-001 — Documentar encodings.** Publicar una única forma
-  por policy, errores, costes y ejemplos materializados/streaming.
+- [x] **STD-ENCODING-DOC-001 — Documentar encodings.** La guía ejecutable
+  [`docs/contracts/stdlib-encoding.md`](./docs/contracts/stdlib-encoding.md)
+  publica una única forma por policy, errores observables, costes, ownership y
+  ejemplos materializados/streaming. La fixture
+  `tests/runtime/m11-std-encoding-doc-001.to`, sus sidecars y los runners
+  `scripts/stdlib-encoding-doc-check.sh`/`scripts/stdlib-encoding-doc-test.sh`
+  verifican seis familias y cierran la documentación hosted; runtime nativo
+  público, SIMD optimizado y lowering AOT permanecen sin reclamar. El siguiente
+  bloque es `STD-YAML-IMPL-001`.
 
 #### 21.3.7 `std.yaml`
 
@@ -7632,6 +7640,7 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 | `STD-ENCODING-IMPL-001` | **Cerrada** | El kernel scalar verifica Base64/hex materializado e incremental, canonicalidad estricta, límites y terminalidad; el compiler y la VM hosted verifican options, `Reader`/`Writer`, handles afines, errores y fixture `m11-std-encoding-impl-001`. Runtime nativo, SIMD y lowering AOT permanecen sin reclamar. |
 | `STD-ENCODING-TEST-001` | **Cerrada** | Modelo independiente de Base64/hex, vectores RFC 4648, fronteras de chunk, errores y offsets, límites atómicos, lifecycle y fuzz `stdlib_encoding` reproducible (128 runs, seed 4105); la frontera native AOT permanece sin reclamar. |
 | `STD-ENCODING-CONF-001` | **Cerrada** | Corpus compartida VM/native de seis casos sobre handles opacos: interoperabilidad Base64/hex, streaming por fragmentos, errores y offsets, límites/terminalidad, cleanup y frontera explícita `simd: not-measured-no-optimized-route`; native AOT y layout FFI permanecen sin reclamar. |
+| `STD-ENCODING-DOC-001` | **Cerrada** | Guía ejecutable con seis familias de ejemplos para la única forma por policy, errores, costes, ownership y materialización/streaming; fixture, sidecars, checker y negativos verificados. Cierre documental hosted sin reclamar runtime nativo público, SIMD optimizado ni lowering AOT. |
 | `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
 | `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
 
