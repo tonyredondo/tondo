@@ -28,7 +28,7 @@
   "coverage": {
     "status": "validated",
     "reason": "the supplied coverage report passed the quality and provenance gates",
-    "report_sha256": "5d0281532dca64d603819e02ccf2573dad424933a775b45fb7d3f6038e681bfc",
+    "report_sha256": "29c7d2334e690fa9e811408f8b7881db1d5e81a1e570e7fc1f96d03a7f1e4900",
     "provenance_sha256": "b7b74526e9674caf01d6627ab25272fb47bfc13be174dc87f881981795bd57e8",
     "tree_sha256": "3553372a89f210f49b39f8d1578d9ea0a2268506ae44ed456748f89761f5fcf1",
     "input_set_sha256": "c6cc989f423ff95c2aa3277da9c8a16fdb07ffb0b0b972e0cc917bc6b5d464c7"
