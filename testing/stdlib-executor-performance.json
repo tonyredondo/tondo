@@ -23,7 +23,7 @@
       "probe": {
         "path": "crates/tondo-native-runtime/src/lib.rs",
         "test": "tests::native_blocking_performance_probe",
-        "sha256": "281a0dd10ea1f57a1cf697bffd3d01e97449ec4d710fc569ed24af50a8f14843"
+        "sha256": "7b20621f6261bb41f58e9ffc078d8534ff5f5f30cb0224d0009b4f275c6bb72a"
       }
     }
   },
