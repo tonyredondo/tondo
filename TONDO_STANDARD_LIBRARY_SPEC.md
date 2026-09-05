@@ -3001,6 +3001,15 @@ El baseline de performance queda registrado por
 Mide únicamente la ruta scalar del bridge VM hosted en 16 workloads; declara
 explícitamente como no medidos el ABI nativo, SIMD, multiversionado, tamaño de
 código y lowering AOT.
+La conformance VM/native queda registrada por
+[`testing/stdlib-encoding-conformance.json`](./testing/stdlib-encoding-conformance.json),
+[`docs/contracts/stdlib-encoding-conformance.md`](./docs/contracts/stdlib-encoding-conformance.md),
+[`scripts/stdlib-encoding-conformance-check.sh`](./scripts/stdlib-encoding-conformance-check.sh),
+[`scripts/stdlib-encoding-conformance-test.sh`](./scripts/stdlib-encoding-conformance-test.sh),
+[`scripts/stdlib-encoding-conformance.sh`](./scripts/stdlib-encoding-conformance.sh) y
+la fixture/sonda compartidas. Cierra seis casos de bytes, streaming, errores,
+límites y cleanup sobre VM hosted y el ABI nativo privado; no promociona
+Cranelift/AOT, layout FFI ni una ruta SIMD.
 
 La superficie canónica es:
 
@@ -3060,8 +3069,12 @@ después de demostrar equivalencia de bytes, errores, offsets, límites y
 terminalidad. `STD-ENCODING-IMPL-001` ya verifica la ruta hosted scalar y
 `STD-ENCODING-TEST-001` cierra el modelo independiente, los vectores, las
 fronteras de chunk, los límites, los errores byte-exactos y el fuzz acotado.
-Las celdas `PERF`, `CONF` y `DOC` permanecen separadas y no se confunden con
-native AOT, que sigue explícitamente sin reclamar.
+`STD-ENCODING-PERF-001` fija el baseline scalar hosted y
+`STD-ENCODING-CONF-001` verifica interoperabilidad VM/native mediante handles
+opacos y el mismo kernel scalar. Como no existe una ruta SIMD optimizada,
+`simd` permanece `not-measured-no-optimized-route`; native AOT sigue
+explícitamente sin reclamar. La celda `DOC` permanece separada y es el
+siguiente bloque del owner.
 
 ### 14.5 Contratos cerrados de los owners STD-0.1A
 

@@ -69,6 +69,7 @@ siendo una capacidad declarada por target.
 - [Contrato de owner de `std.encoding`](./docs/contracts/stdlib-encoding.md)
 - [Contrato de tests de `std.encoding`](./docs/contracts/stdlib-encoding-test.md)
 - [Contrato de rendimiento de `std.encoding`](./docs/contracts/stdlib-encoding-performance.md)
+- [Contrato de conformance VM/native de `std.encoding`](./docs/contracts/stdlib-encoding-conformance.md)
 - [Contrato de owner de `std.yaml`](./docs/contracts/stdlib-yaml.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
@@ -152,8 +153,12 @@ explícito. `STD-ENCODING-TEST-001` queda cerrado. `STD-ENCODING-PERF-001`
 queda cerrado con un baseline scalar de la VM hosted: 16 workloads
 materializados e incrementales, 3 warmups, 9 repeticiones y 3 procesos
 independientes, con mediana/P95/P99, bytes copiados, allocations, memoria
-lógica y cleanup de handles. El siguiente trabajo desbloqueado de ese slice
-es `STD-ENCODING-CONF-001`; el modelo y
+lógica y cleanup de handles. `STD-ENCODING-CONF-001` queda cerrado por una
+corpus común VM/native de seis casos, con interoperabilidad, streaming,
+errores/offsets, límites y cleanup hash-bound; la sonda usa el mismo kernel
+scalar y mantiene `native_aot_lowering: not-claimed` y
+`simd: not-measured-no-optimized-route`. El siguiente bloque de ese slice es
+`STD-ENCODING-DOC-001`; el modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6973,8 +6978,12 @@ estas leaves.
   tres procesos independientes, 27 muestras por workload y exige
   `scalar-fixed-target`; native ABI, SIMD, tamaño de código y lowering AOT
   permanecen explícitamente no medidos.
-- [ ] **STD-ENCODING-CONF-001 — Conformar encodings.** Verificar
-  interoperabilidad, streaming y equivalencia scalar/SIMD en VM/nativo.
+- [x] **STD-ENCODING-CONF-001 — Conformar encodings.** La corpus común de
+  seis casos verifica interoperabilidad VM/native, policies Base64/hex,
+  fragmentación de streaming, errores byte-exactos con offsets, límites
+  atómicos, terminalidad y cleanup de handles. El runtime nativo usa el
+  kernel scalar de `std.encoding` mediante un ABI privado target-qualified;
+  no se reclaman SIMD optimizado, Cranelift/AOT ni layout FFI.
 - [ ] **STD-ENCODING-DOC-001 — Documentar encodings.** Publicar una única forma
   por policy, errores, costes y ejemplos materializados/streaming.
 
@@ -7622,6 +7631,7 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 | `STD-EXEC-IMPL-001` | **Cerrada** | La VM hosted verifica la superficie cooperativa de pools y actores: admisión/backpressure FIFO, `Join`, lifecycle, handlers con estado, `Actor.ref` y `ActorRef.send` `selectable` con prepare/commit/rollback transaccional; workers host, runtime nativo y lowering AOT permanecen sin reclamar. |
 | `STD-ENCODING-IMPL-001` | **Cerrada** | El kernel scalar verifica Base64/hex materializado e incremental, canonicalidad estricta, límites y terminalidad; el compiler y la VM hosted verifican options, `Reader`/`Writer`, handles afines, errores y fixture `m11-std-encoding-impl-001`. Runtime nativo, SIMD y lowering AOT permanecen sin reclamar. |
 | `STD-ENCODING-TEST-001` | **Cerrada** | Modelo independiente de Base64/hex, vectores RFC 4648, fronteras de chunk, errores y offsets, límites atómicos, lifecycle y fuzz `stdlib_encoding` reproducible (128 runs, seed 4105); la frontera native AOT permanece sin reclamar. |
+| `STD-ENCODING-CONF-001` | **Cerrada** | Corpus compartida VM/native de seis casos sobre handles opacos: interoperabilidad Base64/hex, streaming por fragmentos, errores y offsets, límites/terminalidad, cleanup y frontera explícita `simd: not-measured-no-optimized-route`; native AOT y layout FFI permanecen sin reclamar. |
 | `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
 | `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
 

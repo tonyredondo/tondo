@@ -1,0 +1,7 @@
+base64-interoperability:Zm8=:Zm8:fo
+hex-policy:666f:666F:fo
+streaming-invariance:Zm8:666F
+strict-errors:4:0:4:2
+limits-and-lifecycle:5:7:empty
+route-boundary:scalar:simd-not-claimed
+encoding-conformance-ok

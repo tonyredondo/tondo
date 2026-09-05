@@ -395,6 +395,9 @@ dependencies = [
 [[package]]
 name = "tondo-native-runtime"
 version = "0.1.0"
+dependencies = [
+ "tondo-stdlib",
+]
 
 [[package]]
 name = "tondo-reference-adapter"

@@ -14,6 +14,12 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::ThreadId;
 use std::time::Duration;
 
+use tondo_stdlib::encoding::{
+    Base64Alphabet, Base64Decoder, Base64Encoder, Base64Options, Base64Padding, EncodingError,
+    EncodingErrorKind, EncodingLimits, HexDecoder, HexEncoder, HexOptions,
+};
+use tondo_stdlib::serialization::Bytes as StdBytes;
+
 const HANDLE_BIT: u64 = 1 << 63;
 const RESULT_NONE: u64 = 0;
 const RESULT_SOME: u64 = 1;
@@ -74,6 +80,23 @@ const STATUS_BLOCKING_INVALID_HANDLE: u64 = 26;
 const STATUS_BLOCKING_NOT_READY: u64 = 27;
 /// A blocking pool lifecycle transition is not valid for its current state.
 const STATUS_BLOCKING_INVALID_TRANSITION: u64 = 28;
+/// A private result carries a typed `std.encoding` error object.
+const STATUS_ENCODING_ERROR: u64 = 29;
+/// A native encoding option or limit is outside the closed probe ABI.
+const STATUS_ENCODING_INVALID_OPTIONS: u64 = 30;
+/// The native probe keeps its byte budget finite and target-qualified.
+const NATIVE_ENCODING_MAX_BYTES: u64 = 1 << 20;
+const ENCODING_CODEC_BASE64: u64 = 0;
+const ENCODING_CODEC_HEX: u64 = 1;
+const ENCODING_OPERATION_ENCODE: u64 = 0;
+const ENCODING_OPERATION_DECODE: u64 = 1;
+const ENCODING_POLICY_STANDARD_REQUIRED: u64 = 0;
+const ENCODING_POLICY_STANDARD_OMITTED: u64 = 1;
+const ENCODING_POLICY_URL_REQUIRED: u64 = 2;
+const ENCODING_POLICY_URL_OMITTED: u64 = 3;
+const ENCODING_POLICY_HEX_LOWER: u64 = 0;
+const ENCODING_POLICY_HEX_UPPER: u64 = 1;
+const ENCODING_POLICY_HEX_ANY: u64 = 2;
 const STATUS_DIAG_CLEAN: u64 = 0;
 const STATUS_DIAG_FINDING: u64 = 1;
 const STATUS_DIAG_CAPTURED: u64 = 2;
@@ -121,6 +144,145 @@ const BLOCKING_JOB_RUNNING: u64 = 1;
 const BLOCKING_JOB_COMPLETED: u64 = 2;
 const BLOCKING_JOB_CANCELLED: u64 = 3;
 const BLOCKING_JOB_TAKEN: u64 = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NativeEncodingStream {
+    Base64Encoder(Base64Encoder),
+    Base64Decoder(Base64Decoder),
+    HexEncoder(HexEncoder),
+    HexDecoder(HexDecoder),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeEncodingOptions {
+    Base64(Base64Options),
+    Hex(HexOptions),
+}
+
+impl NativeEncodingStream {
+    fn push(&mut self, input: &[u8]) -> Result<StdBytes, EncodingError> {
+        let input = StdBytes::from_slice(input);
+        match self {
+            Self::Base64Encoder(stream) => stream.push(&input),
+            Self::Base64Decoder(stream) => stream.push(&input),
+            Self::HexEncoder(stream) => stream.push(&input),
+            Self::HexDecoder(stream) => stream.push(&input),
+        }
+    }
+
+    fn finish(&mut self) -> Result<StdBytes, EncodingError> {
+        match self {
+            Self::Base64Encoder(stream) => stream.finish(),
+            Self::Base64Decoder(stream) => stream.finish(),
+            Self::HexEncoder(stream) => stream.finish(),
+            Self::HexDecoder(stream) => stream.finish(),
+        }
+    }
+}
+
+impl NativeEncodingOptions {
+    fn stream(self, operation: u64) -> Result<NativeEncodingStream, u64> {
+        match (self, operation) {
+            (Self::Base64(options), ENCODING_OPERATION_ENCODE) => {
+                Ok(NativeEncodingStream::Base64Encoder(
+                    options
+                        .encoder()
+                        .map_err(|_| STATUS_ENCODING_INVALID_OPTIONS)?,
+                ))
+            }
+            (Self::Base64(options), ENCODING_OPERATION_DECODE) => {
+                Ok(NativeEncodingStream::Base64Decoder(
+                    options
+                        .decoder()
+                        .map_err(|_| STATUS_ENCODING_INVALID_OPTIONS)?,
+                ))
+            }
+            (Self::Hex(options), ENCODING_OPERATION_ENCODE) => {
+                Ok(NativeEncodingStream::HexEncoder(
+                    options
+                        .encoder()
+                        .map_err(|_| STATUS_ENCODING_INVALID_OPTIONS)?,
+                ))
+            }
+            (Self::Hex(options), ENCODING_OPERATION_DECODE) => {
+                Ok(NativeEncodingStream::HexDecoder(
+                    options
+                        .decoder()
+                        .map_err(|_| STATUS_ENCODING_INVALID_OPTIONS)?,
+                ))
+            }
+            _ => Err(STATUS_ENCODING_INVALID_OPTIONS),
+        }
+    }
+
+    fn materialize(self, operation: u64, input: &[u8]) -> Result<StdBytes, EncodingError> {
+        let input = StdBytes::from_slice(input);
+        match (self, operation) {
+            (Self::Base64(options), ENCODING_OPERATION_ENCODE) => options.encode(&input),
+            (Self::Base64(options), ENCODING_OPERATION_DECODE) => options.decode(&input),
+            (Self::Hex(options), ENCODING_OPERATION_ENCODE) => options.encode(&input),
+            (Self::Hex(options), ENCODING_OPERATION_DECODE) => options.decode(&input),
+            _ => Err(EncodingError {
+                kind: EncodingErrorKind::InvalidLimit,
+                offset: 0,
+            }),
+        }
+    }
+}
+
+fn native_encoding_limits(max_input: u64, max_output: u64) -> Result<EncodingLimits, u64> {
+    if max_input > NATIVE_ENCODING_MAX_BYTES || max_output > NATIVE_ENCODING_MAX_BYTES {
+        return Err(STATUS_HOST_LIMIT);
+    }
+    let max_input = usize::try_from(max_input).map_err(|_| STATUS_HOST_LIMIT)?;
+    let max_output = usize::try_from(max_output).map_err(|_| STATUS_HOST_LIMIT)?;
+    EncodingLimits::create(max_input, max_output).map_err(|_| STATUS_ENCODING_INVALID_OPTIONS)
+}
+
+fn native_encoding_options(
+    codec: u64,
+    policy: u64,
+    limits: EncodingLimits,
+) -> Result<NativeEncodingOptions, u64> {
+    match codec {
+        ENCODING_CODEC_BASE64 => match policy {
+            ENCODING_POLICY_STANDARD_REQUIRED => Ok(NativeEncodingOptions::Base64(
+                Base64Options::standard(limits),
+            )),
+            ENCODING_POLICY_STANDARD_OMITTED => Ok(NativeEncodingOptions::Base64(
+                Base64Options::create(Base64Alphabet::Standard, Base64Padding::Omitted, limits),
+            )),
+            ENCODING_POLICY_URL_REQUIRED => Ok(NativeEncodingOptions::Base64(
+                Base64Options::url_safe(limits),
+            )),
+            ENCODING_POLICY_URL_OMITTED => Ok(NativeEncodingOptions::Base64(
+                Base64Options::url_safe_unpadded(limits),
+            )),
+            _ => Err(STATUS_ENCODING_INVALID_OPTIONS),
+        },
+        ENCODING_CODEC_HEX => match policy {
+            ENCODING_POLICY_HEX_LOWER => Ok(NativeEncodingOptions::Hex(HexOptions::lower(limits))),
+            ENCODING_POLICY_HEX_UPPER => Ok(NativeEncodingOptions::Hex(HexOptions::upper(limits))),
+            ENCODING_POLICY_HEX_ANY => Ok(NativeEncodingOptions::Hex(HexOptions::any_case(limits))),
+            _ => Err(STATUS_ENCODING_INVALID_OPTIONS),
+        },
+        _ => Err(STATUS_ENCODING_INVALID_OPTIONS),
+    }
+}
+
+fn native_encoding_error_kind(kind: &EncodingErrorKind) -> u64 {
+    match kind {
+        EncodingErrorKind::InvalidLimit => 0,
+        EncodingErrorKind::InvalidCharacter => 1,
+        EncodingErrorKind::InvalidLength => 2,
+        EncodingErrorKind::InvalidPadding => 3,
+        EncodingErrorKind::NonCanonical => 4,
+        EncodingErrorKind::ResourceLimit => 5,
+        EncodingErrorKind::Io(_) => 6,
+        EncodingErrorKind::Closed => 7,
+        EncodingErrorKind::NoProgress => 8,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Object {
@@ -207,6 +369,15 @@ enum Object {
     /// An immutable, bounded byte carrier used by the private host ABI.
     Buffer {
         bytes: Vec<u8>,
+    },
+    /// A private affine encoding state machine. Its payload is the exact
+    /// scalar stdlib kernel; the native ABI only exposes the opaque handle.
+    EncodingStream(NativeEncodingStream),
+    /// Typed encoding failure retained by a result carrier so kind and offset
+    /// can be inspected without exposing Rust layout across the ABI.
+    EncodingError {
+        kind: u64,
+        offset: u64,
     },
     /// A weak handle keeps only the target's tombstone metadata alive.  It
     /// never contributes to strong liveness and is upgraded explicitly.
@@ -961,6 +1132,8 @@ enum ObjectKind {
     Atomic,
     Park,
     Buffer,
+    EncodingStream,
+    EncodingError,
     Weak,
     SyncArray,
     SyncMap,
@@ -1342,6 +1515,8 @@ impl State {
             | Object::SyncStack
             | Object::SyncQueue
             | Object::Buffer { .. }
+            | Object::EncodingStream(_)
+            | Object::EncodingError { .. }
             | Object::Weak { .. }
             | Object::Tombstone
             | Object::Result { .. } => {}
@@ -1410,6 +1585,8 @@ impl State {
                 | Object::ChannelSender { .. }
                 | Object::ChannelReceiver { .. }
                 | Object::ChannelDrain { .. }
+                | Object::EncodingStream(_)
+                | Object::EncodingError { .. }
         ) {
             self.last_status = STATUS_INVALID_TRANSITION;
             return 0;
@@ -3574,6 +3751,165 @@ impl State {
         }
     }
 
+    /// Creates an immutable byte carrier for a native conformance probe. The
+    /// slice is copied immediately; no host pointer crosses the ABI.
+    fn buffer_from_bytes(&mut self, bytes: &[u8]) -> u64 {
+        if bytes.len() as u64 > NATIVE_ENCODING_MAX_BYTES {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        }
+        self.alloc(
+            Object::Buffer {
+                bytes: bytes.to_vec(),
+            },
+            ObjectKind::Buffer,
+        )
+    }
+
+    fn encoding_result_error(&mut self, error: EncodingError) -> u64 {
+        let error_handle = self.alloc(
+            Object::EncodingError {
+                kind: native_encoding_error_kind(&error.kind),
+                offset: error.offset as u64,
+            },
+            ObjectKind::EncodingError,
+        );
+        if error_handle == 0 {
+            return self.host_error(STATUS_HOST_LIMIT);
+        }
+        self.last_status = STATUS_ENCODING_ERROR;
+        let result = self.host_result(RESULT_ERR, Some(error_handle));
+        let _ = self.release(error_handle);
+        result
+    }
+
+    fn encoding_result_bytes(&mut self, result: Result<StdBytes, EncodingError>) -> u64 {
+        match result {
+            Ok(bytes) => {
+                let bytes = bytes.into_vec();
+                if bytes.len() as u64 > NATIVE_ENCODING_MAX_BYTES {
+                    return self.host_error(STATUS_HOST_LIMIT);
+                }
+                let buffer = self.alloc(Object::Buffer { bytes }, ObjectKind::Buffer);
+                if buffer == 0 {
+                    return self.host_error(STATUS_HOST_LIMIT);
+                }
+                let result = self.host_result(RESULT_OK, Some(buffer));
+                let _ = self.release(buffer);
+                result
+            }
+            Err(error) => self.encoding_result_error(error),
+        }
+    }
+
+    fn encoding_stream_new(
+        &mut self,
+        codec: u64,
+        operation: u64,
+        policy: u64,
+        max_input: u64,
+        max_output: u64,
+    ) -> u64 {
+        let limits = match native_encoding_limits(max_input, max_output) {
+            Ok(limits) => limits,
+            Err(status) => {
+                self.last_status = status;
+                return 0;
+            }
+        };
+        let options = match native_encoding_options(codec, policy, limits) {
+            Ok(options) => options,
+            Err(status) => {
+                self.last_status = status;
+                return 0;
+            }
+        };
+        let stream = match options.stream(operation) {
+            Ok(stream) => stream,
+            Err(status) => {
+                self.last_status = status;
+                return 0;
+            }
+        };
+        self.alloc(Object::EncodingStream(stream), ObjectKind::EncodingStream)
+    }
+
+    fn encoding_materialize(
+        &mut self,
+        codec: u64,
+        operation: u64,
+        policy: u64,
+        input: u64,
+        max_input: u64,
+        max_output: u64,
+    ) -> u64 {
+        let bytes = match self.object(input) {
+            Some(Object::Buffer { bytes }) => bytes.clone(),
+            Some(_) | None => return self.host_error(STATUS_INVALID_HANDLE),
+        };
+        let limits = match native_encoding_limits(max_input, max_output) {
+            Ok(limits) => limits,
+            Err(status) => return self.host_error(status),
+        };
+        let options = match native_encoding_options(codec, policy, limits) {
+            Ok(options) => options,
+            Err(status) => return self.host_error(status),
+        };
+        if !matches!(
+            operation,
+            ENCODING_OPERATION_ENCODE | ENCODING_OPERATION_DECODE
+        ) {
+            return self.host_error(STATUS_ENCODING_INVALID_OPTIONS);
+        }
+        self.encoding_result_bytes(options.materialize(operation, &bytes))
+    }
+
+    fn encoding_stream_push(&mut self, stream: u64, input: u64) -> u64 {
+        let bytes = match self.object(input) {
+            Some(Object::Buffer { bytes }) => bytes.clone(),
+            Some(_) | None => return self.host_error(STATUS_INVALID_HANDLE),
+        };
+        let result = match self.object_mut(stream) {
+            Some(Object::EncodingStream(stream)) => stream.push(&bytes),
+            Some(_) | None => return self.host_error(STATUS_INVALID_HANDLE),
+        };
+        self.encoding_result_bytes(result)
+    }
+
+    fn encoding_stream_finish(&mut self, stream: u64) -> u64 {
+        let result = match self.object_mut(stream) {
+            Some(Object::EncodingStream(stream)) => stream.finish(),
+            Some(_) | None => return self.host_error(STATUS_INVALID_HANDLE),
+        };
+        self.encoding_result_bytes(result)
+    }
+
+    fn encoding_error_field(&mut self, result: u64, offset: bool) -> u64 {
+        let field = self
+            .object(result)
+            .and_then(|object| match object {
+                Object::Result {
+                    tag: RESULT_ERR,
+                    payload: Some(error),
+                } => Some(*error),
+                _ => None,
+            })
+            .and_then(|error| match self.object(error) {
+                Some(Object::EncodingError {
+                    kind,
+                    offset: value,
+                }) => Some(if offset { *value } else { *kind }),
+                _ => None,
+            });
+        match field {
+            Some(value) => value,
+            None => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                u64::MAX
+            }
+        }
+    }
+
     fn atomic_new(&mut self, initial: u64) -> u64 {
         let handle = self.alloc(Object::Atomic, ObjectKind::Atomic);
         if handle != 0 {
@@ -5450,6 +5786,14 @@ pub extern "C" fn tondo_rt_buffer_from_byte(value: u64) -> u64 {
     with_state(|state| state.buffer_from_byte(value))
 }
 
+/// Copies a bounded byte slice into an opaque Buffer for native probes. This
+/// Rust-only helper is not part of the C ABI and never exposes the slice's
+/// address.
+#[doc(hidden)]
+pub fn tondo_rt_buffer_from_bytes(bytes: &[u8]) -> u64 {
+    with_state(|state| state.buffer_from_bytes(bytes))
+}
+
 /// Returns the byte length of an opaque Buffer.
 pub extern "C" fn tondo_rt_buffer_len(buffer: u64) -> u64 {
     with_state(|state| state.buffer_len(buffer))
@@ -5459,6 +5803,59 @@ pub extern "C" fn tondo_rt_buffer_len(buffer: u64) -> u64 {
 /// handle or out-of-range index and recording the corresponding status.
 pub extern "C" fn tondo_rt_buffer_byte(buffer: u64, index: u64) -> u64 {
     with_state(|state| state.buffer_byte(buffer, index))
+}
+
+/// Materializes Base64 or hexadecimal through the same scalar kernel used by
+/// the hosted bridge. Codec, operation, policy and limits are the closed
+/// numeric private ABI described by the conformance contract.
+pub extern "C" fn tondo_rt_encoding_materialize(
+    codec: u64,
+    operation: u64,
+    policy: u64,
+    input: u64,
+    max_input: u64,
+    max_output: u64,
+) -> u64 {
+    with_state(|state| {
+        state.encoding_materialize(codec, operation, policy, input, max_input, max_output)
+    })
+}
+
+/// Creates an affine opaque encoding stream. A zero return records the
+/// invalid-option or resource-limit status; successful streams are released
+/// exactly once by the probe.
+pub extern "C" fn tondo_rt_encoding_stream_new(
+    codec: u64,
+    operation: u64,
+    policy: u64,
+    max_input: u64,
+    max_output: u64,
+) -> u64 {
+    with_state(|state| state.encoding_stream_new(codec, operation, policy, max_input, max_output))
+}
+
+/// Pushes one immutable input Buffer through an opaque encoding stream and
+/// returns a Result carrying a new Buffer or a typed EncodingError handle.
+pub extern "C" fn tondo_rt_encoding_push(stream: u64, input: u64) -> u64 {
+    with_state(|state| state.encoding_stream_push(stream, input))
+}
+
+/// Finishes an opaque encoding stream and returns its final Buffer or typed
+/// EncodingError result. A second finish observes `Closed`.
+pub extern "C" fn tondo_rt_encoding_finish(stream: u64) -> u64 {
+    with_state(|state| state.encoding_stream_finish(stream))
+}
+
+/// Reads the stable EncodingErrorKind code from a ResultErr returned by the
+/// private encoding ABI. Codes mirror the hosted variant order (0..8).
+pub extern "C" fn tondo_rt_encoding_error_kind(result: u64) -> u64 {
+    with_state(|state| state.encoding_error_field(result, false))
+}
+
+/// Reads the byte offset from a ResultErr returned by the private encoding
+/// ABI.
+pub extern "C" fn tondo_rt_encoding_error_offset(result: u64) -> u64 {
+    with_state(|state| state.encoding_error_field(result, true))
 }
 
 /// Creates a native atomic scalar. The handle is opaque and the cell itself
@@ -7248,6 +7645,132 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .expect("native runtime test lock is not poisoned")
+    }
+
+    fn encoding_result_bytes(result: u64, expected: &[u8]) {
+        assert_eq!(tondo_rt_result_tag(result), RESULT_OK);
+        let output = tondo_rt_result_payload(result);
+        assert_eq!(tondo_rt_buffer_len(output), expected.len() as u64);
+        for (index, byte) in expected.iter().copied().enumerate() {
+            assert_eq!(tondo_rt_buffer_byte(output, index as u64), byte as u64);
+        }
+        assert_eq!(tondo_rt_release(result), STATUS_OK);
+    }
+
+    fn encoding_result_error(result: u64, kind: u64, offset: u64) {
+        assert_eq!(tondo_rt_result_tag(result), RESULT_ERR);
+        assert_eq!(tondo_rt_last_status(), STATUS_ENCODING_ERROR);
+        assert_eq!(tondo_rt_encoding_error_kind(result), kind);
+        assert_eq!(tondo_rt_encoding_error_offset(result), offset);
+        assert_eq!(tondo_rt_release(result), STATUS_OK);
+    }
+
+    #[test]
+    fn native_encoding_materialized_policies_round_trip() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let source = tondo_rt_buffer_from_bytes(b"fo");
+        let encoded = tondo_rt_encoding_materialize(
+            ENCODING_CODEC_BASE64,
+            ENCODING_OPERATION_ENCODE,
+            ENCODING_POLICY_STANDARD_REQUIRED,
+            source,
+            1024,
+            1024,
+        );
+        encoding_result_bytes(encoded, b"Zm8=");
+        let url = tondo_rt_encoding_materialize(
+            ENCODING_CODEC_BASE64,
+            ENCODING_OPERATION_ENCODE,
+            ENCODING_POLICY_URL_OMITTED,
+            source,
+            1024,
+            1024,
+        );
+        encoding_result_bytes(url, b"Zm8");
+        let hex = tondo_rt_encoding_materialize(
+            ENCODING_CODEC_HEX,
+            ENCODING_OPERATION_ENCODE,
+            ENCODING_POLICY_HEX_UPPER,
+            source,
+            1024,
+            1024,
+        );
+        encoding_result_bytes(hex, b"666F");
+        assert_eq!(tondo_rt_release(source), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_encoding_streaming_is_chunk_invariant_and_terminal() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let stream = tondo_rt_encoding_stream_new(
+            ENCODING_CODEC_BASE64,
+            ENCODING_OPERATION_ENCODE,
+            ENCODING_POLICY_URL_OMITTED,
+            1024,
+            1024,
+        );
+        assert_ne!(stream, 0);
+        for part in [b"f".as_slice(), b"o".as_slice()] {
+            let input = tondo_rt_buffer_from_bytes(part);
+            encoding_result_bytes(tondo_rt_encoding_push(stream, input), b"");
+            assert_eq!(tondo_rt_release(input), STATUS_OK);
+        }
+        encoding_result_bytes(tondo_rt_encoding_finish(stream), b"Zm8");
+        let empty = tondo_rt_buffer_from_bytes(b"");
+        encoding_result_error(tondo_rt_encoding_push(stream, empty), 7, 0);
+        assert_eq!(tondo_rt_release(empty), STATUS_OK);
+        assert_eq!(tondo_rt_release(stream), STATUS_OK);
+
+        let invalid = tondo_rt_buffer_from_bytes(b"Zh==");
+        let error = tondo_rt_encoding_materialize(
+            ENCODING_CODEC_BASE64,
+            ENCODING_OPERATION_DECODE,
+            ENCODING_POLICY_STANDARD_REQUIRED,
+            invalid,
+            1024,
+            1024,
+        );
+        encoding_result_error(error, 4, 0);
+        assert_eq!(tondo_rt_release(invalid), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_encoding_limits_reject_invalid_options_and_stale_handles() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        assert_eq!(
+            tondo_rt_encoding_stream_new(
+                99,
+                ENCODING_OPERATION_ENCODE,
+                ENCODING_POLICY_STANDARD_REQUIRED,
+                1024,
+                1024,
+            ),
+            0
+        );
+        assert_eq!(tondo_rt_last_status(), STATUS_ENCODING_INVALID_OPTIONS);
+        let source = tondo_rt_buffer_from_bytes(b"fo");
+        let limited = tondo_rt_encoding_materialize(
+            ENCODING_CODEC_BASE64,
+            ENCODING_OPERATION_ENCODE,
+            ENCODING_POLICY_STANDARD_REQUIRED,
+            source,
+            2,
+            3,
+        );
+        encoding_result_error(limited, 5, 0);
+        assert_eq!(tondo_rt_release(source), STATUS_OK);
+        let wrong = tondo_rt_buffer_from_bytes(b"x");
+        let stale = tondo_rt_encoding_push(wrong, wrong);
+        assert_eq!(tondo_rt_result_tag(stale), RESULT_ERR);
+        assert_eq!(tondo_rt_result_payload(stale), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_release(stale), STATUS_OK);
+        assert_eq!(tondo_rt_release(wrong), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
     }
 
     #[test]

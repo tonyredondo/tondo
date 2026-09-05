@@ -261,7 +261,17 @@
       "status": "passed"
     },
     "evidence_report": "target/reliability/evidence/stdlib-encoding-implementation.json",
-    "required_follow_ups": ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+    "required_follow_ups": ["STD-ENCODING-DOC-001"]
+  },
+  "conformance": {
+    "task": "STD-ENCODING-CONF-001",
+    "contract": "testing/stdlib-encoding-conformance.json",
+    "document": "docs/contracts/stdlib-encoding-conformance.md",
+    "status": "verified",
+    "target": "tondo-vm-hosted-and-native-runtime-abi",
+    "cases": 6,
+    "native_aot": "not-claimed",
+    "simd": "not-measured-no-optimized-route"
   },
   "promotion": {
     "gates": [
@@ -271,7 +281,7 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-ENCODING-CONF-001"],
+    "next_blocks": ["STD-ENCODING-DOC-001"],
     "implementation_pending": []
   }
 }

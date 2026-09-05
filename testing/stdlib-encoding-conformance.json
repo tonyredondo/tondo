@@ -1,0 +1,97 @@
+{
+  "format": "tondo-stdlib-encoding-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.encoding",
+  "task": "STD-ENCODING-CONF-001",
+  "status": "verified",
+  "contract": "testing/stdlib-encoding.json",
+  "document": "docs/contracts/stdlib-encoding-conformance.md",
+  "vm": {
+    "fixture": "tests/runtime/m11-std-encoding-conformance-001.to",
+    "command": "cargo run -q -p tondo-cli --locked -- run tests/runtime/m11-std-encoding-conformance-001.to",
+    "expected_exit": 0,
+    "expected_stdout": [
+      "base64-interoperability:Zm8=:Zm8:fo",
+      "hex-policy:666f:666F:fo",
+      "streaming-invariance:Zm8:666F",
+      "strict-errors:4:0:4:2",
+      "limits-and-lifecycle:5:7:empty",
+      "route-boundary:scalar:simd-not-claimed",
+      "encoding-conformance-ok"
+    ],
+    "oracle": "hosted-VM-encoding-observable-lines"
+  },
+  "native": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "probe": "crates/tondo-native-runtime/examples/encoding_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example encoding_conformance --locked",
+    "status": "verified-native-runtime-abi",
+    "target_policy": "host-target-only-until-native-aot-encoding-lowering",
+    "oracle": "same-case-id-and-normalized-encoding-observables"
+  },
+  "rules": {
+    "same_corpus": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "observable": "exact-ordered-lines-plus-native-result-tags",
+    "interoperability": "materialized-Base64-and-hex-vectors-round-trip-across-the-shared-corpus",
+    "streaming": "one-byte-fragments-and-quantum-boundaries-match-materialized-output",
+    "errors": "strict-wire-errors-preserve-kind-and-observed-byte-offset",
+    "limits": "input-output-limits-fail-before-publication-and-close-the-stream",
+    "scalar": "native-private-ABI-reuses-the-stdlib-scalar-oracle-without-a-second-wire-model",
+    "simd": "not-measured-no-optimized-route",
+    "native_aot": "not-claimed",
+    "cleanup": "fresh-case-reset-and-zero-live-objects-before-return"
+  },
+  "cases": [
+    {
+      "id": "base64-interoperability",
+      "vm_observable": "base64-interoperability:Zm8=:Zm8:fo",
+      "native_expected": {"status":"passed","standard":"Zm8=","url":"Zm8","round_trip":"fo","cleanup":true}
+    },
+    {
+      "id": "hex-policy",
+      "vm_observable": "hex-policy:666f:666F:fo",
+      "native_expected": {"status":"passed","lower":"666f","upper":"666F","round_trip":"fo","cleanup":true}
+    },
+    {
+      "id": "streaming-invariance",
+      "vm_observable": "streaming-invariance:Zm8:666F",
+      "native_expected": {"status":"passed","base64":"Zm8","hex":"666F","terminal":true,"cleanup":true}
+    },
+    {
+      "id": "strict-errors",
+      "vm_observable": "strict-errors:4:0:4:2",
+      "native_expected": {"status":"passed","base64_kind":4,"base64_offset":0,"hex_kind":4,"hex_offset":2,"cleanup":true}
+    },
+    {
+      "id": "limits-and-lifecycle",
+      "vm_observable": "limits-and-lifecycle:5:7:empty",
+      "native_expected": {"status":"passed","limit_kind":5,"limit_offset":0,"closed_kind":7,"zero_empty":true,"cleanup":true}
+    },
+    {
+      "id": "route-boundary",
+      "vm_observable": "route-boundary:scalar:simd-not-claimed",
+      "native_expected": {"status":"passed","scalar":"verified","simd":"not-measured-no-optimized-route","native_aot":"not-claimed"}
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-vm-fixture",
+    "missing-native-probe",
+    "corpus-id-drift",
+    "native-case-missing",
+    "native-case-duplicate",
+    "observable-line-drift",
+    "wrong-error-kind-or-offset",
+    "limit-error-does-not-close-stream",
+    "scalar-route-drift",
+    "simd-claim-without-optimized-route",
+    "native-aot-lowering-claim",
+    "physical-path-in-evidence",
+    "nonzero-live-objects"
+  ],
+  "report": "target/reliability/evidence/stdlib-encoding-conformance.json",
+  "next_blocks": ["STD-ENCODING-DOC-001"]
+}

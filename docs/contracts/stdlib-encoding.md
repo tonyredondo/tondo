@@ -239,7 +239,26 @@ lowering AOT. Por eso `native_aot` permanece `not-claimed`,
 `simd` permanece `not-measured-no-optimized-route` y
 `multiversion_dispatch` solo describe la dimensión declarada del target, sin
 afirmar una ruta optimizada. La interoperabilidad VM/nativo y la igualdad
-scalar/SIMD siguen siendo el trabajo de `STD-ENCODING-CONF-001`.
+scalar/SIMD tienen una frontera explícita en `STD-ENCODING-CONF-001`.
+
+## Conformance VM/native
+
+`STD-ENCODING-CONF-001` cierra la corpus observable compartida en
+[`testing/stdlib-encoding-conformance.json`](../../testing/stdlib-encoding-conformance.json)
+y [`stdlib-encoding-conformance.md`](./stdlib-encoding-conformance.md). La
+fixture hosted y la sonda nativa ejecutan seis case IDs: interoperabilidad de
+Base64/hex, fragmentación de streaming, errores estrictos con offsets,
+límites/terminalidad y la frontera de ruta scalar/SIMD. La sonda nativa usa
+handles opacos `u64` y el mismo kernel scalar de
+`crates/tondo-stdlib/src/encoding.rs`; no expone layout, punteros ni una API
+FFI pública.
+
+La comparación verifica bytes, policies, chunk boundaries, kind/offset de
+errores, publicación atómica ante límites y cero handles vivos por caso. No
+existe aún una ruta SIMD optimizada, por lo que el reporte conserva
+`simd: not-measured-no-optimized-route`; `native_aot_lowering: not-claimed`
+continúa sin cambios. El siguiente bloque del owner es únicamente
+`STD-ENCODING-DOC-001`.
 
 ## Exclusiones deliberadas
 
@@ -264,7 +283,8 @@ afirmación de runtime nativo ni de lowering AOT genérico:
 `STD-ENCODING-TEST-001` ya cierra el modelo independiente, los vectores,
 las fronteras de chunk, los límites, los errores byte-exactos y el fuzz
 acotado sin promover una API pública ni un backend adicional.
-`STD-ENCODING-PERF-001` cierra el baseline scalar hosted descrito arriba.
-Permanecen pendientes `STD-ENCODING-CONF-001` y
-`STD-ENCODING-DOC-001`; deben conservar la misma frontera de una única
+`STD-ENCODING-PERF-001` cierra el baseline scalar hosted descrito arriba y
+`STD-ENCODING-CONF-001` cierra la interoperabilidad VM/native descrita en la
+sección anterior. Permanece pendiente únicamente
+`STD-ENCODING-DOC-001`; debe conservar la misma frontera de una única
 semántica.

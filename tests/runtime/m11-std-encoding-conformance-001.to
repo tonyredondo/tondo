@@ -1,0 +1,122 @@
+import std.bytes
+import std.console
+import std.encoding
+
+fn base64_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
+    let limits = encoding.EncodingLimits.defaults()
+    let source = bytes.Bytes("fo")?
+    let standard = encoding.Base64Options.standard(limits)
+    let encoded = standard.encode(source)?
+    assert(String(encoded)? == "Zm8=")
+    let decoded = standard.decode(encoded)?
+    assert(String(decoded)? == "fo")
+    let url = encoding.Base64Options.urlSafeUnpadded(limits).encode(source)?
+    assert(String(url)? == "Zm8")
+    console.println("base64-interoperability:Zm8=:Zm8:fo")
+}
+
+fn hex_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
+    let limits = encoding.EncodingLimits.defaults()
+    let source = bytes.Bytes("fo")?
+    let lower = encoding.HexOptions.lower(limits).encode(source)?
+    let upper = encoding.HexOptions.upper(limits).encode(source)?
+    assert(String(lower)? == "666f")
+    assert(String(upper)? == "666F")
+    let decoded = encoding.HexOptions.anyCase(limits).decode(upper)?
+    assert(String(decoded)? == "fo")
+    console.println("hex-policy:666f:666F:fo")
+}
+
+fn streaming_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
+    let limits = encoding.EncodingLimits.defaults()
+    var encoder = encoding.Base64Options.urlSafeUnpadded(limits).encoder()?
+    let first = encoder.push(bytes.Bytes("f")?)?
+    let second = encoder.push(bytes.Bytes("o")?)?
+    assert(first.length() == 0)
+    assert(second.length() == 0)
+    let tail = encoder.finish()?
+    assert(String(tail)? == "Zm8")
+
+    var decoder = encoding.Base64Options.standard(limits).decoder()?
+    let decoded_first = decoder.push(bytes.Bytes("Z")?)?
+    let decoded_second = decoder.push(bytes.Bytes("g==")?)?
+    assert(decoded_first.length() == 0)
+    assert(String(decoded_second)? == "f")
+    let decoded_tail = decoder.finish()?
+    assert(decoded_tail.length() == 0)
+
+    var hex_encoder = encoding.HexOptions.upper(limits).encoder()?
+    let hex_output = hex_encoder.push(bytes.Bytes("fo")?)?
+    assert(String(hex_output)? == "666F")
+    let hex_tail = hex_encoder.finish()?
+    assert(hex_tail.length() == 0)
+    console.println("streaming-invariance:Zm8:666F")
+}
+
+fn strict_error_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
+    let limits = encoding.EncodingLimits.defaults()
+    match encoding.Base64Options.standard(limits).decode(bytes.Bytes("Zh==")?) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            encoding.EncodingErrorKind.NonCanonical => assert(error.offset == 0)
+            _ => assert(false)
+        }
+    }
+    match encoding.HexOptions.lower(limits).decode(bytes.Bytes("00AB")?) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            encoding.EncodingErrorKind.NonCanonical => assert(error.offset == 2)
+            _ => assert(false)
+        }
+    }
+    console.println("strict-errors:4:0:4:2")
+}
+
+fn limits_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
+    let source = bytes.Bytes("fo")?
+    let tiny = encoding.EncodingLimits.create(2, 3)?
+    match encoding.Base64Options.standard(tiny).encode(source) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            encoding.EncodingErrorKind.ResourceLimit => assert(error.offset == 0)
+            _ => assert(false)
+        }
+    }
+
+    var encoder = encoding.Base64Options.standard(tiny).encoder()?
+    let carried = encoder.push(bytes.Bytes("fo")?)?
+    assert(carried.length() == 0)
+    match encoder.finish() {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            encoding.EncodingErrorKind.ResourceLimit => assert(error.offset == 0)
+            _ => assert(false)
+        }
+    }
+    match encoder.finish() {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            encoding.EncodingErrorKind.Closed => assert(error.offset == 0)
+            _ => assert(false)
+        }
+    }
+
+    let zero = encoding.EncodingLimits.create(0, 0)?
+    let empty = encoding.Base64Options.standard(zero).encode(bytes.empty()?)?
+    assert(empty.length() == 0)
+    console.println("limits-and-lifecycle:5:7:empty")
+}
+
+fn route_boundary() {
+    console.println("route-boundary:scalar:simd-not-claimed")
+}
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
+    base64_case()?
+    hex_case()?
+    streaming_case()?
+    strict_error_case()?
+    limits_case()?
+    route_boundary()
+    console.println("encoding-conformance-ok")
+}

@@ -280,7 +280,7 @@ impl HexOptions {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Base64Encoder {
     options: Base64Options,
     carry: [u8; 2],
@@ -400,7 +400,7 @@ impl Base64Encoder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Base64Decoder {
     options: Base64Options,
     pending: [u8; 3],
@@ -569,7 +569,7 @@ impl Base64Decoder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HexEncoder {
     options: HexOptions,
     input_bytes: usize,
@@ -642,7 +642,7 @@ impl HexEncoder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HexDecoder {
     options: HexOptions,
     pending: Option<u8>,
