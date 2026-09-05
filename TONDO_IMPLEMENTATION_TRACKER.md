@@ -6162,7 +6162,7 @@ pueden retrasar el primer backend correcto.
   cinco targets de fuzz de owners y el target de diagnósticos (128 ejecuciones,
   límites fijos y regresiones replayed), ASan/UBSan con wrapper absoluto, y la
   compuerta workspace de cobertura/mutación manteniendo la baseline versionada
-  (actualmente 90,61%) y un suelo de política de 90,55%.
+  (actualmente 90,71%) y un suelo de política de 90,55%.
   `scripts/native-aot-quality-check.sh` valida un resumen reproducible y sin
   rutas físicas; `scripts/native-aot-quality-test.sh` muta los 12 oráculos
   críticos y rechaza también reportes incompletos, baseline alterado o
@@ -7647,7 +7647,7 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
 reconciliación y selló la evidencia final de workspace, conformance, reliability,
 doc-tests, rustdoc y contratos de stdlib. La evidencia de calidad instrumentada
-alcanza 90,61% de líneas (`9061` bp), 87,01% de funciones y 88,91% de regiones;
+alcanza 90,71% de líneas (`9071` bp), 87,21% de funciones y 89,08% de regiones;
 la baseline se recapturó sobre este árbol después de la evolución de los bloques
 de `select` y conserva esos floors sin exclusiones. La compuerta oficial de
 mutación ejecuta seis mutantes críticos deterministas, uno por frontera: seis
