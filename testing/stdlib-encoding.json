@@ -7,6 +7,8 @@
   "task": "STD-ENCODING-001",
   "status": "contract-locked",
   "contract": "docs/contracts/stdlib-encoding.md",
+  "testing_contract": "testing/stdlib-encoding-test.json",
+  "testing_document": "docs/contracts/stdlib-encoding-test.md",
   "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
   "language_spec": "TONDO_LANGUAGE_SPEC.md",
   "layer": "B6",
@@ -248,7 +250,7 @@
       "status": "passed"
     },
     "evidence_report": "target/reliability/evidence/stdlib-encoding-implementation.json",
-    "required_follow_ups": ["STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+    "required_follow_ups": ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
   },
   "promotion": {
     "gates": [
@@ -258,6 +260,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-ENCODING-TEST-001"]
+    "next_blocks": ["STD-ENCODING-PERF-001"]
   }
 }

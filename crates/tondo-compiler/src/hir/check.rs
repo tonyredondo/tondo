@@ -23860,6 +23860,7 @@ mod tests {
     use crate::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
 
     use super::*;
+    use super::{HirCallableId as C, HirExpressionKind as E};
 
     fn check(source: &str) -> (SourceDatabase, ResolvedProgram, HirCheckOutput) {
         check_with_diagnostic_limit(source, 100).expect("expression checking succeeds")
@@ -25454,6 +25455,10 @@ mod tests {
             ),
             (
                 "import std.sync as concurrent\nfn invalid() {\n    let value = concurrent.Map[1:2:3]\n}\n",
+                "E1102",
+            ),
+            (
+                "import std.sync as concurrent\nfn invalid() {\n    let array: concurrent.Array[Int] = concurrent.Array[1]\n    array.missing()\n}\n",
                 "E1102",
             ),
         ] {
@@ -33506,6 +33511,13 @@ fn build(input: Int, flag: Bool) {
             "import std.bytes\nfn invalid() { bytes.missing() }\n",
             "import std.sync\nfn invalid() { sync.missing() }\n",
             "import std.sync\nfn invalid() { sync.MemoryOrder.Unknown() }\n",
+            "import std.encoding\nfn invalid() { encoding.Base64Alphabet.Unknown() }\n",
+            "import std.encoding\nfn invalid() { encoding.Base64Padding.Unknown() }\n",
+            "import std.encoding\nfn invalid() { encoding.HexCase.Unknown() }\n",
+            "import std.encoding\nfn invalid() { encoding.EncodingLimits.missing() }\n",
+            "import std.encoding\nfn invalid() { encoding.Base64Options.missing() }\n",
+            "import std.encoding\nfn invalid() { encoding.HexOptions.missing() }\n",
+            "import std.encoding\nfn invalid() { let options = encoding.Base64Options.standard(encoding.EncodingLimits.defaults())\noptions.missing() }\n",
         ] {
             let (_, _, output) = check(source);
             assert!(
@@ -34164,5 +34176,120 @@ fn build(input: Int, flag: Bool) {
              }\n",
         );
         assert_eq!(codes(&duplicate_brackets), ["E1104"]);
+    }
+
+    #[test]
+    fn encoding_bootstrap_surface_resolves_all_constructors_and_methods() {
+        let (_, _, output) = check(
+            "import std.bytes\n\
+             import std.console\n\
+             import std.encoding\n\
+             fn surface(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {\n\
+                 if false {\n\
+                     let alphabet_standard = encoding.Base64Alphabet.Standard\n\
+                     let alphabet_url = encoding.Base64Alphabet.UrlSafe\n\
+                     let padding_required = encoding.Base64Padding.Required\n\
+                     let padding_omitted = encoding.Base64Padding.Omitted\n\
+                     let case_lower = encoding.HexCase.Lower\n\
+                     let case_upper = encoding.HexCase.Upper\n\
+                     let case_any = encoding.HexCase.Any\n\
+                     let limits = encoding.EncodingLimits.defaults()\n\
+                     let custom_limits = encoding.EncodingLimits.create(1, 2)?\n\
+                     let standard = encoding.Base64Options.standard(limits)\n\
+                     let url_safe = encoding.Base64Options.urlSafe(limits)\n\
+                     let url_safe_unpadded = encoding.Base64Options.urlSafeUnpadded(limits)\n\
+                     let custom = encoding.Base64Options.create(alphabet_standard, padding_required, custom_limits)\n\
+                     let lower = encoding.HexOptions.lower(limits)\n\
+                     let upper = encoding.HexOptions.upper(limits)\n\
+                     let any_case = encoding.HexOptions.anyCase(limits)\n\
+                     let custom_hex = encoding.HexOptions.create(case_any, custom_limits)\n\
+                     let _encoded = standard.encode(bytes.Bytes(\"fo\")?)?\n\
+                     let _decoded = standard.decode(bytes.Bytes(\"Zm8=\")?)?\n\
+                     let _custom_encoded = custom.encode(bytes.Bytes(\"fo\")?)?\n\
+                     let _lower_encoded = lower.encode(bytes.Bytes(\"fo\")?)?\n\
+                     let _upper_decoded = upper.decode(bytes.Bytes(\"666F\")?)?\n\
+                     let _any_decoded = any_case.decode(bytes.Bytes(\"666f\")?)?\n\
+                     let _custom_hex_encoded = custom_hex.encode(bytes.Bytes(\"fo\")?)?\n\
+                     var stdout = console.stdout()?\n\
+                     url_safe.encodeTo(bytes.Bytes(\"fo\")?, var stdout)?\n\
+                     var stdin = console.stdin()?\n\
+                     let _from_reader = url_safe_unpadded.decodeFrom(var stdin)?\n\
+                     var hex_stdout = console.stdout()?\n\
+                     lower.encodeTo(bytes.Bytes(\"fo\")?, var hex_stdout)?\n\
+                     var hex_stdin = console.stdin()?\n\
+                     let _hex_from_reader = lower.decodeFrom(var hex_stdin)?\n\
+                     var base64_encoder = standard.encoder()?\n\
+                     let _encoder_chunk = base64_encoder.push(bytes.Bytes(\"f\")?)?\n\
+                     let _encoder_tail = base64_encoder.finish()?\n\
+                     var base64_decoder = standard.decoder()?\n\
+                     let _decoder_chunk = base64_decoder.push(bytes.Bytes(\"Zg==\")?)?\n\
+                     let _decoder_tail = base64_decoder.finish()?\n\
+                     var hex_encoder = lower.encoder()?\n\
+                     let _hex_encoder_chunk = hex_encoder.push(bytes.Bytes(\"f\")?)?\n\
+                     let _hex_encoder_tail = hex_encoder.finish()?\n\
+                     var hex_decoder = lower.decoder()?\n\
+                     let _hex_decoder_chunk = hex_decoder.push(bytes.Bytes(\"66\")?)?\n\
+                     let _hex_decoder_tail = hex_decoder.finish()?\n\
+                 }\n\
+             }\n",
+        );
+        assert!(output.diagnostics().is_empty());
+        assert!(output.is_complete());
+        let variant_count = output
+            .program()
+            .expressions()
+            .filter(|expression| matches!(expression.kind(), E::Variant { .. }))
+            .count();
+        assert_eq!(variant_count, 7);
+        let (_, _, invalid_static) = check(
+            "import std.encoding\n\
+             fn invalid(): Unit {\n\
+                 let _alphabet = encoding.Base64Alphabet.Standard(1)\n\
+                 let _url = encoding.Base64Alphabet.UrlSafe(1)\n\
+                 let _required = encoding.Base64Padding.Required(1)\n\
+                 let _omitted = encoding.Base64Padding.Omitted(1)\n\
+                 let _lower = encoding.HexCase.Lower(1)\n\
+                 let _upper = encoding.HexCase.Upper(1)\n\
+                 let _any = encoding.HexCase.Any(1)\n\
+             }\n",
+        );
+        assert_eq!(codes(&invalid_static), vec!["E1102"; 7]);
+        let expected = [
+            HirBootstrapHostFunction::EncodingLimitsDefaults,
+            HirBootstrapHostFunction::EncodingLimitsCreate,
+            HirBootstrapHostFunction::EncodingBase64OptionsStandard,
+            HirBootstrapHostFunction::EncodingBase64OptionsUrlSafe,
+            HirBootstrapHostFunction::EncodingBase64OptionsUrlSafeUnpadded,
+            HirBootstrapHostFunction::EncodingBase64OptionsCreate,
+            HirBootstrapHostFunction::EncodingHexOptionsLower,
+            HirBootstrapHostFunction::EncodingHexOptionsUpper,
+            HirBootstrapHostFunction::EncodingHexOptionsAnyCase,
+            HirBootstrapHostFunction::EncodingHexOptionsCreate,
+            HirBootstrapHostFunction::EncodingBase64OptionsEncode,
+            HirBootstrapHostFunction::EncodingBase64OptionsDecode,
+            HirBootstrapHostFunction::EncodingBase64OptionsEncodeTo,
+            HirBootstrapHostFunction::EncodingBase64OptionsDecodeFrom,
+            HirBootstrapHostFunction::EncodingBase64OptionsEncoder,
+            HirBootstrapHostFunction::EncodingBase64OptionsDecoder,
+            HirBootstrapHostFunction::EncodingHexOptionsEncode,
+            HirBootstrapHostFunction::EncodingHexOptionsDecode,
+            HirBootstrapHostFunction::EncodingHexOptionsEncodeTo,
+            HirBootstrapHostFunction::EncodingHexOptionsDecodeFrom,
+            HirBootstrapHostFunction::EncodingHexOptionsEncoder,
+            HirBootstrapHostFunction::EncodingHexOptionsDecoder,
+            HirBootstrapHostFunction::EncodingBase64EncoderPush,
+            HirBootstrapHostFunction::EncodingBase64EncoderFinish,
+            HirBootstrapHostFunction::EncodingBase64DecoderPush,
+            HirBootstrapHostFunction::EncodingBase64DecoderFinish,
+            HirBootstrapHostFunction::EncodingHexEncoderPush,
+            HirBootstrapHostFunction::EncodingHexEncoderFinish,
+            HirBootstrapHostFunction::EncodingHexDecoderPush,
+            HirBootstrapHostFunction::EncodingHexDecoderFinish,
+        ];
+        let expressions = || output.program().expressions();
+        for function in expected {
+            let found = expressions().any(|expression| matches!(expression.kind(), E::Function(C::Host(actual)) if *actual == function));
+            assert!(found);
+        }
     }
 }

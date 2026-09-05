@@ -37,8 +37,8 @@ jq -e '
   .implementation.status == "verified-hosted-vm"
   and .implementation.public_api_promoted == false
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.required_follow_ups == ["STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-ENCODING-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-PERF-001"]
 ' testing/stdlib-encoding.json >/dev/null
 
 for marker in \

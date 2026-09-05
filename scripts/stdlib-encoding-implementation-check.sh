@@ -30,8 +30,8 @@ jq -e '
   and .implementation.fixture == {path:"tests/runtime/m11-std-encoding-impl-001.to",stdout:"Zm8=encoding-ok",exit:0,status:"passed"}
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-encoding-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-ENCODING-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable implementation state"
 
 for path in \

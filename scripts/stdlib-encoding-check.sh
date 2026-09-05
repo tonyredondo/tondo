@@ -24,6 +24,8 @@ jq -e '
   and .task == "STD-ENCODING-001"
   and .status == "contract-locked"
   and .contract == "docs/contracts/stdlib-encoding.md"
+  and .testing_contract == "testing/stdlib-encoding-test.json"
+  and .testing_document == "docs/contracts/stdlib-encoding-test.md"
   and .spec == "TONDO_STANDARD_LIBRARY_SPEC.md"
   and .language_spec == "TONDO_LANGUAGE_SPEC.md"
   and .layer == "B6"
@@ -119,8 +121,8 @@ jq -e '
   and .implementation.fixture == {path:"tests/runtime/m11-std-encoding-impl-001.to",stdout:"Zm8=encoding-ok",exit:0,status:"passed"}
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-encoding-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-ENCODING-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable encoding contract"
 
 for path in \
@@ -153,5 +155,9 @@ done
 
 grep -Fq 'testing/stdlib-encoding.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the encoding registry"
+grep -Fq 'testing/stdlib-encoding-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the encoding testing registry"
+grep -Fq 'stdlib-encoding-test.md' "$root/docs/contracts/stdlib-encoding.md" \
+    || die "encoding document does not link the testing contract"
 
 echo "std.encoding contract: OK (Base64/hex policies; strict canonicality; bounded streaming; scalar/SIMD boundary)"

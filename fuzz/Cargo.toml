@@ -87,6 +87,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "stdlib_encoding"
+path = "fuzz_targets/stdlib_encoding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "diagnostics"
 path = "fuzz_targets/diagnostics.rs"
 test = false

@@ -4,6 +4,9 @@
 `STD-ENCODING-001`. El registro machine-readable está en
 [`testing/stdlib-encoding.json`](../../testing/stdlib-encoding.json) y este
 documento se integra desde [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
+La evidencia de tests y fuzz del mismo owner está en
+[`testing/stdlib-encoding-test.json`](../../testing/stdlib-encoding-test.json)
+y [`docs/contracts/stdlib-encoding-test.md`](./stdlib-encoding-test.md).
 El cierre fija la semántica portable de Base64 y hexadecimal; no afirma que
 los adaptadores runtime de VM o nativo ya estén publicados.
 
@@ -239,6 +242,9 @@ salida y estado hash-bound en la evidencia de implementación.
 Esta implementación es un cierre de la ruta hosted y del oráculo scalar, no una
 afirmación de runtime nativo ni de lowering AOT genérico:
 `native_aot_lowering: not-claimed`. Los bloques
-`STD-ENCODING-TEST-001`, `STD-ENCODING-PERF-001`, `STD-ENCODING-CONF-001` y
-`STD-ENCODING-DOC-001` permanecen pendientes y deben conservar la misma
-frontera de una única semántica.
+`STD-ENCODING-TEST-001` ya cierra el modelo independiente, los vectores,
+las fronteras de chunk, los límites, los errores byte-exactos y el fuzz
+acotado sin promover una API pública ni un backend adicional. Permanecen
+pendientes `STD-ENCODING-PERF-001`, `STD-ENCODING-CONF-001` y
+`STD-ENCODING-DOC-001`; deben conservar la misma frontera de una única
+semántica.

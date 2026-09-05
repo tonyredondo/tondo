@@ -416,6 +416,7 @@ dependencies = [
  "sha2",
  "tondo-compiler",
  "tondo-conformance",
+ "tondo-stdlib",
  "tondo-vm",
 ]
 

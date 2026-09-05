@@ -11,6 +11,7 @@ serde_json.workspace = true
 sha2.workspace = true
 tondo-compiler = { path = "../tondo-compiler", features = ["conformance"] }
 tondo-conformance = { path = "../tondo-conformance" }
+tondo-stdlib = { path = "../tondo-stdlib" }
 tondo-vm = { path = "../tondo-vm", features = ["conformance"] }
 
 [lints]

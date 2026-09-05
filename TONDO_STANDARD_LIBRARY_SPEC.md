@@ -2980,6 +2980,12 @@ El contrato machine-readable y sus checks negativos viven en
 [`docs/contracts/stdlib-encoding.md`](./docs/contracts/stdlib-encoding.md),
 [`scripts/stdlib-encoding-check.sh`](./scripts/stdlib-encoding-check.sh) y
 [`scripts/stdlib-encoding-test.sh`](./scripts/stdlib-encoding-test.sh). La
+frontera de fiabilidad del bloque de tests queda registrada en
+[`testing/stdlib-encoding-test.json`](./testing/stdlib-encoding-test.json),
+[`docs/contracts/stdlib-encoding-test.md`](./docs/contracts/stdlib-encoding-test.md),
+[`scripts/stdlib-encoding-test-check.sh`](./scripts/stdlib-encoding-test-check.sh),
+[`scripts/stdlib-encoding-test-test.sh`](./scripts/stdlib-encoding-test-test.sh) y
+[`scripts/stdlib-encoding-fuzz.sh`](./scripts/stdlib-encoding-fuzz.sh). La
 implementación hosted queda registrada además por
 [`scripts/stdlib-encoding-implementation-check.sh`](./scripts/stdlib-encoding-implementation-check.sh),
 [`scripts/stdlib-encoding-implementation-test.sh`](./scripts/stdlib-encoding-implementation-test.sh),
@@ -3042,9 +3048,11 @@ ni operaciones `selectable`.
 
 La ruta escalar es el oráculo. SIMD y multiversionado solo pueden promoverse
 después de demostrar equivalencia de bytes, errores, offsets, límites y
-terminalidad. `STD-ENCODING-IMPL-001` ya verifica la ruta hosted scalar; las
-celdas `TEST`, `PERF`, `CONF` y `DOC` permanecen separadas y no se confunden
-con native AOT, que sigue explícitamente sin reclamar.
+terminalidad. `STD-ENCODING-IMPL-001` ya verifica la ruta hosted scalar y
+`STD-ENCODING-TEST-001` cierra el modelo independiente, los vectores, las
+fronteras de chunk, los límites, los errores byte-exactos y el fuzz acotado.
+Las celdas `PERF`, `CONF` y `DOC` permanecen separadas y no se confunden con
+native AOT, que sigue explícitamente sin reclamar.
 
 ### 14.5 Contratos cerrados de los owners STD-0.1A
 

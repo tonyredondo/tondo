@@ -1,0 +1,113 @@
+{
+  "format": "tondo-stdlib-encoding-testing/1",
+  "owner": "std.encoding",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-ENCODING-TEST-001",
+  "status": "verified",
+  "contract": "docs/contracts/stdlib-encoding-test.md",
+  "implementation_contract": "testing/stdlib-encoding.json",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-encoding.json",
+  "layer": "B6",
+  "kind": "reliability-facing",
+  "target": "independent-reference-and-hosted-regression-boundary",
+  "limits": {
+    "max_reference_payload_bytes": 96,
+    "max_exhaustive_vector_bytes": 8,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 512,
+    "model_seed_count": 4096,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/src/encoding_model.rs",
+      "crates/tondo-reliability/tests/encoding_models.rs"
+    ],
+    "laws": [
+      "RFC 4648 standard Base64 vectors round-trip byte-for-byte",
+      "URL-safe Base64 changes only the declared alphabet",
+      "required padding is emitted and validated only at the final quantum",
+      "omitted padding accepts only two- or three-character remainders",
+      "non-zero Base64 pad bits are NonCanonical",
+      "mixed alphabets, whitespace and trailing data are rejected",
+      "lower and upper hexadecimal output is policy-selected",
+      "Any hexadecimal accepts both cases and emits lowercase",
+      "hexadecimal prefixes, separators and odd nibbles are rejected",
+      "materialized and incremental results are invariant under chunk boundaries",
+      "empty chunks do not change codec state",
+      "input and output limits fail before publishing partial bytes",
+      "wire errors expose the observed input offset",
+      "terminal success and errors reject all later operations",
+      "bounded replays are deterministic and panic-free"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded Base64/hex wire model with exact error kinds and offsets",
+    "command": "cargo test -p tondo-reliability --test encoding_models --locked"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/tests/encoding_models.rs",
+      "crates/tondo-stdlib/src/encoding.rs",
+      "crates/tondo-compiler/src/process_host.rs"
+    ],
+    "commands": [
+      "scripts/stdlib-encoding-test-check.sh",
+      "cargo test -p tondo-reliability --test encoding_models --locked",
+      "cargo test -p tondo-stdlib encoding:: --locked",
+      "cargo test -p tondo-compiler encoding_host_ --locked",
+      "cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_encoding --locked"
+    ],
+    "cases": [
+      "RFC4648-empty-one-two-three-and-long-vectors",
+      "standard-and-url-safe-alphabet-equivalence",
+      "required-and-omitted-padding-boundaries",
+      "every-short-vector-encode-chunk-boundary",
+      "every-short-vector-decode-chunk-boundary",
+      "empty-chunk-no-state-change",
+      "invalid-character-and-mixed-alphabet-offsets",
+      "invalid-padding-and-trailing-data-offsets",
+      "non-zero-pad-bits-are-noncanonical",
+      "strict-hex-case-prefix-separator-and-odd-length",
+      "input-and-output-limit-prepublication",
+      "atomic-limit-failure-closes-stream",
+      "finish-required-and-closed-after-terminal",
+      "deterministic-bounded-model-replay"
+    ],
+    "oracle": "production scalar materialized and incremental paths agree with the independent model on bytes, errors and offsets"
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_encoding",
+    "source": "fuzz/fuzz_targets/stdlib_encoding.rs",
+    "corpus": "fuzz/corpus/stdlib_encoding/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 512,
+    "smoke": {
+      "runs": 128,
+      "seed": 4105,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "oracle": "panic-free deterministic replay, scalar/reference byte equality, exact wire errors and chunk invariance",
+    "command": "TONDO_ENCODING_FUZZ_RUNS=128 scripts/stdlib-encoding-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_encoding fuzz/corpus/stdlib_encoding -- -runs=0 -max_len=4096"
+  },
+  "sanitization": {
+    "status": "bounded-safe-rust-no-unsafe-boundary",
+    "applicable": false,
+    "native_aot": "not-claimed",
+    "reason": "The independent model, scalar stdlib and hosted regression lane use safe Rust; this block does not promote generic native AOT or sanitizer coverage."
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "implementation_pending": [],
+    "next_blocks": ["STD-ENCODING-PERF-001"],
+    "remaining": []
+  }
+}
