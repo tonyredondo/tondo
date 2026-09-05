@@ -21148,19 +21148,26 @@ mod tests {
             };
             host.invoke("blocking.test", &[])
         });
-        let mut pending = false;
-        for _ in 0..1000 {
-            pending = state
-                .0
-                .lock()
-                .expect("blocking state should not be poisoned")
-                .host_requests_pending
-                != 0;
-            if pending {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut guard = state
+            .0
+            .lock()
+            .expect("blocking state should not be poisoned");
+        while guard.host_requests_pending == 0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 break;
             }
-            thread::yield_now();
+            let (next, timeout) = host_wake
+                .wait_timeout(guard, remaining)
+                .expect("blocking host wake should not be poisoned");
+            guard = next;
+            if timeout.timed_out() {
+                break;
+            }
         }
+        let pending = guard.host_requests_pending != 0;
+        drop(guard);
         assert!(
             pending,
             "worker should publish its host request before waiting"
