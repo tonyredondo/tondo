@@ -151,11 +151,11 @@ jq -e '
   and .performance.dispatch_mode == "scalar-only"
   and .implementation.native_aot_lowering == "not-claimed"
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-ENCODING-CONF-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-DOC-001"]
 ' testing/stdlib-encoding.json >/dev/null || die "parent encoding registry has a stale performance frontier"
 
 jq -e '
-  .promotion.next_blocks == ["STD-ENCODING-CONF-001"]
+  .promotion.next_blocks == ["STD-ENCODING-DOC-001"]
   and .promotion.implementation_pending == []
 ' testing/stdlib-encoding-test.json >/dev/null || die "encoding testing registry has a stale performance frontier"
 
