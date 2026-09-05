@@ -626,6 +626,90 @@ fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShap
     ]
 }
 
+fn bootstrap_yaml_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 6] {
+    [
+        (
+            "YamlTag",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "Null", "Bool", "Int", "Float", "Str", "Binary", "Seq", "Map",
+            ]),
+        ),
+        (
+            "YamlScalar",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Null", "Bool", "Int", "UInt", "Float", "Text", "Bytes"]),
+        ),
+        (
+            "YamlEvent",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "StreamStart",
+                "DocumentStart",
+                "DocumentEnd",
+                "Scalar",
+                "SequenceStart",
+                "SequenceEnd",
+                "MappingStart",
+                "MappingKey",
+                "MappingEnd",
+                "Anchor",
+                "Alias",
+                "Tag",
+                "StreamEnd",
+            ]),
+        ),
+        (
+            "YamlPathSegment",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Key", "Index"]),
+        ),
+        (
+            "YamlErrorKind",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "InvalidLimit",
+                "InvalidUtf8",
+                "InvalidDirective",
+                "InvalidDocument",
+                "InvalidIndentation",
+                "InvalidScalar",
+                "InvalidEscape",
+                "InvalidTag",
+                "InvalidAnchor",
+                "UndefinedAlias",
+                "AliasCycle",
+                "AliasLimit",
+                "MergeKeyForbidden",
+                "DuplicateKey",
+                "NonStringKey",
+                "NumberOutOfRange",
+                "NonFiniteNumber",
+                "InvalidBinary",
+                "DepthLimit",
+                "NodeLimit",
+                "ExpandedNodeLimit",
+                "ScalarLimit",
+                "CollectionLimit",
+                "DocumentLimit",
+                "TypeMismatch",
+                "MissingField",
+                "UnknownField",
+                "UnexpectedEvent",
+                "TrailingDocument",
+                "Io",
+                "Closed",
+                "NoProgress",
+            ]),
+        ),
+        (
+            "YamlError",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["kind", "offset", "line", "column", "path"]),
+        ),
+    ]
+}
+
 fn bootstrap_encoding_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 12] {
     [
         (
@@ -1104,6 +1188,7 @@ impl Resolver<'_> {
             return Ok(());
         };
         self.install_bootstrap_module_nominals(file, program, "json", &bootstrap_json_nominals())?;
+        self.install_bootstrap_module_nominals(file, program, "yaml", &bootstrap_yaml_nominals())?;
         self.install_bootstrap_module_nominals(
             file,
             program,

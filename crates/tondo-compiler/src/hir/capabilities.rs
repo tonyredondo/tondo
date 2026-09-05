@@ -751,6 +751,8 @@ fn intrinsic_node(
         | IntrinsicType::JsonDuplicatePolicy
         | IntrinsicType::JsonUnknownFieldPolicy
         | IntrinsicType::JsonNumberPolicy
+        | IntrinsicType::YamlLimits
+        | IntrinsicType::YamlOptions
         | IntrinsicType::MessagePackLimits
         | IntrinsicType::MessagePackDecodeOptions
         | IntrinsicType::MessagePackEncodeOptions
@@ -915,10 +917,19 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::YamlReader | IntrinsicType::YamlWriter => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::JsonValue
         | IntrinsicType::JsonValueView
         | IntrinsicType::JsonRaw
         | IntrinsicType::JsonNumber
+        | IntrinsicType::YamlValue
+        | IntrinsicType::YamlValueView
         | IntrinsicType::MessagePackValue
         | IntrinsicType::MessagePackValueView
         | IntrinsicType::MessagePackRaw

@@ -85,7 +85,11 @@ jq -e '
   and .performance.scalar_oracle == true
   and .performance.alias_expansion == "iterative-and-budgeted"
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.status == "verified-hosted-vm"
+  and .implementation.host == "verified-hosted-vm-buffered-yaml-bridge"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and .implementation.required_follow_ups == ["STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-TEST-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 echo "std.yaml tests: OK (schema boundary; tags; aliases; limits; streaming; security; promotion)"

@@ -584,6 +584,12 @@ impl Verifier<'_> {
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
                         | IntrinsicType::JsonWriter
+                        | IntrinsicType::YamlLimits
+                        | IntrinsicType::YamlOptions
+                        | IntrinsicType::YamlValue
+                        | IntrinsicType::YamlValueView
+                        | IntrinsicType::YamlReader
+                        | IntrinsicType::YamlWriter
                         | IntrinsicType::MessagePackLimits
                         | IntrinsicType::MessagePackDecodeOptions
                         | IntrinsicType::MessagePackEncodeOptions

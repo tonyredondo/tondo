@@ -20,7 +20,7 @@ use tondo_stdlib::testing::{
 };
 use tondo_stdlib::{
     encoding, io as stdlib_io, json, math, messagepack, path, protobuf,
-    serialization as stdlib_serialization,
+    serialization as stdlib_serialization, yaml,
 };
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
@@ -315,6 +315,16 @@ struct JsonEncodeOptionsInput {
     canonical: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct YamlLimitsInput {
+    values: [i128; 9],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct YamlOptionsInput {
+    limits: YamlLimitsInput,
+}
+
 enum HostValue {
     Command(ProcessPlan),
     Pipeline(ProcessPlan),
@@ -427,6 +437,21 @@ enum HostValue {
     },
     VirtualTime {
         domain: u64,
+    },
+    YamlValue(yaml::YamlValue),
+    YamlLimits(YamlLimitsInput),
+    YamlOptions(YamlOptionsInput),
+    YamlValueView {
+        _bytes: u64,
+    },
+    YamlReader {
+        reader: yaml::YamlReader,
+        finished: bool,
+    },
+    YamlWriter {
+        writer: yaml::YamlWriter,
+        stream: Option<StreamKind>,
+        finished: bool,
     },
     JsonValue(json::JsonValue),
     JsonLimits(JsonLimitsInput),
@@ -627,6 +652,43 @@ fn json_error_kind_ordinal(kind: json::JsonErrorKind) -> u32 {
         json::JsonErrorKind::IoError => 12,
         json::JsonErrorKind::TrailingData => 13,
         json::JsonErrorKind::CanonicalizationError => 14,
+    }
+}
+
+fn yaml_error_kind_ordinal(kind: yaml::YamlErrorKind) -> u32 {
+    match kind {
+        yaml::YamlErrorKind::InvalidLimit => 0,
+        yaml::YamlErrorKind::InvalidUtf8 => 1,
+        yaml::YamlErrorKind::InvalidDirective => 2,
+        yaml::YamlErrorKind::InvalidDocument => 3,
+        yaml::YamlErrorKind::InvalidIndentation => 4,
+        yaml::YamlErrorKind::InvalidScalar => 5,
+        yaml::YamlErrorKind::InvalidEscape => 6,
+        yaml::YamlErrorKind::InvalidTag => 7,
+        yaml::YamlErrorKind::InvalidAnchor => 8,
+        yaml::YamlErrorKind::UndefinedAlias => 9,
+        yaml::YamlErrorKind::AliasCycle => 10,
+        yaml::YamlErrorKind::AliasLimit => 11,
+        yaml::YamlErrorKind::MergeKeyForbidden => 12,
+        yaml::YamlErrorKind::DuplicateKey => 13,
+        yaml::YamlErrorKind::NonStringKey => 14,
+        yaml::YamlErrorKind::NumberOutOfRange => 15,
+        yaml::YamlErrorKind::NonFiniteNumber => 16,
+        yaml::YamlErrorKind::InvalidBinary => 17,
+        yaml::YamlErrorKind::DepthLimit => 18,
+        yaml::YamlErrorKind::NodeLimit => 19,
+        yaml::YamlErrorKind::ExpandedNodeLimit => 20,
+        yaml::YamlErrorKind::ScalarLimit => 21,
+        yaml::YamlErrorKind::CollectionLimit => 22,
+        yaml::YamlErrorKind::DocumentLimit => 23,
+        yaml::YamlErrorKind::TypeMismatch => 24,
+        yaml::YamlErrorKind::MissingField => 25,
+        yaml::YamlErrorKind::UnknownField => 26,
+        yaml::YamlErrorKind::UnexpectedEvent => 27,
+        yaml::YamlErrorKind::TrailingDocument => 28,
+        yaml::YamlErrorKind::Io(_) => 29,
+        yaml::YamlErrorKind::Closed => 30,
+        yaml::YamlErrorKind::NoProgress => 31,
     }
 }
 
@@ -2325,6 +2387,62 @@ impl BootstrapHost {
         }
     }
 
+    fn yaml_error(&mut self, error: &yaml::YamlError) -> RuntimeValue {
+        self.yaml_error_parts(error)
+    }
+
+    fn yaml_result_structured_error(&mut self, error: &yaml::YamlError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.yaml_error(error)))
+    }
+
+    fn yaml_result_error(&mut self, kind: yaml::YamlErrorKind) -> RuntimeValue {
+        let error = yaml::YamlError {
+            kind,
+            offset: 0,
+            line: 1,
+            column: 1,
+            path: Vec::new(),
+        };
+        self.yaml_result_structured_error(&error)
+    }
+
+    fn yaml_error_parts(&mut self, error: &yaml::YamlError) -> RuntimeValue {
+        let kind_values = match &error.kind {
+            yaml::YamlErrorKind::Io(message) => vec![self.io_error(message.clone())],
+            _ => Vec::new(),
+        };
+        let path = error
+            .path
+            .iter()
+            .map(|segment| match segment {
+                yaml::YamlPathSegment::Key(key) => RuntimeValue::Variant {
+                    name: "YamlPathSegment".into(),
+                    variant: 0,
+                    values: vec![RuntimeValue::String(key.clone())],
+                },
+                yaml::YamlPathSegment::Index(index) => RuntimeValue::Variant {
+                    name: "YamlPathSegment".into(),
+                    variant: 1,
+                    values: vec![RuntimeValue::Integer(*index as i128)],
+                },
+            })
+            .collect();
+        RuntimeValue::Record {
+            name: "YamlError".into(),
+            values: vec![
+                RuntimeValue::Variant {
+                    name: "YamlErrorKind".into(),
+                    variant: yaml_error_kind_ordinal(error.kind.clone()),
+                    values: kind_values,
+                },
+                RuntimeValue::Integer(error.offset as i128),
+                RuntimeValue::Integer(error.line as i128),
+                RuntimeValue::Integer(error.column as i128),
+                RuntimeValue::Array(path),
+            ],
+        }
+    }
+
     fn format_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         self.allocate(
             RuntimeHostValueKind::FormatError,
@@ -3383,6 +3501,76 @@ impl BootstrapHost {
         })
     }
 
+    fn yaml_value(&self, value: &RuntimeValue) -> Result<&yaml::YamlValue, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::YamlValue,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("YamlValue receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::YamlValue(value)) => Ok(value),
+            _ => Err(VmError::Host("YamlValue token is stale".into())),
+        }
+    }
+
+    fn yaml_limits_input(&self, value: &RuntimeValue) -> Result<YamlLimitsInput, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::YamlValue,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("YamlLimits value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::YamlLimits(limits)) => Ok(*limits),
+            _ => Err(VmError::Host("YamlLimits token is stale".into())),
+        }
+    }
+
+    fn yaml_limits(&self, input: YamlLimitsInput) -> Result<yaml::YamlLimits, yaml::YamlErrorKind> {
+        let [
+            max_input_bytes,
+            max_documents,
+            max_depth,
+            max_nodes,
+            max_expanded_nodes,
+            max_aliases,
+            max_scalar_bytes,
+            max_collection_entries,
+            max_anchor_name_bytes,
+        ] = input.values;
+        let convert =
+            |value: i128| usize::try_from(value).map_err(|_| yaml::YamlErrorKind::InvalidLimit);
+        yaml::YamlLimits::create(
+            convert(max_input_bytes)?,
+            convert(max_documents)?,
+            convert(max_depth)?,
+            convert(max_nodes)?,
+            convert(max_expanded_nodes)?,
+            convert(max_aliases)?,
+            convert(max_scalar_bytes)?,
+            convert(max_collection_entries)?,
+            convert(max_anchor_name_bytes)?,
+        )
+        .map_err(|error| error.kind)
+    }
+
+    fn yaml_options(&self, value: &RuntimeValue) -> Result<yaml::YamlOptions, yaml::YamlErrorKind> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::YamlValue,
+            id,
+        } = value
+        else {
+            return Err(yaml::YamlErrorKind::TypeMismatch);
+        };
+        let Some(HostValue::YamlOptions(options)) = self.values.get(id) else {
+            return Err(yaml::YamlErrorKind::TypeMismatch);
+        };
+        Ok(yaml::YamlOptions::create(self.yaml_limits(options.limits)?))
+    }
+
     fn messagepack_error_parts(&self, error: &messagepack::MessagePackError) -> RuntimeValue {
         RuntimeValue::Record {
             name: "MessagePackError".into(),
@@ -4184,6 +4372,384 @@ impl BootstrapHost {
             },
             RuntimeValue::Float(_) => Err(json::JsonErrorKind::NumberRange),
             _ => Err(json::JsonErrorKind::TypeMismatch),
+        }
+    }
+
+    fn yaml_to_typed_runtime(
+        &mut self,
+        value: &yaml::YamlValue,
+        expected: &str,
+    ) -> Result<RuntimeValue, yaml::YamlErrorKind> {
+        use yaml::YamlValue;
+        let expected = expected.trim();
+        if let Some(inner) = expected.strip_suffix('?') {
+            if matches!(value, YamlValue::Null) {
+                return Ok(RuntimeValue::OptionNone);
+            }
+            return self
+                .yaml_to_typed_runtime(value, inner)
+                .map(Box::new)
+                .map(RuntimeValue::OptionSome);
+        }
+        match (expected, value) {
+            ("Unit", YamlValue::Null) => Ok(RuntimeValue::Unit),
+            ("Bool", YamlValue::Bool(value)) => Ok(RuntimeValue::Bool(*value)),
+            ("String", YamlValue::Text(value)) => Ok(RuntimeValue::String(value.clone())),
+            ("Byte", YamlValue::UInt(value)) => u8::try_from(*value)
+                .map(RuntimeValue::Byte)
+                .map_err(|_| yaml::YamlErrorKind::NumberOutOfRange),
+            ("Byte", YamlValue::Int(value)) if *value >= 0 => u8::try_from(*value)
+                .map(RuntimeValue::Byte)
+                .map_err(|_| yaml::YamlErrorKind::NumberOutOfRange),
+            ("Int" | "Int8" | "Int16" | "Int32" | "Int64", YamlValue::Int(value)) => {
+                let in_range = match expected {
+                    "Int8" => i8::try_from(*value).is_ok(),
+                    "Int16" => i16::try_from(*value).is_ok(),
+                    "Int32" => i32::try_from(*value).is_ok(),
+                    _ => true,
+                };
+                in_range
+                    .then_some(RuntimeValue::Integer(i128::from(*value)))
+                    .ok_or(yaml::YamlErrorKind::NumberOutOfRange)
+            }
+            ("Int" | "Int8" | "Int16" | "Int32" | "Int64", YamlValue::UInt(value)) => {
+                let signed =
+                    i64::try_from(*value).map_err(|_| yaml::YamlErrorKind::NumberOutOfRange)?;
+                self.yaml_to_typed_runtime(&YamlValue::Int(signed), expected)
+            }
+            ("UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64", YamlValue::UInt(value)) => {
+                let in_range = match expected {
+                    "UInt8" => u8::try_from(*value).is_ok(),
+                    "UInt16" => u16::try_from(*value).is_ok(),
+                    "UInt32" => u32::try_from(*value).is_ok(),
+                    _ => true,
+                };
+                in_range
+                    .then_some(RuntimeValue::Integer(i128::from(*value)))
+                    .ok_or(yaml::YamlErrorKind::NumberOutOfRange)
+            }
+            ("UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64", YamlValue::Int(value))
+                if *value >= 0 =>
+            {
+                self.yaml_to_typed_runtime(&YamlValue::UInt(*value as u64), expected)
+            }
+            ("Float32", YamlValue::Float(value)) if value.is_finite() => {
+                Ok(RuntimeValue::Float(*value as f32 as f64))
+            }
+            ("Float" | "Float64", YamlValue::Float(value)) if value.is_finite() => {
+                Ok(RuntimeValue::Float(*value))
+            }
+            ("Float32" | "Float" | "Float64", YamlValue::Int(value)) => {
+                Ok(RuntimeValue::Float(*value as f64))
+            }
+            ("Float32" | "Float" | "Float64", YamlValue::UInt(value)) => {
+                Ok(RuntimeValue::Float(*value as f64))
+            }
+            _ => {
+                if let Some(parts) = generic_parts(expected, "Array")
+                    && let [item] = parts.as_slice()
+                    && let YamlValue::Array(values) = value
+                {
+                    return values
+                        .iter()
+                        .map(|value| self.yaml_to_typed_runtime(value, item))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(RuntimeValue::Array);
+                }
+                if let Some(parts) = generic_parts(expected, "Map")
+                    && let [key, item] = parts.as_slice()
+                    && *key == "String"
+                    && let YamlValue::Object(members) = value
+                {
+                    return members
+                        .iter()
+                        .map(|member| {
+                            Ok((
+                                RuntimeValue::String(member.key.clone()),
+                                self.yaml_to_typed_runtime(&member.value, item)?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, yaml::YamlErrorKind>>()
+                        .map(RuntimeValue::Map);
+                }
+                Err(match value {
+                    YamlValue::Float(value) if !value.is_finite() => {
+                        yaml::YamlErrorKind::NonFiniteNumber
+                    }
+                    _ => yaml::YamlErrorKind::TypeMismatch,
+                })
+            }
+        }
+    }
+
+    fn runtime_yaml_value(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<yaml::YamlValue, yaml::YamlErrorKind> {
+        use yaml::{YamlMember, YamlValue};
+        match value {
+            RuntimeValue::Unit | RuntimeValue::OptionNone => Ok(YamlValue::Null),
+            RuntimeValue::Bool(value) => Ok(YamlValue::Bool(*value)),
+            RuntimeValue::Byte(value) => Ok(YamlValue::UInt(u64::from(*value))),
+            RuntimeValue::Integer(value) if *value < 0 => i64::try_from(*value)
+                .map(YamlValue::Int)
+                .map_err(|_| yaml::YamlErrorKind::NumberOutOfRange),
+            RuntimeValue::Integer(value) => {
+                if let Ok(value) = i64::try_from(*value) {
+                    Ok(YamlValue::Int(value))
+                } else {
+                    u64::try_from(*value)
+                        .map(YamlValue::UInt)
+                        .map_err(|_| yaml::YamlErrorKind::NumberOutOfRange)
+                }
+            }
+            RuntimeValue::Float(value) if value.is_finite() => Ok(YamlValue::Float(*value)),
+            RuntimeValue::Float(_) => Err(yaml::YamlErrorKind::NonFiniteNumber),
+            RuntimeValue::String(value) => Ok(YamlValue::Text(value.clone())),
+            RuntimeValue::Array(values) => values
+                .iter()
+                .map(|value| self.runtime_yaml_value(value))
+                .collect::<Result<Vec<_>, _>>()
+                .map(YamlValue::Array),
+            RuntimeValue::Map(entries) => entries
+                .iter()
+                .map(|(key, value)| {
+                    let RuntimeValue::String(key) = key else {
+                        return Err(yaml::YamlErrorKind::NonStringKey);
+                    };
+                    Ok(YamlMember {
+                        key: key.clone(),
+                        value: self.runtime_yaml_value(value)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, yaml::YamlErrorKind>>()
+                .map(YamlValue::Object),
+            RuntimeValue::OptionSome(value) => self.runtime_yaml_value(value),
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::YamlValue,
+                id,
+            } => match self.values.get(id) {
+                Some(HostValue::YamlValue(value)) => Ok(value.clone()),
+                _ => Err(yaml::YamlErrorKind::TypeMismatch),
+            },
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Bytes,
+                ..
+            } => self
+                .bytes(value)
+                .map(|bytes| YamlValue::Bytes(bytes.to_vec()))
+                .map_err(|_| yaml::YamlErrorKind::TypeMismatch),
+            _ => Err(yaml::YamlErrorKind::TypeMismatch),
+        }
+    }
+
+    fn yaml_tag_to_runtime(tag: yaml::YamlTag) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "YamlTag".into(),
+            variant: match tag {
+                yaml::YamlTag::Null => 0,
+                yaml::YamlTag::Bool => 1,
+                yaml::YamlTag::Int => 2,
+                yaml::YamlTag::Float => 3,
+                yaml::YamlTag::Str => 4,
+                yaml::YamlTag::Binary => 5,
+                yaml::YamlTag::Seq => 6,
+                yaml::YamlTag::Map => 7,
+            },
+            values: Vec::new(),
+        }
+    }
+
+    fn yaml_tag_from_runtime(value: &RuntimeValue) -> Result<yaml::YamlTag, VmError> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = value
+        else {
+            return Err(VmError::Host("YamlTag value is invalid".into()));
+        };
+        if name != "YamlTag" || !values.is_empty() {
+            return Err(VmError::Host("YamlTag value is invalid".into()));
+        }
+        match *variant {
+            0 => Ok(yaml::YamlTag::Null),
+            1 => Ok(yaml::YamlTag::Bool),
+            2 => Ok(yaml::YamlTag::Int),
+            3 => Ok(yaml::YamlTag::Float),
+            4 => Ok(yaml::YamlTag::Str),
+            5 => Ok(yaml::YamlTag::Binary),
+            6 => Ok(yaml::YamlTag::Seq),
+            7 => Ok(yaml::YamlTag::Map),
+            _ => Err(VmError::Host("YamlTag variant is invalid".into())),
+        }
+    }
+
+    fn yaml_scalar_to_runtime(&mut self, scalar: yaml::YamlScalar) -> RuntimeValue {
+        let (variant, values) = match scalar {
+            yaml::YamlScalar::Null => (0, Vec::new()),
+            yaml::YamlScalar::Bool(value) => (1, vec![RuntimeValue::Bool(value)]),
+            yaml::YamlScalar::Int(value) => (2, vec![RuntimeValue::Integer(i128::from(value))]),
+            yaml::YamlScalar::UInt(value) => (3, vec![RuntimeValue::Integer(i128::from(value))]),
+            yaml::YamlScalar::Float(value) => (4, vec![RuntimeValue::Float(value)]),
+            yaml::YamlScalar::Text(value) => (5, vec![RuntimeValue::String(value)]),
+            yaml::YamlScalar::Bytes(value) => (
+                6,
+                vec![self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value))],
+            ),
+        };
+        RuntimeValue::Variant {
+            name: "YamlScalar".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn runtime_yaml_scalar(&self, value: &RuntimeValue) -> Result<yaml::YamlScalar, VmError> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = value
+        else {
+            return Err(VmError::Host("YamlScalar value is invalid".into()));
+        };
+        if name != "YamlScalar" {
+            return Err(VmError::Host("YamlScalar name is invalid".into()));
+        }
+        let payload = |index: usize| {
+            values
+                .get(index)
+                .ok_or_else(|| VmError::Host("YamlScalar payload is incomplete".into()))
+        };
+        match *variant {
+            0 if values.is_empty() => Ok(yaml::YamlScalar::Null),
+            1 if values.len() == 1 => match payload(0)? {
+                RuntimeValue::Bool(value) => Ok(yaml::YamlScalar::Bool(*value)),
+                _ => Err(VmError::Host("YamlScalar Bool payload is invalid".into())),
+            },
+            2 if values.len() == 1 => match payload(0)? {
+                RuntimeValue::Integer(value) => i64::try_from(*value)
+                    .map(yaml::YamlScalar::Int)
+                    .map_err(|_| VmError::Host("YamlScalar Int is out of range".into())),
+                _ => Err(VmError::Host("YamlScalar Int payload is invalid".into())),
+            },
+            3 if values.len() == 1 => match payload(0)? {
+                RuntimeValue::Integer(value) => u64::try_from(*value)
+                    .map(yaml::YamlScalar::UInt)
+                    .map_err(|_| VmError::Host("YamlScalar UInt is out of range".into())),
+                _ => Err(VmError::Host("YamlScalar UInt payload is invalid".into())),
+            },
+            4 if values.len() == 1 => match payload(0)? {
+                RuntimeValue::Float(value) => Ok(yaml::YamlScalar::Float(*value)),
+                _ => Err(VmError::Host("YamlScalar Float payload is invalid".into())),
+            },
+            5 if values.len() == 1 => match payload(0)? {
+                RuntimeValue::String(value) => Ok(yaml::YamlScalar::Text(value.clone())),
+                _ => Err(VmError::Host("YamlScalar Text payload is invalid".into())),
+            },
+            6 if values.len() == 1 => {
+                Ok(yaml::YamlScalar::Bytes(self.bytes(payload(0)?)?.to_vec()))
+            }
+            _ => Err(VmError::Host(
+                "YamlScalar variant or payload is invalid".into(),
+            )),
+        }
+    }
+
+    fn runtime_yaml_event(&mut self, event: yaml::YamlEvent) -> RuntimeValue {
+        let (variant, values) = match event {
+            yaml::YamlEvent::StreamStart => (0, Vec::new()),
+            yaml::YamlEvent::DocumentStart => (1, Vec::new()),
+            yaml::YamlEvent::DocumentEnd => (2, Vec::new()),
+            yaml::YamlEvent::Scalar(value) => (3, vec![self.yaml_scalar_to_runtime(value)]),
+            yaml::YamlEvent::SequenceStart(anchor) => (
+                4,
+                vec![match anchor {
+                    Some(value) => RuntimeValue::OptionSome(Box::new(RuntimeValue::String(value))),
+                    None => RuntimeValue::OptionNone,
+                }],
+            ),
+            yaml::YamlEvent::SequenceEnd => (5, Vec::new()),
+            yaml::YamlEvent::MappingStart(anchor) => (
+                6,
+                vec![match anchor {
+                    Some(value) => RuntimeValue::OptionSome(Box::new(RuntimeValue::String(value))),
+                    None => RuntimeValue::OptionNone,
+                }],
+            ),
+            yaml::YamlEvent::MappingKey => (7, Vec::new()),
+            yaml::YamlEvent::MappingEnd => (8, Vec::new()),
+            yaml::YamlEvent::Anchor(value) => (9, vec![RuntimeValue::String(value)]),
+            yaml::YamlEvent::Alias(value) => (10, vec![RuntimeValue::String(value)]),
+            yaml::YamlEvent::Tag(value) => (11, vec![Self::yaml_tag_to_runtime(value)]),
+            yaml::YamlEvent::StreamEnd => (12, Vec::new()),
+        };
+        RuntimeValue::Variant {
+            name: "YamlEvent".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn yaml_event(&self, value: &RuntimeValue) -> Result<yaml::YamlEvent, VmError> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = value
+        else {
+            return Err(VmError::Host("YamlEvent value is invalid".into()));
+        };
+        if name != "YamlEvent" {
+            return Err(VmError::Host("YamlEvent name is invalid".into()));
+        }
+        let payload = |index: usize| {
+            values
+                .get(index)
+                .ok_or_else(|| VmError::Host("YamlEvent payload is incomplete".into()))
+        };
+        let optional_string = |value: &RuntimeValue| match value {
+            RuntimeValue::OptionNone => Ok(None),
+            RuntimeValue::OptionSome(value) => match value.as_ref() {
+                RuntimeValue::String(value) => Ok(Some(value.clone())),
+                _ => Err(VmError::Host("YamlEvent anchor payload is invalid".into())),
+            },
+            _ => Err(VmError::Host(
+                "YamlEvent optional payload is invalid".into(),
+            )),
+        };
+        match *variant {
+            0 if values.is_empty() => Ok(yaml::YamlEvent::StreamStart),
+            1 if values.is_empty() => Ok(yaml::YamlEvent::DocumentStart),
+            2 if values.is_empty() => Ok(yaml::YamlEvent::DocumentEnd),
+            3 if values.len() == 1 => Ok(yaml::YamlEvent::Scalar(
+                self.runtime_yaml_scalar(payload(0)?)?,
+            )),
+            4 if values.len() == 1 => Ok(yaml::YamlEvent::SequenceStart(optional_string(
+                payload(0)?,
+            )?)),
+            5 if values.is_empty() => Ok(yaml::YamlEvent::SequenceEnd),
+            6 if values.len() == 1 => {
+                Ok(yaml::YamlEvent::MappingStart(optional_string(payload(0)?)?))
+            }
+            7 if values.is_empty() => Ok(yaml::YamlEvent::MappingKey),
+            8 if values.is_empty() => Ok(yaml::YamlEvent::MappingEnd),
+            9 if values.len() == 1 => match payload(0)? {
+                RuntimeValue::String(value) => Ok(yaml::YamlEvent::Anchor(value.clone())),
+                _ => Err(VmError::Host("YamlEvent Anchor payload is invalid".into())),
+            },
+            10 if values.len() == 1 => match payload(0)? {
+                RuntimeValue::String(value) => Ok(yaml::YamlEvent::Alias(value.clone())),
+                _ => Err(VmError::Host("YamlEvent Alias payload is invalid".into())),
+            },
+            11 if values.len() == 1 => Ok(yaml::YamlEvent::Tag(Self::yaml_tag_from_runtime(
+                payload(0)?,
+            )?)),
+            12 if values.is_empty() => Ok(yaml::YamlEvent::StreamEnd),
+            _ => Err(VmError::Host(
+                "YamlEvent variant or payload is invalid".into(),
+            )),
         }
     }
 
@@ -6216,6 +6782,471 @@ impl VmHost for BootstrapHost {
                         Ok(RuntimeValue::Unit)
                     }
                     _ => Err(VmError::Host("UnknownFields token is stale".into())),
+                }
+            }
+            ("intrinsic.yaml.YamlLimits.defaults", []) => {
+                let limits = yaml::YamlLimits::default();
+                Ok(self.allocate(
+                    RuntimeHostValueKind::YamlValue,
+                    HostValue::YamlLimits(YamlLimitsInput {
+                        values: [
+                            limits.max_input_bytes as i128,
+                            limits.max_documents as i128,
+                            limits.max_depth as i128,
+                            limits.max_nodes as i128,
+                            limits.max_expanded_nodes as i128,
+                            limits.max_aliases as i128,
+                            limits.max_scalar_bytes as i128,
+                            limits.max_collection_entries as i128,
+                            limits.max_anchor_name_bytes as i128,
+                        ],
+                    }),
+                ))
+            }
+            ("intrinsic.yaml.YamlLimits.construct", arguments) => {
+                if arguments.len() != 9 {
+                    return Err(VmError::Host(
+                        "YamlLimits.construct received an invalid argument list".into(),
+                    ));
+                }
+                let mut values = [0_i128; 9];
+                for (slot, argument) in values.iter_mut().zip(arguments) {
+                    let RuntimeValue::Integer(value) = argument else {
+                        return Err(VmError::Host(
+                            "YamlLimits.construct requires integer limits".into(),
+                        ));
+                    };
+                    *slot = *value;
+                }
+                let input = YamlLimitsInput { values };
+                self.yaml_limits(input).map_err(|kind| {
+                    VmError::Host(format!("invalid YamlLimits.construct: {kind:?}"))
+                })?;
+                Ok(self.allocate(
+                    RuntimeHostValueKind::YamlValue,
+                    HostValue::YamlLimits(input),
+                ))
+            }
+            ("intrinsic.yaml.YamlLimits.create", arguments) => {
+                if arguments.len() != 9 {
+                    return Err(VmError::Host(
+                        "YamlLimits.create received an invalid argument list".into(),
+                    ));
+                }
+                let mut values = [0_i128; 9];
+                for (slot, argument) in values.iter_mut().zip(arguments) {
+                    let RuntimeValue::Integer(value) = argument else {
+                        return Err(VmError::Host(
+                            "YamlLimits.create requires integer limits".into(),
+                        ));
+                    };
+                    *slot = *value;
+                }
+                let input = YamlLimitsInput { values };
+                match self.yaml_limits(input) {
+                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::YamlValue,
+                        HostValue::YamlLimits(input),
+                    )))),
+                    Err(kind) => Ok(self.yaml_result_error(kind)),
+                }
+            }
+            ("intrinsic.yaml.YamlOptions.defaults", []) => {
+                let limits = yaml::YamlLimits::default();
+                Ok(self.allocate(
+                    RuntimeHostValueKind::YamlValue,
+                    HostValue::YamlOptions(YamlOptionsInput {
+                        limits: YamlLimitsInput {
+                            values: [
+                                limits.max_input_bytes as i128,
+                                limits.max_documents as i128,
+                                limits.max_depth as i128,
+                                limits.max_nodes as i128,
+                                limits.max_expanded_nodes as i128,
+                                limits.max_aliases as i128,
+                                limits.max_scalar_bytes as i128,
+                                limits.max_collection_entries as i128,
+                                limits.max_anchor_name_bytes as i128,
+                            ],
+                        },
+                    }),
+                ))
+            }
+            ("intrinsic.yaml.YamlOptions.construct", [limits]) => {
+                let limits = self.yaml_limits_input(limits)?;
+                self.yaml_limits(limits).map_err(|kind| {
+                    VmError::Host(format!("invalid YamlOptions.construct: {kind:?}"))
+                })?;
+                Ok(self.allocate(
+                    RuntimeHostValueKind::YamlValue,
+                    HostValue::YamlOptions(YamlOptionsInput { limits }),
+                ))
+            }
+            ("std.yaml.validate", [bytes, options]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::validate(&input, options) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.parse", [bytes, options]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::parse_with_options(&input, options) {
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::YamlValue,
+                        HostValue::YamlValue(value),
+                    )))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.parseAll", [bytes, options]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::parse_all_with_options(&input, options) {
+                    Ok(values) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                        values
+                            .iter()
+                            .map(|value| {
+                                self.allocate(
+                                    RuntimeHostValueKind::YamlValue,
+                                    HostValue::YamlValue(value.clone()),
+                                )
+                            })
+                            .collect(),
+                    )))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.parseView", [bytes, options]) => {
+                let id = self.bytes_id(bytes)?;
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::parse_view(&input, options) {
+                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::YamlValueView,
+                        HostValue::YamlValueView { _bytes: id },
+                    )))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.decode", [bytes, options]) => {
+                let expected = generic_argument(specialized_name).ok_or_else(|| {
+                    VmError::Host("specialized YAML decode has no type argument".into())
+                })?;
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::parse_with_options(&input, options) {
+                    Ok(value) => match self.yaml_to_typed_runtime(&value, expected) {
+                        Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(value))),
+                        Err(kind) => Ok(self.yaml_result_error(kind)),
+                    },
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.decodeAll", [bytes, options]) => {
+                let expected = generic_argument(specialized_name).ok_or_else(|| {
+                    VmError::Host("specialized YAML decodeAll has no type argument".into())
+                })?;
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::parse_all_with_options(&input, options) {
+                    Ok(values) => {
+                        let mut output = Vec::with_capacity(values.len());
+                        for value in values {
+                            match self.yaml_to_typed_runtime(&value, expected) {
+                                Ok(value) => output.push(value),
+                                Err(kind) => return Ok(self.yaml_result_error(kind)),
+                            }
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                            output,
+                        ))))
+                    }
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.encode", [value, options]) => {
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                let value = match self.runtime_yaml_value(value) {
+                    Ok(value) => value,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::encode(&value, options) {
+                    Ok(output) => {
+                        if self.ensure_bytes_len(output.len()).is_err() {
+                            return Ok(self.yaml_result_error(yaml::YamlErrorKind::NodeLimit));
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(output),
+                        ))))
+                    }
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.encodeCanonical", [value, limits]) => {
+                let value = match self.yaml_value(value) {
+                    Ok(value) => value.clone(),
+                    Err(error) => return Err(error),
+                };
+                let limits = match self.yaml_limits_input(limits).and_then(|input| {
+                    self.yaml_limits(input)
+                        .map_err(|kind| VmError::Host(format!("invalid YamlLimits: {kind:?}")))
+                }) {
+                    Ok(limits) => limits,
+                    Err(error) => return Err(error),
+                };
+                match yaml::encode_canonical(&value, limits) {
+                    Ok(output) => {
+                        if self.ensure_bytes_len(output.len()).is_err() {
+                            return Ok(self.yaml_result_error(yaml::YamlErrorKind::NodeLimit));
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(output),
+                        ))))
+                    }
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlReader.fromBytes", [bytes, options]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::YamlReader::from_bytes(&input, options) {
+                    Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::YamlReader,
+                        HostValue::YamlReader {
+                            reader,
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlReader.fromReader", [reader, options]) => {
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.yaml_result_error(yaml::YamlErrorKind::Io(
+                        "YamlReader.fromReader requires stdin".into(),
+                    )));
+                }
+                let input = self.stdin[offset..].to_vec();
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = self.stdin.len();
+                }
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::YamlReader::from_reader(std::io::Cursor::new(input), options) {
+                    Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::YamlReader,
+                        HostValue::YamlReader {
+                            reader,
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlReader.next", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::YamlReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("YamlReader receiver is invalid".into()));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::YamlReader { finished: true, .. }) => {
+                        return Ok(self.yaml_result_error(yaml::YamlErrorKind::Closed));
+                    }
+                    Some(HostValue::YamlReader { reader, finished }) => {
+                        let result = reader.next();
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    _ => return Err(VmError::Host("YamlReader token is stale".into())),
+                };
+                match result {
+                    Ok(Some(event)) => Ok(RuntimeValue::ResultOk(Box::new(
+                        RuntimeValue::OptionSome(Box::new(self.runtime_yaml_event(event))),
+                    ))),
+                    Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlReader.own", [reader, event]) => {
+                let event = self.yaml_event(event)?;
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::YamlReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("YamlReader receiver is invalid".into()));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::YamlReader { finished: true, .. }) => {
+                        return Ok(self.yaml_result_error(yaml::YamlErrorKind::Closed));
+                    }
+                    Some(HostValue::YamlReader { reader, finished }) => {
+                        let result = reader.own(event);
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    _ => return Err(VmError::Host("YamlReader token is stale".into())),
+                };
+                match result {
+                    Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.runtime_yaml_event(event),
+                    ))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlReader.finish", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::YamlReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("YamlReader receiver is invalid".into()));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::YamlReader { finished: true, .. }) => {
+                        return Ok(self.yaml_result_error(yaml::YamlErrorKind::Closed));
+                    }
+                    Some(HostValue::YamlReader { reader, finished }) => {
+                        let result = reader.finish();
+                        *finished = true;
+                        result
+                    }
+                    _ => return Err(VmError::Host("YamlReader token is stale".into())),
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlWriter.toWriter", [writer, options]) => {
+                let stream = self.writer_stream(writer)?;
+                if stream == StreamKind::Stdin {
+                    return Ok(self.yaml_result_error(yaml::YamlErrorKind::Io(
+                        "YamlWriter.toWriter requires stdout or stderr".into(),
+                    )));
+                }
+                let options = match self.yaml_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.yaml_result_error(kind)),
+                };
+                match yaml::YamlWriter::to_writer(options) {
+                    Ok(writer) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::YamlWriter,
+                        HostValue::YamlWriter {
+                            writer,
+                            stream: Some(stream),
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlWriter.write", [writer, event]) => {
+                let event = self.yaml_event(event)?;
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::YamlWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host("YamlWriter receiver is invalid".into()));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::YamlWriter { finished: true, .. }) => {
+                        return Ok(self.yaml_result_error(yaml::YamlErrorKind::Closed));
+                    }
+                    Some(HostValue::YamlWriter {
+                        writer, finished, ..
+                    }) => {
+                        let result = writer.write(event);
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    _ => return Err(VmError::Host("YamlWriter token is stale".into())),
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
+                }
+            }
+            ("std.yaml.YamlWriter.finish", [writer]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::YamlWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host("YamlWriter receiver is invalid".into()));
+                };
+                let (stream, result) = match self.values.get_mut(id) {
+                    Some(HostValue::YamlWriter { finished: true, .. }) => {
+                        return Ok(self.yaml_result_error(yaml::YamlErrorKind::Closed));
+                    }
+                    Some(HostValue::YamlWriter {
+                        writer,
+                        stream,
+                        finished,
+                    }) => {
+                        let result = writer.finish();
+                        *finished = true;
+                        (*stream, result)
+                    }
+                    _ => return Err(VmError::Host("YamlWriter token is stale".into())),
+                };
+                match result {
+                    Ok(bytes) => {
+                        if self.ensure_bytes_len(bytes.len()).is_err() {
+                            return Ok(self.yaml_result_error(yaml::YamlErrorKind::NodeLimit));
+                        }
+                        if let Some(stream) = stream {
+                            match stream {
+                                StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
+                                StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
+                                StreamKind::Stdin => unreachable!("stdin rejected at construction"),
+                            }
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+                    }
+                    Err(error) => Ok(self.yaml_result_structured_error(&error)),
                 }
             }
             ("std.json.validate", [bytes, options]) => {
@@ -18340,6 +19371,225 @@ mod tests {
                 }
             ));
         }
+    }
+
+    #[test]
+    fn yaml_public_host_surface_materializes_typed_values_and_streams() {
+        let mut host = BootstrapHost::with_stdin(Vec::new());
+        let options = host
+            .invoke("intrinsic.yaml.YamlOptions.defaults", &[])
+            .unwrap();
+        let input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"b: 2\na: true\n".to_vec()),
+        );
+        assert!(matches!(
+            host.invoke("std.yaml.validate", &[input.clone(), options.clone()])
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        let value = ok(host
+            .invoke("std.yaml.parse", &[input.clone(), options.clone()])
+            .unwrap());
+        assert!(matches!(
+            value,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::YamlValue,
+                ..
+            }
+        ));
+        let encoded = ok(host
+            .invoke("std.yaml.encode", &[value.clone(), options.clone()])
+            .unwrap());
+        assert_eq!(host.bytes(&encoded).unwrap(), b"b: 2\na: true\n");
+        let limits = host
+            .invoke("intrinsic.yaml.YamlLimits.defaults", &[])
+            .unwrap();
+        let canonical = ok(host
+            .invoke("std.yaml.encodeCanonical", &[value.clone(), limits])
+            .unwrap());
+        assert_eq!(host.bytes(&canonical).unwrap(), b"a: true\nb: 2\n");
+        let view = ok(host
+            .invoke("std.yaml.parseView", &[input.clone(), options.clone()])
+            .unwrap());
+        assert!(matches!(
+            view,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::YamlValueView,
+                ..
+            }
+        ));
+
+        let sequence = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"- 1\n- 2\n".to_vec()),
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.yaml.decode[Array[Int]]",
+                    &[sequence.clone(), options.clone()],
+                )
+                .unwrap()),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(1), RuntimeValue::Integer(2),])
+        );
+        let documents = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"---\na\n---\nb\n".to_vec()),
+        );
+        let all = ok(host
+            .invoke("std.yaml.parseAll", &[documents, options.clone()])
+            .unwrap());
+        assert!(matches!(all, RuntimeValue::Array(values) if values.len() == 2));
+
+        let reader = ok(host
+            .invoke("std.yaml.YamlReader.fromBytes", &[input, options])
+            .unwrap());
+        let mut event_count = 0;
+        loop {
+            let next = host
+                .invoke("std.yaml.YamlReader.next", std::slice::from_ref(&reader))
+                .unwrap();
+            match ok(next) {
+                RuntimeValue::OptionSome(_) => event_count += 1,
+                RuntimeValue::OptionNone => break,
+                other => panic!("unexpected YAML reader result: {other:?}"),
+            }
+        }
+        assert!(event_count >= 8);
+        assert!(matches!(
+            host.invoke("std.yaml.YamlReader.next", std::slice::from_ref(&reader))
+                .unwrap(),
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Record { name, .. } if name == "YamlError")
+        ));
+
+        let stdout = ok(host.invoke("std.console.stdout", &[]).unwrap());
+        let writer_options = options_for_yaml(&mut host);
+        let writer = ok(host
+            .invoke("std.yaml.YamlWriter.toWriter", &[stdout, writer_options])
+            .unwrap());
+        for event in [
+            yaml_event(0, Vec::new()),
+            yaml_event(1, Vec::new()),
+            yaml_event(6, vec![RuntimeValue::OptionNone]),
+            yaml_event(7, Vec::new()),
+            yaml_scalar_event(5, RuntimeValue::String("b".into())),
+            yaml_scalar_event(2, RuntimeValue::Integer(1)),
+            yaml_event(8, Vec::new()),
+            yaml_event(2, Vec::new()),
+            yaml_event(12, Vec::new()),
+        ] {
+            let result = host
+                .invoke(
+                    "std.yaml.YamlWriter.write",
+                    &[writer.clone(), event.clone()],
+                )
+                .unwrap();
+            assert!(
+                matches!(&result, RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)),
+                "event {event:?} returned {result:?}"
+            );
+        }
+        assert!(matches!(
+            host.invoke("std.yaml.YamlWriter.finish", std::slice::from_ref(&writer))
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        assert_eq!(host.take_stdout(), b"b: 1\n");
+        assert!(matches!(
+            host.invoke("std.yaml.YamlWriter.finish", std::slice::from_ref(&writer))
+                .unwrap(),
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Record { name, .. } if name == "YamlError")
+        ));
+    }
+
+    #[test]
+    fn yaml_host_rejects_invalid_limits_and_forged_events_atomically() {
+        let mut host = BootstrapHost::default();
+        let invalid_limits = host
+            .invoke(
+                "intrinsic.yaml.YamlLimits.create",
+                &[
+                    RuntimeValue::Integer(0),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(1),
+                ],
+            )
+            .unwrap();
+        assert!(matches!(
+            invalid_limits,
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Record { name, values, .. }
+                    if name == "YamlError"
+                        && matches!(values.first(), Some(RuntimeValue::Variant { name, variant: 0, .. }) if name == "YamlErrorKind"))
+        ));
+
+        let options = host
+            .invoke("intrinsic.yaml.YamlOptions.defaults", &[])
+            .unwrap();
+        let invalid = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"a: [unterminated\n".to_vec()),
+        );
+        let rejected = host.invoke("std.yaml.parse", &[invalid, options]).unwrap();
+        assert!(matches!(
+            rejected,
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Record { name, .. } if name == "YamlError")
+        ));
+
+        let forged = yaml_event(3, vec![RuntimeValue::Bool(true)]);
+        let mut writer = yaml::YamlWriter::to_writer(yaml::YamlOptions::default()).unwrap();
+        assert!(matches!(writer.write(yaml::YamlEvent::StreamStart), Ok(())));
+        let writer_token = host.allocate(
+            RuntimeHostValueKind::YamlWriter,
+            HostValue::YamlWriter {
+                writer,
+                stream: None,
+                finished: false,
+            },
+        );
+        assert!(matches!(
+            host.invoke("std.yaml.YamlWriter.write", &[writer_token.clone(), forged]),
+            Err(VmError::Host(message)) if message.contains("YamlScalar")
+        ));
+        assert!(matches!(
+            host.invoke("std.yaml.YamlWriter.finish", &[writer_token]),
+            Ok(RuntimeValue::ResultErr(error))
+                if matches!(error.as_ref(), RuntimeValue::Record { name, .. } if name == "YamlError")
+        ));
+    }
+
+    fn options_for_yaml(host: &mut BootstrapHost) -> RuntimeValue {
+        host.invoke("intrinsic.yaml.YamlOptions.defaults", &[])
+            .unwrap()
+    }
+
+    fn yaml_event(variant: u32, values: Vec<RuntimeValue>) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "YamlEvent".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn yaml_scalar_event(variant: u32, value: RuntimeValue) -> RuntimeValue {
+        yaml_event(
+            3,
+            vec![RuntimeValue::Variant {
+                name: "YamlScalar".into(),
+                variant,
+                values: vec![value],
+            }],
+        )
     }
 
     #[test]

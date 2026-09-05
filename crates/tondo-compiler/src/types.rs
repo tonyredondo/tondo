@@ -185,6 +185,12 @@ pub enum IntrinsicType {
     JsonNumber,
     JsonReader,
     JsonWriter,
+    YamlLimits,
+    YamlOptions,
+    YamlValue,
+    YamlValueView,
+    YamlReader,
+    YamlWriter,
     MessagePackLimits,
     MessagePackDecodeOptions,
     MessagePackEncodeOptions,
@@ -292,6 +298,12 @@ impl IntrinsicType {
             Self::JsonNumber => "JsonNumber",
             Self::JsonReader => "JsonReader",
             Self::JsonWriter => "JsonWriter",
+            Self::YamlLimits => "YamlLimits",
+            Self::YamlOptions => "YamlOptions",
+            Self::YamlValue => "YamlValue",
+            Self::YamlValueView => "YamlValueView",
+            Self::YamlReader => "YamlReader",
+            Self::YamlWriter => "YamlWriter",
             Self::MessagePackLimits => "MessagePackLimits",
             Self::MessagePackDecodeOptions => "MessagePackDecodeOptions",
             Self::MessagePackEncodeOptions => "MessagePackEncodeOptions",
@@ -400,6 +412,12 @@ impl IntrinsicType {
             | Self::JsonNumber
             | Self::JsonReader
             | Self::JsonWriter
+            | Self::YamlLimits
+            | Self::YamlOptions
+            | Self::YamlValue
+            | Self::YamlValueView
+            | Self::YamlReader
+            | Self::YamlWriter
             | Self::MessagePackLimits
             | Self::MessagePackDecodeOptions
             | Self::MessagePackEncodeOptions

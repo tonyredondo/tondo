@@ -5875,6 +5875,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::JsonNumber
                     | BytecodeIntrinsicType::JsonReader
                     | BytecodeIntrinsicType::JsonWriter
+                    | BytecodeIntrinsicType::YamlLimits
+                    | BytecodeIntrinsicType::YamlOptions
+                    | BytecodeIntrinsicType::YamlValue
+                    | BytecodeIntrinsicType::YamlValueView
+                    | BytecodeIntrinsicType::YamlReader
+                    | BytecodeIntrinsicType::YamlWriter
                     | BytecodeIntrinsicType::MessagePackLimits
                     | BytecodeIntrinsicType::MessagePackDecodeOptions
                     | BytecodeIntrinsicType::MessagePackEncodeOptions
@@ -8382,6 +8388,13 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::JsonNumber => RuntimeHostValueKind::JsonNumber,
         BytecodeIntrinsicType::JsonReader => RuntimeHostValueKind::JsonReader,
         BytecodeIntrinsicType::JsonWriter => RuntimeHostValueKind::JsonWriter,
+        BytecodeIntrinsicType::YamlLimits | BytecodeIntrinsicType::YamlOptions => {
+            RuntimeHostValueKind::YamlValue
+        }
+        BytecodeIntrinsicType::YamlValue => RuntimeHostValueKind::YamlValue,
+        BytecodeIntrinsicType::YamlValueView => RuntimeHostValueKind::YamlValueView,
+        BytecodeIntrinsicType::YamlReader => RuntimeHostValueKind::YamlReader,
+        BytecodeIntrinsicType::YamlWriter => RuntimeHostValueKind::YamlWriter,
         BytecodeIntrinsicType::MessagePackLimits
         | BytecodeIntrinsicType::MessagePackDecodeOptions
         | BytecodeIntrinsicType::MessagePackEncodeOptions

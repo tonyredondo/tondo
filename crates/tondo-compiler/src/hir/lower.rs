@@ -309,6 +309,7 @@ impl<'a> TypeLowerer<'a> {
                 },
             );
         }
+        self.lower_bootstrap_yaml_nominal_declarations()?;
         self.lower_bootstrap_encoding_nominal_declarations()?;
         self.lower_bootstrap_serialization_nominal_declarations()?;
         self.lower_bootstrap_messagepack_nominal_declarations()?;
@@ -428,6 +429,163 @@ impl<'a> TypeLowerer<'a> {
                     HirNominalShape::Newtype { underlying: int }
                 }
                 _ => unreachable!("the bootstrap encoding nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn lower_bootstrap_yaml_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("yaml")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let int = self.interner.scalar(ScalarType::Int);
+        let uint = self.interner.scalar(ScalarType::UInt64);
+        let float = self.interner.scalar(ScalarType::Float);
+        let bool_type = self.interner.scalar(ScalarType::Bool);
+        let string = self.interner.scalar(ScalarType::String);
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let optional_string = self.interner.option(string)?;
+        let path_segment = self.bootstrap_nominal_type(&module, "YamlPathSegment")?;
+        let path_values = self
+            .interner
+            .intrinsic(IntrinsicType::Array, vec![path_segment])?;
+        let io_error = self
+            .interner
+            .intrinsic(IntrinsicType::IoError, Vec::new())?;
+        let tag_type = self.bootstrap_nominal_type(&module, "YamlTag")?;
+        let scalar_type = self.bootstrap_nominal_type(&module, "YamlScalar")?;
+        let _event_type = self.bootstrap_nominal_type(&module, "YamlEvent")?;
+        let kind_type = self.bootstrap_nominal_type(&module, "YamlErrorKind")?;
+        for name in [
+            "YamlTag",
+            "YamlScalar",
+            "YamlEvent",
+            "YamlPathSegment",
+            "YamlErrorKind",
+            "YamlError",
+        ] {
+            let type_name = Name::new(name).expect("bootstrap YAML type names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("bootstrap YAML nominal symbols are indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name {
+                "YamlTag" => HirNominalShape::Enum {
+                    variants: [
+                        "Null", "Bool", "Int", "Float", "Str", "Binary", "Seq", "Map",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                },
+                "YamlScalar" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "Null", Vec::new()),
+                        self.bootstrap_variant(symbol, "Bool", vec![bool_type]),
+                        self.bootstrap_variant(symbol, "Int", vec![int]),
+                        self.bootstrap_variant(symbol, "UInt", vec![uint]),
+                        self.bootstrap_variant(symbol, "Float", vec![float]),
+                        self.bootstrap_variant(symbol, "Text", vec![string]),
+                        self.bootstrap_variant(symbol, "Bytes", vec![bytes]),
+                    ],
+                },
+                "YamlEvent" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "StreamStart", Vec::new()),
+                        self.bootstrap_variant(symbol, "DocumentStart", Vec::new()),
+                        self.bootstrap_variant(symbol, "DocumentEnd", Vec::new()),
+                        self.bootstrap_variant(symbol, "Scalar", vec![scalar_type]),
+                        self.bootstrap_variant(symbol, "SequenceStart", vec![optional_string]),
+                        self.bootstrap_variant(symbol, "SequenceEnd", Vec::new()),
+                        self.bootstrap_variant(symbol, "MappingStart", vec![optional_string]),
+                        self.bootstrap_variant(symbol, "MappingKey", Vec::new()),
+                        self.bootstrap_variant(symbol, "MappingEnd", Vec::new()),
+                        self.bootstrap_variant(symbol, "Anchor", vec![string]),
+                        self.bootstrap_variant(symbol, "Alias", vec![string]),
+                        self.bootstrap_variant(symbol, "Tag", vec![tag_type]),
+                        self.bootstrap_variant(symbol, "StreamEnd", Vec::new()),
+                    ],
+                },
+                "YamlPathSegment" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "Key", vec![string]),
+                        self.bootstrap_variant(symbol, "Index", vec![int]),
+                    ],
+                },
+                "YamlErrorKind" => HirNominalShape::Enum {
+                    variants: [
+                        "InvalidLimit",
+                        "InvalidUtf8",
+                        "InvalidDirective",
+                        "InvalidDocument",
+                        "InvalidIndentation",
+                        "InvalidScalar",
+                        "InvalidEscape",
+                        "InvalidTag",
+                        "InvalidAnchor",
+                        "UndefinedAlias",
+                        "AliasCycle",
+                        "AliasLimit",
+                        "MergeKeyForbidden",
+                        "DuplicateKey",
+                        "NonStringKey",
+                        "NumberOutOfRange",
+                        "NonFiniteNumber",
+                        "InvalidBinary",
+                        "DepthLimit",
+                        "NodeLimit",
+                        "ExpandedNodeLimit",
+                        "ScalarLimit",
+                        "CollectionLimit",
+                        "DocumentLimit",
+                        "TypeMismatch",
+                        "MissingField",
+                        "UnknownField",
+                        "UnexpectedEvent",
+                        "TrailingDocument",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .chain(std::iter::once(self.bootstrap_variant(
+                        symbol,
+                        "Io",
+                        vec![io_error],
+                    )))
+                    .chain([
+                        self.bootstrap_variant(symbol, "Closed", Vec::new()),
+                        self.bootstrap_variant(symbol, "NoProgress", Vec::new()),
+                    ])
+                    .collect(),
+                },
+                "YamlError" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "kind", kind_type),
+                        self.bootstrap_field(symbol, "offset", int),
+                        self.bootstrap_field(symbol, "line", int),
+                        self.bootstrap_field(symbol, "column", int),
+                        self.bootstrap_field(symbol, "path", path_values),
+                    ],
+                },
+                _ => unreachable!("the bootstrap YAML nominal list is closed"),
             };
             self.declarations.insert(
                 symbol,
@@ -1222,6 +1380,8 @@ impl<'a> TypeLowerer<'a> {
         let testing_module = self.packages.module(self.packages.standard(), &testing);
         let json = ModulePath::new("json")?;
         let json_module = self.packages.module(self.packages.standard(), &json);
+        let yaml = ModulePath::new("yaml")?;
+        let yaml_module = self.packages.module(self.packages.standard(), &yaml);
         let encoding = ModulePath::new("encoding")?;
         let encoding_module = self.packages.module(self.packages.standard(), &encoding);
         let serialization = ModulePath::new("serialization")?;
@@ -1357,6 +1517,11 @@ impl<'a> TypeLowerer<'a> {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
         });
+        let yaml_referenced = yaml_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
         let encoding_referenced = encoding_module.as_ref().is_some_and(|module| {
             self.resolved.references().any(|reference| {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
@@ -1420,6 +1585,7 @@ impl<'a> TypeLowerer<'a> {
             && !format_referenced
             && !testing_referenced
             && !json_referenced
+            && !yaml_referenced
             && !encoding_referenced
             && !messagepack_referenced
             && !protobuf_referenced
@@ -4439,6 +4605,253 @@ impl<'a> TypeLowerer<'a> {
                     json_error,
                 )?;
             }
+        }
+        if yaml_referenced {
+            let yaml_module = yaml_module
+                .as_ref()
+                .expect("referenced YAML modules are installed");
+            let yaml_value = self
+                .interner
+                .intrinsic(IntrinsicType::YamlValue, Vec::new())?;
+            let yaml_value_view = self
+                .interner
+                .intrinsic(IntrinsicType::YamlValueView, Vec::new())?;
+            let yaml_reader = self
+                .interner
+                .intrinsic(IntrinsicType::YamlReader, Vec::new())?;
+            let yaml_writer = self
+                .interner
+                .intrinsic(IntrinsicType::YamlWriter, Vec::new())?;
+            let yaml_limits = self
+                .interner
+                .intrinsic(IntrinsicType::YamlLimits, Vec::new())?;
+            let yaml_options = self
+                .interner
+                .intrinsic(IntrinsicType::YamlOptions, Vec::new())?;
+            let yaml_tag = self.bootstrap_nominal_type(yaml_module, "YamlTag")?;
+            let yaml_scalar = self.bootstrap_nominal_type(yaml_module, "YamlScalar")?;
+            let yaml_event = self.bootstrap_nominal_type(yaml_module, "YamlEvent")?;
+            let yaml_error = self.bootstrap_nominal_type(yaml_module, "YamlError")?;
+            let reader = self.interner.intrinsic(IntrinsicType::Reader, Vec::new())?;
+            let writer = self.interner.intrinsic(IntrinsicType::Writer, Vec::new())?;
+            let yaml_unit_result = self.interner.result(unit, yaml_error)?;
+            let yaml_bytes_result = self.interner.result(bytes, yaml_error)?;
+            let yaml_value_result = self.interner.result(yaml_value, yaml_error)?;
+            let yaml_value_view_result = self.interner.result(yaml_value_view, yaml_error)?;
+            let yaml_reader_result = self.interner.result(yaml_reader, yaml_error)?;
+            let yaml_writer_result = self.interner.result(yaml_writer, yaml_error)?;
+            let yaml_event_result = self.interner.result(yaml_event, yaml_error)?;
+            let optional_yaml_event = self.interner.option(yaml_event)?;
+            let optional_yaml_event_result =
+                self.interner.result(optional_yaml_event, yaml_error)?;
+            let yaml_array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![yaml_value])?;
+            let yaml_array_result = self.interner.result(yaml_array, yaml_error)?;
+
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlLimitsDefaults,
+                Vec::new(),
+                None,
+                yaml_limits,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlLimitsConstruct,
+                vec![(int, false); 9],
+                None,
+                yaml_limits,
+            )?;
+            let yaml_limits_create_result = self.interner.result(yaml_limits, yaml_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlLimitsCreate,
+                vec![(int, false); 9],
+                None,
+                yaml_limits_create_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlOptionsDefaults,
+                Vec::new(),
+                None,
+                yaml_options,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlOptionsConstruct,
+                vec![(yaml_limits, false)],
+                None,
+                yaml_options,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlValidate,
+                vec![(bytes, false), (yaml_options, false)],
+                None,
+                yaml_unit_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlParse,
+                vec![(bytes, false), (yaml_options, false)],
+                None,
+                yaml_value_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlParseAll,
+                vec![(bytes, false), (yaml_options, false)],
+                None,
+                yaml_array_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlParseView,
+                vec![(bytes, false), (yaml_options, false)],
+                None,
+                yaml_value_view_result,
+            )?;
+            let generic = self.interner.generic_parameter(0)?;
+            let generic_result = self.interner.result(generic, yaml_error)?;
+            let generic_array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic])?;
+            let generic_array_result = self.interner.result(generic_array, yaml_error)?;
+            let yaml_codec = self.interner.nominal(
+                SymbolIdentity::bootstrap_standard("serialization", "Yaml"),
+                Vec::new(),
+            )?;
+            let yaml_decode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(
+                    Name::new("Decode").expect("bootstrap trait names are valid"),
+                ),
+                arguments: vec![yaml_codec],
+            };
+            let yaml_encode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(
+                    Name::new("Encode").expect("bootstrap trait names are valid"),
+                ),
+                arguments: vec![yaml_codec],
+            };
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlDecode,
+                vec![
+                    (bytes, ParameterMode::Value, false),
+                    (yaml_options, ParameterMode::Value, false),
+                ],
+                generic_result,
+                1,
+                vec![(0, vec![yaml_decode_bound.clone()])],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlDecodeAll,
+                vec![
+                    (bytes, ParameterMode::Value, false),
+                    (yaml_options, ParameterMode::Value, false),
+                ],
+                generic_array_result,
+                1,
+                vec![(0, vec![yaml_decode_bound])],
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlEncodeValue,
+                vec![(yaml_value, false), (yaml_options, false)],
+                None,
+                yaml_bytes_result,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlEncode,
+                vec![
+                    (generic, ParameterMode::Value, false),
+                    (yaml_options, ParameterMode::Value, false),
+                ],
+                yaml_bytes_result,
+                1,
+                vec![(0, vec![yaml_encode_bound])],
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlEncodeCanonical,
+                vec![(yaml_value, false), (yaml_limits, false)],
+                None,
+                yaml_bytes_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::YamlReaderFromBytes,
+                vec![(bytes, false), (yaml_options, false)],
+                None,
+                yaml_reader_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::YamlReaderFromReader,
+                vec![
+                    (reader, ParameterMode::Var, false),
+                    (yaml_options, ParameterMode::Value, false),
+                ],
+                None,
+                yaml_reader_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::YamlReaderNext,
+                vec![(yaml_reader, ParameterMode::Var, true)],
+                None,
+                optional_yaml_event_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::YamlReaderOwn,
+                vec![
+                    (yaml_reader, ParameterMode::Var, true),
+                    (yaml_event, ParameterMode::Value, false),
+                ],
+                None,
+                yaml_event_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::YamlReaderFinish,
+                vec![(yaml_reader, ParameterMode::Var, true)],
+                None,
+                yaml_unit_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::YamlWriterToWriter,
+                vec![
+                    (writer, ParameterMode::Var, false),
+                    (yaml_options, ParameterMode::Value, false),
+                ],
+                None,
+                yaml_writer_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::YamlWriterWrite,
+                vec![
+                    (yaml_writer, ParameterMode::Var, true),
+                    (yaml_event, ParameterMode::Value, false),
+                ],
+                None,
+                yaml_unit_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::YamlWriterFinish,
+                vec![(yaml_writer, ParameterMode::Var, true)],
+                None,
+                yaml_unit_result,
+            )?;
+            let _ = yaml_tag;
+            let _ = yaml_scalar;
         }
         if messagepack_referenced {
             let messagepack_module = messagepack_module
@@ -9732,6 +10145,12 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
                         | IntrinsicType::JsonWriter
+                        | IntrinsicType::YamlLimits
+                        | IntrinsicType::YamlOptions
+                        | IntrinsicType::YamlValue
+                        | IntrinsicType::YamlValueView
+                        | IntrinsicType::YamlReader
+                        | IntrinsicType::YamlWriter
                         | IntrinsicType::MessagePackLimits
                         | IntrinsicType::MessagePackDecodeOptions
                         | IntrinsicType::MessagePackEncodeOptions

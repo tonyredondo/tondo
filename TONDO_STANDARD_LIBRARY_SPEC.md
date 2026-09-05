@@ -3860,9 +3860,18 @@ son [`testing/stdlib-yaml.json`](./testing/stdlib-yaml.json),
 [`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md),
 [`scripts/stdlib-yaml-check.sh`](./scripts/stdlib-yaml-check.sh) y
 [`scripts/stdlib-yaml-test.sh`](./scripts/stdlib-yaml-test.sh). El contrato
-queda cerrado como diseño B0; implementación, host, fuzzing, rendimiento,
-conformance y documentación de uso permanecen pendientes de sus leaves tras
-`NATIVE-001`.
+queda cerrado como diseño B0. `STD-YAML-IMPL-001` verifica la ruta scalar y el
+bridge VM hosted buffered para parseo/encoding dinámico y tipado, límites,
+errores y ciclo de vida de reader/writer; sus artefactos son
+[`scripts/stdlib-yaml-implementation-check.sh`](./scripts/stdlib-yaml-implementation-check.sh),
+[`scripts/stdlib-yaml-implementation-test.sh`](./scripts/stdlib-yaml-implementation-test.sh),
+[`scripts/stdlib-yaml-implementation.sh`](./scripts/stdlib-yaml-implementation.sh),
+la fixture de VM y el informe
+`target/reliability/evidence/stdlib-yaml-implementation.json`. El cierre no
+promociona una API pública, no afirma runtime nativo ni lowering AOT
+(`native_aot_lowering: not-claimed`); corpus ampliado, fuzzing, rendimiento,
+conformance y documentación de uso siguen en sus leaves `STD-YAML-*`, cuyo
+siguiente bloque es `STD-YAML-TEST-001`.
 
 ### 14.14 `std.toml`
 

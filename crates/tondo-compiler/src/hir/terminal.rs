@@ -167,6 +167,12 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::JsonNumber
         | IntrinsicType::JsonReader
         | IntrinsicType::JsonWriter
+        | IntrinsicType::YamlLimits
+        | IntrinsicType::YamlOptions
+        | IntrinsicType::YamlValue
+        | IntrinsicType::YamlValueView
+        | IntrinsicType::YamlReader
+        | IntrinsicType::YamlWriter
         | IntrinsicType::MessagePackLimits
         | IntrinsicType::MessagePackDecodeOptions
         | IntrinsicType::MessagePackEncodeOptions
@@ -581,6 +587,12 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::JsonNumber
         | IntrinsicType::JsonReader
         | IntrinsicType::JsonWriter
+        | IntrinsicType::YamlLimits
+        | IntrinsicType::YamlOptions
+        | IntrinsicType::YamlValue
+        | IntrinsicType::YamlValueView
+        | IntrinsicType::YamlReader
+        | IntrinsicType::YamlWriter
         | IntrinsicType::MessagePackLimits
         | IntrinsicType::MessagePackDecodeOptions
         | IntrinsicType::MessagePackEncodeOptions

@@ -18,6 +18,10 @@ pub struct MessagePack;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Protobuf;
 
+/// YAML 1.2 Core codec identity for the common typed event protocol.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Yaml;
+
 /// A common owned value for the dynamic JSON/MessagePack path.
 ///
 /// Protobuf intentionally keeps its wire-oriented `ProtoValue` model instead

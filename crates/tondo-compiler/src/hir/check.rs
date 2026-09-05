@@ -954,6 +954,12 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
                         | IntrinsicType::JsonWriter
+                        | IntrinsicType::YamlLimits
+                        | IntrinsicType::YamlOptions
+                        | IntrinsicType::YamlValue
+                        | IntrinsicType::YamlValueView
+                        | IntrinsicType::YamlReader
+                        | IntrinsicType::YamlWriter
                         | IntrinsicType::MessagePackLimits
                         | IntrinsicType::MessagePackDecodeOptions
                         | IntrinsicType::MessagePackEncodeOptions
@@ -7717,6 +7723,27 @@ impl<'a> ExpressionChecker<'a> {
                     ),
                     ("canonical", bool_type),
                 ],
+            ),
+            IntrinsicType::YamlLimits => (
+                HirBootstrapHostFunction::YamlLimitsConstruct,
+                vec![
+                    ("maxInputBytes", int),
+                    ("maxDocuments", int),
+                    ("maxDepth", int),
+                    ("maxNodes", int),
+                    ("maxExpandedNodes", int),
+                    ("maxAliases", int),
+                    ("maxScalarBytes", int),
+                    ("maxCollectionEntries", int),
+                    ("maxAnchorNameBytes", int),
+                ],
+            ),
+            IntrinsicType::YamlOptions => (
+                HirBootstrapHostFunction::YamlOptionsConstruct,
+                vec![(
+                    "limits",
+                    intrinsic(IntrinsicType::YamlLimits, &mut self.program.interner)?,
+                )],
             ),
             _ => return Ok(None),
         };
@@ -15337,6 +15364,16 @@ impl<'a> ExpressionChecker<'a> {
                 (module_token, function_token, 8_u8)
             }
             [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("YamlLimits") =>
+            {
+                (module_token, function_token, 27_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("YamlOptions") =>
+            {
+                (module_token, function_token, 28_u8)
+            }
+            [module_token, type_token, function_token]
                 if type_token.token().normalized_identifier() == Some("MessagePackTimestamp") =>
             {
                 (module_token, function_token, 9_u8)
@@ -15505,6 +15542,18 @@ impl<'a> ExpressionChecker<'a> {
                 ("json", Some("__buffer")) if generated_standard => {
                     HirBootstrapHostFunction::JsonWriterBuffer
                 }
+                _ => return Ok(None),
+            }
+        } else if static_type == 27 {
+            match (module.path().as_str(), function_name) {
+                ("yaml", Some("defaults")) => HirBootstrapHostFunction::YamlLimitsDefaults,
+                ("yaml", Some("create")) => HirBootstrapHostFunction::YamlLimitsCreate,
+                _ => return Ok(None),
+            }
+        } else if static_type == 28 {
+            match (module.path().as_str(), function_name) {
+                ("yaml", Some("defaults")) => HirBootstrapHostFunction::YamlOptionsDefaults,
+                ("yaml", Some("create")) => HirBootstrapHostFunction::YamlOptionsConstruct,
                 _ => return Ok(None),
             }
         } else if static_type == 9 {
@@ -15708,6 +15757,17 @@ impl<'a> ExpressionChecker<'a> {
                 ("json", Some("decode")) => HirBootstrapHostFunction::JsonDecode,
                 ("json", Some("encode")) => HirBootstrapHostFunction::JsonEncode,
                 ("json", Some("encodeCanonical")) => HirBootstrapHostFunction::JsonEncodeCanonical,
+                ("yaml", Some("validate")) => HirBootstrapHostFunction::YamlValidate,
+                ("yaml", Some("parse")) => HirBootstrapHostFunction::YamlParse,
+                ("yaml", Some("parseAll")) => HirBootstrapHostFunction::YamlParseAll,
+                ("yaml", Some("parseView")) => HirBootstrapHostFunction::YamlParseView,
+                ("yaml", Some("decode")) => HirBootstrapHostFunction::YamlDecode,
+                ("yaml", Some("decodeAll")) => HirBootstrapHostFunction::YamlDecodeAll,
+                ("yaml", Some("encode")) if explicit_bracket.is_none() => {
+                    HirBootstrapHostFunction::YamlEncodeValue
+                }
+                ("yaml", Some("encode")) => HirBootstrapHostFunction::YamlEncode,
+                ("yaml", Some("encodeCanonical")) => HirBootstrapHostFunction::YamlEncodeCanonical,
                 ("json", Some("raw")) => HirBootstrapHostFunction::JsonRaw,
                 ("json", Some("rawUnchecked")) => HirBootstrapHostFunction::JsonRawUnchecked,
                 ("messagepack", Some("validate")) => HirBootstrapHostFunction::MessagePackValidate,
@@ -19784,6 +19844,11 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 (IntrinsicType::JsonWriter, "write") => HirBootstrapHostFunction::JsonWriterWrite,
                 (IntrinsicType::JsonWriter, "finish") => HirBootstrapHostFunction::JsonWriterFinish,
+                (IntrinsicType::YamlReader, "next") => HirBootstrapHostFunction::YamlReaderNext,
+                (IntrinsicType::YamlReader, "own") => HirBootstrapHostFunction::YamlReaderOwn,
+                (IntrinsicType::YamlReader, "finish") => HirBootstrapHostFunction::YamlReaderFinish,
+                (IntrinsicType::YamlWriter, "write") => HirBootstrapHostFunction::YamlWriterWrite,
+                (IntrinsicType::YamlWriter, "finish") => HirBootstrapHostFunction::YamlWriterFinish,
                 (IntrinsicType::JsonWriter, "__write")
                     if self.sources.get(file)?.origin()
                         == crate::source::SourceOrigin::GeneratedStandard =>
@@ -19887,6 +19952,11 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::JsonReaderFinish
                 | HirBootstrapHostFunction::JsonWriterWrite
                 | HirBootstrapHostFunction::JsonWriterFinish
+                | HirBootstrapHostFunction::YamlReaderNext
+                | HirBootstrapHostFunction::YamlReaderOwn
+                | HirBootstrapHostFunction::YamlReaderFinish
+                | HirBootstrapHostFunction::YamlWriterWrite
+                | HirBootstrapHostFunction::YamlWriterFinish
                 | HirBootstrapHostFunction::JsonWriterBufferWrite
                 | HirBootstrapHostFunction::JsonWriterBufferWriteBase64
                 | HirBootstrapHostFunction::JsonWriterBufferFinish

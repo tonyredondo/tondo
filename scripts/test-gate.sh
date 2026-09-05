@@ -269,6 +269,12 @@ run_step stdlib-yaml-contract \
     scripts/stdlib-yaml-check.sh
 run_step stdlib-yaml-contract-tests \
     scripts/stdlib-yaml-test.sh
+run_step stdlib-yaml-implementation-contract \
+    scripts/stdlib-yaml-implementation-check.sh
+run_step stdlib-yaml-implementation-contract-tests \
+    scripts/stdlib-yaml-implementation-test.sh
+run_step stdlib-yaml-implementation \
+    scripts/stdlib-yaml-implementation.sh
 run_step stdlib-toml-contract \
     scripts/stdlib-toml-check.sh
 run_step stdlib-toml-contract-tests \

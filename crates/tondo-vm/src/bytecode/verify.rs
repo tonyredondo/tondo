@@ -522,6 +522,12 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::JsonNumber
                 | BytecodeIntrinsicType::JsonReader
                 | BytecodeIntrinsicType::JsonWriter
+                | BytecodeIntrinsicType::YamlLimits
+                | BytecodeIntrinsicType::YamlOptions
+                | BytecodeIntrinsicType::YamlValue
+                | BytecodeIntrinsicType::YamlValueView
+                | BytecodeIntrinsicType::YamlReader
+                | BytecodeIntrinsicType::YamlWriter
                 | BytecodeIntrinsicType::MessagePackLimits
                 | BytecodeIntrinsicType::MessagePackDecodeOptions
                 | BytecodeIntrinsicType::MessagePackEncodeOptions
@@ -1269,12 +1275,13 @@ fn intrinsic_capability(
             capability,
             ClosedCapability::Discard | ClosedCapability::Send
         )),
-        BytecodeIntrinsicType::JsonReader | BytecodeIntrinsicType::JsonWriter => {
-            fixed_capability(matches!(
-                capability,
-                ClosedCapability::Discard | ClosedCapability::Send
-            ))
-        }
+        BytecodeIntrinsicType::JsonReader
+        | BytecodeIntrinsicType::JsonWriter
+        | BytecodeIntrinsicType::YamlReader
+        | BytecodeIntrinsicType::YamlWriter => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
+        )),
         BytecodeIntrinsicType::MessagePackReader
         | BytecodeIntrinsicType::MessagePackWriter
         | BytecodeIntrinsicType::ProtoReader
@@ -1286,6 +1293,10 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::JsonValueView
         | BytecodeIntrinsicType::JsonRaw
         | BytecodeIntrinsicType::JsonNumber
+        | BytecodeIntrinsicType::YamlLimits
+        | BytecodeIntrinsicType::YamlOptions
+        | BytecodeIntrinsicType::YamlValue
+        | BytecodeIntrinsicType::YamlValueView
         | BytecodeIntrinsicType::MessagePackLimits
         | BytecodeIntrinsicType::MessagePackDecodeOptions
         | BytecodeIntrinsicType::MessagePackEncodeOptions
@@ -1683,6 +1694,12 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::JsonNumber
         | BytecodeIntrinsicType::JsonReader
         | BytecodeIntrinsicType::JsonWriter
+        | BytecodeIntrinsicType::YamlLimits
+        | BytecodeIntrinsicType::YamlOptions
+        | BytecodeIntrinsicType::YamlValue
+        | BytecodeIntrinsicType::YamlValueView
+        | BytecodeIntrinsicType::YamlReader
+        | BytecodeIntrinsicType::YamlWriter
         | BytecodeIntrinsicType::MessagePackLimits
         | BytecodeIntrinsicType::MessagePackDecodeOptions
         | BytecodeIntrinsicType::MessagePackEncodeOptions
@@ -1909,6 +1926,12 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::JsonNumber
                 | BytecodeIntrinsicType::JsonReader
                 | BytecodeIntrinsicType::JsonWriter
+                | BytecodeIntrinsicType::YamlLimits
+                | BytecodeIntrinsicType::YamlOptions
+                | BytecodeIntrinsicType::YamlValue
+                | BytecodeIntrinsicType::YamlValueView
+                | BytecodeIntrinsicType::YamlReader
+                | BytecodeIntrinsicType::YamlWriter
                 | BytecodeIntrinsicType::MessagePackLimits
                 | BytecodeIntrinsicType::MessagePackDecodeOptions
                 | BytecodeIntrinsicType::MessagePackEncodeOptions
@@ -2394,6 +2417,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.fs.Directory.")
                 && !callable.name.starts_with("std.json.JsonReader.")
                 && !callable.name.starts_with("std.json.JsonWriter.")
+                && !callable.name.starts_with("std.yaml.YamlReader.")
+                && !callable.name.starts_with("std.yaml.YamlWriter.")
                 && !callable
                     .name
                     .starts_with("std.messagepack.MessagePackReader.")
@@ -15741,7 +15766,11 @@ mod tests {
                 | BytecodeIntrinsicType::ProtoEncodeOptions
                 | BytecodeIntrinsicType::ProtoWireTypePolicy
                 | BytecodeIntrinsicType::ProtoUnknownPolicy
-                | BytecodeIntrinsicType::UnknownFields => [true, true, false, false, true, true],
+                | BytecodeIntrinsicType::UnknownFields
+                | BytecodeIntrinsicType::YamlLimits
+                | BytecodeIntrinsicType::YamlOptions
+                | BytecodeIntrinsicType::YamlValue
+                | BytecodeIntrinsicType::YamlValueView => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::FormatBuilder
                 | BytecodeIntrinsicType::VirtualTime => [false, true, false, false, true, false],
@@ -15762,7 +15791,9 @@ mod tests {
                 | BytecodeIntrinsicType::Reader
                 | BytecodeIntrinsicType::Writer
                 | BytecodeIntrinsicType::JsonReader
-                | BytecodeIntrinsicType::JsonWriter => [false, true, false, false, true, false],
+                | BytecodeIntrinsicType::JsonWriter
+                | BytecodeIntrinsicType::YamlReader
+                | BytecodeIntrinsicType::YamlWriter => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::IoLimits
                 | BytecodeIntrinsicType::JsonLimits
                 | BytecodeIntrinsicType::JsonDecodeOptions

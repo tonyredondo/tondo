@@ -1,0 +1,21 @@
+import std.bytes
+import std.console
+import std.yaml
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let limits = yaml.YamlLimits.defaults()
+    let options = yaml.YamlOptions.create(limits)
+    let source = bytes.Bytes("b: 2\na: true\n")?
+    let value = yaml.parse(source, options)?
+    let encoded = yaml.encode(value, options)?
+    assert(String(encoded)? == "b: 2\na: true\n")
+    let canonical = yaml.encodeCanonical(value, limits)?
+    assert(String(canonical)? == "a: true\nb: 2\n")
+    let typed = yaml.decode[Array[Int]](bytes.Bytes("- 1\n- 2\n")?, options)?
+    assert(typed.length() == 2)
+    let typed_encoded = yaml.encode[Array[Int]](typed, options)?
+    assert(String(typed_encoded)? == "- 1\n- 2\n")
+    let all = yaml.parseAll(bytes.Bytes("---\none\n---\ntwo\n")?, options)?
+    assert(all.length() == 2)
+    console.println("yaml-ok")
+}

@@ -1,8 +1,9 @@
 # Contrato de `std.yaml`
 
 **Estado:** contrato `contract-locked` para STD-0.1B, cerrado por
-`STD-YAML-001`. La implementación de VM/host y el backend nativo permanecen
-pendientes de sus leaves posteriores a `NATIVE-001`.
+`STD-YAML-001`. La ruta scalar y el bridge VM hosted de la implementación
+quedan verificados por `STD-YAML-IMPL-001`; la promoción de la API pública y el
+backend nativo permanecen explícitamente fuera de este cierre.
 
 `std.yaml` ofrece un lector y escritor YAML 1.2 deliberadamente seguro. No
 intenta implementar todos los dialectos históricos de YAML: fija un subset
@@ -360,6 +361,39 @@ Los presupuestos de rendimiento medirán throughput, tail latency, allocations,
 bytes copiados, profundidad, aliases y coste de rechazo adversarial. No se
 publican claims de rendimiento antes de `STD-YAML-PERF-001`.
 
+## Estado de implementación
+
+`STD-YAML-IMPL-001` cierra la ruta hosted verificable del draft/0.1. El módulo
+[`crates/tondo-stdlib/src/yaml.rs`](../../crates/tondo-stdlib/src/yaml.rs)
+implementa el parser YAML 1.2 Core, la validación de tags/aliases y límites, el
+modelo dinámico, la conversión tipada sobre los eventos comunes de
+`std.serialization` y la codificación normal/canónica. El compilador registra
+los nominales, intrinsics, firmas y efectos de las 21 operaciones; el host y la
+VM materializan esos handles y sus errores con ubicación y path.
+
+La evidencia de este bloque cubre la ruta hosted buffered y del oráculo scalar:
+`parse`/`parseAll`/`parseView`, `decode`/`decodeAll`, `encode` y
+`encodeCanonical`, además del ciclo de vida de `YamlReader` y `YamlWriter`.
+En esta implementación hosted los adapters de reader/writer son un bridge
+buffered: `fromReader` colecciona el input antes de producir eventos y el
+writer retiene eventos hasta `finish`; esto modela y prueba el contrato de
+estados, pero no reclama todavía un runtime nativo de streaming ni lowering
+AOT. El registro mantiene `native_aot_lowering: not-claimed` y
+`public_api_promoted: false`.
+
+La fixture ejecutable y el informe reproducible son
+`tests/runtime/m11-std-yaml-impl-001.to` y
+`target/reliability/evidence/stdlib-yaml-implementation.json`, generados por
+los checkers y runner del bloque. Permanecen separados los corpus ampliados,
+fuzzing, mediciones de rendimiento, conformance y guía de uso:
+
+```text
+STD-YAML-TEST-001
+STD-YAML-PERF-001
+STD-YAML-CONF-001
+STD-YAML-DOC-001
+```
+
 ## Exclusiones deliberadas
 
 Este contrato no incluye YAML 1.1, custom tags, directives de `%TAG`,
@@ -369,11 +403,10 @@ anchors cíclicos, documentos ilimitados, comentarios preservados en el árbol,
 locale, environment interpolation, schema discovery, RPC ni una API async o
 `selectable` paralela.
 
-La implementación, host, corpus de tests, fuzzing, rendimiento, conformance y
-documentación de uso quedan pendientes de:
+El corpus de tests, fuzzing, rendimiento, conformance y documentación de uso
+quedan pendientes de:
 
 ```text
-STD-YAML-IMPL-001
 STD-YAML-TEST-001
 STD-YAML-PERF-001
 STD-YAML-CONF-001

@@ -13,6 +13,7 @@ pub mod path;
 pub mod protobuf;
 pub mod serialization;
 pub mod testing;
+pub mod yaml;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodecError {

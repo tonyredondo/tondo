@@ -144,11 +144,12 @@ jq -e '
   and all(.corpora[]; .source == "owner-generated" and .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "verified-hosted-vm"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
-  and .implementation.required_follow_ups == ["STD-YAML-IMPL-001", "STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.host == "verified-hosted-vm-buffered-yaml-bridge"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and .implementation.required_follow_ups == ["STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-TEST-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.yaml contract"
 
 for path in \

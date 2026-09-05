@@ -240,10 +240,51 @@
     "ambient-locale"
   ],
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "verified-hosted-vm",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
-    "required_follow_ups": ["STD-YAML-IMPL-001", "STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+    "host": "verified-hosted-vm-buffered-yaml-bridge",
+    "native_aot_lowering": "not-claimed",
+    "sources": [
+      "crates/tondo-stdlib/src/yaml.rs",
+      "crates/tondo-stdlib/src/lib.rs",
+      "crates/tondo-stdlib/src/serialization.rs",
+      "crates/tondo-compiler/src/package.rs",
+      "crates/tondo-compiler/src/resolve.rs",
+      "crates/tondo-compiler/src/types.rs",
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/capabilities.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/hir/terminal.rs",
+      "crates/tondo-compiler/src/hir/verify.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-vm/src/bytecode.rs",
+      "crates/tondo-vm/src/bytecode/verify.rs",
+      "crates/tondo-vm/src/runtime.rs",
+      "crates/tondo-vm/src/runtime/execute.rs"
+    ],
+    "tests": [
+      "crates/tondo-stdlib/src/yaml.rs::core_block_flow_and_quotes_round_trip",
+      "crates/tondo-stdlib/src/yaml.rs::aliases_are_copied_and_cycles_are_rejected",
+      "crates/tondo-stdlib/src/yaml.rs::tags_security_and_limits_are_enforced",
+      "crates/tondo-stdlib/src/yaml.rs::canonical_order_and_reader_lifecycle_are_stable",
+      "crates/tondo-stdlib/src/yaml.rs::typed_static_protocol_uses_common_events",
+      "crates/tondo-compiler/src/process_host.rs::yaml_public_host_surface_materializes_typed_values_and_streams",
+      "crates/tondo-compiler/src/process_host.rs::yaml_host_rejects_invalid_limits_and_forged_events_atomically",
+      "crates/tondo-vm/src/runtime/execute.rs::default_host_and_closed_runtime_helpers_have_explicit_boundaries",
+      "tests/runtime/m11-std-yaml-impl-001.to",
+      "scripts/stdlib-yaml-implementation-check.sh",
+      "scripts/stdlib-yaml-implementation-test.sh"
+    ],
+    "proof": "STD-YAML-IMPL-001 verifies the YAML 1.2 Core parser, bounded aliases and tags, dynamic and common-event typed codecs, and the hosted VM bridge for materialized calls plus buffered Reader/Writer lifecycle. Native runtime execution and generic native AOT lowering remain explicitly unclaimed; the independent test, performance, conformance and usage-documentation leaves remain separate.",
+    "fixture": {
+      "path": "tests/runtime/m11-std-yaml-impl-001.to",
+      "stdout": "yaml-ok",
+      "exit": 0,
+      "status": "passed"
+    },
+    "evidence_report": "target/reliability/evidence/stdlib-yaml-implementation.json",
+    "required_follow_ups": ["STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
   },
   "promotion": {
     "gates": [
@@ -253,6 +294,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-YAML-TEST-001"]
   }
 }

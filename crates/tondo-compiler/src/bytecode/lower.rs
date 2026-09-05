@@ -4435,6 +4435,12 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::JsonNumber => bc::BytecodeIntrinsicType::JsonNumber,
         IntrinsicType::JsonReader => bc::BytecodeIntrinsicType::JsonReader,
         IntrinsicType::JsonWriter => bc::BytecodeIntrinsicType::JsonWriter,
+        IntrinsicType::YamlLimits => bc::BytecodeIntrinsicType::YamlLimits,
+        IntrinsicType::YamlOptions => bc::BytecodeIntrinsicType::YamlOptions,
+        IntrinsicType::YamlValue => bc::BytecodeIntrinsicType::YamlValue,
+        IntrinsicType::YamlValueView => bc::BytecodeIntrinsicType::YamlValueView,
+        IntrinsicType::YamlReader => bc::BytecodeIntrinsicType::YamlReader,
+        IntrinsicType::YamlWriter => bc::BytecodeIntrinsicType::YamlWriter,
         IntrinsicType::MessagePackLimits => bc::BytecodeIntrinsicType::MessagePackLimits,
         IntrinsicType::MessagePackDecodeOptions => {
             bc::BytecodeIntrinsicType::MessagePackDecodeOptions

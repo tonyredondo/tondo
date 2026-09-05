@@ -6421,11 +6421,13 @@ publica hasta cerrar el gate final.
   expansión/scalars/collections y errores con offset, línea, columna y path.
   No hay lookup ambiental, API async duplicada ni operación `selectable`.
   Los checks negativos `scripts/stdlib-yaml-check.sh` y
-  `scripts/stdlib-yaml-test.sh` están integrados en `test-gate.sh`. La
-  implementación, host, tests, fuzzing, rendimiento, conformance y
-  documentación de uso siguen pendientes de `STD-YAML-IMPL-001` y sus leaves
-  posteriores a `NATIVE-001`; la instrumentación hosted de
-  `DIAG-RUNTIME-001` ya está cerrada.
+  `scripts/stdlib-yaml-test.sh` están integrados en `test-gate.sh`. La ruta
+  scalar y el bridge VM hosted buffered quedan cerrados por
+  `STD-YAML-IMPL-001`, con typed/dynamic codecs, límites, errores y lifecycle
+  de reader/writer; la API pública y el lowering AOT nativo siguen sin
+  reclamar. Los corpus ampliados, fuzzing, rendimiento, conformance y
+  documentación de uso quedan pendientes de las leaves `STD-YAML-*`; la
+  instrumentación hosted de `DIAG-RUNTIME-001` ya está cerrada.
 
 - [x] **STD-TOML-001 — Especificar `std.toml`.** El contrato
   [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md) y el
@@ -6997,9 +6999,14 @@ estas leaves.
 
 #### 21.3.7 `std.yaml`
 
-- [ ] **STD-YAML-IMPL-001 — Implementar YAML seguro.** Publicar typed, dynamic y
-  streaming sobre serialization con aliases/tags acotados y construcción
-  atómica; no habilitar resolución o tipos ambientales.
+- [x] **STD-YAML-IMPL-001 — Implementar YAML seguro.** Cerrada la ruta YAML 1.2
+  Core scalar y el bridge VM hosted buffered sobre `std.serialization`: parseo
+  dinámico/typed, tags y aliases acotados, límites, errores con ubicación/path,
+  codificación normal/canónica y lifecycle de `YamlReader`/`YamlWriter`. La
+  fixture `tests/runtime/m11-std-yaml-impl-001.to`, los tests directos del
+  kernel, compiler host y materialización nominal VM pasan. No se promociona
+  una API pública ni se reclama runtime nativo o lowering AOT; el siguiente
+  bloque es `STD-YAML-TEST-001`.
 - [ ] **STD-YAML-TEST-001 — Probar y fuzzear YAML.** Cubrir corpus interoperable,
   Unicode, anchors/aliases, tags, duplicados, chunks, bombs, nesting y límites.
 - [ ] **STD-YAML-PERF-001 — Medir YAML.** Fijar throughput, tail, memoria,
