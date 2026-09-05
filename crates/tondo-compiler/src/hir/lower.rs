@@ -451,6 +451,19 @@ impl<'a> TypeLowerer<'a> {
         let Some(module) = self.packages.module(self.packages.standard(), &path) else {
             return Ok(());
         };
+        // The standard package registry contains module entries even when a
+        // source file did not import that owner.  Only lower the synthetic
+        // declarations when the resolver indexed the complete nominal set;
+        // otherwise a small program (for example a math-only script) must not
+        // trip the bootstrap dependency assertion below.
+        let tag_name = Name::new("YamlTag").expect("YAML nominal names are valid");
+        if self
+            .resolved
+            .bootstrap_nominal(&module, &tag_name)
+            .is_none()
+        {
+            return Ok(());
+        }
         let int = self.interner.scalar(ScalarType::Int);
         let uint = self.interner.scalar(ScalarType::UInt64);
         let float = self.interner.scalar(ScalarType::Float);
