@@ -127,6 +127,7 @@ impl YamlLimits {
         Self::default()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         max_input_bytes: usize,
         max_documents: usize,
@@ -169,17 +170,9 @@ impl YamlLimits {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct YamlOptions {
     pub limits: YamlLimits,
-}
-
-impl Default for YamlOptions {
-    fn default() -> Self {
-        Self {
-            limits: YamlLimits::default(),
-        }
-    }
 }
 
 impl YamlOptions {
@@ -337,6 +330,8 @@ enum Node {
     Alias(String),
 }
 
+type ParsedDocument = (Node, HashMap<String, Node>);
+
 struct Parser {
     input: Vec<u8>,
     lines: Vec<SourceLine>,
@@ -378,7 +373,7 @@ impl Parser {
         })
     }
 
-    fn parse_stream(mut self) -> Result<Vec<(Node, HashMap<String, Node>)>, YamlError> {
+    fn parse_stream(mut self) -> Result<Vec<ParsedDocument>, YamlError> {
         let mut documents = Vec::new();
         while self.skip_ignored() {
             let explicit_start = self.current_content() == Some("---");
@@ -761,8 +756,8 @@ impl Parser {
             let Some(token) = rest.split_whitespace().next() else {
                 break;
             };
-            if token.starts_with('&') {
-                let name = token[1..].to_owned();
+            if let Some(stripped) = token.strip_prefix('&') {
+                let name = stripped.to_owned();
                 if !valid_anchor_name(&name, self.options.limits.max_anchor_name_bytes)
                     || anchor.is_some()
                     || self.anchors.contains_key(&name)
@@ -1156,8 +1151,8 @@ impl<'a, 'p> FlowParser<'a, 'p> {
             else {
                 break;
             };
-            if token.starts_with('&') {
-                let name = token[1..].to_owned();
+            if let Some(stripped) = token.strip_prefix('&') {
+                let name = stripped.to_owned();
                 if !valid_anchor_name(&name, self.parser.options.limits.max_anchor_name_bytes)
                     || anchor.is_some()
                 {
@@ -2123,10 +2118,10 @@ impl YamlReader {
         if self.finished || self.eof_returned {
             return Err(YamlError::at_zero(YamlErrorKind::Closed));
         }
-        if let YamlEvent::Scalar(YamlScalar::Text(text)) = &event {
-            if text.len() > self.options.limits.max_scalar_bytes {
-                return self.fail(YamlErrorKind::ScalarLimit);
-            }
+        if let YamlEvent::Scalar(YamlScalar::Text(text)) = &event
+            && text.len() > self.options.limits.max_scalar_bytes
+        {
+            return self.fail(YamlErrorKind::ScalarLimit);
         }
         Ok(event)
     }
@@ -2283,15 +2278,14 @@ impl YamlWriter {
                     pending_key,
                     ..
                 }) = self.stack.last_mut()
+                    && *expecting_key
                 {
-                    if *expecting_key {
-                        let YamlValue::Text(key) = value else {
-                            return self.fail(YamlErrorKind::NonStringKey);
-                        };
-                        *pending_key = Some(key);
-                        *expecting_key = false;
-                        return Ok(());
-                    }
+                    let YamlValue::Text(key) = value else {
+                        return self.fail(YamlErrorKind::NonStringKey);
+                    };
+                    *pending_key = Some(key);
+                    *expecting_key = false;
+                    return Ok(());
                 }
                 self.attach(value)
             }
@@ -2588,8 +2582,8 @@ impl TryFrom<serialization::Value> for YamlValue {
             serialization::Value::Float32(bits) => Ok(Self::Float(f32::from_bits(bits) as f64)),
             serialization::Value::Float64(bits) => Ok(Self::Float(f64::from_bits(bits))),
             serialization::Value::Number(value) => {
-                let (scalar, spelling) = scalar_from_text(&value, false, usize::MAX)
-                    .map_err(|kind| YamlError::at_zero(kind))?;
+                let (scalar, spelling) =
+                    scalar_from_text(&value, false, usize::MAX).map_err(YamlError::at_zero)?;
                 Ok(scalar_to_value(&scalar_with_spelling(scalar, spelling)))
             }
             serialization::Value::String(value) => Ok(Self::Text(value)),

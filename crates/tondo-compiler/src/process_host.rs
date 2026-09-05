@@ -7012,13 +7012,10 @@ impl VmHost for BootstrapHost {
                     Ok(value) => value.clone(),
                     Err(error) => return Err(error),
                 };
-                let limits = match self.yaml_limits_input(limits).and_then(|input| {
+                let limits = self.yaml_limits_input(limits).and_then(|input| {
                     self.yaml_limits(input)
                         .map_err(|kind| VmError::Host(format!("invalid YamlLimits: {kind:?}")))
-                }) {
-                    Ok(limits) => limits,
-                    Err(error) => return Err(error),
-                };
+                })?;
                 match yaml::encode_canonical(&value, limits) {
                     Ok(output) => {
                         if self.ensure_bytes_len(output.len()).is_err() {
