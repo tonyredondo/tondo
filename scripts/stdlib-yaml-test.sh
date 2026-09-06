@@ -95,8 +95,8 @@ jq -e '
   and .implementation.native_aot_lowering == "not-claimed"
   and .testing_contract == "testing/stdlib-yaml-test.json"
   and .testing_document == "docs/contracts/stdlib-yaml-test.md"
-  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
+  and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 echo "std.yaml tests: OK (schema boundary; tags; aliases; limits; streaming; security; promotion)"

@@ -72,6 +72,7 @@ siendo una capacidad declarada por target.
 - [Contrato de conformance VM/native de `std.encoding`](./docs/contracts/stdlib-encoding-conformance.md)
 - [Contrato de owner de `std.yaml`](./docs/contracts/stdlib-yaml.md)
 - [Contrato de tests de `std.yaml`](./docs/contracts/stdlib-yaml-test.md)
+- [Contrato de rendimiento de `std.yaml`](./docs/contracts/stdlib-yaml-performance.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
@@ -159,8 +160,11 @@ corpus común VM/native de seis casos, con interoperabilidad, streaming,
 errores/offsets, límites y cleanup hash-bound; la sonda usa el mismo kernel
 scalar y mantiene `native_aot_lowering: not-claimed` y
 `simd: not-measured-no-optimized-route`. `STD-ENCODING-DOC-001` queda cerrado
-por la guía ejecutable de policies, errores, costes y ejemplos; el siguiente
-bloque de ese slice es `STD-YAML-IMPL-001`. El modelo y
+por la guía ejecutable de policies, errores, costes y ejemplos. `STD-YAML-PERF-001`
+queda cerrado por el baseline scalar hosted de 13 workloads, 27 muestras por
+workload y métricas de latencia, tail, throughput, allocations, memoria lógica,
+bytes copiados, profundidad, aliases, expansión, rechazo adversarial y cleanup;
+el siguiente bloque de ese slice es `STD-YAML-CONF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6428,9 +6432,11 @@ publica hasta cerrar el gate final.
   de reader/writer; la API pública y el lowering AOT nativo siguen sin
   reclamar. `STD-YAML-TEST-001` cierra el modelo independiente, el corpus
   acotado, las regresiones de scalar/hosted, los límites y el fuzz determinista;
-  rendimiento, conformance y documentación de uso quedan pendientes de las
-  leaves `STD-YAML-*`; la instrumentación hosted de `DIAG-RUNTIME-001` ya está
-  cerrada.
+  `STD-YAML-PERF-001` queda cerrado por el baseline scalar hosted de 13 workloads
+  y 27 muestras por workload, con métricas de tail, throughput, allocations,
+  memoria lógica, bytes copiados y rechazo adversarial; conformance y
+  documentación de uso quedan pendientes de las leaves `STD-YAML-*`; la
+  instrumentación hosted de `DIAG-RUNTIME-001` ya está cerrada.
 
 - [x] **STD-TOML-001 — Especificar `std.toml`.** El contrato
   [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md) y el
@@ -7016,10 +7022,19 @@ estas leaves.
   regresiones de stdlib/compiler/VM, corpus persistente y target fuzz acotado
   cubren documentos, Unicode, anchors/aliases, tags, duplicados, chunks,
   nesting, límites, terminalidad y casos de seguridad. No se promocionan
-  runtime nativo, AOT ni rendimiento; el siguiente bloque es
-  `STD-YAML-PERF-001`.
-- [ ] **STD-YAML-PERF-001 — Medir YAML.** Fijar throughput, tail, memoria,
-  allocations y comportamiento adversario sin optimizar solo documentos planos.
+  runtime nativo, AOT ni conformance; el baseline de rendimiento hosted queda
+  cerrado por `STD-YAML-PERF-001` y el siguiente bloque es
+  `STD-YAML-CONF-001`.
+- [x] **STD-YAML-PERF-001 — Medir YAML.** Cerrado con
+  [`testing/stdlib-yaml-performance.json`](./testing/stdlib-yaml-performance.json),
+  [`docs/contracts/stdlib-yaml-performance.md`](./docs/contracts/stdlib-yaml-performance.md)
+  y sus checks/runner. La campaña hosted scalar cubre 13 workloads, tres
+  procesos independientes y 27 muestras por workload, con mediana/P95/P99,
+  throughput, allocations, memoria lógica, bytes copiados, profundidad,
+  aliases, expansión, rechazo adversarial, dispatch `scalar-fixed-target` y
+  cero handles YAML vivos al finalizar. Runtime nativo, SIMD, lowering AOT y
+  fast paths optimizados siguen sin reclamar; el siguiente bloque es
+  `STD-YAML-CONF-001`.
 - [ ] **STD-YAML-CONF-001 — Conformar YAML.** Comparar typed/dynamic/streaming,
   interoperabilidad y errores/path sobre VM y nativo.
 - [ ] **STD-YAML-DOC-001 — Documentar YAML.** Enumerar el subset seguro,

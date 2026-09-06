@@ -45,8 +45,11 @@ runs, seed 4107, `nightly-2026-07-28`, a ten-second per-input timeout and a
 
 This block promotes only the independent model, scalar/hosted regression
 evidence, persistent corpus and bounded fuzz harness. It does not claim native
-AOT execution, SIMD equivalence, throughput, tail latency, allocation or
-interoperability beyond the already implemented hosted surface. Those remain
-separate leaves. The next block is `STD-YAML-PERF-001`.
-Its contract is [`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json);
-the performance evidence remains pending until its runner completes.
+AOT execution, SIMD equivalence or interoperability beyond the already
+implemented hosted surface. The hosted scalar throughput, tail-latency,
+allocation and adversarial baseline is closed separately by
+`STD-YAML-PERF-001`; conformance and usage documentation remain separate leaves.
+The next block is `STD-YAML-CONF-001`.
+Its performance contract is
+[`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json),
+with the promoted report recorded by its runner.

@@ -65,7 +65,7 @@ jq -e '
   and .sanitization.native_aot == "not-claimed"
   and .promotion.model_test_fuzz_complete == true
   and .promotion.implementation_pending == []
-  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
+  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
   and .promotion.remaining == []
 ' "$contract" >/dev/null || die "invalid machine-readable YAML testing contract"
 
@@ -129,8 +129,8 @@ done
 jq -e '
   .testing_contract == "testing/stdlib-yaml-test.json"
   and .testing_document == "docs/contracts/stdlib-yaml-test.md"
-  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
+  and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
 ' "$root/testing/stdlib-yaml.json" >/dev/null \
     || die "parent YAML registry does not expose the promoted testing boundary"
 

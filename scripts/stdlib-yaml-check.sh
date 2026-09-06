@@ -142,7 +142,7 @@ jq -e '
   and .performance.task == "STD-YAML-PERF-001"
   and .performance.contract == "testing/stdlib-yaml-performance.json"
   and .performance.document == "docs/contracts/stdlib-yaml-performance.md"
-  and .performance.status == "pending-evidence"
+  and .performance.status == "verified-hosted-vm-baseline"
   and .performance.target == "tondo-vm-hosted"
   and .performance.native_aot == "not-claimed"
   and .performance.workloads == 13
@@ -160,8 +160,8 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "verified-hosted-vm-buffered-yaml-bridge"
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
+  and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.yaml contract"
 
 for path in \

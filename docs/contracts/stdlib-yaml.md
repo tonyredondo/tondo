@@ -365,8 +365,9 @@ La implementación debe usar worklists/frames explícitos para aliases,
 indentación y collections. No puede resolver aliases mediante una expansión
 recursiva sobre la pila del host ni mantener una tabla global entre documentos.
 Los presupuestos de rendimiento medirán throughput, tail latency, allocations,
-bytes copiados, profundidad, aliases y coste de rechazo adversarial. No se
-publican claims de rendimiento antes de `STD-YAML-PERF-001`.
+bytes copiados, profundidad, aliases y coste de rechazo adversarial.
+`STD-YAML-PERF-001` cierra ahora el baseline scalar hosted con esas dimensiones;
+esto no promociona una ruta nativa, SIMD ni lowering AOT.
 
 ## Estado de implementación
 
@@ -395,11 +396,13 @@ los checkers y runner del bloque. El contrato de pruebas y su documento son
 [`testing/stdlib-yaml-test.json`](../../testing/stdlib-yaml-test.json) y
 [`docs/contracts/stdlib-yaml-test.md`](./stdlib-yaml-test.md); sus pruebas
 independientes y regresiones hosted cierran el corpus acotado, los límites,
-la fragmentación y el fuzz determinista. Permanecen separados las mediciones
-de rendimiento, conformance y guía de uso:
+la fragmentación y el fuzz determinista. `STD-YAML-PERF-001` queda cerrado por
+el baseline scalar hosted de 13 workloads y 27 muestras por workload, con
+throughput, tail latency, allocations, bytes copiados, memoria lógica,
+profundidad, aliases, expansión, rechazo adversarial y cleanup de handles.
+Permanecen separados conformance y guía de uso:
 
 ```text
-STD-YAML-PERF-001
 STD-YAML-CONF-001
 STD-YAML-DOC-001
 ```
@@ -413,11 +416,9 @@ anchors cíclicos, documentos ilimitados, comentarios preservados en el árbol,
 locale, environment interpolation, schema discovery, RPC ni una API async o
 `selectable` paralela.
 
-Las mediciones de rendimiento, conformance y documentación de uso quedan
-pendientes de:
+Conformance y documentación de uso quedan pendientes de:
 
 ```text
-STD-YAML-PERF-001
 STD-YAML-CONF-001
 STD-YAML-DOC-001
 ```

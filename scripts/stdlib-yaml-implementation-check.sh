@@ -32,8 +32,8 @@ jq -e '
   and .implementation.fixture == {path:"tests/runtime/m11-std-yaml-impl-001.to",stdout:"yaml-ok",exit:0,status:"passed"}
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-yaml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
+  and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable implementation state"
 
 for path in \

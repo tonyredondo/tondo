@@ -3875,12 +3875,16 @@ la fixture de VM y el informe
 `target/reliability/evidence/stdlib-yaml-implementation.json`. El cierre no
 promociona una API pública, no afirma runtime nativo ni lowering AOT
 (`native_aot_lowering: not-claimed`). `STD-YAML-TEST-001` cierra el modelo
-independiente, las regresiones scalar/hosted, los límites y el fuzz acotado;
-el contrato de rendimiento hosted es
+independiente, las regresiones scalar/hosted, los límites y el fuzz acotado.
+El contrato de rendimiento hosted
 [`testing/stdlib-yaml-performance.json`](./testing/stdlib-yaml-performance.json)
-y queda pendiente de su runner reproducible. Rendimiento, conformance y
-documentación de uso siguen en sus leaves `STD-YAML-*`, cuyo siguiente bloque
-es `STD-YAML-PERF-001`.
+queda cerrado por `STD-YAML-PERF-001`: la campaña observa 13 workloads y 27
+muestras por workload con latencia, tail, throughput, allocations, memoria
+lógica, bytes copiados, profundidad, aliases, expansión, rechazo adversarial y
+cleanup de handles. El baseline se limita a `tondo-vm-hosted` /
+`bytecode-vm`; runtime nativo, SIMD y lowering AOT siguen sin reclamar.
+Conformance y documentación de uso continúan en sus leaves `STD-YAML-*`, cuyo
+siguiente bloque es `STD-YAML-CONF-001`.
 
 ### 14.14 `std.toml`
 

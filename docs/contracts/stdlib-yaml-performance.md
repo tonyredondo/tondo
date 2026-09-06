@@ -1,10 +1,11 @@
 # `std.yaml` performance contract
 
-`STD-YAML-PERF-001` defines the target-qualified performance boundary for the
-Tondo 0.1 draft. The machine-readable contract is currently
+`STD-YAML-PERF-001` closes the target-qualified performance boundary for the
+Tondo 0.1 draft. The machine-readable contract is
 [`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json).
-Its status is `pending-evidence` until the reproducible runner completes; no
-performance promotion is asserted by this document before that run.
+Its status is `verified-hosted-vm-baseline`; the reproducible campaign completed
+13 workloads with 27 samples per workload and the exact host/model checks below.
+This promotion is limited to the hosted scalar baseline.
 
 This is a reproducible `tondo-vm-hosted` / `bytecode-vm` baseline. It measures
 the scalar YAML kernel through the real hosted bridge and does not promote the
@@ -29,7 +30,7 @@ logical-memory counters.
 
 ## Workloads and measurements
 
-The 13 planned workloads intentionally include more than flat documents:
+The 13 workloads intentionally include more than flat documents:
 
 | Family | Workloads | Boundary exercised |
 | --- | --- | --- |
@@ -68,10 +69,10 @@ or optimized multiversion dispatch is `not-measured-no-optimized-route`.
 The dispatch field records the declared target/workload size class; it is not
 evidence that an optimized route exists.
 
-The pending run will execute the independent bounded YAML model and its
-deterministic replay tests before collecting host samples. It checks exact materialized
-values, canonical bytes, event counts, writer output, expected error kinds, and
-terminal handle cleanup. It never combines targets or backends.
+The completed campaign executes the independent bounded YAML model and its
+deterministic replay tests before collecting host samples. It checks exact
+materialized values, canonical bytes, event counts, writer output, expected error
+kinds, and terminal handle cleanup. It never combines targets or backends.
 
 ## Reproduction
 
@@ -84,8 +85,8 @@ TONDO_STDLIB_YAML_PERF_ALLOW_DIRTY=1 \
 
 The runner writes
 `target/reliability/evidence/stdlib-yaml-performance.json` and rejects a dirty
-workspace by default. CI runs the same runner from a clean checkout. Only a
-successful runner and clean-checkout CI observation can promote this
-hosted baseline; YAML conformance, usage
-documentation, native runtime behavior, and generic AOT remain separate
-frontiers.
+workspace by default. The promoted report records 13 workloads, 27 samples each,
+the scalar-fixed-target dispatch, all declared latency/throughput/allocation and
+adversarial counters, and zero live YAML handles at every terminal boundary.
+YAML conformance, usage documentation, native runtime behavior, SIMD and generic
+AOT remain separate frontiers.

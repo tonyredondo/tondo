@@ -4,7 +4,7 @@
   "phase": "STD-0.1B",
   "task": "STD-YAML-PERF-001",
   "owner": "std.yaml",
-  "status": "pending-evidence",
+  "status": "verified-hosted-vm-baseline",
   "target": "tondo-vm-hosted",
   "backend": "bytecode-vm",
   "profile": "test",

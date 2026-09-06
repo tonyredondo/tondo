@@ -21,7 +21,7 @@ jq -e '
   and .phase == "STD-0.1B"
   and .task == "STD-YAML-PERF-001"
   and .owner == "std.yaml"
-  and .status == "pending-evidence"
+  and .status == "verified-hosted-vm-baseline"
   and .target == "tondo-vm-hosted"
   and .backend == "bytecode-vm"
   and .profile == "test"
@@ -165,7 +165,7 @@ jq -e '
   .performance.task == "STD-YAML-PERF-001"
   and .performance.contract == "testing/stdlib-yaml-performance.json"
   and .performance.document == "docs/contracts/stdlib-yaml-performance.md"
-  and .performance.status == "pending-evidence"
+  and .performance.status == "verified-hosted-vm-baseline"
   and .performance.target == "tondo-vm-hosted"
   and .performance.native_aot == "not-claimed"
   and .performance.workloads == 13
@@ -176,11 +176,11 @@ jq -e '
     "alias-expansion", "adversarial-rejection"
   ]
   and .implementation.native_aot_lowering == "not-claimed"
-  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
+  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
 ' testing/stdlib-yaml.json >/dev/null || die "parent YAML registry has a stale performance frontier"
 
 jq -e '
-  .promotion.next_blocks == ["STD-YAML-PERF-001"]
+  .promotion.next_blocks == ["STD-YAML-CONF-001"]
   and .promotion.implementation_pending == []
 ' testing/stdlib-yaml-test.json >/dev/null || die "YAML testing registry has a stale promotion frontier"
 
@@ -203,4 +203,4 @@ grep -Fq 'stdlib-yaml-performance.md' docs/contracts/stdlib-yaml.md \
 grep -Fq 'STD-YAML-PERF-001' TONDO_IMPLEMENTATION_TRACKER.md \
     || die "tracker does not record the YAML performance leaf"
 
-echo "std.yaml performance contract: OK (hosted scalar baseline; 13 workloads; adversarial boundary explicit)"
+echo "std.yaml performance contract: OK (verified hosted scalar baseline; 13 workloads; adversarial boundary explicit)"

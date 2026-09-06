@@ -211,7 +211,7 @@
     "task": "STD-YAML-PERF-001",
     "contract": "testing/stdlib-yaml-performance.json",
     "document": "docs/contracts/stdlib-yaml-performance.md",
-    "status": "pending-evidence",
+    "status": "verified-hosted-vm-baseline",
     "target": "tondo-vm-hosted",
     "backend": "bytecode-vm",
     "profile": "test",
@@ -299,7 +299,7 @@
       "status": "passed"
     },
     "evidence_report": "target/reliability/evidence/stdlib-yaml-implementation.json",
-    "required_follow_ups": ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+    "required_follow_ups": ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
   },
   "promotion": {
     "gates": [
@@ -309,6 +309,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-YAML-PERF-001"]
+    "next_blocks": ["STD-YAML-CONF-001"]
   }
 }
