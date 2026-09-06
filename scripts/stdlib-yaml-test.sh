@@ -96,7 +96,7 @@ jq -e '
   and .testing_contract == "testing/stdlib-yaml-test.json"
   and .testing_document == "docs/contracts/stdlib-yaml-test.md"
   and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
+  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 echo "std.yaml tests: OK (schema boundary; tags; aliases; limits; streaming; security; promotion)"

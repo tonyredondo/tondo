@@ -33,7 +33,7 @@ jq -e '
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-yaml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
+  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable implementation state"
 
 for path in \

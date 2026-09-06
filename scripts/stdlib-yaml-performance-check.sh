@@ -176,11 +176,11 @@ jq -e '
     "alias-expansion", "adversarial-rejection"
   ]
   and .implementation.native_aot_lowering == "not-claimed"
-  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
+  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
 ' testing/stdlib-yaml.json >/dev/null || die "parent YAML registry has a stale performance frontier"
 
 jq -e '
-  .promotion.next_blocks == ["STD-YAML-CONF-001"]
+  .promotion.next_blocks == ["STD-YAML-DOC-001"]
   and .promotion.implementation_pending == []
 ' testing/stdlib-yaml-test.json >/dev/null || die "YAML testing registry has a stale promotion frontier"
 

@@ -43,7 +43,7 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.native_aot_lowering == "not-claimed"
   and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
+  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 for marker in \
