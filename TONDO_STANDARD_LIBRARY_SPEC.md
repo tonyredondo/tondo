@@ -3883,8 +3883,13 @@ muestras por workload con latencia, tail, throughput, allocations, memoria
 lógica, bytes copiados, profundidad, aliases, expansión, rechazo adversarial y
 cleanup de handles. El baseline se limita a `tondo-vm-hosted` /
 `bytecode-vm`; runtime nativo, SIMD y lowering AOT siguen sin reclamar.
-Conformance y documentación de uso continúan en sus leaves `STD-YAML-*`, cuyo
-siguiente bloque es `STD-YAML-CONF-001`.
+La conformance VM/native target-qualified está cerrada por
+[`testing/stdlib-yaml-conformance.json`](./testing/stdlib-yaml-conformance.json) y
+[`docs/contracts/stdlib-yaml-conformance.md`](./docs/contracts/stdlib-yaml-conformance.md):
+se comparan seis casos en el VM hosted y en un proceso nativo que reutiliza el
+scalar stdlib, sin ABI YAML nativo ni lowering AOT. `native_aot_lowering` sigue
+`not-claimed` y no hay ruta SIMD medida. La única hoja siguiente es
+`STD-YAML-DOC-001`.
 
 ### 14.14 `std.toml`
 

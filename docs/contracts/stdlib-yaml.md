@@ -17,6 +17,10 @@ tests es [`testing/stdlib-yaml-test.json`](../../testing/stdlib-yaml-test.json)
 y el contrato de rendimiento hosted es
 [`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json)
 y su documento [`docs/contracts/stdlib-yaml-performance.md`](./stdlib-yaml-performance.md).
+La conformance VM/native target-qualified está cerrada por
+[`testing/stdlib-yaml-conformance.json`](../../testing/stdlib-yaml-conformance.json) y
+[`docs/contracts/stdlib-yaml-conformance.md`](./stdlib-yaml-conformance.md); la siguiente hoja es
+`STD-YAML-DOC-001`.
 Este documento se integra desde
 [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
 
@@ -400,10 +404,14 @@ la fragmentación y el fuzz determinista. `STD-YAML-PERF-001` queda cerrado por
 el baseline scalar hosted de 13 workloads y 27 muestras por workload, con
 throughput, tail latency, allocations, bytes copiados, memoria lógica,
 profundidad, aliases, expansión, rechazo adversarial y cleanup de handles.
-Permanecen separados conformance y guía de uso:
+La conformance queda cerrada por `STD-YAML-CONF-001`: el fixture hosted y el
+probe nativo de proceso separado comparan el mismo corpus de seis casos, con
+rutas dinámica/tipada, interoperabilidad Core, streaming de un byte, errores con
+path/ubicación, límites y lifecycle. La prueba nativa reutiliza el scalar stdlib;
+no promociona ABI YAML nativo, SIMD ni lowering AOT (`native_aot: not-claimed`).
+La única hoja pendiente es la guía de uso `STD-YAML-DOC-001`:
 
 ```text
-STD-YAML-CONF-001
 STD-YAML-DOC-001
 ```
 
@@ -416,9 +424,8 @@ anchors cíclicos, documentos ilimitados, comentarios preservados en el árbol,
 locale, environment interpolation, schema discovery, RPC ni una API async o
 `selectable` paralela.
 
-Conformance y documentación de uso quedan pendientes de:
+La documentación de uso queda pendiente de:
 
 ```text
-STD-YAML-CONF-001
 STD-YAML-DOC-001
 ```

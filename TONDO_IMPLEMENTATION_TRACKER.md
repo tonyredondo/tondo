@@ -164,7 +164,7 @@ por la guía ejecutable de policies, errores, costes y ejemplos. `STD-YAML-PERF-
 queda cerrado por el baseline scalar hosted de 13 workloads, 27 muestras por
 workload y métricas de latencia, tail, throughput, allocations, memoria lógica,
 bytes copiados, profundidad, aliases, expansión, rechazo adversarial y cleanup;
-el siguiente bloque de ese slice es `STD-YAML-CONF-001`. El modelo y
+`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. La siguiente hoja de ese slice es `STD-YAML-DOC-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -7022,8 +7022,8 @@ estas leaves.
   regresiones de stdlib/compiler/VM, corpus persistente y target fuzz acotado
   cubren documentos, Unicode, anchors/aliases, tags, duplicados, chunks,
   nesting, límites, terminalidad y casos de seguridad. No se promocionan
-  runtime nativo, AOT ni conformance; el baseline de rendimiento hosted queda
-  cerrado por `STD-YAML-PERF-001` y el siguiente bloque es
+  runtime nativo ni AOT; el baseline de rendimiento hosted queda cerrado por
+  `STD-YAML-PERF-001` y la conformance queda registrada en
   `STD-YAML-CONF-001`.
 - [x] **STD-YAML-PERF-001 — Medir YAML.** Cerrado con
   [`testing/stdlib-yaml-performance.json`](./testing/stdlib-yaml-performance.json),
@@ -7033,10 +7033,15 @@ estas leaves.
   throughput, allocations, memoria lógica, bytes copiados, profundidad,
   aliases, expansión, rechazo adversarial, dispatch `scalar-fixed-target` y
   cero handles YAML vivos al finalizar. Runtime nativo, SIMD, lowering AOT y
-  fast paths optimizados siguen sin reclamar; el siguiente bloque es
-  `STD-YAML-CONF-001`.
-- [ ] **STD-YAML-CONF-001 — Conformar YAML.** Comparar typed/dynamic/streaming,
-  interoperabilidad y errores/path sobre VM y nativo.
+  fast paths optimizados siguen sin reclamar; conformance pasa a hoja verificada
+  por `STD-YAML-CONF-001` y el siguiente bloque es `STD-YAML-DOC-001`.
+- [x] **STD-YAML-CONF-001 — Conformar YAML.** El fixture hosted y el probe nativo
+  de proceso separado comparan el mismo corpus de seis casos: typed/dynamic,
+  interoperabilidad YAML 1.2 Core, streaming con fragmentos de un byte, errores
+  con path/offset/línea/columna, límites y lifecycle terminal. El probe reutiliza
+  el scalar de `std.yaml`, comprueba cero objetos de la tabla runtime entre casos
+  y no reclama ABI YAML nativo, SIMD ni lowering AOT; el siguiente bloque es
+  `STD-YAML-DOC-001`.
 - [ ] **STD-YAML-DOC-001 — Documentar YAML.** Enumerar el subset seguro,
   policies, límites, costes y ejemplos ejecutables.
 

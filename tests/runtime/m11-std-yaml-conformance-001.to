@@ -1,0 +1,120 @@
+import std.bytes
+import std.console
+import std.yaml
+
+fn typed_dynamic_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let limits = yaml.YamlLimits.defaults()
+    let options = yaml.YamlOptions.create(limits)
+    let source = bytes.Bytes("name: Tondo\ncount: 7\nactive: true\n")?
+    let value = yaml.parse(source, options)?
+    let encoded = yaml.encode(value, options)?
+    assert(String(encoded)? == "name: Tondo\ncount: 7\nactive: true\n")
+
+    let typed_source = bytes.Bytes("- 7\n- 9\n")?
+    let typed = yaml.decode[Array[Int]](typed_source, options)?
+    assert(typed == [7, 9])
+    let typed_encoded = yaml.encode[Array[Int]](typed, options)?
+    assert(String(typed_encoded)? == "- 7\n- 9\n")
+    console.println("typed-dynamic:3:Tondo:7:2")
+}
+
+fn interoperability_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let limits = yaml.YamlLimits.defaults()
+    let options = yaml.YamlOptions.create(limits)
+    let source = bytes.Bytes("z: yes\na: 0x10\nb: !!binary Zm8=\n")?
+    let value = yaml.parse(source, options)?
+    let canonical = yaml.encodeCanonical(value, limits)?
+    assert(String(canonical)? == "a: 16\nb: !!binary Zm8=\nz: yes\n")
+    let normal = yaml.encode(value, options)?
+    assert(String(normal)? == "z: yes\na: 16\nb: !!binary Zm8=\n")
+    console.println("interoperability:3:16:fo:3")
+}
+
+fn streaming_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let options = yaml.YamlOptions.defaults()
+    let source = bytes.Bytes("---\na: 1\n---\na: 2\n")?
+    let documents = yaml.parseAll(source, options)?
+    assert(documents.length() == 2)
+
+    var reader = yaml.YamlReader.fromBytes(source, options)?
+    var events = 0
+    for _ in 0..16 {
+        match reader.next() {
+            ok(value) => match value {
+                some(_) => {
+                    events += 1
+                }
+                none => assert(false)
+            }
+            err(_) => assert(false)
+        }
+    }
+    assert(events == 16)
+    match reader.next() {
+        ok(value) => match value {
+            some(_) => assert(false)
+            none => ()
+        }
+        err(_) => assert(false)
+    }
+    match reader.next() {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.Closed => ()
+            _ => assert(false)
+        }
+    }
+    console.println("streaming:2:16:closed")
+}
+
+fn errors_path_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let options = yaml.YamlOptions.defaults()
+    let invalid = bytes.Bytes("items:\n  - !!binary invalid!\n")?
+    match yaml.parse(invalid, options) {
+        ok(_) => assert(false)
+        err(error) => {
+            match error.kind {
+                yaml.YamlErrorKind.InvalidBinary => ()
+                _ => assert(false)
+            }
+            assert(error.offset == 0)
+            assert(error.line == 1)
+            assert(error.column == 1)
+            match error.path {
+                [yaml.YamlPathSegment.Key(key), yaml.YamlPathSegment.Index(index)] => {
+                    assert(key == "items")
+                    assert(index == 0)
+                }
+                _ => assert(false)
+            }
+        }
+    }
+    console.println("errors-path:17:2:0")
+}
+
+fn limits_lifecycle_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let tiny = yaml.YamlLimits.create(4, 1, 64, 100, 100, 10, 100, 100, 32)?
+    let options = yaml.YamlOptions.create(tiny)
+    match yaml.parse(bytes.Bytes("a: 1\n")?, options) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.NodeLimit => assert(error.offset == 0)
+            _ => assert(false)
+        }
+    }
+    console.println("limits-lifecycle:19:0")
+}
+
+fn route_boundary() {
+    console.println("route-boundary:scalar:simd-not-claimed:native-aot-not-claimed")
+}
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    typed_dynamic_case()?
+    interoperability_case()?
+    streaming_case()?
+    errors_path_case()?
+    limits_lifecycle_case()?
+    route_boundary()
+    console.println("yaml-conformance-ok")
+}

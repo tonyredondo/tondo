@@ -15364,6 +15364,16 @@ impl<'a> ExpressionChecker<'a> {
                 (module_token, function_token, 8_u8)
             }
             [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("YamlReader") =>
+            {
+                (module_token, function_token, 29_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("YamlWriter") =>
+            {
+                (module_token, function_token, 30_u8)
+            }
+            [module_token, type_token, function_token]
                 if type_token.token().normalized_identifier() == Some("YamlLimits") =>
             {
                 (module_token, function_token, 27_u8)
@@ -15554,6 +15564,17 @@ impl<'a> ExpressionChecker<'a> {
             match (module.path().as_str(), function_name) {
                 ("yaml", Some("defaults")) => HirBootstrapHostFunction::YamlOptionsDefaults,
                 ("yaml", Some("create")) => HirBootstrapHostFunction::YamlOptionsConstruct,
+                _ => return Ok(None),
+            }
+        } else if static_type == 29 {
+            match (module.path().as_str(), function_name) {
+                ("yaml", Some("fromBytes")) => HirBootstrapHostFunction::YamlReaderFromBytes,
+                ("yaml", Some("fromReader")) => HirBootstrapHostFunction::YamlReaderFromReader,
+                _ => return Ok(None),
+            }
+        } else if static_type == 30 {
+            match (module.path().as_str(), function_name) {
+                ("yaml", Some("toWriter")) => HirBootstrapHostFunction::YamlWriterToWriter,
                 _ => return Ok(None),
             }
         } else if static_type == 9 {
@@ -34246,6 +34267,48 @@ fn build(input: Int, flag: Bool) {
              }\n",
         );
         assert_eq!(codes(&duplicate_brackets), ["E1104"]);
+    }
+
+    #[test]
+    fn yaml_bootstrap_surface_resolves_static_constructors() {
+        let (_, _, output) = check(
+            "import std.bytes\n\
+             import std.console\n\
+             import std.yaml\n\
+             fn surface(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {\n\
+                 if false {\n\
+                     let limits = yaml.YamlLimits.defaults()\n\
+                     let options = yaml.YamlOptions.create(limits)\n\
+                     let input = bytes.Bytes(\"a: 1\")?\n\
+                     var reader = yaml.YamlReader.fromBytes(input, options)?\n\
+                     let _event = reader.next()?\n\
+                     reader.finish()?\n\
+                     var output = console.stdout()?\n\
+                     var writer = yaml.YamlWriter.toWriter(var output, options)?\n\
+                     writer.finish()?\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let expected = [
+            HirBootstrapHostFunction::YamlLimitsDefaults,
+            HirBootstrapHostFunction::YamlOptionsConstruct,
+            HirBootstrapHostFunction::YamlReaderFromBytes,
+            HirBootstrapHostFunction::YamlReaderNext,
+            HirBootstrapHostFunction::YamlReaderFinish,
+            HirBootstrapHostFunction::YamlWriterToWriter,
+            HirBootstrapHostFunction::YamlWriterFinish,
+        ];
+        for function in expected {
+            assert!(output.program().expressions().any(|expression| {
+                matches!(expression.kind(), E::Function(C::Host(actual)) if *actual == function)
+            }));
+        }
     }
 
     #[test]

@@ -1,0 +1,142 @@
+{
+  "format": "tondo-stdlib-yaml-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.yaml",
+  "task": "STD-YAML-CONF-001",
+  "status": "verified",
+  "contract": "testing/stdlib-yaml.json",
+  "document": "docs/contracts/stdlib-yaml-conformance.md",
+  "vm": {
+    "fixture": "tests/runtime/m11-std-yaml-conformance-001.to",
+    "command": "cargo run -q -p tondo-cli --locked -- run tests/runtime/m11-std-yaml-conformance-001.to",
+    "expected_exit": 0,
+    "expected_stdout": [
+      "typed-dynamic:3:Tondo:7:2",
+      "interoperability:3:16:fo:3",
+      "streaming:2:16:closed",
+      "errors-path:17:2:0",
+      "limits-lifecycle:19:0",
+      "route-boundary:scalar:simd-not-claimed:native-aot-not-claimed",
+      "yaml-conformance-ok"
+    ],
+    "oracle": "hosted-VM-YAML-observable-lines"
+  },
+  "native": {
+    "probe": "crates/tondo-native-runtime/examples/yaml_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example yaml_conformance --locked",
+    "status": "verified-native-stdlib-process",
+    "target_policy": "host-target-only-until-native-aot-yaml-lowering",
+    "oracle": "same-case-id-and-normalized-stdlib-yaml-observables",
+    "abi": "not-implemented",
+    "aot": "not-claimed"
+  },
+  "rules": {
+    "same_corpus": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "observable": "exact-ordered-VM-lines-plus-native-json-observations",
+    "dynamic_typed": "dynamic-object-round-trip-and-common-Encode-Decode-Array[Int]-round-trip",
+    "interoperability": "YAML-1.2-Core-radix-binary-and-canonical-ordering-share-the-same-stdlib-oracle",
+    "streaming": "two-documents-and-one-byte-reader-fragments-have-identical-event-count-and-closed-transition",
+    "errors": "invalid-binary-kind-path-offset-line-column-are-preserved",
+    "limits": "input-limit-rejects-before-publication-and-reader-EOF-is-terminal",
+    "lifecycle": "reader-EOF-is-followed-by-Closed-and-case-owned-values-drop-before-cleanup",
+    "scalar": "native-probe-reuses-tondo-stdlib-yaml-without-a-second-wire-model",
+    "simd": "not-measured-no-optimized-route",
+    "native_aot": "not-claimed",
+    "cleanup": "fresh-case-runtime-reset-and-zero-live-runtime-table-objects-before-return"
+  },
+  "cases": [
+    {
+      "id": "typed-dynamic",
+      "vm_observable": "typed-dynamic:3:Tondo:7:2",
+      "native_expected": {
+        "status": "passed",
+        "line": "typed-dynamic:3:Tondo:7:2",
+        "dynamic_keys": 3,
+        "typed_length": 2,
+        "cleanup": true
+      }
+    },
+    {
+      "id": "interoperability",
+      "vm_observable": "interoperability:3:16:fo:3",
+      "native_expected": {
+        "status": "passed",
+        "line": "interoperability:3:16:fo:3",
+        "canonical_keys": 3,
+        "binary": "fo",
+        "cleanup": true
+      }
+    },
+    {
+      "id": "streaming",
+      "vm_observable": "streaming:2:16:closed",
+      "native_expected": {
+        "status": "passed",
+        "line": "streaming:2:16:closed",
+        "documents": 2,
+        "bytes_events": 16,
+        "chunk_events": 16,
+        "terminal": true,
+        "cleanup": true
+      }
+    },
+    {
+      "id": "errors-path",
+      "vm_observable": "errors-path:17:2:0",
+      "native_expected": {
+        "status": "passed",
+        "line": "errors-path:17:2:0",
+        "kind": 17,
+        "path": ["items", "0"],
+        "offset": 0,
+        "line": 1,
+        "column": 1,
+        "cleanup": true
+      }
+    },
+    {
+      "id": "limits-lifecycle",
+      "vm_observable": "limits-lifecycle:19:0",
+      "native_expected": {
+        "status": "passed",
+        "line": "limits-lifecycle:19:0",
+        "kind": 19,
+        "offset": 0,
+        "closed": true,
+        "cleanup": true
+      }
+    },
+    {
+      "id": "route-boundary",
+      "vm_observable": "route-boundary:scalar:simd-not-claimed:native-aot-not-claimed",
+      "native_expected": {
+        "status": "passed",
+        "line": "route-boundary:scalar:simd-not-claimed:native-aot-not-claimed",
+        "scalar": "verified",
+        "simd": "not-measured-no-optimized-route",
+        "native_aot": "not-claimed"
+      }
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-vm-fixture",
+    "missing-native-probe",
+    "corpus-id-drift",
+    "native-case-missing",
+    "native-case-duplicate",
+    "observable-line-drift",
+    "wrong-error-kind-or-path",
+    "reader-event-count-drift",
+    "scalar-route-drift",
+    "simd-claim-without-optimized-route",
+    "native-aot-lowering-claim",
+    "physical-path-in-evidence",
+    "nonzero-live-objects"
+  ],
+  "report": "target/reliability/evidence/stdlib-yaml-conformance.json",
+  "next_blocks": ["STD-YAML-DOC-001"]
+}

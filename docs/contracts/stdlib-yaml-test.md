@@ -48,8 +48,12 @@ evidence, persistent corpus and bounded fuzz harness. It does not claim native
 AOT execution, SIMD equivalence or interoperability beyond the already
 implemented hosted surface. The hosted scalar throughput, tail-latency,
 allocation and adversarial baseline is closed separately by
-`STD-YAML-PERF-001`; conformance and usage documentation remain separate leaves.
-The next block is `STD-YAML-CONF-001`.
+`STD-YAML-PERF-001`; VM/native conformance is now closed separately by
+`STD-YAML-CONF-001`, while usage documentation remains a separate leaf.
+The conformance contract and report are
+[`testing/stdlib-yaml-conformance.json`](../../testing/stdlib-yaml-conformance.json) and
+[`docs/contracts/stdlib-yaml-conformance.md`](./stdlib-yaml-conformance.md).
+The next block is `STD-YAML-DOC-001`.
 Its performance contract is
 [`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json),
 with the promoted report recorded by its runner.

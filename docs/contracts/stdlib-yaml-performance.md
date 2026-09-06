@@ -88,5 +88,5 @@ The runner writes
 workspace by default. The promoted report records 13 workloads, 27 samples each,
 the scalar-fixed-target dispatch, all declared latency/throughput/allocation and
 adversarial counters, and zero live YAML handles at every terminal boundary.
-YAML conformance, usage documentation, native runtime behavior, SIMD and generic
-AOT remain separate frontiers.
+YAML conformance is closed by `STD-YAML-CONF-001`; usage documentation, native
+runtime behavior, SIMD and generic AOT remain separate frontiers.

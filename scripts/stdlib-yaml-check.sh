@@ -149,6 +149,14 @@ jq -e '
   and .performance.samples_per_workload == 27
   and .performance.dispatch_mode == "scalar-only"
   and .performance.required_measurements == ["throughput", "tail-latency", "allocations", "bytes-copied", "depth", "alias-expansion", "adversarial-rejection"]
+  and .conformance.task == "STD-YAML-CONF-001"
+  and .conformance.contract == "testing/stdlib-yaml-conformance.json"
+  and .conformance.document == "docs/contracts/stdlib-yaml-conformance.md"
+  and .conformance.status == "verified"
+  and .conformance.target == "tondo-vm-hosted-and-native-stdlib-process"
+  and .conformance.cases == 6
+  and .conformance.native_aot == "not-claimed"
+  and .conformance.simd == "not-measured-no-optimized-route"
   and ([.test_matrix[].id] | unique | length) == 8
   and all(.test_matrix[]; .required == true and (.observables | length) > 0)
   and (([.corpora[].id] | unique | length) == ([.corpora[].id] | length))
@@ -161,7 +169,7 @@ jq -e '
   and .implementation.host == "verified-hosted-vm-buffered-yaml-bridge"
   and .implementation.native_aot_lowering == "not-claimed"
   and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-CONF-001"]
+  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.yaml contract"
 
 for path in \
@@ -204,5 +212,9 @@ grep -Fq 'stdlib-yaml-performance.md' "$root/docs/contracts/stdlib-yaml.md" \
     || die "YAML owner document does not link the performance contract"
 grep -Fq 'stdlib-yaml-performance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "stdlib spec does not link the YAML performance contract"
+grep -Fq 'stdlib-yaml-conformance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "stdlib spec does not link the YAML conformance contract"
+grep -Fq 'stdlib-yaml-conformance.md' "$root/docs/contracts/stdlib-yaml.md" \
+    || die "YAML owner document does not link the conformance contract"
 
 echo "std.yaml contract: OK (YAML 1.2 core; bounded aliases; typed/dynamic/streaming; no ambient resolution)"
