@@ -3859,7 +3859,12 @@ El contrato machine-readable, la documentación operativa y sus checks negativos
 son [`testing/stdlib-yaml.json`](./testing/stdlib-yaml.json),
 [`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md),
 [`scripts/stdlib-yaml-check.sh`](./scripts/stdlib-yaml-check.sh) y
-[`scripts/stdlib-yaml-test.sh`](./scripts/stdlib-yaml-test.sh). El contrato
+[`scripts/stdlib-yaml-test.sh`](./scripts/stdlib-yaml-test.sh). El contrato de
+fiabilidad es [`testing/stdlib-yaml-test.json`](./testing/stdlib-yaml-test.json),
+con documento [`docs/contracts/stdlib-yaml-test.md`](./docs/contracts/stdlib-yaml-test.md),
+checks [`scripts/stdlib-yaml-test-check.sh`](./scripts/stdlib-yaml-test-check.sh),
+regresiones [`scripts/stdlib-yaml-test-test.sh`](./scripts/stdlib-yaml-test-test.sh)
+y fuzz [`scripts/stdlib-yaml-fuzz.sh`](./scripts/stdlib-yaml-fuzz.sh). El contrato
 queda cerrado como diseño B0. `STD-YAML-IMPL-001` verifica la ruta scalar y el
 bridge VM hosted buffered para parseo/encoding dinámico y tipado, límites,
 errores y ciclo de vida de reader/writer; sus artefactos son
@@ -3869,9 +3874,10 @@ errores y ciclo de vida de reader/writer; sus artefactos son
 la fixture de VM y el informe
 `target/reliability/evidence/stdlib-yaml-implementation.json`. El cierre no
 promociona una API pública, no afirma runtime nativo ni lowering AOT
-(`native_aot_lowering: not-claimed`); corpus ampliado, fuzzing, rendimiento,
-conformance y documentación de uso siguen en sus leaves `STD-YAML-*`, cuyo
-siguiente bloque es `STD-YAML-TEST-001`.
+(`native_aot_lowering: not-claimed`). `STD-YAML-TEST-001` cierra el modelo
+independiente, las regresiones scalar/hosted, los límites y el fuzz acotado;
+rendimiento, conformance y documentación de uso siguen en sus leaves
+`STD-YAML-*`, cuyo siguiente bloque es `STD-YAML-PERF-001`.
 
 ### 14.14 `std.toml`
 

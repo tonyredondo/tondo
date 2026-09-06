@@ -64,6 +64,11 @@ for marker in \
         || { echo "std.yaml tests: missing marker $marker" >&2; exit 1; }
 done
 
+grep -Fq 'stdlib-yaml-test.json' TONDO_STANDARD_LIBRARY_SPEC.md \
+    || { echo "std.yaml tests: missing testing contract link" >&2; exit 1; }
+grep -Fq 'stdlib-yaml-test.md' docs/contracts/stdlib-yaml.md \
+    || { echo "std.yaml tests: missing testing document link" >&2; exit 1; }
+
 jq -e '
   .task == "STD-YAML-001"
   and .wire.yaml_version == "1.2"
@@ -88,8 +93,10 @@ jq -e '
   and .implementation.status == "verified-hosted-vm"
   and .implementation.host == "verified-hosted-vm-buffered-yaml-bridge"
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.required_follow_ups == ["STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-TEST-001"]
+  and .testing_contract == "testing/stdlib-yaml-test.json"
+  and .testing_document == "docs/contracts/stdlib-yaml-test.md"
+  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 echo "std.yaml tests: OK (schema boundary; tags; aliases; limits; streaming; security; promotion)"

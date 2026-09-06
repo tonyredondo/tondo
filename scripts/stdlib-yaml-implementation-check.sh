@@ -20,6 +20,8 @@ jq -e '
   and .owner == "std.yaml"
   and .task == "STD-YAML-001"
   and .status == "contract-locked"
+  and .testing_contract == "testing/stdlib-yaml-test.json"
+  and .testing_document == "docs/contracts/stdlib-yaml-test.md"
   and .target == "tondo-vm-hosted-and-native"
   and .implementation.status == "verified-hosted-vm"
   and .implementation.public_api_promoted == false
@@ -30,12 +32,13 @@ jq -e '
   and .implementation.fixture == {path:"tests/runtime/m11-std-yaml-impl-001.to",stdout:"yaml-ok",exit:0,status:"passed"}
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-yaml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable implementation state"
 
 for path in \
     docs/contracts/stdlib-yaml.md \
+    docs/contracts/stdlib-yaml-test.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md \
     tests/runtime/m11-std-yaml-impl-001.to \
@@ -127,5 +130,9 @@ grep -Fq "[x] **STD-YAML-IMPL-001" "$root/TONDO_IMPLEMENTATION_TRACKER.md" \
     || die "tracker does not record the implementation leaf"
 grep -Fq "STD-YAML-TEST-001" "$root/TONDO_IMPLEMENTATION_TRACKER.md" \
     || die "tracker does not expose the next YAML block"
+grep -Fq "stdlib-yaml-test.json" "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "stdlib spec does not link the YAML testing contract"
+grep -Fq "stdlib-yaml-test.md" "$root/docs/contracts/stdlib-yaml.md" \
+    || die "YAML document does not link the testing contract"
 
 echo "std.yaml implementation: OK (YAML scalar kernel; buffered hosted VM bridge; native AOT explicitly unclaimed)"

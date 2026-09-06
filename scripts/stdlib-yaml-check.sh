@@ -24,6 +24,8 @@ jq -e '
   and .task == "STD-YAML-001"
   and .status == "contract-locked"
   and .contract == "docs/contracts/stdlib-yaml.md"
+  and .testing_contract == "testing/stdlib-yaml-test.json"
+  and .testing_document == "docs/contracts/stdlib-yaml-test.md"
   and .spec == "TONDO_STANDARD_LIBRARY_SPEC.md"
   and .language_spec == "TONDO_LANGUAGE_SPEC.md"
   and .layer == "B7"
@@ -148,12 +150,13 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "verified-hosted-vm-buffered-yaml-bridge"
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.required_follow_ups == ["STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.yaml contract"
 
 for path in \
     docs/contracts/stdlib-yaml.md \
+    docs/contracts/stdlib-yaml-test.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
@@ -183,5 +186,9 @@ done
 
 grep -Fq 'testing/stdlib-yaml.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the YAML registry"
+grep -Fq 'testing/stdlib-yaml-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the YAML testing contract"
+grep -Fq 'stdlib-yaml-test.md' "$root/docs/contracts/stdlib-yaml.md" \
+    || die "YAML owner document does not link the testing contract"
 
 echo "std.yaml contract: OK (YAML 1.2 core; bounded aliases; typed/dynamic/streaming; no ambient resolution)"

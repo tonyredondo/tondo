@@ -16,6 +16,7 @@ pub mod spec_structure;
 pub mod sync_collection_model;
 pub mod sync_model;
 pub mod tracker;
+pub mod yaml_model;
 
 use std::fmt::Write as _;
 use std::fs;

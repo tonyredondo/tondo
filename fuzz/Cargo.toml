@@ -94,6 +94,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "stdlib_yaml"
+path = "fuzz_targets/stdlib_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "diagnostics"
 path = "fuzz_targets/diagnostics.rs"
 test = false

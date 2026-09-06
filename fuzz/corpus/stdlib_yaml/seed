@@ -1,0 +1,8 @@
+---
+title: "Tondo YAML fuzz seed"
+values:
+  - null
+  - true
+  - 0x2a
+  - !!binary SGVsbG8=
+...

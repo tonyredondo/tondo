@@ -2,16 +2,20 @@
 
 **Estado:** contrato `contract-locked` para STD-0.1B, cerrado por
 `STD-YAML-001`. La ruta scalar y el bridge VM hosted de la implementación
-quedan verificados por `STD-YAML-IMPL-001`; la promoción de la API pública y el
-backend nativo permanecen explícitamente fuera de este cierre.
+quedan verificados por `STD-YAML-IMPL-001`; el modelo independiente, las
+regresiones y el fuzz acotado quedan cerrados por `STD-YAML-TEST-001`. La
+promoción de la API pública y el backend nativo permanecen explícitamente fuera
+de este cierre.
 
 `std.yaml` ofrece un lector y escritor YAML 1.2 deliberadamente seguro. No
 intenta implementar todos los dialectos históricos de YAML: fija un subset
 portable, determinista y acotado que sirve para configuración y documentos de
 datos sin ejecutar código, consultar el entorno ni construir grafos sin límite.
 El registro machine-readable es
-[`testing/stdlib-yaml.json`](../../testing/stdlib-yaml.json) y este documento se
-integra desde [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
+[`testing/stdlib-yaml.json`](../../testing/stdlib-yaml.json), el contrato de
+tests es [`testing/stdlib-yaml-test.json`](../../testing/stdlib-yaml-test.json)
+y este documento se integra desde
+[`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
 
 ## Principios del owner
 
@@ -381,14 +385,17 @@ estados, pero no reclama todavía un runtime nativo de streaming ni lowering
 AOT. El registro mantiene `native_aot_lowering: not-claimed` y
 `public_api_promoted: false`.
 
-La fixture ejecutable y el informe reproducible son
+La fixture ejecutable y el informe reproducible de implementación son
 `tests/runtime/m11-std-yaml-impl-001.to` y
 `target/reliability/evidence/stdlib-yaml-implementation.json`, generados por
-los checkers y runner del bloque. Permanecen separados los corpus ampliados,
-fuzzing, mediciones de rendimiento, conformance y guía de uso:
+los checkers y runner del bloque. El contrato de pruebas y su documento son
+[`testing/stdlib-yaml-test.json`](../../testing/stdlib-yaml-test.json) y
+[`docs/contracts/stdlib-yaml-test.md`](./stdlib-yaml-test.md); sus pruebas
+independientes y regresiones hosted cierran el corpus acotado, los límites,
+la fragmentación y el fuzz determinista. Permanecen separados las mediciones
+de rendimiento, conformance y guía de uso:
 
 ```text
-STD-YAML-TEST-001
 STD-YAML-PERF-001
 STD-YAML-CONF-001
 STD-YAML-DOC-001
@@ -403,11 +410,10 @@ anchors cíclicos, documentos ilimitados, comentarios preservados en el árbol,
 locale, environment interpolation, schema discovery, RPC ni una API async o
 `selectable` paralela.
 
-El corpus de tests, fuzzing, rendimiento, conformance y documentación de uso
-quedan pendientes de:
+Las mediciones de rendimiento, conformance y documentación de uso quedan
+pendientes de:
 
 ```text
-STD-YAML-TEST-001
 STD-YAML-PERF-001
 STD-YAML-CONF-001
 STD-YAML-DOC-001

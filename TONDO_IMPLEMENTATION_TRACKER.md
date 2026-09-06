@@ -71,6 +71,7 @@ siendo una capacidad declarada por target.
 - [Contrato de rendimiento de `std.encoding`](./docs/contracts/stdlib-encoding-performance.md)
 - [Contrato de conformance VM/native de `std.encoding`](./docs/contracts/stdlib-encoding-conformance.md)
 - [Contrato de owner de `std.yaml`](./docs/contracts/stdlib-yaml.md)
+- [Contrato de tests de `std.yaml`](./docs/contracts/stdlib-yaml-test.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
@@ -6425,9 +6426,11 @@ publica hasta cerrar el gate final.
   scalar y el bridge VM hosted buffered quedan cerrados por
   `STD-YAML-IMPL-001`, con typed/dynamic codecs, límites, errores y lifecycle
   de reader/writer; la API pública y el lowering AOT nativo siguen sin
-  reclamar. Los corpus ampliados, fuzzing, rendimiento, conformance y
-  documentación de uso quedan pendientes de las leaves `STD-YAML-*`; la
-  instrumentación hosted de `DIAG-RUNTIME-001` ya está cerrada.
+  reclamar. `STD-YAML-TEST-001` cierra el modelo independiente, el corpus
+  acotado, las regresiones de scalar/hosted, los límites y el fuzz determinista;
+  rendimiento, conformance y documentación de uso quedan pendientes de las
+  leaves `STD-YAML-*`; la instrumentación hosted de `DIAG-RUNTIME-001` ya está
+  cerrada.
 
 - [x] **STD-TOML-001 — Especificar `std.toml`.** El contrato
   [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md) y el
@@ -7006,9 +7009,15 @@ estas leaves.
   fixture `tests/runtime/m11-std-yaml-impl-001.to`, los tests directos del
   kernel, compiler host y materialización nominal VM pasan. No se promociona
   una API pública ni se reclama runtime nativo o lowering AOT; el siguiente
-  bloque es `STD-YAML-TEST-001`.
-- [ ] **STD-YAML-TEST-001 — Probar y fuzzear YAML.** Cubrir corpus interoperable,
-  Unicode, anchors/aliases, tags, duplicados, chunks, bombs, nesting y límites.
+  bloque fue `STD-YAML-TEST-001`.
+- [x] **STD-YAML-TEST-001 — Probar y fuzzear YAML.** El contrato
+  [`docs/contracts/stdlib-yaml-test.md`](./docs/contracts/stdlib-yaml-test.md),
+  su registro, el modelo independiente de Core scalar/canonical values,
+  regresiones de stdlib/compiler/VM, corpus persistente y target fuzz acotado
+  cubren documentos, Unicode, anchors/aliases, tags, duplicados, chunks,
+  nesting, límites, terminalidad y casos de seguridad. No se promocionan
+  runtime nativo, AOT ni rendimiento; el siguiente bloque es
+  `STD-YAML-PERF-001`.
 - [ ] **STD-YAML-PERF-001 — Medir YAML.** Fijar throughput, tail, memoria,
   allocations y comportamiento adversario sin optimizar solo documentos planos.
 - [ ] **STD-YAML-CONF-001 — Conformar YAML.** Comparar typed/dynamic/streaming,

@@ -37,11 +37,13 @@ jq '.implementation.required_follow_ups = []' testing/stdlib-yaml.json > "$tmp_d
 expect_failure missing-follow-up env TONDO_STDLIB_YAML_CONTRACT="$tmp_dir/missing-follow-up.json" scripts/stdlib-yaml-implementation-check.sh
 
 jq -e '
-  .implementation.status == "verified-hosted-vm"
+  .testing_contract == "testing/stdlib-yaml-test.json"
+  and .testing_document == "docs/contracts/stdlib-yaml-test.md"
+  and .implementation.status == "verified-hosted-vm"
   and .implementation.public_api_promoted == false
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.required_follow_ups == ["STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-YAML-PERF-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 for marker in \

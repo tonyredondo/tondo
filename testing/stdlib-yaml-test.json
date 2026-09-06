@@ -1,0 +1,113 @@
+{
+  "format": "tondo-stdlib-yaml-testing/1",
+  "owner": "std.yaml",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-YAML-TEST-001",
+  "status": "verified",
+  "contract": "docs/contracts/stdlib-yaml-test.md",
+  "implementation_contract": "testing/stdlib-yaml.json",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-yaml.json",
+  "layer": "B7",
+  "kind": "reliability-facing",
+  "target": "independent-reference-and-hosted-regression-boundary",
+  "limits": {
+    "max_reference_nodes": 128,
+    "max_reference_scalar_bytes": 96,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 512,
+    "model_seed_count": 4096,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/src/yaml_model.rs",
+      "crates/tondo-reliability/tests/yaml_models.rs"
+    ],
+    "laws": [
+      "YAML 1.2 Core null and boolean spellings resolve independently",
+      "decimal, binary, octal and hexadecimal integers preserve signed and unsigned ranges",
+      "finite decimal and scientific floats are accepted while non-finite values are rejected",
+      "YAML 1.1 boolean spellings remain text",
+      "custom tags, aliases, anchors and merge keys are rejected by the scalar boundary",
+      "canonical text quoting is selected without consulting the production parser",
+      "canonical mappings sort UTF-8 keys and reject duplicate keys",
+      "binary values use padded standard Base64",
+      "canonical rendering is idempotent for every bounded generated value",
+      "bounded malformed inputs produce deterministic independent errors",
+      "bounded replays never exceed the input, action, node or scalar budgets",
+      "valid and invalid replay counts remain balanced",
+      "reference values have deterministic depth and node observations",
+      "reader fragments preserve event order across one-byte boundaries",
+      "terminal reader and writer states reject later operations",
+      "the model is panic-free under repeated deterministic replay"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded YAML Core scalar and canonical-value model with deterministic malformed replay",
+    "command": "cargo test -p tondo-reliability --test yaml_models --locked"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/tests/yaml_models.rs",
+      "crates/tondo-stdlib/src/yaml.rs",
+      "crates/tondo-compiler/src/process_host.rs"
+    ],
+    "commands": [
+      "scripts/stdlib-yaml-test-check.sh",
+      "cargo test -p tondo-reliability --test yaml_models --locked",
+      "cargo test -p tondo-stdlib yaml:: --locked",
+      "cargo test -p tondo-compiler process_host::tests::yaml_ --locked",
+      "cargo test -p tondo-vm default_host_and_closed_runtime_helpers_have_explicit_boundaries --locked",
+      "cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_yaml --locked"
+    ],
+    "cases": [
+      "stream-documents-comments-empty-documents-and-delimiters",
+      "core-null-bool-radix-integer-float-and-yaml-11-text",
+      "unicode-quoted-escapes-flow-collections-and-block-scalars",
+      "anchors-aliases-logical-copy-forward-reference-cycles-and-bounds",
+      "core-tags-binary-compatibility-and-security-rejections",
+      "duplicate-keys-non-string-keys-merge-keys-and-invalid-directives",
+      "canonical-ordering-parse-view-validation-and-value-shapes",
+      "one-byte-reader-fragments-and-common-event-decoder",
+      "writer-balance-finish-errors-and-terminal-lifecycle",
+      "typed-codecs-and-serialization-value-conversions",
+      "input-depth-node-scalar-collection-and-document-limits",
+      "deterministic-bounded-model-replay-and-panic-boundary"
+    ],
+    "oracle": "independent model, scalar stdlib tests and hosted regression suites agree on values, canonical bytes, errors and terminal state"
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_yaml",
+    "source": "fuzz/fuzz_targets/stdlib_yaml.rs",
+    "corpus": "fuzz/corpus/stdlib_yaml/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 512,
+    "smoke": {
+      "runs": 128,
+      "seed": 4107,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "oracle": "panic-free deterministic replay, independent canonical bytes, production parse/re-encode stability and explicit bounds",
+    "command": "TONDO_YAML_FUZZ_RUNS=128 scripts/stdlib-yaml-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_yaml fuzz/corpus/stdlib_yaml -- -runs=0 -max_len=4096"
+  },
+  "sanitization": {
+    "status": "bounded-safe-rust-no-unsafe-boundary",
+    "applicable": false,
+    "native_aot": "not-claimed",
+    "reason": "The independent model, scalar stdlib and hosted regression lane use safe Rust; this block does not promote generic native AOT or sanitizer coverage."
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "implementation_pending": [],
+    "next_blocks": ["STD-YAML-PERF-001"],
+    "remaining": []
+  }
+}

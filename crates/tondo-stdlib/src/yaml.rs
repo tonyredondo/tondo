@@ -380,8 +380,13 @@ impl Parser {
             if explicit_start {
                 self.index += 1;
                 self.skip_ignored();
-                if !self.has_significant() {
+                if !self.has_significant() || matches!(self.current_content(), Some("---" | "..."))
+                {
                     documents.push((self.null_node(0)?, HashMap::new()));
+                    if self.current_content() == Some("...") {
+                        self.index += 1;
+                        self.skip_ignored();
+                    }
                     continue;
                 }
             }
@@ -814,7 +819,8 @@ impl Parser {
         for (index, (indent, line)) in collected.iter().enumerate() {
             let start = content_indent.min(*indent);
             let text = line.get(start..).unwrap_or_default();
-            if folded && index > 0 && !text.is_empty() && !output.ends_with('\n') {
+            if folded && index > 0 && !text.is_empty() && !output.ends_with("\n\n") {
+                output.pop();
                 output.push(' ');
             }
             output.push_str(text);
@@ -2619,6 +2625,16 @@ fn scalar_with_spelling(scalar: YamlScalar, _spelling: String) -> YamlScalar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::io::{self, Read};
+
+    fn assert_parse_error(input: &[u8], expected: YamlErrorKind) {
+        assert_eq!(parse(input).unwrap_err().kind, expected);
+    }
+
+    fn options_with(limits: YamlLimits) -> YamlOptions {
+        YamlOptions::create(limits)
+    }
 
     #[test]
     fn core_block_flow_and_quotes_round_trip() {
@@ -2727,5 +2743,688 @@ quoted: 'true'
         );
         let output = decode_static::<Vec<i64>>(&input, YamlOptions::default()).unwrap();
         assert_eq!(output, vec![1, 2]);
+    }
+
+    #[test]
+    fn stream_documents_comments_and_block_structure_are_bounded() {
+        assert_eq!(parse(b"\r\n# only comments\r\n").unwrap(), YamlValue::Null);
+        assert_eq!(
+            parse(b"a:\n").unwrap(),
+            YamlValue::Object(vec![YamlMember {
+                key: "a".into(),
+                value: YamlValue::Null,
+            }])
+        );
+        let value =
+            parse(b"- name: one\n  count: 1\n- name: two\n  count: 2\n-\n  - nested\n  - null\n")
+                .unwrap();
+        assert!(matches!(value, YamlValue::Array(values) if values.len() == 3));
+
+        let documents = parse_all(b"---\nfirst\n...\n---\nsecond\n").unwrap();
+        assert_eq!(documents.len(), 2);
+        assert_eq!(documents[0], YamlValue::Text("first".into()));
+        assert_eq!(documents[1], YamlValue::Text("second".into()));
+        assert_eq!(
+            parse_all(b"---\n---\n").unwrap(),
+            vec![YamlValue::Null, YamlValue::Null]
+        );
+        assert_parse_error(b"%YAML 1.2\nvalue\n", YamlErrorKind::InvalidDirective);
+        assert_parse_error(b"first\nsecond\n", YamlErrorKind::TrailingDocument);
+
+        let limits = YamlLimits {
+            max_documents: 1,
+            ..YamlLimits::default()
+        };
+        assert_eq!(
+            parse_all_with_options(b"---\na\n---\nb\n", options_with(limits))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::DocumentLimit
+        );
+        assert_parse_error(b"\tbad\n", YamlErrorKind::InvalidIndentation);
+        assert_parse_error(b"a:\n    b: 1\n c: 2\n", YamlErrorKind::TrailingDocument);
+
+        let invalid = YamlLimits::create(0, 1, 1, 1, 1, 1, 1, 1, 1);
+        assert_eq!(invalid.unwrap_err().kind, YamlErrorKind::InvalidLimit);
+        let bad_options = options_with(YamlLimits {
+            max_input_bytes: 0,
+            ..YamlLimits::default()
+        });
+        assert_eq!(
+            parse_with_options(b"x", bad_options).unwrap_err().kind,
+            YamlErrorKind::InvalidLimit
+        );
+        let input_limit = options_with(YamlLimits {
+            max_input_bytes: 2,
+            ..YamlLimits::default()
+        });
+        assert_eq!(
+            parse_with_options(b"123", input_limit).unwrap_err().kind,
+            YamlErrorKind::NodeLimit
+        );
+        assert_eq!(
+            parse_with_options(&[0xff], YamlOptions::default())
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::InvalidUtf8
+        );
+    }
+
+    #[test]
+    fn scalar_radix_float_and_quoted_escape_matrix() {
+        let value = parse(
+            b"[null, ~, TRUE, false, 0b101, 0o17, 0x1f, 9223372036854775808, -9223372036854775808, 1.25, 1e2, yes, 1_0]",
+        )
+        .unwrap();
+        let YamlValue::Array(values) = value else {
+            panic!("array")
+        };
+        assert_eq!(values[0], YamlValue::Null);
+        assert_eq!(values[1], YamlValue::Null);
+        assert_eq!(values[2], YamlValue::Bool(true));
+        assert_eq!(values[3], YamlValue::Bool(false));
+        assert_eq!(values[4], YamlValue::Int(5));
+        assert_eq!(values[5], YamlValue::Int(15));
+        assert_eq!(values[6], YamlValue::Int(31));
+        assert_eq!(values[7], YamlValue::UInt(9_223_372_036_854_775_808));
+        assert_eq!(values[8], YamlValue::Int(i64::MIN));
+        assert_eq!(values[9], YamlValue::Float(1.25));
+        assert_eq!(values[10], YamlValue::Float(100.0));
+        assert_eq!(values[11], YamlValue::Text("yes".into()));
+        assert_eq!(values[12], YamlValue::Text("1_0".into()));
+        assert_parse_error(b".NaN\n", YamlErrorKind::NonFiniteNumber);
+        assert_parse_error(b"18446744073709551616\n", YamlErrorKind::NumberOutOfRange);
+        assert_parse_error(b"0xzz\n", YamlErrorKind::NumberOutOfRange);
+
+        let escaped = parse(
+            br##"["\0\a\b\t\n\v\f\r\e\"\\\/ \x41\u0042\U00000043", 'it''s', "# not comment"]"##,
+        )
+        .unwrap();
+        let YamlValue::Array(values) = escaped else {
+            panic!("array")
+        };
+        assert_eq!(
+            values[0],
+            YamlValue::Text("\0\u{7}\u{8}\t\n\u{b}\u{c}\r\u{1b}\"\\/ ABC".into())
+        );
+        assert_eq!(values[1], YamlValue::Text("it's".into()));
+        assert_eq!(values[2], YamlValue::Text("# not comment".into()));
+        assert_parse_error(br#"["\q"]"#, YamlErrorKind::InvalidEscape);
+        assert_parse_error(br#"["\uD800"]"#, YamlErrorKind::InvalidEscape);
+        assert_parse_error(br#"["unterminated]"#, YamlErrorKind::InvalidScalar);
+
+        let flow = parse(br#"[1, true, {key: [2, 3,], empty:}, "a,b"]"#).unwrap();
+        assert!(matches!(flow, YamlValue::Array(values) if values.len() == 4));
+        assert_parse_error(b"[1, 2\n", YamlErrorKind::InvalidDocument);
+        assert_parse_error(b"{a 1}\n", YamlErrorKind::InvalidDocument);
+        assert_parse_error(b"{a: 1, a: 2}\n", YamlErrorKind::DuplicateKey);
+        assert_parse_error(b"{1: value}\n", YamlErrorKind::NonStringKey);
+    }
+
+    #[test]
+    fn tags_anchors_alias_limits_and_block_scalars_follow_the_contract() {
+        assert_eq!(parse(b"!!str 42\n").unwrap(), YamlValue::Text("42".into()));
+        assert_eq!(parse(b"!!int 42\n").unwrap(), YamlValue::Int(42));
+        assert_eq!(parse(b"!!float 2\n").unwrap(), YamlValue::Float(2.0));
+        assert_eq!(
+            parse(b"!!seq [1]\n").unwrap(),
+            YamlValue::Array(vec![YamlValue::Int(1)])
+        );
+        assert_eq!(
+            parse(b"!!map {a: 1}\n").unwrap(),
+            YamlValue::Object(vec![YamlMember {
+                key: "a".into(),
+                value: YamlValue::Int(1),
+            }])
+        );
+        assert_eq!(
+            parse(b"!<tag:yaml.org,2002:bool> true\n").unwrap(),
+            YamlValue::Bool(true)
+        );
+        assert_eq!(
+            parse(b"!!binary SGVsbG8=\n").unwrap(),
+            YamlValue::Bytes(b"Hello".to_vec())
+        );
+        assert_eq!(
+            parse(b"!!binary |-\n  SGVs\n  bG8=\n").unwrap(),
+            YamlValue::Bytes(b"Hello".to_vec())
+        );
+        assert_parse_error(b"!!bool 1\n", YamlErrorKind::TypeMismatch);
+        assert_parse_error(b"!!null 1\n", YamlErrorKind::TypeMismatch);
+        assert_parse_error(b"!!seq 1\n", YamlErrorKind::TypeMismatch);
+        assert_parse_error(b"!!map 1\n", YamlErrorKind::TypeMismatch);
+        assert_parse_error(b"!!binary invalid!\n", YamlErrorKind::InvalidBinary);
+        assert_parse_error(b"!!str !!int 1\n", YamlErrorKind::InvalidTag);
+        assert_parse_error(b"<<: {a: 1}\n", YamlErrorKind::MergeKeyForbidden);
+
+        let aliases = parse(b"a: &x [one, two]\nb: *x\n").unwrap();
+        let YamlValue::Object(members) = aliases else {
+            panic!("mapping")
+        };
+        assert_eq!(members[0].value, members[1].value);
+        assert_parse_error(b"a: &1 value\n", YamlErrorKind::InvalidAnchor);
+        assert_parse_error("a: &é value\n".as_bytes(), YamlErrorKind::InvalidAnchor);
+        assert_parse_error(b"a: &x 1\nb: &x 2\n", YamlErrorKind::InvalidAnchor);
+        assert_parse_error(b"a: &a [*a]\n", YamlErrorKind::AliasCycle);
+
+        let alias_limit = options_with(YamlLimits {
+            max_aliases: 1,
+            ..YamlLimits::default()
+        });
+        assert_eq!(
+            parse_with_options(b"a: &x 1\nb: *x\nc: *x\n", alias_limit)
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::AliasLimit
+        );
+        let anchor_limit = options_with(YamlLimits {
+            max_anchor_name_bytes: 1,
+            ..YamlLimits::default()
+        });
+        assert_eq!(
+            parse_with_options(b"a: &long 1\n", anchor_limit)
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::InvalidAnchor
+        );
+
+        let block = parse(
+            b"literal: |\n  first\n  second\nfolded: >-\n  first\n  second\nkeep: |+\n  line\n\n\n",
+        )
+        .unwrap();
+        let YamlValue::Object(members) = block else {
+            panic!("mapping")
+        };
+        assert_eq!(members[0].value, YamlValue::Text("first\nsecond\n".into()));
+        assert_eq!(members[1].value, YamlValue::Text("first second".into()));
+        assert_eq!(members[2].value, YamlValue::Text("line\n\n\n\n".into()));
+        let scalar_limit = options_with(YamlLimits {
+            max_scalar_bytes: 2,
+            ..YamlLimits::default()
+        });
+        assert_eq!(
+            parse_with_options(b"value: |\n  long\n", scalar_limit)
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::ScalarLimit
+        );
+    }
+
+    #[test]
+    fn parse_view_validate_and_dynamic_encoding_cover_all_value_shapes() {
+        let input = b"message: \"line\\n\"\nvalues: [1, 2]\nbytes: !!binary AQI=\n";
+        let view = parse_view(input, YamlOptions::default()).unwrap();
+        assert_eq!(view.bytes(), input);
+        assert_eq!(view.clone_value().unwrap(), parse(input).unwrap());
+        validate(input, YamlOptions::default()).unwrap();
+
+        let value = YamlValue::Object(vec![
+            YamlMember {
+                key: "z".into(),
+                value: YamlValue::Array(vec![
+                    YamlValue::Null,
+                    YamlValue::Bool(true),
+                    YamlValue::Int(-3),
+                    YamlValue::UInt(u64::MAX),
+                    YamlValue::Float(1.5),
+                    YamlValue::Text("safe".into()),
+                    YamlValue::Bytes(vec![0, 1, 2]),
+                    YamlValue::Array(Vec::new()),
+                    YamlValue::Object(Vec::new()),
+                ]),
+            },
+            YamlMember {
+                key: "a".into(),
+                value: YamlValue::Text("line\n\tquote \" \\".into()),
+            },
+        ]);
+        let encoded = encode(&value, YamlOptions::default()).unwrap();
+        assert_eq!(parse(&encoded).unwrap(), value);
+        assert_eq!(
+            encode_canonical(&value, YamlLimits::default()).unwrap(),
+            b"a: \"line\\n\\tquote \\\" \\\\\"\nz:\n  - null\n  - true\n  - -3\n  - 18446744073709551615\n  - 1.5\n  - safe\n  - !!binary AAEC\n  - []\n  - {}\n"
+        );
+        let duplicate = YamlValue::Object(vec![
+            YamlMember {
+                key: "a".into(),
+                value: YamlValue::Null,
+            },
+            YamlMember {
+                key: "a".into(),
+                value: YamlValue::Null,
+            },
+        ]);
+        assert_eq!(
+            encode(&duplicate, YamlOptions::default()).unwrap_err().kind,
+            YamlErrorKind::DuplicateKey
+        );
+        assert_eq!(
+            encode(&YamlValue::Float(f64::NAN), YamlOptions::default())
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::NonFiniteNumber
+        );
+        assert_eq!(
+            encode(
+                &YamlValue::Text("long".into()),
+                options_with(YamlLimits {
+                    max_input_bytes: 2,
+                    ..YamlLimits::default()
+                }),
+            )
+            .unwrap_err()
+            .kind,
+            YamlErrorKind::NodeLimit
+        );
+        assert_eq!(
+            encode(
+                &YamlValue::Array(vec![YamlValue::Null, YamlValue::Null]),
+                options_with(YamlLimits {
+                    max_collection_entries: 1,
+                    ..YamlLimits::default()
+                }),
+            )
+            .unwrap_err()
+            .kind,
+            YamlErrorKind::CollectionLimit
+        );
+        assert_eq!(
+            encode(
+                &YamlValue::Text("x".into()),
+                options_with(YamlLimits {
+                    max_scalar_bytes: 0,
+                    ..YamlLimits::default()
+                }),
+            )
+            .unwrap_err()
+            .kind,
+            YamlErrorKind::InvalidLimit
+        );
+    }
+
+    #[test]
+    fn reader_writer_events_and_terminal_lifecycle_are_explicit() {
+        struct Chunked {
+            bytes: &'static [u8],
+        }
+
+        impl Read for Chunked {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                if self.bytes.is_empty() {
+                    return Ok(0);
+                }
+                let count = self.bytes.len().min(output.len()).min(1);
+                output[..count].copy_from_slice(&self.bytes[..count]);
+                self.bytes = &self.bytes[count..];
+                Ok(count)
+            }
+        }
+
+        struct Broken;
+
+        impl Read for Broken {
+            fn read(&mut self, _output: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("broken input"))
+            }
+        }
+
+        let mut reader =
+            YamlReader::from_reader(Chunked { bytes: b"a: 1\n" }, YamlOptions::default()).unwrap();
+        assert_eq!(
+            reader
+                .own(YamlEvent::Scalar(YamlScalar::Text("ok".into())))
+                .unwrap(),
+            YamlEvent::Scalar(YamlScalar::Text("ok".into()))
+        );
+        let mut raw_events = Vec::new();
+        while reader.index < reader.events.len() {
+            raw_events.push(reader.next().unwrap().unwrap());
+        }
+        assert!(
+            raw_events
+                .iter()
+                .any(|event| matches!(event, YamlEvent::MappingStart(_)))
+        );
+        reader.finish().unwrap();
+        assert_eq!(reader.next().unwrap_err().kind, YamlErrorKind::Closed);
+        assert_eq!(reader.finish().unwrap_err().kind, YamlErrorKind::Closed);
+        assert!(matches!(
+            YamlReader::from_reader(Broken, YamlOptions::default()),
+            Err(YamlError {
+                kind: YamlErrorKind::Io(_),
+                ..
+            })
+        ));
+
+        let mut decoder = YamlReader::from_bytes(b"[1, true]", YamlOptions::default()).unwrap();
+        assert_eq!(
+            <YamlReader as Decoder<YamlCodec, YamlError>>::peek_event(&mut decoder).unwrap(),
+            Some(Event::StartArray(None))
+        );
+        assert_eq!(
+            <YamlReader as Decoder<YamlCodec, YamlError>>::next(&mut decoder).unwrap(),
+            Some(Event::StartArray(None))
+        );
+        assert_eq!(
+            <YamlReader as Decoder<YamlCodec, YamlError>>::next(&mut decoder).unwrap(),
+            Some(Event::Int(1))
+        );
+        assert_eq!(
+            <YamlReader as Decoder<YamlCodec, YamlError>>::next(&mut decoder).unwrap(),
+            Some(Event::Bool(true))
+        );
+        assert_eq!(
+            <YamlReader as Decoder<YamlCodec, YamlError>>::limits(&decoder).max_container_items,
+            YamlLimits::default().max_collection_entries
+        );
+
+        let own_limit = options_with(YamlLimits {
+            max_scalar_bytes: 1,
+            ..YamlLimits::default()
+        });
+        let mut own_reader = YamlReader::from_values(vec![YamlValue::Null], own_limit).unwrap();
+        assert_eq!(
+            own_reader
+                .own(YamlEvent::Scalar(YamlScalar::Text("too long".into())))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::ScalarLimit
+        );
+        assert_eq!(
+            own_reader.next().unwrap_err().kind,
+            YamlErrorKind::ScalarLimit
+        );
+        assert_eq!(
+            YamlReader::from_values(
+                vec![YamlValue::Null, YamlValue::Null],
+                options_with(YamlLimits {
+                    max_nodes: 1,
+                    max_expanded_nodes: 1,
+                    ..YamlLimits::default()
+                })
+            )
+            .err()
+            .unwrap()
+            .kind,
+            YamlErrorKind::ExpandedNodeLimit
+        );
+        assert_eq!(
+            YamlReader::from_events(
+                vec![YamlEvent::StreamStart; 5],
+                options_with(YamlLimits {
+                    max_nodes: 1,
+                    max_expanded_nodes: 1,
+                    ..YamlLimits::default()
+                })
+            )
+            .err()
+            .unwrap()
+            .kind,
+            YamlErrorKind::InvalidLimit
+        );
+
+        let mut writer = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        for event in [YamlEvent::StreamStart, YamlEvent::DocumentStart] {
+            writer.write(event).unwrap();
+        }
+        writer
+            .write(YamlEvent::MappingStart(Some("ignored".into())))
+            .unwrap();
+        writer.write(YamlEvent::MappingKey).unwrap();
+        writer
+            .write(YamlEvent::Scalar(YamlScalar::Text("items".into())))
+            .unwrap();
+        writer
+            .write(YamlEvent::SequenceStart(Some("ignored".into())))
+            .unwrap();
+        writer.write(YamlEvent::Scalar(YamlScalar::Int(1))).unwrap();
+        writer
+            .write(YamlEvent::Scalar(YamlScalar::Bool(true)))
+            .unwrap();
+        writer.write(YamlEvent::SequenceEnd).unwrap();
+        writer.write(YamlEvent::MappingKey).unwrap();
+        writer
+            .write(YamlEvent::Scalar(YamlScalar::Text("none".into())))
+            .unwrap();
+        writer.write(YamlEvent::Scalar(YamlScalar::Null)).unwrap();
+        writer.write(YamlEvent::MappingEnd).unwrap();
+        writer.write(YamlEvent::DocumentEnd).unwrap();
+        writer.write(YamlEvent::StreamEnd).unwrap();
+        let output = writer.finish().unwrap();
+        assert_eq!(
+            parse(&output).unwrap(),
+            YamlValue::Object(vec![
+                YamlMember {
+                    key: "items".into(),
+                    value: YamlValue::Array(vec![YamlValue::Int(1), YamlValue::Bool(true)]),
+                },
+                YamlMember {
+                    key: "none".into(),
+                    value: YamlValue::Null,
+                },
+            ])
+        );
+        assert_eq!(writer.finish().unwrap_err().kind, YamlErrorKind::Closed);
+        assert_eq!(
+            writer
+                .write(YamlEvent::Scalar(YamlScalar::Null))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::Closed
+        );
+    }
+
+    #[test]
+    fn writer_rejects_invalid_event_sequences_and_protocol_converts_scalars() {
+        let mut empty = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        assert_eq!(
+            empty.finish().unwrap_err().kind,
+            YamlErrorKind::InvalidDocument
+        );
+
+        let mut unbalanced = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        unbalanced.write(YamlEvent::SequenceStart(None)).unwrap();
+        assert_eq!(
+            unbalanced.finish().unwrap_err().kind,
+            YamlErrorKind::UnexpectedEvent
+        );
+        assert_eq!(
+            unbalanced.write(YamlEvent::SequenceEnd).unwrap_err().kind,
+            YamlErrorKind::UnexpectedEvent
+        );
+
+        let mut end = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        assert_eq!(
+            end.write(YamlEvent::SequenceEnd).unwrap_err().kind,
+            YamlErrorKind::UnexpectedEvent
+        );
+        assert_eq!(
+            end.write(YamlEvent::Scalar(YamlScalar::Null))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::UnexpectedEvent
+        );
+
+        let mut key = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        key.write(YamlEvent::MappingStart(None)).unwrap();
+        key.write(YamlEvent::MappingKey).unwrap();
+        assert_eq!(
+            key.write(YamlEvent::Scalar(YamlScalar::Int(1)))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::NonStringKey
+        );
+
+        let mut duplicate = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        duplicate.write(YamlEvent::MappingStart(None)).unwrap();
+        for value in ["a", "a"] {
+            duplicate.write(YamlEvent::MappingKey).unwrap();
+            duplicate
+                .write(YamlEvent::Scalar(YamlScalar::Text(value.into())))
+                .unwrap();
+            if value == "a" && duplicate.stack.first().is_some_and(|frame| matches!(frame, WriterFrame::Mapping { members, .. } if members.is_empty())) {
+                duplicate.write(YamlEvent::Scalar(YamlScalar::Null)).unwrap();
+            } else {
+                assert_eq!(duplicate.write(YamlEvent::Scalar(YamlScalar::Null)).unwrap_err().kind, YamlErrorKind::DuplicateKey);
+                break;
+            }
+        }
+
+        let mut trailing = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        trailing.write(YamlEvent::Scalar(YamlScalar::Null)).unwrap();
+        assert_eq!(
+            trailing
+                .write(YamlEvent::Scalar(YamlScalar::Null))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::TrailingDocument
+        );
+        let mut special = YamlWriter::to_writer(YamlOptions::default()).unwrap();
+        for event in [
+            YamlEvent::Anchor("x".into()),
+            YamlEvent::Alias("x".into()),
+            YamlEvent::Tag(YamlTag::Str),
+        ] {
+            assert_eq!(
+                special.write(event).unwrap_err().kind,
+                YamlErrorKind::UnexpectedEvent
+            );
+            break;
+        }
+
+        let scalars = [
+            YamlScalar::Null,
+            YamlScalar::Bool(true),
+            YamlScalar::Int(-1),
+            YamlScalar::UInt(2),
+            YamlScalar::Float(1.25),
+            YamlScalar::Text("text".into()),
+            YamlScalar::Bytes(vec![1, 2]),
+        ];
+        for scalar in scalars {
+            assert!(yaml_scalar_to_event(scalar).is_ok());
+        }
+        assert_eq!(
+            yaml_scalar_to_event(YamlScalar::Float(f64::INFINITY))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::NonFiniteNumber
+        );
+        for event in [
+            YamlEvent::SequenceStart(None),
+            YamlEvent::SequenceEnd,
+            YamlEvent::MappingStart(None),
+            YamlEvent::MappingKey,
+            YamlEvent::MappingEnd,
+        ] {
+            assert!(yaml_event_to_event(event).is_ok());
+        }
+        for event in [
+            YamlEvent::StreamStart,
+            YamlEvent::DocumentStart,
+            YamlEvent::DocumentEnd,
+            YamlEvent::StreamEnd,
+            YamlEvent::Anchor("x".into()),
+            YamlEvent::Alias("x".into()),
+            YamlEvent::Tag(YamlTag::Str),
+        ] {
+            assert_eq!(
+                yaml_event_to_event(event).unwrap_err().kind,
+                YamlErrorKind::UnexpectedEvent
+            );
+        }
+    }
+
+    #[test]
+    fn typed_codecs_and_serialization_value_conversions_round_trip() {
+        let input = encode_typed(&Some(vec![1_i64, 2_i64]), YamlOptions::default()).unwrap();
+        assert_eq!(
+            decode_typed::<Option<Vec<i64>>>(&input, YamlOptions::default()).unwrap(),
+            Some(vec![1, 2])
+        );
+        let none = encode_typed(&Option::<i64>::None, YamlOptions::default()).unwrap();
+        assert_eq!(
+            decode_typed::<Option<i64>>(&none, YamlOptions::default()).unwrap(),
+            None
+        );
+        assert_eq!(
+            decode_typed::<String>(b"1\n", YamlOptions::default())
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::TypeMismatch
+        );
+        assert_eq!(
+            decode_typed::<i64>(b"---\n1\n---\n2\n", YamlOptions::default())
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::TrailingDocument
+        );
+
+        let mut map = BTreeMap::new();
+        map.insert("a".to_owned(), 1_i64);
+        map.insert("b".to_owned(), 2_i64);
+        let encoded_map = encode_static(&map, YamlOptions::default()).unwrap();
+        assert_eq!(
+            decode_static::<BTreeMap<String, i64>>(&encoded_map, YamlOptions::default()).unwrap(),
+            map
+        );
+        assert_eq!(
+            encode_static(&(), YamlOptions::default()).unwrap(),
+            b"null\n"
+        );
+        assert_eq!(
+            decode_static::<()>(b"null\n", YamlOptions::default()).unwrap(),
+            ()
+        );
+
+        let values = vec![
+            YamlValue::Null,
+            YamlValue::Bool(true),
+            YamlValue::Int(-2),
+            YamlValue::UInt(3),
+            YamlValue::Float(1.5),
+            YamlValue::Text("text".into()),
+            YamlValue::Bytes(vec![4, 5]),
+            YamlValue::Array(vec![YamlValue::Null]),
+            YamlValue::Object(vec![YamlMember {
+                key: "k".into(),
+                value: YamlValue::Bool(false),
+            }]),
+        ];
+        for value in values {
+            let serialized: serialization::Value = value.clone().into();
+            assert_eq!(YamlValue::try_from(serialized).unwrap(), value);
+        }
+        assert_eq!(
+            YamlValue::try_from(serialization::Value::Float32(1.5_f32.to_bits())).unwrap(),
+            YamlValue::Float(1.5)
+        );
+        assert_eq!(
+            YamlValue::try_from(serialization::Value::Float64(2.5_f64.to_bits())).unwrap(),
+            YamlValue::Float(2.5)
+        );
+        assert_eq!(
+            YamlValue::try_from(serialization::Value::Number("0x10".into())).unwrap(),
+            YamlValue::Int(16)
+        );
+        assert_eq!(
+            YamlValue::try_from(serialization::Value::Number("plain".into())).unwrap(),
+            YamlValue::Text("plain".into())
+        );
+        assert_eq!(
+            YamlValue::try_from(serialization::Value::Map(Vec::new()))
+                .unwrap_err()
+                .kind,
+            YamlErrorKind::TypeMismatch
+        );
+        assert_eq!(
+            YamlValue::try_from(serialization::Value::Extension {
+                type_code: 1,
+                payload: vec![]
+            })
+            .unwrap_err()
+            .kind,
+            YamlErrorKind::TypeMismatch
+        );
     }
 }
