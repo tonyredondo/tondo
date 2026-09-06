@@ -314,7 +314,7 @@ fn render_value(
         ReferenceValue::Object(members) => {
             let mut seen = Vec::with_capacity(members.len());
             for (key, _) in members {
-                if seen.iter().any(|candidate: &&String| *candidate == key) {
+                if seen.contains(&key) {
                     return Err(ReferenceError {
                         kind: ReferenceErrorKind::DuplicateKey,
                         offset: 0,

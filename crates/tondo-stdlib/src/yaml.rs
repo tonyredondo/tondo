@@ -3279,17 +3279,16 @@ quoted: 'true'
                 .kind,
             YamlErrorKind::TrailingDocument
         );
-        let mut special = YamlWriter::to_writer(YamlOptions::default()).unwrap();
         for event in [
             YamlEvent::Anchor("x".into()),
             YamlEvent::Alias("x".into()),
             YamlEvent::Tag(YamlTag::Str),
         ] {
+            let mut special = YamlWriter::to_writer(YamlOptions::default()).unwrap();
             assert_eq!(
                 special.write(event).unwrap_err().kind,
                 YamlErrorKind::UnexpectedEvent
             );
-            break;
         }
 
         let scalars = [
