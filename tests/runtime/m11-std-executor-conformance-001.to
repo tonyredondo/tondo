@@ -11,7 +11,8 @@ fn blocking_compute(): Int ! Never {
 }
 
 fn slow_compute(): Int ! time.ClockError suspends {
-    time.sleep(time.Duration.fromNanoseconds(1000000))?
+    // Keep the admission probe alive beyond the host clock poll interval.
+    time.sleep(time.Duration.fromNanoseconds(50000000))?
     42
 }
 
