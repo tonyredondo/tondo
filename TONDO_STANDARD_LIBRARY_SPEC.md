@@ -3876,8 +3876,11 @@ la fixture de VM y el informe
 promociona una API pública, no afirma runtime nativo ni lowering AOT
 (`native_aot_lowering: not-claimed`). `STD-YAML-TEST-001` cierra el modelo
 independiente, las regresiones scalar/hosted, los límites y el fuzz acotado;
-rendimiento, conformance y documentación de uso siguen en sus leaves
-`STD-YAML-*`, cuyo siguiente bloque es `STD-YAML-PERF-001`.
+el contrato de rendimiento hosted es
+[`testing/stdlib-yaml-performance.json`](./testing/stdlib-yaml-performance.json)
+y queda pendiente de su runner reproducible. Rendimiento, conformance y
+documentación de uso siguen en sus leaves `STD-YAML-*`, cuyo siguiente bloque
+es `STD-YAML-PERF-001`.
 
 ### 14.14 `std.toml`
 

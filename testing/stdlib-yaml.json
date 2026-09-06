@@ -207,7 +207,20 @@
     "alias_expansion": "iterative-and-budgeted",
     "streaming_allocation": "bounded-by-chunk-and-limits",
     "claims_before_perf_gate": "forbidden",
-    "required_measurements": ["throughput", "tail-latency", "allocations", "bytes-copied", "depth", "alias-expansion", "adversarial-rejection"]
+    "required_measurements": ["throughput", "tail-latency", "allocations", "bytes-copied", "depth", "alias-expansion", "adversarial-rejection"],
+    "task": "STD-YAML-PERF-001",
+    "contract": "testing/stdlib-yaml-performance.json",
+    "document": "docs/contracts/stdlib-yaml-performance.md",
+    "status": "pending-evidence",
+    "target": "tondo-vm-hosted",
+    "backend": "bytecode-vm",
+    "profile": "test",
+    "workloads": 13,
+    "samples_per_workload": 27,
+    "native_aot": "not-claimed",
+    "dispatch_mode": "scalar-only",
+    "report": "target/reliability/evidence/stdlib-yaml-performance.json",
+    "command": "scripts/stdlib-yaml-performance.sh"
   },
   "test_matrix": [
     {"id":"syntax-and-schema","required":true,"observables":["yaml-1.2-core","block-and-flow","quoted-and-block-scalars","yaml-1.1-spellings-as-text","timestamps-as-text"]},

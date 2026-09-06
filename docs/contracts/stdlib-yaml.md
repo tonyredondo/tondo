@@ -14,7 +14,10 @@ datos sin ejecutar código, consultar el entorno ni construir grafos sin límite
 El registro machine-readable es
 [`testing/stdlib-yaml.json`](../../testing/stdlib-yaml.json), el contrato de
 tests es [`testing/stdlib-yaml-test.json`](../../testing/stdlib-yaml-test.json)
-y este documento se integra desde
+y el contrato de rendimiento hosted es
+[`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json)
+y su documento [`docs/contracts/stdlib-yaml-performance.md`](./stdlib-yaml-performance.md).
+Este documento se integra desde
 [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
 
 ## Principios del owner

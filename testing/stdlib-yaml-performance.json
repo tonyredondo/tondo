@@ -1,0 +1,110 @@
+{
+  "format": "tondo-stdlib-yaml-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-YAML-PERF-001",
+  "owner": "std.yaml",
+  "status": "pending-evidence",
+  "target": "tondo-vm-hosted",
+  "backend": "bytecode-vm",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-compiler/src/process_host.rs",
+    "test": "process_host::tests::yaml_performance_probe",
+    "sha256": "8701c20c9ce2bb6513f15c594af1c85577f94d253048d0bce511513e9f78fb17"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 16,
+    "deterministic_seed": "tondo-stdlib-yaml-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-timed-latency; included-in-allocation-and-memory-counters"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "path",
+    "pid",
+    "timestamp"
+  ],
+  "metrics": [
+    "adversarial_rejection",
+    "allocations",
+    "aliases",
+    "bytes_copied",
+    "depth",
+    "expanded_nodes",
+    "latency",
+    "live_handles",
+    "logical_memory_bytes",
+    "tail_latency",
+    "throughput"
+  ],
+  "workloads": [
+    {"id":"parse-core-small","operation":"materialized-parse","shape":"core","size_class":"small","payload_bytes":74,"chunk_bytes":0,"depth":2,"aliases":0,"expanded_nodes":10,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-nested-medium","operation":"materialized-parse","shape":"nested","size_class":"medium","payload_bytes":220,"chunk_bytes":0,"depth":4,"aliases":0,"expanded_nodes":17,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-alias-expanded","operation":"materialized-parse","shape":"alias","size_class":"medium","payload_bytes":64,"chunk_bytes":0,"depth":4,"aliases":1,"expanded_nodes":11,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-block-scalars","operation":"materialized-parse","shape":"block-scalars","size_class":"medium","payload_bytes":76,"chunk_bytes":0,"depth":2,"aliases":0,"expanded_nodes":3,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-all-documents","operation":"materialized-parse-all","shape":"documents","size_class":"medium","payload_bytes":61,"chunk_bytes":0,"depth":3,"aliases":0,"expanded_nodes":10,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-view-nested","operation":"borrowed-parse-view","shape":"nested","size_class":"medium","payload_bytes":220,"chunk_bytes":0,"depth":4,"aliases":0,"expanded_nodes":17,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"validate-alias-limit","operation":"adversarial-reject","shape":"alias-limit","size_class":"small","payload_bytes":20,"chunk_bytes":0,"depth":2,"aliases":2,"expanded_nodes":0,"expected_error":"AliasLimit","dispatch":"scalar-fixed-target"},
+    {"id":"validate-depth-limit","operation":"adversarial-reject","shape":"depth-limit","size_class":"small","payload_bytes":54,"chunk_bytes":0,"depth":6,"aliases":0,"expanded_nodes":0,"expected_error":"DepthLimit","dispatch":"scalar-fixed-target"},
+    {"id":"validate-syntax-reject","operation":"adversarial-reject","shape":"syntax-reject","size_class":"small","payload_bytes":17,"chunk_bytes":0,"depth":1,"aliases":0,"expanded_nodes":0,"expected_error":"InvalidDocument","dispatch":"scalar-fixed-target"},
+    {"id":"encode-nested-medium","operation":"materialized-encode","shape":"nested","size_class":"medium","payload_bytes":220,"chunk_bytes":0,"depth":4,"aliases":0,"expanded_nodes":17,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"encode-canonical-core","operation":"canonical-encode","shape":"core","size_class":"small","payload_bytes":74,"chunk_bytes":0,"depth":2,"aliases":0,"expanded_nodes":10,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"stream-reader-events","operation":"stream-reader-events","shape":"block-scalars","size_class":"medium","payload_bytes":76,"chunk_bytes":1,"depth":2,"aliases":0,"expanded_nodes":3,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"stream-writer-events","operation":"stream-writer-events","shape":"block-scalars","size_class":"medium","payload_bytes":76,"chunk_bytes":0,"depth":2,"aliases":0,"expanded_nodes":3,"expected_error":null,"dispatch":"scalar-fixed-target"}
+  ],
+  "strategy": {
+    "hosted_vm": "scalar-kernel-host-bridge-baseline",
+    "native_runtime_abi": "not-measured-by-this-hosted-report",
+    "native_aot": "not-claimed",
+    "simd": "not-measured-no-optimized-route",
+    "selection": "hosted-scalar-baseline",
+    "selection_reason": "The only executable YAML route is the scalar kernel through the buffered hosted VM bridge; this campaign measures structured documents, streaming events and bounded rejection without implying native, SIMD or AOT readiness."
+  },
+  "dispatch": {
+    "mode": "scalar-only",
+    "selection": "target-declared-and-workload-size",
+    "selected_route": "scalar",
+    "multiversion": "not-claimed",
+    "size_classes": ["small", "medium"]
+  },
+  "invariants": {
+    "operations": "stable-per-workload-across-all-27-samples",
+    "bytes_copied": "host-input-plus-materialized-value-or-output; event-payload-bytes-counted-once",
+    "allocations": "logical-host-values-including-fixture; allocator-overhead-excluded",
+    "logical_memory": "host-registry-YamlValue-Bytes-and-stream-output; RSS-and-allocator-overhead-excluded",
+    "live_handles": "zero-YamlReader-and-YamlWriter-handles-before-probe-return",
+    "depth": "declared-structural-depth-of-each-bounded-fixture",
+    "aliases": "declared-source-aliases-or-rejection-at-alias-budget",
+    "expanded_nodes": "declared-bounded-materialized-value-nodes; rejected-expansions-report-zero",
+    "adversarial_rejection": "invalid-input-and-limit-workloads-reject-on-every-operation-without-partial-value",
+    "dispatch": "every-sample-reports-scalar-fixed-target",
+    "target_isolation": "reports-never-combine-targets-or-backends",
+    "oracle": "independent-bounded-YAML-model-plus-exact-host-output-and-error-checks"
+  },
+  "oracle": {
+    "kind": "independent-bounded-yaml-model-and-host-invariant-checks",
+    "sources": [
+      "crates/tondo-reliability/src/yaml_model.rs",
+      "crates/tondo-reliability/tests/yaml_models.rs"
+    ]
+  },
+  "report": "target/reliability/evidence/stdlib-yaml-performance.json"
+}

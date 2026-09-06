@@ -17811,6 +17811,817 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct YamlPerformanceWorkload {
+        id: &'static str,
+        operation: &'static str,
+        shape: &'static str,
+        size_class: &'static str,
+        input: &'static [u8],
+        chunk_bytes: usize,
+        expected_error: Option<u32>,
+        depth: u64,
+        aliases: u64,
+        expanded_nodes: u64,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct YamlPerformanceSample {
+        nanos: u64,
+        input_bytes: u64,
+        output_bytes: u64,
+        operations: u64,
+        bytes_copied: u64,
+        allocations: u64,
+        logical_memory_bytes: u64,
+        live_handles: u64,
+        depth: u64,
+        aliases: u64,
+        expanded_nodes: u64,
+        adversarial_rejections: u64,
+        dispatch: &'static str,
+        size_class: &'static str,
+    }
+
+    const YAML_PERF_BATCH: usize = 16;
+    const YAML_PERF_DISPATCH: &str = "scalar-fixed-target";
+
+    const YAML_PERF_CORE: &[u8] =
+        "name: Tondo\nenabled: true\ncount: 42\nitems:\n  - one\n  - [two, \"tres 🚀\"]\n"
+            .as_bytes();
+    const YAML_PERF_NESTED: &[u8] = br#"service:
+  name: tondo
+  retries: 3
+  endpoints:
+    - host: api-a
+      ports: [443, 8443]
+    - host: api-b
+      ports: [443]
+  metadata:
+    region: eu-west
+    features:
+      tracing: true
+      compression: false
+"#;
+    const YAML_PERF_ALIAS: &[u8] =
+        b"base: &item\n  name: tondo\n  values:\n    - 1\n    - 2\ncopy: *item\n";
+    const YAML_PERF_DOCUMENTS: &[u8] =
+        b"---\nname: first\nitems: [1, 2]\n---\nname: second\nitems: [3, 4]\n";
+    const YAML_PERF_BLOCK: &[u8] =
+        b"literal: |\n  first line\n  second line\nfolded: >-\n  first line\n  second line\n";
+    const YAML_PERF_ADVERSARIAL_ALIAS: &[u8] = b"a: &x 1\nb: *x\nc: *x\n";
+    const YAML_PERF_ADVERSARIAL_DEPTH: &[u8] =
+        b"a:\n  b:\n    c:\n      d:\n        e:\n          f: value\n";
+    const YAML_PERF_ADVERSARIAL_SYNTAX: &[u8] = b"a: [unterminated\n";
+
+    fn yaml_performance_workloads() -> [YamlPerformanceWorkload; 13] {
+        [
+            YamlPerformanceWorkload {
+                id: "parse-core-small",
+                operation: "materialized-parse",
+                shape: "core",
+                size_class: "small",
+                input: YAML_PERF_CORE,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 2,
+                aliases: 0,
+                expanded_nodes: 10,
+            },
+            YamlPerformanceWorkload {
+                id: "parse-nested-medium",
+                operation: "materialized-parse",
+                shape: "nested",
+                size_class: "medium",
+                input: YAML_PERF_NESTED,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 4,
+                aliases: 0,
+                expanded_nodes: 17,
+            },
+            YamlPerformanceWorkload {
+                id: "parse-alias-expanded",
+                operation: "materialized-parse",
+                shape: "alias",
+                size_class: "medium",
+                input: YAML_PERF_ALIAS,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 4,
+                aliases: 1,
+                expanded_nodes: 11,
+            },
+            YamlPerformanceWorkload {
+                id: "parse-block-scalars",
+                operation: "materialized-parse",
+                shape: "block-scalars",
+                size_class: "medium",
+                input: YAML_PERF_BLOCK,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 2,
+                aliases: 0,
+                expanded_nodes: 3,
+            },
+            YamlPerformanceWorkload {
+                id: "parse-all-documents",
+                operation: "materialized-parse-all",
+                shape: "documents",
+                size_class: "medium",
+                input: YAML_PERF_DOCUMENTS,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 3,
+                aliases: 0,
+                expanded_nodes: 10,
+            },
+            YamlPerformanceWorkload {
+                id: "parse-view-nested",
+                operation: "borrowed-parse-view",
+                shape: "nested",
+                size_class: "medium",
+                input: YAML_PERF_NESTED,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 4,
+                aliases: 0,
+                expanded_nodes: 17,
+            },
+            YamlPerformanceWorkload {
+                id: "validate-alias-limit",
+                operation: "adversarial-reject",
+                shape: "alias-limit",
+                size_class: "small",
+                input: YAML_PERF_ADVERSARIAL_ALIAS,
+                chunk_bytes: 0,
+                expected_error: Some(11),
+                depth: 2,
+                aliases: 2,
+                expanded_nodes: 0,
+            },
+            YamlPerformanceWorkload {
+                id: "validate-depth-limit",
+                operation: "adversarial-reject",
+                shape: "depth-limit",
+                size_class: "small",
+                input: YAML_PERF_ADVERSARIAL_DEPTH,
+                chunk_bytes: 0,
+                expected_error: Some(18),
+                depth: 6,
+                aliases: 0,
+                expanded_nodes: 0,
+            },
+            YamlPerformanceWorkload {
+                id: "validate-syntax-reject",
+                operation: "adversarial-reject",
+                shape: "syntax-reject",
+                size_class: "small",
+                input: YAML_PERF_ADVERSARIAL_SYNTAX,
+                chunk_bytes: 0,
+                expected_error: Some(3),
+                depth: 1,
+                aliases: 0,
+                expanded_nodes: 0,
+            },
+            YamlPerformanceWorkload {
+                id: "encode-nested-medium",
+                operation: "materialized-encode",
+                shape: "nested",
+                size_class: "medium",
+                input: YAML_PERF_NESTED,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 4,
+                aliases: 0,
+                expanded_nodes: 17,
+            },
+            YamlPerformanceWorkload {
+                id: "encode-canonical-core",
+                operation: "canonical-encode",
+                shape: "core",
+                size_class: "small",
+                input: YAML_PERF_CORE,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 2,
+                aliases: 0,
+                expanded_nodes: 10,
+            },
+            YamlPerformanceWorkload {
+                id: "stream-reader-events",
+                operation: "stream-reader-events",
+                shape: "block-scalars",
+                size_class: "medium",
+                input: YAML_PERF_BLOCK,
+                chunk_bytes: 1,
+                expected_error: None,
+                depth: 2,
+                aliases: 0,
+                expanded_nodes: 3,
+            },
+            YamlPerformanceWorkload {
+                id: "stream-writer-events",
+                operation: "stream-writer-events",
+                shape: "block-scalars",
+                size_class: "medium",
+                input: YAML_PERF_BLOCK,
+                chunk_bytes: 0,
+                expected_error: None,
+                depth: 2,
+                aliases: 0,
+                expanded_nodes: 3,
+            },
+        ]
+    }
+
+    fn yaml_performance_options(workload: YamlPerformanceWorkload) -> yaml::YamlOptions {
+        let mut limits = yaml::YamlLimits::default();
+        match workload.shape {
+            "alias-limit" => limits.max_aliases = 1,
+            "depth-limit" => limits.max_depth = 4,
+            _ => {}
+        }
+        yaml::YamlOptions::create(limits)
+    }
+
+    fn yaml_performance_value_bytes(value: &yaml::YamlValue) -> usize {
+        match value {
+            yaml::YamlValue::Text(text) => text.len(),
+            yaml::YamlValue::Bytes(bytes) => bytes.len(),
+            yaml::YamlValue::Array(values) => values.iter().map(yaml_performance_value_bytes).sum(),
+            yaml::YamlValue::Object(members) => members
+                .iter()
+                .map(|member| member.key.len() + yaml_performance_value_bytes(&member.value))
+                .sum(),
+            _ => 0,
+        }
+    }
+
+    fn yaml_performance_event_bytes(event: &yaml::YamlEvent) -> usize {
+        match event {
+            yaml::YamlEvent::Scalar(yaml::YamlScalar::Text(text)) => text.len(),
+            yaml::YamlEvent::Scalar(yaml::YamlScalar::Bytes(bytes)) => bytes.len(),
+            yaml::YamlEvent::SequenceStart(Some(anchor))
+            | yaml::YamlEvent::MappingStart(Some(anchor))
+            | yaml::YamlEvent::Anchor(anchor)
+            | yaml::YamlEvent::Alias(anchor) => anchor.len(),
+            _ => 0,
+        }
+    }
+
+    fn yaml_performance_logical_bytes(host: &BootstrapHost) -> u64 {
+        fn value_bytes(value: &yaml::YamlValue) -> usize {
+            std::mem::size_of::<yaml::YamlValue>()
+                + match value {
+                    yaml::YamlValue::Text(text) => text.capacity(),
+                    yaml::YamlValue::Bytes(bytes) => bytes.capacity(),
+                    yaml::YamlValue::Array(values) => {
+                        values.capacity() * std::mem::size_of::<yaml::YamlValue>()
+                            + values.iter().map(value_bytes).sum::<usize>()
+                    }
+                    yaml::YamlValue::Object(members) => {
+                        members.capacity() * std::mem::size_of::<yaml::YamlMember>()
+                            + members
+                                .iter()
+                                .map(|member| member.key.capacity() + value_bytes(&member.value))
+                                .sum::<usize>()
+                    }
+                    _ => 0,
+                }
+        }
+        let registry = host.values.len() * std::mem::size_of::<HostValue>();
+        let payload = host
+            .values
+            .values()
+            .map(|value| match value {
+                HostValue::Bytes(bytes) => bytes.capacity(),
+                HostValue::YamlValue(value) => value_bytes(value),
+                _ => 0,
+            })
+            .sum::<usize>();
+        let streams = host
+            .stdout
+            .capacity()
+            .saturating_add(host.stderr.capacity());
+        u64::try_from(registry.saturating_add(payload).saturating_add(streams))
+            .expect("logical YAML state size fits in u64")
+    }
+
+    fn yaml_performance_live_handles(host: &BootstrapHost) -> u64 {
+        u64::try_from(
+            host.values
+                .values()
+                .filter(|value| {
+                    matches!(
+                        value,
+                        HostValue::YamlReader { .. } | HostValue::YamlWriter { .. }
+                    )
+                })
+                .count(),
+        )
+        .expect("YAML handle count fits in u64")
+    }
+
+    fn yaml_performance_take_bytes(host: &mut BootstrapHost, value: RuntimeValue) -> Vec<u8> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Bytes,
+            id,
+        } = value
+        else {
+            panic!("YAML performance result is not a Bytes host value");
+        };
+        match host.values.remove(&id) {
+            Some(HostValue::Bytes(bytes)) => bytes,
+            _ => panic!("YAML performance result Bytes token is stale"),
+        }
+    }
+
+    fn yaml_performance_take_value(
+        host: &mut BootstrapHost,
+        value: RuntimeValue,
+    ) -> yaml::YamlValue {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::YamlValue,
+            id,
+        } = value
+        else {
+            panic!("YAML performance result is not a YamlValue host value");
+        };
+        match host.values.remove(&id) {
+            Some(HostValue::YamlValue(value)) => value,
+            _ => panic!("YAML performance result YamlValue token is stale"),
+        }
+    }
+
+    fn yaml_performance_take_view(host: &mut BootstrapHost, value: RuntimeValue) {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::YamlValueView,
+            id,
+        } = value
+        else {
+            panic!("YAML performance result is not a YamlValueView host value");
+        };
+        assert!(host.values.remove(&id).is_some());
+    }
+
+    fn yaml_performance_error_kind(value: &RuntimeValue) -> Option<u32> {
+        let RuntimeValue::ResultErr(error) = value else {
+            return None;
+        };
+        let RuntimeValue::Record { name, values } = error.as_ref() else {
+            return None;
+        };
+        let Some(RuntimeValue::Variant {
+            name: kind,
+            variant,
+            values,
+        }) = values.first()
+        else {
+            return None;
+        };
+        (name == "YamlError" && kind == "YamlErrorKind" && values.is_empty()).then_some(*variant)
+    }
+
+    fn yaml_performance_fixture_events(input: &[u8]) -> Vec<yaml::YamlEvent> {
+        let mut reader = yaml::YamlReader::from_bytes(input, yaml::YamlOptions::default())
+            .expect("YAML performance fixture must parse");
+        let mut events = Vec::new();
+        while let Some(event) = reader.next().expect("YAML performance fixture events") {
+            events.push(event);
+        }
+        events
+    }
+
+    fn yaml_performance_workload(workload: YamlPerformanceWorkload) -> YamlPerformanceSample {
+        let options = yaml_performance_options(workload);
+        let expected_value = if workload.expected_error.is_none()
+            && matches!(
+                workload.operation,
+                "materialized-parse" | "borrowed-parse-view"
+            ) {
+            Some(yaml::parse_with_options(workload.input, options).expect("YAML value fixture"))
+        } else {
+            None
+        };
+        let fixture_value = if workload.expected_error.is_none()
+            && matches!(
+                workload.operation,
+                "materialized-parse"
+                    | "borrowed-parse-view"
+                    | "materialized-encode"
+                    | "canonical-encode"
+            ) {
+            Some(yaml::parse_with_options(workload.input, options).expect("YAML fixture value"))
+        } else {
+            None
+        };
+        let mut expected_encoded = if workload.expected_error.is_none()
+            && matches!(
+                workload.operation,
+                "materialized-encode" | "canonical-encode"
+            ) {
+            let value = fixture_value.clone().expect("YAML encode fixture");
+            Some(if workload.operation == "canonical-encode" {
+                yaml::encode_canonical(&value, options.limits).expect("canonical YAML fixture")
+            } else {
+                yaml::encode(&value, options).expect("YAML fixture")
+            })
+        } else {
+            None
+        };
+        let expected_events = if matches!(
+            workload.operation,
+            "stream-reader-events" | "stream-writer-events"
+        ) {
+            Some(yaml_performance_fixture_events(workload.input))
+        } else {
+            None
+        };
+        let expected_event_bytes = expected_events.as_ref().map(|events| {
+            events
+                .iter()
+                .map(yaml_performance_event_bytes)
+                .sum::<usize>()
+        });
+
+        let mut host = BootstrapHost::with_stdin(Vec::new());
+        let initial_allocations = host.next_value;
+        let options_token = host.allocate(
+            RuntimeHostValueKind::YamlValue,
+            HostValue::YamlOptions(YamlOptionsInput {
+                limits: YamlLimitsInput {
+                    values: [
+                        options.limits.max_input_bytes as i128,
+                        options.limits.max_documents as i128,
+                        options.limits.max_depth as i128,
+                        options.limits.max_nodes as i128,
+                        options.limits.max_expanded_nodes as i128,
+                        options.limits.max_aliases as i128,
+                        options.limits.max_scalar_bytes as i128,
+                        options.limits.max_collection_entries as i128,
+                        options.limits.max_anchor_name_bytes as i128,
+                    ],
+                },
+            }),
+        );
+        let limits_token = host.allocate(
+            RuntimeHostValueKind::YamlValue,
+            HostValue::YamlLimits(YamlLimitsInput {
+                values: [
+                    options.limits.max_input_bytes as i128,
+                    options.limits.max_documents as i128,
+                    options.limits.max_depth as i128,
+                    options.limits.max_nodes as i128,
+                    options.limits.max_expanded_nodes as i128,
+                    options.limits.max_aliases as i128,
+                    options.limits.max_scalar_bytes as i128,
+                    options.limits.max_collection_entries as i128,
+                    options.limits.max_anchor_name_bytes as i128,
+                ],
+            }),
+        );
+        let input_token = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(workload.input.to_vec()),
+        );
+        let fixture_token = fixture_value.as_ref().map(|value| {
+            host.allocate(
+                RuntimeHostValueKind::YamlValue,
+                HostValue::YamlValue(value.clone()),
+            )
+        });
+        let event_tokens = expected_events.as_ref().map(|events| {
+            events
+                .iter()
+                .cloned()
+                .map(|event| host.runtime_yaml_event(event))
+                .collect::<Vec<_>>()
+        });
+        let mut peak_logical_bytes = yaml_performance_logical_bytes(&host);
+        let started = Instant::now();
+        let mut output_bytes = 0usize;
+        let mut bytes_copied = 0usize;
+        let mut adversarial_rejections = 0usize;
+        match workload.operation {
+            "materialized-parse" => {
+                for _ in 0..YAML_PERF_BATCH {
+                    let result = host
+                        .invoke(
+                            "std.yaml.parse",
+                            &[input_token.clone(), options_token.clone()],
+                        )
+                        .unwrap();
+                    let value = yaml_performance_take_value(&mut host, ok(result));
+                    assert_eq!(value, expected_value.clone().expect("parse value"));
+                    let value_bytes = yaml_performance_value_bytes(&value);
+                    output_bytes = output_bytes.saturating_add(value_bytes);
+                    bytes_copied = bytes_copied
+                        .saturating_add(workload.input.len())
+                        .saturating_add(value_bytes);
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(yaml_performance_logical_bytes(&host));
+                    std::hint::black_box(value);
+                }
+            }
+            "materialized-parse-all" => {
+                let expected = yaml::parse_all_with_options(workload.input, options)
+                    .expect("parse-all fixture");
+                for _ in 0..YAML_PERF_BATCH {
+                    let result = host
+                        .invoke(
+                            "std.yaml.parseAll",
+                            &[input_token.clone(), options_token.clone()],
+                        )
+                        .unwrap();
+                    let RuntimeValue::Array(values) = ok(result) else {
+                        panic!("YAML parseAll result is not an array");
+                    };
+                    let actual = values
+                        .into_iter()
+                        .map(|value| yaml_performance_take_value(&mut host, value))
+                        .collect::<Vec<_>>();
+                    assert_eq!(actual, expected);
+                    let value_bytes = actual
+                        .iter()
+                        .map(yaml_performance_value_bytes)
+                        .sum::<usize>();
+                    output_bytes = output_bytes.saturating_add(value_bytes);
+                    bytes_copied = bytes_copied
+                        .saturating_add(workload.input.len())
+                        .saturating_add(value_bytes);
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(yaml_performance_logical_bytes(&host));
+                    std::hint::black_box(actual);
+                }
+            }
+            "borrowed-parse-view" => {
+                for _ in 0..YAML_PERF_BATCH {
+                    let result = host
+                        .invoke(
+                            "std.yaml.parseView",
+                            &[input_token.clone(), options_token.clone()],
+                        )
+                        .unwrap();
+                    yaml_performance_take_view(&mut host, ok(result));
+                    bytes_copied = bytes_copied.saturating_add(workload.input.len());
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(yaml_performance_logical_bytes(&host));
+                }
+            }
+            "adversarial-reject" => {
+                for _ in 0..YAML_PERF_BATCH {
+                    let result = host
+                        .invoke(
+                            "std.yaml.parse",
+                            &[input_token.clone(), options_token.clone()],
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        yaml_performance_error_kind(&result),
+                        workload.expected_error
+                    );
+                    adversarial_rejections = adversarial_rejections.saturating_add(1);
+                    bytes_copied = bytes_copied.saturating_add(workload.input.len());
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(yaml_performance_logical_bytes(&host));
+                }
+            }
+            "materialized-encode" | "canonical-encode" => {
+                let value = fixture_token.clone().expect("encode fixture token");
+                let method = if workload.operation == "canonical-encode" {
+                    "std.yaml.encodeCanonical"
+                } else {
+                    "std.yaml.encode"
+                };
+                for _ in 0..YAML_PERF_BATCH {
+                    let arguments = if workload.operation == "canonical-encode" {
+                        vec![value.clone(), limits_token.clone()]
+                    } else {
+                        vec![value.clone(), options_token.clone()]
+                    };
+                    let result = host.invoke(method, &arguments).unwrap();
+                    let output = yaml_performance_take_bytes(&mut host, ok(result));
+                    assert_eq!(output, expected_encoded.clone().expect("encoded fixture"));
+                    output_bytes = output_bytes.saturating_add(output.len());
+                    bytes_copied = bytes_copied
+                        .saturating_add(workload.input.len())
+                        .saturating_add(output.len());
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(yaml_performance_logical_bytes(&host));
+                    std::hint::black_box(output);
+                }
+            }
+            "stream-reader-events" => {
+                let expected = expected_events.as_ref().expect("reader events");
+                for _ in 0..YAML_PERF_BATCH {
+                    let reader = ok(host
+                        .invoke(
+                            "std.yaml.YamlReader.fromBytes",
+                            &[input_token.clone(), options_token.clone()],
+                        )
+                        .unwrap());
+                    let mut actual_events = 0usize;
+                    loop {
+                        let result = host
+                            .invoke("std.yaml.YamlReader.next", std::slice::from_ref(&reader))
+                            .unwrap();
+                        match ok(result) {
+                            RuntimeValue::OptionSome(event) => {
+                                actual_events = actual_events.saturating_add(1);
+                                std::hint::black_box(event);
+                            }
+                            RuntimeValue::OptionNone => break,
+                            other => panic!("unexpected YAML reader result: {other:?}"),
+                        }
+                    }
+                    assert_eq!(actual_events, expected.len());
+                    bytes_copied = bytes_copied
+                        .saturating_add(workload.input.len())
+                        .saturating_add(expected_event_bytes.expect("event bytes"));
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(yaml_performance_logical_bytes(&host));
+                    if let RuntimeValue::Host { id, .. } = reader {
+                        host.values.remove(&id);
+                    }
+                }
+            }
+            "stream-writer-events" => {
+                let events = event_tokens.as_ref().expect("writer events");
+                let expected = expected_encoded.get_or_insert_with(|| {
+                    let value = yaml::parse(workload.input).expect("YAML writer fixture");
+                    yaml::encode(&value, options).expect("YAML writer output fixture")
+                });
+                for _ in 0..YAML_PERF_BATCH {
+                    let stdout = ok(host.invoke("std.console.stdout", &[]).unwrap());
+                    let writer = ok(host
+                        .invoke(
+                            "std.yaml.YamlWriter.toWriter",
+                            &[stdout.clone(), options_token.clone()],
+                        )
+                        .unwrap());
+                    for event in events {
+                        let result = host
+                            .invoke(
+                                "std.yaml.YamlWriter.write",
+                                &[writer.clone(), event.clone()],
+                            )
+                            .unwrap();
+                        assert!(matches!(
+                            result,
+                            RuntimeValue::ResultOk(value)
+                                if matches!(value.as_ref(), RuntimeValue::Unit)
+                        ));
+                    }
+                    let result = host
+                        .invoke("std.yaml.YamlWriter.finish", std::slice::from_ref(&writer))
+                        .unwrap();
+                    assert!(matches!(
+                        result,
+                        RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+                    ));
+                    output_bytes = output_bytes.saturating_add(expected.len());
+                    bytes_copied = bytes_copied.saturating_add(expected.len()).saturating_add(
+                        events
+                            .iter()
+                            .map(|event| match event {
+                                RuntimeValue::Variant {
+                                    variant: 3, values, ..
+                                } => values.first().map_or(0, |scalar| match scalar {
+                                    RuntimeValue::Variant {
+                                        variant: 5, values, ..
+                                    } => values.first().map_or(0, |value| match value {
+                                        RuntimeValue::String(text) => text.len(),
+                                        _ => 0,
+                                    }),
+                                    _ => 0,
+                                }),
+                                _ => 0,
+                            })
+                            .sum::<usize>(),
+                    );
+                    peak_logical_bytes =
+                        peak_logical_bytes.max(yaml_performance_logical_bytes(&host));
+                    if let RuntimeValue::Host { id, .. } = writer {
+                        host.values.remove(&id);
+                    }
+                    host.cleanup(&stdout).unwrap();
+                }
+            }
+            other => panic!("unknown YAML performance operation: {other}"),
+        }
+        let nanos = started.elapsed().as_nanos().max(1);
+
+        if workload.operation == "stream-writer-events" {
+            let expected = expected_encoded
+                .as_ref()
+                .expect("writer output fixture")
+                .repeat(YAML_PERF_BATCH);
+            assert_eq!(host.take_stdout(), expected);
+        }
+
+        if let Some(value) = fixture_token {
+            host.values.remove(&match value {
+                RuntimeValue::Host { id, .. } => id,
+                _ => unreachable!("YAML fixture must be a host value"),
+            });
+        }
+        host.values.remove(&match input_token {
+            RuntimeValue::Host { id, .. } => id,
+            _ => unreachable!("YAML performance input must be a host value"),
+        });
+        host.values.remove(&match options_token {
+            RuntimeValue::Host { id, .. } => id,
+            _ => unreachable!("YAML performance options must be a host value"),
+        });
+        host.values.remove(&match limits_token {
+            RuntimeValue::Host { id, .. } => id,
+            _ => unreachable!("YAML performance limits must be a host value"),
+        });
+        if let Some(event_tokens) = event_tokens {
+            for event in event_tokens {
+                if let RuntimeValue::Host { id, .. } = event {
+                    host.values.remove(&id);
+                }
+            }
+        }
+        host.take_stdout();
+        assert_eq!(yaml_performance_live_handles(&host), 0);
+
+        YamlPerformanceSample {
+            nanos: u64::try_from(nanos).expect("YAML performance duration fits in u64"),
+            input_bytes: u64::try_from(workload.input.len())
+                .expect("YAML performance input length fits in u64"),
+            output_bytes: u64::try_from(output_bytes / YAML_PERF_BATCH)
+                .expect("YAML performance output length fits in u64"),
+            operations: YAML_PERF_BATCH as u64,
+            bytes_copied: u64::try_from(bytes_copied)
+                .expect("YAML performance copied bytes fit in u64"),
+            allocations: host.next_value.saturating_sub(initial_allocations),
+            logical_memory_bytes: peak_logical_bytes,
+            live_handles: yaml_performance_live_handles(&host),
+            depth: workload.depth,
+            aliases: workload.aliases,
+            expanded_nodes: workload.expanded_nodes,
+            adversarial_rejections: adversarial_rejections as u64,
+            dispatch: YAML_PERF_DISPATCH,
+            size_class: workload.size_class,
+        }
+    }
+
+    #[test]
+    fn yaml_performance_probe() {
+        let workloads = yaml_performance_workloads();
+        for _ in 0..3 {
+            for workload in workloads {
+                let sample = yaml_performance_workload(workload);
+                assert!(sample.nanos > 0);
+                assert_eq!(sample.operations, YAML_PERF_BATCH as u64);
+                assert!(sample.allocations > 0);
+                assert!(sample.logical_memory_bytes > 0);
+                assert_eq!(sample.live_handles, 0);
+                assert_eq!(sample.dispatch, YAML_PERF_DISPATCH);
+            }
+        }
+        for _ in 0..9 {
+            for workload in workloads {
+                let sample = yaml_performance_workload(workload);
+                assert!(sample.nanos > 0);
+                assert_eq!(sample.operations, YAML_PERF_BATCH as u64);
+                assert!(sample.allocations > 0);
+                assert!(sample.logical_memory_bytes > 0);
+                assert_eq!(sample.live_handles, 0);
+                assert_eq!(sample.dispatch, YAML_PERF_DISPATCH);
+                if workload.expected_error.is_some() {
+                    assert_eq!(sample.adversarial_rejections, YAML_PERF_BATCH as u64);
+                } else {
+                    assert_eq!(sample.adversarial_rejections, 0);
+                }
+                println!(
+                    "TONDO_YAML_PERF\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    workload.id,
+                    workload.operation,
+                    workload.shape,
+                    sample.size_class,
+                    sample.input_bytes,
+                    sample.output_bytes,
+                    workload.chunk_bytes,
+                    sample.dispatch,
+                    sample.nanos,
+                    sample.operations,
+                    sample.bytes_copied,
+                    sample.allocations,
+                    sample.logical_memory_bytes,
+                    sample.live_handles,
+                    sample.depth,
+                    sample.aliases,
+                    sample.expanded_nodes,
+                    sample.adversarial_rejections,
+                );
+            }
+        }
+    }
+
     #[test]
     fn text_owner_builds_scalars_and_rejects_invalid_boundaries_atomically() {
         let mut host = BootstrapHost::default();

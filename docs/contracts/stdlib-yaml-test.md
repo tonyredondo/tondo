@@ -48,3 +48,5 @@ evidence, persistent corpus and bounded fuzz harness. It does not claim native
 AOT execution, SIMD equivalence, throughput, tail latency, allocation or
 interoperability beyond the already implemented hosted surface. Those remain
 separate leaves. The next block is `STD-YAML-PERF-001`.
+Its contract is [`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json);
+the performance evidence remains pending until its runner completes.

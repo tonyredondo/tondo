@@ -139,6 +139,16 @@ jq -e '
   and .performance.alias_expansion == "iterative-and-budgeted"
   and .performance.streaming_allocation == "bounded-by-chunk-and-limits"
   and .performance.claims_before_perf_gate == "forbidden"
+  and .performance.task == "STD-YAML-PERF-001"
+  and .performance.contract == "testing/stdlib-yaml-performance.json"
+  and .performance.document == "docs/contracts/stdlib-yaml-performance.md"
+  and .performance.status == "pending-evidence"
+  and .performance.target == "tondo-vm-hosted"
+  and .performance.native_aot == "not-claimed"
+  and .performance.workloads == 13
+  and .performance.samples_per_workload == 27
+  and .performance.dispatch_mode == "scalar-only"
+  and .performance.required_measurements == ["throughput", "tail-latency", "allocations", "bytes-copied", "depth", "alias-expansion", "adversarial-rejection"]
   and ([.test_matrix[].id] | unique | length) == 8
   and all(.test_matrix[]; .required == true and (.observables | length) > 0)
   and (([.corpora[].id] | unique | length) == ([.corpora[].id] | length))
@@ -190,5 +200,9 @@ grep -Fq 'testing/stdlib-yaml-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" 
     || die "main stdlib spec does not link the YAML testing contract"
 grep -Fq 'stdlib-yaml-test.md' "$root/docs/contracts/stdlib-yaml.md" \
     || die "YAML owner document does not link the testing contract"
+grep -Fq 'stdlib-yaml-performance.md' "$root/docs/contracts/stdlib-yaml.md" \
+    || die "YAML owner document does not link the performance contract"
+grep -Fq 'stdlib-yaml-performance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "stdlib spec does not link the YAML performance contract"
 
 echo "std.yaml contract: OK (YAML 1.2 core; bounded aliases; typed/dynamic/streaming; no ambient resolution)"
