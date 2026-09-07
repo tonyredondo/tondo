@@ -299,7 +299,7 @@
       "status": "passed"
     },
     "evidence_report": "target/reliability/evidence/stdlib-yaml-implementation.json",
-    "required_follow_ups": ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
+    "required_follow_ups": []
   },
   "conformance": {
     "task": "STD-YAML-CONF-001",
@@ -311,6 +311,34 @@
     "native_aot": "not-claimed",
     "simd": "not-measured-no-optimized-route"
   },
+  "documentation": {
+    "task": "STD-YAML-DOC-001",
+    "status": "verified",
+    "document": "docs/contracts/stdlib-yaml.md",
+    "fixture": "tests/runtime/m11-std-yaml-doc-001.to",
+    "command": "scripts/stdlib-yaml-doc-check.sh",
+    "expected_stdout": "yaml-doc-ok",
+    "examples": [
+      "safe-subset-and-policies",
+      "materialized-and-typed",
+      "aliases-and-limits",
+      "streaming-events",
+      "errors-and-security",
+      "costs-and-ownership"
+    ],
+    "sections": [
+      "surface",
+      "safe-subset",
+      "policies",
+      "limits",
+      "errors",
+      "costs",
+      "ownership",
+      "materialized-examples",
+      "streaming-examples",
+      "executable-verification"
+    ]
+  },
   "promotion": {
     "gates": [
       {"id":"design","required":true},
@@ -319,6 +347,7 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-YAML-DOC-001"]
+    "implementation_pending": [],
+    "next_blocks": ["STD-TOML-IMPL-001"]
   }
 }

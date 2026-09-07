@@ -291,6 +291,10 @@ run_step stdlib-yaml-conformance-contract-tests \
     scripts/stdlib-yaml-conformance-test.sh
 run_step stdlib-yaml-conformance \
     scripts/stdlib-yaml-conformance.sh
+run_step stdlib-yaml-documentation-contract \
+    scripts/stdlib-yaml-doc-check.sh
+run_step stdlib-yaml-documentation-contract-tests \
+    scripts/stdlib-yaml-doc-test.sh
 run_step stdlib-toml-contract \
     scripts/stdlib-toml-check.sh
 run_step stdlib-toml-contract-tests \

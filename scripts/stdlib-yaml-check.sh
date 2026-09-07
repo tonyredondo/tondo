@@ -168,8 +168,37 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "verified-hosted-vm-buffered-yaml-bridge"
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
+  and .implementation.required_follow_ups == []
+  and .documentation == {
+    task: "STD-YAML-DOC-001",
+    status: "verified",
+    document: "docs/contracts/stdlib-yaml.md",
+    fixture: "tests/runtime/m11-std-yaml-doc-001.to",
+    command: "scripts/stdlib-yaml-doc-check.sh",
+    expected_stdout: "yaml-doc-ok",
+    examples: [
+      "safe-subset-and-policies",
+      "materialized-and-typed",
+      "aliases-and-limits",
+      "streaming-events",
+      "errors-and-security",
+      "costs-and-ownership"
+    ],
+    sections: [
+      "surface",
+      "safe-subset",
+      "policies",
+      "limits",
+      "errors",
+      "costs",
+      "ownership",
+      "materialized-examples",
+      "streaming-examples",
+      "executable-verification"
+    ]
+  }
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-TOML-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.yaml contract"
 
 for path in \
@@ -216,5 +245,12 @@ grep -Fq 'stdlib-yaml-conformance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "stdlib spec does not link the YAML conformance contract"
 grep -Fq 'stdlib-yaml-conformance.md' "$root/docs/contracts/stdlib-yaml.md" \
     || die "YAML owner document does not link the conformance contract"
+grep -Fq 'stdlib-yaml-doc-check.sh' "$root/docs/contracts/stdlib-yaml.md" \
+    || die "YAML owner document does not link the documentation checker"
+[[ -x "$root/scripts/stdlib-yaml-doc-check.sh" ]] \
+    || die "YAML documentation checker is not executable"
+[[ -x "$root/scripts/stdlib-yaml-doc-test.sh" ]] \
+    || die "YAML documentation contract test is not executable"
+scripts/stdlib-yaml-doc-check.sh >/dev/null
 
 echo "std.yaml contract: OK (YAML 1.2 core; bounded aliases; typed/dynamic/streaming; no ambient resolution)"

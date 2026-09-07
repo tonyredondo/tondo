@@ -164,7 +164,7 @@ por la guía ejecutable de policies, errores, costes y ejemplos. `STD-YAML-PERF-
 queda cerrado por el baseline scalar hosted de 13 workloads, 27 muestras por
 workload y métricas de latencia, tail, throughput, allocations, memoria lógica,
 bytes copiados, profundidad, aliases, expansión, rechazo adversarial y cleanup;
-`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. La siguiente hoja de ese slice es `STD-YAML-DOC-001`. El modelo y
+`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. `STD-YAML-DOC-001` queda cerrado por la guía ejecutable del subset seguro, policies, límites, costes, ownership y ejemplos materializados/streaming; el siguiente bloque de ese slice es `STD-TOML-IMPL-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -7034,16 +7034,30 @@ estas leaves.
   aliases, expansión, rechazo adversarial, dispatch `scalar-fixed-target` y
   cero handles YAML vivos al finalizar. Runtime nativo, SIMD, lowering AOT y
   fast paths optimizados siguen sin reclamar; conformance pasa a hoja verificada
-  por `STD-YAML-CONF-001` y el siguiente bloque es `STD-YAML-DOC-001`.
+  por `STD-YAML-CONF-001`; el siguiente bloque es `STD-TOML-IMPL-001`.
 - [x] **STD-YAML-CONF-001 — Conformar YAML.** El fixture hosted y el probe nativo
   de proceso separado comparan el mismo corpus de seis casos: typed/dynamic,
   interoperabilidad YAML 1.2 Core, streaming con fragmentos de un byte, errores
   con path/offset/línea/columna, límites y lifecycle terminal. El probe reutiliza
   el scalar de `std.yaml`, comprueba cero objetos de la tabla runtime entre casos
-  y no reclama ABI YAML nativo, SIMD ni lowering AOT; el siguiente bloque es
-  `STD-YAML-DOC-001`.
-- [ ] **STD-YAML-DOC-001 — Documentar YAML.** Enumerar el subset seguro,
-  policies, límites, costes y ejemplos ejecutables.
+  y no reclama ABI YAML nativo, SIMD ni lowering AOT; la guía documental queda
+  cerrada por `STD-YAML-DOC-001` y el siguiente bloque es
+  `STD-TOML-IMPL-001`.
+- [x] **STD-YAML-DOC-001 — Documentar YAML.** La guía canónica en
+  [`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md) enumera el
+  subset seguro YAML 1.2 Core, policies explícitas, límites y costes lineales,
+  errores/ownership y las fronteras materializada, `parseView` y reader
+  streaming. La fixture
+  `tests/runtime/m11-std-yaml-doc-001.to` ejecuta seis familias
+  (`safe-subset-and-policies`, `materialized-and-typed`, `aliases-and-limits`,
+  `streaming-events`, `errors-and-security`, `costs-and-ownership`) y termina
+  con `yaml-doc-ok`; `scripts/stdlib-yaml-doc-check.sh` /
+  `scripts/stdlib-yaml-doc-test.sh` verifican sidecars, mutaciones negativas,
+  promoción y provenance. La firma suspendible `YamlWriter.toWriter` queda
+  documentada como `writer-boundary: static-contract-only-until-async-dispatch`
+  porque el dispatcher async hosted aún no la ejecuta; no se reclama runtime
+  nativo público, SIMD ni lowering AOT. El siguiente bloque es
+  `STD-TOML-IMPL-001`.
 
 #### 21.3.8 `std.toml`
 

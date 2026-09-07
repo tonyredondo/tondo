@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "bd6a26f42681a6271b3d86c03dec2195d985c8a8cdd0c569978da628dfbf8417"
+      "sha256": "982ffe52722915973663306443211e316e177c046bfde5c7d56ef467aae9c333"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,15 +34,15 @@
     }
   ],
   "summary": {
-    "logical_tests": 2839,
-    "repetitions": 3151,
-    "physical_sources": 586,
-    "unique_source_hashes": 938,
+    "logical_tests": 2840,
+    "repetitions": 3152,
+    "physical_sources": 587,
+    "unique_source_hashes": 939,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 69,
       "draft-contract": 38,
-      "fixture": 196,
+      "fixture": 197,
       "fuzz-target": 13,
       "rust-test": 1998,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 13,
       "draft-pending": 38,
-      "executable": 2766,
+      "executable": 2767,
       "non-executable": 22
     },
     "by_phase": {
@@ -71,7 +71,7 @@
       "protocol": 70,
       "reliability": 156,
       "resolution": 27,
-      "runtime": 375,
+      "runtime": 376,
       "semantic": 931,
       "testing": 38,
       "tooling": 4
@@ -15693,6 +15693,27 @@
       "sidecars": [
         "tests/runtime/m11-std-yaml-conformance-001.exit",
         "tests/runtime/m11-std-yaml-conformance-001.stdout"
+      ]
+    },
+    {
+      "id": "fixture:runtime/m11-std-yaml-doc-001",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "runtime",
+      "source": "tests/runtime/m11-std-yaml-doc-001.to",
+      "fixture": "runtime/m11-std-yaml-doc-001",
+      "group": "runtime",
+      "requirements": [],
+      "oracle": "exit+stdout+stderr+diagnostics",
+      "repetitions": 1,
+      "source_sha256": "c5edcb93bb35facfb3e13c5f7ce7168ff31c058eb83712464776421d58ab5607",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "tests/runtime/m11-std-yaml-doc-001.exit",
+        "tests/runtime/m11-std-yaml-doc-001.stdout"
       ]
     },
     {

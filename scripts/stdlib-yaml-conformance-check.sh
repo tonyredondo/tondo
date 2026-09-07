@@ -62,7 +62,7 @@ jq -e '
   and (.negative_cases | length == 14)
   and (([.negative_cases[]] | unique | length) == (.negative_cases | length))
   and .report == "target/reliability/evidence/stdlib-yaml-conformance.json"
-  and .next_blocks == ["STD-YAML-DOC-001"]
+  and .next_blocks == ["STD-TOML-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable conformance contract"
 
 for path in \
@@ -135,10 +135,10 @@ jq -e '
   and .conformance.target == "tondo-vm-hosted-and-native-stdlib-process"
   and .conformance.cases == 6
   and .conformance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
+  and .promotion.next_blocks == ["STD-TOML-IMPL-001"]
 ' "$root/testing/stdlib-yaml.json" >/dev/null || die "YAML owner registry does not expose conformance promotion"
 
-jq -e '.promotion.next_blocks == ["STD-YAML-DOC-001"]' \
+jq -e '.promotion.next_blocks == ["STD-TOML-IMPL-001"]' \
     "$root/testing/stdlib-yaml-test.json" >/dev/null \
     || die "YAML test registry has a stale conformance frontier"
 

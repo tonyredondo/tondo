@@ -33,7 +33,7 @@ expect_failure missing-source env TONDO_STDLIB_YAML_CONTRACT="$tmp_dir/missing-s
 jq '.implementation.tests = .implementation.tests[0:10]' testing/stdlib-yaml.json > "$tmp_dir/missing-test.json"
 expect_failure missing-test env TONDO_STDLIB_YAML_CONTRACT="$tmp_dir/missing-test.json" scripts/stdlib-yaml-implementation-check.sh
 
-jq '.implementation.required_follow_ups = []' testing/stdlib-yaml.json > "$tmp_dir/missing-follow-up.json"
+jq '.implementation.required_follow_ups = ["STD-YAML-DOC-001"]' testing/stdlib-yaml.json > "$tmp_dir/missing-follow-up.json"
 expect_failure missing-follow-up env TONDO_STDLIB_YAML_CONTRACT="$tmp_dir/missing-follow-up.json" scripts/stdlib-yaml-implementation-check.sh
 
 jq -e '
@@ -42,8 +42,8 @@ jq -e '
   and .implementation.status == "verified-hosted-vm"
   and .implementation.public_api_promoted == false
   and .implementation.native_aot_lowering == "not-claimed"
-  and .implementation.required_follow_ups == ["STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-YAML-DOC-001"]
+  and .implementation.required_follow_ups == []
+  and .promotion.next_blocks == ["STD-TOML-IMPL-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 for marker in \

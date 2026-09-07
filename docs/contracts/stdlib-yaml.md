@@ -19,8 +19,13 @@ y el contrato de rendimiento hosted es
 y su documento [`docs/contracts/stdlib-yaml-performance.md`](./stdlib-yaml-performance.md).
 La conformance VM/native target-qualified está cerrada por
 [`testing/stdlib-yaml-conformance.json`](../../testing/stdlib-yaml-conformance.json) y
-[`docs/contracts/stdlib-yaml-conformance.md`](./stdlib-yaml-conformance.md); la siguiente hoja es
-`STD-YAML-DOC-001`.
+[`docs/contracts/stdlib-yaml-conformance.md`](./stdlib-yaml-conformance.md). La guía ejecutable de uso queda cerrada por
+`STD-YAML-DOC-001`; su ficha, fixture y runners están en
+[`testing/stdlib-yaml.json`](../../testing/stdlib-yaml.json),
+`tests/runtime/m11-std-yaml-doc-001.to`,
+[`scripts/stdlib-yaml-doc-check.sh`](../../scripts/stdlib-yaml-doc-check.sh) y
+[`scripts/stdlib-yaml-doc-test.sh`](../../scripts/stdlib-yaml-doc-test.sh). El siguiente
+bloque del owner es `STD-TOML-IMPL-001`.
 Este documento se integra desde
 [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
 
@@ -409,11 +414,12 @@ probe nativo de proceso separado comparan el mismo corpus de seis casos, con
 rutas dinámica/tipada, interoperabilidad Core, streaming de un byte, errores con
 path/ubicación, límites y lifecycle. La prueba nativa reutiliza el scalar stdlib;
 no promociona ABI YAML nativo, SIMD ni lowering AOT (`native_aot: not-claimed`).
-La única hoja pendiente es la guía de uso `STD-YAML-DOC-001`:
-
-```text
-STD-YAML-DOC-001
-```
+La guía de uso queda cerrada por `STD-YAML-DOC-001`, con la fixture
+`tests/runtime/m11-std-yaml-doc-001.to`, sus sidecars y los runners
+`scripts/stdlib-yaml-doc-check.sh` / `scripts/stdlib-yaml-doc-test.sh`.
+El cierre documental mantiene explícitas las fronteras de ejecución del
+writer suspendible y no promociona runtime nativo público, SIMD ni lowering
+AOT. El siguiente bloque del owner es `STD-TOML-IMPL-001`.
 
 ## Exclusiones deliberadas
 
@@ -424,8 +430,115 @@ anchors cíclicos, documentos ilimitados, comentarios preservados en el árbol,
 locale, environment interpolation, schema discovery, RPC ni una API async o
 `selectable` paralela.
 
-La documentación de uso queda pendiente de:
+La documentación de uso queda cerrada por `STD-YAML-DOC-001`; la siguiente
+implementación del roadmap es `STD-TOML-IMPL-001`.
 
-```text
-STD-YAML-DOC-001
+## Guía ejecutable de `std.yaml`
+
+`STD-YAML-DOC-001` cierra la guía de uso de este owner sin introducir una
+segunda API. La ficha documental vive en el campo `documentation` de
+[`testing/stdlib-yaml.json`](../../testing/stdlib-yaml.json); la fixture
+[`tests/runtime/m11-std-yaml-doc-001.to`](../../tests/runtime/m11-std-yaml-doc-001.to)
+ejecuta las rutas materializadas y de reader verificadas por la VM hosted y
+termina con `yaml-doc-ok`. Los seis ejemplos de la ficha son decisiones de
+uso observables: `safe-subset-and-policies`, `materialized-and-typed`,
+`aliases-and-limits`, `streaming-events`, `errors-and-security` y
+`costs-and-ownership`.
+
+La API pública conserva la firma suspendible de `YamlWriter.toWriter` y sus
+reglas de lifecycle. Sin embargo, la ruta genérica `tondo-cli run` todavía
+devuelve `unsupported VM host call` para esa llamada porque el dispatcher
+async de `BootstrapHost` aún no registra el writer YAML. La cobertura directa
+de `BootstrapHost::invoke` no convierte esa ruta en ejecución CLI; por eso
+`writer-boundary: static-contract-only-until-async-dispatch` queda declarado
+de forma explícita y esta fixture no lo reclama como ejemplo ejecutable.
+
+### Subset seguro y policies
+
+Usa el subset YAML 1.2 Core fijado por el owner: `true`/`false` son booleanos,
+`yes`/`no` permanecen texto, los tags son solo los ocho tipos Core admitidos y
+no hay includes, lookup ambiental ni ejecución. Selecciona `YamlOptions` una
+sola vez; `defaults` usa límites finitos del target y `YamlOptions.create`
+permite hacerlos visibles en el llamador. No hay autodetección ni una policy
+paralela para YAML 1.1.
+
+```tondo
+let options = yaml.YamlOptions.defaults()
+let source = bytes.Bytes("name: Tondo\nactive: true\nlegacy: yes\n")?
+let value = yaml.parse(source, options)?
+assert(String(yaml.encode(value, options)?)? == "name: Tondo\nactive: true\nlegacy: yes\n")
 ```
+
+### Límites y costes
+
+`YamlLimits` hace explícitos `maxInputBytes`, `maxDocuments`, `maxDepth`,
+`maxNodes`, `YamlLimits.maxExpandedNodes`, `maxAliases`,
+`maxScalarBytes`, `maxCollectionEntries` y `maxAnchorNameBytes`. Todos son
+finitos y se validan antes de publicar un valor. El parser usa frames/worklists
+explícitos: el coste normal es lineal en bytes y nodos observados, mientras que
+cada alias consume presupuesto de alias y de expansión. Un límite produce un
+error atómico (`NodeLimit`, `ExpandedNodeLimit`, `ScalarLimit` o
+`CollectionLimit`) sin árbol parcial.
+
+`encode` y `decode` son collectors de la misma máquina que el reader. Usa
+`encodeCanonical` cuando necesites bytes reproducibles; ordena keys por UTF-8
+y no preserva anchors. `parseView` presta una vista sin copiar y su lifetime
+termina al avanzar el reader o al retornar la operación; `own` o el modelo
+`YamlValue` son las formas de conservar datos.
+
+### Errores y ownership
+
+Cada fallo devuelve `YamlError` con `kind`, offset UTF-8, línea/columna
+1-based y `path` de keys/índices. `AliasCycle`, `InvalidTag`, `InvalidBinary` y
+los límites se rechazan antes de exponer un resultado parcial. Los handles
+`YamlReader` y `YamlWriter` son afines: no son `Copy`, `Share` ni `Clone`,
+pueden enviarse solo cuando satisfacen `Send` y quedan terminales después de
+`finish` o de cualquier error; una operación posterior devuelve
+`YamlErrorKind.Closed`. El input no se retiene como alias mutable.
+
+### Ejemplos materializados
+
+Para payloads pequeños o cuando el consumidor necesita un valor completo,
+usa `parse`/`encode`; para tipos conocidos, `decode[T]`/`encode[T]` aplican el
+protocolo `std.serialization` sin construir un árbol dinámico adicional.
+`encodeCanonical` ofrece una salida estable para firmas o snapshots:
+
+```tondo
+let limits = yaml.YamlLimits.defaults()
+let options = yaml.YamlOptions.create(limits)
+let value = yaml.parse(bytes.Bytes("name: Tondo\ncount: 7\n")?, options)?
+let typed = yaml.decode[Array[Int]](bytes.Bytes("- 7\n- 9\n")?, options)?
+assert(typed == [7, 9])
+assert(String(yaml.encodeCanonical(value, limits)?)? == "count: 7\nname: Tondo\n")
+```
+
+La fixture identifica esta familia como `materialized_typed` y comprueba que
+la salida vuelve a parsear con el mismo schema Core.
+
+### Ejemplos streaming
+
+`parseAll` procesa varios documentos y aplica `maxDocuments`. Para control
+fino, `YamlReader.fromBytes` y `next` exponen los eventos; `none` aparece una
+sola vez tras `StreamEnd` y `finish` cierra el handle. El corte en fragmentos
+no cambia eventos, valores ni errores. La fixture `streaming_events` verifica
+dos documentos y los dieciséis eventos del stream.
+
+Los adaptadores `YamlReader.fromReader` y `YamlWriter.toWriter` siguen siendo
+las únicas entradas que suspenden. El reader tiene contrato ejecutable en esta
+fixture; el writer conserva el contrato estático y la cobertura de host
+directo descrita arriba hasta que exista su registro en el dispatcher async.
+
+### Verificación ejecutable
+
+La guía se comprueba con
+[`scripts/stdlib-yaml-doc-check.sh`](../../scripts/stdlib-yaml-doc-check.sh),
+y sus mutaciones negativas con
+[`scripts/stdlib-yaml-doc-test.sh`](../../scripts/stdlib-yaml-doc-test.sh).
+El checker ejecuta la fixture con
+`cargo run -q -p tondo-cli --locked -- run`, compara exactamente el sidecar
+`yaml-doc-ok` y exige exit `0`. La evidencia de rendimiento y conformance
+permanece separada en
+[`stdlib-yaml-performance.md`](./stdlib-yaml-performance.md) y
+[`stdlib-yaml-conformance.md`](./stdlib-yaml-conformance.md); este cierre no
+promueve runtime nativo, SIMD ni lowering AOT (`native_aot_lowering: not-claimed`,
+`simd: not-measured-no-optimized-route`).

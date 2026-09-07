@@ -53,7 +53,7 @@ allocation and adversarial baseline is closed separately by
 The conformance contract and report are
 [`testing/stdlib-yaml-conformance.json`](../../testing/stdlib-yaml-conformance.json) and
 [`docs/contracts/stdlib-yaml-conformance.md`](./stdlib-yaml-conformance.md).
-The next block is `STD-YAML-DOC-001`.
+The next block is `STD-TOML-IMPL-001`.
 Its performance contract is
 [`testing/stdlib-yaml-performance.json`](../../testing/stdlib-yaml-performance.json),
 with the promoted report recorded by its runner.

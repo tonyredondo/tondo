@@ -1,0 +1,122 @@
+import std.bytes
+import std.console
+import std.yaml
+
+fn safe_subset(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let options = yaml.YamlOptions.defaults()
+    let source = bytes.Bytes("name: Tondo\nactive: true\nlegacy: yes\n")?
+    let value = yaml.parse(source, options)?
+    let encoded = yaml.encode(value, options)?
+    assert(String(encoded)? == "name: Tondo\nactive: true\nlegacy: yes\n")
+    match yaml.parse(bytes.Bytes("value: .inf\n")?, options) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.NonFiniteNumber => ()
+            _ => assert(false)
+        }
+    }
+}
+
+fn materialized_typed(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let limits = yaml.YamlLimits.defaults()
+    let options = yaml.YamlOptions.create(limits)
+    let value = yaml.parse(bytes.Bytes("name: Tondo\ncount: 7\n")?, options)?
+    assert(String(yaml.encode(value, options)?)? == "name: Tondo\ncount: 7\n")
+    let typed = yaml.decode[Array[Int]](bytes.Bytes("- 7\n- 9\n")?, options)?
+    assert(typed == [7, 9])
+    assert(String(yaml.encode[Array[Int]](typed, options)?)? == "- 7\n- 9\n")
+    assert(String(yaml.encodeCanonical(value, limits)?)? == "count: 7\nname: Tondo\n")
+}
+
+fn aliases_and_limits(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let options = yaml.YamlOptions.defaults()
+    let aliased = yaml.parse(bytes.Bytes("base: &items [1, 2]\ncopy: *items\n")?, options)?
+    assert(yaml.encode(aliased, options)?.length() > 0)
+    match yaml.parse(bytes.Bytes("loop: &loop [*loop]\n")?, options) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.AliasCycle => ()
+            _ => assert(false)
+        }
+    }
+    let tiny = yaml.YamlLimits.create(4, 1, 64, 100, 100, 10, 100, 100, 32)?
+    match yaml.parse(bytes.Bytes("a: 1\n")?, yaml.YamlOptions.create(tiny)) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.NodeLimit => ()
+            _ => assert(false)
+        }
+    }
+}
+
+fn streaming_events(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let options = yaml.YamlOptions.defaults()
+    let source = bytes.Bytes("---\na: 1\n---\na: 2\n")?
+    assert(yaml.parseAll(source, options)?.length() == 2)
+    var reader = yaml.YamlReader.fromBytes(source, options)?
+    var events = 0
+    for _ in 0..16 {
+        match reader.next() {
+            ok(value) => match value {
+                some(_) => {
+                    events += 1
+                }
+                none => assert(false)
+            }
+            err(_) => assert(false)
+        }
+    }
+    assert(events == 16)
+    match reader.next() {
+        ok(value) => match value {
+            some(_) => assert(false)
+            none => ()
+        }
+        err(_) => assert(false)
+    }
+    match reader.next() {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.Closed => ()
+            _ => assert(false)
+        }
+    }
+}
+
+fn errors_and_security(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let options = yaml.YamlOptions.defaults()
+    match yaml.parse(bytes.Bytes("!custom value\n")?, options) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.InvalidTag => ()
+            _ => assert(false)
+        }
+    }
+    match yaml.parse(bytes.Bytes("value: !!binary invalid!\n")?, options) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            yaml.YamlErrorKind.InvalidBinary => ()
+            _ => assert(false)
+        }
+    }
+}
+
+fn costs_and_ownership(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
+    let limits = yaml.YamlLimits.defaults()
+    let options = yaml.YamlOptions.create(limits)
+    let input = bytes.Bytes("b: 2\na: 1\n")?
+    let view = yaml.parseView(input, options)?
+    let _ = view
+    let canonical = yaml.encodeCanonical(yaml.parse(input, options)?, limits)?
+    assert(String(canonical)? == "a: 1\nb: 2\n")
+}
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) suspends {
+    safe_subset()?
+    materialized_typed()?
+    aliases_and_limits()?
+    streaming_events()?
+    errors_and_security()?
+    costs_and_ownership()?
+    console.println("yaml-doc-ok")
+}

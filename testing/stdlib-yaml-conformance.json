@@ -138,5 +138,5 @@
     "nonzero-live-objects"
   ],
   "report": "target/reliability/evidence/stdlib-yaml-conformance.json",
-  "next_blocks": ["STD-YAML-DOC-001"]
+  "next_blocks": ["STD-TOML-IMPL-001"]
 }

@@ -3888,8 +3888,23 @@ La conformance VM/native target-qualified está cerrada por
 [`docs/contracts/stdlib-yaml-conformance.md`](./docs/contracts/stdlib-yaml-conformance.md):
 se comparan seis casos en el VM hosted y en un proceso nativo que reutiliza el
 scalar stdlib, sin ABI YAML nativo ni lowering AOT. `native_aot_lowering` sigue
-`not-claimed` y no hay ruta SIMD medida. La única hoja siguiente es
-`STD-YAML-DOC-001`.
+`not-claimed` y no hay ruta SIMD medida.
+
+`STD-YAML-DOC-001` cierra la guía ejecutable de uso en
+[`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md). La ficha
+[`testing/stdlib-yaml.json`](./testing/stdlib-yaml.json), la fixture
+`tests/runtime/m11-std-yaml-doc-001.to` y los runners
+[`scripts/stdlib-yaml-doc-check.sh`](./scripts/stdlib-yaml-doc-check.sh) /
+[`scripts/stdlib-yaml-doc-test.sh`](./scripts/stdlib-yaml-doc-test.sh)
+verifican el subset seguro YAML 1.2 Core, la selección explícita de policies,
+los límites finitos, costes, ownership, errores y ejemplos materializados y
+streaming. La fixture usa únicamente rutas CLI hosted verificadas; la firma
+suspendible `YamlWriter.toWriter` permanece como contrato estático y cobertura
+directa del host hasta que el dispatcher async registre esa operación
+(`writer-boundary: static-contract-only-until-async-dispatch`,
+`native_aot_lowering: not-claimed`,
+`simd: not-measured-no-optimized-route`). El siguiente bloque del owner es
+`STD-TOML-IMPL-001`.
 
 ### 14.14 `std.toml`
 

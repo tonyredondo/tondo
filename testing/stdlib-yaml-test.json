@@ -107,7 +107,7 @@
   "promotion": {
     "model_test_fuzz_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-YAML-DOC-001"],
+    "next_blocks": ["STD-TOML-IMPL-001"],
     "remaining": []
   }
 }
