@@ -305,6 +305,12 @@ run_step stdlib-toml-implementation-contract-tests \
     scripts/stdlib-toml-implementation-test.sh
 run_step stdlib-toml-implementation \
     scripts/stdlib-toml-implementation.sh
+run_step stdlib-toml-testing-contract \
+    scripts/stdlib-toml-test-check.sh
+run_step stdlib-toml-testing-contract-tests \
+    scripts/stdlib-toml-test-test.sh
+run_step stdlib-toml-fuzz \
+    scripts/stdlib-toml-fuzz.sh
 run_step stdlib-cbor-contract \
     scripts/stdlib-cbor-check.sh
 run_step stdlib-cbor-contract-tests \

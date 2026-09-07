@@ -15,6 +15,7 @@ pub mod regression;
 pub mod spec_structure;
 pub mod sync_collection_model;
 pub mod sync_model;
+pub mod toml_model;
 pub mod tracker;
 pub mod yaml_model;
 

@@ -165,7 +165,7 @@ por la guía ejecutable de policies, errores, costes y ejemplos. `STD-YAML-PERF-
 queda cerrado por el baseline scalar hosted de 13 workloads, 27 muestras por
 workload y métricas de latencia, tail, throughput, allocations, memoria lógica,
 bytes copiados, profundidad, aliases, expansión, rechazo adversarial y cleanup;
-`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. `STD-YAML-DOC-001` queda cerrado por la guía ejecutable del subset seguro, policies, límites, costes, ownership y ejemplos materializados/streaming; el siguiente bloque de ese slice es `STD-TOML-TEST-001`. El modelo y
+`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. `STD-YAML-DOC-001` queda cerrado por la guía ejecutable del subset seguro, policies, límites, costes, ownership y ejemplos materializados/streaming; el siguiente bloque de ese slice es `STD-TOML-PERF-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6464,7 +6464,7 @@ publica hasta cerrar el gate final.
   mantiene `verified-stdlib-kernel`, `public_api_promoted: false`,
   `host: not-claimed-until-compiler-toml-abi` y
   `native_aot_lowering: not-claimed`; no se reclama un intrinsic compiler/VM
-  ni lowering AOT. El siguiente bloque es `STD-TOML-TEST-001`.
+  ni lowering AOT. El siguiente bloque es `STD-TOML-PERF-001`.
 
 - [x] **STD-CBOR-001 — Especificar `std.cbor`.** El contrato
   [`docs/contracts/stdlib-cbor.md`](./docs/contracts/stdlib-cbor.md) y el
@@ -7041,7 +7041,7 @@ estas leaves.
   aliases, expansión, rechazo adversarial, dispatch `scalar-fixed-target` y
   cero handles YAML vivos al finalizar. Runtime nativo, SIMD, lowering AOT y
   fast paths optimizados siguen sin reclamar; conformance pasa a hoja verificada
-  por `STD-YAML-CONF-001`; el siguiente bloque es `STD-TOML-TEST-001`.
+  por `STD-YAML-CONF-001`; el siguiente bloque es `STD-TOML-PERF-001`.
 - [x] **STD-YAML-CONF-001 — Conformar YAML.** El fixture hosted y el probe nativo
   de proceso separado comparan el mismo corpus de seis casos: typed/dynamic,
   interoperabilidad YAML 1.2 Core, streaming con fragmentos de un byte, errores
@@ -7049,7 +7049,7 @@ estas leaves.
   el scalar de `std.yaml`, comprueba cero objetos de la tabla runtime entre casos
   y no reclama ABI YAML nativo, SIMD ni lowering AOT; la guía documental queda
   cerrada por `STD-YAML-DOC-001` y el siguiente bloque es
-  `STD-TOML-TEST-001`.
+  `STD-TOML-PERF-001`.
 - [x] **STD-YAML-DOC-001 — Documentar YAML.** La guía canónica en
   [`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md) enumera el
   subset seguro YAML 1.2 Core, policies explícitas, límites y costes lineales,
@@ -7064,7 +7064,7 @@ estas leaves.
   documentada como `writer-boundary: static-contract-only-until-async-dispatch`
   porque el dispatcher async hosted aún no la ejecuta; no se reclama runtime
   nativo público, SIMD ni lowering AOT. El siguiente bloque es
-  `STD-TOML-TEST-001`.
+  `STD-TOML-PERF-001`.
 
 #### 21.3.8 `std.toml`
 
@@ -7078,10 +7078,14 @@ estas leaves.
   `public_api_promoted: false`, `host: not-claimed-until-compiler-toml-abi` y
   `native_aot_lowering: not-claimed`. No se reclama intrinsic compiler/VM,
   runtime hosted, ABI nativo ni lowering AOT; tampoco se interpreta
-  `tondo.toml`. El siguiente bloque es `STD-TOML-TEST-001`.
-- [ ] **STD-TOML-TEST-001 — Probar y fuzzear TOML.** Cubrir corpus oficial,
-  Unicode, números, fechas, tablas, arrays, duplicados, chunks aplicables,
-  límites y spans exactos.
+  `tondo.toml`. El siguiente bloque es `STD-TOML-PERF-001`.
+- [x] **STD-TOML-TEST-001 — Probar y fuzzear TOML.** Cerrado con el modelo
+  canónico independiente, 4.096 seeds deterministas, corpus TOML 1.1.0,
+  Unicode, números, fechas, tablas, arrays, duplicados, chunks de un byte,
+  límites, spans exactos, adapters common y fuzz bounded de 128 runs. El
+  registro y el contrato son testing/stdlib-toml-test.json y
+  docs/contracts/stdlib-toml-test.md; no se promueve compiler/VM/AOT ni
+  rendimiento. El siguiente bloque es STD-TOML-PERF-001.
 - [ ] **STD-TOML-PERF-001 — Medir TOML.** Fijar parsing/encoding, tail, memoria,
   allocations y documentos adversarios.
 - [ ] **STD-TOML-CONF-001 — Conformar TOML.** Verificar interoperabilidad,

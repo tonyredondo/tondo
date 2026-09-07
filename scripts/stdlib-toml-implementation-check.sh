@@ -28,8 +28,8 @@ jq -e '
   and .implementation.fixture == null
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-toml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-TOML-TEST-001", "STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
-  and .promotion.next_blocks == ["STD-TOML-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .promotion.next_blocks == ["STD-TOML-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.toml implementation state"
 
 for path in \

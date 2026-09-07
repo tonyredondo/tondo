@@ -24,6 +24,8 @@ jq -e '
   and .task == "STD-TOML-001"
   and .status == "contract-locked"
   and .contract == "docs/contracts/stdlib-toml.md"
+  and .testing_contract == "testing/stdlib-toml-test.json"
+  and .testing_document == "docs/contracts/stdlib-toml-test.md"
   and .spec == "TONDO_STANDARD_LIBRARY_SPEC.md"
   and .language_spec == "TONDO_LANGUAGE_SPEC.md"
   and .layer == "B8"
@@ -136,12 +138,13 @@ jq -e '
   and .implementation.fixture == null
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-toml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-TOML-TEST-001", "STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
-  and .promotion.next_blocks == ["STD-TOML-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .promotion.next_blocks == ["STD-TOML-PERF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.toml contract"
 
 for path in \
     docs/contracts/stdlib-toml.md \
+    docs/contracts/stdlib-toml-test.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
@@ -171,5 +174,9 @@ done
 
 grep -Fq 'testing/stdlib-toml.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the TOML registry"
+grep -Fq 'testing/stdlib-toml-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the TOML testing contract"
+grep -Fq 'stdlib-toml-test.md' "$root/docs/contracts/stdlib-toml.md" \
+    || die "TOML owner document does not link the testing contract"
 
 echo "std.toml contract: OK (TOML 1.1.0; typed/dynamic/streaming; spans; toolchain boundary)"

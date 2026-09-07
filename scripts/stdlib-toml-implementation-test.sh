@@ -40,8 +40,8 @@ jq -e '
   and .implementation.host == "not-claimed-until-compiler-toml-abi"
   and .implementation.native_aot_lowering == "not-claimed"
   and .implementation.fixture == null
-  and .implementation.required_follow_ups == ["STD-TOML-TEST-001", "STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
-  and .promotion.next_blocks == ["STD-TOML-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .promotion.next_blocks == ["STD-TOML-PERF-001"]
 ' testing/stdlib-toml.json >/dev/null
 
 for marker in \

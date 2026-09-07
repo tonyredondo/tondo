@@ -1,0 +1,121 @@
+{
+  "format": "tondo-stdlib-toml-testing/1",
+  "owner": "std.toml",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-TOML-TEST-001",
+  "status": "verified",
+  "contract": "docs/contracts/stdlib-toml-test.md",
+  "implementation_contract": "testing/stdlib-toml.json",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-toml.json",
+  "layer": "B8",
+  "kind": "reliability-facing",
+  "target": "independent-reference-and-hosted-regression-boundary",
+  "limits": {
+    "max_reference_nodes": 128,
+    "max_reference_scalar_bytes": 96,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 512,
+    "model_seed_count": 4096,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/src/toml_model.rs",
+      "crates/tondo-reliability/tests/toml_models.rs"
+    ],
+    "laws": [
+      "canonical root-table keys sort by UTF-8 bytes",
+      "bounded model values use only lossless signed and unsigned integer ranges",
+      "finite decimal floats always retain a TOML decimal spelling",
+      "basic strings escape control bytes without consulting production code",
+      "heterogeneous arrays and inline tables retain source order",
+      "duplicate model keys are rejected",
+      "invalid model keys and non-finite values are rejected",
+      "canonical rendering is idempotent for every bounded generated value",
+      "model depth and node counts remain below fixed budgets",
+      "the same seed produces the same value and bytes",
+      "the model never reads tondo.toml or host state",
+      "production parse and canonical re-encode preserve model bytes",
+      "empty roots remain valid empty TOML documents",
+      "model replay is panic-free under repeated deterministic execution"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded TOML canonical-value renderer with deterministic replay",
+    "command": "cargo test -p tondo-reliability --test toml_models --locked"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "crates/tondo-reliability/tests/toml_models.rs",
+      "crates/tondo-stdlib/src/toml.rs"
+    ],
+    "commands": [
+      "scripts/stdlib-toml-test-check.sh",
+      "cargo test -p tondo-reliability --test toml_models --locked",
+      "cargo test -p tondo-stdlib toml::tests --locked",
+      "cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_toml --locked",
+      "TONDO_TOML_FUZZ_RUNS=128 scripts/stdlib-toml-fuzz.sh"
+    ],
+    "cases": [
+      "canonical-reference-model-and-hosted-reencode",
+      "deterministic-seed-replay-and-node-budget",
+      "duplicate-invalid-key-nonfinite-and-depth-model-errors",
+      "official-valid-syntax-corpus",
+      "Unicode-and-basic-multiline-literal-strings",
+      "radix-integers-floats-and-lossless-boundaries",
+      "civil-dates-times-offsets-and-precision",
+      "tables-inline-tables-and-arrays-of-tables",
+      "duplicate-definitions-collisions-and-closed-inline-tables",
+      "one-byte-reader-fragments-and-common-events",
+      "input-depth-node-table-array-key-scalar-string-limits",
+      "exact-spans-stable-paths-and-atomic-failure",
+      "writer-balance-and-terminal-lifecycle",
+      "serialization-conversion-and-typed-protocol-boundary"
+    ],
+    "oracle": "independent renderer, hosted TOML kernel and event/limit regression cases agree on canonical bytes, errors, spans, paths and terminal state"
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_toml",
+    "source": "fuzz/fuzz_targets/stdlib_toml.rs",
+    "corpus": "fuzz/corpus/stdlib_toml/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 512,
+    "smoke": {
+      "runs": 128,
+      "seed": 4113,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "oracle": "panic-free deterministic replay, independent canonical bytes, production parse/re-encode stability and explicit bounds",
+    "command": "TONDO_TOML_FUZZ_RUNS=128 scripts/stdlib-toml-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_toml fuzz/corpus/stdlib_toml -- -runs=0 -max_len=4096"
+  },
+  "sanitization": {
+    "status": "bounded-safe-rust-no-unsafe-boundary",
+    "applicable": false,
+    "native_aot": "not-claimed",
+    "reason": "The independent model, hosted scalar tests and fuzz target use safe Rust; this block does not promote compiler, native runtime, AOT or sanitizer equivalence."
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "implementation_pending": [
+      "compiler-toml-abi",
+      "hosted-runtime-registration",
+      "native-aot-lowering"
+    ],
+    "next_blocks": [
+      "STD-TOML-PERF-001"
+    ],
+    "remaining": [
+      "STD-TOML-PERF-001",
+      "STD-TOML-CONF-001",
+      "STD-TOML-DOC-001"
+    ]
+  }
+}

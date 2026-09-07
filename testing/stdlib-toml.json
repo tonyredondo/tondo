@@ -7,6 +7,8 @@
   "task": "STD-TOML-001",
   "status": "contract-locked",
   "contract": "docs/contracts/stdlib-toml.md",
+  "testing_contract": "testing/stdlib-toml-test.json",
+  "testing_document": "docs/contracts/stdlib-toml-test.md",
   "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
   "language_spec": "TONDO_LANGUAGE_SPEC.md",
   "layer": "B8",
@@ -263,7 +265,7 @@
     "fixture": null,
     "evidence_report": "target/reliability/evidence/stdlib-toml-implementation.json",
     "proof": "cargo test -p tondo-stdlib --locked toml::tests and cargo clippy -p tondo-stdlib --locked -- -D warnings pass for the deterministic TOML kernel; compiler/host/AOT promotion remains explicitly unclaimed.",
-    "required_follow_ups": ["STD-TOML-TEST-001", "STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+    "required_follow_ups": ["STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
   },
   "promotion": {
     "gates": [
@@ -273,6 +275,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-TOML-TEST-001"]
+    "next_blocks": ["STD-TOML-PERF-001"]
   }
 }

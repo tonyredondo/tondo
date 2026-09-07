@@ -2085,6 +2085,7 @@ fn own_events_to_value(events: &[TomlEvent]) -> Result<TomlValue, TomlError> {
     let mut current = Vec::<String>::new();
     let mut table_stack = Vec::<Vec<String>>::new();
     let mut builders = Vec::<ValueBuilder>::new();
+    let mut builder_targets = Vec::<Option<Vec<String>>>::new();
     let mut pending = None;
     let mut tables = HashSet::<Vec<String>>::new();
     let mut started = false;
@@ -2148,15 +2149,20 @@ fn own_events_to_value(events: &[TomlEvent]) -> Result<TomlValue, TomlError> {
                 if ended {
                     return Err(TomlError::at_zero(TomlErrorKind::UnexpectedToken));
                 }
+                builder_targets.push(pending.take());
                 builders.push(ValueBuilder::Array(Vec::new()));
             }
             TomlEvent::ArrayEnd => {
                 let Some(ValueBuilder::Array(values)) = builders.pop() else {
                     return Err(TomlError::at_zero(TomlErrorKind::UnexpectedToken));
                 };
+                let Some(target) = builder_targets.pop() else {
+                    return Err(TomlError::at_zero(TomlErrorKind::UnexpectedToken));
+                };
+                let mut target = target;
                 attach_built_value(
                     &mut root,
-                    &mut pending,
+                    &mut target,
                     &mut builders,
                     TomlValue::Array(values),
                 )
@@ -2166,15 +2172,20 @@ fn own_events_to_value(events: &[TomlEvent]) -> Result<TomlValue, TomlError> {
                 if ended {
                     return Err(TomlError::at_zero(TomlErrorKind::UnexpectedToken));
                 }
+                builder_targets.push(pending.take());
                 builders.push(ValueBuilder::Table(Vec::new()));
             }
             TomlEvent::InlineTableEnd => {
                 let Some(ValueBuilder::Table(members)) = builders.pop() else {
                     return Err(TomlError::at_zero(TomlErrorKind::UnexpectedToken));
                 };
+                let Some(target) = builder_targets.pop() else {
+                    return Err(TomlError::at_zero(TomlErrorKind::UnexpectedToken));
+                };
+                let mut target = target;
                 attach_built_value(
                     &mut root,
-                    &mut pending,
+                    &mut target,
                     &mut builders,
                     TomlValue::Table(members),
                 )
@@ -2182,7 +2193,13 @@ fn own_events_to_value(events: &[TomlEvent]) -> Result<TomlValue, TomlError> {
             }
         }
     }
-    if !started || !ended || pending.is_some() || !builders.is_empty() || !table_stack.is_empty() {
+    if !started
+        || !ended
+        || pending.is_some()
+        || !builders.is_empty()
+        || !builder_targets.is_empty()
+        || !table_stack.is_empty()
+    {
         return Err(TomlError::at_zero(TomlErrorKind::UnexpectedToken));
     }
     Ok(root)
@@ -2721,6 +2738,835 @@ sku = "B"
         );
         let error = TomlReader::from_reader(ErrorReader, TomlOptions::default()).unwrap_err();
         assert!(matches!(error.kind, TomlErrorKind::Io(_)));
+    }
+
+    fn assert_kind(input: &[u8], options: TomlOptions, expected: TomlErrorKind) {
+        assert_eq!(parse(input, options).unwrap_err().kind, expected);
+    }
+
+    fn table_member<'a>(value: &'a TomlValue, key: &str) -> &'a TomlValue {
+        let TomlValue::Table(members) = value else {
+            panic!("expected table")
+        };
+        &members
+            .iter()
+            .find(|member| member.key == key)
+            .unwrap_or_else(|| panic!("missing key {key}"))
+            .value
+    }
+
+    #[test]
+    fn syntax_matrix_covers_comments_keys_strings_arrays_and_tables() {
+        let value = parse_default(
+            br#"
+# comments and CRLF are discarded
+bare-key = true
+"quoted key" = "a,b"
+'literal-key' = 'C:\tmp\file'
+escaped = "\b\t\n\f\r\e\"\x41\u0042\U00000043\\"
+multiline = """first
+second \
+  third"""
+literal-multiline = '''first
+second'''
+values = [
+  1,
+  0x10,
+  { "x y" = "z", nested.key = 4, },
+  [true, false,],
+]
+[owner]
+name = "Tom"
+[[owner.workers]]
+name = "one"
+[owner.workers.meta]
+active = true
+[[owner.workers]]
+name = "two"
+"#,
+        )
+        .unwrap();
+        assert_eq!(table_member(&value, "bare-key"), &TomlValue::Bool(true));
+        assert_eq!(
+            table_member(&value, "quoted key"),
+            &TomlValue::Text("a,b".into())
+        );
+        assert_eq!(
+            table_member(&value, "literal-key"),
+            &TomlValue::Text(r"C:\tmp\file".into())
+        );
+        assert_eq!(
+            table_member(&value, "escaped"),
+            &TomlValue::Text("\u{8}\t\n\u{c}\r\u{1b}\"ABC\\".into())
+        );
+        assert_eq!(
+            table_member(&value, "multiline"),
+            &TomlValue::Text("first\nsecond third".into())
+        );
+        assert_eq!(
+            table_member(&value, "literal-multiline"),
+            &TomlValue::Text("first\nsecond".into())
+        );
+        let TomlValue::Array(values) = table_member(&value, "values") else {
+            panic!("values array")
+        };
+        assert_eq!(values[0], TomlValue::Int(1));
+        assert_eq!(values[1], TomlValue::Int(16));
+        assert!(matches!(values[2], TomlValue::Table(_)));
+        assert!(matches!(values[3], TomlValue::Array(_)));
+        let owner = table_member(&value, "owner");
+        let workers = table_member(owner, "workers");
+        assert!(matches!(workers, TomlValue::Array(rows) if rows.len() == 2));
+    }
+
+    #[test]
+    fn numeric_and_temporal_boundaries_preserve_lossless_values() {
+        let value = parse_default(
+            br#"
+decimal = +1_000
+negative = -9223372036854775808
+unsigned = 18446744073709551615
+binary = 0b1010_0011
+octal = 0o7_5
+hex = 0xDEAD_BEEF
+fraction = 0.125
+exponent = -1.5e+2
+positive_inf = +inf
+negative_inf = -inf
+not_a_number = nan
+date = 1979-05-27
+time = 07:32
+precise = 07:32:00.123456789
+local = 1979-05-27T07:32:00.1
+space = 1979-05-27 07:32:00
+utc = 1979-05-27T07:32:00Z
+offset = 1979-05-27T07:32:00-07:30
+"#,
+        )
+        .unwrap();
+        assert_eq!(table_member(&value, "decimal"), &TomlValue::Int(1_000));
+        assert_eq!(table_member(&value, "negative"), &TomlValue::Int(i64::MIN));
+        assert_eq!(table_member(&value, "unsigned"), &TomlValue::UInt(u64::MAX));
+        assert_eq!(table_member(&value, "binary"), &TomlValue::Int(0xa3));
+        assert_eq!(table_member(&value, "octal"), &TomlValue::Int(61));
+        assert_eq!(table_member(&value, "hex"), &TomlValue::Int(0xdead_beef));
+        assert_eq!(table_member(&value, "fraction"), &TomlValue::Float(0.125));
+        assert_eq!(table_member(&value, "exponent"), &TomlValue::Float(-150.0));
+        assert!(matches!(
+            table_member(&value, "positive_inf"),
+            TomlValue::Float(value) if value.is_infinite() && value.is_sign_positive()
+        ));
+        assert!(matches!(
+            table_member(&value, "negative_inf"),
+            TomlValue::Float(value) if value.is_infinite() && value.is_sign_negative()
+        ));
+        assert!(
+            matches!(table_member(&value, "not_a_number"), TomlValue::Float(value) if value.is_nan())
+        );
+        assert!(matches!(
+            table_member(&value, "date"),
+            TomlValue::LocalDate(TomlDate {
+                year: 1979,
+                month: 5,
+                day: 27
+            })
+        ));
+        assert_eq!(
+            table_member(&value, "time"),
+            &TomlValue::LocalTime(TomlTime {
+                hour: 7,
+                minute: 32,
+                second: 0,
+                nanosecond: 0,
+            })
+        );
+        assert!(matches!(
+            table_member(&value, "precise"),
+            TomlValue::LocalTime(TomlTime {
+                nanosecond: 123_456_789,
+                ..
+            })
+        ));
+        assert!(matches!(
+            table_member(&value, "local"),
+            TomlValue::LocalDateTime(_)
+        ));
+        assert!(matches!(
+            table_member(&value, "space"),
+            TomlValue::LocalDateTime(_)
+        ));
+        assert!(matches!(
+            table_member(&value, "utc"),
+            TomlValue::OffsetDateTime(TomlOffsetDateTime {
+                offset_minutes: 0,
+                ..
+            })
+        ));
+        assert!(matches!(
+            table_member(&value, "offset"),
+            TomlValue::OffsetDateTime(TomlOffsetDateTime {
+                offset_minutes: -450,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn malformed_syntax_is_atomic_and_reports_stable_locations() {
+        for (input, expected) in [
+            (b"[broken\n".as_slice(), TomlErrorKind::InvalidTable),
+            (b"[[broken]\n".as_slice(), TomlErrorKind::InvalidTableArray),
+            (b"a =\n".as_slice(), TomlErrorKind::MissingValue),
+            (b"a 1\n".as_slice(), TomlErrorKind::UnexpectedToken),
+            (b"a = 1 trailing\n".as_slice(), TomlErrorKind::InvalidNumber),
+            (b"a = [1\n".as_slice(), TomlErrorKind::InvalidArray),
+            (b"a = { x = 1\n".as_slice(), TomlErrorKind::InvalidArray),
+            (
+                b"a = \"unterminated\n".as_slice(),
+                TomlErrorKind::InvalidString,
+            ),
+            (br#"a = "\q""#.as_slice(), TomlErrorKind::InvalidEscape),
+            (b"a = 01\n".as_slice(), TomlErrorKind::InvalidNumber),
+            (
+                b"a = 18446744073709551616\n".as_slice(),
+                TomlErrorKind::IntegerOutOfRange,
+            ),
+            (
+                b"a = 2020-02-30\n".as_slice(),
+                TomlErrorKind::InvalidDateTime,
+            ),
+            (
+                b"a = 12:00:00.1234567890\n".as_slice(),
+                TomlErrorKind::DateTimePrecision,
+            ),
+            (b"a = [1,,2]\n".as_slice(), TomlErrorKind::InvalidNumber),
+            (b"[a] trailing\n".as_slice(), TomlErrorKind::TrailingInput),
+            (b"[[a]] trailing\n".as_slice(), TomlErrorKind::TrailingInput),
+        ] {
+            assert_kind(input, TomlOptions::default(), expected);
+        }
+        let duplicate = parse_default(b"first = 1\nfirst = 2\n").unwrap_err();
+        assert_eq!(duplicate.kind, TomlErrorKind::DuplicateKey);
+        assert_eq!(duplicate.path, vec![TomlPathSegment::Key("first".into())]);
+        assert_eq!(duplicate.span.start_line, 2);
+        assert_eq!(duplicate.span.start_column, 1);
+        assert!(duplicate.span.end_offset > duplicate.span.start_offset);
+        assert_eq!(
+            parse_default(b"inline = { value = 1, }\ninline.value = 2\n")
+                .unwrap_err()
+                .kind,
+            TomlErrorKind::InlineTableExtension
+        );
+        assert_eq!(
+            parse_default(b"[a]\nx = 1\n[a]\ny = 2\n").unwrap_err().kind,
+            TomlErrorKind::DuplicateTable
+        );
+        assert_eq!(
+            parse_default(b"a = 1\n[a]\n").unwrap_err().kind,
+            TomlErrorKind::TableAfterValue
+        );
+    }
+
+    #[test]
+    fn every_materialisation_limit_rejects_without_partial_values() {
+        let cases = [
+            (
+                b"a = 1\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_input_bytes: 2,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::ResourceLimit,
+            ),
+            (
+                b"a = [1]\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_depth: 1,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::DepthLimit,
+            ),
+            (
+                b"a = 1\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_nodes: 1,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::NodeLimit,
+            ),
+            (
+                b"[a]\nx = 1\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_tables: 1,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::TableLimit,
+            ),
+            (
+                b"a = [1, 2]\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_array_elements: 1,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::ArrayLimit,
+            ),
+            (
+                b"long = 1\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_key_bytes: 2,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::KeyLimit,
+            ),
+            (
+                b"a.b = 1\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_path_segments: 1,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::KeyLimit,
+            ),
+            (
+                b"value = \"long\"\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_string_bytes: 2,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::StringLimit,
+            ),
+            (
+                b"value = \"long\"\n".as_slice(),
+                TomlOptions::create(TomlLimits {
+                    max_scalar_bytes: 2,
+                    ..TomlLimits::default()
+                }),
+                TomlErrorKind::ScalarLimit,
+            ),
+        ];
+        for (input, options, expected) in cases {
+            assert_kind(input, options, expected);
+        }
+        let bad_limits =
+            TomlLimits::create(usize::MAX, 1, usize::MAX, usize::MAX, 1, 1, 1, 1, 1, 1);
+        assert_eq!(bad_limits.unwrap_err().kind, TomlErrorKind::InvalidLimit);
+        assert_kind(
+            b"[[rows]]\nx = 1\n[[rows]]\nx = 2\n",
+            TomlOptions::create(TomlLimits {
+                max_array_table_rows: 1,
+                ..TomlLimits::default()
+            }),
+            TomlErrorKind::TableLimit,
+        );
+        assert_kind(
+            b"a = [1]\n",
+            TomlOptions::create(TomlLimits {
+                max_nodes: 2,
+                ..TomlLimits::default()
+            }),
+            TomlErrorKind::NodeLimit,
+        );
+    }
+
+    #[test]
+    fn dynamic_encoding_and_validation_cover_all_value_shapes() {
+        let value = TomlValue::Table(vec![
+            TomlMember {
+                key: "z".into(),
+                value: TomlValue::Array(vec![
+                    TomlValue::Bool(true),
+                    TomlValue::Int(-2),
+                    TomlValue::UInt(u64::MAX),
+                    TomlValue::Float(1.5),
+                    TomlValue::Float(f64::INFINITY),
+                    TomlValue::Float(f64::NAN),
+                    TomlValue::Text("line\n\tquote \" \\".into()),
+                    TomlValue::LocalTime(TomlTime {
+                        hour: 7,
+                        minute: 32,
+                        second: 1,
+                        nanosecond: 12_300_000,
+                    }),
+                    TomlValue::Array(Vec::new()),
+                    TomlValue::Table(vec![TomlMember {
+                        key: "quoted key".into(),
+                        value: TomlValue::Text("inline".into()),
+                    }]),
+                ]),
+            },
+            TomlMember {
+                key: "nested".into(),
+                value: TomlValue::Table(vec![TomlMember {
+                    key: "empty".into(),
+                    value: TomlValue::Table(Vec::new()),
+                }]),
+            },
+            TomlMember {
+                key: "rows".into(),
+                value: TomlValue::Array(vec![
+                    TomlValue::Table(vec![TomlMember {
+                        key: "id".into(),
+                        value: TomlValue::Int(1),
+                    }]),
+                    TomlValue::Table(vec![TomlMember {
+                        key: "id".into(),
+                        value: TomlValue::Int(2),
+                    }]),
+                ]),
+            },
+        ]);
+        let insertion = encode(&value, TomlOptions::default()).unwrap();
+        let canonical = encode_canonical(&value, TomlLimits::default()).unwrap();
+        assert_eq!(
+            encode(&parse_default(&insertion).unwrap(), TomlOptions::default()).unwrap(),
+            insertion
+        );
+        assert_eq!(
+            encode_canonical(&parse_default(&canonical).unwrap(), TomlLimits::default()).unwrap(),
+            canonical
+        );
+        let canonical_text = String::from_utf8(canonical).unwrap();
+        assert!(canonical_text.contains("nan"));
+        assert!(canonical_text.contains("inf"));
+        assert!(canonical_text.contains("[[rows]]"));
+        assert!(canonical_text.contains("\"quoted key\""));
+        assert_eq!(
+            encode(&TomlValue::Int(1), TomlOptions::default())
+                .unwrap_err()
+                .kind,
+            TomlErrorKind::TypeMismatch
+        );
+        assert_eq!(
+            encode(
+                &TomlValue::Table(vec![TomlMember {
+                    key: "null".into(),
+                    value: TomlValue::Null,
+                }]),
+                TomlOptions::default()
+            )
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::TypeMismatch
+        );
+        let duplicate = TomlValue::Table(vec![
+            TomlMember {
+                key: "a".into(),
+                value: TomlValue::Int(1),
+            },
+            TomlMember {
+                key: "a".into(),
+                value: TomlValue::Int(2),
+            },
+        ]);
+        assert_eq!(
+            encode(&duplicate, TomlOptions::default()).unwrap_err().kind,
+            TomlErrorKind::DuplicateKey
+        );
+        assert_eq!(
+            encode(
+                &TomlValue::Table(vec![TomlMember {
+                    key: "x".into(),
+                    value: TomlValue::Text("long".into()),
+                }]),
+                TomlOptions::create(TomlLimits {
+                    max_string_bytes: 2,
+                    ..TomlLimits::default()
+                })
+            )
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::StringLimit
+        );
+        assert_eq!(
+            encode(
+                &TomlValue::Table(vec![TomlMember {
+                    key: "x".into(),
+                    value: TomlValue::Table(Vec::new()),
+                }]),
+                TomlOptions::create(TomlLimits {
+                    max_depth: 1,
+                    ..TomlLimits::default()
+                })
+            )
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::DepthLimit
+        );
+    }
+
+    #[test]
+    fn own_and_common_event_protocols_round_trip_and_reject_malformed_streams() {
+        let value = TomlValue::Table(vec![
+            TomlMember {
+                key: "flag".into(),
+                value: TomlValue::Bool(true),
+            },
+            TomlMember {
+                key: "array".into(),
+                value: TomlValue::Array(vec![
+                    TomlValue::Int(1),
+                    TomlValue::Table(vec![TomlMember {
+                        key: "name".into(),
+                        value: TomlValue::Text("row".into()),
+                    }]),
+                ]),
+            },
+            TomlMember {
+                key: "rows".into(),
+                value: TomlValue::Array(vec![TomlValue::Table(vec![TomlMember {
+                    key: "id".into(),
+                    value: TomlValue::Int(1),
+                }])]),
+            },
+            TomlMember {
+                key: "when".into(),
+                value: TomlValue::OffsetDateTime(TomlOffsetDateTime {
+                    local: TomlDateTime {
+                        date: TomlDate {
+                            year: 2026,
+                            month: 9,
+                            day: 7,
+                        },
+                        time: TomlTime {
+                            hour: 12,
+                            minute: 0,
+                            second: 1,
+                            nanosecond: 0,
+                        },
+                    },
+                    offset_minutes: 60,
+                }),
+            },
+        ]);
+        let own = events_for_value(&value).unwrap();
+        assert_eq!(own_events_to_value(&own).unwrap(), value);
+        assert_eq!(own.first(), Some(&TomlEvent::StreamStart));
+        assert_eq!(own.last(), Some(&TomlEvent::StreamEnd));
+
+        let common = vec![
+            Event::StartRecord {
+                name: "Root".into(),
+                fields: Some(2),
+            },
+            Event::Field("items".into()),
+            Event::StartArray(Some(2)),
+            Event::Int(1),
+            Event::Float32(1.5_f32.to_bits()),
+            Event::EndArray,
+            Event::Field("ok".into()),
+            Event::Bool(true),
+            Event::EndRecord,
+        ];
+        let common_value = common_events_to_value(&common).unwrap();
+        assert_eq!(
+            common_value,
+            TomlValue::Table(vec![
+                TomlMember {
+                    key: "items".into(),
+                    value: TomlValue::Array(vec![TomlValue::Int(1), TomlValue::Float(1.5),]),
+                },
+                TomlMember {
+                    key: "ok".into(),
+                    value: TomlValue::Bool(true),
+                },
+            ])
+        );
+        for events in [
+            vec![],
+            vec![TomlEvent::StreamStart],
+            vec![TomlEvent::StreamEnd],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::StreamEnd,
+                TomlEvent::StreamEnd,
+            ],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::Scalar(TomlScalar::Int(1)),
+                TomlEvent::StreamEnd,
+            ],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::Key(vec!["a".into()]),
+                TomlEvent::Key(vec!["b".into()]),
+            ],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::ArrayEnd,
+                TomlEvent::StreamEnd,
+            ],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::InlineTableEnd,
+                TomlEvent::StreamEnd,
+            ],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::TableEnd,
+                TomlEvent::StreamEnd,
+            ],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::TableStart(Vec::new()),
+                TomlEvent::StreamEnd,
+            ],
+            vec![
+                TomlEvent::StreamStart,
+                TomlEvent::ArrayTableStart(Vec::new()),
+                TomlEvent::StreamEnd,
+            ],
+        ] {
+            assert!(own_events_to_value(&events).is_err(), "events: {events:?}");
+        }
+        assert_eq!(
+            common_events_to_value(&[Event::StartArray(None), Event::EndArray])
+                .unwrap_err()
+                .kind,
+            TomlErrorKind::TypeMismatch
+        );
+        assert_eq!(
+            common_events_to_value(&[Event::Null]).unwrap_err().kind,
+            TomlErrorKind::TypeMismatch
+        );
+        assert_eq!(
+            common_events_to_value(&[Event::StartMap(None), Event::MapKey, Event::Int(1)])
+                .unwrap_err()
+                .kind,
+            TomlErrorKind::TypeMismatch
+        );
+        assert_eq!(
+            common_events_to_value(&[
+                Event::StartMap(None),
+                Event::MapKey,
+                Event::String("a".into()),
+                Event::Int(1),
+                Event::EndMap,
+                Event::Bool(true),
+            ])
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::TrailingInput
+        );
+    }
+
+    #[test]
+    fn typed_protocol_conversions_and_stream_lifecycle_are_bounded() {
+        use crate::serialization::Encoder as _;
+
+        assert_eq!(
+            encode_typed(&Some(4_i64), TomlOptions::default())
+                .unwrap_err()
+                .kind,
+            TomlErrorKind::TypeMismatch
+        );
+        assert_eq!(
+            decode_typed::<i64>(b"x = true\n", TomlOptions::default())
+                .unwrap_err()
+                .kind,
+            TomlErrorKind::TypeMismatch
+        );
+
+        let mut common_writer = TomlWriter::to_writer(TomlOptions::default()).unwrap();
+        common_writer.start_map(Some(1)).unwrap();
+        common_writer.map_key().unwrap();
+        common_writer.string("x").unwrap();
+        common_writer.int(1).unwrap();
+        common_writer.end_map().unwrap();
+        assert_eq!(common_writer.finish().unwrap(), b"x = 1\n");
+        assert_eq!(
+            common_writer.finish().unwrap_err().kind,
+            TomlErrorKind::Closed
+        );
+        let mut limited_writer = TomlWriter::to_writer(TomlOptions::create(TomlLimits {
+            max_nodes: 1,
+            ..TomlLimits::default()
+        }))
+        .unwrap();
+        limited_writer.start_map(None).unwrap();
+        limited_writer.map_key().unwrap();
+        limited_writer.string("x").unwrap();
+        limited_writer.int(1).unwrap();
+        assert_eq!(
+            limited_writer.write_event(Event::EndMap).unwrap_err().kind,
+            TomlErrorKind::ResourceLimit
+        );
+
+        let values = [
+            TomlValue::Null,
+            TomlValue::Bool(true),
+            TomlValue::Int(-2),
+            TomlValue::UInt(3),
+            TomlValue::Float(1.5),
+            TomlValue::Text("text".into()),
+            TomlValue::Array(vec![TomlValue::Bool(false)]),
+            TomlValue::Table(vec![TomlMember {
+                key: "k".into(),
+                value: TomlValue::UInt(1),
+            }]),
+        ];
+        for value in values {
+            let serialized: serialization::Value = value.clone().into();
+            assert_eq!(TomlValue::try_from(serialized).unwrap(), value);
+        }
+        let temporal = TomlValue::OffsetDateTime(TomlOffsetDateTime {
+            local: TomlDateTime {
+                date: TomlDate {
+                    year: 2026,
+                    month: 9,
+                    day: 7,
+                },
+                time: TomlTime {
+                    hour: 12,
+                    minute: 0,
+                    second: 0,
+                    nanosecond: 0,
+                },
+            },
+            offset_minutes: 0,
+        });
+        assert_eq!(
+            serialization::Value::from(temporal),
+            serialization::Value::String("2026-09-07T12:00:00Z".into())
+        );
+        assert_eq!(
+            TomlValue::try_from(serialization::Value::Float32(1.5_f32.to_bits())).unwrap(),
+            TomlValue::Float(1.5)
+        );
+        assert_eq!(
+            TomlValue::try_from(serialization::Value::Float64(2.5_f64.to_bits())).unwrap(),
+            TomlValue::Float(2.5)
+        );
+        assert_eq!(
+            TomlValue::try_from(serialization::Value::Number("0x10".into())).unwrap(),
+            TomlValue::Int(16)
+        );
+        for value in [
+            serialization::Value::Bytes(vec![1]),
+            serialization::Value::Map(Vec::new()),
+            serialization::Value::Extension {
+                type_code: 1,
+                payload: vec![],
+            },
+        ] {
+            assert_eq!(
+                TomlValue::try_from(value).unwrap_err().kind,
+                TomlErrorKind::TypeMismatch
+            );
+        }
+
+        let mut decoder =
+            TomlReader::from_bytes(b"a = [1, true]\n", TomlOptions::default()).unwrap();
+        assert_eq!(
+            <TomlReader as Decoder<TomlCodec, TomlError>>::peek_event(&mut decoder).unwrap(),
+            Some(Event::StartMap(Some(1)))
+        );
+        assert_eq!(
+            <TomlReader as Decoder<TomlCodec, TomlError>>::limits(&decoder).max_depth,
+            TomlLimits::default().max_depth
+        );
+        assert_eq!(
+            <TomlReader as Decoder<TomlCodec, TomlError>>::next(&mut decoder).unwrap(),
+            Some(Event::StartMap(Some(1)))
+        );
+        assert_eq!(
+            <TomlReader as Decoder<TomlCodec, TomlError>>::next(&mut decoder).unwrap(),
+            Some(Event::MapKey)
+        );
+        assert_eq!(
+            <TomlReader as Decoder<TomlCodec, TomlError>>::next(&mut decoder).unwrap(),
+            Some(Event::String("a".into()))
+        );
+        assert_eq!(
+            <TomlReader as Decoder<TomlCodec, TomlError>>::next(&mut decoder).unwrap(),
+            Some(Event::StartArray(Some(2)))
+        );
+        let own_limit = TomlOptions::create(TomlLimits {
+            max_scalar_bytes: 1,
+            ..TomlLimits::default()
+        });
+        let mut own_reader = TomlReader::from_bytes(b"a = 1\n", own_limit).unwrap();
+        assert_eq!(
+            own_reader
+                .own(TomlEvent::Scalar(TomlScalar::Text("long".into())))
+                .unwrap_err()
+                .kind,
+            TomlErrorKind::ScalarLimit
+        );
+        assert_eq!(
+            own_reader.next().unwrap_err().kind,
+            TomlErrorKind::ScalarLimit
+        );
+    }
+
+    #[test]
+    fn reader_input_limits_and_terminal_errors_are_explicit() {
+        assert_eq!(
+            TomlReader::from_chunks(
+                [b"a = 1\n".as_slice(), b"".as_slice()],
+                TomlOptions::create(TomlLimits {
+                    max_input_bytes: 4,
+                    ..TomlLimits::default()
+                })
+            )
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::ResourceLimit
+        );
+        assert_eq!(
+            TomlReader::from_reader(
+                io::Cursor::new(b"a = 1\n"),
+                TomlOptions::create(TomlLimits {
+                    max_input_bytes: 2,
+                    ..TomlLimits::default()
+                })
+            )
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::ResourceLimit
+        );
+        assert_eq!(
+            TomlReader::from_bytes(
+                b"a = 1\n",
+                TomlOptions::create(TomlLimits {
+                    max_nodes: 1,
+                    ..TomlLimits::default()
+                })
+            )
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::NodeLimit
+        );
+        assert_eq!(
+            TomlReader::from_bytes(
+                b"a = 1\n",
+                TomlOptions::create(TomlLimits {
+                    max_nodes: 1,
+                    max_input_bytes: 64,
+                    ..TomlLimits::default()
+                })
+            )
+            .unwrap_err()
+            .kind,
+            TomlErrorKind::NodeLimit
+        );
+        let mut broken = TomlWriter::to_writer(TomlOptions::default()).unwrap();
+        assert_eq!(
+            broken.finish().unwrap_err().kind,
+            TomlErrorKind::UnexpectedToken
+        );
+        assert_eq!(
+            broken.finish().unwrap_err().kind,
+            TomlErrorKind::UnexpectedToken
+        );
+        let mut unbalanced = TomlWriter::to_writer(TomlOptions::default()).unwrap();
+        unbalanced.write(TomlEvent::StreamStart).unwrap();
+        assert_eq!(
+            unbalanced.finish().unwrap_err().kind,
+            TomlErrorKind::UnexpectedToken
+        );
+        assert_eq!(
+            unbalanced.write(TomlEvent::StreamEnd).unwrap_err().kind,
+            TomlErrorKind::UnexpectedToken
+        );
     }
 
     struct ErrorReader;

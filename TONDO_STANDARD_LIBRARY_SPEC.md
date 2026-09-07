@@ -3936,16 +3936,24 @@ La identidad serialization::Toml se registra sin añadir un intrinsic del
 compilador. El estado es verified-stdlib-kernel; host/compiler,
 native_aot_lowering: not-claimed y public_api_promoted: false. No se reclama
 ejecución hosted ni runtime nativo hasta disponer del ABI TOML correspondiente.
-El siguiente bloque es STD-TOML-TEST-001.
+STD-TOML-TEST-001 queda verificado por el modelo canónico independiente, la
+matriz hosted, el corpus negativo, el reader common con fragmentos de un byte y
+el fuzz bounded. La evidencia está en
+[testing/stdlib-toml-test.json](./testing/stdlib-toml-test.json) y
+[docs/contracts/stdlib-toml-test.md](./docs/contracts/stdlib-toml-test.md);
+no promueve compiler/VM/AOT ni claims de rendimiento. El siguiente bloque es
+STD-TOML-PERF-001.
 
 El contrato machine-readable, la documentación y los checks negativos son
-[`testing/stdlib-toml.json`](./testing/stdlib-toml.json),
-[`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md),
-[`scripts/stdlib-toml-check.sh`](./scripts/stdlib-toml-check.sh) y
-[`scripts/stdlib-toml-test.sh`](./scripts/stdlib-toml-test.sh). El contrato
-queda cerrado como diseño B0; host/compiler, fuzzing ampliado, rendimiento,
-conformance y documentación de uso permanecen pendientes de las leaves
-STD-TOML-TEST-001, STD-TOML-PERF-001, STD-TOML-CONF-001 y STD-TOML-DOC-001.
+[testing/stdlib-toml.json](./testing/stdlib-toml.json),
+[docs/contracts/stdlib-toml.md](./docs/contracts/stdlib-toml.md),
+[testing/stdlib-toml-test.json](./testing/stdlib-toml-test.json),
+[docs/contracts/stdlib-toml-test.md](./docs/contracts/stdlib-toml-test.md),
+[scripts/stdlib-toml-check.sh](./scripts/stdlib-toml-check.sh) y
+[scripts/stdlib-toml-test.sh](./scripts/stdlib-toml-test.sh). El contrato
+queda cerrado como diseño B0; host/compiler, rendimiento, conformance y
+documentación de uso permanecen pendientes de las leaves
+STD-TOML-PERF-001, STD-TOML-CONF-001 y STD-TOML-DOC-001.
 
 ### 14.15 `std.cbor`
 

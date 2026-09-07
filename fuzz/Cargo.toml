@@ -101,6 +101,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "stdlib_toml"
+path = "fuzz_targets/stdlib_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "diagnostics"
 path = "fuzz_targets/diagnostics.rs"
 test = false

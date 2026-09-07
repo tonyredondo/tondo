@@ -400,7 +400,7 @@ canónico, el protocolo de eventos y los handles reader/writer atómicos.
 serialization::Toml y lib.rs registran la identidad del codec sin crear una
 ruta paralela para el toolchain.
 
-La evidencia focalizada ejecuta los ocho casos de toml::tests y clippy
+La evidencia focalizada ejecuta los dieciséis casos de toml::tests y clippy
 estricto; la construcción es atómica y no se publica un valor o bytes parciales
 cuando falla una cota, un token, un duplicado, un span o el balance de eventos.
 La implementación usa la misma política para parse, parse_view, validate,
@@ -419,8 +419,11 @@ No existe todavía un intrinsic std.toml en el compilador/HIR/VM ni un ABI
 Tondo para conectar std.io.Writer; por eso este bloque no reclama ejecución
 hosted, runtime nativo ni lowering AOT, y no introduce una fixture .to
 artificial. La ruta typed Rust solo usa std.serialization y no interpreta
-tondo.toml. El siguiente bloque es STD-TOML-TEST-001, que ampliará el corpus
-oficial y fuzzing sin mover esta frontera.
+tondo.toml. El contrato de tests y su evidencia independiente están en
+[testing/stdlib-toml-test.json](../../testing/stdlib-toml-test.json) y
+[stdlib-toml-test.md](./stdlib-toml-test.md). STD-TOML-TEST-001 queda cerrado
+por el modelo canónico, corpus, chunking, límites, spans y fuzz bounded; no
+mueve esta frontera. El siguiente bloque es STD-TOML-PERF-001.
 
 ## Exclusiones deliberadas y leaves posteriores
 
@@ -434,7 +437,6 @@ El host/compiler, corpus ampliado de tests/fuzzing, rendimiento, conformance y
 documentación de uso permanecen pendientes de:
 
 ```text
-STD-TOML-TEST-001
 STD-TOML-PERF-001
 STD-TOML-CONF-001
 STD-TOML-DOC-001
