@@ -5235,6 +5235,17 @@ impl Default for BootstrapHost {
 }
 
 impl VmHost for BootstrapHost {
+    fn selects_test_node(&self, id: &str) -> bool {
+        self.testing_participation
+            .as_ref()
+            .is_none_or(|participation| participation.selects(id))
+    }
+    fn take_test_timeout(&mut self) -> Option<String> {
+        self.testing_participation
+            .as_ref()
+            .and_then(TestParticipation::take_timeout)
+    }
+
     fn interruption_requested(&self) -> bool {
         self.testing_participation
             .as_ref()
@@ -11076,7 +11087,13 @@ impl VmHost for BootstrapHost {
                     return Ok(Some((*call, value)));
                 }
             }
-            if allow_interruption && self.interruption_requested() {
+            if allow_interruption
+                && (self.interruption_requested()
+                    || self
+                        .testing_participation
+                        .as_ref()
+                        .is_some_and(TestParticipation::timeout_pending))
+            {
                 return Ok(None);
             }
             if calls
@@ -11277,12 +11294,12 @@ impl VmHost for BootstrapHost {
         };
         let panic = match outcome {
             VmTestNodeOutcome::Passed => None,
+            VmTestNodeOutcome::TimedOut => None,
             VmTestNodeOutcome::Panicked(panic) => Some(panic),
             VmTestNodeOutcome::Interrupted => {
-                envelope
-                    .close()
-                    .map_err(|error| VmError::Host(error.to_string()))?;
-                return Ok(());
+                return participation
+                    .finish_interrupted(id, envelope)
+                    .map_err(VmError::Host);
             }
         };
         participation
@@ -11291,6 +11308,9 @@ impl VmHost for BootstrapHost {
     }
 
     fn begin_test_suite_cleanup(&mut self) -> Result<(), VmError> {
+        if let Some(participation) = &self.testing_participation {
+            participation.begin_cleanup().map_err(VmError::Host)?;
+        }
         let envelope = self.testing_envelope()?;
         envelope
             .set_phase(crate::test_control::ExecutionPhase::Cleanup)
@@ -11685,6 +11705,65 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn interrupted_child_closes_its_phase_before_ancestor_timeout_finishes() {
+        use crate::test_backend::TestPhaseObserver;
+        use crate::test_control::EnvelopeLimits;
+
+        #[derive(Debug, Default)]
+        struct Phases(std::sync::Mutex<Vec<String>>);
+        impl TestPhaseObserver for Phases {
+            fn enter(&self, id: &str, _: TestExecutionKind) -> Result<(), String> {
+                self.0.lock().unwrap().push(id.into());
+                Ok(())
+            }
+            fn cleanup(&self) -> Result<(), String> {
+                Ok(())
+            }
+            fn finish(&self, id: &str) -> Result<bool, String> {
+                assert_eq!(self.0.lock().unwrap().pop().as_deref(), Some(id));
+                Ok(id == "suite")
+            }
+            fn timeout_pending(&self) -> bool {
+                false
+            }
+            fn take_timeout(&self) -> Option<String> {
+                None
+            }
+        }
+
+        let phases = Arc::new(Phases::default());
+        let participation = TestParticipation::new(
+            EnvelopeLimits::new(1024, 1024, 1024),
+            BTreeMap::new(),
+            false,
+        )
+        .with_phases(phases.clone());
+        let mut host = BootstrapHost::default();
+        host.install_testing_participation(participation.clone());
+        host.begin_test_node(VmTestNodeKind::Suite, "suite")
+            .unwrap();
+        host.begin_test_node(VmTestNodeKind::Leaf, "suite::child")
+            .unwrap();
+        // An ancestor deadline can arrive after entry into its descendant.
+        // Unwinding that descendant must close its phase without publishing
+        // an ordinary attempt for an interrupted test.
+        host.finish_test_node(
+            VmTestNodeKind::Leaf,
+            "suite::child",
+            VmTestNodeOutcome::Interrupted,
+        )
+        .unwrap();
+        assert_eq!(*phases.0.lock().unwrap(), ["suite"]);
+        host.finish_test_node(VmTestNodeKind::Suite, "suite", VmTestNodeOutcome::TimedOut)
+            .unwrap();
+        assert!(phases.0.lock().unwrap().is_empty());
+        let executions = participation.executions().unwrap();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0].id, "suite");
+        assert!(executions[0].timed_out);
+    }
 
     fn runtime_json_error_kind(value: &RuntimeValue) -> Option<u32> {
         let RuntimeValue::Record { name, values } = value else {

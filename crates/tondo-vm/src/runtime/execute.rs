@@ -49,6 +49,17 @@ type HeapMapEntry = (Option<Value>, Option<Value>);
 pub trait VmHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError>;
 
+    /// Takes a runner deadline request for one active test boundary. This is
+    /// distinct from a language panic and from cancelling the whole invocation.
+    fn take_test_timeout(&mut self) -> Option<String> {
+        None
+    }
+
+    /// Runtime selection of a previously compiled test participation.
+    fn selects_test_node(&self, _id: &str) -> bool {
+        true
+    }
+
     /// Requests cancellation of the complete execution, including its root.
     /// The VM polls between instructions and while waiting for hosted work.
     fn interruption_requested(&self) -> bool {
@@ -166,6 +177,7 @@ pub enum VmTestNodeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmTestNodeOutcome {
+    TimedOut,
     Passed,
     Panicked(VmPanic),
     Interrupted,
@@ -1426,6 +1438,7 @@ struct Engine<'program, 'host> {
     pending_test_control: bool,
     interruption_observed: bool,
     interrupt_unwind_pending: BTreeSet<usize>,
+    timed_out_test_boundaries: BTreeSet<String>,
     tasks: Vec<TaskRecord>,
     runnable: VecDeque<usize>,
     current_task: usize,
@@ -1493,6 +1506,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             pending_test_control: false,
             interruption_observed: false,
             interrupt_unwind_pending: BTreeSet::new(),
+            timed_out_test_boundaries: BTreeSet::new(),
             tasks: Vec::new(),
             runnable: VecDeque::new(),
             current_task: 0,
@@ -2033,6 +2047,29 @@ impl<'program, 'host> Engine<'program, 'host> {
                     self.interrupt_unwind_pending.insert(task);
                     self.request_cancel(task)?;
                 }
+            }
+        }
+        if !self.interruption_observed
+            && let Some(id) = self.host.take_test_timeout()
+        {
+            let contains = |frames: &[Frame]| {
+                frames.iter().any(|frame| {
+                    frame
+                        .continuation
+                        .as_ref()
+                        .and_then(|continuation| continuation.test_boundary.as_ref())
+                        .is_some_and(|boundary| boundary.id == id)
+                })
+            };
+            let task = if contains(&self.frames) {
+                Some(self.current_task)
+            } else {
+                self.tasks.iter().position(|task| contains(&task.frames))
+            };
+            if let Some(task) = task {
+                self.timed_out_test_boundaries.insert(id);
+                self.interrupt_unwind_pending.insert(task);
+                self.request_cancel(task)?;
             }
         }
         Ok(())
@@ -7845,10 +7882,19 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 "internal test boundary returned a non-Unit value",
                             ));
                         }
+                        let timed_out = self.timed_out_test_boundaries.remove(&boundary.id);
+                        if timed_out {
+                            self.interrupt_unwind_pending.remove(&self.current_task);
+                            self.tasks[self.current_task].cancel_requested = false;
+                        }
                         self.host.finish_test_node(
                             boundary.kind,
                             &boundary.id,
-                            VmTestNodeOutcome::Passed,
+                            if timed_out {
+                                VmTestNodeOutcome::TimedOut
+                            } else {
+                                VmTestNodeOutcome::Passed
+                            },
                         )?;
                     }
                     if let Some(controller) = &continuation.virtual_time {
@@ -7928,6 +7974,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                             .ok_or_else(|| VmError::invariant("test boundary panic disappeared"))?;
                         match unwind {
                             RuntimeUnwind::Panic(panic) => {
+                                if self.timed_out_test_boundaries.remove(&boundary.id) {
+                                    self.interrupt_unwind_pending.remove(&self.current_task);
+                                    self.tasks[self.current_task].cancel_requested = false;
+                                }
                                 self.host.finish_test_node(
                                     boundary.kind,
                                     &boundary.id,
@@ -7948,6 +7998,29 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 return Ok(None);
                             }
                             RuntimeUnwind::Cancelled => {
+                                if !self.interruption_observed
+                                    && self.timed_out_test_boundaries.remove(&boundary.id)
+                                {
+                                    self.host.finish_test_node(
+                                        boundary.kind,
+                                        &boundary.id,
+                                        VmTestNodeOutcome::TimedOut,
+                                    )?;
+                                    self.interrupt_unwind_pending.remove(&self.current_task);
+                                    self.tasks[self.current_task].cancel_requested = false;
+                                    if let Some(destination) = &continuation.destination {
+                                        self.write_place(caller, destination, Value::Unit)?;
+                                    }
+                                    self.jump(
+                                        caller,
+                                        continuation.target.ok_or_else(|| {
+                                            VmError::invariant(
+                                                "timed out test boundary has no successor",
+                                            )
+                                        })?,
+                                    );
+                                    return Ok(None);
+                                }
                                 self.host.finish_test_node(
                                     boundary.kind,
                                     &boundary.id,
@@ -11558,6 +11631,9 @@ impl Engine<'_, '_> {
                         ));
                     };
                     let id = self.string_value(id)?.to_owned();
+                    if !self.host.selects_test_node(&id) {
+                        return Ok(OperationResult::Value(Value::Unit));
+                    }
                     let kind = if matches!(function, BytecodeBootstrapHostFunction::TestingRunLeaf)
                     {
                         VmTestNodeKind::Leaf
@@ -14143,6 +14219,9 @@ impl Engine<'_, '_> {
                         ));
                     };
                     let id = self.string_value(id)?.to_owned();
+                    if !self.host.selects_test_node(&id) {
+                        return Ok(OperationResult::Value(Value::Unit));
+                    }
                     let kind = if metadata.name == "std.testing.__runLeaf" {
                         VmTestNodeKind::Leaf
                     } else {

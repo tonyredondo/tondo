@@ -3446,14 +3446,14 @@ reporters.
 - [ ] **UTEST-LIMIT-001 — Apply finite budgets and deadlines to each public test phase.**
   The Rust profile, atomic budget ledger and pausable deadline model exist;
   eight unit tests cover their bounded rules. Public output/artifact/snapshot
-  limits and a whole-worker watchdog also exist, but the CLI does not apply
-  the wall-clock deadline independently to each leaf and active suite phase.
-  The audit reproduced two 350 ms tests passing separately with `--timeout
-  500ms`, while their shared suite exits 3 with `test worker timed out`; both
-  pass together with `--timeout 1500ms`. Descendant waiting time incorrectly
-  consumes the participation deadline. Wire phase identity and active timing
-  through the isolated worker, preserve non-cooperative termination and
-  per-attempt resource bounds, and verify terminal/report/retry behavior.
+  limits exist. The public CLI now applies separate wall-clock deadlines to
+  each leaf, setup and teardown, with sequenced worker phase notifications,
+  paused ancestor clocks, scoped VM cancellation and an external cleanup
+  watchdog. Two 350 ms leaves, 350 ms setup and 350 ms teardown now pass under
+  the same 500 ms per-phase cap. Focused regressions cover setup blocking,
+  sibling continuation, teardown result preservation and isolated retry units.
+  Remaining work includes complete per-phase structural accounting and every
+  non-cooperative cleanup route, followed by the required promotion gates.
   Model success cannot close the public boundary. See
   `docs/contracts/test-limits.md` and `TONDO_TESTING_SPEC.md` section 7.8.
 
@@ -3535,7 +3535,7 @@ reporters.
   revocación, espera externa `P2003`, solapamiento `P2004`, rango/overflow
   `P2005` y cleanup por `P0008`.
 
-- [x] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
+- [ ] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
   heredado.** Parsear `--retry N` con default cero y máximo finito; ejecutar la
   ronda inicial completa antes de planificar rondas adicionales solo para
   `failed-error`, `failed-panic` y `timeout`. Construir unidades hoja con
@@ -3561,6 +3561,14 @@ reporters.
   campaña runtime por workers frescos. `docs/contracts/test-retry.md` fija el
   contrato; los tests cubren causas elegibles/no elegibles, flaky-pass,
   aislamiento de workers, orden y combinaciones incompatibles.
+
+  The public audit found that the CLI previously retried passing siblings and
+  reconstructed every nested retry as an outer suite unit. The CLI now uses
+  the existing unit planner and exact runtime selection over immutable
+  bytecode, with fresh processes and actual round/unit metadata. Public tests
+  cover independent failing leaves, setup and teardown timeout units, and
+  passing siblings excluded from leaf retries. Full input-provider/resource
+  integration and the required promotion gates remain pending.
 
 - [x] **UTEST-REPEAT-001 — Implementar repetición completa y aislada.** Parsear
   `--repeat N` con default uno y `N >= 1`; rechazar retry, allow-flaky, list y

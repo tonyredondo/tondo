@@ -585,7 +585,9 @@ fn acceptance_project_dogfoods_an_isolated_deterministic_retry() {
         .iter()
         .find(|test| test.id.ends_with("::stableSibling"))
         .unwrap();
-    assert_eq!(sibling.attempts.len(), 2);
+    // A leaf retry re-enters its ancestors but does not rerun passing siblings.
+    assert_eq!(sibling.attempts.len(), 1);
+    assert_eq!(sibling.attempts[0].round, 0);
     assert!(
         sibling
             .attempts

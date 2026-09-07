@@ -31,13 +31,28 @@ wall-clock deadline for non-sidecar consumers and does not disable any
 structural budget. `InterruptController` models the first cancellation
 request, one finite grace period and forced termination of a non-cooperative
 worker. Clock regressions are rejected rather than wrapped. These are model
-operations; the public worker watchdog currently measures an entire suite
-participation with one monotonic start time.
+operations. The public worker now emits bounded, sequenced node and cleanup
+transitions to a coordinator watchdog. Each active phase has its own deadline;
+the coordinator pauses the parent while a descendant executes and applies the
+closed setup/teardown caps, reduced by an explicit CLI timeout when supplied.
 
 The 2026-09-07 audit exercised one suite with two leaves, each awaiting
 `time.sleep(time.Duration.fromNanoseconds(350000000))`. Each selected alone
 passed with `--timeout 500ms`. Selecting both caused exit 3 and
 `test worker timed out`, while both passed with `--timeout 1500ms`. This
-contradicts the independent body/setup/teardown deadlines in testing section
-7.8. The public phase transition, watchdog, terminal reporting and retry paths
-must be verified together before this task or T0 can close.
+contradicted the independent body/setup/teardown deadlines in testing section
+7.8. The regression now passes with independent setup, nested leaves and
+teardown. A deadline request names the active phase generation; the VM cancels
+that test boundary, drains observable cleanup and preserves sibling execution.
+Timeout is reported separately from language panic or external interruption.
+
+The coordinator allows the bounded cleanup grace before reaping a worker that
+does not respond. Failure to establish clean isolation is infrastructure, and
+does not produce a successful report. Worker bootstrap and final transport also
+have a finite 30-second envelope. Completed leaf results survive a suite
+teardown timeout. Retry integration uses the same immutable compiled artifact
+and independent process for each selected retry unit.
+
+This does not close all structural limits per phase or prove every native and
+non-cooperative cleanup route. `UTEST-LIMIT-001` and T0 remain open until those
+remaining integration boundaries and the required gates are verified.

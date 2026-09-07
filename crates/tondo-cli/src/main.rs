@@ -34,10 +34,10 @@ use tondo_compiler::test_report::{
 };
 use tondo_compiler::test_result::{
     AggregateStatus, ArtifactRecord, AttemptPhase, AttemptStatus, BlockedBy, DiagnosticPrivacy,
-    DiagnosticRecord, DiagnosticStatus, FailureRecord, ResultNodeKind, RetryUnit, RetryUnitKind,
-    SkipRecord, SnapshotRecord, SnapshotStatus, TestAttempt, TestNode, VirtualTimeRecord,
+    DiagnosticRecord, DiagnosticStatus, FailureRecord, ResultNodeKind, SkipRecord, SnapshotRecord,
+    SnapshotStatus, TestAttempt, TestNode, VirtualTimeRecord,
 };
-use tondo_compiler::test_retry::{RetryCampaign, RetryContext, RetryPolicy};
+use tondo_compiler::test_retry::RetryContext;
 use tondo_compiler::test_runtime::{
     LeafProgram, RunError, RuntimeConfig, RuntimeRunner, RuntimeStatus,
 };
@@ -51,7 +51,9 @@ use tondo_vm::runtime::{
 
 mod doc_test;
 mod project_discovery;
+mod test_campaign;
 mod test_cli;
+mod test_deadline;
 mod test_interrupt;
 mod test_outputs;
 
@@ -1214,6 +1216,23 @@ fn execute_test_plan_at(
                     input,
                     entries,
                     timeout_ms: worker_timeout,
+                    phase_limits: test_deadline::Limits {
+                        body: worker_timeout.unwrap_or(test_project_plan.limits().timeout_ms()),
+                        setup: test_project_plan.limits().setup_timeout_ms().min(
+                            if execution_plan.timeout_explicit {
+                                worker_timeout.unwrap_or(u64::MAX)
+                            } else {
+                                u64::MAX
+                            },
+                        ),
+                        teardown: test_project_plan.limits().teardown_timeout_ms().min(
+                            if execution_plan.timeout_explicit {
+                                worker_timeout.unwrap_or(u64::MAX)
+                            } else {
+                                u64::MAX
+                            },
+                        ),
+                    },
                     update_snapshots: worker_update_snapshots,
                     has_suites,
                     diagnostics: execution_plan.diagnostics.clone(),
@@ -1280,9 +1299,11 @@ fn execute_test_plan_at(
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))?
     .with_interruption(test_interrupt::token());
+    let mut initial_plan = execution_plan.clone();
+    initial_plan.retry = 0;
     let mut attempts = execute_campaign(
         &request,
-        &execution_plan,
+        &initial_plan,
         &ordered,
         programs,
         runtime,
@@ -1290,13 +1311,23 @@ fn execute_test_plan_at(
         &snapshot_inputs,
     )?;
     attach_worker_diagnostics(&worker_groups, &mut attempts)?;
-    let suite_attempts = collect_suite_attempts(&worker_groups, &execution_plan)?;
+    let mut suite_attempts = collect_suite_attempts(&worker_groups, &initial_plan)?;
+    let retry_rounds = test_campaign::retry_units(
+        &execution_plan,
+        &ordered,
+        &worker_groups,
+        &mut attempts,
+        &mut suite_attempts,
+        &request,
+        &identity,
+        &snapshot_inputs,
+    )?;
     let mut node_attempts = attempts.clone();
     node_attempts.extend(suite_attempts.iter().map(|attempt| CliAttempt {
         id: attempt.id.clone(),
         iteration: attempt.iteration,
         round: attempt.round,
-        unit: (attempt.round > 0).then_some(1),
+        unit: attempt.unit,
         invocation: attempt.invocation,
         status: attempt.status,
         report: attempt.report.clone(),
@@ -1360,6 +1391,7 @@ fn execute_test_plan_at(
         &snapshot_inputs,
         &snapshot_mutation,
         &identity,
+        retry_rounds,
     )?;
     publish_test_outputs(&execution_plan, &report)?;
     if !test_interrupt::finish_publication() {
@@ -1557,25 +1589,54 @@ fn encode_bounded_worker_json(value: &impl Serialize, limit: usize) -> Result<Ve
     Ok(buffer.bytes)
 }
 
-fn read_worker_diagnostics(mut reader: impl Read) -> io::Result<Vec<u8>> {
+fn read_worker_diagnostics(
+    reader: impl Read,
+    phases: Option<Arc<Mutex<test_deadline::Watchdog>>>,
+) -> io::Result<Vec<u8>> {
     // First and second OS requests have different supervision semantics. Each
     // worker reports its own count; simultaneous delivery to several workers
     // is merged by maximum, not mistaken for repeated cancellation.
-    for count in 1..=2 {
-        let mut prefix = Vec::new();
+    use std::io::BufRead;
+    let mut reader = io::BufReader::new(reader);
+    let mut diagnostics = Vec::new();
+    let mut count = 0;
+    loop {
+        let mut line = Vec::new();
         reader
             .by_ref()
-            .take(test_interrupt::WORKER_REQUEST_FRAME.len() as u64)
-            .read_to_end(&mut prefix)?;
-        if prefix == test_interrupt::WORKER_REQUEST_FRAME {
+            .take(1024 * 1024 + 1)
+            .read_until(b'\n', &mut line)?;
+        if line.is_empty() {
+            return Ok(diagnostics);
+        }
+        if line == test_interrupt::WORKER_REQUEST_FRAME {
+            count += 1;
+            if count > 2 {
+                return Err(io::Error::other("too many worker interruption frames"));
+            }
             test_interrupt::worker_requested_interruption(count);
             continue;
         }
-        let remaining = read_bounded_worker_pipe(reader, 1024 * 1024 - prefix.len())?;
-        prefix.extend(remaining);
-        return Ok(prefix);
+        if let Some(payload) = line.strip_prefix(test_deadline::FRAME_PREFIX) {
+            if line.len() > test_deadline::MAX_FRAME_BYTES {
+                return Err(io::Error::other("worker phase frame exceeds its bound"));
+            }
+            let event = serde_json::from_slice(payload).map_err(io::Error::other)?;
+            phases
+                .as_ref()
+                .ok_or_else(|| io::Error::other("unexpected worker phase frame"))?
+                .lock()
+                .map_err(|_| io::Error::other("worker watchdog lock is poisoned"))?
+                .event(event, Instant::now())?;
+        } else {
+            if diagnostics.len() + line.len() > 1024 * 1024 {
+                return Err(io::Error::other(
+                    "worker diagnostics exceed the process transport limit",
+                ));
+            }
+            diagnostics.extend(line);
+        }
     }
-    read_bounded_worker_pipe(reader, 1024 * 1024)
 }
 
 fn read_bounded_worker_pipe(reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
@@ -1794,6 +1855,7 @@ struct SharedWorkerGroup {
     input: Arc<Vec<u8>>,
     entries: Vec<String>,
     timeout_ms: Option<u64>,
+    phase_limits: test_deadline::Limits,
     update_snapshots: bool,
     has_suites: bool,
     diagnostics: BTreeSet<DiagnosticProfile>,
@@ -1826,6 +1888,7 @@ impl SharedWorkerGroup {
                 self.input.clone(),
                 &self.entries,
                 self.timeout_ms,
+                self.phase_limits,
                 self.update_snapshots,
                 &diagnostic_context,
             )
@@ -1952,6 +2015,7 @@ fn spawn_test_worker(
     input: Arc<Vec<u8>>,
     entries: &[String],
     timeout_ms: Option<u64>,
+    phase_limits: test_deadline::Limits,
     update_snapshots: bool,
     diagnostic_context: &DiagnosticWorkerContext<'_>,
 ) -> Result<WorkerGroupResult, RunError> {
@@ -2010,15 +2074,16 @@ fn spawn_test_worker(
         .expect("worker stdin was explicitly piped");
     // Feed the input concurrently with output draining and the wall-clock
     // deadline; a pipe-sized input must not block timeout enforcement.
-    let (control, requests) = std::sync::mpsc::channel();
+    let (control, requests) = std::sync::mpsc::channel::<Vec<u8>>();
     let writer = std::thread::spawn(move || {
         stdin.write_all(&input)?;
-        if requests.recv().is_ok() {
-            stdin.write_all(b"C")?;
+        while let Ok(request) = requests.recv() {
+            stdin.write_all(&request)?;
         }
         Ok::<(), io::Error>(())
     });
-    let result = wait_worker_controlled(child, timeout_ms, Some(&control));
+    let phases = Arc::new(Mutex::new(test_deadline::Watchdog::new(phase_limits)));
+    let result = wait_worker_controlled(child, timeout_ms, Some(&control), Some(phases.clone()));
     drop(control);
     let written = writer.join();
     let (status, stdout, stderr) = result?;
@@ -2038,7 +2103,7 @@ fn spawn_test_worker(
             ),
         });
     }
-    let response: WorkerBatchResponse =
+    let mut response: WorkerBatchResponse =
         serde_json::from_slice(&stdout).map_err(|error| RunError::Infrastructure {
             message: format!("invalid isolated test worker response: {error}"),
         })?;
@@ -2049,6 +2114,37 @@ fn spawn_test_worker(
                 response.format
             ),
         });
+    }
+    for (id, phase) in &phases
+        .lock()
+        .map_err(|_| RunError::Infrastructure {
+            message: "worker watchdog lock is poisoned".into(),
+        })?
+        .expired
+    {
+        let error = || {
+            Some(WorkerError {
+                kind: "timeout".into(),
+                code: None,
+                message: "test phase exceeded its wall-clock deadline".into(),
+            })
+        };
+        if let Some((_, leaf)) = response.responses.iter_mut().find(|(leaf, _)| leaf == id) {
+            leaf.status = "timeout".into();
+            leaf.error = error();
+        }
+        if let Some(suite) = response.suites.iter_mut().find(|suite| &suite.id == id) {
+            suite.status = "timeout".into();
+            suite.phase = Some(
+                if *phase == test_deadline::Phase::Teardown {
+                    "teardown"
+                } else {
+                    "setup"
+                }
+                .into(),
+            );
+            suite.error = error();
+        }
     }
     let responses = response.responses.into_iter().collect::<BTreeMap<_, _>>();
     if responses.len() != entries.len() {
@@ -2099,13 +2195,14 @@ fn wait_worker(
     child: Child,
     timeout_ms: Option<u64>,
 ) -> Result<(String, Vec<u8>, Vec<u8>), RunError> {
-    wait_worker_controlled(child, timeout_ms, None)
+    wait_worker_controlled(child, timeout_ms, None, None)
 }
 
 fn wait_worker_controlled(
     mut child: Child,
     timeout_ms: Option<u64>,
-    control: Option<&std::sync::mpsc::Sender<()>>,
+    control: Option<&std::sync::mpsc::Sender<Vec<u8>>>,
+    phases: Option<Arc<Mutex<test_deadline::Watchdog>>>,
 ) -> Result<(String, Vec<u8>, Vec<u8>), RunError> {
     // Drain both pipes while the worker is running. Waiting for process exit
     // before reading would deadlock a valid worker whose bounded report is
@@ -2113,17 +2210,18 @@ fn wait_worker_controlled(
     let stdout_reader = child.stdout.take().map(|pipe| {
         std::thread::spawn(move || read_bounded_worker_pipe(pipe, MAX_WORKER_INPUT_BYTES))
     });
+    let phase_reader = phases.clone();
     let stderr_reader = child
         .stderr
         .take()
-        .map(|pipe| std::thread::spawn(move || read_worker_diagnostics(pipe)));
+        .map(|pipe| std::thread::spawn(move || read_worker_diagnostics(pipe, phase_reader)));
     let started = Instant::now();
     let mut cancellation = test_interrupt::WorkerCancellation::new();
     loop {
         let requests = test_interrupt::requests();
         let (first_request, forced) = cancellation.poll(requests);
         if first_request && let Some(control) = control {
-            let _ = control.send(());
+            let _ = control.send(vec![b'C']);
         }
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -2172,6 +2270,34 @@ fn wait_worker_controlled(
                     });
                 }
                 if !cancellation.requested()
+                    && let Some(phases) = &phases
+                {
+                    let mut phases = phases.lock().map_err(|_| RunError::Infrastructure {
+                        message: "worker watchdog lock is poisoned".into(),
+                    })?;
+                    let (expired, stuck) = phases.poll(Instant::now());
+                    if let Some(sequence) = expired
+                        && let Some(control) = control
+                    {
+                        let mut frame = vec![b'T'];
+                        frame.extend_from_slice(&sequence.to_le_bytes());
+                        let _ = control.send(frame);
+                    }
+                    if stuck || phases.idle_expired(Instant::now()) {
+                        drop(phases);
+                        let killed = child.kill();
+                        let reaped = child.wait();
+                        let _ = join_worker_pipe(stdout_reader, "output");
+                        let _ = join_worker_pipe(stderr_reader, "diagnostics");
+                        return Err(RunError::Infrastructure {
+                            message: format!(
+                                "test phase worker did not complete isolated cleanup: kill={killed:?}, reap={reaped:?}"
+                            ),
+                        });
+                    }
+                }
+                if phases.is_none()
+                    && !cancellation.requested()
                     && timeout_ms
                         .is_some_and(|limit| started.elapsed() >= Duration::from_millis(limit))
                 {
@@ -2341,13 +2467,27 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     };
     // The remaining stdin byte is a cancellation request, separate from the
     // immutable hashed payload. EOF means the coordinator closed the session.
+    let phases = Arc::new(test_deadline::WorkerPhases::default());
     if input.is_ok() {
-        std::thread::spawn(|| {
-            let mut request = [0];
-            // EOF or a malformed control frame also closes the supervisor lease.
-            // A live worker must drain instead of continuing without its owner.
-            let _ = io::stdin().read_exact(&mut request);
-            test_interrupt::supervisor_requested_interruption();
+        let requested = phases.requested.clone();
+        std::thread::spawn(move || {
+            let mut input = io::stdin().lock();
+            loop {
+                let mut request = [0];
+                if input.read_exact(&mut request).is_err() || request[0] != b'T' {
+                    test_interrupt::supervisor_requested_interruption();
+                    break;
+                }
+                let mut sequence = [0; 8];
+                if input.read_exact(&mut sequence).is_err() {
+                    test_interrupt::supervisor_requested_interruption();
+                    break;
+                }
+                requested.store(
+                    u64::from_le_bytes(sequence),
+                    std::sync::atomic::Ordering::Release,
+                );
+            }
         });
     }
     if test_interrupt::requests() > 0 {
@@ -2358,6 +2498,7 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
             input,
             &entries,
             update_snapshots,
+            phases,
             &DiagnosticWorkerContext {
                 profiles: &diagnostic_profiles,
                 run_id: &run_id,
@@ -2417,6 +2558,7 @@ fn execute_test_worker(
     input: WorkerInput,
     entry_ids: &[String],
     update_snapshots: bool,
+    phases: Arc<test_deadline::WorkerPhases>,
     diagnostic_context: &DiagnosticWorkerContext<'_>,
 ) -> Result<WorkerGroupResult, String> {
     if input.source_revision != diagnostic_context.source_revision {
@@ -2425,7 +2567,15 @@ fn execute_test_worker(
     if input.target != BuildTarget::vm_hosted().name() {
         return Err("compiled worker target is unsupported".into());
     }
-    let selected = input.entries.iter().collect::<Vec<_>>();
+    let selection = entry_ids.iter().cloned().collect::<BTreeSet<_>>();
+    if selection.len() != entry_ids.len() || selection.is_empty() {
+        return Err("worker selection is empty or duplicated".into());
+    }
+    let selected = input
+        .entries
+        .iter()
+        .filter(|entry| selection.contains(entry.id()))
+        .collect::<Vec<_>>();
     if selected
         .iter()
         .map(|entry| entry.id())
@@ -2461,7 +2611,9 @@ fn execute_test_worker(
         input.expected,
         update_snapshots,
     )
-    .with_interruption(test_interrupt::token());
+    .with_interruption(test_interrupt::token())
+    .with_selection(selection)
+    .with_phases(phases);
     let execution = tondo_compiler::test_backend::execute_compiled(
         &input.program,
         input.entry,
@@ -2491,16 +2643,26 @@ fn execute_test_worker(
             execution.kind == tondo_compiler::test_backend::TestExecutionKind::Leaf
                 && execution.id == entry.id()
         }) {
-            let error = execution
-                .panic
-                .as_ref()
-                .and_then(tondo_vm::runtime::VmPanic::language_panic)
-                .map(|panic| WorkerError {
-                    kind: "panic".into(),
-                    code: Some(panic.code.code().into()),
-                    message: panic.message.clone(),
-                });
-            let status = if error.is_some() {
+            let error = if execution.timed_out {
+                Some(WorkerError {
+                    kind: "timeout".into(),
+                    code: None,
+                    message: "test phase exceeded its wall-clock deadline".into(),
+                })
+            } else {
+                execution
+                    .panic
+                    .as_ref()
+                    .and_then(tondo_vm::runtime::VmPanic::language_panic)
+                    .map(|panic| WorkerError {
+                        kind: "panic".into(),
+                        code: Some(panic.code.code().into()),
+                        message: panic.message.clone(),
+                    })
+            };
+            let status = if execution.timed_out {
+                "timeout"
+            } else if error.is_some() {
                 "failed-panic"
             } else if matches!(
                 execution.report.terminal(),
@@ -2514,7 +2676,7 @@ fn execute_test_worker(
             } else {
                 "passed"
             };
-            let crashed = error.is_some();
+            let crashed = error.as_ref().is_some_and(|error| error.kind == "panic");
             let attempt_id = format!("{}#{}", entry.id(), diagnostic_context.invocation);
             let diagnostics = diagnostic_reports_for(&DiagnosticReportContext {
                 profiles: diagnostic_context.profiles,
@@ -2550,7 +2712,9 @@ fn execute_test_worker(
             .iter()
             .filter(|execution| {
                 execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
-                    && (execution.panic.is_some() || execution.report.terminal().is_some())
+                    && (execution.timed_out
+                        || execution.panic.is_some()
+                        || execution.report.terminal().is_some())
                     && entry
                         .id()
                         .strip_prefix(&execution.id)
@@ -2609,16 +2773,25 @@ fn execute_test_worker(
             execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
         })
         .map(|execution| {
-            let error = execution
-                .panic
-                .as_ref()
-                .and_then(tondo_vm::runtime::VmPanic::language_panic)
-                .map(|panic| WorkerError {
-                    kind: "panic".into(),
-                    code: Some(panic.code.code().into()),
-                    message: panic.message.clone(),
-                });
+            let error = if execution.timed_out {
+                Some(WorkerError {
+                    kind: "timeout".into(),
+                    code: None,
+                    message: "test phase exceeded its wall-clock deadline".into(),
+                })
+            } else {
+                execution
+                    .panic
+                    .as_ref()
+                    .and_then(tondo_vm::runtime::VmPanic::language_panic)
+                    .map(|panic| WorkerError {
+                        kind: "panic".into(),
+                        code: Some(panic.code.code().into()),
+                        message: panic.message.clone(),
+                    })
+            };
             let status = match execution.report.terminal() {
+                _ if execution.timed_out => "timeout",
                 _ if error.is_some() => "failed-panic",
                 Some(Terminal::Skipped { .. }) => "skipped",
                 Some(Terminal::ResourceLimit { .. }) => "resource-limit",
@@ -2685,7 +2858,9 @@ fn execute_test_worker(
             .iter()
             .filter(|execution| {
                 execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
-                    && (execution.panic.is_some() || execution.report.terminal().is_some())
+                    && (execution.timed_out
+                        || execution.panic.is_some()
+                        || execution.report.terminal().is_some())
                     && id
                         .strip_prefix(&execution.id)
                         .is_some_and(|suffix| suffix.starts_with("::"))
@@ -2979,6 +3154,7 @@ struct CliSuiteAttempt {
     id: String,
     iteration: u32,
     round: u32,
+    unit: Option<u32>,
     invocation: u64,
     status: RuntimeStatus,
     phase: Option<AttemptPhase>,
@@ -3050,6 +3226,7 @@ fn collect_suite_attempts(
                     0
                 },
                 invocation,
+                unit: None,
                 status,
                 phase,
                 report,
@@ -3109,47 +3286,6 @@ fn execute_campaign(
             .map(|attempt| CliAttempt {
                 id: attempt.id().to_owned(),
                 iteration: attempt.iteration(),
-                round: attempt.round(),
-                unit: attempt.unit(),
-                invocation: attempt.worker().invocation_id(),
-                status: attempt.status(),
-                report: attempt.report().clone(),
-                error: None,
-                snapshot_updates: Vec::new(),
-                diagnostics: Vec::new(),
-                diagnostic_artifacts: Vec::new(),
-            })
-            .collect());
-    }
-    if plan.retry > 0 {
-        let policy = RetryPolicy::new(plan.retry)
-            .map_err(|error| TestCommandError::Usage(error.to_string()))?
-            .with_allow_flaky(plan.allow_flaky);
-        let context = RetryContext::new(
-            shard_identity(plan),
-            request.target().name(),
-            identity.inputs.public_sha256(),
-            order_seed(plan),
-            tondo_compiler::test_report::CANONICAL_ORDER_ALGORITHM,
-            request
-                .capabilities()
-                .iter()
-                .map(|capability| capability.as_str().to_owned()),
-            campaign_limits(plan),
-            &identity.artifact_store_sha256,
-            &snapshots.before_sha256,
-        )
-        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-        let report = RetryCampaign::new(runtime, policy, context)
-            .map_err(|error| TestCommandError::Internal(error.to_string()))?
-            .run(programs)
-            .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-        return Ok(report
-            .attempts()
-            .iter()
-            .map(|attempt| CliAttempt {
-                id: attempt.id().to_owned(),
-                iteration: 1,
                 round: attempt.round(),
                 unit: attempt.unit(),
                 invocation: attempt.worker().invocation_id(),
@@ -3579,9 +3715,10 @@ fn build_test_report(
     snapshots: &SnapshotInputs,
     mutation: &SnapshotMutation,
     identity: &TestInvocationIdentity,
+    retry_rounds: Vec<tondo_compiler::test_report::ReportRetryRound>,
 ) -> Result<TestReport, TestCommandError> {
     let mut metadata = report_metadata(request, plan, ownership, snapshots, mutation, identity)?;
-    metadata.retry.rounds = retry_rounds(plan, entries, attempts);
+    metadata.retry.rounds = retry_rounds;
     let tests = entries
         .iter()
         .map(|entry| {
@@ -3601,7 +3738,11 @@ fn build_test_report(
             let test_attempts = selected
                 .iter()
                 .enumerate()
-                .map(|(index, attempt)| make_test_attempt(index as u32 + 1, attempt))
+                .map(|(index, source)| {
+                    let mut attempt = make_test_attempt(index as u32 + 1, source)?;
+                    bind_blocked_attempt(&mut attempt, source, suite_attempts)?;
+                    Ok::<_, TestCommandError>(attempt)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let (package, module, path) = identity_parts(entry.id());
             let owners = ownership
@@ -3659,7 +3800,7 @@ fn build_test_report(
                         id: source.id.clone(),
                         iteration: source.iteration,
                         round: source.round,
-                        unit: (source.round > 0).then_some(1),
+                        unit: source.unit,
                         invocation: source.invocation,
                         status: source.status,
                         report: source.report.clone(),
@@ -3669,6 +3810,7 @@ fn build_test_report(
                         diagnostic_artifacts: source.diagnostic_artifacts.clone(),
                     };
                     let mut attempt = make_test_attempt(index as u32 + 1, &source_attempt)?;
+                    bind_blocked_attempt(&mut attempt, &source_attempt, suite_attempts)?;
                     attempt.phase = source.phase;
                     Ok(attempt)
                 })
@@ -3719,57 +3861,28 @@ fn build_test_report(
     .map_err(|error| TestCommandError::Internal(error.to_string()))
 }
 
-fn retry_rounds(
-    plan: &test_cli::TestCliPlan,
-    entries: &[tondo_compiler::test_backend::TestEntry],
-    attempts: &[CliAttempt],
-) -> Vec<tondo_compiler::test_report::ReportRetryRound> {
-    if plan.retry == 0 {
-        return Vec::new();
-    }
-    let mut rounds = Vec::new();
-    for round in 1..=plan.retry {
-        let mut grouped = BTreeMap::<String, (usize, RetryUnitKind, Vec<String>)>::new();
-        for (index, entry) in entries.iter().enumerate() {
-            if !attempts
-                .iter()
-                .any(|attempt| attempt.id == entry.id() && attempt.round == round)
-            {
-                continue;
-            }
-            let (id, kind) = if entry.suites().is_empty() {
-                (entry.id().to_owned(), RetryUnitKind::Test)
-            } else {
-                let components = entry.id().split("::").collect::<Vec<_>>();
-                (components[..4].join("::"), RetryUnitKind::Suite)
-            };
-            grouped
-                .entry(id)
-                .and_modify(|(_, _, leaves)| leaves.push(entry.id().to_owned()))
-                .or_insert((index, kind, vec![entry.id().to_owned()]));
-        }
-        let mut units = grouped
-            .into_iter()
-            .map(|(id, (index, kind, execution_plan))| {
-                (
-                    index,
-                    RetryUnit {
-                        kind,
-                        id,
-                        execution_plan,
-                    },
-                )
-            })
+fn bind_blocked_attempt(
+    attempt: &mut TestAttempt,
+    source: &CliAttempt,
+    suites: &[CliSuiteAttempt],
+) -> Result<(), TestCommandError> {
+    if let Some(blocked) = &mut attempt.blocked_by {
+        let mut causes = suites
+            .iter()
+            .filter(|suite| suite.id == blocked.id)
             .collect::<Vec<_>>();
-        units.sort_by_key(|(index, _)| *index);
-        if !units.is_empty() {
-            rounds.push(tondo_compiler::test_report::ReportRetryRound {
-                round,
-                units: units.into_iter().map(|(_, unit)| unit).collect(),
-            });
-        }
+        causes.sort_by_key(|suite| (suite.iteration, suite.round, suite.unit));
+        let index = causes
+            .iter()
+            .position(|suite| suite.invocation == source.invocation)
+            .ok_or_else(|| {
+                TestCommandError::Internal(
+                    "blocked attempt has no causal suite participation".into(),
+                )
+            })?;
+        blocked.attempt = index as u32 + 1;
     }
-    rounds
+    Ok(())
 }
 
 fn identity_parts(id: &str) -> (String, String, Vec<String>) {
@@ -4759,7 +4872,13 @@ mod tests {
         };
         // No worker can reconstruct the invocation from these paths now.
         fs::remove_dir_all(&root).unwrap();
-        let result = spawn_test_worker(encoded, &ids, Some(10_000), false, &context).unwrap();
+        let phase_limits = test_deadline::Limits {
+            body: 10_000,
+            setup: 10_000,
+            teardown: 10_000,
+        };
+        let result =
+            spawn_test_worker(encoded, &ids, Some(10_000), phase_limits, false, &context).unwrap();
         let response = &result.leaves[&ids[0]];
         assert_eq!(response.status, "passed", "{:?}", response.error);
         assert!(response.error.is_none());
@@ -4780,6 +4899,7 @@ mod tests {
             Arc::new(invalid.encode().unwrap()),
             &ids,
             Some(10_000),
+            phase_limits,
             false,
             &context,
         )
@@ -4800,6 +4920,7 @@ mod tests {
             Arc::new(bytes),
             &ids,
             Some(10_000),
+            phase_limits,
             false,
             &revision_context,
         )
@@ -4825,6 +4946,7 @@ mod tests {
             Arc::new(changed.encode().unwrap()),
             &ids,
             Some(10_000),
+            phase_limits,
             false,
             &context,
         )

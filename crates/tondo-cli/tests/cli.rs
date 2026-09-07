@@ -1459,6 +1459,124 @@ fn test_command_cannot_disable_the_closed_sidecar_timeout() {
 }
 
 #[test]
+fn phase_deadlines_do_not_sum_descendants_or_setup_and_teardown() {
+    let directory = project_with_source_and_threads(b"fn main() {}\n");
+    fs::create_dir_all(directory.join("tests")).unwrap();
+    fs::write(
+        directory.join("tests/phases.to"),
+        r#"
+import std.time
+suite outer {
+    _ = time.sleep(time.Duration.fromNanoseconds(350000000))
+    defer { _ = time.sleep(time.Duration.fromNanoseconds(350000000))
+    }
+    suite inner {
+        test first { _ = time.sleep(time.Duration.fromNanoseconds(350000000))
+        }
+        test second { _ = time.sleep(time.Duration.fromNanoseconds(350000000))
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--timeout", "500ms", "--test-format", "json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report = TestReport::parse(&output.stdout).unwrap();
+    assert_eq!(report.tests().len(), 2);
+    assert_eq!(report.suites().len(), 2);
+    assert!(
+        report
+            .tests()
+            .iter()
+            .all(|test| test.status == AggregateStatus::Passed)
+    );
+    assert!(
+        report
+            .suites()
+            .iter()
+            .all(|suite| suite.status == AggregateStatus::Passed)
+    );
+}
+
+#[test]
+fn phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results() {
+    for (source, phase, tests, expected) in [
+        (
+            "suite outer { test first {}\n test middle { _ = time.sleep(time.Duration.fromNanoseconds(300000000))\n }\n test zlast {}\n}\n",
+            None,
+            3,
+            vec![
+                AggregateStatus::Passed,
+                AggregateStatus::Timeout,
+                AggregateStatus::Passed,
+            ],
+        ),
+        (
+            "suite outer { _ = time.sleep(time.Duration.fromNanoseconds(300000000))\n test child {}\n}\n",
+            Some("setup"),
+            1,
+            vec![AggregateStatus::BlockedSetup],
+        ),
+        (
+            "suite outer { defer { _ = time.sleep(time.Duration.fromNanoseconds(300000000))\n }\n test child {}\n}\n",
+            Some("teardown"),
+            1,
+            vec![AggregateStatus::Passed],
+        ),
+    ] {
+        let directory = project_with_source_and_threads(b"fn main() {}\n");
+        fs::create_dir_all(directory.join("tests")).unwrap();
+        fs::write(
+            directory.join("tests/phases.to"),
+            format!("import std.time\n{source}"),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args(["test", "--timeout", "100ms", "--test-format", "json"])
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{phase:?}: {}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let report = TestReport::parse(&output.stdout).unwrap();
+        assert_eq!(report.tests().len(), tests);
+        assert_eq!(
+            report
+                .tests()
+                .iter()
+                .map(|test| test.status)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        if let Some(phase) = phase {
+            assert_eq!(report.suites()[0].status, AggregateStatus::Timeout);
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(json["suites"][0]["attempts"][0]["phase"], phase);
+        } else {
+            assert_eq!(report.suites()[0].status, AggregateStatus::Passed);
+        }
+    }
+}
+
+#[test]
 fn test_command_kills_a_recursive_leaf_at_the_wall_clock_boundary() {
     let directory = test_project(b"fn spin() { spin() }\ntest smoke { spin() }\n");
     let started = std::time::Instant::now();
@@ -1476,6 +1594,110 @@ fn test_command_kills_a_recursive_leaf_at_the_wall_clock_boundary() {
         elapsed < std::time::Duration::from_secs(3),
         "worker was not bounded: {elapsed:?}"
     );
+}
+
+#[test]
+fn phase_timeout_retry_keeps_complete_attempts_and_fresh_participations() {
+    let directory = test_project(b"suite outer {\n test slow { for {}\n }\n test sibling {}\n}\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--timeout",
+            "20ms",
+            "--retry",
+            "1",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report = TestReport::parse(&output.stdout).unwrap();
+    let slow = report
+        .tests()
+        .iter()
+        .find(|test| test.id.ends_with("::slow"))
+        .unwrap();
+    assert_eq!(slow.status, AggregateStatus::Timeout);
+    assert_eq!(slow.attempts.len(), 2);
+    assert!(
+        slow.attempts
+            .iter()
+            .all(|attempt| attempt.status == tondo_compiler::test_result::AttemptStatus::Timeout)
+    );
+    let sibling = report
+        .tests()
+        .iter()
+        .find(|test| test.id.ends_with("::sibling"))
+        .unwrap();
+    assert_eq!(sibling.status, AggregateStatus::Passed);
+    assert_eq!(sibling.attempts.len(), 1);
+    assert_eq!(report.suites()[0].attempts.len(), 2);
+}
+
+#[test]
+fn phase_retry_units_cover_suite_failures_and_independent_leaf_failures() {
+    for (source, expected_suites, expected_kind) in [
+        (
+            "suite outer {\n test first { for {}\n }\n test second { for {}\n }\n}\n",
+            3,
+            "test",
+        ),
+        ("suite outer { for {}\n test child {}\n}\n", 2, "suite"),
+        (
+            "import std.time\nsuite outer { defer { _ = time.sleep(time.Duration.fromNanoseconds(100000000))\n }\n test child {}\n}\n",
+            2,
+            "suite",
+        ),
+    ] {
+        let directory = test_project(source.as_bytes());
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args([
+                "test",
+                "--timeout",
+                "20ms",
+                "--retry",
+                "1",
+                "--test-format",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let report = TestReport::parse(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "{error}: {}\n{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            )
+        });
+        assert_eq!(report.suites()[0].attempts.len(), expected_suites);
+        assert!(report.tests().iter().all(|test| test.attempts.len() == 2));
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            value["retry"]["rounds"][0]["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|unit| unit["kind"] == expected_kind)
+        );
+    }
 }
 
 #[cfg(unix)]

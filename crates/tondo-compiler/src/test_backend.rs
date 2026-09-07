@@ -58,6 +58,17 @@ pub struct TestNodeExecution {
     pub phase: ExecutionPhase,
     pub panic: Option<VmPanic>,
     pub snapshot_updates: Vec<(String, String)>,
+    pub timed_out: bool,
+}
+
+/// Runner-owned phase supervision, outside the Tondo evidence envelope.
+/// Implementations must keep notifications bounded and preserve node nesting.
+pub trait TestPhaseObserver: std::fmt::Debug + Send + Sync {
+    fn enter(&self, id: &str, kind: TestExecutionKind) -> Result<(), String>;
+    fn cleanup(&self) -> Result<(), String>;
+    fn finish(&self, id: &str) -> Result<bool, String>;
+    fn timeout_pending(&self) -> bool;
+    fn take_timeout(&self) -> Option<String>;
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +79,8 @@ pub struct TestParticipation {
 #[derive(Debug)]
 struct TestParticipationInner {
     interrupted: Arc<AtomicBool>,
+    phases: Option<Arc<dyn TestPhaseObserver>>,
+    selected: Option<std::collections::BTreeSet<String>>,
     limits: EnvelopeLimits,
     expected: BTreeMap<String, BTreeMap<String, String>>,
     update_snapshots: bool,
@@ -75,6 +88,53 @@ struct TestParticipationInner {
 }
 
 impl TestParticipation {
+    /// Restricts an immutable compiled participation to a retry unit. The
+    /// entire target was checked before this runtime selection is installed.
+    pub fn with_selection(mut self, selected: std::collections::BTreeSet<String>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("select before sharing a participation")
+            .selected = Some(selected);
+        self
+    }
+
+    pub(crate) fn selects(&self, id: &str) -> bool {
+        self.inner.selected.as_ref().is_none_or(|selected| {
+            selected.contains(id)
+                || selected.iter().any(|leaf| {
+                    leaf.strip_prefix(id)
+                        .is_some_and(|suffix| suffix.starts_with("::"))
+                })
+        })
+    }
+
+    pub fn with_phases(mut self, phases: Arc<dyn TestPhaseObserver>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("configure phases before sharing a participation")
+            .phases = Some(phases);
+        self
+    }
+
+    pub(crate) fn timeout_pending(&self) -> bool {
+        self.inner
+            .phases
+            .as_ref()
+            .is_some_and(|phases| phases.timeout_pending())
+    }
+
+    pub(crate) fn take_timeout(&self) -> Option<String> {
+        self.inner
+            .phases
+            .as_ref()
+            .and_then(|phases| phases.take_timeout())
+    }
+
+    pub(crate) fn begin_cleanup(&self) -> Result<(), String> {
+        self.inner
+            .phases
+            .as_ref()
+            .map_or(Ok(()), |phases| phases.cleanup())
+    }
+
     /// Shares the worker's external cancellation request with the hosted VM.
     /// The request stops the participation; it is never a test assertion.
     pub fn with_interruption(mut self, interrupted: Arc<AtomicBool>) -> Self {
@@ -96,6 +156,8 @@ impl TestParticipation {
         Self {
             inner: Arc::new(TestParticipationInner {
                 interrupted: Arc::new(AtomicBool::new(false)),
+                phases: None,
+                selected: None,
                 limits,
                 expected,
                 update_snapshots,
@@ -121,7 +183,24 @@ impl TestParticipation {
                 .set_phase(ExecutionPhase::Body)
                 .map_err(|error| error.to_string())?;
         }
+        if let Some(phases) = &self.inner.phases {
+            phases.enter(id, kind)?;
+        }
         Ok(envelope)
+    }
+
+    /// Closes an unwound node without manufacturing an ordinary test result.
+    /// Ancestor deadlines can unwind descendants before their own boundary.
+    pub(crate) fn finish_interrupted(
+        &self,
+        id: &str,
+        envelope: EnvelopeHandle,
+    ) -> Result<(), String> {
+        envelope.close().map_err(|error| error.to_string())?;
+        if let Some(phases) = &self.inner.phases {
+            phases.finish(id)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn finish(
@@ -137,6 +216,11 @@ impl TestParticipation {
         let snapshot_updates = envelope
             .snapshot_updates()
             .map_err(|error| error.to_string())?;
+        let timed_out = self
+            .inner
+            .phases
+            .as_ref()
+            .map_or(Ok(false), |phases| phases.finish(id))?;
         self.inner
             .executions
             .lock()
@@ -148,6 +232,7 @@ impl TestParticipation {
                 phase,
                 panic,
                 snapshot_updates,
+                timed_out,
             });
         Ok(())
     }
