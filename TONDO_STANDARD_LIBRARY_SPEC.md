@@ -3904,7 +3904,7 @@ directa del host hasta que el dispatcher async registre esa operación
 (`writer-boundary: static-contract-only-until-async-dispatch`,
 `native_aot_lowering: not-claimed`,
 `simd: not-measured-no-optimized-route`). El siguiente bloque del owner es
-`STD-TOML-IMPL-001`.
+`STD-TOML-TEST-001`.
 
 ### 14.14 `std.toml`
 
@@ -3929,14 +3929,23 @@ half-open en bytes UTF-8, con línea/columna y path `Key`/`Index`; el parser es
 invariante al chunking y no publica resultados parciales. Solo la frontera de
 `std.io.Reader`/`Writer` suspende y no existe una API `selectable` duplicada.
 
+El kernel Rust de tondo-stdlib queda verificado por STD-TOML-IMPL-001 con
+TomlValue/TomlValueView, parser con spans, fechas civiles de nanosegundo,
+duplicados y tablas/AOT, encoder canónico, eventos y reader/writer atómicos.
+La identidad serialization::Toml se registra sin añadir un intrinsic del
+compilador. El estado es verified-stdlib-kernel; host/compiler,
+native_aot_lowering: not-claimed y public_api_promoted: false. No se reclama
+ejecución hosted ni runtime nativo hasta disponer del ABI TOML correspondiente.
+El siguiente bloque es STD-TOML-TEST-001.
+
 El contrato machine-readable, la documentación y los checks negativos son
 [`testing/stdlib-toml.json`](./testing/stdlib-toml.json),
 [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md),
 [`scripts/stdlib-toml-check.sh`](./scripts/stdlib-toml-check.sh) y
 [`scripts/stdlib-toml-test.sh`](./scripts/stdlib-toml-test.sh). El contrato
-queda cerrado como diseño B0; implementación, host, fuzzing, rendimiento,
-conformance y documentación de uso permanecen pendientes de
-`STD-TOML-IMPL-001` y sus leaves posteriores a `NATIVE-001`.
+queda cerrado como diseño B0; host/compiler, fuzzing ampliado, rendimiento,
+conformance y documentación de uso permanecen pendientes de las leaves
+STD-TOML-TEST-001, STD-TOML-PERF-001, STD-TOML-CONF-001 y STD-TOML-DOC-001.
 
 ### 14.15 `std.cbor`
 

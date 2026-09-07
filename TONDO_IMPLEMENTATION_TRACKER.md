@@ -45,7 +45,7 @@ hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
 lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
 siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-09-05
+**Última actualización:** 2026-09-07
 
 **Especificaciones normativas:**
 
@@ -73,6 +73,7 @@ siendo una capacidad declarada por target.
 - [Contrato de owner de `std.yaml`](./docs/contracts/stdlib-yaml.md)
 - [Contrato de tests de `std.yaml`](./docs/contracts/stdlib-yaml-test.md)
 - [Contrato de rendimiento de `std.yaml`](./docs/contracts/stdlib-yaml-performance.md)
+- [Contrato de owner de `std.toml`](./docs/contracts/stdlib-toml.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
@@ -164,7 +165,7 @@ por la guía ejecutable de policies, errores, costes y ejemplos. `STD-YAML-PERF-
 queda cerrado por el baseline scalar hosted de 13 workloads, 27 muestras por
 workload y métricas de latencia, tail, throughput, allocations, memoria lógica,
 bytes copiados, profundidad, aliases, expansión, rechazo adversarial y cleanup;
-`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. `STD-YAML-DOC-001` queda cerrado por la guía ejecutable del subset seguro, policies, límites, costes, ownership y ejemplos materializados/streaming; el siguiente bloque de ese slice es `STD-TOML-IMPL-001`. El modelo y
+`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. `STD-YAML-DOC-001` queda cerrado por la guía ejecutable del subset seguro, policies, límites, costes, ownership y ejemplos materializados/streaming; el siguiente bloque de ese slice es `STD-TOML-TEST-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6457,7 +6458,13 @@ publica hasta cerrar el gate final.
   `tondo.toml`. Los negativos están en `scripts/stdlib-toml-check.sh` y
   `scripts/stdlib-toml-test.sh`, integrados en `test-gate.sh`. La implementación,
   host, tests/fuzzing, rendimiento, conformance y documentación de uso quedan
-  pendientes de `STD-TOML-IMPL-001` y sus leaves posteriores a `NATIVE-001`.
+  `STD-TOML-IMPL-001` queda cerrado para el kernel determinista de
+  `tondo-stdlib`, con parser TOML 1.1.0, árbol typed/dynamic, fechas civiles,
+  spans, duplicados, tablas/AOT, eventos y reader/writer atómicos. El registro
+  mantiene `verified-stdlib-kernel`, `public_api_promoted: false`,
+  `host: not-claimed-until-compiler-toml-abi` y
+  `native_aot_lowering: not-claimed`; no se reclama un intrinsic compiler/VM
+  ni lowering AOT. El siguiente bloque es `STD-TOML-TEST-001`.
 
 - [x] **STD-CBOR-001 — Especificar `std.cbor`.** El contrato
   [`docs/contracts/stdlib-cbor.md`](./docs/contracts/stdlib-cbor.md) y el
@@ -7034,7 +7041,7 @@ estas leaves.
   aliases, expansión, rechazo adversarial, dispatch `scalar-fixed-target` y
   cero handles YAML vivos al finalizar. Runtime nativo, SIMD, lowering AOT y
   fast paths optimizados siguen sin reclamar; conformance pasa a hoja verificada
-  por `STD-YAML-CONF-001`; el siguiente bloque es `STD-TOML-IMPL-001`.
+  por `STD-YAML-CONF-001`; el siguiente bloque es `STD-TOML-TEST-001`.
 - [x] **STD-YAML-CONF-001 — Conformar YAML.** El fixture hosted y el probe nativo
   de proceso separado comparan el mismo corpus de seis casos: typed/dynamic,
   interoperabilidad YAML 1.2 Core, streaming con fragmentos de un byte, errores
@@ -7042,7 +7049,7 @@ estas leaves.
   el scalar de `std.yaml`, comprueba cero objetos de la tabla runtime entre casos
   y no reclama ABI YAML nativo, SIMD ni lowering AOT; la guía documental queda
   cerrada por `STD-YAML-DOC-001` y el siguiente bloque es
-  `STD-TOML-IMPL-001`.
+  `STD-TOML-TEST-001`.
 - [x] **STD-YAML-DOC-001 — Documentar YAML.** La guía canónica en
   [`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md) enumera el
   subset seguro YAML 1.2 Core, policies explícitas, límites y costes lineales,
@@ -7057,13 +7064,21 @@ estas leaves.
   documentada como `writer-boundary: static-contract-only-until-async-dispatch`
   porque el dispatcher async hosted aún no la ejecuta; no se reclama runtime
   nativo público, SIMD ni lowering AOT. El siguiente bloque es
-  `STD-TOML-IMPL-001`.
+  `STD-TOML-TEST-001`.
 
 #### 21.3.8 `std.toml`
 
-- [ ] **STD-TOML-IMPL-001 — Implementar TOML.** Publicar typed, árbol dinámico y
-  parser con spans sobre serialization, preservando fecha/hora, duplicados y
-  construcción atómica sin compartir semántica con el manifest del toolchain.
+- [x] **STD-TOML-IMPL-001 — Implementar TOML.** El kernel de
+  `crates/tondo-stdlib/src/toml.rs` publica typed/dynamic `TomlValue`,
+  `TomlValueView`, parser TOML 1.1.0 con spans half-open, fechas civiles con
+  precisión nanosegundo, duplicados, tablas/arrays-of-tables, encoder canónico,
+  eventos y reader/writer atómicos sobre `serialization::Toml`. Los ocho tests
+  focalizados y clippy estricto pasan; el registro
+  `testing/stdlib-toml.json` queda en `verified-stdlib-kernel` con
+  `public_api_promoted: false`, `host: not-claimed-until-compiler-toml-abi` y
+  `native_aot_lowering: not-claimed`. No se reclama intrinsic compiler/VM,
+  runtime hosted, ABI nativo ni lowering AOT; tampoco se interpreta
+  `tondo.toml`. El siguiente bloque es `STD-TOML-TEST-001`.
 - [ ] **STD-TOML-TEST-001 — Probar y fuzzear TOML.** Cubrir corpus oficial,
   Unicode, números, fechas, tablas, arrays, duplicados, chunks aplicables,
   límites y spans exactos.

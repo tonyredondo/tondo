@@ -22,6 +22,10 @@ pub struct Protobuf;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Yaml;
 
+/// TOML 1.1.0 codec identity for the common typed serialization protocol.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Toml;
+
 /// A common owned value for the dynamic JSON/MessagePack path.
 ///
 /// Protobuf intentionally keeps its wire-oriented `ProtoValue` model instead

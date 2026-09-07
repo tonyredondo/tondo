@@ -390,6 +390,38 @@ desde `.to`. `std.toml` no puede cambiar el package graph, seleccionar
 capabilities, resolver dependencias, leer la red ni ejecutar el compiler por
 el hecho de parsear un documento con esas keys.
 
+## Implementación del kernel
+
+STD-TOML-IMPL-001 queda cerrado para el kernel determinista de tondo-stdlib.
+El estado machine-readable es verified-stdlib-kernel: el módulo
+crates/tondo-stdlib/src/toml.rs publica el modelo TomlValue, las cuatro formas
+temporales civiles, el parser con spans, duplicados y tablas/AOT, el encoder
+canónico, el protocolo de eventos y los handles reader/writer atómicos.
+serialization::Toml y lib.rs registran la identidad del codec sin crear una
+ruta paralela para el toolchain.
+
+La evidencia focalizada ejecuta los ocho casos de toml::tests y clippy
+estricto; la construcción es atómica y no se publica un valor o bytes parciales
+cuando falla una cota, un token, un duplicado, un span o el balance de eventos.
+La implementación usa la misma política para parse, parse_view, validate,
+encode, encodeCanonical, TomlReader y TomlWriter.
+
+El límite de ejecución es intencionado y está sellado en el registro:
+
+~~~text
+implementation.status: verified-stdlib-kernel
+host: not-claimed-until-compiler-toml-abi
+native_aot_lowering: not-claimed
+public_api_promoted: false
+~~~
+
+No existe todavía un intrinsic std.toml en el compilador/HIR/VM ni un ABI
+Tondo para conectar std.io.Writer; por eso este bloque no reclama ejecución
+hosted, runtime nativo ni lowering AOT, y no introduce una fixture .to
+artificial. La ruta typed Rust solo usa std.serialization y no interpreta
+tondo.toml. El siguiente bloque es STD-TOML-TEST-001, que ampliará el corpus
+oficial y fuzzing sin mover esta frontera.
+
 ## Exclusiones deliberadas y leaves posteriores
 
 Este contrato no incluye TOML 1.0 como dialecto alternativo, documentos
@@ -398,11 +430,10 @@ preservados, edición round-trip, schema discovery, valores binarios implícitos
 segundos intercalares, offsets fuera de `std.time`, fracciones de más de nueve
 dígitos, futures duplicadas ni `selectable`.
 
-La implementación, host, corpus de tests/fuzzing, rendimiento, conformance y
+El host/compiler, corpus ampliado de tests/fuzzing, rendimiento, conformance y
 documentación de uso permanecen pendientes de:
 
 ```text
-STD-TOML-IMPL-001
 STD-TOML-TEST-001
 STD-TOML-PERF-001
 STD-TOML-CONF-001

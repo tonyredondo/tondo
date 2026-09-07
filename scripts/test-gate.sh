@@ -299,6 +299,12 @@ run_step stdlib-toml-contract \
     scripts/stdlib-toml-check.sh
 run_step stdlib-toml-contract-tests \
     scripts/stdlib-toml-test.sh
+run_step stdlib-toml-implementation-contract \
+    scripts/stdlib-toml-implementation-check.sh
+run_step stdlib-toml-implementation-contract-tests \
+    scripts/stdlib-toml-implementation-test.sh
+run_step stdlib-toml-implementation \
+    scripts/stdlib-toml-implementation.sh
 run_step stdlib-cbor-contract \
     scripts/stdlib-cbor-check.sh
 run_step stdlib-cbor-contract-tests \

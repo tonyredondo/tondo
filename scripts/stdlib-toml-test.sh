@@ -43,6 +43,15 @@ expect_failure recursive-stack env TONDO_STDLIB_TOML_CONTRACT="$tmp_dir/recursiv
 jq '.implementation.public_api_promoted = true' testing/stdlib-toml.json > "$tmp_dir/premature-promotion.json"
 expect_failure premature-promotion env TONDO_STDLIB_TOML_CONTRACT="$tmp_dir/premature-promotion.json" scripts/stdlib-toml-check.sh
 
+jq '.implementation.status = "pending-after-native-gate"' testing/stdlib-toml.json > "$tmp_dir/pending-implementation.json"
+expect_failure pending-implementation env TONDO_STDLIB_TOML_CONTRACT="$tmp_dir/pending-implementation.json" scripts/stdlib-toml-check.sh
+
+jq '.implementation.host = "required-after-native-gate"' testing/stdlib-toml.json > "$tmp_dir/pending-host.json"
+expect_failure pending-host env TONDO_STDLIB_TOML_CONTRACT="$tmp_dir/pending-host.json" scripts/stdlib-toml-check.sh
+
+jq '.implementation.native_aot_lowering = "verified"' testing/stdlib-toml.json > "$tmp_dir/native-claim.json"
+expect_failure native-claim env TONDO_STDLIB_TOML_CONTRACT="$tmp_dir/native-claim.json" scripts/stdlib-toml-check.sh
+
 jq '.corpora += [.corpora[0]]' testing/stdlib-toml.json > "$tmp_dir/duplicate-corpus.json"
 expect_failure duplicate-corpus env TONDO_STDLIB_TOML_CONTRACT="$tmp_dir/duplicate-corpus.json" scripts/stdlib-toml-check.sh
 
@@ -85,8 +94,12 @@ jq -e '
   and .ownership.reader_writer_affine == true
   and .errors.partial_success == false
   and .performance.scalar_oracle == true
+  and .implementation.status == "verified-stdlib-kernel"
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.host == "not-claimed-until-compiler-toml-abi"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and .implementation.fixture == null
+  and .promotion.next_blocks == ["STD-TOML-TEST-001"]
 ' testing/stdlib-toml.json >/dev/null
 
 echo "std.toml tests: OK (TOML 1.1.0; dates; tables; duplicates; spans; streaming; toolchain boundary)"

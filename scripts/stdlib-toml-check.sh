@@ -127,11 +127,17 @@ jq -e '
   and all(.corpora[]; .source == "owner-generated" and .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "verified-stdlib-kernel"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
-  and .implementation.required_follow_ups == ["STD-TOML-IMPL-001", "STD-TOML-TEST-001", "STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.host == "not-claimed-until-compiler-toml-abi"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and (.implementation.sources | type == "array" and length == 3)
+  and (.implementation.tests | type == "array" and length == 8)
+  and .implementation.fixture == null
+  and .implementation.evidence_report == "target/reliability/evidence/stdlib-toml-implementation.json"
+  and (.implementation.proof | type == "string" and length > 0)
+  and .implementation.required_follow_ups == ["STD-TOML-TEST-001", "STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .promotion.next_blocks == ["STD-TOML-TEST-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.toml contract"
 
 for path in \
