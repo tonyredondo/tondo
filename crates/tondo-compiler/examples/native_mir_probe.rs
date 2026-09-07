@@ -179,6 +179,13 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
                                         result: None,
                                         diagnostics: vec!["vm-non-int-result".to_owned()],
                                     },
+                                    VmOutcome::Interrupted => VmScalarObservation {
+                                        function_ordinal: function.ordinal,
+                                        arguments,
+                                        status: "interrupted",
+                                        result: None,
+                                        diagnostics: vec!["vm-interrupted".to_owned()],
+                                    },
                                     VmOutcome::Panicked(_) => VmScalarObservation {
                                         function_ordinal: function.ordinal,
                                         arguments,
@@ -262,6 +269,15 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
                                             },
                                         }
                                     }
+                                    VmOutcome::Interrupted => VmManagedObservation {
+                                        function_ordinal: function.ordinal,
+                                        arguments,
+                                        status: "interrupted",
+                                        tag: None,
+                                        payload: None,
+                                        payload_text: None,
+                                        diagnostics: vec!["vm-interrupted".to_owned()],
+                                    },
                                     VmOutcome::Panicked(_) => VmManagedObservation {
                                         function_ordinal: function.ordinal,
                                         arguments,

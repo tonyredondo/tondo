@@ -221,12 +221,26 @@ pub(crate) fn analyze_availability(
     capabilities: &CapabilityAnalysis,
     terminals: &TerminalAnalysis,
 ) -> Result<Vec<AvailabilityFinding>, TypeError> {
+    analyze_availability_from(program, capabilities, terminals, 0)
+}
+
+/// Checks new bodies in an appended expression arena. References to sealed
+/// declarations remain available, but their source bodies are not analyzed.
+pub(crate) fn analyze_availability_from(
+    program: &HirProgram,
+    capabilities: &CapabilityAnalysis,
+    terminals: &TerminalAnalysis,
+    expression_start: usize,
+) -> Result<Vec<AvailabilityFinding>, TypeError> {
     let mut findings = BTreeSet::new();
-    let liveness = collect_liveness_facts(program);
+    let liveness = collect_liveness_facts_from(program, expression_start);
     for callable in program.callables() {
         let Some(body) = program.body(callable.id()) else {
             continue;
         };
+        if (body.root().index() as usize) < expression_start {
+            continue;
+        }
         let initial_owners = callable
             .parameters()
             .iter()
@@ -256,6 +270,9 @@ pub(crate) fn analyze_availability(
         .analyze_body(body.root())?;
     }
     for closure in program.closures() {
+        if (closure.body().root().index() as usize) < expression_start {
+            continue;
+        }
         let initial_owners = closure
             .parameters()
             .iter()
@@ -863,6 +880,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             HirExpressionKind::Await { operation } => {
                 self.record_suspension_requirements(&state, live_after, expression.span())?;
                 let mut flow = self.expression(*operation, state, Demand::Transfer, live_after)?;
+                // Await consumes its Join even when the returned value is
+                // discarded as an expression statement rather than bound.
+                consume_terminal_argument(&mut flow, *operation, self.direct_local(*operation));
                 for state in flow
                     .normal
                     .iter_mut()
@@ -4091,9 +4111,13 @@ struct LivenessFacts {
 }
 
 fn collect_liveness_facts(program: &HirProgram) -> LivenessFacts {
-    let mut uses = Vec::<BTreeSet<LocalId>>::new();
-    let mut continues = Vec::<BTreeSet<HirLoopId>>::new();
-    for expression in program.expressions() {
+    collect_liveness_facts_from(program, 0)
+}
+
+fn collect_liveness_facts_from(program: &HirProgram, expression_start: usize) -> LivenessFacts {
+    let mut uses = vec![BTreeSet::<LocalId>::new(); expression_start];
+    let mut continues = vec![BTreeSet::<HirLoopId>::new(); expression_start];
+    for expression in program.expressions().skip(expression_start) {
         let mut current = BTreeSet::new();
         let mut current_continues = BTreeSet::new();
         if let HirExpressionKind::Local(local) = expression.kind() {

@@ -321,7 +321,7 @@ generate_matrix() {
         | ($owner_config | map(. as $owner |
             ($all_rows | map(select(.owner == $owner.id))) as $owner_rows
             | [
-                (if ($owner_rows | length) == 0 and $owner.runtime.kind != "not-applicable" then "no-callable-signatures-indexed" else empty end),
+                (if ($owner_rows | length) == 0 then "no-callable-signatures-indexed" else empty end),
                 (if ($owner.case.kind == "runtime" and (($owner.case.path | startswith("tests/runtime/")) | not)) then "invalid-runtime-case" else empty end),
                 (if ($owner.case.kind == "compile" and ((($owner.case.path | startswith("crates/")) and ($owner.case.path | contains("/tests/"))) | not)) then "invalid-compile-case" else empty end),
                 (if ($owner.case.kind == "runner-source" and $owner.case.path != "crates/tondo-compiler/src/driver.rs") then "invalid-runner-case" else empty end),

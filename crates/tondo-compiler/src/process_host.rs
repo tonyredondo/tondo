@@ -940,6 +940,7 @@ pub(crate) struct BootstrapHost {
     testing: Option<EnvelopeHandle>,
     testing_participation: Option<TestParticipation>,
     testing_stack: Vec<Option<EnvelopeHandle>>,
+    testing_control: Option<String>,
 }
 
 impl BootstrapHost {
@@ -1007,6 +1008,7 @@ impl BootstrapHost {
             testing: None,
             testing_participation: None,
             testing_stack: Vec::new(),
+            testing_control: None,
         }
     }
 
@@ -1025,21 +1027,17 @@ impl BootstrapHost {
     }
 
     fn testing_result(
+        &mut self,
         envelope: &EnvelopeHandle,
         result: Result<(), ControlError>,
     ) -> Result<RuntimeValue, VmError> {
         match result {
             Ok(()) => Ok(RuntimeValue::Unit),
-            Err(ControlError::FailNow { message }) => {
-                let _ = envelope.fail_now(message);
-                Ok(RuntimeValue::Unit)
-            }
-            Err(ControlError::Skip { reason }) => {
-                let _ = envelope.skip(reason);
-                Ok(RuntimeValue::Unit)
-            }
             Err(error) => {
-                let _ = envelope.fail_now(error.to_string());
+                envelope.record_host_error(&error).map_err(|error| {
+                    VmError::Host(format!("cannot record test terminal: {error}"))
+                })?;
+                self.testing_control = Some(error.to_string());
                 Ok(RuntimeValue::Unit)
             }
         }
@@ -5237,6 +5235,12 @@ impl Default for BootstrapHost {
 }
 
 impl VmHost for BootstrapHost {
+    fn interruption_requested(&self) -> bool {
+        self.testing_participation
+            .as_ref()
+            .is_some_and(TestParticipation::interrupted)
+    }
+
     fn set_execution_unit(&mut self, unit: u64) {
         self.current_unit = unit;
     }
@@ -5306,10 +5310,16 @@ impl VmHost for BootstrapHost {
         let name = name.split_once('[').map_or(name, |(base, _)| base);
         match (name, arguments) {
             ("std.console.print", [RuntimeValue::String(text)]) => {
+                if let Some(envelope) = self.testing.clone() {
+                    return self.testing_result(&envelope, envelope.print_stdout(text, false));
+                }
                 self.stdout.extend_from_slice(text.as_bytes());
                 Ok(RuntimeValue::Unit)
             }
             ("std.console.println", [RuntimeValue::String(text)]) => {
+                if let Some(envelope) = self.testing.clone() {
+                    return self.testing_result(&envelope, envelope.print_stdout(text, true));
+                }
                 self.stdout.extend_from_slice(text.as_bytes());
                 self.stdout.push(b'\n');
                 Ok(RuntimeValue::Unit)
@@ -5870,6 +5880,9 @@ impl VmHost for BootstrapHost {
             }
             ("std.math.round", [RuntimeValue::Float(value)]) => {
                 Ok(RuntimeValue::Float(math::round(*value)))
+            }
+            ("std.math.roundTiesAway", [RuntimeValue::Float(value)]) => {
+                Ok(RuntimeValue::Float(math::round_ties_away(*value)))
             }
             ("std.math.truncate", [RuntimeValue::Float(value)]) => {
                 Ok(RuntimeValue::Float(math::truncate(*value)))
@@ -8596,7 +8609,7 @@ impl VmHost for BootstrapHost {
             }
             ("std.testing.log", [RuntimeValue::String(message)]) => {
                 let envelope = self.testing_envelope()?;
-                Self::testing_result(&envelope, envelope.log(message.clone()))
+                self.testing_result(&envelope, envelope.log(message.clone()))
             }
             ("std.testing.assertEqual", [expected, actual]) => {
                 let envelope = self.testing_envelope()?;
@@ -8611,7 +8624,7 @@ impl VmHost for BootstrapHost {
                         ),
                     })
                 };
-                Self::testing_result(&envelope, result)
+                self.testing_result(&envelope, result)
             }
             ("std.testing.assertNotEqual", [expected, actual]) => {
                 let envelope = self.testing_envelope()?;
@@ -8625,7 +8638,7 @@ impl VmHost for BootstrapHost {
                         ),
                     })
                 };
-                Self::testing_result(&envelope, result)
+                self.testing_result(&envelope, result)
             }
             (
                 "std.testing.assertTextEqual",
@@ -8642,7 +8655,7 @@ impl VmHost for BootstrapHost {
                         ),
                     })
                 };
-                Self::testing_result(&envelope, result)
+                self.testing_result(&envelope, result)
             }
             (
                 "std.testing.diffText",
@@ -8814,7 +8827,7 @@ impl VmHost for BootstrapHost {
             ("std.testing.assertSome", [RuntimeValue::OptionSome(value)]) => Ok((**value).clone()),
             ("std.testing.assertSome", [RuntimeValue::OptionNone]) => {
                 let envelope = self.testing_envelope()?;
-                Self::testing_result(
+                self.testing_result(
                     &envelope,
                     Err(ControlError::FailNow {
                         message: "assertion failed: expected Some, got None".into(),
@@ -8824,7 +8837,7 @@ impl VmHost for BootstrapHost {
             ("std.testing.assertNone", [RuntimeValue::OptionNone]) => Ok(RuntimeValue::Unit),
             ("std.testing.assertNone", [RuntimeValue::OptionSome(value)]) => {
                 let envelope = self.testing_envelope()?;
-                Self::testing_result(
+                self.testing_result(
                     &envelope,
                     Err(ControlError::FailNow {
                         message: format!(
@@ -8837,7 +8850,7 @@ impl VmHost for BootstrapHost {
             ("std.testing.assertOk", [RuntimeValue::ResultOk(value)]) => Ok((**value).clone()),
             ("std.testing.assertOk", [RuntimeValue::ResultErr(error)]) => {
                 let envelope = self.testing_envelope()?;
-                Self::testing_result(
+                self.testing_result(
                     &envelope,
                     Err(ControlError::FailNow {
                         message: format!(
@@ -8850,7 +8863,7 @@ impl VmHost for BootstrapHost {
             ("std.testing.assertErr", [RuntimeValue::ResultErr(error)]) => Ok((**error).clone()),
             ("std.testing.assertErr", [RuntimeValue::ResultOk(value)]) => {
                 let envelope = self.testing_envelope()?;
-                Self::testing_result(
+                self.testing_result(
                     &envelope,
                     Err(ControlError::FailNow {
                         message: format!(
@@ -8890,7 +8903,7 @@ impl VmHost for BootstrapHost {
                         ),
                     })
                 };
-                Self::testing_result(&envelope, result)
+                self.testing_result(&envelope, result)
             }
             (
                 "std.testing.assertFloat32Near",
@@ -8912,7 +8925,7 @@ impl VmHost for BootstrapHost {
                         ),
                     })
                 };
-                Self::testing_result(&envelope, result)
+                self.testing_result(&envelope, result)
             }
             /*
              * Keep this arm unreachable for older bytecode so a stale client
@@ -8942,15 +8955,15 @@ impl VmHost for BootstrapHost {
                     };
                     tags.insert(key.clone(), value.clone());
                 }
-                Self::testing_result(&envelope, envelope.tags(tags))
+                self.testing_result(&envelope, envelope.tags(tags))
             }
             ("std.testing.failNow", [RuntimeValue::String(message)]) => {
                 let envelope = self.testing_envelope()?;
-                Self::testing_result(&envelope, envelope.fail_now(message.clone()))
+                self.testing_result(&envelope, envelope.fail_now(message.clone()))
             }
             ("std.testing.skip", [RuntimeValue::String(reason)]) => {
                 let envelope = self.testing_envelope()?;
-                Self::testing_result(&envelope, envelope.skip(reason.clone()))
+                self.testing_result(&envelope, envelope.skip(reason.clone()))
             }
             (
                 "std.testing.attach",
@@ -8962,7 +8975,7 @@ impl VmHost for BootstrapHost {
             ) => {
                 let envelope = self.testing_envelope()?;
                 let bytes = self.bytes(bytes)?.to_vec();
-                Self::testing_result(
+                self.testing_result(
                     &envelope,
                     envelope.attach(name.clone(), media_type.clone(), bytes),
                 )
@@ -8973,7 +8986,7 @@ impl VmHost for BootstrapHost {
             ) => {
                 let envelope = self.testing_envelope()?;
                 let result = envelope.snapshot(name.clone(), actual).map(|_| ());
-                Self::testing_result(&envelope, result)
+                self.testing_result(&envelope, result)
             }
             ("std.time.now", []) => match self.clock.now() {
                 Ok(nanos) => Ok(RuntimeValue::ResultOk(Box::new(
@@ -11045,14 +11058,26 @@ impl VmHost for BootstrapHost {
     }
 
     fn wait_async(&mut self, calls: &[u64]) -> Result<(u64, RuntimeValue), VmError> {
+        self.wait_async_interruptible(calls, false)?
+            .ok_or_else(|| VmError::Host("host wait interrupted".into()))
+    }
+
+    fn wait_async_interruptible(
+        &mut self,
+        calls: &[u64],
+        allow_interruption: bool,
+    ) -> Result<Option<(u64, RuntimeValue)>, VmError> {
         if calls.is_empty() {
             return Err(VmError::Host("host wait received no process calls".into()));
         }
         loop {
             for call in calls {
                 if let Some(value) = self.poll_async(*call)? {
-                    return Ok((*call, value));
+                    return Ok(Some((*call, value)));
                 }
+            }
+            if allow_interruption && self.interruption_requested() {
+                return Ok(None);
             }
             if calls
                 .iter()
@@ -11210,6 +11235,10 @@ impl VmHost for BootstrapHost {
         Ok(())
     }
 
+    fn take_test_control(&mut self) -> Option<String> {
+        self.testing_control.take()
+    }
+
     fn begin_test_node(&mut self, kind: VmTestNodeKind, id: &str) -> Result<(), VmError> {
         let participation = self.testing_participation.clone().ok_or_else(|| {
             VmError::Host("test node boundary has no installed participation".into())
@@ -11249,6 +11278,12 @@ impl VmHost for BootstrapHost {
         let panic = match outcome {
             VmTestNodeOutcome::Passed => None,
             VmTestNodeOutcome::Panicked(panic) => Some(panic),
+            VmTestNodeOutcome::Interrupted => {
+                envelope
+                    .close()
+                    .map_err(|error| VmError::Host(error.to_string()))?;
+                return Ok(());
+            }
         };
         participation
             .finish(id, kind, envelope, panic)
@@ -11304,6 +11339,10 @@ impl ProcessGroup {
             configure_process_group(&mut command);
             if let Some(stdin) = previous_stdin.take() {
                 command.stdin(stdin);
+            } else {
+                // A standalone command has no supplied input stream. It must
+                // not inherit the compiler's terminal or worker control pipe.
+                command.stdin(Stdio::null());
             }
 
             if !final_stage && stage.merge_stderr {

@@ -6911,7 +6911,10 @@ Las construcciones de newtype no participan en esta tabla. `UserId(value)` exige
 que `value` sea exactamente del tipo subyacente después de expandir aliases; toda
 conversión numérica necesaria se escribe antes de cruzar la frontera nominal.
 
-La librería ofrecerá operaciones explícitas `floor`, `ceil`, `round` y `truncate`.
+The standard library provides explicit `floor`, `ceil`, `round`, `roundTiesAway`
+and `truncate` operations. `round` selects the nearest integer with ties to even;
+`roundTiesAway` selects the nearest integer with ties away from zero. Both
+return a value of the same floating-point type and agree away from exact ties.
 
 ### 18.7 Promoción
 

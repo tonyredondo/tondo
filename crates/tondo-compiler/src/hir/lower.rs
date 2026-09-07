@@ -40,7 +40,82 @@ pub fn lower_types<'a>(
     resolved: &'a ResolvedProgram,
     limits: TypeLoweringLimits,
 ) -> Result<HirOutput, HirError> {
+    lower_types_from(
+        packages,
+        sources,
+        parsed,
+        resolved,
+        HirProgram::empty(limits.max_type_nodes)?,
+        limits,
+    )
+}
+
+/// Appends signatures and types to checked production HIR, preserving its IDs,
+/// inferred signatures, constants and bodies. Only new files may be parsed;
+/// the driver must bind the unchanged production source prefix and resolution.
+pub fn lower_types_extension<'a>(
+    packages: &'a PackageGraph,
+    sources: &'a SourceDatabase,
+    parsed: impl IntoIterator<Item = (FileId, &'a Parsed)>,
+    resolved: &'a ResolvedProgram,
+    production: &HirProgram,
+    limits: TypeLoweringLimits,
+) -> Result<HirOutput, HirError> {
+    if !production.expression_check_complete {
+        return Err(HirError::TextInvariant {
+            message: "a HIR extension requires checked production".into(),
+        });
+    }
+    lower_types_from(
+        packages,
+        sources,
+        parsed,
+        resolved,
+        production.clone(),
+        limits,
+    )
+}
+
+fn lower_types_from<'a>(
+    packages: &'a PackageGraph,
+    sources: &'a SourceDatabase,
+    parsed: impl IntoIterator<Item = (FileId, &'a Parsed)>,
+    resolved: &'a ResolvedProgram,
+    mut program: HirProgram,
+    limits: TypeLoweringLimits,
+) -> Result<HirOutput, HirError> {
     let parsed = parsed.into_iter().collect::<BTreeMap<_, _>>();
+    if program.callables.iter().any(|callable| {
+        callable
+            .body_source
+            .is_some_and(|span| parsed.contains_key(&span.file()))
+    }) || program
+        .constants
+        .values()
+        .any(|constant| parsed.contains_key(&constant.span.file()))
+        || program
+            .declarations
+            .values()
+            .any(|declaration| parsed.contains_key(&declaration.span.file()))
+    {
+        return Err(HirError::TextInvariant {
+            message: "a HIR extension cannot reopen production syntax".into(),
+        });
+    }
+    program.interner.set_limit(limits.max_type_nodes)?;
+    let alias_templates = program
+        .declarations
+        .iter()
+        .filter_map(|(symbol, declaration)| match declaration.kind {
+            HirTypeDeclarationKind::Alias { target } => Some((*symbol, target)),
+            _ => None,
+        })
+        .collect();
+    let declaration_parameters = program
+        .declarations
+        .iter()
+        .map(|(symbol, declaration)| (*symbol, declaration.parameters.clone()))
+        .collect();
     let mut lowerer = TypeLowerer {
         packages,
         sources,
@@ -49,21 +124,21 @@ pub fn lower_types<'a>(
         diagnostics: Vec::new(),
         max_diagnostics: limits.max_diagnostics,
         max_trait_termination_steps: u64::from(limits.max_trait_obligations),
-        interner: TypeInterner::new(limits.max_type_nodes)?,
+        interner: program.interner,
         sites: BTreeMap::new(),
         alias_dependencies: BTreeMap::new(),
         cyclic_aliases: BTreeSet::new(),
-        alias_templates: BTreeMap::new(),
+        alias_templates,
         declaration_environments: BTreeMap::new(),
-        declaration_parameters: BTreeMap::new(),
-        declarations: BTreeMap::new(),
-        constants: BTreeMap::new(),
-        callables: Vec::new(),
+        declaration_parameters,
+        declarations: program.declarations,
+        constants: program.constants,
+        callables: program.callables,
         implementation_sites: Vec::new(),
-        implementations: Vec::new(),
-        derive_requests: Vec::new(),
-        annotations: BTreeMap::new(),
-        generic_types: BTreeMap::new(),
+        implementations: program.implementations,
+        derive_requests: program.derive_requests,
+        annotations: program.annotations,
+        generic_types: program.local_types,
         inferred_suspendible: BTreeSet::new(),
         suspendible_names: BTreeSet::new(),
     };
@@ -87,18 +162,9 @@ pub fn lower_types<'a>(
             implementations: lowerer.implementations,
             derive_requests: lowerer.derive_requests,
             annotations: lowerer.annotations,
-            expressions: Vec::new(),
-            expression_flows: Vec::new(),
-            expression_breaks: Vec::new(),
-            member_references: Vec::new(),
-            unsafe_regions: Vec::new(),
-            patterns: Vec::new(),
-            bodies: BTreeMap::new(),
-            closures: Vec::new(),
             local_types: lowerer.generic_types,
-            capability_statuses: Vec::new(),
-            terminal_statuses: Vec::new(),
             expression_check_complete: false,
+            ..program
         },
         diagnostics: lowerer.diagnostics,
     })
@@ -227,6 +293,9 @@ impl<'a> TypeLowerer<'a> {
             let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
                 continue;
             };
+            if self.declarations.contains_key(&symbol) {
+                continue;
+            }
             let declaration = self
                 .resolved
                 .symbol(symbol)
@@ -1350,11 +1419,10 @@ impl<'a> TypeLowerer<'a> {
     }
 
     fn lower_bootstrap_host_contracts(&mut self) -> Result<(), HirError> {
-        let file = *self
-            .parsed
-            .keys()
-            .next()
-            .expect("type lowering always receives at least the root source");
+        let Some(file) = self.parsed.keys().next().copied() else {
+            // A test consumer with no new declarations reuses its entire seal.
+            return Ok(());
+        };
         let span = self.sources.span(file, TextRange::empty(0))?;
         // Core Option/Result operations are intrinsic language capabilities,
         // so their generic signatures must be available even in a source file
@@ -3874,6 +3942,7 @@ impl<'a> TypeLowerer<'a> {
                 HirBootstrapHostFunction::MathFloor,
                 HirBootstrapHostFunction::MathCeil,
                 HirBootstrapHostFunction::MathRound,
+                HirBootstrapHostFunction::MathRoundTiesAway,
                 HirBootstrapHostFunction::MathTruncate,
                 HirBootstrapHostFunction::MathAbs,
             ] {
@@ -6375,6 +6444,13 @@ impl<'a> TypeLowerer<'a> {
         generic_arity: u32,
         bounds: Vec<(u32, Vec<HirTraitReference>)>,
     ) -> Result<(), HirError> {
+        if self
+            .callables
+            .iter()
+            .any(|callable| callable.id == HirCallableId::Host(function))
+        {
+            return Ok(());
+        }
         let function_parameters = fixed
             .iter()
             .map(|(ty, mode, _)| FunctionParameter::new(*mode, *ty))
@@ -6429,6 +6505,11 @@ impl<'a> TypeLowerer<'a> {
         virtual_time: TypeId,
         unit: TypeId,
     ) -> Result<(), HirError> {
+        if self.callables.iter().any(|callable| {
+            callable.id == HirCallableId::Host(HirBootstrapHostFunction::TestingWithVirtualTime)
+        }) {
+            return Ok(());
+        }
         let error = self.interner.generic_parameter(0)?;
         let outcome = self.interner.result(unit, error)?;
         let body = self.interner.function(FunctionType::new(
@@ -6481,6 +6562,13 @@ impl<'a> TypeLowerer<'a> {
         variadic: Option<TypeId>,
         outcome: TypeId,
     ) -> Result<(), HirError> {
+        if self
+            .callables
+            .iter()
+            .any(|callable| callable.id == HirCallableId::Host(function))
+        {
+            return Ok(());
+        }
         let function_parameters = fixed
             .iter()
             .map(|(ty, mode, _)| FunctionParameter::new(*mode, *ty))
@@ -8153,8 +8241,9 @@ impl<'a> TypeLowerer<'a> {
             }
         }
         let sites = self.implementation_sites.clone();
+        let implementation_start = self.implementations.len();
         for (index, site) in sites.into_iter().enumerate() {
-            let index = u32::try_from(index)
+            let index = u32::try_from(implementation_start + index)
                 .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
             self.lower_implementation(HirImplementationId(index), site.file, site.node)?;
         }

@@ -1,10 +1,14 @@
 # Test-input materialization and revocation
 
-**Status:** implemented for `UTEST-INPUTS-001`
+**Status:** bounded Rust materialization model; public integration remains open
+under `UTEST-INPUTS-001`.
 
 `tondo_compiler::test_inputs::TestInputPlan` remains the value-free planning
 boundary. `tondo_compiler::test_input_runtime` is the worker boundary that
-materializes only descriptors accepted by the selected build/runtime target.
+models materialization of descriptors accepted by the selected build/runtime
+target. The public CLI captures source and snapshot inputs, but has no route
+yet for registering these runtime providers or transporting their descriptors
+to the worker. The following properties apply to the Rust model.
 
 Public bytes are checked against the declared `sha256:` before a worker is
 returned. Provider errors are reduced to the logical input name and provider
@@ -18,4 +22,3 @@ secret count, the already planned secret-profile digest and reproducibility
 state, but no secret names, values, hashes, or bytes. The API cannot redact a
 secret that the Tondo program explicitly copies into a log, tag, stream,
 failure, snapshot, or artifact; that remains the documented caller boundary.
-

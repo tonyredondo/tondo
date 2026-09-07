@@ -392,7 +392,8 @@ impl ArtifactStore {
         Ok(())
     }
 
-    fn manifest_path(&self) -> PathBuf {
+    /// Final output tracked by the CLI's invocation publication transaction.
+    pub fn manifest_path(&self) -> PathBuf {
         let digest = sha256(self.attempt.as_bytes());
         let filename = digest.strip_prefix("sha256:").unwrap_or(&digest);
         self.root.join("manifests").join(format!("{filename}.json"))

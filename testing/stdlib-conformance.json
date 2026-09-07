@@ -2,7 +2,7 @@
   "format": "tondo-stdlib-conformance/1",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "promoted",
+  "status": "planned",
   "sources": {
     "normative_matrix": "testing/stdlib-matrix.json",
     "documentation": "testing/stdlib-documentation.json",
@@ -14,31 +14,33 @@
   "runner": {
     "lineage": "draft",
     "manifest": "conformance/0.1/manifest.json",
-    "manifest_sha256": "016edfea892728645c387c2bcf4003096119a2e90b142ecf168bc7b4f6667299",
+    "manifest_sha256": "8dc61afdadc0cefa4b8d2296426688477245d75c48a1445ca4fccd759aac7a9b",
     "full_suite_case_count": 206,
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
     "owner_command_policy": "each owner command and every runtime/example case must pass"
   },
   "rules": {
-    "every_matrix_row_has_observation": true,
+    "every_matrix_row_has_case_plan": true,
     "verified_requires_current_observation": true,
     "runtime_cases_compare_exit_and_stdout_sidecars": true,
     "compiler_and_external_cases_run_the_declared_command": true,
     "capability_and_cancellation_cases_are_included": true,
-    "coordination_is_not_evidence": true
+    "coordination_is_not_evidence": true,
+    "generation_does_not_promote": true
   },
   "owners": [
     {
       "id": "std.async",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.async:36",
-        "signature:std.async:37",
         "signature:std.async:38",
         "signature:std.async:39",
-        "signature:std.async:40"
+        "signature:std.async:40",
+        "signature:std.async:41",
+        "signature:std.async:42"
       ],
       "requirements": [
         "requirement:std.async:async-iterator",
@@ -79,6 +81,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.async",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-async-iter-001.to",
@@ -90,7 +93,8 @@
     {
       "id": "std.bytes",
       "layer": "A0",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [],
       "requirements": [
         "requirement:std.bytes:builder-atomicity",
@@ -117,6 +121,7 @@
       ],
       "refs": [
         "testing/stdlib-conformance.json#owners/std.bytes",
+        "testing/stdlib-public-api.json",
         "tests/runtime/m10-std-bytes-001.to"
       ],
       "scope": "public-owner-and-runtime"
@@ -124,7 +129,8 @@
     {
       "id": "std.collections",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.collections:139",
         "signature:std.collections:140",
@@ -170,6 +176,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.collections",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-collections-001.to"
@@ -179,7 +186,8 @@
     {
       "id": "std.console",
       "layer": "A2",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.console:10",
         "signature:std.console:11",
@@ -216,6 +224,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.console",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-console-001.to"
@@ -225,7 +234,8 @@
     {
       "id": "std.core",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.core:28",
         "signature:std.core:29",
@@ -269,6 +279,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.core",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-core-001.to",
@@ -279,7 +290,8 @@
     {
       "id": "std.env",
       "layer": "A0",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.env:29",
         "signature:std.env:30",
@@ -313,6 +325,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.env",
         "testing/stdlib-public-api.json",
         "tests/runtime/m10-std-env-001.to"
@@ -322,13 +335,14 @@
     {
       "id": "std.format",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.format:240",
-        "signature:std.format:241",
-        "signature:std.format:242",
-        "signature:std.format:243",
-        "signature:std.format:244"
+        "signature:std.format:256",
+        "signature:std.format:257",
+        "signature:std.format:258",
+        "signature:std.format:259",
+        "signature:std.format:260"
       ],
       "requirements": [
         "requirement:std.format:async-cancellation",
@@ -355,6 +369,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.format",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-format-001.to"
@@ -364,7 +379,8 @@
     {
       "id": "std.fs",
       "layer": "A2",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.fs:85",
         "signature:std.fs:86",
@@ -408,6 +424,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.fs",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-fs-001.to"
@@ -417,12 +434,13 @@
     {
       "id": "std.io",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.io:270",
-        "signature:std.io:271",
-        "signature:std.io:272",
-        "signature:std.io:273"
+        "signature:std.io:286",
+        "signature:std.io:287",
+        "signature:std.io:288",
+        "signature:std.io:289"
       ],
       "requirements": [
         "requirement:std.io:async-cancellation",
@@ -449,6 +467,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.io",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-io-001.to"
@@ -458,7 +477,8 @@
     {
       "id": "std.iter",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.iter:164",
         "signature:std.iter:165",
@@ -490,6 +510,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.iter",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-iter-001.to"
@@ -499,7 +520,8 @@
     {
       "id": "std.json",
       "layer": "A3",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.json:143",
         "signature:std.json:144",
@@ -560,6 +582,7 @@
       ],
       "refs": [
         "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.json",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-codecs-001.to"
@@ -569,17 +592,19 @@
     {
       "id": "std.math",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.math:220",
-        "signature:std.math:221",
-        "signature:std.math:222",
-        "signature:std.math:223",
-        "signature:std.math:224",
-        "signature:std.math:225",
-        "signature:std.math:226",
-        "signature:std.math:227",
-        "signature:std.math:228"
+        "signature:std.math:235",
+        "signature:std.math:236",
+        "signature:std.math:237",
+        "signature:std.math:238",
+        "signature:std.math:239",
+        "signature:std.math:240",
+        "signature:std.math:241",
+        "signature:std.math:242",
+        "signature:std.math:243",
+        "signature:std.math:244"
       ],
       "requirements": [
         "requirement:std.math:async-cancellation",
@@ -591,9 +616,9 @@
         "requirement:std.math:ownership"
       ],
       "rows": {
-        "signatures": 9,
+        "signatures": 10,
         "requirements": 7,
-        "total": 16
+        "total": 17
       },
       "owner_command": "scripts/stdlib-math-test.sh",
       "cases": [
@@ -613,6 +638,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.math",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-math-001.to",
@@ -623,7 +649,8 @@
     {
       "id": "std.messagepack",
       "layer": "A3",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.messagepack:100",
         "signature:std.messagepack:101",
@@ -682,6 +709,7 @@
       ],
       "refs": [
         "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.messagepack",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-codecs-001.to"
@@ -691,7 +719,8 @@
     {
       "id": "std.meta",
       "layer": "A0",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [],
       "requirements": [
         "requirement:std.meta:canonical-rendering",
@@ -718,14 +747,16 @@
       ],
       "refs": [
         "crates/tondo-compiler/tests/std_meta_conformance.rs",
-        "testing/stdlib-conformance.json#owners/std.meta"
+        "testing/stdlib-conformance.json#owners/std.meta",
+        "testing/stdlib-public-api.json"
       ],
-      "scope": "compiler-build-only"
+      "scope": "compiler-component-only"
     },
     {
       "id": "std.path",
       "layer": "A2",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.path:47",
         "signature:std.path:48",
@@ -765,6 +796,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.path",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-path-001.to"
@@ -774,7 +806,8 @@
     {
       "id": "std.process",
       "layer": "A2",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.process:148",
         "signature:std.process:149",
@@ -828,6 +861,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.process",
         "testing/stdlib-public-api.json",
         "tests/runtime/m8-process-001.to",
@@ -838,7 +872,8 @@
     {
       "id": "std.protobuf",
       "layer": "A3",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.protobuf:113",
         "signature:std.protobuf:114",
@@ -896,6 +931,7 @@
       ],
       "refs": [
         "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.protobuf",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-codecs-001.to"
@@ -905,8 +941,11 @@
     {
       "id": "std.reflect",
       "layer": "A0",
-      "status": "verified",
-      "public_signatures": [],
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
+      "public_signatures": [
+        "signature:std.reflect:32"
+      ],
       "requirements": [
         "requirement:std.reflect:artifact-local-identity",
         "requirement:std.reflect:catalog-shape",
@@ -916,9 +955,9 @@
         "requirement:std.reflect:root-closure"
       ],
       "rows": {
-        "signatures": 0,
+        "signatures": 1,
         "requirements": 6,
-        "total": 6
+        "total": 7
       },
       "owner_command": "scripts/stdlib-reflect-test.sh",
       "cases": [
@@ -932,14 +971,16 @@
       ],
       "refs": [
         "crates/tondo-compiler/src/reflect.rs",
-        "testing/stdlib-conformance.json#owners/std.reflect"
+        "testing/stdlib-conformance.json#owners/std.reflect",
+        "testing/stdlib-public-api.json"
       ],
-      "scope": "compiler-metadata-only"
+      "scope": "metadata-model-only"
     },
     {
       "id": "std.serialization",
       "layer": "A3",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [],
       "requirements": [
         "requirement:std.serialization:async-cancellation",
@@ -975,6 +1016,7 @@
       "refs": [
         "crates/tondo-stdlib/tests/codec_conformance.rs",
         "testing/stdlib-conformance.json#owners/std.serialization",
+        "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-codecs-001.to"
       ],
       "scope": "public-owner-and-runtime"
@@ -982,7 +1024,8 @@
     {
       "id": "std.testing",
       "layer": "A4",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.testing:148",
         "signature:std.testing:149",
@@ -1037,6 +1080,7 @@
       ],
       "refs": [
         "crates/tondo-cli/tests/acceptance_projects.rs",
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.testing",
         "testing/stdlib-public-api.json"
       ],
@@ -1045,7 +1089,8 @@
     {
       "id": "std.text",
       "layer": "A1",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.text:104",
         "signature:std.text:105",
@@ -1095,6 +1140,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.text",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-text-001.to",
@@ -1105,7 +1151,8 @@
     {
       "id": "std.time",
       "layer": "A0",
-      "status": "verified",
+      "status": "pending",
+      "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
         "signature:std.time:44",
         "signature:std.time:45",
@@ -1140,6 +1187,7 @@
         }
       ],
       "refs": [
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.time",
         "testing/stdlib-public-api.json",
         "tests/runtime/m10-std-time-001.to"
@@ -1149,9 +1197,9 @@
   ],
   "summary": {
     "owners": 22,
-    "signatures": 214,
+    "signatures": 216,
     "requirements": 171,
-    "rows": 385,
+    "rows": 387,
     "cases": 32
   }
 }

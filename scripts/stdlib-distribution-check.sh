@@ -23,12 +23,20 @@ jq -e '
   and .edition == "0.1"
   and .phase == "STD-0.1A"
   and .status == "closed-contract"
+  and .promotion == "pending"
+  and .input_policy == {
+    source: "captured-current-git-file-set",
+    binary: "explicit-hash-bound-input",
+    binary_source_provenance: "not-claimed",
+    dirty: "explicit-local-iteration-only",
+    changes: "reject-before-publication"
+  }
   and .distribution_format == "tondo-stdlib-vm-distribution/1"
   and .package_id == "toolchain:std:0.1-bootstrap"
   and .target == "tondo-vm-hosted"
   and .profile == "hosted"
   and (.required_sections | sort) == ["bin", "capabilities", "docs", "examples", "interfaces", "manifests", "providers", "sources", "units"]
-  and (.required_records | sort) == ["capability_matrix_hash", "documentation_hashes", "edition", "example_hashes", "interface_hashes", "manifest_hashes", "package_id", "payload_hash", "profile", "provider_hashes", "reproducible", "source_hashes", "target", "unit_hashes"]
+  and (.required_records | sort) == ["capability_matrix_hash", "documentation_hashes", "edition", "example_hashes", "inputs", "interface_hashes", "manifest_hashes", "package_id", "payload_hash", "profile", "promotion", "provider_hashes", "reproducible", "source_hashes", "target", "unit_hashes"]
   and .archive == {
     "format": "tar-ustar",
     "ordering": "lexicographic-path",
@@ -57,8 +65,8 @@ jq -e '
     "std.time": ["clock"]
   }
   and (.negative_cases | sort) == [
-    "archive-differs-between-clean-workspaces", "binary-missing", "contract-drift",
-    "example-missing", "manifest-hash-mismatch", "payload-hash-mismatch",
+    "archive-differs-between-clean-workspaces", "binary-missing", "captured-input-corruption", "contract-drift",
+    "dirty-workspace", "example-missing", "input-changed-after-capture", "manifest-hash-mismatch", "payload-hash-mismatch",
     "source-tree-required-after-install", "workspace-not-empty", "wrong-package-id"
   ]
   and .next_blocks == ["STD-S1A-SEAL-001"]

@@ -149,6 +149,43 @@ pub struct TestInputPlan {
 }
 
 impl TestInputPlan {
+    /// Construct a closed public input plan from already captured hashes.
+    /// Each tuple is (name, logical source, profile, SHA-256). Input values
+    /// never enter this record; the ordinary parser validates the result.
+    pub fn from_public_hashes(
+        test_plan: &TestProjectPlan,
+        inputs: impl IntoIterator<Item = (String, String, TestInputProfile, String)>,
+    ) -> Result<Self, TestInputPlanError> {
+        let mut inputs = inputs
+            .into_iter()
+            .map(|(name, source, profile, hash)| TestInputDescriptor {
+                name,
+                source,
+                profile,
+                visibility: TestInputVisibility::Public,
+                sha256: Some(hash),
+                provider: None,
+                descriptor: None,
+                version: None,
+                capability: None,
+            })
+            .collect::<Vec<_>>();
+        inputs.sort_by(|left, right| left.name.cmp(&right.name));
+        let plan = Self {
+            test_plan_sha256: sha256(
+                &test_plan
+                    .canonical_bytes()
+                    .map_err(|error| TestInputPlanError::Serialization(error.to_string()))?,
+            ),
+            public_sha256: public_digest(&inputs)?,
+            inputs,
+            secret_profile_sha256: None,
+            secret_count: 0,
+            reproducibility: TestReproducibility::Closed,
+        };
+        Self::parse(test_plan, &plan.canonical_bytes()?)
+    }
+
     /// Parse a value-free input plan against the normalized test plan.
     ///
     /// Public values are represented only by their declared SHA-256. Secret

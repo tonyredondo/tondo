@@ -117,7 +117,8 @@ model from the real and virtual providers, checked limits and errors, timer
 lifecycle, and capability/conformance identity. The owner corpus is split into
 arithmetic boundaries, provider equivalence and timer lifecycle. `HOST` is
 verified because both providers are implemented at the single hosted
-`process_host` boundary; `STD-A-FUZZ-001` promotes the owner-aware route while
+`process_host` boundary. The `STD-A-FUZZ-001` time route currently checks a fixed
+source without executing a provider; owner fuzz coverage remains partial while
 provider-scoped performance remains explicitly pending rather than inferred from unit-test timing.
 The contract and its negative fixtures are checked by
 `scripts/stdlib-time-check.sh` and `scripts/stdlib-time-test.sh`.

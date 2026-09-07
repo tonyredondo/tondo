@@ -22,39 +22,39 @@ jq -e '
   .format == "tondo-stdlib-conformance-coordination/1"
   and .edition == "0.1"
   and .phase == "STD-0.1A"
-  and .status == "promoted"
-  and .promotion.status == "promoted"
+  and .status == "planned"
+  and .promotion.status == "pending"
   and .promotion.next_coordination == "STD-S1A-SEAL-001"
-  and .promotion.matrix_status == "verified"
+  and (.promotion.reason | type == "string" and length > 0)
   and .rules.one_owner_per_matrix_row
   and .rules.every_matrix_row_has_conf_record
   and .rules.pending_requires_reason
   and .rules.partial_requires_reason
   and .rules.refs_are_explicit
   and .rules.verified_requires_observation
-  and (.rules.coordination_does_not_promote == false)
+  and .rules.coordination_does_not_promote
   and .rules.execution_registry == "testing/stdlib-conformance.json"
   and (.owners | type == "array" and length == 22)
   and ([.owners[].id] | unique | length) == 22
   and (.summary == {
-    owners: 22,
-    rows: 385,
-    public_signatures: 214,
-    requirements: 171,
-    verified_rows: 385,
-    partial_rows: 0,
-    pending_rows: 0,
-    owner_verified: 22,
-    owner_partial: 0,
-    owner_pending: 0
+    owners: (.owners | length),
+    rows: ([.owners[].rows[]] | length),
+    public_signatures: ([.owners[].rows[] | select(.kind == "signature")] | length),
+    requirements: ([.owners[].rows[] | select(.kind == "requirement")] | length),
+    verified_rows: ([.owners[].rows[] | select(.status == "verified")] | length),
+    partial_rows: ([.owners[].rows[] | select(.status == "partial")] | length),
+    pending_rows: ([.owners[].rows[] | select(.status == "pending")] | length),
+    owner_verified: ([.owners[] | select(.status == "verified")] | length),
+    owner_partial: ([.owners[] | select(.status == "partial")] | length),
+    owner_pending: ([.owners[] | select(.status == "pending")] | length)
   })
   and all(.owners[];
     ((.id | type) == "string" and (.id | test("^std\\.[a-z]+$")))
     and (.rows | type == "array" and length > 0)
     and (.public_signatures | type == "array")
     and (.requirements | type == "array")
-    and .status == "verified"
-    and .reason == null
+    and (.status | IN("pending", "partial"))
+    and (.reason | type == "string" and length > 0)
     and (.evidence.status == .status)
     and (.evidence.refs | type == "array" and length > 0)
     and (.evidence.commands | type == "array" and length > 0)
@@ -63,14 +63,14 @@ jq -e '
     and all(.rows[];
       ((.id | type) == "string" and (.id | (startswith("signature:") or startswith("requirement:"))))
       and (.kind | IN("signature", "requirement"))
-      and .status == "verified"
-      and .reason == null
+      and (.status | IN("pending", "partial"))
+      and (.reason | type == "string" and length > 0)
       and (.refs | type == "array" and length > 0)
     )
   )
-  and ([.owners[].rows[].id] | unique | length) == 385
+  and ([.owners[].rows[].id] | unique | length) == .summary.rows
   and ([.owners[].rows[].id] | sort) == ([.owners[].rows[].id] | unique | sort)
-    and all(.owners[]; .status == "verified" and all(.rows[]; .status == "verified"))
+
 ' "$coordination" >/dev/null || {
     echo "stdlib conformance coordination: invalid registry" >&2
     exit 1
@@ -80,7 +80,8 @@ jq -n -e --slurpfile coordination "$coordination" --slurpfile matrix testing/std
   ($coordination[0]) as $coord
   | ($matrix[0]) as $matrix
   | ($api[0]) as $api
-  | ([ $coord.owners[].id ] | sort) == ([ $matrix.owners[].id ] | sort)
+  | ($coord.promotion.matrix_status == $matrix.status)
+  and ([ $coord.owners[].id ] | sort) == ([ $matrix.owners[].id ] | sort)
   and ([ $coord.owners[].rows[].id ] | sort) == ([ $matrix.rows[].id ] | sort)
   and all($coord.owners[];
     . as $owner
@@ -114,4 +115,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].evidence.commands[]' "$coordination")
 
-echo "stdlib conformance coordination: OK (22 owners; 385 verified rows; 214 signatures; 171 requirements; promotion recorded)"
+echo "stdlib conformance coordination: consistent case plan; execution promotion remains pending"

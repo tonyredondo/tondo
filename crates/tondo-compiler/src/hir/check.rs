@@ -36,7 +36,7 @@ use super::{
     HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirSelectArm,
     HirSerializationTraitMethod, HirSpawnKind, HirStatement, HirTraitConstructor,
     HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
-    TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability,
+    TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability_from,
     analyze_closure_captures, select_implementation,
 };
 
@@ -102,10 +102,74 @@ pub(crate) fn check_expressions_configured<'a>(
     sources: &'a SourceDatabase,
     parsed: impl IntoIterator<Item = (FileId, &'a Parsed)>,
     resolved: &'a ResolvedProgram,
+    mut program: HirProgram,
+    limits: ExpressionCheckLimits,
+    documentation_fixture: bool,
+) -> Result<HirCheckOutput, HirError> {
+    let parsed = parsed.into_iter().collect::<Vec<_>>();
+    // Protocol and receiver-selected calls can reveal suspension after the
+    // source-name fixed point. Recheck the unsealed extension with those
+    // effects before trusting any call, function value, or closure type.
+    // Each retry promotes at least one existing callable, so this terminates.
+    loop {
+        let output = check_expressions_pass(
+            sources,
+            parsed.iter().copied(),
+            resolved,
+            program.clone(),
+            limits,
+            documentation_fixture,
+        )?;
+        let mut promoted = false;
+        for callable in &mut program.callables {
+            let TypeKind::Function(previous) = program.interner.kind(callable.function_type)?
+            else {
+                continue;
+            };
+            if previous.is_async() {
+                continue;
+            }
+            let Some(checked) = output.program.callable(callable.id) else {
+                continue;
+            };
+            if matches!(output.program.interner.kind(checked.function_type)?, TypeKind::Function(function) if function.is_async())
+            {
+                callable.function_type = program.interner.function(FunctionType::with_effects(
+                    true,
+                    previous.is_selectable(),
+                    previous.is_unsafe(),
+                    previous.parameters().to_vec(),
+                    previous.variadic(),
+                    previous.outcome(),
+                ))?;
+                promoted = true;
+            }
+        }
+        if !promoted {
+            if output.complete
+                && !output
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.severity() == Severity::Error)
+            {
+                super::verify_typed_hir(resolved, &output.program)?;
+            }
+            return Ok(output);
+        }
+    }
+}
+
+fn check_expressions_pass<'a>(
+    sources: &'a SourceDatabase,
+    parsed: impl IntoIterator<Item = (FileId, &'a Parsed)>,
+    resolved: &'a ResolvedProgram,
     program: HirProgram,
     limits: ExpressionCheckLimits,
     documentation_fixture: bool,
 ) -> Result<HirCheckOutput, HirError> {
+    let expression_start = program.expressions.len();
+    let next_loop_id = program.next_loop_id;
+    let next_scope_id = program.next_scope_id;
     let mut checker = ExpressionChecker {
         sources,
         parsed: parsed.into_iter().collect(),
@@ -117,8 +181,10 @@ pub(crate) fn check_expressions_configured<'a>(
         trait_obligations_remaining: u64::from(limits.max_trait_obligations),
         max_diagnostics: limits.max_diagnostics,
         complete: true,
-        next_loop_id: 0,
-        next_scope_id: 0,
+        next_loop_id,
+        next_scope_id,
+        expression_start,
+        test_node_closures: BTreeSet::new(),
         capability_analysis: None,
         reported_capability_requirements: BTreeSet::new(),
         opaque_body: None,
@@ -152,15 +218,10 @@ pub(crate) fn check_expressions_configured<'a>(
         .into_iter()
         .map(|ty| terminals.status(&checker.program, ty, &assumptions))
         .collect::<Result<_, crate::types::TypeError>>()?;
+    checker.check_test_captures()?;
     checker.program.expression_check_complete = checker.complete;
-    if checker.complete
-        && !checker
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.severity() == Severity::Error)
-    {
-        super::verify_typed_hir(resolved, &checker.program)?;
-    }
+    checker.program.next_loop_id = checker.next_loop_id;
+    checker.program.next_scope_id = checker.next_scope_id;
     Ok(HirCheckOutput {
         program: checker.program,
         diagnostics: checker.diagnostics,
@@ -663,7 +724,9 @@ struct ExpressionChecker<'a> {
     complete: bool,
     next_loop_id: u32,
     next_scope_id: u32,
+    expression_start: usize,
     capability_analysis: Option<CapabilityAnalysis>,
+    test_node_closures: BTreeSet<(FileId, TextRange)>,
     reported_capability_requirements: BTreeSet<(Span, TypeId, HirCapability)>,
     opaque_body: Option<OpaqueBodyInference>,
     closure_body: Option<ClosureBodyInference>,
@@ -677,6 +740,7 @@ impl<'a> ExpressionChecker<'a> {
             .program
             .declarations
             .values()
+            .filter(|declaration| self.parsed.contains_key(&declaration.span.file()))
             .map(|declaration| {
                 let mut roots = declaration
                     .parameters
@@ -707,6 +771,7 @@ impl<'a> ExpressionChecker<'a> {
             .program
             .callables
             .iter()
+            .filter(|callable| self.parsed.contains_key(&callable.span.file()))
             .map(|callable| {
                 let mut roots = vec![callable.function_type];
                 roots.extend(callable.generics.iter().flat_map(generic_bound_type_roots));
@@ -725,6 +790,7 @@ impl<'a> ExpressionChecker<'a> {
             .program
             .constants
             .values()
+            .filter(|constant| self.parsed.contains_key(&constant.span.file()))
             .filter_map(|constant| constant.declared_type.map(|ty| (constant.span, vec![ty])))
             .collect::<Vec<_>>();
         for (span, roots) in constants {
@@ -735,6 +801,7 @@ impl<'a> ExpressionChecker<'a> {
             .program
             .implementations
             .iter()
+            .filter(|implementation| self.parsed.contains_key(&implementation.span.file()))
             .map(|implementation| {
                 let mut roots = vec![implementation.target];
                 roots.extend(implementation.trait_reference.arguments.iter().copied());
@@ -769,6 +836,112 @@ impl<'a> ExpressionChecker<'a> {
         Ok(())
     }
 
+    fn check_test_captures(&mut self) -> Result<(), HirError> {
+        use crate::test_capture::{CaptureAccess, CaptureBindingMode, CaptureTypeFacts};
+
+        // Generated node boundaries retain ordinary source closures, so their
+        // captures are the resolved lexical ancestors, not a reconstructed
+        // runtime environment. Ordinary closures keep their existing rules.
+        // Record the boundary before callable erasure: even a rejected coercion
+        // must not hide an invalid suite capture behind a generic type error.
+        let boundaries = self
+            .program
+            .closures
+            .iter()
+            .filter(|closure| {
+                self.test_node_closures
+                    .contains(&(closure.span.file(), closure.span.range()))
+            })
+            .map(|closure| closure.id)
+            .collect::<Vec<_>>();
+        let mut uses = BTreeMap::<(FileId, LocalId), Vec<(Span, CaptureAccess)>>::new();
+        for expression in &self.program.expressions[self.expression_start..] {
+            if let HirExpressionKind::Local(local) = expression.kind {
+                uses.entry((expression.span.file(), local))
+                    .or_default()
+                    .push((expression.span, CaptureAccess::Observe));
+            }
+            let arguments = match &expression.kind {
+                HirExpressionKind::Call { arguments, .. }
+                | HirExpressionKind::AsyncCall { arguments, .. } => arguments,
+                _ => continue,
+            };
+            for argument in arguments {
+                let access = match argument.mode {
+                    ParameterMode::Value => continue,
+                    ParameterMode::Ref => CaptureAccess::SharedBorrow,
+                    ParameterMode::Mut => CaptureAccess::MutableBorrow,
+                    ParameterMode::Var => CaptureAccess::ReplaceBorrow,
+                };
+                if let Some(local) = self.expression_root_local(argument.value) {
+                    let span = self.program.expressions[argument.value.index() as usize].span;
+                    uses.entry((span.file(), local))
+                        .or_default()
+                        .push((span, access));
+                }
+            }
+        }
+        for entries in uses.values_mut() {
+            entries.sort_unstable_by_key(|(span, access)| (span.range().start(), *access));
+        }
+        let mut findings = BTreeSet::new();
+        for id in boundaries {
+            let closure = &self.program.closures[id.index() as usize];
+            for capture in &closure.captures {
+                let Some(binding) = self.resolved.local(capture.local) else {
+                    return Err(HirError::TraitSelectionInvariant {
+                        message: "test capture has no resolved binding".into(),
+                    });
+                };
+                let facts =
+                    CaptureTypeFacts::from_hir(&self.program, capture.ty).map_err(|error| {
+                        HirError::TraitSelectionInvariant {
+                            message: error.to_string(),
+                        }
+                    })?;
+                let mode = if capture.mutable {
+                    CaptureBindingMode::Var
+                } else {
+                    CaptureBindingMode::Let
+                };
+                let entries = uses
+                    .get(&(closure.span.file(), capture.local))
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let start = entries.partition_point(|(span, _)| {
+                    span.range().start() < closure.span.range().start()
+                });
+                let end = entries
+                    .partition_point(|(span, _)| span.range().start() < closure.span.range().end());
+                let entries = &entries[start..end];
+                // Admission follows the capture itself, including when a
+                // rejected or folded expression has no remaining HIR use.
+                if let Some(message) =
+                    facts.rejection(binding.name().as_str(), mode, CaptureAccess::Observe)
+                {
+                    let span = entries.first().map_or(closure.span, |(span, _)| *span);
+                    findings.insert((span, binding.span(), message));
+                    continue;
+                }
+                for &(span, access) in entries {
+                    if let Some(message) = facts.rejection(binding.name().as_str(), mode, access) {
+                        findings.insert((span, binding.span(), message));
+                    }
+                }
+            }
+        }
+        for (span, binding, message) in findings {
+            self.emit(
+                span,
+                "E2005",
+                message,
+                vec![("the suite binding is declared here", binding)],
+                None,
+            )?;
+        }
+        Ok(())
+    }
+
     fn check_call_bound_formations(&mut self) -> Result<(), HirError> {
         let mut contracts = Vec::new();
         for declaration in self.program.declarations.values() {
@@ -791,6 +964,9 @@ impl<'a> ExpressionChecker<'a> {
         }
 
         for (span, bounds) in contracts {
+            if !self.parsed.contains_key(&span.file()) {
+                continue;
+            }
             let mut signature = None;
             for bound in bounds {
                 let HirTraitConstructor::Prelude(name) = &bound.constructor else {
@@ -1006,6 +1182,9 @@ impl<'a> ExpressionChecker<'a> {
     fn check_discard_parameters(&mut self) -> Result<(), HirError> {
         let callables = self.program.callables.clone();
         for callable in callables {
+            if !self.parsed.contains_key(&callable.span.file()) {
+                continue;
+            }
             let assumptions =
                 CapabilityAssumptions::from_generics(&self.program, &callable.generics);
             for parameter in callable
@@ -1025,7 +1204,13 @@ impl<'a> ExpressionChecker<'a> {
     }
 
     fn check_constants(&mut self) -> Result<(), HirError> {
-        let mut symbols = self.program.constants.keys().copied().collect::<Vec<_>>();
+        let mut symbols = self
+            .program
+            .constants
+            .iter()
+            .filter(|(_, constant)| self.parsed.contains_key(&constant.span.file()))
+            .map(|(symbol, _)| *symbol)
+            .collect::<Vec<_>>();
         symbols.sort_by(|left, right| {
             self.resolved
                 .symbol(*left)
@@ -1246,6 +1431,9 @@ impl<'a> ExpressionChecker<'a> {
     fn check_callables(&mut self) -> Result<(), HirError> {
         let callables = self.program.callables.clone();
         for callable in callables {
+            if self.program.bodies.contains_key(&callable.id) {
+                continue;
+            }
             let Some(body_source) = callable.body_source else {
                 continue;
             };
@@ -1608,7 +1796,12 @@ impl<'a> ExpressionChecker<'a> {
     fn check_ownership_availability(&mut self) -> Result<(), HirError> {
         let capabilities = CapabilityAnalysis::new(&self.program, self.resolved)?;
         let terminals = TerminalAnalysis::new(&self.program, self.resolved)?;
-        let findings = analyze_availability(&self.program, &capabilities, &terminals)?;
+        let findings = analyze_availability_from(
+            &self.program,
+            &capabilities,
+            &terminals,
+            self.expression_start,
+        )?;
         for finding in findings {
             let name = finding.local().map(|local| {
                 self.resolved
@@ -1895,6 +2088,7 @@ impl<'a> ExpressionChecker<'a> {
             .program
             .callables
             .iter()
+            .filter(|callable| self.parsed.contains_key(&callable.span.file()))
             .filter_map(|callable| {
                 let opaque = callable.opaque_result.as_ref()?;
                 opaque.witness?;
@@ -2041,6 +2235,7 @@ impl<'a> ExpressionChecker<'a> {
         let candidates = self
             .program
             .expressions_with_ids()
+            .skip(self.expression_start)
             .filter_map(|(id, expression)| match expression.kind() {
                 HirExpressionKind::Map { entries, .. } => Some((
                     id,
@@ -2346,6 +2541,7 @@ impl<'a> ExpressionChecker<'a> {
                     .iter()
                     .map(|closure| closure.body.root),
             )
+            .filter(|root| (root.index() as usize) >= self.expression_start)
             .collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
         let mut warnings = Vec::new();
@@ -4293,7 +4489,11 @@ impl<'a> ExpressionChecker<'a> {
                     .unwrap_or_default();
                 self.emit(
                     use_span,
-                    "E1402",
+                    if self.test_node_closures.contains(&(file, closure_range)) {
+                        "E2005"
+                    } else {
+                        "E1402"
+                    },
                     "a `ref`, `mut`, or `var` loan cannot be captured by a closure",
                     related,
                     None,
@@ -15765,6 +15965,7 @@ impl<'a> ExpressionChecker<'a> {
                 ("math", Some("floor")) => HirBootstrapHostFunction::MathFloor,
                 ("math", Some("ceil")) => HirBootstrapHostFunction::MathCeil,
                 ("math", Some("round")) => HirBootstrapHostFunction::MathRound,
+                ("math", Some("roundTiesAway")) => HirBootstrapHostFunction::MathRoundTiesAway,
                 ("math", Some("truncate")) => HirBootstrapHostFunction::MathTruncate,
                 ("math", Some("sqrt")) => HirBootstrapHostFunction::MathSqrt,
                 ("math", Some("fma")) => HirBootstrapHostFunction::MathFma,
@@ -16000,6 +16201,20 @@ impl<'a> ExpressionChecker<'a> {
             host_function,
             HirBootstrapHostFunction::ConsolePrint | HirBootstrapHostFunction::ConsolePrintln
         ) {
+            if matches!(
+                host_function,
+                HirBootstrapHostFunction::TestingRunLeaf
+                    | HirBootstrapHostFunction::TestingRunSuite
+            ) && let Some(argument) = suffix
+                .child_nodes()
+                .filter(|child| child.kind() == SyntaxKind::CallArgument)
+                .nth(1)
+                && let Some(body) = argument
+                    .child_nodes()
+                    .find(|child| AstExpression::cast(*child).is_some())
+            {
+                self.test_node_closures.insert((file, body.range()));
+            }
             let callee = self.bootstrap_host_callee(
                 host_function,
                 self.sources.span(file, base_path.range())?,
@@ -23939,6 +24154,7 @@ fn strongly_connected_components(
 
 #[cfg(test)]
 mod tests {
+    use crate::types::TypeError;
     use std::sync::Arc;
 
     use crate::hir::{
@@ -24016,6 +24232,256 @@ mod tests {
             },
         )?;
         Ok((sources, resolved, checked))
+    }
+
+    fn hir_extension_source(
+        sources: &mut SourceDatabase,
+        production: &ResolvedProgram,
+        text: &str,
+    ) -> (PackageGraph, FileId, Parsed, ResolvedProgram) {
+        let root = sources.iter().next().unwrap().0;
+        let file = sources
+            .add(SourceInput::virtual_file(
+                sources.get(root).unwrap().source_id().clone(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("extension_test.to").unwrap(),
+                Arc::<[u8]>::from(text.as_bytes()),
+            ))
+            .unwrap();
+        let parsed = parse(
+            sources,
+            file,
+            lex(sources, file, LexMode::Module).unwrap(),
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{text}\n{:?}",
+            parsed.diagnostics()
+        );
+        let packages = PackageGraph::loose(sources, root).unwrap();
+        let resolved = crate::resolve::resolve_extension(
+            &packages,
+            sources,
+            [(file, &parsed)],
+            production,
+            100,
+        )
+        .unwrap();
+        let (resolved, diagnostics) = resolved.into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        (packages, file, parsed, resolved)
+    }
+
+    fn check_hir_extension(
+        sources: &mut SourceDatabase,
+        resolved: &ResolvedProgram,
+        production: &HirProgram,
+        text: &str,
+    ) -> HirCheckOutput {
+        let (packages, file, parsed, resolved) = hir_extension_source(sources, resolved, text);
+        let lowered = crate::hir::lower_types_extension(
+            &packages,
+            sources,
+            [(file, &parsed)],
+            &resolved,
+            production,
+            TypeLoweringLimits {
+                max_type_nodes: 100_000,
+                max_trait_obligations: 100_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap();
+        let (program, diagnostics) = lowered.into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        check_expressions(
+            sources,
+            [(file, &parsed)],
+            &resolved,
+            program,
+            ExpressionCheckLimits {
+                max_nodes: 100_000,
+                max_pattern_steps: 100_000,
+                max_trait_obligations: 100_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn hir_extension_retains_checked_constants_bodies_types_and_control_ids() {
+        let (mut sources, resolved, production) = check(
+            "alias Values[T] = Array[T]\nconst Base = 40\nfn zeta[T](value: T): T { value }\nfn production(): Int {\n    let transform = (value: Int): Int { value + 1 }\n    for false {}\n    transform(Base)\n}\n",
+        );
+        assert!(production.is_complete());
+        assert!(
+            production.diagnostics().is_empty(),
+            "{:?}",
+            production.diagnostics()
+        );
+        let production = production.program();
+        let before = format!("{production:?}");
+        let extended = check_hir_extension(
+            &mut sources,
+            &resolved,
+            production,
+            "const Derived = Base + 2\nfn alpha(): Int {\n    let values: Values[Int] = [Derived]\n    let transform = (value: Int): Int { zeta(value) }\n    for false {}\n    transform(values[0])\n}\n",
+        );
+        assert!(extended.is_complete());
+        assert!(
+            extended.diagnostics().is_empty(),
+            "{:?}",
+            extended.diagnostics()
+        );
+        let extended = extended.program();
+        for ty in production.interner.ids() {
+            assert_eq!(
+                production.interner.kind(ty).unwrap(),
+                extended.interner.kind(ty).unwrap()
+            );
+        }
+        for (symbol, constant) in &production.constants {
+            assert_eq!(
+                format!("{constant:?}"),
+                format!("{:?}", extended.constants[symbol])
+            );
+        }
+        for callable in &production.callables {
+            assert_eq!(
+                format!("{callable:?}"),
+                format!("{:?}", extended.callable(callable.id).unwrap())
+            );
+        }
+        for (id, body) in &production.bodies {
+            assert_eq!(body.root(), extended.bodies[id].root());
+        }
+        assert_eq!(
+            format!("{:?}", production.expressions),
+            format!(
+                "{:?}",
+                &extended.expressions[..production.expressions.len()]
+            )
+        );
+        assert_eq!(
+            format!("{:?}", production.closures),
+            format!("{:?}", &extended.closures[..production.closures.len()])
+        );
+        assert!(extended.next_loop_id > production.next_loop_id);
+        assert!(extended.next_scope_id > production.next_scope_id);
+        assert!(extended.closures.len() > production.closures.len());
+        assert_eq!(format!("{production:?}"), before);
+    }
+
+    #[test]
+    fn hir_extension_checks_new_type_and_ownership_errors() {
+        for (text, code) in [
+            ("fn broken(): Int { true }\n", "E1102"),
+            (
+                "fn broken[T](value: T): T {\n    let moved = value\n    value\n}\n",
+                "E1401",
+            ),
+        ] {
+            let (mut sources, resolved, production) = check("fn production(): Int { 42 }\n");
+            let checked = check_hir_extension(&mut sources, &resolved, production.program(), text);
+            assert!(
+                checked
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code().as_str() == code),
+                "{text}\n{:?}",
+                checked.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn hir_extension_requires_complete_production_and_retains_resource_limits() {
+        let (mut sources, resolved, production) = check("fn production(): Int { 42 }\n");
+        let (packages, file, parsed, resolved) = hir_extension_source(
+            &mut sources,
+            &resolved,
+            "fn helper(): Int { production() }\n",
+        );
+        let limits = TypeLoweringLimits {
+            max_type_nodes: 100_000,
+            max_trait_obligations: 100_000,
+            max_diagnostics: 100,
+        };
+        let mut incomplete = production.program().clone();
+        incomplete.expression_check_complete = false;
+        assert!(matches!(
+            crate::hir::lower_types_extension(
+                &packages,
+                &sources,
+                [(file, &parsed)],
+                &resolved,
+                &incomplete,
+                limits
+            ),
+            Err(HirError::TextInvariant { .. })
+        ));
+        assert!(matches!(
+            crate::hir::lower_types_extension(
+                &packages,
+                &sources,
+                [(file, &parsed)],
+                &resolved,
+                production.program(),
+                TypeLoweringLimits {
+                    max_type_nodes: 0,
+                    ..limits
+                }
+            ),
+            Err(HirError::Type(TypeError::ResourceLimit { limit: 0 }))
+        ));
+        let lowered = crate::hir::lower_types_extension(
+            &packages,
+            &sources,
+            [(file, &parsed)],
+            &resolved,
+            production.program(),
+            limits,
+        )
+        .unwrap();
+        assert!(matches!(
+            check_expressions(
+                &sources,
+                [(file, &parsed)],
+                &resolved,
+                lowered.into_parts().0,
+                ExpressionCheckLimits {
+                    max_nodes: 0,
+                    max_pattern_steps: 100_000,
+                    max_trait_obligations: 100_000,
+                    max_diagnostics: 100
+                }
+            ),
+            Err(HirError::NodeLimit { .. })
+        ));
+        let root = sources.iter().next().unwrap().0;
+        let old_parsed = parse(
+            &sources,
+            root,
+            lex(&sources, root, LexMode::Module).unwrap(),
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            crate::hir::lower_types_extension(
+                &packages,
+                &sources,
+                [(root, &old_parsed)],
+                &resolved,
+                production.program(),
+                limits
+            ),
+            Err(HirError::TextInvariant { .. })
+        ));
     }
 
     fn check_modules(inputs: &[(&str, &str, &str)]) -> HirCheckOutput {

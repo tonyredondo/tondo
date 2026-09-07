@@ -425,6 +425,9 @@ fn discovered_key(source: &DiscoveredSource) -> String {
 }
 
 fn canonical_path(field: &'static str, value: String) -> Result<String, DiscoveryError> {
+    if value == "." && matches!(field, "root.physical_path" | "root.logical_path") {
+        return Ok(value);
+    }
     if value == "." || value.is_empty() {
         return if field == "repository_root" && value.is_empty() {
             Ok(String::new())
@@ -450,7 +453,7 @@ fn canonical_path(field: &'static str, value: String) -> Result<String, Discover
 }
 
 fn path_within(root: &str, path: &str) -> bool {
-    if root.is_empty() {
+    if root.is_empty() || root == "." {
         return true;
     }
     path == root
@@ -531,6 +534,31 @@ mod tests {
     }
 
     #[test]
+    fn project_root_sources_use_the_explicit_dot_root_without_admitting_dot_files() {
+        let config = DiscoveryConfig::new(
+            "",
+            vec![DiscoveryRoot::new(TestSourceClass::Production, ".", ".").unwrap()],
+        )
+        .unwrap();
+        let sources = discover(
+            &config,
+            vec![
+                DiscoveryEntry::new("main.to", "main.to", "main"),
+                DiscoveryEntry::new("main_test.to", "main_test.to", "main"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            sources
+                .iter()
+                .map(DiscoveredSource::class)
+                .collect::<Vec<_>>(),
+            [TestSourceClass::Production, TestSourceClass::UnitTest]
+        );
+        assert!(discover(&config, vec![DiscoveryEntry::new(".", ".", "main")]).is_err());
+    }
+
+    #[test]
     fn rejects_symlink_escapes_non_regular_files_and_duplicates() {
         let error = discover(
             &config(),
@@ -590,7 +618,19 @@ mod tests {
             "src\\main.to",
             "/src/main.to",
         ] {
-            assert!(DiscoveryRoot::new(TestSourceClass::Production, value, "src").is_err());
+            // The test-plan root uses `.` for the project directory. Source
+            // entries still require an actual relative file path.
+            assert_eq!(
+                DiscoveryRoot::new(TestSourceClass::Production, value, "src").is_ok(),
+                value == "."
+            );
+            assert!(
+                discover(
+                    &config(),
+                    vec![DiscoveryEntry::new(value, "src/main.to", "main")]
+                )
+                .is_err()
+            );
         }
         assert!(
             DiscoveryConfig::new(

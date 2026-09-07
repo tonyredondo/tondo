@@ -8,6 +8,8 @@ tmp_root="${TMPDIR:-/tmp}"
 tmp_dir="$(mktemp -d "$tmp_root/tondo-stdlib-conformance-coordination-negative.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+scripts/stdlib-conformance-coordination-check.sh
+
 expect_failure() {
     local name="$1"
     shift
@@ -27,7 +29,7 @@ jq '.owners[0].reason = "stale" | .owners[0].rows[0].reason = "stale"' testing/s
 expect_failure missing-reason env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/missing-reason.json" \
     scripts/stdlib-conformance-coordination-check.sh
 
-jq '.owners[0].status = "partial"' testing/stdlib-conformance-coordination.json \
+jq '.owners[0].status = "verified"' testing/stdlib-conformance-coordination.json \
     > "$tmp_dir/overclaim-owner.json"
 expect_failure overclaim-owner env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/overclaim-owner.json" \
     scripts/stdlib-conformance-coordination-check.sh
@@ -44,19 +46,12 @@ expect_failure missing-ref env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/m
 
 jq -e '
   . as $root
-  | $root.summary == {
-    owners: 22,
-    rows: 385,
-    public_signatures: 214,
-    requirements: 171,
-    verified_rows: 385,
-    partial_rows: 0,
-    pending_rows: 0,
-    owner_verified: 22,
-    owner_partial: 0,
-    owner_pending: 0
-  }
-  and any($root.owners[]; .id == "std.async" and .status == "verified" and (.rows | length) == 12)
+  | $root.status == "planned"
+  and $root.promotion.status == "pending"
+  and $root.summary.verified_rows == 0
+  and $root.summary.partial_rows + $root.summary.pending_rows == $root.summary.rows
+  and any($root.owners[]; .id == "std.reflect" and .status == "partial")
+  and any($root.owners[]; .id == "std.async" and .status == "pending" and (.rows | length) == 12)
   and all(["std.serialization", "std.json", "std.messagepack", "std.protobuf"][];
     . as $owner_id
     | any($root.owners[]; .id == $owner_id and (.evidence.cases | length) > 0)

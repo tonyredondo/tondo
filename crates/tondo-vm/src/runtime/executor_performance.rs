@@ -428,6 +428,7 @@ fn executor_performance_probe() {
         },
         stack: Vec::new(),
         suppressed: Vec::new(),
+        from_test_control: false,
     };
     for completion in [
         BlockingCompletion::Panicked(panic),

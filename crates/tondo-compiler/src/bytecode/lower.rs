@@ -5304,6 +5304,7 @@ mod tests {
         match execute_outcome(source, name) {
             VmOutcome::Returned(value) => value,
             VmOutcome::Panicked(panic) => panic!("unexpected VM panic: {panic:#?}"),
+            VmOutcome::Interrupted => panic!("unexpected external interruption"),
         }
     }
 

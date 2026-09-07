@@ -1,4 +1,3 @@
-import std.testing
 import std.time
 
 fn answer(): Int {
@@ -8,10 +7,4 @@ fn answer(): Int {
 pub fn answerAfterBackoff(delay: time.Duration): Int ! time.ClockError suspends {
     time.sleep(delay)?
     answer()
-}
-
-test production_api {
-    testing.log("unit production API")
-    testing.tags(["kind": "unit"])
-    assert(answer() == 42)
 }

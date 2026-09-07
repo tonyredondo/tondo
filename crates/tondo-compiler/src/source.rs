@@ -286,6 +286,11 @@ impl Span {
     pub fn range(self) -> TextRange {
         self.range
     }
+
+    /// Rebinds a span when an unchanged source database is reordered.
+    pub(crate) fn with_file(self, file: FileId) -> Self {
+        Self { file, ..self }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

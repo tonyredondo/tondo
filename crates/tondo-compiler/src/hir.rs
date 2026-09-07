@@ -30,12 +30,13 @@ mod traits;
 mod verify;
 
 pub(crate) use availability::{
-    AvailabilityFindingKind, analyze_availability, analyze_closure_captures,
+    AvailabilityFindingKind, analyze_availability, analyze_availability_from,
+    analyze_closure_captures,
 };
 pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 pub(crate) use check::check_expressions_configured;
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
-pub use lower::{TypeLoweringLimits, lower_types};
+pub use lower::{TypeLoweringLimits, lower_types, lower_types_extension};
 pub(crate) use regions::{
     StaticCollectionRegion, StaticRegionRelation, StaticSlice, parse_nonnegative_integer,
     static_collection_relation, static_nonnegative_integer, static_slice,
@@ -327,7 +328,7 @@ impl HirOutput {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirProgram {
     interner: TypeInterner,
     declarations: BTreeMap<SymbolId, HirTypeDeclaration>,
@@ -348,9 +349,37 @@ pub struct HirProgram {
     capability_statuses: Vec<[HirCapabilityStatus; HirCapability::COUNT]>,
     terminal_statuses: Vec<HirTerminalStatus>,
     expression_check_complete: bool,
+    next_loop_id: u32,
+    next_scope_id: u32,
 }
 
 impl HirProgram {
+    fn empty(max_type_nodes: u32) -> Result<Self, TypeError> {
+        Ok(Self {
+            interner: TypeInterner::new(max_type_nodes)?,
+            declarations: BTreeMap::new(),
+            constants: BTreeMap::new(),
+            callables: Vec::new(),
+            implementations: Vec::new(),
+            derive_requests: Vec::new(),
+            annotations: BTreeMap::new(),
+            expressions: Vec::new(),
+            expression_flows: Vec::new(),
+            expression_breaks: Vec::new(),
+            member_references: Vec::new(),
+            unsafe_regions: Vec::new(),
+            patterns: Vec::new(),
+            bodies: BTreeMap::new(),
+            closures: Vec::new(),
+            local_types: BTreeMap::new(),
+            capability_statuses: Vec::new(),
+            terminal_statuses: Vec::new(),
+            expression_check_complete: false,
+            next_loop_id: 0,
+            next_scope_id: 0,
+        })
+    }
+
     /// Test-only mutable access for typed-HIR verifier fixtures.
     #[cfg(test)]
     pub fn expressions_mut_for_tests(&mut self) -> &mut Vec<HirExpression> {
@@ -2838,6 +2867,7 @@ pub enum HirBootstrapHostFunction {
     MathFloor,
     MathCeil,
     MathRound,
+    MathRoundTiesAway,
     MathTruncate,
     MathSqrt,
     MathFma,
@@ -3334,6 +3364,7 @@ impl HirBootstrapHostFunction {
             Self::MathFloor => "std.math.floor",
             Self::MathCeil => "std.math.ceil",
             Self::MathRound => "std.math.round",
+            Self::MathRoundTiesAway => "std.math.roundTiesAway",
             Self::MathTruncate => "std.math.truncate",
             Self::MathSqrt => "std.math.sqrt",
             Self::MathFma => "std.math.fma",

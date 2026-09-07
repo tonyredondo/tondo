@@ -109,9 +109,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.async",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -134,8 +135,8 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Public owner signatures or implementation routes remain unverified",
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/process_host.rs",
@@ -151,8 +152,8 @@
           ]
         },
         "public_api": {
-          "status": "not-applicable",
-          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
+          "status": "partial",
+          "reason": "no public signatures are indexed for this owner; its callable surface remains unaudited",
           "signatures": [],
           "verified_signatures": [],
           "refs": [
@@ -173,11 +174,12 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "partial",
+        "reason": "Public owner signatures or implementation routes remain unverified",
         "refs": [
           "testing/stdlib-conformance.json#owners/std.bytes",
           "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
           "tests/runtime/m10-std-bytes-001.to"
         ]
       },
@@ -279,9 +281,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.collections",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -360,9 +363,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.console",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -453,9 +457,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.core",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -533,9 +538,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.env",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -582,18 +588,18 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.format:240",
-            "std.format:241",
-            "std.format:242",
-            "std.format:243",
-            "std.format:244"
+            "std.format:256",
+            "std.format:257",
+            "std.format:258",
+            "std.format:259",
+            "std.format:260"
           ],
           "verified_signatures": [
-            "std.format:240",
-            "std.format:241",
-            "std.format:242",
-            "std.format:243",
-            "std.format:244"
+            "std.format:256",
+            "std.format:257",
+            "std.format:258",
+            "std.format:259",
+            "std.format:260"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -613,9 +619,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.format",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -709,9 +716,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.fs",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -758,16 +766,16 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.io:270",
-            "std.io:271",
-            "std.io:272",
-            "std.io:273"
+            "std.io:286",
+            "std.io:287",
+            "std.io:288",
+            "std.io:289"
           ],
           "verified_signatures": [
-            "std.io:270",
-            "std.io:271",
-            "std.io:272",
-            "std.io:273"
+            "std.io:286",
+            "std.io:287",
+            "std.io:288",
+            "std.io:289"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -787,9 +795,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.io",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -862,9 +871,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.iter",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -984,10 +994,11 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
           "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.json",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -1031,26 +1042,28 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.math:220",
-            "std.math:221",
-            "std.math:222",
-            "std.math:223",
-            "std.math:224",
-            "std.math:225",
-            "std.math:226",
-            "std.math:227",
-            "std.math:228"
+            "std.math:235",
+            "std.math:236",
+            "std.math:237",
+            "std.math:238",
+            "std.math:239",
+            "std.math:240",
+            "std.math:241",
+            "std.math:242",
+            "std.math:243",
+            "std.math:244"
           ],
           "verified_signatures": [
-            "std.math:220",
-            "std.math:221",
-            "std.math:222",
-            "std.math:223",
-            "std.math:224",
-            "std.math:225",
-            "std.math:226",
-            "std.math:227",
-            "std.math:228"
+            "std.math:235",
+            "std.math:236",
+            "std.math:237",
+            "std.math:238",
+            "std.math:239",
+            "std.math:240",
+            "std.math:241",
+            "std.math:242",
+            "std.math:243",
+            "std.math:244"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1078,9 +1091,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.math",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -1193,10 +1207,11 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
           "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.messagepack",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -1217,8 +1232,8 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Public owner signatures or implementation routes remain unverified",
           "refs": [
             "crates/tondo-compiler/src/meta.rs",
             "crates/tondo-compiler/src/meta_vm.rs",
@@ -1234,8 +1249,8 @@
           ]
         },
         "public_api": {
-          "status": "not-applicable",
-          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
+          "status": "partial",
+          "reason": "no public signatures are indexed for this owner; its callable surface remains unaudited",
           "signatures": [],
           "verified_signatures": [],
           "refs": [
@@ -1244,7 +1259,7 @@
         }
       },
       "runtime_applicable": false,
-      "runtime_reason": "build-only provider; conformance runs in the compiler/meta VM boundary",
+      "runtime_reason": "current examples exercise compiler components; public provider integration is pending",
       "examples": [
         {
           "id": "meta-conformance",
@@ -1256,12 +1271,13 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "partial",
+        "reason": "Public owner signatures or implementation routes remain unverified",
         "refs": [
           "crates/tondo-compiler/tests/std_meta_conformance.rs",
           "testing/stdlib-conformance.json#owners/std.meta",
-          "testing/stdlib-matrix.json"
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1343,9 +1359,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.path",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -1455,9 +1472,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.process",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -1562,10 +1580,11 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
           "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.protobuf",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -1586,8 +1605,8 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Public owner signatures or implementation routes remain unverified",
           "refs": [
             "crates/tondo-compiler/src/reflect.rs"
           ]
@@ -1601,9 +1620,11 @@
           ]
         },
         "public_api": {
-          "status": "not-applicable",
-          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
-          "signatures": [],
+          "status": "partial",
+          "reason": "public API audit retains gaps for this owner",
+          "signatures": [
+            "std.reflect:32"
+          ],
           "verified_signatures": [],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1611,7 +1632,7 @@
         }
       },
       "runtime_applicable": false,
-      "runtime_reason": "metadata-only provider; no runtime value or host adapter exists",
+      "runtime_reason": "current examples exercise the Rust metadata catalog; public Tondo runtime reflection is pending",
       "examples": [
         {
           "id": "reflect-metadata",
@@ -1623,12 +1644,13 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "partial",
+        "reason": "Public owner signatures or implementation routes remain unverified",
         "refs": [
           "crates/tondo-compiler/src/reflect.rs",
           "testing/stdlib-conformance.json#owners/std.reflect",
-          "testing/stdlib-matrix.json"
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1647,8 +1669,8 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Public owner signatures or implementation routes remain unverified",
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
@@ -1668,7 +1690,7 @@
         },
         "public_api": {
           "status": "partial",
-          "reason": "the owner contract has public protocols but no public-audit signature rows yet",
+          "reason": "no public signatures are indexed for this owner; its callable surface remains unaudited",
           "signatures": [],
           "verified_signatures": [],
           "refs": [
@@ -1697,12 +1719,13 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "partial",
+        "reason": "Public owner signatures or implementation routes remain unverified",
         "refs": [
           "crates/tondo-stdlib/tests/codec_conformance.rs",
           "testing/stdlib-conformance.json#owners/std.serialization",
           "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-codecs-001.to"
         ]
       },
@@ -1817,10 +1840,11 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
           "crates/tondo-cli/tests/acceptance_projects.rs",
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.testing",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json"
@@ -1920,9 +1944,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.text",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -2002,9 +2027,10 @@
         }
       ],
       "conformance": {
-        "status": "verified",
-        "reason": null,
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.time",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
@@ -2021,8 +2047,8 @@
     "external_examples": 4,
     "compiler_examples": 2,
     "api_complete": 18,
-    "api_partial": 1,
-    "api_not_applicable": 3
+    "api_partial": 4,
+    "api_not_applicable": 0
   },
   "promotion": {
     "status": "not-published",

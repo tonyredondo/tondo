@@ -8,7 +8,7 @@ output="${1:-testing/stdlib-test-coordination.json}"
 mkdir -p "$(dirname "$output")"
 
 jq -n \
-    --slurpfile evidence testing/stdlib-owner-evidence.json \
+    --slurpfile evidence "${TONDO_STDLIB_OWNER_EVIDENCE:-testing/stdlib-owner-evidence.json}" \
     --slurpfile api testing/stdlib-public-api.json \
     --slurpfile matrix testing/stdlib-matrix.json \
     '
@@ -71,7 +71,7 @@ jq -n \
     | ($e.owners | map(. as $owner
         | ($owner.id) as $id
         | (first($e.leaves[] | select((.owners | index($id)) != null))) as $leaf
-        | ([ $a.rows[] | select(.owner == $id) | {id, symbol, signature} ] | sort_by(.id)) as $public_api
+        | ([ $a.rows[] | select(.owner == $id) | {id, symbol, signature, implementation_status: .status, missing} ] | sort_by(.id)) as $public_api
         | ([ $m.rows[] | select(.owner == $id and .kind == "requirement") | .id ] | sort) as $requirements
         | {
             id: $id,
@@ -92,6 +92,8 @@ jq -n \
             fuzz: {
               status: $owner.cells.FUZZ.status,
               reason: $owner.cells.FUZZ.reason,
+              evidence_kind: $owner.cells.FUZZ.evidence_kind,
+              component_status: $owner.cells.FUZZ.component_status,
               campaigns: campaigns($id),
               refs: $owner.cells.FUZZ.refs
             }
@@ -100,7 +102,7 @@ jq -n \
         format: "tondo-stdlib-test-coordination/1",
         edition: "0.1",
         phase: "STD-0.1A",
-        status: "closed-coordination",
+        status: (if all($owners[]; .fuzz.status == "verified") then "closed-coordination" else "open-coordination" end),
         sources: {
           owner_evidence: "testing/stdlib-owner-evidence.json",
           public_api: "testing/stdlib-public-api.json",
@@ -112,7 +114,8 @@ jq -n \
           every_surface_has_model_law: true,
           every_owner_has_test_commands: true,
           fuzz_gaps_require_reason: true,
-          partial_fuzz_is_not_promotion: true
+          partial_fuzz_is_not_promotion: true,
+          model_laws_do_not_promote_public_implementation: true
         },
         owners: $owners,
         summary: {
@@ -121,9 +124,10 @@ jq -n \
           owner_requirements: ([$owners[].requirements[]] | length),
           model_laws: ([$owners[].model.laws[]] | length),
           fuzz_verified: ([$owners[] | select(.fuzz.status == "verified")] | length),
-          fuzz_partial: ([$owners[] | select(.fuzz.status == "partial")] | length)
+          fuzz_partial: ([$owners[] | select(.fuzz.status == "partial")] | length),
+          fuzz_component_verified: ([$owners[] | select(.fuzz.component_status == "verified")] | length)
         },
-        next_coordination: "STD-A-PERF-001"
+        next_coordination: (if all($owners[]; .fuzz.status == "verified") then "STD-A-PERF-001" else "STD-A-FUZZ-001" end)
       }
     ' > "$output"
 

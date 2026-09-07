@@ -5,7 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 contract="${TONDO_STDLIB_S1A_SEAL_CONTRACT:-$root/testing/stdlib-s1a-seal.json}"
-seal_dir="${TONDO_STDLIB_S1A_SEAL_DIR:-$root/target/reliability/evidence/stdlib-s1a-seal}"
+seal_dir="${TONDO_STDLIB_S1A_SEAL_DIR:-${CARGO_TARGET_DIR:-$root/target}/reliability/evidence/stdlib-s1a-seal}"
 
 die() {
     echo "stdlib S1A seal: $*" >&2
@@ -38,19 +38,20 @@ jq -e '
     "STD-A-DIST-001", "STD-A-FUZZ-001", "STD-A-PERF-001",
     "STD-A-SELECTABLE-IMPL-001"
   ]
-  and .invariants.public_api.signatures == 214
+  and .invariants.public_api.signatures == 216
   and .invariants.public_api.gaps == 0
-  and .invariants.matrix == {owners:22,requirements:171,rows:385,open_rows:0,status:"verified",applicable_open_cells:0}
+  and .invariants.matrix == {owners:22,requirements:171,rows:387,open_rows:0,status:"verified",applicable_open_cells:0}
   and .invariants.fuzz == {owners:22,verified:22,partial:0}
   and .invariants.performance == {captured_owners:10,not_applicable_owners:12,deferred_dimensions:[]}
-  and .invariants.conformance == {owners:22,rows:385,cases:206,passed:true}
+  and .invariants.conformance == {owners:22,rows:387,cases:206,passed:true}
   and .invariants.distribution == {clean_source_workspaces:2,byte_identical:true,public_release:false}
   and .invariants.claims == {g5:false,native_backend:false,tlf:false,public_release:false}
   and (.negative_cases | sort) == [
     "archive-payload-mismatch", "bundle-manifest-mismatch", "dirty-workspace",
     "distribution-not-reproducible", "evidence-revision-drift", "g5-claim",
-    "matrix-open-cell", "native-backend-claim", "performance-deferred-dimension",
-    "public-api-gap", "tlf-claim"
+    "matrix-open-cell", "missing-required-payload", "native-backend-claim", "performance-deferred-dimension",
+    "public-api-gap", "required-check-substitution", "tlf-claim", "unpromoted-conformance",
+    "unproved-distribution-source", "verification-record-drift"
   ]
   and .next_blocks == ["DIAG-SPEC-001"]
   and .public_release == false
@@ -140,4 +141,7 @@ while IFS=$'\t' read -r path expected_sha expected_bytes; do
     [[ "$archive_sha" == "$expected_sha" ]] || die "archive payload hash mismatch: $path"
 done < <(jq -r '.files[] | [.path, .sha256, (.bytes | tostring)] | @tsv' "$manifest")
 
-echo "stdlib S1A seal: verified (content-addressed draft bundle; G5/N1/TLF/public-release claims disabled)"
+python3 "$root/scripts/stdlib_s1a_payload.py" --bundle "$bundle_root" \
+    --contract "$contract" --seal "$seal" --manifest "$manifest"
+
+echo "stdlib S1A seal: verified (payload integrity and required evidence bindings; G5/N1/TLF/public-release claims disabled)"

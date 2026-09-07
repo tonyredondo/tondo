@@ -61,6 +61,12 @@ pub(crate) fn expand_derives(
     let mut diagnostics = Vec::new();
 
     for (request_index, hir_request) in hir.derive_requests().iter().enumerate() {
+        if !parsed
+            .iter()
+            .any(|(file, _)| *file == hir_request.span().file())
+        {
+            continue;
+        }
         let module = packages
             .module_for_file(sources, hir_request.span().file())
             .map_err(|error| DeriveFrontendError::Invariant(error.to_string()))?;

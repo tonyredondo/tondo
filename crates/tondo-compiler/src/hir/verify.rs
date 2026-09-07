@@ -4044,7 +4044,10 @@ impl Verifier<'_> {
                 if expression.ty != signature.function_type {
                     return Err(HirInvariantError::new(
                         context,
-                        "function value type differs from its callable signature",
+                        format!(
+                            "function value type differs from its callable signature ({callable:?}): expression {:?}, callable {:?}",
+                            expression.ty, signature.function_type
+                        ),
                     ));
                 }
             }

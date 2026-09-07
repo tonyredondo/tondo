@@ -31,11 +31,12 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
     let matrix = load(&root, "testing/stdlib-matrix.json");
     let coordinated = rows_by_id(&registry);
 
-    assert_eq!(registry["status"], "promoted");
-    assert_eq!(registry["promotion"]["status"], "promoted");
+    assert_eq!(registry["status"], "planned");
+    assert_eq!(registry["promotion"]["status"], "pending");
+    assert_eq!(registry["rules"]["coordination_does_not_promote"], true);
 
     let matrix_rows = matrix["rows"].as_array().unwrap();
-    assert_eq!(matrix_rows.len(), 385);
+    assert_eq!(matrix_rows.len(), 387);
     assert_eq!(coordinated.len(), matrix_rows.len());
 
     for matrix_row in matrix_rows {
@@ -55,12 +56,21 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
         assert_eq!(row["reason"], owner_conf["stages"]["CONF"]["reason"]);
         assert_eq!(row["refs"], owner_conf["stages"]["CONF"]["refs"]);
         assert!(!row["refs"].as_array().unwrap().is_empty());
-        assert_eq!(row["status"], "verified");
-        assert!(row["reason"].is_null());
+        assert_ne!(row["status"], "verified");
+        assert!(
+            row["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
+        );
     }
 
     assert_eq!(registry["summary"]["rows"], matrix_rows.len());
-    assert_eq!(registry["summary"]["verified_rows"], matrix_rows.len());
+    assert_eq!(registry["summary"]["verified_rows"], 0);
+    assert_eq!(
+        registry["summary"]["pending_rows"].as_u64().unwrap()
+            + registry["summary"]["partial_rows"].as_u64().unwrap(),
+        matrix_rows.len() as u64
+    );
 }
 
 #[test]
@@ -81,18 +91,28 @@ fn owner_closure_and_promotion_boundary_are_explicit() {
 
     for owner in owners(&registry) {
         let rows = owner["rows"].as_array().unwrap();
-        let expected_status = "verified";
+        let expected_status = if matches!(
+            owner["id"].as_str().unwrap(),
+            "std.bytes" | "std.meta" | "std.reflect" | "std.serialization"
+        ) {
+            "partial"
+        } else {
+            "pending"
+        };
         assert_eq!(owner["status"], expected_status);
         assert_eq!(owner["evidence"]["status"], expected_status);
-        assert!(owner["reason"].is_null());
+        assert!(
+            owner["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
+        );
         assert!(!owner["evidence"]["refs"].as_array().unwrap().is_empty());
         assert!(!owner["evidence"]["commands"].as_array().unwrap().is_empty());
-        if expected_status == "verified" {
-            assert!(rows.iter().all(|row| row["status"] == "verified"));
-        }
+        assert!(rows.iter().all(|row| row["status"] == expected_status));
     }
 
-    assert_eq!(registry["promotion"]["matrix_status"], "verified");
+    assert_eq!(registry["promotion"]["matrix_status"], matrix["status"]);
+    assert_eq!(matrix["status"], "open-gaps");
     assert_eq!(
         registry["promotion"]["next_coordination"],
         "STD-S1A-SEAL-001"
@@ -100,7 +120,7 @@ fn owner_closure_and_promotion_boundary_are_explicit() {
 }
 
 #[test]
-fn conformance_commands_and_codec_observations_are_linked() {
+fn conformance_commands_and_codec_case_plans_are_linked() {
     let root = root();
     let registry = load(&root, "testing/stdlib-conformance-coordination.json");
     let mut codec_owners = BTreeSet::from([
@@ -138,7 +158,7 @@ fn conformance_commands_and_codec_observations_are_linked() {
                     .any(|reference| reference
                         .as_str()
                         .unwrap()
-                        .contains("stdlib-conformance.json#owners/"))
+                        .contains("stdlib-conformance.json"))
             );
         }
     }
@@ -147,6 +167,10 @@ fn conformance_commands_and_codec_observations_are_linked() {
     let async_owner = owners(&registry)
         .find(|owner| owner["id"] == "std.async")
         .unwrap();
-    assert_eq!(async_owner["status"], "verified");
-    assert!(async_owner["reason"].is_null());
+    assert_eq!(async_owner["status"], "pending");
+    assert!(
+        async_owner["reason"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty())
+    );
 }

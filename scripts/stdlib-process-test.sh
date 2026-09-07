@@ -222,11 +222,16 @@ jq -e '
     and .cells.HOST.status == "verified"
     and .cells.MODEL.status == "verified"
     and .cells.TEST.status == "verified"
-    and .cells.FUZZ.status == "verified"
+    and .cells.FUZZ.status == "partial"
+    and .cells.FUZZ.component_status == "partial"
+    and .cells.FUZZ.evidence_kind == "constant-admission"
+    and (.cells.FUZZ.reason | type == "string" and length > 0)
     and .cells.PERF.status == "not-applicable"
-    and .cells.CONF.status == "verified"
-    and .cells.CONF.reason == null
+    and .cells.CONF.status == "pending"
+    and (.cells.CONF.reason | type == "string" and length > 0)
     and .cells.DOC.status == "verified")
 ' testing/stdlib-owner-evidence.json >/dev/null
 
-echo "std.process owner tests: OK"
+scripts/stdlib-owner-evidence-check.sh >/dev/null
+
+echo "std.process component tests: OK (whole-owner FUZZ and CONF promotion remain pending)"

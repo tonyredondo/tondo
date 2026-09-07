@@ -15,6 +15,7 @@ use tondo_compiler::project::{
 };
 use tondo_compiler::test_plan::TestProjectPlan;
 use tondo_compiler::test_report::{SnapshotMode, TestList, TestReport};
+use tondo_compiler::test_result::AggregateStatus;
 use tondo_compiler::test_snapshots::SnapshotStore;
 
 static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
@@ -648,7 +649,10 @@ fn test_project(source: &[u8]) -> std::path::PathBuf {
             .unwrap(),
     )
     .unwrap();
-    let test_plan = TestProjectPlan::defaults(&project, 1)
+    let production_project =
+        ProjectPlan::parse(&production_manifest, &normalized_production_lock).unwrap();
+    let test_plan = TestProjectPlan::for_discovered_project(Some(&production_project), &project, 1)
+        .unwrap()
         .canonical_bytes()
         .unwrap();
     let mut test_plan_value: serde_json::Value = serde_json::from_slice(&test_plan).unwrap();
@@ -656,6 +660,421 @@ fn test_project(source: &[u8]) -> std::path::PathBuf {
     let test_plan_toml = toml::to_string(&toml::Value::try_from(test_plan_value).unwrap()).unwrap();
     fs::write(directory.join("tondo.test.toml"), test_plan_toml).unwrap();
     directory
+}
+
+#[test]
+fn test_reports_bind_captured_inputs_and_effective_resource_limits() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let report_for = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["test", "--project"])
+            .arg(&directory)
+            .args(["--test-format", "json"])
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        TestReport::parse(&output.stdout).unwrap()
+    };
+    let before = report_for(&[]);
+    assert_ne!(before.metadata().inputs.public_sha256, "0".repeat(64));
+    assert_ne!(
+        before.metadata().limits.resource_profile_sha256,
+        "0".repeat(64)
+    );
+    assert_eq!(
+        before.canonical_bytes().unwrap(),
+        report_for(&[]).canonical_bytes().unwrap()
+    );
+    fs::write(
+        directory.join("tests/smoke.to"),
+        "test smoke { assert(1 == 1) }\n",
+    )
+    .unwrap();
+    let source_changed = report_for(&[]);
+    assert_ne!(
+        before.metadata().inputs.public_sha256,
+        source_changed.metadata().inputs.public_sha256
+    );
+    assert_eq!(
+        before.metadata().limits.resource_profile_sha256,
+        source_changed.metadata().limits.resource_profile_sha256
+    );
+    let jobs_changed = report_for(&["--jobs", "2"]);
+    assert_eq!(
+        source_changed.metadata().inputs.public_sha256,
+        jobs_changed.metadata().inputs.public_sha256
+    );
+    assert_ne!(
+        source_changed.metadata().limits.resource_profile_sha256,
+        jobs_changed.metadata().limits.resource_profile_sha256
+    );
+    rewrite_test_plan(&directory, |plan| {
+        plan["limits"]["instructions"] = serde_json::json!(1000);
+    });
+    let plan_changed = report_for(&[]);
+    assert_ne!(
+        source_changed.metadata().inputs.public_sha256,
+        plan_changed.metadata().inputs.public_sha256
+    );
+    assert_ne!(
+        source_changed.metadata().limits.resource_profile_sha256,
+        plan_changed.metadata().limits.resource_profile_sha256
+    );
+    let package = "workspace:cli@local";
+    let store = SnapshotStore::from_entries(
+        package,
+        [tondo_compiler::test_snapshots::SnapshotEntry {
+            node_id: "cli::integration::smoke::smoke".into(),
+            name: "unused".into(),
+            value: "captured".into(),
+        }],
+    )
+    .unwrap();
+    fs::write(
+        directory.join("tests/snapshots.json"),
+        store.canonical_bytes().unwrap(),
+    )
+    .unwrap();
+    let snapshot_changed = report_for(&[]);
+    assert_ne!(
+        plan_changed.metadata().inputs.public_sha256,
+        snapshot_changed.metadata().inputs.public_sha256
+    );
+    assert_eq!(
+        plan_changed.metadata().limits.resource_profile_sha256,
+        snapshot_changed.metadata().limits.resource_profile_sha256
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn test_source_classes_reject_production_nodes_imports_and_test_exports() {
+    for (production, test_path, test_source, code) in [
+        (
+            "test misplaced {}\n",
+            "tests/smoke.to",
+            "test smoke {}\n",
+            "E2001",
+        ),
+        (
+            "import std.testing\nfn main() {}\n",
+            "tests/smoke.to",
+            "test smoke {}\n",
+            "E2003",
+        ),
+        (
+            "fn main() {}\n",
+            "tests/smoke.to",
+            "pub fn helper(): Int { 1 }\ntest smoke {}\n",
+            "E2003",
+        ),
+        (
+            "fn main() {}\n",
+            "src/main_test.to",
+            "pub fn helper(): Int { 1 }\ntest smoke {}\n",
+            "E2003",
+        ),
+    ] {
+        let directory = project_with_source_and_threads(production.as_bytes());
+        fs::create_dir_all(directory.join("tests")).unwrap();
+        fs::write(directory.join(test_path), test_source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["test", "--project"])
+            .arg(&directory)
+            .args(["--list", "--exact", "absent", "--allow-empty"])
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(code),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn test_only_projects_keep_unit_and_integration_sources_distinct() {
+    let directory = project_with_source_and_threads(b"fn main() {}\n");
+    fs::remove_file(directory.join("src/main.to")).unwrap();
+    fs::create_dir_all(directory.join("tests/http")).unwrap();
+    fs::write(
+        directory.join("src/main_test.to"),
+        "fn helper(): Int { 1 }\ntest unitCase { assert(helper() == 1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("tests/http/client.to"),
+        "fn helper(): Int { 2 }\ntest integrationCase { assert(helper() == 2) }\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["test", "--project"])
+        .arg(&directory)
+        .args(["--test-format", "json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report = TestReport::parse(&output.stdout).unwrap();
+    let ids = report
+        .tests()
+        .iter()
+        .map(|test| test.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            "executordemo::integration::http.client::integrationCase",
+            "executordemo::unit::main::unitCase"
+        ]
+    );
+    assert!(
+        report
+            .tests()
+            .iter()
+            .all(|test| test.status == AggregateStatus::Passed)
+    );
+}
+
+#[test]
+fn empty_shards_emit_reports_but_empty_selectors_still_fail() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let mut run_counts = Vec::new();
+    let mut list_counts = Vec::new();
+    for shard in ["1/2", "2/2"] {
+        for list in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+            command.args(["test", "--project"]).arg(&directory).args([
+                "--shard",
+                shard,
+                "--test-format",
+                "json",
+            ]);
+            if list {
+                command.arg("--list");
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if list {
+                list_counts.push(TestList::parse(&output.stdout).unwrap().tests().len());
+            } else {
+                run_counts.push(TestReport::parse(&output.stdout).unwrap().tests().len());
+            }
+        }
+    }
+    run_counts.sort();
+    list_counts.sort();
+    assert_eq!(run_counts, [0, 1]);
+    assert_eq!(list_counts, [0, 1]);
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["test", "--project"])
+        .arg(&directory)
+        .args([
+            "--shard",
+            "1/2",
+            "--exact",
+            "absent",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no tests matched"));
+}
+
+#[test]
+fn integration_roots_have_distinct_packages_and_visible_path_ids() {
+    let directory = project_with_source_and_threads(
+        b"pub fn answer(): Int { 42 }\nfn hidden(): Int { 7 }\nfn main() {}\n",
+    );
+    fs::create_dir_all(directory.join("tests/http")).unwrap();
+    fs::write(directory.join("tests/a.to"),
+        "import executordemo.main\nfn helper(): Int { 1 }\ntest smoke { assert(helper() == 1)\nassert(main.answer() == 42) }\n").unwrap();
+    fs::write(
+        directory.join("tests/http/b.to"),
+        "fn helper(): Int { 2 }\ntest smoke { assert(helper() == 2) }\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("PASS executordemo::integration::a::smoke"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("PASS executordemo::integration::http.b::smoke"),
+        "{stdout}"
+    );
+    fs::write(
+        directory.join("tests/a.to"),
+        "import executordemo.main\ntest smoke { assert(main.hidden() == 7) }\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--list"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("hidden"));
+}
+
+#[test]
+fn integration_package_aliases_do_not_collide_with_a_user_package_name() {
+    let directory = project_with_source_and_threads(b"pub fn answer(): Int { 42 }\nfn main() {}\n");
+    let config_path = directory.join("tondo.toml");
+    let mut config: toml::Value =
+        toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["package"]["name"] = toml::Value::String("tondoIntegration0".into());
+    fs::write(config_path, toml::to_string(&config).unwrap()).unwrap();
+    fs::create_dir_all(directory.join("tests")).unwrap();
+    fs::write(
+        directory.join("tests/consumer.to"),
+        "import tondoIntegration0.main\ntest smoke { assert(main.answer() == 42) }\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("PASS tondoIntegration0::integration::consumer::smoke")
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn test_companion_cannot_repair_invalid_production() {
+    let directory =
+        project_with_source_and_threads(b"fn compute(): Int { testHelper() }\nfn main() {}\n");
+    fs::write(
+        directory.join("src/main_test.to"),
+        "fn testHelper(): Int { 42 }\ntest smoke { assert(compute() == 42) }\n",
+    )
+    .unwrap();
+    for command in [
+        vec!["check"],
+        vec!["test"],
+        vec!["test", "--list"],
+        vec!["test", "--filter", "absent", "--allow-empty"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args(&command)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{command:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("E1001"));
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn test_command_validates_the_full_target_before_selection() {
+    for (source, options) in [
+        ("test smoke { nonexistentFunction() }\n", vec!["--list"]),
+        (
+            "test good { assert(true) }\ntest bad { nonexistentFunction() }\n",
+            vec!["--filter", "good"],
+        ),
+        ("test broken { let = }\n", vec!["--allow-empty"]),
+        (
+            "test good { assert(true) }\ntest bad { nonexistentFunction() }\n",
+            vec!["--filter", "absent", "--allow-empty"],
+        ),
+    ] {
+        let directory = test_project(source.as_bytes());
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .arg("test")
+            .args(&options)
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{options:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "invalid compilation must not list or execute tests"
+        );
+        assert!(!output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn test_listing_compiles_without_entering_suites_or_consuming_runtime_limits() {
+    let directory = test_project(b"suite outer { assert(false)\n test body { assert(false) }\n}\n");
+    rewrite_test_plan(&directory, |plan| {
+        plan["limits"]["instructions"] = serde_json::json!(1);
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--list", "--test-format", "json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let list = TestList::parse(&output.stdout).unwrap();
+    assert_eq!(list.tests().len(), 1);
 }
 
 #[test]
@@ -675,7 +1094,7 @@ fn test_command_executes_a_test_body_through_the_vm_backend() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("PASS cli::integration::tests::smoke")
+        String::from_utf8_lossy(&output.stdout).contains("PASS cli::integration::smoke::smoke")
     );
 }
 
@@ -736,6 +1155,64 @@ fn rewrite_test_plan(directory: &std::path::Path, edit: impl FnOnce(&mut serde_j
 }
 
 #[test]
+fn test_plan_reconciles_every_discovered_source_identity_before_selection() {
+    for field in [
+        "physical_path",
+        "logical_path",
+        "module",
+        "input",
+        "package",
+        "missing",
+        "additional",
+    ] {
+        let directory = test_project(b"test smoke { assert(true) }\n");
+        rewrite_test_plan(&directory, |plan| {
+            let sources = plan["sources"].as_array_mut().unwrap();
+            let index = sources
+                .iter()
+                .position(|source| source["class"] == "integration-test")
+                .unwrap();
+            match field {
+                "physical_path" | "logical_path" => {
+                    sources[index][field] = serde_json::json!("tests/other.to")
+                }
+                "module" | "input" => sources[index][field] = serde_json::json!("renamed"),
+                "package" => sources[index][field] = serde_json::json!("workspace:other@local"),
+                "missing" => {
+                    sources.remove(index);
+                }
+                "additional" => {
+                    let mut additional = sources[index].clone();
+                    additional["physical_path"] = serde_json::json!("tests/other.to");
+                    additional["logical_path"] = serde_json::json!("tests/other.to");
+                    additional["module"] = serde_json::json!("other");
+                    additional["input"] =
+                        serde_json::json!("source:integration-test:tests/other.to");
+                    sources.push(additional);
+                }
+                _ => unreachable!(),
+            }
+        });
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args(["test", "--filter", "absent", "--allow-empty", "--list"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{field}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "{field}: a drifted plan published a list"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
 fn test_command_accepts_an_optional_toml_plan_sidecar() {
     let directory = test_project(b"test smoke { assert(true) }\n");
     let explicit = directory.join("custom-plan.toml");
@@ -761,6 +1238,210 @@ fn test_command_accepts_an_optional_toml_plan_sidecar() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(report.tests().len(), 1);
+}
+
+#[test]
+fn testing_host_terminals_stop_the_leaf_and_preserve_sibling_evidence() {
+    for operation in [
+        "let a = 1\n let b = 2\n testing.assertEqual(ref a, ref b)",
+        "let a = 1\n testing.assertNotEqual(ref a, ref a)",
+        "testing.assertTextEqual(\"expected\", \"actual\")",
+        "let absent: Int? = none\n _ = testing.assertSome(absent)",
+        "testing.assertNone(some(42))",
+        "let failure: Int ! String = err(\"bad\")\n _ = testing.assertOk(failure)",
+        "let success: Int ! String = ok(42)\n _ = testing.assertErr(success)",
+    ] {
+        let source = format!(
+            "import std.testing\nsuite shared {{\n test first {{ testing.log(\"first\") }}\n test middle {{\n defer testing.log(\"cleanup\")\n {operation}\n testing.log(\"unreachable\")\n }}\n test last {{ testing.log(\"last\") }}\n}}\n"
+        );
+        let directory = test_project(source.as_bytes());
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args(["test", "--test-format", "json"])
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        let report = TestReport::parse(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "{operation}: {error}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+        assert_eq!(output.status.code(), Some(1));
+        for (name, status, logs) in [
+            ("first", AggregateStatus::Passed, vec!["first"]),
+            ("middle", AggregateStatus::FailedPanic, vec!["cleanup"]),
+            ("last", AggregateStatus::Passed, vec!["last"]),
+        ] {
+            let leaf = report
+                .tests()
+                .iter()
+                .find(|leaf| leaf.id.ends_with(&format!("::{name}")))
+                .unwrap();
+            assert_eq!(leaf.status, status, "{operation}: {name}");
+            assert_eq!(leaf.attempts[0].logs, logs, "{operation}: {name}");
+        }
+        assert_eq!(report.suites()[0].status, AggregateStatus::Passed);
+    }
+}
+
+#[test]
+fn testing_host_evidence_limits_are_atomic_and_are_not_retried() {
+    for (budget, operation) in [
+        ("output_bytes", "testing.log(\"123456789\")"),
+        (
+            "snapshot_bytes",
+            "testing.snapshot(\"large\", \"123456789\")",
+        ),
+        (
+            "artifact_bytes",
+            "match bytes.Bytes(\"123456789\") {\n ok(payload) => testing.attach(\"large\", \"text/plain\", payload)\n err(_) => testing.failNow(\"could not create bytes\")\n }",
+        ),
+    ] {
+        let source = format!(
+            "import std.testing\nimport std.bytes\nsuite shared {{\n test first {{ testing.log(\"first\") }}\n test middle {{ {operation}\n testing.log(\"wrong\") }}\n test last {{ testing.log(\"last\") }}\n}}\n"
+        );
+        let directory = test_project(source.as_bytes());
+        rewrite_test_plan(&directory, |plan| plan["limits"][budget] = 8.into());
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args(["test", "--retry", "1", "--test-format", "json"])
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        let report = TestReport::parse(&output.stdout)
+            .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&output.stderr)));
+        assert_eq!(output.status.code(), Some(1));
+        for leaf in report.tests() {
+            assert_eq!(leaf.attempts.len(), 1, "{}", leaf.id);
+            if leaf.id.ends_with("::middle") {
+                assert_eq!(leaf.status, AggregateStatus::ResourceLimit);
+                assert!(leaf.attempts[0].logs.is_empty());
+                assert!(leaf.attempts[0].artifacts.is_empty());
+                assert!(leaf.attempts[0].snapshots.is_empty());
+            } else {
+                assert_eq!(leaf.status, AggregateStatus::Passed);
+                assert_eq!(leaf.attempts[0].logs.len(), 1);
+            }
+        }
+        assert_eq!(report.suites()[0].status, AggregateStatus::Passed);
+    }
+}
+
+#[test]
+fn testing_console_output_belongs_to_its_node_and_uses_the_output_budget() {
+    let directory = test_project(b"import std.testing\nimport std.console\nsuite shared {\n console.print(\"setup\")\n defer console.print(\"end\")\n test first { console.println(\"first\") }\n test middle { console.print(\"1234567\")\n console.println(\"8\")\n testing.log(\"wrong\") }\n test last { console.print(\"last\") }\n}\n");
+    rewrite_test_plan(&directory, |plan| plan["limits"]["output_bytes"] = 8.into());
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--test-format", "json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    let report = TestReport::parse(&output.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&output.stderr)));
+    assert_eq!(output.status.code(), Some(1));
+    for (name, status, stdout) in [
+        ("first", AggregateStatus::Passed, "first\n"),
+        ("middle", AggregateStatus::ResourceLimit, "1234567"),
+        ("last", AggregateStatus::Passed, "last"),
+    ] {
+        let leaf = report
+            .tests()
+            .iter()
+            .find(|leaf| leaf.id.ends_with(&format!("::{name}")))
+            .unwrap();
+        assert_eq!(leaf.status, status, "{name}");
+        assert_eq!(leaf.attempts[0].stdout, stdout, "{name}");
+        assert!(leaf.attempts[0].logs.is_empty());
+    }
+    assert_eq!(report.suites()[0].status, AggregateStatus::Passed);
+    assert_eq!(report.suites()[0].attempts[0].stdout, "setupend");
+}
+
+#[test]
+fn testing_cleanup_panics_cannot_be_hidden_by_host_terminals() {
+    for cleanup in ["assert(false)", "testing.assertTextEqual(\"a\", \"b\")"] {
+        let source = format!(
+            "import std.testing\ntest leaf {{\n defer {cleanup}\n testing.skip(\"not available\")\n}}\nsuite setup {{\n defer {cleanup}\n testing.skip(\"not available\")\n test child {{ assert(true) }}\n}}\n"
+        );
+        let directory = test_project(source.as_bytes());
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args(["test", "--test-format", "json"])
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        let report = TestReport::parse(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "{cleanup}: {error}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+        assert_eq!(output.status.code(), Some(1), "{cleanup}");
+        for leaf in report.tests() {
+            assert_eq!(
+                leaf.status,
+                if leaf.id.ends_with("::child") {
+                    AggregateStatus::BlockedSetup
+                } else {
+                    AggregateStatus::FailedPanic
+                },
+                "{cleanup}: {}",
+                leaf.id
+            );
+            assert!(leaf.attempts[0].skip.is_none());
+        }
+        assert_eq!(report.suites()[0].status, AggregateStatus::FailedPanic);
+        assert_eq!(
+            report.suites()[0].attempts[0].phase,
+            Some(tondo_compiler::test_result::AttemptPhase::Setup)
+        );
+    }
+}
+
+#[test]
+fn suite_capture_admission_precedes_selection_and_worker_creation() {
+    for source in [
+        "suite shared {\n var value = 42\n test leaf { assert(value == 42) }\n}\n",
+        "suite shared {\n var value = 42\n suite nested {\n test leaf { assert(value == 42) }\n }\n}\n",
+        "import std.testing\nsuite shared {\n let value = 42\n test leaf { testing.assertEqual(ref value, ref value) }\n}\n",
+        "import std.testing\nimport std.time\nfn timer(): time.Timer { testing.failNow(\"compile only\") }\nsuite shared {\n let value = timer()\n test leaf { value.cancel() }\n}\n",
+    ] {
+        let directory = test_project(source.as_bytes());
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args(["test", "--list", "--filter", "absent", "--allow-empty"])
+            .output()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("E2005"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let directory = test_project(b"import std.testing\nsuite shared {\n let value = 42\n let text = \"Tondo\"\n suite nested {\n test leaf {\n let snapshot = value\n testing.assertEqual(ref snapshot, ref snapshot)\n assert(text == \"Tondo\")\n }\n }\n}\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--test-format", "json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = TestReport::parse(&output.stdout).unwrap();
+    assert_eq!(report.tests()[0].status, AggregateStatus::Passed);
 }
 
 #[test]
@@ -795,6 +1476,236 @@ fn test_command_kills_a_recursive_leaf_at_the_wall_clock_boundary() {
         elapsed < std::time::Duration::from_secs(3),
         "worker was not bounded: {elapsed:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn external_interrupt_drains_cleanup_and_preserves_complete_outputs() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    #[derive(Debug)]
+    enum Delivery {
+        Coordinator,
+        Worker,
+        Both,
+    }
+    use Delivery::{Both, Coordinator, Worker};
+
+    for (body, ready_in_cleanup, cleanup_ns, second_request, expected_exit, delivery) in [
+        ("for {}", false, 100000000_u64, false, 4, Coordinator),
+        (
+            "_ = time.sleep(time.Duration.fromNanoseconds(60000000000))",
+            false,
+            100000000,
+            false,
+            4,
+            Coordinator,
+        ),
+        ("", true, 100000000, false, 4, Coordinator),
+        ("", true, 60000000000, false, 3, Coordinator),
+        ("", true, 60000000000, true, 3, Coordinator),
+        ("for {}", false, 100000000, false, 4, Worker),
+        ("", true, 60000000000, false, 3, Worker),
+        ("", true, 500000000, true, 3, Worker),
+        ("", true, 500000000, false, 4, Both),
+        ("", true, 500000000, true, 3, Both),
+        (
+            "scope {\n let pending = spawn childWork()\n _ = await pending\n}",
+            false,
+            100000000,
+            false,
+            4,
+            Coordinator,
+        ),
+        (
+            "_ = process.command(\"/bin/sh\", \"-c\", \"read unused && exit 77; printf %s $$ > process-pid; printf %s \\\"$PPID\\\" > ready; exec /bin/sleep 60\").run()",
+            false,
+            100000000,
+            false,
+            4,
+            Coordinator,
+        ),
+    ] {
+        let cleanup_ready = if ready_in_cleanup {
+            "mark(\"ready\")"
+        } else {
+            ""
+        };
+        let body_ready =
+            if ready_in_cleanup || body.starts_with("scope") || body.contains("process.command") {
+                ""
+            } else {
+                "mark(\"ready\")"
+            };
+        let source = format!(
+            r#"import std.process
+import std.time
+import std.testing
+fn mark(name: String) {{
+    _ = process.command("/bin/sh", "-c", "printf %s \"$PPID\" > \"$1\"", "tondo-test", name).run()
+}}
+fn cleanup() {{
+    {cleanup_ready}
+    _ = time.sleep(time.Duration.fromNanoseconds({cleanup_ns}))
+    mark("cleaned")
+}}
+fn childWork() suspends {{
+    defer mark("child-cleaned")
+    mark("ready")
+    for {{}}
+}}
+test active {{
+    defer cleanup()
+    testing.snapshot("value", "updated value")
+    {body_ready}
+    {body}
+}}
+test later {{ mark("later") }}
+"#
+        );
+        let directory = test_project(source.as_bytes());
+        rewrite_test_plan(&directory, |plan| {
+            plan["snapshot_stores"] = serde_json::json!([{"name":"default", "path":"tests/snapshots.json", "update":true, "max_bytes":1048576}]);
+        });
+        let json = directory.join("results.json");
+        let junit = directory.join("results.xml");
+        fs::write(&json, b"prior json").unwrap();
+        fs::write(&junit, b"prior junit").unwrap();
+        let snapshots = fs::read(directory.join("tests/snapshots.json")).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(&directory)
+            .args([
+                "test",
+                "--update-snapshots",
+                "--report",
+                "json=results.json",
+                "--report",
+                "junit=results.xml",
+                "--artifacts",
+                "artifacts",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut worker_pid = String::new();
+        while Instant::now() < deadline {
+            if let Ok(value) = fs::read_to_string(directory.join("ready"))
+                && value.parse::<u32>().is_ok_and(|pid| pid > 0)
+            {
+                worker_pid = value;
+                break;
+            }
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let ready = !worker_pid.is_empty();
+        let mut delivery_failures = Vec::new();
+        if ready {
+            let signal_pids = match delivery {
+                Worker => vec![worker_pid.clone()],
+                Coordinator => vec![child.id().to_string()],
+                Both => vec![child.id().to_string(), worker_pid.clone()],
+            };
+            for request in 0..=usize::from(second_request) {
+                if request > 0 {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                // Queue the same delivery at both endpoints before either handles it.
+                // Otherwise the coordinator can reap the worker after its second
+                // request before the test's next kill process sends that request.
+                // Single-endpoint cases retain ordinary asynchronous delivery.
+                let signals: &[&str] = if matches!(delivery, Both) {
+                    &["-STOP", "-INT", "-CONT"]
+                } else {
+                    &["-INT"]
+                };
+                for signal in signals {
+                    let sent = Command::new("kill")
+                        .arg(signal)
+                        .args(&signal_pids)
+                        .output()
+                        .unwrap();
+                    if !sent.status.success() {
+                        delivery_failures.push(format!(
+                            "{delivery:?}, request={request}, signal={signal}, pids={signal_pids:?}: {}",
+                            String::from_utf8_lossy(&sent.stderr)
+                        ));
+                    }
+                }
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if child.try_wait().unwrap().is_none() {
+            child.kill().unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            delivery_failures.is_empty(),
+            "signal delivery failed: {delivery_failures:?}; worker output: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            ready,
+            "worker did not reach body in {directory:?}: {}\n{source}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(expected_exit),
+            "{body}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            directory.join("cleaned").exists(),
+            expected_exit == 4,
+            "suspendible defer was abandoned: {body}"
+        );
+        assert!(!worker_pid.is_empty());
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &worker_pid])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success(),
+            "worker {worker_pid} survived interruption"
+        );
+        assert!(!directory.join("later").exists());
+        if body.starts_with("scope") {
+            assert!(directory.join("child-cleaned").exists());
+        }
+        if body.contains("process.command") {
+            let process_pid = fs::read_to_string(directory.join("process-pid")).unwrap();
+            assert!(process_pid.parse::<u32>().is_ok_and(|pid| pid > 0));
+            assert!(
+                !Command::new("kill")
+                    .args(["-0", &process_pid])
+                    .stderr(Stdio::null())
+                    .status()
+                    .unwrap()
+                    .success(),
+                "host process {process_pid} survived cancellation"
+            );
+        }
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("interrupted"));
+        assert_eq!(fs::read(&json).unwrap(), b"prior json");
+        assert_eq!(fs::read(&junit).unwrap(), b"prior junit");
+        assert_eq!(
+            fs::read(directory.join("tests/snapshots.json")).unwrap(),
+            snapshots
+        );
+        assert!(!directory.join("artifacts/manifests").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 #[test]
@@ -915,18 +1826,8 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
 
 #[test]
 fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
-    let missing = std::env::temp_dir().join(format!(
-        "tondo-hidden-worker-missing-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .args(["__test-worker", "--project"])
-        .arg(&missing)
-        .args(["--entry", "missing"])
+        .args(["__test-worker", "--entry", "missing"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -937,7 +1838,7 @@ fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
         response["responses"][0][1]["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("cannot resolve project directory")
+            .contains("closed worker input hash is required")
     );
 }
 
@@ -963,7 +1864,7 @@ fn test_command_reports_failures_and_publishes_json_and_junit() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("PANIC cli::integration::tests::smoke")
+        String::from_utf8_lossy(&output.stdout).contains("PANIC cli::integration::smoke::smoke")
     );
     assert!(String::from_utf8_lossy(&json_bytes).contains("tondo-test-report-0.1/7"));
     assert!(String::from_utf8_lossy(&junit_bytes).contains("<testsuites"));

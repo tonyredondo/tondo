@@ -18,48 +18,54 @@ cmp -s "$generated" "$coordination" || {
     exit 1
 }
 
-jq -e '
+jq -e --slurpfile api "${TONDO_STDLIB_PUBLIC_API:-testing/stdlib-public-api.json}" '
+  def public_valid:
+    .public_api as $api
+    | ($api.signature_count == ($api.signatures | length))
+      and ($api.verified_count == ([$api.signatures[] | select(.status == "verified")] | length))
+      and ($api.gap_count == $api.signature_count - $api.verified_count)
+      and ($api.owner_missing | type == "array")
+      and ($api.status == (if $api.owner_status == "verified" and ($api.owner_missing | length) == 0 and $api.signature_count > 0 and $api.gap_count == 0 then "verified" else "open-gaps" end));
+  def owner_closed:
+    .implementation_status == "verified"
+    and .matrix_impl_host == "verified"
+    and .public_api.status == "verified";
   .format == "tondo-stdlib-implementation-coordination/1"
   and .edition == "0.1"
   and .phase == "STD-0.1A"
-  and .status == "closed-coordination"
+  and .status == (if all(.owners[]; owner_closed) then "closed-coordination" else "open-gaps" end)
   and .sources.implementation == "testing/stdlib-implementation.json"
   and .sources.public_api == "testing/stdlib-public-api.json"
   and .sources.normative_matrix == "testing/stdlib-matrix.json"
+  and .sources.owner_evidence == "testing/stdlib-owner-evidence.json"
   and .rules.required_owner_status == "implemented-draft"
   and .rules.implementation_stage_must_be_verified
   and .rules.callable_public_signatures_must_be_verified
-  and .rules.build_only_no_callable_surface_requires_reason
+  and .rules.empty_public_surface_is_unverified
   and .rules.global_public_audit_is_not_promoted
   and .rules.no_waivers
-  and .next_coordination == "NATIVE-PUBLISH-SPEC-001"
-  and .global_public_api.status == "verified"
-  and .global_public_api.gaps == 0
+  and .next_coordination == "STD-B-INTEGRATION-PLAN-001"
+  and .global_public_api.status == $api[0].status
+  and .global_public_api.gaps == $api[0].summary.gaps
   and .summary == {
-    owners: 8,
-    signatures: 64,
-    verified_signatures: 64,
-    owners_with_public_surface: 7,
-    owners_without_callable_surface: 1
+    owners: (.owners | length),
+    signatures: ([.owners[].public_api.signatures[]] | length),
+    verified_signatures: ([.owners[].public_api.signatures[] | select(.status == "verified")] | length),
+    owners_with_public_surface: ([.owners[] | select(.public_api.signature_count > 0)] | length),
+    owners_without_callable_surface: ([.owners[] | select(.public_api.signature_count == 0)] | length),
+    owners_with_public_gaps: ([.owners[] | select(.public_api.status != "verified")] | length)
   }
   and (.owners | map(.id)) == ["std.core", "std.text", "std.collections", "std.iter", "std.math", "std.format", "std.io", "std.serialization"]
   and all(.owners[];
     (.layer | test("^A[13]$"))
-    and (.implementation_status == "verified")
-    and (.matrix_impl_host == "verified")
+    and (.implementation_status == "verified" or .implementation_status == "open-gaps")
     and (.implementation | type == "array" and length > 0)
     and (.tests | type == "array" and length > 0)
     and (.proof | type == "string" and length > 0)
-    and (if .public_api.status == "verified" then
-          (.public_api.signature_count > 0
-           and .public_api.signature_count == .public_api.verified_count
-           and .public_api.gap_count == 0
-           and all(.public_api.signatures[]; .status == "verified"))
-        elif .public_api.status == "not-applicable" then
-          (.id == "std.serialization"
-           and (.public_surface_reason | type == "string" and length > 0)
-           and .public_api.signature_count == 0)
-        else false end)
+    and public_valid
+    and (if .public_api.signature_count == 0 then
+      (.public_surface_reason | type == "string" and length > 0)
+      else .public_surface_reason == null end)
   )
 ' "$coordination" >/dev/null || {
     echo "stdlib implementation coordination: invalid registry" >&2
@@ -80,4 +86,4 @@ while IFS= read -r ref; do
     }
 done < <(jq -r '.sources[]' "$coordination")
 
-echo "stdlib implementation coordination: OK (8 owners; 64 public signatures verified; codec/build-only audit closed; next NATIVE-PUBLISH-SPEC-001)"
+echo "stdlib implementation coordination: consistent ($(jq -r '.status' "$coordination")); global API gaps: $(jq -r '.global_public_api.gaps' "$coordination")"

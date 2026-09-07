@@ -27,4 +27,29 @@ if [[ "$strict_rc" -eq 0 ]]; then
     exit 1
 fi
 
+# Assert the specific rejection, even while unrelated owners have open gaps.
+TONDO_PUBLIC_API_CONFIG="$tmp/invalid.json" TONDO_PUBLIC_API_MATRIX="$tmp/invalid-report.json" \
+    scripts/stdlib-public-api-audit.sh --write >/dev/null
+jq -e 'first(.owners[] | select(.id == "std.core")) |
+    .status == "open-gaps" and (.owner_missing | index("documentation-is-not-public-case") != null)' \
+    "$tmp/invalid-report.json" >/dev/null
+
+# A build-only label must not turn an empty extracted surface into coverage.
+jq '.owners |= map(if .id == "std.core" then
+    .include = ["nonexistentCallable"] |
+    .runtime = {kind:"not-applicable",paths:[],reason:"negative fixture"} |
+    .case = {path:"crates/tondo-compiler/src/driver.rs",kind:"build-only",canonical_calls:[]}
+    else . end)' testing/stdlib-public-api-config.json > "$tmp/empty.json"
+TONDO_PUBLIC_API_CONFIG="$tmp/empty.json" TONDO_PUBLIC_API_MATRIX="$tmp/empty-report.json" \
+    scripts/stdlib-public-api-audit.sh --write >/dev/null
+jq -e 'first(.owners[] | select(.id == "std.core")) |
+    .signature_count == 0 and .status == "open-gaps" and
+    (.owner_missing | index("no-callable-signatures-indexed") != null)' \
+    "$tmp/empty-report.json" >/dev/null
+
+# A real indexed runtime owner remains verified in the unmodified configuration.
+TONDO_PUBLIC_API_MATRIX="$tmp/current-report.json" scripts/stdlib-public-api-audit.sh --write >/dev/null
+jq -e 'first(.owners[] | select(.id == "std.core")) |
+    .signature_count > 0 and .status == "verified"' "$tmp/current-report.json" >/dev/null
+
 echo "stdlib public API audit tests: OK"

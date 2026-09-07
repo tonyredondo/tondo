@@ -21,6 +21,9 @@
     "docs/contracts/stdlib-s1a-seal.md",
     "docs/contracts/stdlib-public-api-audit.md",
     "testing/stdlib-s1a-seal.json",
+    "testing/inventory.json",
+    "conformance/0.1/manifest.json",
+    "conformance/draft/manifest.json",
     "testing/stdlib-async.json",
     "testing/stdlib-fuzz.json",
     "testing/stdlib-performance.json",
@@ -51,7 +54,7 @@
       "id": "STD-A-DIST-001",
       "path": "target/reliability/evidence/stdlib-distribution/stdlib-distribution.json",
       "format": "tondo-stdlib-distribution-evidence/1",
-      "status": "promoted-draft",
+      "status": "verified-vm-bundle",
       "revision_field": null,
       "tree_field": null
     },
@@ -139,25 +142,25 @@
     {
       "id": "STD-A-CONF-001",
       "source": "target/reliability/evidence/stdlib-conformance.json",
-      "proof": "22 owners, 385 rows, 206 draft cases passed"
+      "proof": "22 owners, 387 public matrix rows and 206 draft cases passed; public row coverage verified and promotion earned"
     },
     {
       "id": "STD-A-DIST-001",
       "source": "target/reliability/evidence/stdlib-distribution/stdlib-distribution.json",
-      "proof": "two clean snapshots and byte-identical VM package"
+      "proof": "two clean snapshots, byte-identical VM package and verified binary source provenance bound to the seal revision"
     }
   ],
   "invariants": {
     "public_api": {
       "strict": true,
       "owners": 21,
-      "signatures": 214,
+      "signatures": 216,
       "gaps": 0
     },
     "matrix": {
       "owners": 22,
       "requirements": 171,
-      "rows": 385,
+      "rows": 387,
       "open_rows": 0,
       "status": "verified",
       "applicable_open_cells": 0
@@ -174,7 +177,7 @@
     },
     "conformance": {
       "owners": 22,
-      "rows": 385,
+      "rows": 387,
       "cases": 206,
       "passed": true
     },
@@ -201,7 +204,12 @@
     "archive-payload-mismatch",
     "g5-claim",
     "native-backend-claim",
-    "tlf-claim"
+    "tlf-claim",
+    "missing-required-payload",
+    "verification-record-drift",
+    "required-check-substitution",
+    "unpromoted-conformance",
+    "unproved-distribution-source"
   ],
   "next_blocks": ["DIAG-SPEC-001"],
   "public_release": false

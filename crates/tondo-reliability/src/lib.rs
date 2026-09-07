@@ -1,6 +1,7 @@
 #![doc = "Deterministic reliability tooling for the Tondo repository."]
 
 pub mod channel_model;
+pub mod codec_fuzz;
 pub mod encoding_model;
 pub mod gap_audit;
 pub mod generator;
@@ -12,6 +13,7 @@ pub mod provenance;
 pub mod quality;
 pub mod ratchet;
 pub mod regression;
+pub mod scalar_fuzz;
 pub mod spec_structure;
 pub mod sync_collection_model;
 pub mod sync_model;

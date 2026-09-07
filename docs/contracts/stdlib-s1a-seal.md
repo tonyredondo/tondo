@@ -1,5 +1,13 @@
 # STD-S1A seal contract
 
+**Implementation status:** promotion reopened by the 2026-09-07 audit. The
+public API audit accepted runtime reflection with no indexed signatures, and
+several owner fuzz routes exercised Rust containers or constant frontend
+checks. Public testing and general metaprogramming integration also remain
+open. Historical bundles retain their measured scope but cannot establish
+S1A. Complete public coverage remains required; the locked counts below include
+both approved rounding operations.
+
 `STD-S1A-SEAL-001` is the final technical gate for the unpublished
 `STD-0.1A` standard-library foundation. It is deliberately separate from the
 language candidate seal (`CONF-SEAL-FINAL-001`/G5), the native backend (N1) and
@@ -14,7 +22,7 @@ seal consumes the tracked owner, API, matrix, conformance, performance,
 documentation, distribution and async/select registries. It also consumes
 fresh reports from the current clean Git revision:
 
-- `stdlib-conformance.json` (22 owners, 385 rows and 206 draft cases);
+- `stdlib-conformance.json` (22 owners, 387 rows and 206 draft cases);
 - `stdlib-performance-report.json` plus its promoted coordinator;
 - `async-select-conformance.json` and `async-select-performance.json`; and
 - the reproducible VM distribution evidence and archive.
@@ -23,11 +31,12 @@ The runner executes the contract checks and negative-test suites, then rejects
 the seal if any of these is true:
 
 - the working tree is dirty or a report is bound to another revision/tree;
-- the strict public API audit is not `214/214` with zero gaps;
+- the strict public API audit is not `216/216` with zero gaps;
 - the normative matrix contains an applicable open cell;
 - FUZZ has fewer than 22 verified owners, PERF has a deferred dimension, or
   CONF/DIST/async-select evidence is not passed and draft-only;
-- the archive is not the byte-identical result of two clean snapshots; or
+- the archive is not the byte-identical result of two clean snapshots with
+  verified binary source provenance; or
 - metadata claims G5, a native backend, TLF or a public release.
 
 No state is promoted by editing a JSON status. Every claim is derived from the
@@ -54,6 +63,24 @@ tree. This permits a reviewer or CI job to copy the bundle elsewhere and
 verify its integrity independently. The distribution archive remains nested
 as evidence; it is not published by this gate.
 
+The checker also requires every input and evidence role from the supplied
+contract. The bundled contract must match that contract byte for byte. Outer
+seal, bundle manifest and verification record must agree on revision and tree;
+the complete ordered check list and its transcripts must be present and hash
+bound. Public API and matrix gaps, partial fuzz, unpromoted public conformance
+and an unproved distribution binary are rejected even when their payload
+hashes are internally consistent. Draft case results, layer evidence,
+inventory, manifests and conformance transcripts are cross-checked inside the
+bundle. The checker validates records and bindings; it does not independently
+rerun the captured commands.
+
+The audit reproduced an integrity-only bundle with a single text file being
+accepted as sealed. `stdlib_s1a_payload_test.py` retains that public-checker
+regression plus bounded positive record and negative binding tests. Its
+synthetic records are unit-test inputs, never promotion evidence for Tondo.
+The current checkout still cannot produce a conformant S1A seal while its
+public integration prerequisites remain open.
+
 The generated directory is intentionally under `target/` and is not a tracked
 release artifact. A future release process may attach a reviewed bundle, but
 that action requires the separate G5/S1 and publication decisions.
@@ -64,6 +91,7 @@ that action requires the separate G5/S1 and publication decisions.
 scripts/stdlib-s1a-seal.sh
 scripts/stdlib-s1a-seal-check.sh
 scripts/stdlib-s1a-seal-test.sh
+python3 -B scripts/stdlib_s1a_payload_test.py
 ```
 
 The full `scripts/test-gate.sh` runs the seal after the S1A conformance,

@@ -5,7 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 contract="${TONDO_STDLIB_CONFORMANCE_CONTRACT:-testing/stdlib-conformance.json}"
-evidence_dir="${TONDO_STDLIB_EVIDENCE_DIR:-target/reliability/evidence}"
+target_dir="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.target_directory')"
+evidence_dir="${TONDO_STDLIB_EVIDENCE_DIR:-$target_dir/reliability/evidence}"
 logs_dir="$evidence_dir/stdlib-conformance-logs"
 result="$evidence_dir/stdlib-conformance.json"
 mkdir -p "$evidence_dir" "$logs_dir"
@@ -18,17 +19,7 @@ die() {
 [[ -f "$contract" ]] || die "missing contract: ${contract#"$root/"}"
 [[ -f "$evidence_dir/layer-evidence.json" ]] || die "missing current layer evidence; run the test gate first"
 
-jq -e '
-  .format == "tondo-stdlib-conformance/1"
-  and .edition == "0.1"
-  and .phase == "STD-0.1A"
-  and .status == "promoted"
-  and .runner.lineage == "draft"
-  and .runner.full_suite_case_count == 206
-  and (.owners | type == "array" and length == 22)
-  and ([.owners[].id] | unique | length) == 22
-  and all(.owners[]; .status == "verified" and (.owner_command | startswith("scripts/")) and (.cases | length > 0))
-' "$contract" >/dev/null || die "invalid public conformance contract"
+scripts/stdlib-conformance-check.sh --plan
 
 current_tree_sha256="$(cargo run -p tondo-reliability --locked -- quality provenance --root . | jq -r '.tree_sha256')"
 layer_tree_sha256="$(jq -r '.tree_sha256' "$evidence_dir/layer-evidence.json")"
@@ -119,13 +110,16 @@ run_runtime_case() {
         '{id:$id,source:$source,status:$status,log:$log}' >> "$case_results"
 }
 
+run_logged draft-adapter-build cargo build -p tondo-reference-adapter --locked
+adapter="$target_dir/debug/tondo-reference-adapter"
+[[ -f "$adapter.exe" ]] && adapter="$adapter.exe"
 run_logged draft-validate \
     cargo run -p tondo-conformance --locked -- validate \
     --root . --manifest conformance/draft/manifest.json --lineage draft
 run_logged draft-run \
     cargo run -p tondo-conformance --locked -- run \
     --root . --manifest conformance/draft/manifest.json --lineage draft \
-    --adapter target/debug/tondo-reference-adapter \
+    --adapter "$adapter" \
     --evidence "$evidence_dir/layer-evidence.json" \
     --output "$evidence_dir/conformance-result.json"
 
@@ -147,6 +141,7 @@ while IFS= read -r command; do
 done < <(jq -r '.owners[].cases[] | select(.kind != "runtime") | .command' "$contract" | sort -u)
 
 revision="$(git rev-parse HEAD)"
+[[ "$(cargo run -p tondo-reliability --locked -- quality provenance --root . | jq -r '.tree_sha256')" == "$current_tree_sha256" ]] || die "source inputs changed during the campaign"
 contract_sha256="$(sha256sum "$contract" | cut -d' ' -f1)"
 manifest_sha256="$(sha256sum conformance/0.1/manifest.json | cut -d' ' -f1)"
 result_sha256="$(sha256sum "$evidence_dir/conformance-result.json" | cut -d' ' -f1)"
@@ -154,12 +149,13 @@ jq -e \
     --arg revision "$revision" \
     --arg manifest_sha256 "$manifest_sha256" \
     --arg result_sha256 "$result_sha256" \
+    --argjson expected_cases "$(jq '.runner.full_suite_case_count' "$contract")" \
     '.format == "tondo-conformance-result-draft/2"
      and .suite == "tondo-conformance-draft"
      and .edition == "0.1"
      and .manifest_sha256 == $manifest_sha256
      and .passed == true
-     and (.cases | length) == 206' "$evidence_dir/conformance-result.json" >/dev/null || die "draft suite result is not a passed 206-case observation"
+     and (.cases | length) == $expected_cases' "$evidence_dir/conformance-result.json" >/dev/null || die "draft suite result does not match the declared case count"
 
 commands_json="$(jq -s '.' "$command_results")"
 cases_json="$(jq -s '.' "$case_results")"
@@ -170,6 +166,7 @@ jq -n \
     --arg manifest_sha256 "$manifest_sha256" \
     --arg result_sha256 "$result_sha256" \
     --arg contract_sha256 "$contract_sha256" \
+    --arg result_path "$evidence_dir/conformance-result.json" \
     --argjson commands "$commands_json" \
     --argjson cases "$cases_json" \
     --slurpfile result "$evidence_dir/conformance-result.json" \
@@ -180,6 +177,9 @@ jq -n \
           edition: "0.1",
           phase: "STD-0.1A",
           status: "passed",
+          scope: "declared-cases",
+          public_row_coverage: "unverified",
+          promotion: "pending",
           revision: $revision,
           tree_sha256: $current_tree_sha256,
           contract_sha256: $contract_sha256,
@@ -187,6 +187,7 @@ jq -n \
           full_suite: {
             cases: ($result[0].cases | length),
             passed: $result[0].passed,
+            result: $result_path,
             result_sha256: $result_sha256
           },
           commands: $commands,
@@ -202,4 +203,5 @@ jq -n \
         }
     ' > "$result"
 
-echo "stdlib conformance: OK (22 owners; 385 rows; 206 draft cases; runtime sidecars compared; report: ${result#"$root/"})"
+TONDO_STDLIB_CONFORMANCE_EVIDENCE="$result" scripts/stdlib-conformance-check.sh
+echo "stdlib conformance: declared cases passed; public row coverage and promotion remain pending; report: ${result#"$root/"}"

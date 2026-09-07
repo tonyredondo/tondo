@@ -1,9 +1,10 @@
 # Static suite-capture contract
 
-**Status:** implemented for `UTEST-CAPTURE-001`
+**Status:** bounded capture model and public HIR admission implemented;
+worker snapshot isolation remains a separate testing boundary.
 
 `tondo_compiler::test_capture` is the semantic boundary between the static
-`suite`/`test` tree and future test-body checking/lowering. It consumes the
+`suite`/`test` tree and test-body checking. It consumes the
 resolved suite bindings and uses supplied by the checker; it never executes a
 setup, keeps a mutable environment, or consults the worker.
 
@@ -37,5 +38,22 @@ plan and before capture errors on a rejected plan.
 
 `CaptureTypeFacts::from_hir` is the only adapter from HIR capability and
 terminal summaries. Missing facts are rejected instead of being treated as
-safe. The resulting `TestCapturePlan` is host-free input for the later checker
-and lowering stages.
+safe. The resulting `TestCapturePlan` is a host-free model of snapshot slots.
+
+## Executable frontend boundary
+
+The ordinary HIR checker identifies generated suite/test closure boundaries
+before callable erasure and checks their resolved captures after capability
+and terminal analysis. It uses the same admission rule as the model. Invalid
+bindings and ancestor loans report `E2005` before `tondo test` selects, lists,
+or launches workers. Ordinary closures retain their existing capture rules.
+An immutable scalar or string capture can be observed by a nested test; a
+test can bind its own local copy and borrow that copy.
+
+The CLI regression `suite_capture_admission_precedes_selection_and_worker_creation`
+exercises mutable ancestors, nested suites, loans and terminal owners through
+the public compiler, including an empty selector, and executes a valid nested
+capture. The executable route uses the existing HIR closure capture layout;
+it does not consume `TestCapturePlan` snapshot slots. These checks establish
+static admission, not fresh process isolation for each leaf, transport of every
+host-backed snapshot value, or native AOT execution.

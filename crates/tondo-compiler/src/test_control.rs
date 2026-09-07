@@ -766,6 +766,57 @@ impl EnvelopeHandle {
         Ok(self.lock()?.phase)
     }
 
+    /// Preserve a hosted operation's terminal before the VM unwinds its node.
+    /// Failed preflights have already left the evidence buffers unchanged.
+    pub(crate) fn record_host_error(&self, error: &ControlError) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        match error {
+            ControlError::Closed
+            | ControlError::PhaseRegression { .. }
+            | ControlError::VirtualTimeMissing
+            | ControlError::ProductionOperation { .. }
+            | ControlError::Poisoned => return Err(error.clone()),
+            ControlError::Skip { reason } if state.terminal.is_none() => {
+                state.terminal = Some(Terminal::Skipped {
+                    reason: reason.clone(),
+                });
+            }
+            ControlError::Skip { .. } => {}
+            ControlError::OutputLimit
+            | ControlError::ArtifactLimit
+            | ControlError::SnapshotLimit => {
+                let kind = match error {
+                    ControlError::OutputLimit => "output",
+                    ControlError::ArtifactLimit => "artifacts",
+                    _ => "snapshots",
+                };
+                set_failure_terminal(&mut state, Terminal::ResourceLimit { kind });
+            }
+            _ => {
+                let message = match error {
+                    ControlError::FailNow { message } => message.clone(),
+                    _ => error.to_string(),
+                };
+                if state.phase == ExecutionPhase::Cleanup {
+                    state.terminal = Some(Terminal::CleanupFailure {
+                        code: error.code().into(),
+                        message,
+                    });
+                } else {
+                    set_failure_terminal(
+                        &mut state,
+                        Terminal::FailNow {
+                            code: error.code(),
+                            message,
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn log(&self, message: impl Into<String>) -> Result<(), ControlError> {
         let message = message.into();
         let mut state = self.lock()?;
@@ -809,27 +860,39 @@ impl EnvelopeHandle {
     }
 
     pub fn stdout(&self, text: impl Into<String>) -> Result<(), ControlError> {
-        self.append_stream(text.into(), true)
+        self.append_stream(&text.into(), true, false)
     }
 
     pub fn stderr(&self, text: impl Into<String>) -> Result<(), ControlError> {
-        self.append_stream(text.into(), false)
+        self.append_stream(&text.into(), false, false)
     }
 
-    fn append_stream(&self, text: String, stdout: bool) -> Result<(), ControlError> {
+    /// Includes the optional line ending in the same atomic output preflight.
+    pub(crate) fn print_stdout(&self, text: &str, newline: bool) -> Result<(), ControlError> {
+        self.append_stream(text, true, newline)
+    }
+
+    fn append_stream(&self, text: &str, stdout: bool, newline: bool) -> Result<(), ControlError> {
         let mut state = self.lock()?;
         ensure_open(&state)?;
         let limit = state.limits.output_bytes;
+        let delta = (text.len() as u64)
+            .checked_add(u64::from(newline))
+            .ok_or(ControlError::OutputLimit)?;
         reserve(
             &mut state.used_output,
             limit,
-            text.len() as u64,
+            delta,
             ControlError::OutputLimit,
         )?;
-        if stdout {
-            state.stdout.push_str(&text);
+        let stream = if stdout {
+            &mut state.stdout
         } else {
-            state.stderr.push_str(&text);
+            &mut state.stderr
+        };
+        stream.push_str(text);
+        if newline {
+            stream.push('\n');
         }
         Ok(())
     }

@@ -730,6 +730,7 @@ impl LeafResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
+    Interrupted,
     DuplicateLeaf(String),
     EmptyLeafId,
     InvalidConfig(RuntimeConfigError),
@@ -739,6 +740,7 @@ pub enum RuntimeError {
 impl std::fmt::Display for RuntimeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Interrupted => formatter.write_str("test invocation interrupted"),
             Self::DuplicateLeaf(id) => write!(formatter, "leaf `{id}` is duplicated"),
             Self::EmptyLeafId => formatter.write_str("leaf identity cannot be empty"),
             Self::InvalidConfig(error) => error.fmt(formatter),
@@ -767,6 +769,7 @@ impl RuntimeReport {
 }
 
 pub struct RuntimeRunner {
+    interruption: Option<Arc<AtomicBool>>,
     config: RuntimeConfig,
     serial: AtomicU64,
     invocation_serial: AtomicU64,
@@ -787,6 +790,7 @@ impl RuntimeRunner {
             return Err(RuntimeConfigError::ZeroResourceHandles);
         }
         Ok(Self {
+            interruption: None,
             config,
             serial: AtomicU64::new(0),
             invocation_serial: AtomicU64::new(0),
@@ -795,6 +799,18 @@ impl RuntimeRunner {
 
     pub const fn config(&self) -> RuntimeConfig {
         self.config
+    }
+
+    /// Stop dispatch and join active workers before returning an interruption.
+    pub fn with_interruption(mut self, interruption: Arc<AtomicBool>) -> Self {
+        self.interruption = Some(interruption);
+        self
+    }
+
+    fn interrupted(&self) -> bool {
+        self.interruption
+            .as_ref()
+            .is_some_and(|value| value.load(Ordering::Acquire))
     }
 
     pub fn run(&self, programs: Vec<LeafProgram>) -> Result<RuntimeReport, RuntimeError> {
@@ -820,6 +836,9 @@ impl RuntimeRunner {
                         results.push(handle.join().map_err(|_| RuntimeError::WorkerJoin)?);
                     }
                 }
+                if self.interrupted() {
+                    break;
+                }
                 let registry = registry.clone();
                 let serial = self.serial.fetch_add(1, Ordering::Relaxed);
                 pending.push(
@@ -831,6 +850,9 @@ impl RuntimeRunner {
             }
             Ok::<(), RuntimeError>(())
         })?;
+        if self.interrupted() {
+            return Err(RuntimeError::Interrupted);
+        }
         results.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(RuntimeReport {
             leaves: results,
@@ -1035,6 +1057,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn interruption_joins_active_cleanup_and_stops_subsequent_dispatch() {
+        let request = Arc::new(AtomicBool::new(false));
+        let runner = RuntimeRunner::new(
+            RuntimeConfig::new(1, EnvelopeLimits::new(1000, 1000, 1000)).unwrap(),
+        )
+        .unwrap()
+        .with_interruption(request.clone());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let completed = events.clone();
+        let first = LeafProgram::new("first", move |context| {
+            let completed = completed.clone();
+            context.defer(move |_| {
+                completed.lock().unwrap().push("cleanup");
+                Ok(())
+            })?;
+            request.store(true, Ordering::Release);
+            Ok(())
+        });
+        let later = events.clone();
+        let second = LeafProgram::new("second", move |_| {
+            later.lock().unwrap().push("incorrect dispatch");
+            Ok(())
+        });
+        assert_eq!(
+            runner.run(vec![first, second]),
+            Err(RuntimeError::Interrupted)
+        );
+        assert_eq!(*events.lock().unwrap(), ["cleanup"]);
+    }
+
+    #[test]
     fn empty_worker_reports_are_closed_and_detached() {
         let report = empty_report();
         assert_eq!(report.phase(), ExecutionPhase::Closed);
@@ -1099,6 +1152,7 @@ mod tests {
         let mut config = config();
         config.max_resource_handles = 0;
         let runner = RuntimeRunner {
+            interruption: None,
             config,
             serial: AtomicU64::new(0),
             invocation_serial: AtomicU64::new(0),

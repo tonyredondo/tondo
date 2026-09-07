@@ -582,7 +582,7 @@ pub fn build_with_graph(
     )
 }
 
-fn synthetic_package(tested_package: &PackageId, logical_path: &str) -> PackageId {
+pub(crate) fn synthetic_package(tested_package: &PackageId, logical_path: &str) -> PackageId {
     let mut identity = Vec::new();
     append_field(&mut identity, tested_package.as_str());
     append_field(&mut identity, logical_path);

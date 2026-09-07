@@ -8,6 +8,8 @@ tmp_root="${TMPDIR:-/tmp}"
 tmp_dir="$(mktemp -d "$tmp_root/tondo-stdlib-test-coordination-negative.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+scripts/stdlib-test-coordination-check.sh
+
 expect_failure() {
     local name="$1"
     shift
@@ -32,9 +34,14 @@ jq '.owners[0].model.laws = []' testing/stdlib-test-coordination.json \
 expect_failure missing-model-law env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/missing-model-law.json" \
     scripts/stdlib-test-coordination-check.sh
 
-jq '.owners[0].fuzz.status = "partial"' testing/stdlib-test-coordination.json \
+jq '.owners[0].fuzz.reason = null' testing/stdlib-test-coordination.json \
     > "$tmp_dir/missing-fuzz-reason.json"
 expect_failure missing-fuzz-reason env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/missing-fuzz-reason.json" \
+    scripts/stdlib-test-coordination-check.sh
+
+jq '.status = "closed-coordination" | .owners[].fuzz.status = "verified"' testing/stdlib-test-coordination.json \
+    > "$tmp_dir/false-promotion.json"
+expect_failure false-promotion env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/false-promotion.json" \
     scripts/stdlib-test-coordination-check.sh
 
 jq '.next_coordination = "STD-TEST-001"' testing/stdlib-test-coordination.json \
@@ -54,11 +61,12 @@ done
 jq -e '
   .summary == {
     owners: 22,
-    public_signatures: 214,
+    public_signatures: 216,
     owner_requirements: 171,
     model_laws: 66,
-    fuzz_verified: 22,
-    fuzz_partial: 0
+    fuzz_verified: 0,
+    fuzz_partial: 22,
+    fuzz_component_verified: 9
   }
 ' testing/stdlib-test-coordination.json >/dev/null
 

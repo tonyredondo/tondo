@@ -29,6 +29,14 @@ pub enum TestSourceClass {
 }
 
 impl TestSourceClass {
+    pub(crate) const fn test_id_segment(self) -> &'static str {
+        match self {
+            Self::Production => "production",
+            Self::UnitTest => "unit",
+            Self::IntegrationTest => "integration",
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Production => "production",
@@ -510,10 +518,107 @@ impl TestProjectPlan {
         }
     }
 
+    /// Materialize conventional test sources enumerated by the CLI, while
+    /// binding the plan to the separately validated production project.
+    /// No filesystem enumeration or input reading occurs here.
+    pub fn for_discovered_project(
+        production: Option<&ProjectPlan>,
+        discovered: &ProjectPlan,
+        jobs: u32,
+    ) -> Result<Self, TestPlanError> {
+        let mut plan = Self::defaults(production.unwrap_or(discovered), jobs);
+        let production_paths = production
+            .map(|project| project.selected_source_paths().collect::<BTreeSet<_>>())
+            .unwrap_or_default();
+        if production.is_none() {
+            plan.sources.clear();
+            plan.roots.clear();
+        }
+        for (package, physical, logical, module) in discovered.selected_source_records() {
+            if production_paths.contains(physical) {
+                continue;
+            }
+            let (class, module) = if let Some(relative) = logical.strip_prefix("tests/") {
+                (
+                    TestSourceClass::IntegrationTest,
+                    relative.trim_end_matches(".to").replace('/', "."),
+                )
+            } else if physical.ends_with("_test.to") {
+                (TestSourceClass::UnitTest, module.to_owned())
+            } else {
+                return Err(TestPlanError::InvalidField {
+                    field: "sources",
+                    message: format!(
+                        "discovered source `{physical}` is neither production nor a conventional test"
+                    ),
+                });
+            };
+            plan.roots.push(TestSourceRoot {
+                class,
+                physical_path: source_parent(physical),
+                logical_path: source_parent(logical),
+            });
+            plan.sources.push(TestSource {
+                class,
+                package: package.to_owned(),
+                physical_path: physical.to_owned(),
+                logical_path: logical.to_owned(),
+                module,
+                input: format!("source:{}:{physical}", class.as_str()),
+            });
+        }
+        plan.roots.sort_by(|left, right| {
+            (left.class, &left.physical_path, &left.logical_path).cmp(&(
+                right.class,
+                &right.physical_path,
+                &right.logical_path,
+            ))
+        });
+        plan.roots.dedup();
+        let mut plan = match production {
+            Some(project) => Self::parse(project, &plan.canonical_bytes()?)?,
+            None => Self::parse_test_only(discovered, &plan.canonical_bytes()?)?,
+        };
+        // A convention-created store may start empty. An explicit sidecar
+        // continues to require its declared snapshot inputs to exist.
+        plan.snapshot_stores_implicit = true;
+        Ok(plan)
+    }
+
     /// Parse and validate a closed test plan against an already validated
     /// production project. This method does not read any path named by the
     /// plan; all path and input checks are purely structural.
     pub fn parse(project: &ProjectPlan, bytes: &[u8]) -> Result<Self, TestPlanError> {
+        Self::parse_with_production_sources(
+            project,
+            bytes,
+            &project.selected_source_paths().collect(),
+        )
+    }
+
+    /// Bind a project containing only test sources without inventing a
+    /// production source or treating its tests as production declarations.
+    pub fn parse_test_only(project: &ProjectPlan, bytes: &[u8]) -> Result<Self, TestPlanError> {
+        let plan = Self::parse_with_production_sources(project, bytes, &BTreeSet::new())?;
+        let paths = plan
+            .sources
+            .iter()
+            .map(|source| source.physical_path.as_str())
+            .collect::<BTreeSet<_>>();
+        if paths != project.selected_source_paths().collect() {
+            return Err(TestPlanError::InvalidField {
+                field: "sources",
+                message: "test-only sources must exactly match the active project sources".into(),
+            });
+        }
+        Ok(plan)
+    }
+
+    fn parse_with_production_sources(
+        project: &ProjectPlan,
+        bytes: &[u8],
+        production_paths: &BTreeSet<&str>,
+    ) -> Result<Self, TestPlanError> {
         let wire: TestPlanWire = serde_json::from_slice(bytes)
             .map_err(|error| TestPlanError::InvalidJson(error.to_string()))?;
         if wire.format != TEST_PLAN_FORMAT {
@@ -555,7 +660,7 @@ impl TestProjectPlan {
             .package_ids()
             .map(str::to_owned)
             .collect::<BTreeSet<_>>();
-        let sources = normalize_sources(wire.sources, project, &package_ids, &roots)?;
+        let sources = normalize_sources(wire.sources, production_paths, &package_ids, &roots)?;
         let dev_dependencies = normalize_dev_dependencies(wire.dev_dependencies)?;
         let codeowners = normalize_codeowners(wire.codeowners)?;
         let selector = normalize_selector(wire.selector)?;
@@ -1023,7 +1128,7 @@ fn normalize_roots(wire: Vec<SourceRootWire>) -> Result<Vec<TestSourceRoot>, Tes
 
 fn normalize_sources(
     wire: Vec<TestSourceWire>,
-    project: &ProjectPlan,
+    production_paths: &BTreeSet<&str>,
     package_ids: &BTreeSet<String>,
     roots: &[TestSourceRoot],
 ) -> Result<Vec<TestSource>, TestPlanError> {
@@ -1117,8 +1222,7 @@ fn normalize_sources(
         .filter(|source| source.class == TestSourceClass::Production)
         .map(|source| source.physical_path.as_str())
         .collect::<BTreeSet<_>>();
-    let project_sources = project.selected_source_paths().collect::<BTreeSet<_>>();
-    if production != project_sources {
+    if &production != production_paths {
         return Err(TestPlanError::InvalidField {
             field: "sources",
             message: "production sources must exactly match the active project sources".into(),
@@ -1251,6 +1355,12 @@ fn normalize_order(wire: OrderWire) -> Result<TestOrder, TestPlanError> {
 }
 
 fn normalize_policy(wire: PolicyWire) -> Result<TestPolicy, TestPlanError> {
+    if wire.fail_fast {
+        return Err(TestPlanError::InvalidField {
+            field: "policy.fail_fast",
+            message: "Tondo 0.1 does not define a global fail-fast policy".into(),
+        });
+    }
     if wire.jobs == 0 || wire.repeat == 0 {
         return Err(TestPlanError::InvalidField {
             field: "policy",
@@ -2107,13 +2217,13 @@ mod tests {
         let policy = normalize_policy(PolicyWire {
             jobs: 2,
             allow_empty: true,
-            fail_fast: true,
+            fail_fast: false,
             retry: 3,
             repeat: 1,
         })
         .unwrap();
         assert_eq!((policy.jobs(), policy.retry(), policy.repeat()), (2, 3, 1));
-        assert!(policy.allow_empty() && policy.fail_fast());
+        assert!(policy.allow_empty() && !policy.fail_fast());
         assert!(
             normalize_policy(PolicyWire {
                 jobs: 0,

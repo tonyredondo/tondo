@@ -106,12 +106,17 @@ jq -e '
     and (.cells.HOST.reason | contains("intrinsic"))
     and .cells.MODEL.status == "verified"
     and .cells.TEST.status == "verified"
-    and .cells.FUZZ.status == "verified"
+    and .cells.FUZZ.status == "partial"
+    and .cells.FUZZ.component_status == "verified"
+    and .cells.FUZZ.evidence_kind == "kernel-invariants"
+    and (.cells.FUZZ.reason | type == "string" and length > 0)
     and .cells.PERF.status == "verified"
     and .cells.PERF.reason == null
-    and .cells.CONF.status == "verified"
-    and .cells.CONF.reason == null
+    and .cells.CONF.status == "pending"
+    and (.cells.CONF.reason | type == "string" and length > 0)
     and .cells.DOC.status == "verified")
 ' testing/stdlib-owner-evidence.json >/dev/null
 
-echo "std.format owner tests: OK"
+scripts/stdlib-owner-evidence-check.sh >/dev/null
+
+echo "std.format component tests: OK (whole-owner FUZZ and CONF promotion remain pending)"

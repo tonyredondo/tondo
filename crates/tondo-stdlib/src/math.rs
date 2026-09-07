@@ -18,7 +18,15 @@ pub fn ceil(value: f64) -> f64 {
     value.ceil()
 }
 
+/// Round to the nearest integer, choosing the even integer at an exact tie.
+/// Preserve signed zero and infinities; a NaN input produces NaN.
 pub fn round(value: f64) -> f64 {
+    value.round_ties_even()
+}
+
+/// Round to the nearest integer, choosing the integer farther from zero at a tie.
+/// Preserve signed zero and infinities; a NaN input produces NaN.
+pub fn round_ties_away(value: f64) -> f64 {
     value.round()
 }
 
@@ -67,6 +75,56 @@ mod tests {
         assert_eq!(truncate(-1.9), -1.0);
         assert!(floor(f64::NAN).is_nan());
         assert_eq!(floor(f64::INFINITY), f64::INFINITY);
+    }
+
+    #[test]
+    fn rounding_modes_choose_explicit_ties_and_agree_beside_them() {
+        for (value, even, away) in [
+            (0.5_f64, 0.0_f64, 1.0_f64),
+            (1.5, 2.0, 2.0),
+            (2.5, 2.0, 3.0),
+            (3.5, 4.0, 4.0),
+            (-0.5, -0.0, -1.0),
+            (-1.5, -2.0, -2.0),
+            (-2.5, -2.0, -3.0),
+            (-3.5, -4.0, -4.0),
+        ] {
+            assert_eq!(round(value).to_bits(), even.to_bits(), "{value}");
+            assert_eq!(round_ties_away(value).to_bits(), away.to_bits(), "{value}");
+            for operation in [round, round_ties_away] {
+                assert_eq!(
+                    operation(value.next_down()).to_bits(),
+                    value.floor().to_bits()
+                );
+                assert_eq!(operation(value.next_up()).to_bits(), value.ceil().to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn round_preserves_special_values_and_handles_subnormals_and_large_integers() {
+        for value in [
+            0.0_f64,
+            -0.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MAX,
+            f64::MIN,
+            4_503_599_627_370_496.0,
+            4_503_599_627_370_497.0,
+        ] {
+            for operation in [round, round_ties_away] {
+                assert_eq!(operation(value).to_bits(), value.to_bits());
+            }
+        }
+        for value in [f64::from_bits(1), f64::MIN_POSITIVE] {
+            for operation in [round, round_ties_away] {
+                assert_eq!(operation(value).to_bits(), 0.0_f64.to_bits());
+                assert_eq!(operation(-value).to_bits(), (-0.0_f64).to_bits());
+            }
+        }
+        assert!(round(f64::NAN).is_nan());
+        assert!(round_ties_away(f64::NAN).is_nan());
     }
 
     #[test]

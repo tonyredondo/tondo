@@ -42,8 +42,8 @@ jq -e '
     external_examples: 4,
     compiler_examples: 2,
     api_complete: 18,
-    api_partial: 1,
-    api_not_applicable: 3
+    api_partial: 4,
+    api_not_applicable: 0
   })
   and all(.owners[];
     . as $owner
@@ -92,10 +92,11 @@ jq -n -e --slurpfile documentation "$documentation" --slurpfile matrix testing/s
   and ([ $docs.owners[].id ] | sort) == ([ $conformance.owners[].id ] | sort)
   and all($docs.owners[];
     . as $owner
+    | (first($evidence.owners[] | select(.id == $owner.id)) // null) as $evidence_owner
     | ([ $api.rows[] | select(.owner == $owner.id) | .id ] | sort) == ($owner.boundary.public_api.signatures | sort)
     and ([ $api.rows[] | select(.owner == $owner.id and ((.missing // []) | length == 0)) | .id ] | sort) == ($owner.boundary.public_api.verified_signatures | sort)
-    and (first($evidence.owners[] | select(.id == $owner.id)) // null) as $evidence_owner
-    | (if $evidence_owner == null then ($owner.contract | startswith("docs/contracts/")) else any($evidence_owner.cells.DOC.refs[]; . == $owner.contract) end)
+    and (if $owner.boundary.public_api.status == "complete" then any($api.owners[]; .id == $owner.id and .status == "verified") else true end)
+    and (if $evidence_owner == null then ($owner.contract | startswith("docs/contracts/")) else any($evidence_owner.cells.DOC.refs[]; . == $owner.contract) end)
     and any($conformance.owners[]; .id == $owner.id and .status == $owner.conformance.status)
   )
 ' >/dev/null || {

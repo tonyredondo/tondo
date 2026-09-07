@@ -49,7 +49,8 @@ intrinsic compiler/VM-owned value and has no separate provider capability.
 
 The scalar implementation is the correctness oracle. SIMD or word-wide routes
 may be promoted only after the same results, errors, limits and ownership
-observables are demonstrated. `STD-A-FUZZ-001` promotes the owner-aware route;
+observables are demonstrated. The `STD-A-FUZZ-001` bytes route currently tests
+Rust standard types and does not establish Tondo byte implementation coverage;
 dedicated performance capture remains pending, and no throughput or allocation claim is inferred from unit-test
 timing. Run the contract, negative, and owner-evidence checks with:
 

@@ -328,7 +328,11 @@ for marker in \
 done
 
 cargo test -p tondo-compiler process_host::tests::sync_ --locked >/dev/null
-cargo test -p tondo-vm --lib --locked >/dev/null
+cargo test -p tondo-vm --lib --locked >"$tmp_dir/vm-tests.log" 2>&1 || {
+    test_status=$?
+    cat "$tmp_dir/vm-tests.log" >&2
+    exit "$test_status"
+}
 cargo test -p tondo-native-runtime native_sync_ --locked >/dev/null
 cargo test -p tondo-reliability --test sync_models --locked >/dev/null
 cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_sync --locked >/dev/null

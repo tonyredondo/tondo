@@ -8,6 +8,9 @@ tmp_root="${TMPDIR:-/tmp}"
 tmp_dir="$(mktemp -d "$tmp_root/tondo-stdlib-documentation-negative.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+# A broken checker must not make every rejection probe appear successful.
+scripts/stdlib-documentation-check.sh
+
 expect_failure() {
     local name="$1"
     shift
@@ -42,6 +45,13 @@ jq '(.owners[] | select(.id == "std.meta") | .runtime_reason) = null' \
 expect_failure missing-runtime-reason env TONDO_STDLIB_DOCUMENTATION="$tmp_dir/missing-runtime-reason.json" \
     scripts/stdlib-documentation-check.sh
 
+for owner in std.bytes std.meta std.reflect std.serialization; do
+    jq --arg owner "$owner" '(.owners[] | select(.id == $owner) | .boundary.public_api.status) = "not-applicable"' \
+        testing/stdlib-documentation.json > "$tmp_dir/hidden-api-gap.json"
+    expect_failure "hidden-api-gap-$owner" env TONDO_STDLIB_DOCUMENTATION="$tmp_dir/hidden-api-gap.json" \
+        scripts/stdlib-documentation-check.sh
+done
+
 jq -e '
   . as $root
   | $root.summary == {
@@ -51,8 +61,8 @@ jq -e '
     external_examples: 4,
     compiler_examples: 2,
     api_complete: 18,
-    api_partial: 1,
-    api_not_applicable: 3
+    api_partial: 4,
+    api_not_applicable: 0
   }
   and any($root.owners[]; .id == "std.meta" and .runtime_applicable == false and (.runtime_reason | length) > 0)
   and any($root.owners[]; .id == "std.reflect" and .runtime_applicable == false and (.runtime_reason | length) > 0)

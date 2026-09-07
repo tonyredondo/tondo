@@ -46,8 +46,8 @@ jq -n \
     --slurpfile time_owner testing/stdlib-time.json \
     --slurpfile env_owner testing/stdlib-env.json \
     --slurpfile async_owner testing/stdlib-async.json \
-    --slurpfile owner_evidence testing/stdlib-owner-evidence.json \
-    --slurpfile public_api testing/stdlib-public-api.json \
+    --slurpfile owner_evidence "${TONDO_STDLIB_OWNER_EVIDENCE:-testing/stdlib-owner-evidence.json}" \
+    --slurpfile public_api "${TONDO_STDLIB_PUBLIC_API:-testing/stdlib-public-api.json}" \
     --slurpfile integration testing/stdlib-spec.json \
     --slurpfile performance testing/stdlib-performance.json \
     --slurpfile performance_conformance testing/stdlib-performance-conformance.json \
@@ -90,26 +90,32 @@ jq -n \
 
     def evidence_stage($id; $stage; $fallback; $evidence):
         (evidence_owner($id; $evidence)) as $owner
-        | if $owner == null then
-            $fallback
-          elif $stage == "IMPL/HOST" then
-            ([$owner.cells.IMPL, $owner.cells.HOST] | map(select(. != null))) as $cells
-            | if all($cells[]; .status == "verified" or .status == "not-applicable") then
-                {status: "verified", reason: null, refs: ([$cells[] | .refs[]] | unique)}
-              else
-                {status: (if any($cells[]; .status == "gap") then "gap" elif any($cells[]; .status == "pending") then "pending" else "partial" end), reason: ([$cells[] | select(.reason != null) | .reason] | unique | join("; ")), refs: ([$cells[] | .refs[]] | unique)}
-              end
-          elif $stage == "MODEL/TEST/FUZZ" then
-            ([$owner.cells.MODEL, $owner.cells.TEST, $owner.cells.FUZZ] | map(select(. != null))) as $cells
-            | if all($cells[]; .status == "verified" or .status == "not-applicable") then
-                {status: "verified", reason: null, refs: ([$cells[] | .refs[]] | unique)}
-              else
-                {status: (if any($cells[]; .status == "gap") then "gap" elif any($cells[]; .status == "pending") then "pending" else "partial" end), reason: ([$cells[] | select(.reason != null) | .reason] | unique | join("; ")), refs: ([$cells[] | .refs[]] | unique)}
-              end
-          elif ($owner.cells[$stage] // null) != null then
-            $owner.cells[$stage]
+        | (first($public_api[0].owners[] | select(.id == $id)) // null) as $api_owner
+        | [$public_api[0].rows[] | select(.owner == $id)] as $signatures
+        | (if $stage == "IMPL/HOST" then ["IMPL", "HOST"]
+           elif $stage == "MODEL/TEST/FUZZ" then ["MODEL", "TEST", "FUZZ"]
+           else [$stage] end) as $required
+        | [$required[] as $cell | ($owner.cells[$cell] // {
+            status: "gap", reason: ("Missing " + $cell + " owner evidence"),
+            refs: ["testing/stdlib-owner-evidence.json"]
+          })] as $cells
+        | if (["IMPL/HOST", "CONF", "DOC"] | index($stage)) != null
+             and ($api_owner.status != "verified"
+                  or ($api_owner.owner_missing | length) > 0
+                  or ($signatures | length) == 0
+                  or any($signatures[]; .status != "verified")) then
+            {status: "partial", reason: "Public owner signatures or implementation routes remain unverified", refs: ["testing/stdlib-public-api.json"]}
+          elif $stage == "CONF" and $public_conformance[0].status != "promoted" then
+            {status: "pending", reason: "The conformance registry declares cases; current execution has not been promoted", refs: ["testing/stdlib-conformance.json"]}
+          elif all($cells[];
+              (.refs | type == "array" and length > 0)
+              and (.status == "verified" or (.status == "not-applicable" and (.reason | type == "string" and length > 0)))) then
+            if ($required | length) == 1 then $cells[0]
+            else {status: "verified", reason: null, refs: ([$cells[] | .refs[]] | unique)} end
           else
-            $fallback
+            {status: (if any($cells[]; .status == "gap") then "gap" elif any($cells[]; .status == "pending") then "pending" else "partial" end),
+             reason: ([$cells[] | (.reason // "Owner stage lacks nonempty evidence references")] | unique | join("; ")),
+             refs: (([$cells[] | .refs[]?] + ["testing/stdlib-owner-evidence.json"]) | unique)}
           end;
 
     def performance_owner($id; $manifest):

@@ -111,6 +111,7 @@ jq -n \
         | (first($e.owners[] | select(.id == $id)) // null) as $evidence_owner
         | ([ $a.rows[] | select(.owner == $id) ]) as $api_rows
         | ([ $api_rows[] | select((.missing // []) | length == 0) ]) as $verified_api
+        | ([ $a.owners[] | select(.id == $id) | .owner_missing[]? ]) as $owner_missing
         | (examples($id)) as $examples
         | ($examples | map(. + {status: "verified", verification: (if .kind == "runtime" then "fixture-sidecars" elif .kind == "acceptance" then "acceptance-test" elif .kind == "external" then "external-harness" else "compiler-test" end)})) as $verified_examples
         | (if ($evidence_owner == null) then [fallback_contract($id), "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"] else $evidence_owner.cells.DOC.refs end) as $docs
@@ -134,15 +135,15 @@ jq -n \
                 refs: ($bridge_refs | unique | sort)
               },
               public_api: {
-                status: (if ($api_rows | length) == 0 then (if $id == "std.serialization" then "partial" else "not-applicable" end) elif ($verified_api | length) == ($api_rows | length) then "complete" else "partial" end),
-                reason: (if ($api_rows | length) == 0 then (if $id == "std.serialization" then "the owner contract has public protocols but no public-audit signature rows yet" else "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only" end) elif ($verified_api | length) == ($api_rows | length) then null else "public API audit retains gaps for this owner" end),
+                status: (if ($api_rows | length) > 0 and ($verified_api | length) == ($api_rows | length) and ($owner_missing | length) == 0 then "complete" else "partial" end),
+                reason: (if ($api_rows | length) == 0 then "no public signatures are indexed for this owner; its callable surface remains unaudited" elif ($owner_missing | length) > 0 or ($verified_api | length) != ($api_rows | length) then "public API audit retains gaps for this owner" else null end),
                 signatures: ($api_rows | map(.id) | sort),
                 verified_signatures: ($verified_api | map(.id) | sort),
                 refs: (if ($api_rows | length) == 0 then ["testing/stdlib-public-api.json"] else ["testing/stdlib-public-api.json"] end)
               }
             },
             runtime_applicable: ($id != "std.meta" and $id != "std.reflect"),
-            runtime_reason: (if $id == "std.meta" then "build-only provider; conformance runs in the compiler/meta VM boundary" elif $id == "std.reflect" then "metadata-only provider; no runtime value or host adapter exists" else null end),
+            runtime_reason: (if $id == "std.meta" then "current examples exercise compiler components; public provider integration is pending" elif $id == "std.reflect" then "current examples exercise the Rust metadata catalog; public Tondo runtime reflection is pending" else null end),
             examples: ($verified_examples | sort_by(.id)),
             conformance: (first($c.owners[] | select(.id == $id)) | {status, reason, refs: .evidence.refs}),
             documentation_claim: "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."

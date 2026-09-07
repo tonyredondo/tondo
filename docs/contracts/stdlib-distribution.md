@@ -5,6 +5,11 @@ relocatable VM package. It is deliberately a distribution of the standard
 library and its metadata, not a language release and not the native publisher
 described by `NATIVE-PUBLISH-SPEC-001`.
 
+Promotion remains pending. The executable boundary verifies archive
+reproducibility and the installed Core example. It does not establish complete
+public owner coverage or that an explicitly supplied VM binary was built from
+the captured sources. The report records `binary_source_provenance=not-claimed`.
+
 ## Package identity
 
 The package uses the compiler-owned `PackageId`
@@ -39,22 +44,38 @@ The package root is `tondo-std-0.1/` and has these sections:
 | `metadata/` | The distribution contract and generated package manifest. |
 
 All source, interface, unit, provider, manifest, documentation, capability
-and example inputs are copied from the clean snapshot. The generated records
-bind their hashes to the same inputs; a missing or changed input fails before
-an archive is produced.
+and example inputs come from one immutable capture. The binary and distribution
+contract are captured once as explicit inputs. Both assemblies use those exact
+bytes. A missing input or a changed live or captured input rejects publication
+of the final archive and evidence.
 
 ## Build and reproducibility
 
-`scripts/stdlib-distribution.sh` creates two clean snapshots with
-`git archive`, assembles both packages, and compares the complete archive
-bytes and package manifests (`source_workspaces: 2`, `byte_identical: true`). It does not inspect the working-tree source
-after the snapshots are made. The output evidence is ignored under
-`target/reliability/evidence/stdlib-distribution.json` and contains the
-archive hash, manifest hash, payload hash, input snapshot identities and
-installation observations.
+`scripts/stdlib-distribution.sh` captures the current Git file set with
+`scripts/stdlib_distribution_inputs.py`, including untracked nonignored inputs
+only during explicit local iteration. Canonical relative paths, regular files,
+file modes, byte lengths and SHA-256 hashes define the source snapshot.
+Symlinks and paths escaping the repository are rejected. Git revision and
+dirty state are recorded separately from the content hash.
+
+Two source directories are materialized from that capture; both assemblies
+must produce identical archive bytes and package manifests
+(`source_workspaces: 2`, `byte_identical: true`). The original inputs and the
+capture are rechecked before final output is written. The output evidence is
+ignored under `target/reliability/evidence/stdlib-distribution/` and contains
+archive, manifest, payload, source, binary and contract hashes, together with
+the exact observed installed stdout. All payload modes and archive metadata
+are normalized independently of the caller's umask.
+
+The default requires a clean checkout. `TONDO_STDLIB_DIST_ALLOW_DIRTY=1`
+permits local iteration and records `clean_source_workspaces: 0`; it never
+describes current working bytes as a clean `HEAD` snapshot. The report status
+is `verified-vm-bundle`, with `promotion: pending`, on either route. S1A must
+still establish its own public implementation and promotion prerequisites.
 
 The VM binary is an explicit input (`TONDO_VM_BINARY`, defaulting to the
-already-built `target/debug/tondo`). It is copied into the package and hashed;
+already-built `$CARGO_TARGET_DIR/debug/tondo`, or `target/debug/tondo` when
+unset). It is copied into the package and hashed;
 the distribution runner never searches `PATH`, executes a shell, or consults
 the source tree to resolve an installed module.
 
@@ -77,6 +98,8 @@ content-addressed draft contract.
 
 The checker and executable test reject missing binaries, wrong PackageIds,
 contract drift, missing examples, non-empty installation workspaces, archive
-differences, manifest/payload hash mismatches and any attempt to execute an
-example after removing the installed package. A successful draft distribution
-is evidence for S1A; it does not publish Tondo or claim a public release.
+differences, source/revision/binary/contract drift, manifest/payload hash
+mismatches and any attempt to execute an example after removing the installed
+package. Capture tests also reject file membership changes, executable-mode
+changes and corruption of the frozen inputs. A successful bundle round trip
+is bounded component evidence; it does not promote S1A or publish Tondo.

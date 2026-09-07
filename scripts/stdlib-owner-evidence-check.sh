@@ -19,7 +19,8 @@ jq -e '
   .format == "tondo-stdlib-owner-evidence/1"
   and .edition == "0.1"
   and .phase == "STD-0.1A"
-  and .status == "promoted-evidence"
+  and .status == "component-evidence"
+  and .promotion == "pending"
   and (.leaves | type == "array" and length > 0)
   and ([.leaves[].id] | unique | length) == (.leaves | length)
   and all(.leaves[];
@@ -33,11 +34,11 @@ jq -e '
     and (.layer | test("^A[0-4]$"))
     and ((.cells | keys_unsorted) | sort) == ["CONF", "DOC", "FUZZ", "HOST", "IMPL", "MODEL", "PERF", "SPEC", "TEST"]
     and all(.cells[];
-      (.status | ["verified", "partial", "pending", "not-applicable", "gap"] | index(.)) != null
+      (.status | IN("verified", "partial", "pending", "not-applicable", "gap"))
       and (.refs | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
       and (if .status == "verified" then .reason == null else (.reason | type == "string" and length > 0) end)
     )
-    and (.cells.PERF.status | ["verified", "not-applicable"] | index(.) != null)
+    and (.cells.PERF.status | IN("verified", "not-applicable"))
     and (if .cells.PERF.status == "verified" then .cells.PERF.reason == null else (.cells.PERF.reason | length > 0) end)
     and any(.cells.PERF.refs[]; contains("stdlib-performance"))
     and (if (.id | IN("std.meta", "std.reflect", "std.bytes", "std.core", "std.text", "std.collections", "std.iter", "std.math", "std.format", "std.io", "std.async", "std.path", "std.serialization", "std.json", "std.messagepack", "std.protobuf")) then
@@ -58,13 +59,20 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-REFLECT-EVIDENCE-001" and .owners == ["std.reflect"]))
   and (any(.leaves[]; .id == "STD-A-BYTES-EVIDENCE-001" and .owners == ["std.bytes"]))
     and (any(.leaves[]; .id == "STD-A-TESTING-EVIDENCE-001" and .owners == ["std.testing"]))
-    and (all(.owners[]; .cells.FUZZ.status == "verified" and .cells.FUZZ.reason == null))
+    and (.owners | length == 22)
+    and (all(.owners[]; .cells.FUZZ.status == "partial" and (.cells.FUZZ.reason | length > 0)))
     and (all(.owners[];
-      .cells.CONF.status == "verified"
-      and .cells.CONF.reason == null
+      .cells.CONF.status == "pending"
+      and (.cells.CONF.reason | length > 0)
       and any(.cells.CONF.refs[]; startswith("testing/stdlib-conformance.json#owners/"))
     ))
-' "$evidence" >/dev/null || die "invalid promoted evidence registry"
+' "$evidence" >/dev/null || die "invalid component evidence registry"
+
+generated="$(mktemp "${TMPDIR:-/tmp}/tondo-owner-evidence-check.XXXXXX")"
+trap 'rm -f "$generated"' EXIT
+TONDO_STDLIB_OWNER_EVIDENCE="$evidence" scripts/stdlib-owner-evidence-generate.sh "$generated" >/dev/null
+cmp -s "$evidence" "$generated" || die "FUZZ/CONF cells are stale or overstate their source contracts"
+TONDO_STDLIB_OWNER_EVIDENCE="$evidence" scripts/stdlib-fuzz-check.sh >/dev/null
 
 while IFS=$'\t' read -r leaf contract owner; do
     [[ -f "$root/$contract" ]] || die "missing owner contract: $contract"
@@ -86,4 +94,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (22 owners; CONF/PERF promoted or normative not-applicable; all FUZZ routes promoted)"
+echo "stdlib owner evidence: OK (22 owners; component evidence retained; FUZZ and CONF promotion pending)"

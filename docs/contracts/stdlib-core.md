@@ -206,20 +206,36 @@ las nueve firmas públicas de `Option` y `Result` con sus símbolos HIR, lowerin
 MIR, agregados bytecode y ejecución VM. Las pruebas cubren instanciación
 genérica explícita e inferida, composición `map`/`mapErr`/`unwrapOr`, patrones
 de éxito y error, propagación y semántica de valores. El corpus de admission
-fuzz genera formas `Option`/`Result` y protocolos genéricos; `STD-A-FUZZ-001`
-promueve la ruta owner-aware y los baselines de rendimiento por owner
-permanecen pendientes de promoción. `HOST` es `not-applicable`: el owner es intrínseco y
-compiler/VM-owned, sin capability ni consulta ambiental.
+fuzz genera formas `Option`/`Result` y protocolos genéricos.
+
+`HOST` is `not-applicable` for this intrinsic compiler/VM component; it has no
+separate provider capability or ambient host lookup.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ## `std.math`
 
 Las funciones respetan IEEE-754, no habilitan fast-math y nunca cambian una
 excepción de dominio por un valor silencioso.
 
+`round` returns the nearest integer in the same floating-point type. At an exact
+halfway value it chooses the even integer: `2.5 -> 2.0`, `3.5 -> 4.0`,
+`-2.5 -> -2.0`, and `-3.5 -> -4.0`. Values immediately beside a tie follow
+nearest-integer rounding. Signed zero and infinities are preserved; NaN produces
+NaN. A negative input rounded to zero produces negative zero, including `-0.5`.
+
+`roundTiesAway` also returns the nearest integer, but exact halfway values choose
+the integer farther from zero: `2.5 -> 3.0`, `-2.5 -> -3.0`, `0.5 -> 1.0`,
+and `-0.5 -> -1.0`. Both functions agree away from ties, including `2.1 -> 2.0`
+and `-2.1 -> -2.0`. Signed zero, infinities and NaN follow the same rules as
+`round`; negative inputs whose nearest integer is zero produce negative zero.
+
 ```tondo
 pub fn floor(value: Float): Float
 pub fn ceil(value: Float): Float
 pub fn round(value: Float): Float
+pub fn roundTiesAway(value: Float): Float
 pub fn truncate(value: Float): Float
 pub fn sqrt(value: Float): Float ! MathError
 pub fn fma(a: Float, b: Float, c: Float): Float
@@ -293,7 +309,10 @@ parcial. `HOST` es `not-applicable`: console, filesystem y process poseen los
 adaptadores capability-gated y solo reutilizan estos protocolos. Las dimensiones
 de coste declaradas son bytes copiados, chunks procesados y work-units; sus
 baselines por owner y promoción global de conformance siguen visibles como
-trabajo posterior; `STD-A-FUZZ-001` promueve el fuzz owner-aware.
+trabajo posterior.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ## `std.serialization`
 
@@ -317,9 +336,10 @@ válidos, límites de scalar y errores de frontera. Los fixtures
 por scalar, iteración sin cursor adicional, transforms ASCII y rechazo
 atómico de UTF-8 inválido. `HOST` es `not-applicable`: no hay capability ni
 lectura ambiental separada. El corpus bounded de bytes/UTF-8 y el admission
-fuzz aportan cobertura de frontera; `STD-A-FUZZ-001` promueve el fuzz
-owner-aware y los baselines de coste por owner y la promoción global de
-conformance siguen visibles como trabajo posterior.
+fuzz aportan cobertura de frontera.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ## Evidencia del owner intrínseco `std.collections`
 
@@ -336,9 +356,10 @@ orden normativo sin usar el layout interno como observable. Las properties de
 lowering comparan las rutas eager y COW sobre el mismo corpus y prueban el
 detach antes de escribir; el admission fuzz genera las formas intrínsecas de
 Array/Map/Set y sus límites. `HOST` es `not-applicable`: las colecciones son un
-owner intrínseco portable sin capability ni consulta ambiental. `STD-A-FUZZ-001`
-promueve el fuzz owner-aware; los baselines de memoria/hash por owner y la
-promoción global de conformance permanecen explícitamente pendientes.
+owner intrínseco portable sin capability ni consulta ambiental.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ## Evidencia del owner intrínseco `std.iter`
 
@@ -362,19 +383,19 @@ prestada, dispatch estático de iteradores de usuario, guards de agotamiento,
 trazado de fuente/callbacks y rechazo de descriptores o estados corruptos. El
 admission fuzz aporta formas de cursor; `HOST` es `not-applicable` porque el
 owner es intrínseco portable sin capability ni consulta ambiental.
-`STD-A-FUZZ-001` promueve el fuzz owner-aware; los baselines de
-retención/allocations/materialización y la promoción global de conformance
-permanecen explícitamente pendientes.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ## Evidencia del owner intrínseco `std.math`
 
-`STD-A-MATH-EVIDENCE-001` cierra la evidencia ejecutable de las nueve firmas
-escalares de `std.math`. El modelo numérico conserva IEEE-754: los kernels
-`floor`, `ceil`, `round`, `truncate`, `abs`, `min`, `max` y `fma` mantienen
-infinidades, NaN y cero con signo, mientras `sqrt` distingue `Domain` de
-`NonFinite` sin publicar un valor parcial. El lowering HIR y el puente
-`process_host` mantienen un dispatch estático por operación y materializan
-`MathError` con una frontera nominal.
+`STD-A-MATH-EVIDENCE-001` links the ten scalar signatures of `std.math` to the
+compiler and hosted VM. The numeric model follows IEEE-754; the kernels
+`floor`, `ceil`, `round`, `roundTiesAway` and `truncate` preserve infinities,
+NaN and signed zero according to their individual contracts. `sqrt`
+distinguishes `Domain` from `NonFinite` without publishing a partial value.
+HIR lowering and `process_host` dispatch each operation statically and preserve
+the nominal `MathError` boundary.
 
 Las pruebas del owner combinan la matriz de límites del kernel, el fixture
 `m11-std-math-001.to`, el corpus IEEE de `m6-num-004-ieee.to`, las properties
@@ -383,6 +404,7 @@ runtime test de la frontera de `sqrt`. El kernel scalar es el scalar oracle
 canónico de 0.1: no existe una ruta SIMD alternativa ni fast-math observable;
 si un backend futuro vectoriza, debe demostrar equivalencia bit a bit con este
 oracle antes de cambiar la ruta. `HOST` es `not-applicable` porque el owner es
-intrínseco portable sin capability ni consulta ambiental. `STD-A-FUZZ-001`
-promueve el fuzz owner-aware; baselines de coste por owner y la promoción
-global de conformance siguen visibles como trabajo posterior.
+intrínseco portable sin capability ni consulta ambiental.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.

@@ -174,12 +174,19 @@ fn public_api_status_preserves_audited_gaps() {
                 .count()
         );
         if api_rows.is_empty() {
-            assert!(matches!(
-                public_api["status"].as_str().unwrap(),
-                "partial" | "not-applicable"
-            ));
+            assert_eq!(
+                public_api["status"], "partial",
+                "an unindexed API is unaudited"
+            );
         } else if verified.len() == signatures.len() {
             assert_eq!(public_api["status"], "complete");
+            assert!(
+                api["owners"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| { row["id"] == owner["id"] && row["status"] == "verified" })
+            );
         } else {
             assert_eq!(public_api["status"], "partial");
             assert!(!public_api["reason"].as_str().unwrap().is_empty());
@@ -187,8 +194,8 @@ fn public_api_status_preserves_audited_gaps() {
     }
 
     assert_eq!(docs["summary"]["api_complete"], 18);
-    assert_eq!(docs["summary"]["api_partial"], 1);
-    assert_eq!(docs["summary"]["api_not_applicable"], 3);
+    assert_eq!(docs["summary"]["api_partial"], 4);
+    assert_eq!(docs["summary"]["api_not_applicable"], 0);
 
     for codec in ["std.json", "std.messagepack", "std.protobuf"] {
         let owner = config["owners"]

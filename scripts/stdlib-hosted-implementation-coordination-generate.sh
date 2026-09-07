@@ -14,9 +14,9 @@ mkdir -p "$(dirname "$output")"
 jq -n \
     --slurpfile contract testing/stdlib-hosted.json \
     --slurpfile implementation testing/stdlib-implementation.json \
-    --slurpfile api testing/stdlib-public-api.json \
-    --slurpfile matrix testing/stdlib-matrix.json \
-    --slurpfile evidence testing/stdlib-owner-evidence.json \
+    --slurpfile api "${TONDO_STDLIB_PUBLIC_API:-testing/stdlib-public-api.json}" \
+    --slurpfile matrix "${TONDO_STDLIB_MATRIX:-testing/stdlib-matrix.json}" \
+    --slurpfile evidence "${TONDO_STDLIB_OWNER_EVIDENCE:-testing/stdlib-owner-evidence.json}" \
     '
     ($contract[0]) as $contract
     | ($implementation[0]) as $implementation
@@ -25,9 +25,10 @@ jq -n \
     | ($evidence[0]) as $evidence
     | ["std.console", "std.path", "std.fs", "std.process"] as $required
     | ($required | map(. as $id
-        | (first($implementation.owners[] | select(.id == $id))) as $owner
-        | (first($matrix.owners[] | select(.id == $id))) as $matrix_owner
-        | (first($evidence.owners[] | select(.id == $id))) as $evidence_owner
+        | (first($implementation.owners[] | select(.id == $id)) // null) as $owner
+        | (first($matrix.owners[] | select(.id == $id)) // null) as $matrix_owner
+        | (first($evidence.owners[] | select(.id == $id)) // null) as $evidence_owner
+        | (first($api.owners[] | select(.id == $id)) // null) as $api_owner
         | ([ $api.rows[] | select(.owner == $id) ] | sort_by(.line)) as $signatures
         | {
             id: $id,
@@ -44,7 +45,9 @@ jq -n \
               refs: $evidence_owner.cells.HOST.refs
             },
             public_api: {
-                status: (if all($signatures[]; .status == "verified") then "verified" else "open-gaps" end),
+                status: (if $api_owner.status == "verified" and ($api_owner.owner_missing | length) == 0 and ($signatures | length) > 0 and all($signatures[]; .status == "verified") then "verified" else "open-gaps" end),
+                owner_status: ($api_owner.status // "missing"),
+                owner_missing: ($api_owner.owner_missing // ["owner-not-indexed"]),
                 signature_count: ($signatures | length),
                 verified_count: ([$signatures[] | select(.status == "verified")] | length),
                 gap_count: ([$signatures[] | select(.status != "verified")] | length),
@@ -55,7 +58,7 @@ jq -n \
         format: "tondo-stdlib-hosted-implementation-coordination/1",
         edition: "0.1",
         phase: "STD-0.1A",
-        status: "closed-coordination",
+        status: (if all($owners[]; .implementation_status == "verified" and .matrix_impl_host == "verified" and .public_api.status == "verified" and (.host.status == "verified" or (.id == "std.path" and .host.status == "not-applicable"))) then "closed-coordination" else "open-gaps" end),
         sources: {
           owner_contract: "testing/stdlib-hosted.json",
           implementation: "testing/stdlib-implementation.json",
@@ -70,6 +73,7 @@ jq -n \
           hosted_stage_must_be_verified_or_not_applicable: true,
           capability_boundary_must_match_contract: true,
           callable_public_signatures_must_be_verified: true,
+          empty_public_surface_is_unverified: true,
           global_public_audit_is_not_promoted: true,
           no_waivers: true
         },
@@ -78,6 +82,7 @@ jq -n \
           owners: ($owners | length),
           signatures: ([$owners[].public_api.signatures[]] | length),
           verified_signatures: ([$owners[].public_api.signatures[] | select(.status == "verified")] | length),
+          owners_with_public_gaps: ([$owners[] | select(.public_api.status != "verified")] | length),
           capability_gated_owners: ([$owners[] | select((.capability | length) > 0)] | length),
           pure_owners: ([$owners[] | select((.capability | length) == 0)] | length),
           host_verified_owners: ([$owners[] | select(.host.status == "verified")] | length),
@@ -86,10 +91,10 @@ jq -n \
         global_public_api: {
           status: $api.status,
           gaps: $api.summary.gaps,
-          reason: "STD-CODEC-PUBLIC-001 closed MessagePack/Protobuf callable exposure and indexed the build-only owners without a runtime waiver",
-          next_coordination: "NATIVE-PUBLISH-SPEC-001"
+          reason: "The current global public API audit is retained independently of this component coordinator",
+          next_coordination: "STD-PUBLIC-API-AUDIT-001"
         },
-        next_coordination: "NATIVE-PUBLISH-SPEC-001"
+        next_coordination: "STD-B-INTEGRATION-PLAN-001"
       }
     ' > "$output"
 

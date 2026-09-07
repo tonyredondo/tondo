@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -14,14 +14,15 @@ use crate::diagnostics::{
 use crate::hir::{
     ExpressionCheckLimits, HirBootstrapHostFunction, HirCallableId, HirDiscardStatus, HirError,
     HirExpressionKind, HirProgram, HirSpawnKind, TypeLoweringLimits, check_expressions_configured,
-    lower_types,
+    lower_types, lower_types_extension,
 };
 use crate::mir::{MirError, MirLoweringLimits, MirSummary, lower_to_mir};
 pub use crate::package::Edition;
-use crate::package::{PackageGraph, PackageGraphError};
+use crate::package::{PackageAlias, PackageGraph, PackageGraphError, PackageId, PackageNode};
 use crate::process_host::BootstrapHost;
 use crate::resolve::{
     ResolveError, ResolvedProgram, SymbolKind, Visibility, is_script_statement, resolve,
+    resolve_extension,
 };
 use crate::semantic::SemanticModel;
 use crate::source::{FileId, SourceDatabase, SourceError, SourceId, Span, TextRange};
@@ -30,6 +31,7 @@ use crate::syntax::{
     format_parsed, lex_with_limits, parse,
 };
 use crate::test_backend;
+use crate::test_plan::TestSourceClass;
 use crate::types::TypeError;
 use crate::types::{ScalarType, TypeKind};
 use tondo_vm::bytecode::BytecodeSpan;
@@ -308,9 +310,16 @@ impl Default for ResourceLimits {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecutionMode {
+    Compile,
+    Run,
+}
+
 #[derive(Debug)]
 pub struct CompilationRequest {
     operation: Operation,
+    execution_mode: ExecutionMode,
     edition: Edition,
     target: BuildTarget,
     profile: HostProfile,
@@ -331,6 +340,9 @@ pub struct CompilationRequest {
     test_envelope: Option<crate::test_control::EnvelopeHandle>,
     test_participation_entries: Vec<String>,
     test_participation: Option<crate::test_backend::TestParticipation>,
+    test_package_names: BTreeMap<PackageId, String>,
+    test_source_classes: BTreeMap<FileId, crate::test_plan::TestSourceClass>,
+    sealed_production: Option<std::sync::Arc<SemanticModel>>,
 }
 
 impl CompilationRequest {
@@ -370,6 +382,19 @@ impl CompilationRequest {
                 .any(|capability| capability.as_str() == required)
         });
         packages.validate_sources(&sources, root)?;
+        let test_source_classes = sources
+            .iter()
+            .map(|(file, _)| {
+                (
+                    file,
+                    if operation == Operation::Test && file == root {
+                        TestSourceClass::UnitTest
+                    } else {
+                        TestSourceClass::Production
+                    },
+                )
+            })
+            .collect();
         Ok(Self {
             operation,
             edition,
@@ -387,11 +412,15 @@ impl CompilationRequest {
             documentation_fixture: false,
             warning_profiles: BTreeSet::new(),
             diagnostic_profiles: BTreeSet::new(),
+            execution_mode: ExecutionMode::Run,
             retain_bytecode: false,
             test_entry: None,
             test_envelope: None,
             test_participation_entries: Vec::new(),
             test_participation: None,
+            test_package_names: BTreeMap::new(),
+            test_source_classes,
+            sealed_production: None,
         })
     }
 
@@ -496,6 +525,10 @@ impl CompilationRequest {
         self.limits
     }
 
+    pub fn runtime_limits(&self) -> VmLimits {
+        vm_limits(self.limits)
+    }
+
     pub fn packages(&self) -> &PackageGraph {
         &self.packages
     }
@@ -528,17 +561,418 @@ impl CompilationRequest {
         self.test_entry.as_deref()
     }
 
-    /// Creates an isolated test request rooted at the source file containing
-    /// `entry`. Source bytes and package identity are copied, never shared
-    /// mutably, so retries can compile and execute a fresh VM root.
-    pub fn for_test_entry(&self, entry: &test_backend::TestEntry) -> Result<Self, DriverError> {
-        let root = entry.file();
-        let sources = clone_source_database(&self.sources, None)?;
-        let mut packages = self.packages.clone();
+    fn source_class(&self, file: FileId) -> TestSourceClass {
+        self.test_source_classes
+            .get(&file)
+            .copied()
+            .unwrap_or(TestSourceClass::Production)
+    }
+
+    /// Materializes integration consumers from explicit test-plan classes.
+    /// The caller has already discovered and pinned every source; this method
+    /// performs no filesystem discovery or ambient configuration lookup.
+    pub fn with_test_project_plan(
+        mut self,
+        plan: &crate::test_plan::TestProjectPlan,
+    ) -> Result<Self, DriverError> {
+        if self.sealed_production.is_some() {
+            return Err(DriverError::Invariant(
+                "test source planning must precede production sealing".into(),
+            ));
+        }
+        let mut sources = SourceDatabase::new();
+        let mut nodes = self.packages.packages().cloned().collect::<Vec<_>>();
+        let mut names = BTreeMap::new();
+        for (file, source) in self.sources.iter() {
+            let owner = self
+                .packages
+                .package_for_source(source.source_id())
+                .ok_or_else(|| DriverError::Invariant("test source has no package".into()))?;
+            let declared = plan.sources().iter().find(|entry| {
+                entry.logical_path() == source.path().as_str()
+                    && entry.package() == owner.id().as_str()
+            });
+            let declared = declared.ok_or_else(|| {
+                DriverError::Invariant(format!(
+                    "closed test plan omitted source `{}` from package `{}`",
+                    source.path(),
+                    owner.id()
+                ))
+            })?;
+            self.test_source_classes.insert(file, declared.class());
+            let (source_id, module) = match declared {
+                entry if entry.class() == crate::test_plan::TestSourceClass::IntegrationTest => {
+                    let id = crate::test_integration::synthetic_package(
+                        owner.id(),
+                        entry.logical_path(),
+                    );
+                    let source_id = crate::source::SourceId::new(id.as_str())?;
+                    let module = crate::source::ModulePath::new(entry.module())?;
+                    let mut ordinal = names.len();
+                    let local_name = loop {
+                        let candidate = PackageAlias::new(format!("tondoIntegration{ordinal}"))?;
+                        if nodes.iter().all(|node| node.local_name() != &candidate) {
+                            break candidate;
+                        }
+                        ordinal += 1;
+                    };
+                    let tested_dependency = plan
+                        .sources()
+                        .iter()
+                        .any(|source| {
+                            source.package() == owner.id().as_str()
+                                && source.class() == TestSourceClass::Production
+                        })
+                        .then(|| (owner.local_name().clone(), owner.id().clone()));
+                    nodes.push(PackageNode::new(
+                        id.clone(),
+                        source_id.clone(),
+                        local_name,
+                        owner.edition(),
+                        [module.clone()],
+                        tested_dependency,
+                    )?);
+                    names.insert(id, owner.local_name().as_str().to_owned());
+                    (source_id, module)
+                }
+                _ => {
+                    if declared.module() != source.module().as_str() {
+                        return Err(DriverError::Invariant(format!(
+                            "test plan changed the supplied module for `{}`",
+                            source.path()
+                        )));
+                    }
+                    (source.source_id().clone(), source.module().clone())
+                }
+            };
+            let actual = sources.add(
+                crate::source::SourceInput::new(
+                    source_id,
+                    module,
+                    source.path().clone(),
+                    source.origin(),
+                    std::sync::Arc::<[u8]>::from(source.bytes()),
+                )
+                .with_diagnostic_origin(source.diagnostic_origin()),
+            )?;
+            if actual != file {
+                return Err(DriverError::Invariant(
+                    "test planning changed file identity".into(),
+                ));
+            }
+        }
+        let root_source = sources.get(self.root)?.source_id();
+        let root = nodes
+            .iter()
+            .find(|node| node.source_id() == root_source)
+            .ok_or_else(|| DriverError::Invariant("test root has no package".into()))?
+            .id()
+            .clone();
+        let mut packages = PackageGraph::new(root, self.packages.standard().clone(), nodes)?;
         packages.enable_bootstrap_testing()?;
-        packages.validate_sources(&sources, root)?;
-        let request = CompilationRequest::new(
-            Operation::Test,
+        packages.validate_sources(&sources, self.root)?;
+        self.sources = sources;
+        self.packages = packages;
+        self.test_package_names = names;
+        Ok(self)
+    }
+
+    /// Admits only successful, complete production from the same compilation
+    /// environment and pinned sources. Production files keep their original
+    /// IDs as a prefix; tests are appended and cannot reopen that prefix.
+    pub fn with_production_compilation(
+        mut self,
+        production: CompilationOutput,
+    ) -> Result<Self, DriverError> {
+        if self.operation == Operation::Format || self.sealed_production.is_some() {
+            return Err(DriverError::Invariant(
+                "production sealing requires an unsealed semantic compilation".into(),
+            ));
+        }
+        if production.status != CompilationStatus::Success {
+            return Err(DriverError::Invariant(
+                "cannot seal rejected production".into(),
+            ));
+        }
+        let interface = production.interface().ok_or_else(|| {
+            DriverError::Invariant("production seal requires a compiled interface".into())
+        })?;
+        if interface.edition() != self.edition.as_str()
+            || interface.target() != self.target.name()
+            || interface.profile() != self.profile.as_str()
+            || interface
+                .capabilities()
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>()
+                != self
+                    .capabilities
+                    .iter()
+                    .map(CapabilityName::as_str)
+                    .collect()
+            || interface
+                .features()
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>()
+                != self
+                    .build_inputs
+                    .features()
+                    .iter()
+                    .map(|feature| feature.as_str())
+                    .collect()
+            || self
+                .packages
+                .package(&PackageId::new(interface.package_id())?)
+                .is_none()
+        {
+            return Err(DriverError::Invariant(
+                "production seal has a different compilation environment".into(),
+            ));
+        }
+        let model = production
+            .into_semantic_model()
+            .filter(SemanticModel::expression_check_complete)
+            .ok_or_else(|| {
+                DriverError::Invariant("production seal requires complete semantic checking".into())
+            })?;
+        let mut sources = clone_source_database(model.sources(), None)?;
+        for production_package in model.packages().packages() {
+            let compatible =
+                self.packages
+                    .package(production_package.id())
+                    .is_some_and(|package| {
+                        package.source_id() == production_package.source_id()
+                            && package.local_name() == production_package.local_name()
+                            && package.edition() == production_package.edition()
+                            && production_package.modules().is_subset(package.modules())
+                            && production_package.dependencies().iter().all(
+                                |(alias, dependency)| {
+                                    package.dependencies().get(alias) == Some(dependency)
+                                },
+                            )
+                    });
+            if !compatible {
+                return Err(DriverError::Invariant(format!(
+                    "test graph changed sealed production package `{}`",
+                    production_package.id()
+                )));
+            }
+        }
+        let mut mapping = BTreeMap::new();
+        let mut appended = Vec::new();
+        let mut classes = sources
+            .iter()
+            .map(|(file, _)| (file, TestSourceClass::Production))
+            .collect::<BTreeMap<_, _>>();
+        for (file, source) in self.sources.iter() {
+            let existing = sources.iter().find(|(_, candidate)| {
+                source.source_id() == candidate.source_id()
+                    && source.module() == candidate.module()
+                    && source.path() == candidate.path()
+            });
+            if let Some((actual, candidate)) = existing {
+                if self.source_class(file) != TestSourceClass::Production
+                    || source.bytes() != candidate.bytes()
+                    || source.origin() != candidate.origin()
+                {
+                    return Err(DriverError::Invariant(format!(
+                        "test graph changed sealed production source `{}`",
+                        source.path()
+                    )));
+                }
+                mapping.insert(file, actual);
+            } else {
+                if self.source_class(file) == TestSourceClass::Production {
+                    return Err(DriverError::Invariant(format!(
+                        "production seal omitted source `{}`",
+                        source.path()
+                    )));
+                }
+                let actual = FileId::from_index(sources.len() + appended.len())?;
+                mapping.insert(file, actual);
+                classes.insert(actual, self.source_class(file));
+                appended.push((file, source));
+            }
+        }
+        for (file, source) in model.sources().iter() {
+            if !matches!(
+                source.origin(),
+                crate::source::SourceOrigin::GeneratedStandard
+                    | crate::source::SourceOrigin::GeneratedMeta
+            ) && !mapping.values().any(|mapped| *mapped == file)
+            {
+                return Err(DriverError::Invariant(format!(
+                    "test graph omitted sealed production source `{}`",
+                    source.path()
+                )));
+            }
+        }
+        for (file, source) in appended {
+            let origin = source
+                .diagnostic_origin()
+                .map(|span| {
+                    mapping
+                        .get(&span.file())
+                        .copied()
+                        .map(|file| span.with_file(file))
+                        .ok_or_else(|| {
+                            DriverError::Invariant(
+                                "test source diagnostic origin is outside the pinned graph".into(),
+                            )
+                        })
+                })
+                .transpose()?;
+            let actual = sources.add(
+                crate::source::SourceInput::new(
+                    source.source_id().clone(),
+                    source.module().clone(),
+                    source.path().clone(),
+                    source.origin(),
+                    std::sync::Arc::<[u8]>::from(source.bytes()),
+                )
+                .with_diagnostic_origin(origin),
+            )?;
+            if actual != mapping[&file] {
+                return Err(DriverError::Invariant(
+                    "test source remapping changed file order".into(),
+                ));
+            }
+        }
+        self.root = mapping[&self.root];
+        self.packages.validate_sources(&sources, self.root)?;
+        self.sources = sources;
+        self.test_source_classes = classes;
+        self.sealed_production = Some(std::sync::Arc::new(model));
+        Ok(self)
+    }
+
+    /// Produces independent compilation requests for the unit overlay and
+    /// each integration root. Other test consumers are never dependencies.
+    pub fn test_compilation_requests(&self) -> Result<Vec<Self>, DriverError> {
+        let roots = std::iter::once(self.root)
+            .chain(self.test_source_classes.iter().filter_map(|(file, class)| {
+                (*class == crate::test_plan::TestSourceClass::IntegrationTest).then_some(*file)
+            }))
+            .collect::<BTreeSet<_>>();
+        roots
+            .into_iter()
+            .map(|root| self.for_test_source(root, Operation::Check))
+            .collect()
+    }
+
+    fn for_test_source(&self, root: FileId, operation: Operation) -> Result<Self, DriverError> {
+        let owner = self
+            .packages
+            .module_for_file(&self.sources, root)?
+            .package()
+            .clone();
+        let integration = self.test_package_names.contains_key(&owner);
+        let mut active = BTreeSet::from([owner.clone(), self.packages.standard().clone()]);
+        let mut pending = vec![owner.clone()];
+        while let Some(package) = pending.pop() {
+            for dependency in self
+                .packages
+                .package(&package)
+                .ok_or_else(|| DriverError::Invariant("test package is missing".into()))?
+                .dependencies()
+                .values()
+            {
+                if active.insert(dependency.clone()) {
+                    pending.push(dependency.clone());
+                }
+            }
+        }
+        let mut sources = SourceDatabase::new();
+        let mut classes = BTreeMap::new();
+        let mut selected_root = None;
+        for (file, source) in self.sources.iter() {
+            let package = self
+                .packages
+                .package_for_source(source.source_id())
+                .ok_or_else(|| DriverError::Invariant("test source has no package".into()))?;
+            let class = self
+                .test_source_classes
+                .get(&file)
+                .copied()
+                .unwrap_or(crate::test_plan::TestSourceClass::Production);
+            if !active.contains(package.id())
+                || (integration
+                    && file != root
+                    && class != crate::test_plan::TestSourceClass::Production)
+            {
+                if self
+                    .sealed_production
+                    .as_ref()
+                    .is_some_and(|model| (file.index() as usize) < model.sources().len())
+                {
+                    return Err(DriverError::Invariant(
+                        "test consumer cannot discard sealed production files".into(),
+                    ));
+                }
+                continue;
+            }
+            let actual = sources.add(
+                crate::source::SourceInput::new(
+                    source.source_id().clone(),
+                    source.module().clone(),
+                    source.path().clone(),
+                    source.origin(),
+                    std::sync::Arc::<[u8]>::from(source.bytes()),
+                )
+                .with_diagnostic_origin(source.diagnostic_origin()),
+            )?;
+            classes.insert(actual, class);
+            if file == root {
+                selected_root = Some(actual);
+            }
+        }
+        let root = selected_root
+            .ok_or_else(|| DriverError::Invariant("test root was filtered out".into()))?;
+        let nodes = self
+            .packages
+            .packages()
+            .filter(|package| active.contains(package.id()))
+            .map(|package| {
+                let present = sources
+                    .iter()
+                    .filter(|(_, source)| source.source_id() == package.source_id())
+                    .map(|(_, source)| source.module().clone())
+                    .collect::<BTreeSet<_>>();
+                let modules = if package.id() == self.packages.standard() || present.is_empty() {
+                    package.modules().clone()
+                } else {
+                    present
+                };
+                PackageNode::new(
+                    package.id().clone(),
+                    package.source_id().clone(),
+                    package.local_name().clone(),
+                    package.edition(),
+                    modules,
+                    package
+                        .dependencies()
+                        .iter()
+                        .map(|(alias, package)| (alias.clone(), package.clone())),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut packages =
+            PackageGraph::new(owner.clone(), self.packages.standard().clone(), nodes)?;
+        packages.enable_bootstrap_testing()?;
+        let interfaces = self
+            .build_inputs
+            .dependency_interfaces()
+            .iter()
+            .filter(|(package, _)| active.contains(*package) && *package != &owner)
+            .map(|(package, interface)| (package.clone(), interface.clone()))
+            .collect();
+        let inputs = self.build_inputs.clone().with_dependency_interfaces(
+            interfaces,
+            self.build_inputs.require_dependency_interfaces(),
+        );
+        let mut request = Self::new(
+            operation,
             self.edition,
             self.target.clone(),
             self.profile,
@@ -551,15 +985,27 @@ impl CompilationRequest {
             root,
         )?
         .with_program_arguments(self.program_arguments.clone())
-        .with_declared_build_inputs(self.build_inputs.clone())
+        .with_declared_build_inputs(inputs)
         .with_warning_profiles(self.warning_profiles.clone())
-        .with_diagnostic_profiles(self.diagnostic_profiles.clone())
-        .with_test_entry(entry.id().to_owned());
+        .with_diagnostic_profiles(self.diagnostic_profiles.clone());
+        request.test_package_names = self
+            .test_package_names
+            .iter()
+            .filter(|(package, _)| active.contains(*package))
+            .map(|(package, name)| (package.clone(), name.clone()))
+            .collect();
+        request.test_source_classes = classes;
+        request.sealed_production = self.sealed_production.clone();
         Ok(request)
     }
 
-    /// Creates one test request for every selected leaf in the same source
-    /// file, preserving suite scopes inside a single VM root.
+    /// Creates a worker request with only its closed consumer dependency graph.
+    pub fn for_test_entry(&self, entry: &test_backend::TestEntry) -> Result<Self, DriverError> {
+        Ok(self
+            .for_test_source(entry.file(), Operation::Test)?
+            .with_test_entry(entry.id().to_owned()))
+    }
+
     pub fn for_test_participation(
         &self,
         entries: &[test_backend::TestEntry],
@@ -573,35 +1019,12 @@ impl CompilationRequest {
                 "test participation crosses source files".into(),
             ));
         }
-        let root = first.file();
-        let sources = clone_source_database(&self.sources, None)?;
-        let mut packages = self.packages.clone();
-        packages.enable_bootstrap_testing()?;
-        packages.validate_sources(&sources, root)?;
-        CompilationRequest::new(
-            Operation::Test,
-            self.edition,
-            self.target.clone(),
-            self.profile,
-            self.capabilities.clone(),
-            self.diagnostic_format,
-            SourceForm::Module,
-            self.limits,
-            packages,
-            sources,
-            root,
-        )
-        .map(|request| {
-            request
-                .with_program_arguments(self.program_arguments.clone())
-                .with_declared_build_inputs(self.build_inputs.clone())
-                .with_warning_profiles(self.warning_profiles.clone())
-                .with_diagnostic_profiles(self.diagnostic_profiles.clone())
-                .with_test_participation(
-                    entries.iter().map(|entry| entry.id().to_owned()),
-                    participation,
-                )
-        })
+        Ok(self
+            .for_test_source(first.file(), Operation::Test)?
+            .with_test_participation(
+                entries.iter().map(|entry| entry.id().to_owned()),
+                participation,
+            ))
     }
 }
 
@@ -619,7 +1042,10 @@ pub struct CompilationOutput {
     stdout: Vec<u8>,
     diagnostic_trace: Option<DiagnosticTrace>,
     mir_summary: Option<MirSummary>,
-    bytecode: Option<tondo_vm::bytecode::BytecodeProgram>,
+    bytecode: Option<(
+        tondo_vm::bytecode::BytecodeProgram,
+        tondo_vm::bytecode::BytecodeFunctionId,
+    )>,
     semantic_model: Option<SemanticModel>,
     products: Option<BuildProducts>,
 }
@@ -654,12 +1080,22 @@ impl CompilationOutput {
         self.mir_summary.as_ref()
     }
 
-    /// Returns the verified VM bytecode when this output reached execution.
+    /// Returns verified VM bytecode after [`compile`] or an observed execution.
     ///
     /// This is an internal toolchain observation surface used by backend
     /// differential probes; it is not a serialized artifact or a public ABI.
     pub fn bytecode(&self) -> Option<&tondo_vm::bytecode::BytecodeProgram> {
-        self.bytecode.as_ref()
+        self.bytecode.as_ref().map(|(program, _)| program)
+    }
+
+    /// Takes the verified program and the exact entry selected by the compiler.
+    pub fn into_compiled_program(
+        self,
+    ) -> Option<(
+        tondo_vm::bytecode::BytecodeProgram,
+        tondo_vm::bytecode::BytecodeFunctionId,
+    )> {
+        self.bytecode
     }
 
     pub fn semantic_model(&self) -> Option<&SemanticModel> {
@@ -829,6 +1265,21 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
     execute_with_derives(request, true)
 }
 
+/// Compiles a runnable program or test participation through MIR and bytecode
+/// verification without entering the VM or performing any program host calls.
+/// A successful output owns the bytecode for this invocation; it is not a
+/// persistent artifact or a cross-version bytecode ABI.
+pub fn compile(mut request: CompilationRequest) -> Result<CompilationOutput, DriverError> {
+    if !matches!(request.operation, Operation::Run | Operation::Test) {
+        return Err(DriverError::Invariant(
+            "executable compilation requires a run or test request".into(),
+        ));
+    }
+    request.execution_mode = ExecutionMode::Compile;
+    request.retain_bytecode = true;
+    execute(request)
+}
+
 fn execute_with_derives(
     mut request: CompilationRequest,
     expand_derives: bool,
@@ -890,6 +1341,13 @@ fn execute_with_derives(
     let mut remaining_diagnostics = request.limits.max_diagnostics as usize;
     for index in 0..request.sources.len() {
         let file = FileId::from_index(index)?;
+        if request
+            .sealed_production
+            .as_ref()
+            .is_some_and(|model| index < model.sources().len())
+        {
+            continue;
+        }
         let (lex_mode, parse_mode) = if file == request.root {
             match request.source_form {
                 SourceForm::Module => (LexMode::Module, ParseMode::Module),
@@ -999,19 +1457,109 @@ fn execute_with_derives(
         });
     }
 
-    let resolved = match resolve(
-        &request.packages,
-        &request.sources,
-        parsed_sources.iter().map(|(file, parsed)| (*file, parsed)),
-        remaining_diagnostics,
-    ) {
+    let test_diagnostics =
+        match validate_test_source_contracts(&request, &parsed_sources, remaining_diagnostics) {
+            Ok(diagnostics) => diagnostics,
+            Err(DriverError::Resolve(ResolveError::DiagnosticLimit { file, offset })) => {
+                return syntax_resource_output(&request, file, "primary diagnostic count", offset);
+            }
+            Err(error) => return Err(error),
+        };
+    if test_diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity() == Severity::Error)
+    {
+        let mut bag = DiagnosticBag::new();
+        bag.extend(test_diagnostics);
+        return Ok(CompilationOutput {
+            status: CompilationStatus::Rejected,
+            exit_code: 1,
+            diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
+            stdout: Vec::new(),
+            diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
+            semantic_model: None,
+            products: None,
+        });
+    }
+    remaining_diagnostics -= test_diagnostics.len();
+
+    let parsed_input = || parsed_sources.iter().map(|(file, parsed)| (*file, parsed));
+    let resolved = match if let Some(production) = &request.sealed_production {
+        resolve_extension(
+            &request.packages,
+            &request.sources,
+            parsed_input(),
+            production.resolved(),
+            remaining_diagnostics,
+        )
+    } else {
+        resolve(
+            &request.packages,
+            &request.sources,
+            parsed_input(),
+            remaining_diagnostics,
+        )
+    } {
         Ok(resolved) => resolved,
         Err(ResolveError::DiagnosticLimit { file, offset }) => {
             return syntax_resource_output(&request, file, "primary diagnostic count", offset);
         }
         Err(error) => return Err(error.into()),
     };
-    let (resolved_program, resolution_diagnostics) = resolved.into_parts();
+    let (resolved_program, mut resolution_diagnostics) = resolved.into_parts();
+    if let Some(production) = &request.sealed_production {
+        for member in resolved_program
+            .members()
+            .skip(production.resolved().members().len())
+        {
+            let changes_production = match member.owner() {
+                crate::resolve::MemberOwner::Type(symbol) => {
+                    production.resolved().symbol(symbol).is_some()
+                }
+                crate::resolve::MemberOwner::Variant(member) => {
+                    production.resolved().member(member).is_some()
+                }
+            };
+            if changes_production {
+                if resolution_diagnostics.len() >= remaining_diagnostics {
+                    return syntax_resource_output(
+                        &request,
+                        member.span().file(),
+                        "primary diagnostic count",
+                        member.span().range().start(),
+                    );
+                }
+                resolution_diagnostics.push(Diagnostic::new(
+                    Severity::Error,
+                    DiagnosticCode::new("E2003")?,
+                    "test sources cannot add members to a sealed production type",
+                    PrimaryLocation::Source(member.span()),
+                )?);
+            }
+        }
+    }
+    for symbol in resolved_program.symbols() {
+        if symbol.visibility() == Visibility::Public
+            && request.source_class(symbol.span().file()) != TestSourceClass::Production
+        {
+            if resolution_diagnostics.len() >= remaining_diagnostics {
+                return syntax_resource_output(
+                    &request,
+                    symbol.span().file(),
+                    "primary diagnostic count",
+                    symbol.span().range().start(),
+                );
+            }
+            resolution_diagnostics.push(Diagnostic::new(
+                Severity::Error,
+                DiagnosticCode::new("E2003")?,
+                "test sources cannot export a public declaration",
+                PrimaryLocation::Source(symbol.span()),
+            )?);
+        }
+    }
     if !resolution_diagnostics.is_empty() {
         let mut bag = DiagnosticBag::new();
         bag.extend(resolution_diagnostics);
@@ -1026,6 +1574,7 @@ fn execute_with_derives(
             mir_summary: None,
             bytecode: None,
             semantic_model: Some(SemanticModel::after_resolution(
+                request.packages,
                 request.sources,
                 resolved_program,
             )),
@@ -1033,17 +1582,31 @@ fn execute_with_derives(
         });
     }
 
-    let hir = match lower_types(
-        &request.packages,
-        &request.sources,
-        parsed_sources.iter().map(|(file, parsed)| (*file, parsed)),
-        &resolved_program,
-        TypeLoweringLimits {
-            max_type_nodes: request.limits.max_type_nodes,
-            max_trait_obligations: request.limits.max_trait_obligations,
-            max_diagnostics: remaining_diagnostics,
-        },
-    ) {
+    let type_limits = TypeLoweringLimits {
+        max_type_nodes: request.limits.max_type_nodes,
+        max_trait_obligations: request.limits.max_trait_obligations,
+        max_diagnostics: remaining_diagnostics,
+    };
+    let hir = match if let Some(production) = &request.sealed_production {
+        lower_types_extension(
+            &request.packages,
+            &request.sources,
+            parsed_input(),
+            &resolved_program,
+            production
+                .hir()
+                .expect("admitted production has complete HIR"),
+            type_limits,
+        )
+    } else {
+        lower_types(
+            &request.packages,
+            &request.sources,
+            parsed_input(),
+            &resolved_program,
+            type_limits,
+        )
+    } {
         Ok(hir) => hir,
         Err(HirError::DiagnosticLimit { file, offset }) => {
             return syntax_resource_output(&request, file, "primary diagnostic count", offset);
@@ -1071,6 +1634,7 @@ fn execute_with_derives(
             mir_summary: None,
             bytecode: None,
             semantic_model: Some(SemanticModel::with_hir(
+                request.packages,
                 request.sources,
                 resolved_program,
                 hir_program,
@@ -1079,7 +1643,13 @@ fn execute_with_derives(
         });
     }
 
-    if expand_derives && !hir_program.derive_requests().is_empty() {
+    if expand_derives
+        && hir_program.derive_requests().iter().any(|derive| {
+            parsed_sources
+                .iter()
+                .any(|(file, _)| *file == derive.span().file())
+        })
+    {
         let limits = crate::meta::MetaLimits::new(
             request.limits.max_vm_steps.max(1),
             request.limits.max_vm_heap_bytes.max(1),
@@ -1110,6 +1680,7 @@ fn execute_with_derives(
                     mir_summary: None,
                     bytecode: None,
                     semantic_model: Some(SemanticModel::with_hir(
+                        request.packages,
                         request.sources,
                         resolved_program,
                         hir_program,
@@ -1189,6 +1760,7 @@ fn execute_with_derives(
         Err(error) => return Err(error.into()),
     };
     let (hir_program, mut expression_diagnostics, expression_check_complete) = checked.into_parts();
+    expression_diagnostics.extend(test_diagnostics);
     let core_warnings = request.warning_profiles.contains(&WarningProfile::Core);
     if !core_warnings {
         expression_diagnostics.retain(|diagnostic| diagnostic.severity() != Severity::Warning);
@@ -1262,6 +1834,7 @@ fn execute_with_derives(
             mir_summary: None,
             bytecode: None,
             semantic_model: Some(SemanticModel::with_hir(
+                request.packages,
                 request.sources,
                 resolved_program,
                 hir_program,
@@ -1423,6 +1996,21 @@ fn execute_with_derives(
                             "selected main has no lowered bytecode implementation".into(),
                         )
                     })?;
+                if request.execution_mode == ExecutionMode::Compile {
+                    drop(parsed_sources);
+                    let mut output = semantic_output(
+                        request,
+                        resolved_program,
+                        hir_program,
+                        expression_diagnostics,
+                        None,
+                        0,
+                        Vec::new(),
+                    )?;
+                    output.mir_summary = Some(mir_summary);
+                    output.bytecode = Some((bytecode, function));
+                    return Ok(output);
+                }
                 let mut host = BootstrapHost::with_max_bytes(
                     request.program_arguments.clone(),
                     request.limits.max_vm_heap_bytes,
@@ -1467,6 +2055,7 @@ fn execute_with_derives(
 
                 let runtime_trace = execution.diagnostics.clone();
                 let (diagnostic, exit_code) = match execution.outcome {
+                    VmOutcome::Interrupted => (None, 4),
                     VmOutcome::Returned(RuntimeValue::Unit) => (None, 0),
                     VmOutcome::Returned(RuntimeValue::ResultOk(value))
                         if matches!(value.as_ref(), RuntimeValue::Unit) =>
@@ -1500,7 +2089,7 @@ fn execute_with_derives(
                 output.diagnostic_trace = runtime_trace;
                 output.mir_summary = Some(mir_summary);
                 if retain_bytecode {
-                    output.bytecode = Some(bytecode);
+                    output.bytecode = Some((bytecode, function));
                 }
                 return Ok(output);
             }
@@ -1532,6 +2121,7 @@ fn execute_with_derives(
         mir_summary: None,
         bytecode: None,
         semantic_model: Some(SemanticModel::with_hir(
+            request.packages,
             request.sources,
             resolved_program,
             hir_program,
@@ -1651,7 +2241,10 @@ pub fn discover_tests(
                 "test discovery encountered an unowned source".into(),
             ));
         };
-        if package.id() != &root_package {
+        if request.source_class(file) == TestSourceClass::Production
+            || (package.id() != &root_package
+                && !request.test_package_names.contains_key(package.id()))
+        {
             continue;
         }
         let (lex_mode, parse_mode) = if file == request.root {
@@ -1698,13 +2291,16 @@ pub fn discover_tests(
         if !parsed.diagnostics().is_empty() {
             continue;
         }
-        let package_name = package.local_name().as_str();
+        let package_name = request
+            .test_package_names
+            .get(package.id())
+            .map_or_else(|| package.local_name().as_str(), String::as_str);
         entries.extend(
             test_backend::discover(
                 &request.sources,
                 file,
                 parsed.cst(),
-                package.id(),
+                request.source_class(file),
                 package_name,
             )
             .map_err(|error| DriverError::Invariant(error.to_string()))?,
@@ -1795,16 +2391,22 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
         .packages
         .module_for_file(&request.sources, request.root)?;
     let package_name = request
-        .packages
-        .package(root_module.package())
-        .map(|package| package.local_name().as_str())
+        .test_package_names
+        .get(root_module.package())
+        .map(String::as_str)
+        .or_else(|| {
+            request
+                .packages
+                .package(root_module.package())
+                .map(|package| package.local_name().as_str())
+        })
         .unwrap_or("main");
     let lowered_result = if request.test_participation_entries.is_empty() {
         test_backend::lower_selected(
             &request.sources,
             request.root,
             parsed.cst(),
-            root_module.package(),
+            request.source_class(request.root),
             package_name,
             request.test_entry(),
         )
@@ -1813,7 +2415,7 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             &request.sources,
             request.root,
             parsed.cst(),
-            root_module.package(),
+            request.source_class(request.root),
             package_name,
             request
                 .test_participation_entries
@@ -1870,7 +2472,110 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
         nested.test_participation = Some(participation);
     }
     nested.documentation_fixture = request.documentation_fixture;
+    nested.execution_mode = request.execution_mode;
+    nested.retain_bytecode = request.retain_bytecode;
+    nested.test_source_classes = request.test_source_classes;
+    nested.test_package_names = request.test_package_names;
+    nested.sealed_production = request.sealed_production;
     execute(nested)
+}
+
+fn validate_test_source_contracts(
+    request: &CompilationRequest,
+    parsed: &[(FileId, Parsed)],
+    max_diagnostics: usize,
+) -> Result<Vec<Diagnostic>, DriverError> {
+    let mut inputs = Vec::with_capacity(parsed.len());
+    let mut diagnostics = Vec::new();
+    for (file, parsed) in parsed {
+        let source = request.sources.get(*file)?;
+        let package = request
+            .packages
+            .package_for_source(source.source_id())
+            .ok_or_else(|| DriverError::Invariant("parsed source has no package".into()))?;
+        let class = request.source_class(*file);
+        inputs.push(crate::test_tree::TestSourceInput::new(
+            package.id(),
+            request
+                .test_package_names
+                .get(package.id())
+                .map_or(package.local_name().as_str(), String::as_str),
+            class,
+            source.module(),
+            source.path(),
+            *file,
+            parsed.cst(),
+        ));
+        if class == TestSourceClass::UnitTest {
+            for declaration in parsed.cst().root_node().child_nodes().filter(|node| {
+                matches!(
+                    node.kind(),
+                    crate::syntax::SyntaxKind::ImplDecl | crate::syntax::SyntaxKind::DeriveDecl
+                )
+            }) {
+                if diagnostics.len() >= max_diagnostics {
+                    return Err(ResolveError::DiagnosticLimit {
+                        file: *file,
+                        offset: declaration.range().start(),
+                    }
+                    .into());
+                }
+                diagnostics.push(Diagnostic::new(
+                    Severity::Error,
+                    DiagnosticCode::new("E2003")?,
+                    "unit tests cannot add implementations to sealed production coherence",
+                    PrimaryLocation::Source(request.sources.span(*file, declaration.range())?),
+                )?);
+            }
+        }
+        if class == TestSourceClass::Production {
+            for import in parsed
+                .cst()
+                .root_node()
+                .child_nodes()
+                .filter(|node| node.kind() == crate::syntax::SyntaxKind::ImportDecl)
+            {
+                let path = import
+                    .child_nodes()
+                    .find(|node| node.kind() == crate::syntax::SyntaxKind::ModulePath);
+                let Some(path) = path else {
+                    continue;
+                };
+                let segments = path
+                    .descendant_tokens()
+                    .filter_map(|token| token.token().normalized_identifier())
+                    .collect::<Vec<_>>();
+                if segments == ["std", "testing"] {
+                    if diagnostics.len() >= max_diagnostics {
+                        return Err(ResolveError::DiagnosticLimit {
+                            file: *file,
+                            offset: import.range().start(),
+                        }
+                        .into());
+                    }
+                    diagnostics.push(Diagnostic::new(
+                        Severity::Error,
+                        DiagnosticCode::new("E2003")?,
+                        "production sources cannot import the test-only module `std.testing`",
+                        PrimaryLocation::Source(request.sources.span(*file, import.range())?),
+                    )?);
+                }
+            }
+        }
+    }
+    match crate::test_tree::build_with_diagnostic_limit(
+        &request.sources,
+        inputs,
+        max_diagnostics - diagnostics.len(),
+    ) {
+        Ok(tree) => diagnostics.extend(tree.diagnostics().iter().cloned()),
+        Err(crate::test_tree::TestTreeError::Diagnostics(errors)) => diagnostics.extend(errors),
+        Err(crate::test_tree::TestTreeError::DiagnosticLimit { file, offset }) => {
+            return Err(ResolveError::DiagnosticLimit { file, offset }.into());
+        }
+        Err(error) => return Err(DriverError::Invariant(error.to_string())),
+    }
+    Ok(diagnostics)
 }
 
 fn clone_source_database(
@@ -1970,11 +2675,18 @@ fn select_hosted_main(
     } else {
         None
     };
+    let entry_name = if request.sources.get(request.root)?.origin()
+        == crate::source::SourceOrigin::GeneratedTesting
+    {
+        "__tondoTestEntry"
+    } else {
+        "main"
+    };
     let candidates = resolved
         .symbols()
         .filter(|symbol| {
             symbol.kind() == SymbolKind::Function
-                && symbol.name().as_str() == "main"
+                && symbol.name().as_str() == entry_name
                 && symbol.identity().package() == root_module.package()
                 && symbol.identity().module() == root_module.path()
         })
@@ -2170,7 +2882,12 @@ fn semantic_output(
         diagnostic_trace: None,
         mir_summary: None,
         bytecode: None,
-        semantic_model: Some(SemanticModel::with_hir(request.sources, resolved, hir)),
+        semantic_model: Some(SemanticModel::with_hir(
+            request.packages,
+            request.sources,
+            resolved,
+            hir,
+        )),
         products: Some(products),
     })
 }
@@ -2348,6 +3065,227 @@ mod tests {
         operation_request(Operation::Check, bytes, source_form, limits)
     }
 
+    fn unsealed_test_request(
+        production: &[u8],
+        companion: &[u8],
+        limits: ResourceLimits,
+    ) -> CompilationRequest {
+        let mut sources = SourceDatabase::new();
+        let root = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("root:driver-test").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("main_test.to").unwrap(),
+                Arc::<[u8]>::from(companion),
+            ))
+            .unwrap();
+        sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("root:driver-test").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("main.to").unwrap(),
+                Arc::<[u8]>::from(production),
+            ))
+            .unwrap();
+        CompilationRequest::new(
+            Operation::Test,
+            Edition::V0_1,
+            BuildTarget::vm_hosted(),
+            HostProfile::Hosted,
+            BuildTarget::vm_hosted_capabilities(),
+            DiagnosticFormat::Json,
+            SourceForm::Module,
+            limits,
+            PackageGraph::loose(&sources, root).unwrap(),
+            sources,
+            root,
+        )
+        .unwrap()
+    }
+
+    fn checked_production(bytes: &[u8]) -> CompilationOutput {
+        execute(operation_request(
+            Operation::Check,
+            bytes,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn sealed_production_executes_private_helpers_without_reparsing_production() {
+        let mut production = "fn secret(): Int { 42 }\n".to_owned();
+        for index in 0..200 {
+            production.push_str(&format!("const Constant{index} = {index}\n"));
+        }
+        let companion = b"test sealed { assert(secret() == 42) }\n";
+        let limits = ResourceLimits {
+            max_syntax_tokens: 512,
+            ..ResourceLimits::default()
+        };
+        let unsealed = execute(unsealed_test_request(
+            production.as_bytes(),
+            companion,
+            limits,
+        ))
+        .unwrap();
+        assert_eq!(unsealed.status(), CompilationStatus::Rejected);
+        assert!(unsealed.diagnostics().human().contains("T0002"));
+        let checked = checked_production(production.as_bytes());
+        assert_eq!(
+            checked.status(),
+            CompilationStatus::Success,
+            "{}",
+            checked.diagnostics().human()
+        );
+        let before = format!("{:?}", checked.semantic_model().unwrap());
+        let request = unsealed_test_request(production.as_bytes(), companion, limits)
+            .with_production_compilation(checked)
+            .unwrap();
+        assert_eq!(request.root().index(), 1);
+        let sealed = request.sealed_production.clone().unwrap();
+        let executed = execute(request).unwrap();
+        assert_eq!(
+            executed.status(),
+            CompilationStatus::Success,
+            "{}",
+            executed.diagnostics().human()
+        );
+        assert_eq!(format!("{sealed:?}"), before);
+        let old = sealed.hir().unwrap();
+        let current = executed.semantic_model().unwrap().hir().unwrap();
+        for callable in old.callables() {
+            assert_eq!(
+                format!("{callable:?}"),
+                format!("{:?}", current.callable(callable.id()).unwrap())
+            );
+            if let Some(body) = old.body(callable.id()) {
+                assert_eq!(body.root(), current.body(callable.id()).unwrap().root());
+            }
+        }
+    }
+
+    #[test]
+    fn sealed_production_reuses_generated_standard_sources_and_empty_extensions() {
+        let production = b"import std.json\nfn secret(): Int { 42 }\n";
+        let checked = checked_production(production);
+        assert_eq!(
+            checked.status(),
+            CompilationStatus::Success,
+            "{}",
+            checked.diagnostics().human()
+        );
+        let expected_files = checked.semantic_model().unwrap().sources().len();
+        assert!(expected_files > 1);
+        let request = unsealed_test_request(
+            production,
+            b"import std.console\ntest sealed { console.print(\"\")\n assert(secret() == 42) }\n",
+            ResourceLimits::default(),
+        )
+        .with_production_compilation(checked)
+        .unwrap();
+        assert_eq!(request.root().index() as usize, expected_files);
+        let entries = discover_tests(&request).unwrap();
+        let output = execute(request.for_test_entry(&entries[0]).unwrap()).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let checked = checked_production(b"fn secret(): Int { 42 }\n");
+        let request = operation_request(
+            Operation::Check,
+            b"fn secret(): Int { 42 }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        )
+        .with_production_compilation(checked)
+        .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(output.semantic_model().unwrap().expression_check_complete());
+    }
+
+    #[test]
+    fn sealed_production_rejects_invalid_proof_source_drift_and_coherence_mutations() {
+        let production = b"type Value = { number: Int }\nfn secret(): Int { 42 }\n";
+        let companion = b"test sealed { assert(secret() == 42) }\n";
+        let request = unsealed_test_request(production, companion, ResourceLimits::default());
+        assert!(
+            request
+                .with_production_compilation(checked_production(b"fn broken(): Int { true }\n"))
+                .is_err()
+        );
+        let request = unsealed_test_request(
+            b"fn secret(): Int { 43 }\n",
+            companion,
+            ResourceLimits::default(),
+        );
+        assert!(
+            request
+                .with_production_compilation(checked_production(production))
+                .unwrap_err()
+                .to_string()
+                .contains("changed sealed production source")
+        );
+        let mut request = unsealed_test_request(production, companion, ResourceLimits::default());
+        let root_package = request.packages.root().clone();
+        let packages = request
+            .packages
+            .packages()
+            .map(|package| {
+                PackageNode::new(
+                    package.id().clone(),
+                    package.source_id().clone(),
+                    if package.id() == &root_package {
+                        PackageAlias::new("changed").unwrap()
+                    } else {
+                        package.local_name().clone()
+                    },
+                    package.edition(),
+                    package.modules().clone(),
+                    package
+                        .dependencies()
+                        .iter()
+                        .map(|(alias, package)| (alias.clone(), package.clone())),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        request.packages =
+            PackageGraph::new(root_package, request.packages.standard().clone(), packages).unwrap();
+        assert!(
+            request
+                .with_production_compilation(checked_production(production))
+                .unwrap_err()
+                .to_string()
+                .contains("changed sealed production package")
+        );
+        for companion in [
+            "fn Value.added(): Int { 1 }\ntest sealed {}\n",
+            "trait Custom {}\nimpl Custom for Value {}\ntest sealed {}\n",
+        ] {
+            let request =
+                unsealed_test_request(production, companion.as_bytes(), ResourceLimits::default())
+                    .with_production_compilation(checked_production(production))
+                    .unwrap();
+            let output = execute(request).unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert!(
+                output.diagnostics().human().contains("E2003"),
+                "{companion}\n{}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
     #[test]
     fn test_operation_executes_a_real_assertion_through_the_vm() {
         let request = operation_request(
@@ -2370,7 +3308,7 @@ mod tests {
     #[test]
     fn test_operation_executes_std_testing_value_helpers_through_the_vm() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.testing\ntest helpers {\n let tolerance = match testing.FloatTolerance.from(0.01, 0.1) {\n  ok(value) => value\n  err(_) => testing.failNow(\"invalid tolerance\")\n }\n testing.assertTextEqual(\"same\", \"same\")\n testing.assertFloatNear(10.0, 10.5, ref tolerance)\n testing.assertFloat32Near(10.0, 10.5, ref tolerance)\n let diff = testing.diffText(\"old\\n\", \"new\\n\")\n testing.assertTextEqual(diff.render(), \"--- expected\\n+++ actual\\n-old\\n+new\\n\")\n let workspace = match testing.tempDirectory(\"wave5\") {\n  ok(value) => value\n  err(_) => testing.failNow(\"temp directory unavailable\")\n }\n let root = workspace.path()\n workspace.cleanup()\n var generator = testing.Generator.new(7)\n let first = match generator.nextUInt() {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator failed\")\n }\n let second = match generator.nextUInt() {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator failed\")\n }\n testing.assertNotEqual(ref first, ref second)\n let shrunk = match testing.shrink(ref first) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator shrink failed\")\n }\n _ = shrunk\n var replay = testing.Generator.forCase(7, 2)\n let replayId = replay.id()\n let replayDrawCount = replay.drawCount()\n _ = replayId\n _ = replayDrawCount\n let replayBool = match replay.nextBool() {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator bool failed\")\n }\n let replayInt = match replay.nextInt(0, 4) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator int failed\")\n }\n let replayBytes = match replay.nextBytes(4) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator bytes failed\")\n }\n _ = replayBool\n _ = replayInt\n _ = replayBytes\n let generated = match generator.nextText(16) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator text failed\")\n }\n testing.assertTextEqual(generated, generated)\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -2418,7 +3356,7 @@ mod tests {
     #[test]
     fn test_operation_executes_generic_testing_assertions_and_wrapper_consumers() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.testing\n\
              test helpers {\n\
               let value = testing.assertSome(some(42))\n\
@@ -2467,7 +3405,7 @@ mod tests {
     #[test]
     fn test_operation_virtualizes_the_production_monotonic_clock() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.testing\nimport std.time\ntest virtual_clock {\n match testing.withVirtualTime((clock) {\n  let before = time.now()?\n  clock.advance(time.Duration.fromNanoseconds(100))\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 100)\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual clock failed\")\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -2500,7 +3438,7 @@ mod tests {
     #[test]
     fn test_operation_accepts_affine_virtual_time_body_and_settles_spawned_timers() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.bytes\nimport std.testing\nimport std.time\nfn exerciseVirtualTime(): Unit ! (bytes.BytesError | time.ClockError) {\n var affine = bytes.builder()?\n testing.withVirtualTime((clock) {\n  _ = affine.finish()?\n  let before = time.now()?\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(40))\n   clock.settle()\n   await sleeper?\n  }\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 40)\n })?\n testing.withVirtualTime((clock) {\n  _ = time.now()?\n  clock.advance(time.Duration.fromNanoseconds(5))\n })?\n}\ntest virtual_settle {\n match exerciseVirtualTime() {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -2535,7 +3473,7 @@ mod tests {
     #[test]
     fn test_operation_rejects_spawning_the_virtual_time_boundary() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.testing\nimport std.time\ntest invalid_spawn {\n scope {\n  let task = spawn testing.withVirtualTime((clock) {\n   _ = time.now()?\n   clock.settle()\n  })\n  _ = await task\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -2568,7 +3506,7 @@ mod tests {
     #[test]
     fn test_operation_rejects_non_send_virtual_time_body() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.testing\nfn consumeUnit(value: Unit) {\n match value {\n  () => ()\n }\n}\nfn ready(): Unit suspends {}\ntest invalid_capture {\n scope {\n  let task = spawn ready()\n  match testing.withVirtualTime((clock) {\n   _ = clock\n   _ = await task\n  }) {\n   ok(_) => ()\n   err(_) => ()\n  }\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -2589,7 +3527,7 @@ mod tests {
     #[test]
     fn test_operation_closes_virtual_time_when_the_body_panics() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.testing\nimport std.time\ntest virtual_panic {\n match testing.withVirtualTime((clock) {\n  _ = time.now()?\n  clock.advance(time.Duration.fromNanoseconds(7))\n  panic(\"inside virtual time\")\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"unexpected clock error\")\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -2643,7 +3581,7 @@ mod tests {
     #[test]
     fn test_participation_preserves_suite_scope_and_isolates_leaf_panics() {
         let base = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"import std.testing\nsuite shared {\n testing.log(\"setup once\")\n let value = 42\n test failing { assert(false) }\n test passing { assert(value == 42) }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -2706,7 +3644,7 @@ mod tests {
     #[test]
     fn test_discovery_and_fork_execute_one_of_multiple_leaves() {
         let request = operation_request(
-            Operation::Check,
+            Operation::Test,
             b"test first { assert(true) }\ntest second { assert(false) }\n",
             SourceForm::Module,
             ResourceLimits::default(),
@@ -3785,6 +4723,32 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn static_test_diagnostics_respect_the_shared_compiler_budget() {
+        for source in [
+            &b"test first {}\ntest second {}\n"[..],
+            &b"import std.testing\nimport std.testing as again\nfn main() {}\n"[..],
+        ] {
+            let output = execute(source_request(
+                source,
+                SourceForm::Module,
+                ResourceLimits {
+                    max_diagnostics: 1,
+                    ..ResourceLimits::default()
+                },
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert_eq!(output.diagnostics().diagnostics().len(), 1);
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0002");
+            assert!(
+                output.diagnostics().diagnostics()[0]
+                    .message()
+                    .contains("primary diagnostic count")
+            );
+        }
+    }
+
+    #[test]
     fn resolver_diagnostic_budget_is_enforced_through_the_driver() {
         let limits = ResourceLimits {
             max_diagnostics: 0,
@@ -3958,6 +4922,71 @@ fn main(): !env.EnvError {
             let message = output.diagnostics().diagnostics()[0].message();
             assert!(message.contains("MIR") || message.contains("bytecode"));
         }
+    }
+
+    #[test]
+    fn compile_verifies_all_test_bodies_without_entering_the_vm() {
+        let request = operation_request(
+            Operation::Test,
+            b"suite outer { assert(false)\n test first { assert(false) }\n test second { assert(false) }\n}\n",
+            SourceForm::Module,
+            ResourceLimits { max_vm_steps: 0, ..ResourceLimits::default() },
+        );
+        let entries = discover_tests(&request).unwrap();
+        assert_eq!(entries.len(), 2);
+        let participation = test_backend::TestParticipation::new(
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+            BTreeMap::new(),
+            false,
+        );
+        let output = compile(
+            request
+                .for_test_participation(&entries, participation.clone())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(output.stdout().is_empty());
+        assert!(output.diagnostic_trace().is_none());
+        assert!(output.mir_summary().is_some());
+        tondo_vm::bytecode::verify_bytecode(output.bytecode().unwrap()).unwrap();
+        assert!(participation.executions().unwrap().is_empty());
+
+        for limits in [
+            ResourceLimits {
+                max_mir_verification_steps: 0,
+                ..ResourceLimits::default()
+            },
+            ResourceLimits {
+                max_bytecode_verification_steps: 0,
+                ..ResourceLimits::default()
+            },
+        ] {
+            let output = compile(operation_request(
+                Operation::Test,
+                b"test body { assert(true) }\n",
+                SourceForm::Module,
+                limits,
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0002");
+            assert!(output.bytecode().is_none());
+        }
+        assert!(
+            compile(operation_request(
+                Operation::Check,
+                b"fn main() {}\n",
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .is_err()
+        );
     }
 
     #[test]

@@ -1119,9 +1119,10 @@ celdas [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json
 (`STD-A-BYTES-EVIDENCE-001`). Sus seis dimensiones cubren forma del catálogo,
 ownership/snapshots, UTF-8, atomicidad de builders, límites/rangos y
 properties/hot paths. `HOST` es explícitamente `not-applicable` porque el
-owner es un intrinsic del compilador/VM, sin provider separado; `STD-A-FUZZ-001`
-promueve el fuzz owner-aware y la captura dedicada de rendimiento sigue
-pendiente.
+owner es un intrinsic del compilador/VM, sin provider separado.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 El owner intrínseco `std.core` queda cerrado para la evidencia de STD-0.1A
 mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
@@ -1133,9 +1134,10 @@ de mapas y propagación, agregados bytecode y ejecución VM; las pruebas públic
 incluyen los casos de éxito, error, ausencia, límites y especialización
 explícita. `HOST` es `not-applicable` porque el owner es compiler/VM-owned y no
 consulta capabilities ni el host. El corpus de admission fuzz cubre formas
-`Option`/`Result` y protocolos genéricos; `STD-A-FUZZ-001` promueve el fuzz
-owner-aware y los baselines de rendimiento por owner quedan pendientes de
-promoción.
+`Option`/`Result` y protocolos genéricos.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 El owner intrínseco `std.text` queda cerrado para la evidencia de STD-0.1A
 mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
@@ -1146,9 +1148,10 @@ especialización HIR hasta el puente compiler/VM: Unicode válido, índices y
 slicing por scalar, iteración, búsquedas, transformaciones ASCII y rechazo
 atómico de UTF-8 inválido tienen fixtures ejecutables. `HOST` es
 `not-applicable` por ser un owner intrínseco sin capability ni host ambiental;
-el corpus bounded de UTF-8/admission fuzz está enlazado; `STD-A-FUZZ-001`
-promueve el fuzz owner-aware, mientras los baselines de coste y `STD-CONF-001`
-permanecen pendientes de promoción.
+el corpus bounded de UTF-8/admission fuzz está enlazado.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 El owner intrínseco `std.collections` queda cerrado para la evidencia de
 STD-0.1A mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
@@ -1160,8 +1163,10 @@ de valor con COW interno, capacidad y errores atómicos, orden de inserción,
 hashing de claves, membership, reemplazo/eliminación e iteración lazy están
 cubiertos. `HOST` es `not-applicable` porque el owner es intrínseco y portable;
 el admission fuzz y las properties eager/COW aportan cobertura de formas y
-ownership; `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras los
-baselines de memoria/hash y `STD-CONF-001` permanecen pendientes de promoción.
+ownership.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 El owner intrínseco `std.iter` queda cerrado para la evidencia de STD-0.1A
 mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
@@ -1174,24 +1179,36 @@ callbacks síncronos, closures, rutas calificadas/genéricas, `take(-1)` y
 materialización acotada. Las properties y tests de runtime cubren cursores
 prestados, dispatch de iteradores de usuario, agotamiento, trazado de fuente y
 callbacks, y estados corruptos; `HOST` es `not-applicable` porque no hay
-capability ni dependencia ambiental. `STD-A-FUZZ-001` promueve el fuzz
-owner-aware; baselines de retención/allocations/materialización y
-`STD-CONF-001` permanecen pendientes de promoción.
+capability ni dependencia ambiental.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 El owner intrínseco `std.math` queda cerrado para la evidencia de STD-0.1A
 mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
 y su registro `STD-A-MATH-EVIDENCE-001` en
 [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
-Las nueve firmas escalares se trazan por dispatch HIR estático, puente
-`process_host`, frontera nominal `MathError` y fixture público. Las pruebas
-cubren redondeo ties-to-even y signed zero, infinitudes, NaN, subnormales,
-overflow y dominio/no-finito de `sqrt`, apoyándose en `m6-num-004-ieee.to`,
-properties de Float32 y diagnósticos de constantes. La implementación scalar
-es el scalar oracle de 0.1 y no existe una ruta SIMD/fast-math separada; un
-backend vectorizado futuro sólo puede promocionarse tras demostrar equivalencia
-bit a bit. `HOST` es `not-applicable`; `STD-A-FUZZ-001` promueve el fuzz
-owner-aware, mientras baselines por owner y `STD-CONF-001` siguen pendientes de
-promoción.
+The ten scalar signatures are traced through static HIR dispatch, the
+`process_host` bridge, nominal `MathError` values and a public fixture.
+Tests cover both rounding policies, signed zero, infinities, NaN, subnormals,
+overflow and the domain/non-finite boundary of `sqrt`, with additional numeric
+coverage in `m6-num-004-ieee.to`, Float32 properties and constant diagnostics.
+The scalar implementation is the scalar oracle for 0.1. There is no separate
+SIMD or fast-math route; a future vectorized backend must demonstrate bitwise
+equivalence before promotion. `HOST` is `not-applicable`.
+
+`std.math.round` uses nearest-integer rounding with ties to even: `2.5 -> 2.0`,
+`3.5 -> 4.0`, `-2.5 -> -2.0`, and `-3.5 -> -4.0`.
+`std.math.roundTiesAway` chooses the integer farther from zero at exact ties:
+`2.5 -> 3.0` and `-2.5 -> -3.0`. Both functions agree away from ties, including
+`2.1 -> 2.0` and `-2.1 -> -2.0`. The scalar kernel tests
+cover both representable neighbors of positive and negative ties, signed zero,
+subnormals, large integral values, infinities and NaN. The public
+`tests/runtime/m11-std-math-001.to` fixture exercises the compiler/hosted VM route;
+these checks do not establish native AOT conformance.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 El owner capability-gated `std.time` queda cerrado para la evidencia de
 STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
@@ -1203,9 +1220,10 @@ reloj monotónico de `std::time::Instant`; el virtual está sellado en
 `std.testing`, avanza explícitamente y ejecuta el mismo corpus semántico. La
 capability `clock` se comprueba en el límite del módulo y el fixture
 `tests/runtime/m10-std-time-001.to` atraviesa parser, checker, bytecode, VM y
-host. `HOST` es `verified`; `STD-A-FUZZ-001` promueve el fuzz owner-aware y los
-baselines de rendimiento por provider permanecen como promoción pendiente y no
-se inventan métricas.
+host. `HOST` es `verified`.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 El owner capability-gated `std.env` queda cerrado para la evidencia de
 STD-0.1A mediante [`testing/stdlib-env.json`](testing/stdlib-env.json) y su
@@ -1215,10 +1233,10 @@ disponibilidad, snapshot sellado, argv ordenado, nombres/valores textuales y
 binarios, ausencia mediante `Option`, copias independientes y límites
 atómicos. El proveedor solo recibe un plan runtime explícito: los tests cubren
 inputs inyectados, names inválidos, hosts unavailable y aislamiento de `PATH`,
-`HOME` y otras variables ambientales. `HOST` es `verified`; `STD-A-FUZZ-001`
-promueve el fuzz owner-aware y los baselines de rendimiento por capability
-permanecen como promoción pendiente y no se confunden con lectura del entorno
-del proceso de compilación.
+`HOME` y otras variables ambientales. `HOST` es `verified`.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 #### 10.2.2 Contrato cerrado de `std.text`
 
@@ -1374,9 +1392,10 @@ La evidencia ejecutable `STD-A-IO-EVIDENCE-001` mantiene esta separación:
 `std.console`, `std.fs` y `std.process` poseen los adaptadores capability-gated.
 El corpus de chunks deterministas prueba short I/O, EOF, progreso, errores de
 `flush`, límites y cancelación sin inventar una segunda API síncrona/asíncrona.
-Las dimensiones de coste son bytes copiados, chunks procesados y work-units;
-`STD-A-FUZZ-001` promueve el fuzz owner-aware y baselines por owner y
-conformance global se promueven por sus gates propios.
+Las dimensiones de coste son bytes copiados, chunks procesados y work-units.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ### 10.4 Paths
 
@@ -1446,9 +1465,10 @@ normales, durante unwind y al cancelar una operación suspendible. El host no
 sigue enlaces simbólicos al eliminar un recurso temporal y no incluye paths
 físicos ni contenido en `FsError`; la operación de rename no promete
 durabilidad de hardware. La evidencia ejecutable de este contrato es
-`STD-A-FS-EVIDENCE-001`; `STD-A-FUZZ-001` promueve su fuzz owner-aware, mientras
-los baselines por target y la conformance global siguen siendo promoción
-posterior.
+`STD-A-FS-EVIDENCE-001`.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ### 10.6 Formato
 
@@ -3111,12 +3131,12 @@ un path Rust, una prueba documental o un alias bootstrap no son evidencia
 suficiente. Mientras existan filas `open-gaps`, el catálogo sigue siendo un
 contrato de desarrollo y no una publicación.
 
-La coordinación del grupo Core ya implementado se registra por separado en
+Core implementation coordination is recorded separately in
 [`docs/contracts/stdlib-implementation-coordination.md`](./docs/contracts/stdlib-implementation-coordination.md)
 y [`testing/stdlib-implementation-coordination.json`](./testing/stdlib-implementation-coordination.json).
-Este registro exige evidencia completa para sus owners y conserva los gaps de
-la auditoría global como trabajo pendiente; no relaja el contrato de
-promoción S1A.
+This register derives its state from component evidence and the public audit.
+An empty or incomplete owner inventory remains an explicit gap; it cannot
+close Core coordination or the S1A promotion contract.
 
 La coordinación Hosted se registra por separado en
 [`docs/contracts/stdlib-hosted-implementation-coordination.md`](./docs/contracts/stdlib-hosted-implementation-coordination.md)
@@ -3136,14 +3156,12 @@ dimensiones públicas de performance y las seis celdas
 pendientes exigen razón y referencia; la matriz no adelanta requisitos de
 STD-0.1B ni convierte evidencia de kernel en una API publicada.
 
-La dimensión `FUZZ` de S1A queda cerrada por `STD-A-FUZZ-001`. El target
-owner-aware `fuzz/fuzz_targets/stdlib_owners.rs` enruta cada entrada a uno de
-los 22 owners con límites explícitos, corpus y oráculo propios; el contrato
-machine-readable `testing/stdlib-fuzz.json` conserva semillas, replay,
-minimización y persistencia de regresiones. `scripts/stdlib-fuzz-check.sh`
-comprueba que no falte ninguna ruta ni corpus y que la evidencia de cada owner
-esté promovida. Esta clausura de fuzz no adelanta las dimensiones
-independientes de performance ni conformance.
+The owner-aware target `fuzz/fuzz_targets/stdlib_owners.rs` indexes 22 routes
+with bounded input and corpus records in `testing/stdlib-fuzz.json`. The audit
+reopened `STD-A-FUZZ-001`: route presence, a fixed source admission probe or a
+Rust model alone does not demonstrate an input-dependent public runtime oracle.
+The existing component campaigns remain evidence for their measured boundary;
+owner-wide fuzz promotion, performance and conformance require separate proof.
 
 | Owner | Source set | Estado | Dependencias directas |
 |---|---|---|---|
@@ -3367,9 +3385,10 @@ de eventos con frames explícitos, `Value`/`ValueView`/`Raw`, paths, límites,
 chunking y publicación atómica. Los providers herméticos de derive conservan
 la identidad del codec, generan output determinista, source maps y diagnostics
 reproducibles para records, enums, newtypes, genéricos y attributes. `HOST` es
-`not-applicable`; `STD-A-FUZZ-001` promueve el fuzz owner-aware del protocolo,
-mientras los baselines de coste y `STD-CONF-001` continúan como promoción
-posterior.
+`not-applicable`.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 La evidencia ejecutable de `std.json` es `STD-A-JSON-EVIDENCE-001`. Cierra las
 rutas typed, dynamic y streaming sobre el mismo parser de frames explícitos,
@@ -3518,15 +3537,15 @@ Los usos previstos son diagnostics de aplicación, documentación y herramientas
 que necesitan describir un tipo conocido estáticamente. JSON, MessagePack y
 Protobuf no dependen de este módulo: usan impls generados y dispatch estático.
 
-La evidencia machine-readable de este contrato vive en
-`testing/stdlib-reflect.json` y en la matriz por celdas de
-`testing/stdlib-owner-evidence.json`, bajo
-`STD-A-REFLECT-EVIDENCE-001`. Esa evidencia separa las raíces explícitas, la
-clausura pública, privacidad, identidad local al artefacto, ausencia de
-reflection de valores y los límites de coste; `HOST` es
-`not-applicable` porque el módulo es metadata-only. La matriz no convierte
-estas pruebas en una promesa de reflection runtime ni cierra por sí sola los
-gates globales de conformidad o rendimiento.
+The existing records in `testing/stdlib-reflect.json` and
+`testing/stdlib-owner-evidence.json` cover the bounded Rust metadata catalog:
+explicit roots, public closure, privacy, artifact-local identity and cost limits.
+They do not establish execution of `typeInfo[T]()` from ordinary Tondo source.
+`HOST = not-applicable` only means that reflection needs no external host
+provider; public frontend, VM and native lowering still require executable
+evidence. `REFLECT-IMPL-001` and `STD-A-REFLECT-EVIDENCE-001` remain open for that
+integration, and these component records do not close global conformance or
+performance gates.
 
 ### 14.9 `std.meta`
 
@@ -3687,8 +3706,9 @@ determinismo y límites finitos. La suite verifica que el chunking de un byte no
 altera eventos, preserva extensiones desconocidas y compara en ambas
 direcciones con `rmpv`. `HOST` es `not-applicable`: el bridge del compilador no
 añade capabilities ni semántica de wire dependiente del target.
-`STD-A-FUZZ-001` promueve el fuzz owner-aware por operación; baselines de
-allocations/memoria por target y `STD-CONF-001` siguen como promoción posterior.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 La evidencia ejecutable de `std.protobuf` es `STD-A-PROTOBUF-EVIDENCE-001`.
 Combina el wire portable con la frontera build-only schema-first: TOML
@@ -3698,9 +3718,10 @@ incompatible, descriptor raíz, reader/writer schema-bound, determinismo y
 límites finitos. La suite comprueba fragmentación de un byte y compatibilidad
 bidireccional con `prost`, además de que el generator produzca identidades
 estables y errores de schema sin inputs ambientales. `HOST` es
-`not-applicable`; `STD-A-FUZZ-001` promueve el fuzz owner-aware de
-schema/operaciones; baselines de allocations/memoria por target y
-`STD-CONF-001` siguen como promoción posterior.
+`not-applicable`.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 La evidencia ejecutable de `std.testing` es `STD-A-TESTING-EVIDENCE-001`.
 El módulo es test-only y su bridge `HOST` verificado pertenece al worker del
@@ -3709,16 +3730,25 @@ evidencia enlaza las 25 firmas públicas con assertions de ownership prestado,
 diffs acotados, tolerancias finitas, consumo explícito de `Option`/`Result`,
 temporales afines bajo raíz privada, generators replayables, shrinking sellado,
 control terminal, virtual time y los fixtures de dogfooding del runner.
-`STD-A-FUZZ-001` promueve la ruta owner-aware; baselines completos de coste o
-`STD-CONF-001` permanecen parciales y visibles en la matriz.
 
-La coordinación `STD-TEST-001` queda registrada en
-`testing/stdlib-test-coordination.json`: sus 22 owners A, 214 firmas públicas y
-171 requisitos se vinculan a 66 leyes de modelo, comandos de test y campañas
-de fuzz. El registro se genera desde la evidencia de owners, la auditoría de
-API y la matriz normativa; cada superficie debe tener una ley de modelo y
-`STD-A-FUZZ-001` mantiene las 22 rutas owner-aware promovidas. Esta coordinación
-no cierra la conformidad global.
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
+
+`testing/stdlib-test-coordination.json` links 22 owners, 216 public signatures
+and 171 requirements to 66 model laws and their test/campaign references. The
+generator preserves each signature's public implementation status and missing
+evidence separately from model coverage. A verified model law does not prove
+execution of that API from Tondo. The audit reopened `STD-A-FUZZ-001` to verify
+the actual dispatch and oracle of each owner campaign; recorded references do
+not close that task or global conformance.
+
+The current owner fuzz audit records eight constant frontend checks, three
+Rust-reference routes, nine bounded kernel-invariant routes and two compiler
+models. All 22 whole-owner FUZZ cells remain partial; the nine component
+assertions are retained separately. `STD-TEST-001` remains
+open until its declared laws and commands establish the required public
+coverage. `stdlib-owner-evidence-generate.sh` synchronizes FUZZ and CONF from
+their source contracts without promoting declared cases into observations.
 
 La coordinación `STD-CONF-001` queda registrada en
 `testing/stdlib-conformance-coordination.json`: contiene los 22 owners de
@@ -4550,9 +4580,10 @@ La evidencia ejecutable de esta frontera es `STD-A-PROC-EVIDENCE-001`: enlaza
 las diecisiete firmas públicas con el contrato hosted, la capability estática,
 los planes inertes y handles terminales, HIR/lowering, bytecode/VM, el host de
 procesos y los fixtures M8. El gate cubre backpressure, streams separados y
-`combined`, redirección de stderr, estados/errores, cancelación y reaping;
-`STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras baselines por target y
-`STD-CONF-001` siguen siendo promoción posterior.
+`combined`, redirección de stderr, estados/errores, cancelación y reaping.
+
+`STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
+`testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
 ### 19.3 Una sola implementación vigente
 

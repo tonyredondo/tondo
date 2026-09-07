@@ -6,7 +6,7 @@ use crate::hir::{
     HirCallableId, HirCallableSignature, HirExpression, HirExpressionId, HirExpressionKind,
     HirNominalShape, HirProgram, HirTerminalContract, HirTerminalStatus, HirVariantPayload,
 };
-use crate::package::ModuleId;
+use crate::package::{ModuleId, PackageGraph};
 use crate::resolve::{MemberId, ResolvedEntity, ResolvedName, ResolvedProgram};
 use crate::source::{FileId, SourceDatabase, Span, TextRange};
 use crate::types::{ScalarType, TypeError, TypeId, TypeInterner, TypeKind};
@@ -98,14 +98,20 @@ pub enum SemanticTypeMembers {
 /// produced it.
 #[derive(Debug)]
 pub struct SemanticModel {
+    packages: PackageGraph,
     sources: SourceDatabase,
     resolved: ResolvedProgram,
     hir: Option<HirProgram>,
 }
 
 impl SemanticModel {
-    pub(crate) fn after_resolution(sources: SourceDatabase, resolved: ResolvedProgram) -> Self {
+    pub(crate) fn after_resolution(
+        packages: PackageGraph,
+        sources: SourceDatabase,
+        resolved: ResolvedProgram,
+    ) -> Self {
         Self {
+            packages,
             sources,
             resolved,
             hir: None,
@@ -113,11 +119,13 @@ impl SemanticModel {
     }
 
     pub(crate) fn with_hir(
+        packages: PackageGraph,
         sources: SourceDatabase,
         resolved: ResolvedProgram,
         hir: HirProgram,
     ) -> Self {
         Self {
+            packages,
             sources,
             resolved,
             hir: Some(hir),
@@ -126,6 +134,10 @@ impl SemanticModel {
 
     pub fn sources(&self) -> &SourceDatabase {
         &self.sources
+    }
+
+    pub(crate) fn packages(&self) -> &PackageGraph {
+        &self.packages
     }
 
     pub fn resolved(&self) -> &ResolvedProgram {

@@ -1,5 +1,10 @@
 # `std.reflect` contract
 
+**Implementation status:** the Rust catalog, reachability and privacy models
+exist. Public `std.reflect.typeInfo[T]()` is not yet accepted by the ordinary
+frontend. `REFLECT-IMPL-001` and `STD-A-REFLECT-EVIDENCE-001` are reopened;
+the lack of a host provider does not make this a build-only runtime surface.
+
 `std.reflect` is descriptive, immutable and opt-in. Its only entry point is the
 statically instantiated `typeInfo[T]()` function. A live instantiation retains
 metadata for `T` and the public descriptor types reachable from it; dead calls
@@ -20,6 +25,12 @@ The API has no runtime error type. A non-describable static request is a compile
 error; kind-specific optional views return `none`, and collection views return
 an empty immutable value when inapplicable. JSON, MessagePack and Protobuf use
 generated static implementations rather than this module.
+
+The public entry-point signature is:
+
+```text
+pub fn typeInfo[T](): TypeInfo
+```
 
 ## Evidence and budgets
 

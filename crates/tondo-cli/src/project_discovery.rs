@@ -26,6 +26,7 @@ pub(crate) struct DiscoveredProject {
     pub(crate) root: PathBuf,
     pub(crate) manifest_bytes: Vec<u8>,
     pub(crate) lockfile_bytes: Vec<u8>,
+    pub(crate) production: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,6 +339,7 @@ fn discover_with_selection(
     };
 
     let lock_path = root.join("tondo.lock.toml");
+    let mut production_lockfile_bytes = None;
     let lockfile_bytes = match fs::read(&lock_path) {
         Ok(bytes) => {
             if config
@@ -367,6 +369,7 @@ fn discover_with_selection(
                     lock_path.display()
                 )
             })?;
+            production_lockfile_bytes = Some(production_lock.clone());
             match selection {
                 SourceSelection::Production => production_lock,
                 SourceSelection::ProductionAndTests => {
@@ -381,6 +384,13 @@ fn discover_with_selection(
                     lock_path.display()
                 ));
             }
+            if let Some(manifest) = production_manifest_bytes.as_deref() {
+                production_lockfile_bytes = Some(generated_lockfile(
+                    manifest,
+                    &package_id,
+                    &production_sources,
+                )?);
+            }
             generated_lockfile(&manifest_bytes, &package_id, &sources)?
         }
         Err(error) => {
@@ -392,6 +402,7 @@ fn discover_with_selection(
         root,
         manifest_bytes,
         lockfile_bytes,
+        production: production_manifest_bytes.zip(production_lockfile_bytes),
     })
 }
 

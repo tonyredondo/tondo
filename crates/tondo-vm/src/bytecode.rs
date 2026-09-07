@@ -1,6 +1,7 @@
 //! In-memory, typed bytecode shared by the compiler and the bootstrap VM.
 //!
-//! This representation deliberately has no serializer and is not an ABI. Its
+//! The private same-executable test-worker transport uses serde for these
+//! values; it defines no persistent or cross-version bytecode ABI. Their
 //! indices are request-local, every executable value lives in an explicit
 //! frame slot, and all control-flow targets remain visible to verification.
 
@@ -17,7 +18,19 @@ pub use verify::{
 
 macro_rules! index_type {
     ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[serde(deny_unknown_fields)]
         pub struct $name(u32);
 
         impl $name {
@@ -117,14 +130,18 @@ pub fn normalize_array_slice_indices(
     Ok(output)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeSpan {
     pub file: u32,
     pub start: u32,
     pub end: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeProgram {
     pub types: Vec<BytecodeType>,
     pub nominals: Vec<BytecodeNominal>,
@@ -147,7 +164,8 @@ impl BytecodeProgram {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeType {
     pub name: String,
     pub kind: BytecodeTypeKind,
@@ -158,7 +176,8 @@ pub struct BytecodeType {
 /// The concrete witness remains available to the verifier for representation
 /// checks, but it must not strengthen the contract visible through the opaque
 /// type.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeCapabilitySet {
     pub copy: bool,
     pub discard: bool,
@@ -168,7 +187,8 @@ pub struct BytecodeCapabilitySet {
     pub share: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeTypeKind {
     Scalar(BytecodeScalarType),
     Nominal {
@@ -205,7 +225,10 @@ pub enum BytecodeTypeKind {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeScalarType {
     Bool,
     Int,
@@ -225,7 +248,10 @@ pub enum BytecodeScalarType {
     Float32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeIntrinsicType {
     Array,
     Map,
@@ -337,7 +363,10 @@ pub enum BytecodeIntrinsicType {
     UnknownFields,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeTerminalStatus {
     Absent,
     Potential,
@@ -349,7 +378,8 @@ pub enum BytecodeTerminalStatus {
 /// The bootstrap VM derives this independently from the verified catalog and
 /// attaches the corresponding type ID to every heap allocation. Template field
 /// types retain the nominal arguments needed to interpret generic layouts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeTraceDescriptor {
     Inline,
     String,
@@ -408,33 +438,38 @@ pub enum BytecodeTraceDescriptor {
 }
 
 /// Trace roots carried by one active or suspended frame of a function.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeFrameTraceDescriptor {
     pub function: BytecodeFunctionId,
     pub slots: Vec<BytecodeTypeId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeTraceMetadata {
     pub types: Vec<BytecodeTraceDescriptor>,
     pub frames: Vec<BytecodeFrameTraceDescriptor>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeTerminalOperation {
     JoinAwait,
     ProcessFinish,
     TimerFinish,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeTerminalUnwindAction {
     JoinTeardown,
     ProcessCleanup,
     TimerCleanup,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeTerminalContract {
     pub operation: BytecodeTerminalOperation,
     pub unwind: BytecodeTerminalUnwindAction,
@@ -678,14 +713,18 @@ impl BytecodeIntrinsicType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeCursorMode {
     Own,
     Ref,
     Mut,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeFunctionType {
     pub is_async: bool,
     pub is_selectable: bool,
@@ -695,13 +734,17 @@ pub struct BytecodeFunctionType {
     pub outcome: BytecodeTypeId,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeFunctionParameter {
     pub mode: BytecodeParameterMode,
     pub ty: BytecodeTypeId,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeParameterMode {
     Value,
     Ref,
@@ -709,7 +752,8 @@ pub enum BytecodeParameterMode {
     Var,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeNominal {
     pub name: String,
     pub identity: String,
@@ -717,33 +761,38 @@ pub struct BytecodeNominal {
     pub shape: BytecodeNominalShape,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeNominalShape {
     Newtype { underlying: BytecodeTypeId },
     Record { fields: Vec<BytecodeField> },
     Enum { variants: Vec<BytecodeVariant> },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeField {
     pub member: u32,
     pub ty: BytecodeTypeId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeVariant {
     pub member: u32,
     pub payload: BytecodeVariantPayload,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeVariantPayload {
     Unit,
     Tuple(Vec<BytecodeTypeId>),
     Record(Vec<BytecodeField>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeCallable {
     pub name: String,
     pub generic_arity: u32,
@@ -754,14 +803,16 @@ pub struct BytecodeCallable {
     pub closure: Option<BytecodeClosure>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeClosure {
     pub environment: BytecodeTypeId,
     pub captures: Vec<BytecodeTypeId>,
     pub protocols: BytecodeClosureProtocols,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeClosureProtocols {
     pub call: bool,
     pub call_mut: bool,
@@ -778,7 +829,8 @@ impl BytecodeClosureProtocols {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeParameter {
     pub mode: BytecodeParameterMode,
     pub ty: BytecodeTypeId,
@@ -786,19 +838,22 @@ pub struct BytecodeParameter {
     pub receiver: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeNamedConstant {
     pub name: String,
     pub value: BytecodeConstantValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeConstantValue {
     pub ty: BytecodeTypeId,
     pub kind: BytecodeConstantValueKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeConstantValueKind {
     Unit,
     Bool(bool),
@@ -837,14 +892,16 @@ pub enum BytecodeConstantValueKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeConstantVariantValue {
     Unit,
     Tuple(Vec<BytecodeConstantValue>),
     Record(Vec<(u32, BytecodeConstantValue)>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeFunction {
     pub callable: BytecodeCallableId,
     pub source: BytecodeSpan,
@@ -873,14 +930,16 @@ impl BytecodeFunction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeSlot {
     pub ty: BytecodeTypeId,
     pub span: BytecodeSpanId,
     pub kind: BytecodeSlotKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeSlotKind {
     Return,
     Parameter { index: u32 },
@@ -888,26 +947,30 @@ pub enum BytecodeSlotKind {
     Temporary,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeBlock {
     pub kind: BytecodeBlockKind,
     pub instructions: Vec<BytecodeInstruction>,
     pub terminator: BytecodeTerminator,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeBlockKind {
     Normal,
     Cleanup,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeInstruction {
     pub span: BytecodeSpanId,
     pub kind: BytecodeInstructionKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeInstructionKind {
     StorageLive(BytecodeSlotId),
     StorageDead(BytecodeSlotId),
@@ -947,7 +1010,8 @@ pub enum BytecodeInstructionKind {
 /// its prepare phase; a pending `Join` observes its owner slot without
 /// consuming it — the winner commits, join losers remain owned by the caller,
 /// and runtime-owned call arms are cancelled on rollback.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeSelectRegistration {
     Call(BytecodeOperation),
     Join(BytecodePlace),
@@ -958,7 +1022,8 @@ pub enum BytecodeSelectRegistration {
 /// checked bound.
 pub const MAX_SELECT_ARMS: u32 = 64;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodePlace {
     pub slot: BytecodeSlotId,
     pub ty: BytecodeTypeId,
@@ -992,26 +1057,30 @@ impl BytecodePlace {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeLoanKind {
     CallLocal,
     Region,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeLoan {
     pub kind: BytecodeLoanKind,
     pub mode: BytecodeParameterMode,
     pub place: BytecodePlace,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeProjection {
     pub ty: BytecodeTypeId,
     pub kind: BytecodeProjectionKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeProjectionKind {
     ClosureCapture {
         callable: BytecodeCallableId,
@@ -1053,13 +1122,15 @@ pub enum BytecodeProjectionKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeOperand {
     pub ty: BytecodeTypeId,
     pub kind: BytecodeOperandKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeOperandKind {
     Constant(BytecodeConstant),
     Copy(BytecodePlace),
@@ -1072,7 +1143,8 @@ pub enum BytecodeOperandKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeConstant {
     Unit,
     Bool(bool),
@@ -1083,13 +1155,15 @@ pub enum BytecodeConstant {
     Named(BytecodeConstantId),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeRvalue {
     pub ty: BytecodeTypeId,
     pub kind: BytecodeRvalueKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeRvalueKind {
     Use(BytecodeOperand),
     Prefix {
@@ -1140,7 +1214,8 @@ pub enum BytecodeRvalueKind {
     IteratorState(BytecodeOperand),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeAggregateKind {
     Tuple,
     Array,
@@ -1167,7 +1242,8 @@ pub enum BytecodeAggregateKind {
     ResultErr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeCoercion {
     Exact,
     EffectWeakening,
@@ -1180,14 +1256,18 @@ pub enum BytecodeCoercion {
     Diverging,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeNumericConversion {
     Identity,
     Total,
     Checked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeNumericConversionError {
     OutOfRange,
     NotFinite,
@@ -1212,14 +1292,16 @@ impl BytecodeNumericConversionError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodePrefixOperator {
     Negate,
     LogicalNot,
     BitwiseNot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeBinaryOperator {
     Multiply,
     Divide,
@@ -1241,13 +1323,15 @@ pub enum BytecodeBinaryOperator {
     LogicalOr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeRangeKind {
     Exclusive,
     Inclusive,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeContainmentKind {
     Array,
     MapKey,
@@ -1256,13 +1340,17 @@ pub enum BytecodeContainmentKind {
     StringChar,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeArraySequenceKind {
     Concat,
     Repeat,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeIndexAccess {
     Array,
     String,
@@ -1270,13 +1358,15 @@ pub enum BytecodeIndexAccess {
     MapEntry,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeOperation {
     pub ty: BytecodeTypeId,
     pub kind: BytecodeOperationKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeOperationKind {
     CheckedPrefix {
         operator: BytecodePrefixOperator,
@@ -1340,21 +1430,24 @@ pub enum BytecodeOperationKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeSliceBounds {
     pub start: Option<BytecodeOperand>,
     pub end: Option<BytecodeOperand>,
     pub step: Option<BytecodeOperand>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeCallProtocol {
     Call,
     CallMut,
     CallOnce,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeBootstrapHostFunction {
     ConsolePrint,
     ConsolePrintln,
@@ -1427,20 +1520,23 @@ impl BytecodeBootstrapHostFunction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeAssertMessagePart {
     pub value: BytecodeOperand,
     pub spread: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeCallArgument {
     pub mode: BytecodeParameterMode,
     pub target: BytecodeCallArgumentTarget,
     pub value: BytecodeOperand,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeCallArgumentTarget {
     Receiver,
     Fixed(u32),
@@ -1453,13 +1549,15 @@ pub enum BytecodeCallArgumentTarget {
     AsyncIteratorNext,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeTerminator {
     pub span: BytecodeSpanId,
     pub kind: BytecodeTerminatorKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeTerminatorKind {
     Goto {
         target: BytecodeBlockId,
@@ -1543,7 +1641,8 @@ pub enum BytecodeTerminatorKind {
 
 /// One committed winner of a selection region: where the operation payload
 /// lands (when the arm binds it) and which block runs the arm body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BytecodeSelectArm {
     payload: Option<BytecodePlace>,
     target: BytecodeBlockId,
@@ -1565,19 +1664,24 @@ impl BytecodeSelectArm {
 
 /// Structured spawn lane.  Both lanes return the same affine `Join`; the
 /// runtime decides whether a worker thread is needed for the selected host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeSpawnKind {
     Task,
     Thread,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeAwaitable {
     Call(BytecodeOperation),
     Join(BytecodeOperand),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
 pub enum BytecodeTag {
     OptionNone,
     OptionSome,
@@ -1590,6 +1694,27 @@ pub enum BytecodeTag {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_transport_preserves_exact_numeric_and_unicode_constants() {
+        for kind in [
+            BytecodeConstantValueKind::Integer(i128::MIN),
+            BytecodeConstantValueKind::Integer(i128::MAX),
+            BytecodeConstantValueKind::Integer(u64::MAX as i128),
+            BytecodeConstantValueKind::Float(0x7ff8_0000_0000_0042),
+            BytecodeConstantValueKind::Float((-0.0_f64).to_bits()),
+            BytecodeConstantValueKind::Char('🦀'),
+            BytecodeConstantValueKind::String("quoted \\\"é🦀\\n\\0".into()),
+        ] {
+            let value = BytecodeConstantValue {
+                ty: BytecodeTypeId::new(0),
+                kind,
+            };
+            let bytes = serde_json::to_vec(&value).unwrap();
+            let decoded: BytecodeConstantValue = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(decoded, value);
+        }
+    }
 
     fn projected_place(kind: BytecodeProjectionKind) -> BytecodePlace {
         let ty = BytecodeTypeId::new(0);

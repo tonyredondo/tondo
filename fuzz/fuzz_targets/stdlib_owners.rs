@@ -11,13 +11,8 @@ use tondo_compiler::reflect::{
     ReflectTypeTemplate,
 };
 use tondo_reliability::harness::check;
-use tondo_stdlib::format::{self, FormatLimits};
 use tondo_stdlib::io::{self, IoLimits, SliceReader, VecWriter};
-use tondo_stdlib::math;
 use tondo_stdlib::path::Path;
-use tondo_stdlib::serialization::{
-    self, Deserializer, Event, EventDeserializer, EventSerializer, Limits, Serializer,
-};
 use tondo_stdlib::testing::{self, DiffLimits, FloatTolerance};
 
 /// The owner order is part of the fuzz contract. The first byte selects one
@@ -114,13 +109,7 @@ fn route_std_env() {
 }
 
 fn route_std_format(input: &[u8]) {
-    let value = i128::from(input.first().copied().unwrap_or_default());
-    let limits = FormatLimits {
-        max_bytes: (input.get(1).copied().unwrap_or(16) as usize).saturating_add(1),
-    };
-    let _ = format::format(&value, limits);
-    let values = ["a", "b", "c"];
-    let _ = format::join(&values, ",", limits);
+    tondo_reliability::scalar_fuzz::format(input);
 }
 
 fn route_std_fs() {
@@ -154,31 +143,15 @@ fn route_std_iter() {
 }
 
 fn route_std_json(input: &[u8]) {
-    let _ = tondo_stdlib::json::validate(input);
-    if let Ok(value) = tondo_stdlib::json::parse(input) {
-        let encoded = tondo_stdlib::json::encode(&value).expect("parsed JSON encodes");
-        let _ = tondo_stdlib::json::validate(&encoded);
-    }
+    tondo_reliability::codec_fuzz::json(input);
 }
 
 fn route_std_math(input: &[u8]) {
-    let byte = input.first().copied().unwrap_or_default();
-    let value = f64::from(byte) - 128.0;
-    let _ = math::floor(value);
-    let _ = math::ceil(value);
-    let _ = math::round(value);
-    let _ = math::truncate(value);
-    let _ = math::sqrt(value);
-    let _ = math::fma(value, 2.0, 1.0);
+    tondo_reliability::scalar_fuzz::math(input);
 }
 
 fn route_std_messagepack(input: &[u8]) {
-    let _ = tondo_stdlib::messagepack::validate(input, Default::default());
-    if let Ok(value) = tondo_stdlib::messagepack::parse(input, Default::default()) {
-        let encoded = tondo_stdlib::messagepack::encode_deterministic(&value)
-            .expect("parsed MessagePack encodes");
-        let _ = tondo_stdlib::messagepack::validate(&encoded, Default::default());
-    }
+    tondo_reliability::codec_fuzz::messagepack(input);
 }
 
 fn route_std_meta(input: &[u8]) {
@@ -207,10 +180,7 @@ fn route_std_process() {
 }
 
 fn route_std_protobuf(input: &[u8]) {
-    let _ = tondo_stdlib::protobuf::validate::<()>(input, Default::default());
-    let mut offset = 0;
-    let _ = tondo_stdlib::protobuf::decode_varint(input, &mut offset);
-    let _ = tondo_stdlib::protobuf::decode_fields(input);
+    tondo_reliability::codec_fuzz::protobuf(input);
 }
 
 fn route_std_reflect(input: &[u8]) {
@@ -243,23 +213,7 @@ fn route_std_reflect(input: &[u8]) {
 }
 
 fn route_std_serialization(input: &[u8]) {
-    let limits = Limits {
-        max_depth: 8,
-        max_events: 32,
-        max_bytes: 1024,
-        max_container_items: 16,
-    };
-    let mut serializer = EventSerializer::new(limits);
-    serializer
-        .write_event(Event::String(String::from_utf8_lossy(input).into_owned()))
-        .expect("bounded event accepted");
-    let events = serializer.finish().expect("scalar event is balanced");
-    let mut deserializer = EventDeserializer::new(&events, limits).expect("bounded events");
-    assert!(deserializer.next_event().unwrap().is_some());
-    deserializer.finish().expect("all events consumed");
-    let encoded = serialization::base64_encode(&input[..input.len().min(1024)]);
-    let decoded = serialization::base64_decode(&encoded).expect("base64 round trip");
-    assert_eq!(decoded, input[..input.len().min(1024)]);
+    tondo_reliability::codec_fuzz::serialization(input);
 }
 
 fn route_std_testing(input: &[u8]) {

@@ -2,7 +2,7 @@
   "format": "tondo-stdlib-owner-evidence/1",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "promoted-evidence",
+  "status": "component-evidence",
   "leaves": [
     {
       "id": "STD-A-META-EVIDENCE-001",
@@ -208,8 +208,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a bounded Rust model; it does not establish public Tondo provider or reflection execution.",
+          "evidence_kind": "bounded-model",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.meta",
             "fuzz/corpus/stdlib_owners/std-meta/seed#seed=3014",
@@ -229,11 +231,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.meta"
-          ]
+          ],
+          "scope": "compiler-component-only"
         },
         "DOC": {
           "status": "verified",
@@ -310,8 +313,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a bounded Rust model; it does not establish public Tondo provider or reflection execution.",
+          "evidence_kind": "bounded-model",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.reflect",
             "fuzz/corpus/stdlib_owners/std-reflect/seed#seed=3018",
@@ -331,11 +336,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.reflect"
-          ]
+          ],
+          "scope": "metadata-model-only"
         },
         "DOC": {
           "status": "verified",
@@ -415,8 +421,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route exercises Rust standard types; it does not execute Tondo implementation code.",
+          "evidence_kind": "rust-reference-only",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.bytes",
             "fuzz/corpus/stdlib_owners/std-bytes/seed#seed=3002",
@@ -436,11 +444,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.bytes"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -526,8 +535,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.time",
             "fuzz/corpus/stdlib_owners/std-time/seed#seed=3022",
@@ -547,11 +558,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.time"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -639,8 +651,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.env",
             "fuzz/corpus/stdlib_owners/std-env/seed#seed=3006",
@@ -660,11 +674,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.env"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -758,8 +773,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.core",
             "fuzz/corpus/stdlib_owners/std-core/seed#seed=3005",
@@ -779,11 +796,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.core"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -874,8 +892,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route exercises Rust standard types; it does not execute Tondo implementation code.",
+          "evidence_kind": "rust-reference-only",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.text",
             "fuzz/corpus/stdlib_owners/std-text/seed#seed=3021",
@@ -895,11 +915,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.text"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -996,8 +1017,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route exercises Rust standard types; it does not execute Tondo implementation code.",
+          "evidence_kind": "rust-reference-only",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.collections",
             "fuzz/corpus/stdlib_owners/std-collections/seed#seed=3003",
@@ -1017,11 +1040,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.collections"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1117,8 +1141,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.iter",
             "fuzz/corpus/stdlib_owners/std-iter/seed#seed=3010",
@@ -1138,11 +1164,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.iter"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1237,8 +1264,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.math",
             "fuzz/corpus/stdlib_owners/std-math/seed#seed=3012",
@@ -1258,11 +1287,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.math"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1362,8 +1392,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.format",
             "fuzz/corpus/stdlib_owners/std-format/seed#seed=3007",
@@ -1383,11 +1415,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.format"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1486,8 +1519,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.io",
             "fuzz/corpus/stdlib_owners/std-io/seed#seed=3009",
@@ -1507,11 +1542,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.io"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1611,8 +1647,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.async",
             "fuzz/corpus/stdlib_owners/std-async/seed#seed=3001",
@@ -1632,11 +1670,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.async"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1730,8 +1769,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.console",
             "fuzz/corpus/stdlib_owners/std-console/seed#seed=3004",
@@ -1751,11 +1792,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.console"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1851,8 +1893,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.path",
             "fuzz/corpus/stdlib_owners/std-path/seed#seed=3015",
@@ -1872,11 +1916,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.path"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -1969,8 +2014,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.fs",
             "fuzz/corpus/stdlib_owners/std-fs/seed#seed=3008",
@@ -1990,11 +2037,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.fs"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -2096,8 +2144,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "The route checks a fixed source independent of payload and does not execute the owner API.",
+          "evidence_kind": "constant-admission",
+          "component_status": "partial",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.process",
             "fuzz/corpus/stdlib_owners/std-process/seed#seed=3016",
@@ -2117,11 +2167,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.process"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -2228,8 +2279,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.serialization",
             "fuzz/corpus/stdlib_owners/std-serialization/seed#seed=3019",
@@ -2249,11 +2302,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.serialization"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -2347,8 +2401,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.json",
             "fuzz/corpus/stdlib_owners/std-json/seed#seed=3011",
@@ -2368,11 +2424,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.json"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -2465,8 +2522,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.messagepack",
             "fuzz/corpus/stdlib_owners/std-messagepack/seed#seed=3013",
@@ -2486,11 +2545,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.messagepack"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -2583,8 +2643,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.protobuf",
             "fuzz/corpus/stdlib_owners/std-protobuf/seed#seed=3017",
@@ -2604,11 +2666,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.protobuf"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -2713,8 +2776,10 @@
           ]
         },
         "FUZZ": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering.",
+          "evidence_kind": "kernel-invariants",
+          "component_status": "verified",
           "refs": [
             "fuzz/fuzz_targets/stdlib_owners.rs#route=std.testing",
             "fuzz/corpus/stdlib_owners/std-testing/seed#seed=3020",
@@ -2734,11 +2799,12 @@
           ]
         },
         "CONF": {
-          "status": "verified",
-          "reason": null,
+          "status": "pending",
+          "reason": "Declared cases require a current execution report; generation does not observe execution",
           "refs": [
             "testing/stdlib-conformance.json#owners/std.testing"
-          ]
+          ],
+          "scope": "public-owner-and-runtime"
         },
         "DOC": {
           "status": "verified",
@@ -2797,5 +2863,6 @@
     "TONDO_TEST_TARGET=linux-x86_64 bash scripts/test-gate.sh"
   ],
   "coverage_floor_basis_points": 9025,
-  "live_manifest_regenerated": true
+  "live_manifest_regenerated": true,
+  "promotion": "pending"
 }

@@ -4,6 +4,14 @@
   "edition": "0.1",
   "phase": "STD-0.1A",
   "status": "closed-contract",
+  "promotion": "pending",
+  "input_policy": {
+    "source": "captured-current-git-file-set",
+    "binary": "explicit-hash-bound-input",
+    "binary_source_provenance": "not-claimed",
+    "dirty": "explicit-local-iteration-only",
+    "changes": "reject-before-publication"
+  },
   "distribution_format": "tondo-stdlib-vm-distribution/1",
   "package_id": "toolchain:std:0.1-bootstrap",
   "target": "tondo-vm-hosted",
@@ -33,6 +41,8 @@
     "capability_matrix_hash",
     "example_hashes",
     "payload_hash",
+    "inputs",
+    "promotion",
     "reproducible"
   ],
   "archive": {
@@ -66,6 +76,9 @@
     "archive-differs-between-clean-workspaces",
     "binary-missing",
     "contract-drift",
+    "dirty-workspace",
+    "input-changed-after-capture",
+    "captured-input-corruption",
     "example-missing",
     "manifest-hash-mismatch",
     "payload-hash-mismatch",

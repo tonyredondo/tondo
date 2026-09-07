@@ -29,7 +29,11 @@ fn every_public_signature_has_a_declared_model_law() {
     let api = load(&root, "testing/stdlib-public-api.json");
     let evidence = load(&root, "testing/stdlib-owner-evidence.json");
 
-    assert_eq!(registry["status"], "closed-coordination");
+    assert_eq!(registry["status"], "open-coordination");
+    assert_eq!(
+        registry["rules"]["model_laws_do_not_promote_public_implementation"],
+        true
+    );
     let evidence_owners = evidence["owners"]
         .as_array()
         .unwrap()
@@ -56,6 +60,8 @@ fn every_public_signature_has_a_declared_model_law() {
             .unwrap_or_else(|| panic!("signature {id} is not in the owner model"));
         assert_eq!(entry["symbol"], row["symbol"]);
         assert_eq!(entry["signature"], row["signature"]);
+        assert_eq!(entry["implementation_status"], row["status"]);
+        assert_eq!(entry["missing"], row["missing"]);
         assert!(coordinated["model"]["status"] == "verified");
         assert!(
             coordinated["model"]["laws"]
@@ -65,7 +71,7 @@ fn every_public_signature_has_a_declared_model_law() {
         assert!(seen.insert(id.to_owned()), "duplicate model signature {id}");
     }
 
-    assert_eq!(seen.len(), 214);
+    assert_eq!(seen.len(), 216);
     assert_eq!(registry["summary"]["public_signatures"], seen.len());
 }
 
@@ -101,10 +107,11 @@ fn owners_without_signature_rows_still_model_each_normative_requirement() {
 }
 
 #[test]
-fn test_and_fuzz_evidence_is_executable_and_promoted() {
+fn component_fuzz_evidence_does_not_promote_complete_owner_coverage() {
     let root = root();
     let registry = load(&root, "testing/stdlib-test-coordination.json");
-    let mut verified_fuzz = 0;
+    let contract = load(&root, "testing/stdlib-fuzz.json");
+    let mut verified_components = BTreeSet::new();
 
     for coordinated in registry["owners"].as_array().unwrap() {
         let id = coordinated["id"].as_str().unwrap();
@@ -122,14 +129,42 @@ fn test_and_fuzz_evidence_is_executable_and_promoted() {
 
         let fuzz = &coordinated["fuzz"];
         let status = fuzz["status"].as_str().unwrap();
-        assert_eq!(status, "verified");
+        assert_eq!(status, "partial");
         assert!(!fuzz["campaigns"].as_array().unwrap().is_empty());
         assert!(!fuzz["refs"].as_array().unwrap().is_empty());
-        assert!(fuzz["reason"].is_null());
-        verified_fuzz += 1;
+        assert!(
+            fuzz["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
+        );
+        let route = owner(&contract, id);
+        assert_eq!(fuzz["reason"], route["reason"]);
+        assert_eq!(fuzz["evidence_kind"], route["evidence_kind"]);
+        assert_eq!(fuzz["component_status"], route["component_status"]);
+        if fuzz["component_status"] == "verified" {
+            assert_eq!(fuzz["evidence_kind"], "kernel-invariants");
+            verified_components.insert(id);
+        }
     }
 
-    assert_eq!(verified_fuzz, 22);
-    assert_eq!(registry["summary"]["fuzz_verified"], verified_fuzz);
-    assert_eq!(registry["summary"]["fuzz_partial"], 0);
+    assert_eq!(
+        verified_components,
+        BTreeSet::from([
+            "std.format",
+            "std.io",
+            "std.json",
+            "std.math",
+            "std.messagepack",
+            "std.path",
+            "std.protobuf",
+            "std.serialization",
+            "std.testing",
+        ])
+    );
+    assert_eq!(registry["summary"]["fuzz_verified"], 0);
+    assert_eq!(registry["summary"]["fuzz_partial"], 22);
+    assert_eq!(
+        registry["summary"]["fuzz_component_verified"],
+        verified_components.len()
+    );
 }

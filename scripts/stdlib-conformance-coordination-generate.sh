@@ -57,7 +57,7 @@ jq -n \
         format: "tondo-stdlib-conformance-coordination/1",
         edition: "0.1",
         phase: "STD-0.1A",
-        status: "promoted",
+        status: "planned",
         sources: {
           normative_matrix: "testing/stdlib-matrix.json",
           owner_evidence: "testing/stdlib-owner-evidence.json",
@@ -80,7 +80,7 @@ jq -n \
           partial_requires_reason: true,
           refs_are_explicit: true,
           verified_requires_observation: true,
-          coordination_does_not_promote: false,
+          coordination_does_not_promote: true,
           execution_registry: "testing/stdlib-conformance.json"
         },
         owners: $owners,
@@ -97,8 +97,8 @@ jq -n \
           owner_pending: ([$owners[] | select(.status == "pending")] | length)
         },
         promotion: {
-          status: "promoted",
-          reason: "STD-A-CONF-001 executed every owner command and runtime sidecar, plus the complete 206-case draft suite",
+          status: "pending",
+          reason: "Case and component registers do not supply current execution observations or complete public owner coverage",
           matrix_status: $m.status,
           next_coordination: "STD-S1A-SEAL-001"
         }

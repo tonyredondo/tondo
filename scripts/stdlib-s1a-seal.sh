@@ -5,7 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 contract="${TONDO_STDLIB_S1A_SEAL_CONTRACT:-$root/testing/stdlib-s1a-seal.json}"
-output_dir="${TONDO_STDLIB_S1A_SEAL_DIR:-$root/target/reliability/evidence/stdlib-s1a-seal}"
+target_dir="${CARGO_TARGET_DIR:-$root/target}"
+output_dir="${TONDO_STDLIB_S1A_SEAL_DIR:-$target_dir/reliability/evidence/stdlib-s1a-seal}"
 if [[ "$output_dir" != /* ]]; then
     output_dir="$root/$output_dir"
 fi
@@ -79,7 +80,7 @@ done < <(jq -r '.required_checks[]' "$contract")
 public_api="testing/stdlib-public-api.json"
 matrix="testing/stdlib-matrix.json"
 evidence="testing/stdlib-owner-evidence.json"
-evidence_root="${TONDO_STDLIB_EVIDENCE_DIR:-target/reliability/evidence}"
+evidence_root="${TONDO_STDLIB_EVIDENCE_DIR:-$target_dir/reliability/evidence}"
 conformance="$evidence_root/stdlib-conformance.json"
 distribution="$evidence_root/stdlib-distribution/stdlib-distribution.json"
 performance="$evidence_root/stdlib-performance-report.json"
@@ -89,17 +90,17 @@ async_perf="$evidence_root/async-select-performance.json"
 jq -e '
   .format == "tondo-stdlib-public-api-audit/1"
   and .status == "verified"
-  and .summary.signatures == 214
-  and .summary.verified == 214
+  and .summary.signatures == 216
+  and .summary.verified == 216
   and .summary.gaps == 0
-' "$public_api" >/dev/null || die "public API audit is not strict 214/214"
+' "$public_api" >/dev/null || die "public API audit is not strict 216/216"
 
 jq -e '
   .format == "tondo-stdlib-normative-matrix/1"
   and .status == "verified"
   and .summary.owners == 22
   and .summary.requirements == 171
-  and .summary.rows == 385
+  and .summary.rows == 387
   and .summary.open_rows == 0
   and all(.rows[]; .status == "verified")
   and all(.owners[].stages[]; .status == "verified" or .status == "not-applicable")
@@ -161,7 +162,9 @@ dist_archive_sha256="$(sha256sum "$dist_archive_path" | cut -d' ' -f1)"
 jq -e \
     --arg archive_sha256 "$dist_archive_sha256" \
     '.format == "tondo-stdlib-distribution-evidence/1"
-     and .status == "promoted-draft"
+     and .status == "verified-vm-bundle"
+     and .promotion == "promoted"
+     and .inputs.binary_source_provenance == "verified"
      and .package_id == "toolchain:std:0.1-bootstrap"
      and .public_release == false
      and .byte_identical == true
@@ -188,7 +191,7 @@ jq -e '
 jq -e '
   .format == "tondo-stdlib-conformance/1"
   and .status == "promoted"
-  and .summary == {owners:22,signatures:214,requirements:171,rows:385,cases:32}
+  and .summary == {owners:22,signatures:216,requirements:171,rows:387,cases:32}
 ' testing/stdlib-conformance.json >/dev/null || die "conformance registry is not promoted"
 
 stage="$work/tondo-stdlib-s1a"

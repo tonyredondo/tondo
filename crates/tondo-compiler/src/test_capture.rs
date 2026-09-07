@@ -5,7 +5,8 @@
 //! receives a loan or the original affine owner.  This module is deliberately
 //! independent from the test worker: the semantic checker supplies resolved
 //! bindings and uses, and this boundary validates the closed capture contract
-//! before lowering or scheduling exists.
+//! before execution. The ordinary HIR checker shares the same admission rule
+//! for generated suite and test closures.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -94,7 +95,7 @@ impl fmt::Display for CaptureAccess {
 
 /// Capability/terminal facts for one already type-checked binding.
 ///
-/// `from_hir` is the adapter used by the future test-body checker.  Keeping
+/// `from_hir` is the adapter used by the test-body checker. Keeping
 /// the facts as a small value also lets this module be tested without
 /// constructing a complete HIR program and makes the boundary explicit: no
 /// capture path may invent a capability result.
@@ -155,6 +156,37 @@ impl CaptureTypeFacts {
 
     pub const fn terminal(self) -> HirTerminalStatus {
         self.terminal
+    }
+
+    pub(crate) fn rejection(
+        self,
+        name: &str,
+        mode: CaptureBindingMode,
+        access: CaptureAccess,
+    ) -> Option<String> {
+        if mode != CaptureBindingMode::Let {
+            Some(format!(
+                "binding `{name}` uses `{mode}` and cannot be copied into a suite snapshot"
+            ))
+        } else if !access.is_snapshot_safe() {
+            Some(format!(
+                "binding `{name}` is accessed as `{access}`; loans and moves cannot cross a suite boundary"
+            ))
+        } else if !self.is_snapshot_safe() {
+            let missing = self.missing_capabilities();
+            Some(if missing.is_empty() {
+                format!(
+                    "binding `{name}` has a terminal ownership obligation and cannot be snapshotted"
+                )
+            } else {
+                format!(
+                    "binding `{name}` requires Copy + Send + Share; missing or unresolved: {}",
+                    missing.join(", ")
+                )
+            })
+        } else {
+            None
+        }
     }
 
     fn is_snapshot_safe(self) -> bool {
@@ -501,37 +533,16 @@ pub fn build(
                 use_site.local.index()
             )));
         };
-        let mut invalid = None;
-        if !is_descendant(&nodes, &binding.owner, &use_site.target) {
-            invalid = Some(format!(
+        let invalid = if !is_descendant(&nodes, &binding.owner, &use_site.target) {
+            Some(format!(
                 "binding `{}` is not an ancestor of the target node; nested suites cannot bypass the owning suite",
                 binding.name
-            ));
-        } else if binding.mode != CaptureBindingMode::Let {
-            invalid = Some(format!(
-                "binding `{}` uses `{}` and cannot be copied into a suite snapshot",
-                binding.name, binding.mode
-            ));
-        } else if !use_site.access.is_snapshot_safe() {
-            invalid = Some(format!(
-                "binding `{}` is accessed as `{}`; loans and moves cannot cross a suite boundary",
-                binding.name, use_site.access
-            ));
-        } else if !binding.facts.is_snapshot_safe() {
-            let missing = binding.facts.missing_capabilities();
-            if !missing.is_empty() {
-                invalid = Some(format!(
-                    "binding `{}` requires Copy + Send + Share; missing or unresolved: {}",
-                    binding.name,
-                    missing.join(", ")
-                ));
-            } else {
-                invalid = Some(format!(
-                    "binding `{}` has a terminal ownership obligation and cannot be snapshotted",
-                    binding.name
-                ));
-            }
-        }
+            ))
+        } else {
+            binding
+                .facts
+                .rejection(&binding.name, binding.mode, use_site.access)
+        };
         if let Some(message) = invalid {
             pending.push(PendingDiagnostic {
                 key: DiagnosticKey {

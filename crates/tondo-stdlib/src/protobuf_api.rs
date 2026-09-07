@@ -16,7 +16,7 @@ use crate::serialization::{
     Protobuf as ProtobufCodec, Raw as RawCodec, SerializationError, Serialize,
 };
 
-const MAX_FIELD_NUMBER: u32 = 536_870_911;
+use super::MAX_FIELD_NUMBER;
 const RESERVED_FIELD_START: u32 = 19_000;
 const RESERVED_FIELD_END: u32 = 19_999;
 const MAX_LENGTH: u64 = 2_147_483_647;

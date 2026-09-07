@@ -2,7 +2,7 @@
 //!
 //! Test declarations are a source-level construct, not host-language
 //! callbacks.  The backend therefore lowers the selected declaration to an
-//! ordinary private `main` entry and sends that entry through the same
+//! private `__tondoTestEntry` function and sends that entry through the same
 //! resolver, HIR, MIR, bytecode and VM pipeline used by `tondo run`.  This is
 //! intentionally small: the test runner can add its envelope around this
 //! entry without creating a second language implementation.
@@ -10,15 +10,39 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tondo_vm::runtime::VmPanic;
 
-use crate::package::PackageId;
 use crate::source::{FileId, SourceDatabase, SourceError};
 use crate::syntax::ast::{Declaration, FunctionDecl, SourceFile};
 use crate::syntax::{Cst, SyntaxKind};
 use crate::test_control::{EnvelopeHandle, EnvelopeLimits, EnvelopeReport, ExecutionPhase};
+use crate::test_plan::TestSourceClass;
+
+/// Executes an invocation-owned test artifact in a fresh hosted VM. Bytecode
+/// verification and VM limits apply again at this process boundary; no source
+/// parsing, name resolution, type checking or lowering occurs here.
+pub fn execute_compiled(
+    program: &tondo_vm::bytecode::BytecodeProgram,
+    entry: tondo_vm::bytecode::BytecodeFunctionId,
+    limits: tondo_vm::runtime::VmLimits,
+    participation: TestParticipation,
+    diagnostics: Option<tondo_vm::runtime::DiagnosticConfig>,
+) -> Result<tondo_vm::runtime::VmExecution, tondo_vm::runtime::VmError> {
+    let mut host =
+        crate::process_host::BootstrapHost::with_max_bytes(Vec::new(), limits.max_heap_bytes);
+    host.install_testing_participation(participation);
+    tondo_vm::runtime::execute_with_limits_and_copy_strategy_and_diagnostics(
+        program,
+        entry,
+        &mut host,
+        limits,
+        tondo_vm::runtime::ValueCopyStrategy::default(),
+        diagnostics,
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestExecutionKind {
@@ -43,6 +67,7 @@ pub struct TestParticipation {
 
 #[derive(Debug)]
 struct TestParticipationInner {
+    interrupted: Arc<AtomicBool>,
     limits: EnvelopeLimits,
     expected: BTreeMap<String, BTreeMap<String, String>>,
     update_snapshots: bool,
@@ -50,6 +75,19 @@ struct TestParticipationInner {
 }
 
 impl TestParticipation {
+    /// Shares the worker's external cancellation request with the hosted VM.
+    /// The request stops the participation; it is never a test assertion.
+    pub fn with_interruption(mut self, interrupted: Arc<AtomicBool>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("configure interruption before sharing a participation")
+            .interrupted = interrupted;
+        self
+    }
+
+    pub(crate) fn interrupted(&self) -> bool {
+        self.inner.interrupted.load(Ordering::Acquire)
+    }
+
     pub fn new(
         limits: EnvelopeLimits,
         expected: BTreeMap<String, BTreeMap<String, String>>,
@@ -57,6 +95,7 @@ impl TestParticipation {
     ) -> Self {
         Self {
             inner: Arc::new(TestParticipationInner {
+                interrupted: Arc::new(AtomicBool::new(false)),
                 limits,
                 expected,
                 update_snapshots,
@@ -210,7 +249,7 @@ pub fn discover(
     sources: &SourceDatabase,
     file: FileId,
     cst: &Cst,
-    _package: &PackageId,
+    source_class: TestSourceClass,
     package_name: &str,
 ) -> Result<Vec<TestEntry>, TestBackendError> {
     if cst.root_node().descendant_tokens().any(|token| {
@@ -236,6 +275,7 @@ pub fn discover(
         root.declarations(),
         package_name,
         source.path().as_str(),
+        source_class.test_id_segment(),
         source.module().as_str(),
         &mut parents,
         &mut setup,
@@ -244,18 +284,18 @@ pub fn discover(
     Ok(entries)
 }
 
-/// Produces a complete ordinary module whose `main` body is the selected
+/// Produces a complete ordinary module whose private entry body is the selected
 /// test.  All non-test declarations and imports remain available, while
 /// suites contribute setup statements in declaration order.
 pub fn lower_selected(
     sources: &SourceDatabase,
     file: FileId,
     cst: &Cst,
-    package: &PackageId,
+    source_class: TestSourceClass,
     package_name: &str,
     selector: Option<&str>,
 ) -> Result<Vec<u8>, TestBackendError> {
-    let entries = discover(sources, file, cst, package, package_name)?;
+    let entries = discover(sources, file, cst, source_class, package_name)?;
     let selected = match selector {
         Some(selector) => {
             let matches = entries
@@ -302,7 +342,7 @@ pub fn lower_selected(
     if saw_main {
         return Err(TestBackendError::ProductionMain);
     }
-    output.extend_from_slice(b"fn main() {\n");
+    output.extend_from_slice(b"fn __tondoTestEntry() {\n");
     for statement in selected.setup() {
         output.extend_from_slice(statement);
         output.extend_from_slice(b"\n");
@@ -320,11 +360,11 @@ pub fn lower_participation<'a>(
     sources: &SourceDatabase,
     file: FileId,
     cst: &Cst,
-    package: &PackageId,
+    source_class: TestSourceClass,
     package_name: &str,
     selectors: impl IntoIterator<Item = &'a str>,
 ) -> Result<Vec<u8>, TestBackendError> {
-    let entries = discover(sources, file, cst, package, package_name)?;
+    let entries = discover(sources, file, cst, source_class, package_name)?;
     let selected = selectors
         .into_iter()
         .enumerate()
@@ -365,7 +405,7 @@ pub fn lower_participation<'a>(
     if saw_main {
         return Err(TestBackendError::ProductionMain);
     }
-    output.extend_from_slice(b"fn main() {\n");
+    output.extend_from_slice(b"fn __tondoTestEntry() {\n");
     let root = SourceFile::root(cst)
         .ok_or_else(|| TestBackendError::InvalidBody("missing module root".into()))?;
     let mut parents = Vec::new();
@@ -374,7 +414,7 @@ pub fn lower_participation<'a>(
         source.bytes(),
         root.declarations(),
         package_name,
-        source.path().as_str(),
+        source_class.test_id_segment(),
         source.module().as_str(),
         &mut parents,
         &selected,
@@ -389,16 +429,11 @@ fn emit_participation<'a>(
     source: &[u8],
     declarations: impl Iterator<Item = Declaration<'a>>,
     package_name: &str,
-    logical_path: &str,
+    source_class: &str,
     module: &str,
     parents: &mut Vec<String>,
     selected: &BTreeMap<String, usize>,
 ) -> Result<(), TestBackendError> {
-    let source_class = if logical_path == "tests" || logical_path.starts_with("tests/") {
-        "integration"
-    } else {
-        "unit"
-    };
     let mut declarations = declarations.collect::<Vec<_>>();
     declarations.sort_by_key(|declaration| {
         participation_rank(
@@ -458,7 +493,7 @@ fn emit_participation<'a>(
                         source,
                         body.members(),
                         package_name,
-                        logical_path,
+                        source_class,
                         module,
                         parents,
                         selected,
@@ -554,6 +589,7 @@ fn visit_declarations<'a>(
     declarations: impl Iterator<Item = Declaration<'a>>,
     package_name: &str,
     logical_path: &str,
+    source_class: &str,
     module: &str,
     parents: &mut Vec<String>,
     setup: &mut Vec<Vec<u8>>,
@@ -571,12 +607,6 @@ fn visit_declarations<'a>(
                 let body = test
                     .body()
                     .ok_or_else(|| TestBackendError::InvalidBody("test has no body".into()))?;
-                let source_class = if logical_path == "tests" || logical_path.starts_with("tests/")
-                {
-                    "integration"
-                } else {
-                    "unit"
-                };
                 let id = test_id(package_name, source_class, module, parents, name);
                 entries.push(TestEntry {
                     file,
@@ -609,6 +639,7 @@ fn visit_declarations<'a>(
                     body.members(),
                     package_name,
                     logical_path,
+                    source_class,
                     module,
                     parents,
                     setup,
@@ -679,7 +710,14 @@ mod tests {
     use crate::source::{LogicalPath, ModulePath, SourceId, SourceInput};
     use crate::syntax::{LexMode, ParseMode, lex, parse};
 
-    fn parsed(source: &[u8]) -> (SourceDatabase, FileId, crate::syntax::Parsed, PackageId) {
+    fn parsed(
+        source: &[u8],
+    ) -> (
+        SourceDatabase,
+        FileId,
+        crate::syntax::Parsed,
+        TestSourceClass,
+    ) {
         let mut sources = SourceDatabase::new();
         let file = sources
             .add(SourceInput::virtual_file(
@@ -691,17 +729,44 @@ mod tests {
             .unwrap();
         let lexed = lex(&sources, file, LexMode::Module).unwrap();
         let parsed = parse(&sources, file, lexed, ParseMode::Module, Default::default()).unwrap();
-        let package = PackageId::new("root:test-backend").unwrap();
-        (sources, file, parsed, package)
+        let source_class = TestSourceClass::UnitTest;
+        (sources, file, parsed, source_class)
+    }
+
+    #[test]
+    fn explicit_source_class_controls_ids_independently_of_path() {
+        let (sources, file, parsed, _) = parsed(b"test smoke { assert(true) }\n");
+        for (class, segment) in [
+            (TestSourceClass::UnitTest, "unit"),
+            (TestSourceClass::IntegrationTest, "integration"),
+        ] {
+            let entries = discover(&sources, file, parsed.cst(), class, "main").unwrap();
+            assert_eq!(entries[0].id(), format!("main::{segment}::tests::smoke"));
+            let lowered = lower_participation(
+                &sources,
+                file,
+                parsed.cst(),
+                class,
+                "main",
+                [entries[0].id()],
+            )
+            .unwrap();
+            assert!(
+                String::from_utf8(lowered)
+                    .unwrap()
+                    .contains(entries[0].id())
+            );
+        }
     }
 
     #[test]
     fn lowers_top_level_test_to_real_main_body() {
-        let (sources, file, parsed, package) =
+        let (sources, file, parsed, source_class) =
             parsed(b"import std.console\n\ntest smoke { assert(true) }\n");
-        let output = lower_selected(&sources, file, parsed.cst(), &package, "main", None).unwrap();
+        let output =
+            lower_selected(&sources, file, parsed.cst(), source_class, "main", None).unwrap();
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("fn main()"));
+        assert!(text.contains("fn __tondoTestEntry()"));
         assert!(text.contains("assert(true)"));
         assert!(!text.contains("test smoke"));
     }
@@ -709,14 +774,14 @@ mod tests {
     #[test]
     fn suite_setup_is_inlined_before_the_child_body() {
         let source = b"suite arithmetic { let offset = 2\n test adds { assert(offset == 2) } }\n";
-        let (sources, file, parsed, package) = parsed(source);
-        let entries = discover(&sources, file, parsed.cst(), &package, "main").unwrap();
+        let (sources, file, parsed, source_class) = parsed(source);
+        let entries = discover(&sources, file, parsed.cst(), source_class, "main").unwrap();
         assert_eq!(entries.len(), 1);
         let output = lower_selected(
             &sources,
             file,
             parsed.cst(),
-            &package,
+            source_class,
             "main",
             Some(entries[0].id()),
         )
@@ -728,11 +793,19 @@ mod tests {
     #[test]
     fn participation_emits_selected_members_in_the_planned_tree_order() {
         let source = b"suite ordered {\n test first { assert(true) }\n suite nested { test middle { assert(true) } }\n test last { assert(true) }\n}\n";
-        let (sources, file, parsed, package) = parsed(source);
-        let entries = discover(&sources, file, parsed.cst(), &package, "main").unwrap();
+        let (sources, file, parsed, source_class) = parsed(source);
+        let entries = discover(&sources, file, parsed.cst(), source_class, "main").unwrap();
         let selectors = [entries[2].id(), entries[1].id(), entries[0].id()];
         let text = String::from_utf8(
-            lower_participation(&sources, file, parsed.cst(), &package, "main", selectors).unwrap(),
+            lower_participation(
+                &sources,
+                file,
+                parsed.cst(),
+                source_class,
+                "main",
+                selectors,
+            )
+            .unwrap(),
         )
         .unwrap();
         let last = text.find(entries[2].id()).unwrap();
@@ -747,20 +820,20 @@ mod tests {
             b"fn value(): Int suspends { 1 }\nsuite service { let item = value()\n test reads { assert(item == 1) } }\n".as_slice(),
             b"fn value(): Int suspends { 1 }\ntest reads { assert(value() == 1) }\n".as_slice(),
         ] {
-            let (sources, file, parsed, package) = parsed(source);
+            let (sources, file, parsed, source_class) = parsed(source);
             let output =
-                lower_selected(&sources, file, parsed.cst(), &package, "main", None).unwrap();
+                lower_selected(&sources, file, parsed.cst(), source_class, "main", None).unwrap();
             assert!(String::from_utf8(output)
                 .unwrap()
-                .contains("fn main()"));
+                .contains("fn __tondoTestEntry()"));
         }
     }
 
     #[test]
     fn rejects_a_production_main_in_a_test_target() {
         let source = b"fn main() {}\ntest smoke { assert(true) }\n";
-        let (sources, file, parsed, package) = parsed(source);
-        let error = lower_selected(&sources, file, parsed.cst(), &package, "main", None)
+        let (sources, file, parsed, source_class) = parsed(source);
+        let error = lower_selected(&sources, file, parsed.cst(), source_class, "main", None)
             .expect_err("main must be rejected by the test backend");
         assert_eq!(error, TestBackendError::ProductionMain);
     }
@@ -768,8 +841,8 @@ mod tests {
     #[test]
     fn toolchain_test_boundary_namespace_cannot_be_spelled_by_user_source() {
         let source = b"import std.testing as __tondoTesting\ntest smoke { assert(true) }\n";
-        let (sources, file, parsed, package) = parsed(source);
-        let error = discover(&sources, file, parsed.cst(), &package, "main")
+        let (sources, file, parsed, source_class) = parsed(source);
+        let error = discover(&sources, file, parsed.cst(), source_class, "main")
             .expect_err("toolchain namespace must stay sealed");
         assert!(error.to_string().contains("reserved for the toolchain"));
     }

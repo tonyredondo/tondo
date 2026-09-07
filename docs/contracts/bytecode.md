@@ -32,6 +32,12 @@ This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
 stable artifact format. `TONDO_LANGUAGE_SPEC.md` remains normative.
 
+The test coordinator can encode an invocation-owned program for a fresh worker
+of the same CLI executable. Serde preserves all bytecode tables, exact integer
+values, float bit patterns and request-local indices. This private transport
+is bounded and verified again before execution, as described in
+`docs/contracts/test-cli-plan.md`; it adds no persistent bytecode ABI.
+
 ## Ownership and admission
 
 `tondo-vm` owns the bytecode data model, verifier, and interpreter.

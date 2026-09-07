@@ -11,9 +11,9 @@
       "backend": "bytecode-vm",
       "profile": "test",
       "probe": {
-        "path": "crates/tondo-vm/src/runtime/execute.rs",
+        "path": "crates/tondo-vm/src/runtime/executor_performance.rs",
         "test": "runtime::execute::tests::executor_performance::executor_performance_probe",
-        "sha256": "a01d8c03da604220406ddf4656b3f0ce8d98fa2b8978c7e93308fe7d7249add0"
+        "sha256": "61750a8d0ba0aa3e3dd006889b5404e4ee5619f119ad0efaac8663ef6cede9fe"
       }
     },
     "native_runtime": {
@@ -23,7 +23,7 @@
       "probe": {
         "path": "crates/tondo-native-runtime/src/lib.rs",
         "test": "tests::native_blocking_performance_probe",
-        "sha256": "7b20621f6261bb41f58e9ffc078d8534ff5f5f30cb0224d0009b4f275c6bb72a"
+        "sha256": "aa1819c598da3d232ac5ff49ce434791475f5a145e80b7f4536ac3afd373f802"
       }
     }
   },

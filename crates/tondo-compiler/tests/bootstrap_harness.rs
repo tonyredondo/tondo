@@ -46,6 +46,32 @@ fn repository_fixtures_match_their_sidecars() {
 }
 
 #[test]
+fn public_rounding_modes_reject_wrong_arity_and_non_float_values() {
+    for operation in ["round", "roundTiesAway"] {
+        for statement in [
+            format!("_ = math.{operation}()"),
+            format!("_ = math.{operation}(2.5, 3.5)"),
+            format!("let value: Int = 2\n _ = math.{operation}(value)"),
+            format!("_ = math.{operation}(true)"),
+        ] {
+            let source = format!("import std.math\nfn main() {{\n {statement}\n}}\n");
+            let output = execute(inline_module_request(
+                Operation::Check,
+                "rounding-signatures.to",
+                source.as_bytes(),
+            ))
+            .unwrap();
+            assert_eq!(output.exit_code(), 1, "{statement}");
+            assert!(
+                output.diagnostics().human().contains("E11"),
+                "{statement}: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+}
+
+#[test]
 fn inline_fixture_observes_structured_driver_output() {
     let request = inline_request(
         Operation::Check,
@@ -63,11 +89,12 @@ fn inline_fixture_observes_structured_driver_output() {
 #[test]
 fn public_driver_executes_a_fallible_virtual_time_callback() {
     let base = inline_module_request(
-        Operation::Check,
+        Operation::Test,
         "virtual-time.to",
         b"import std.testing\nimport std.time\ntest virtualClock {\n match testing.withVirtualTime((clock) {\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(3))\n   clock.settle()\n   _ = await sleeper?\n  }\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
     );
     let entries = discover_tests(&base).unwrap();
+    assert_eq!(entries.len(), 1);
     let request = base
         .for_test_entry(&entries[0])
         .unwrap()
@@ -79,6 +106,61 @@ fn public_driver_executes_a_fallible_virtual_time_callback() {
 
     assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
     assert!(output.diagnostics().is_empty());
+}
+
+#[test]
+fn receiver_selected_suspension_rechecks_forward_function_values_and_sync_contracts() {
+    for annotation in ["", "@nosuspend\n"] {
+        let source = format!(
+            "import std.process\n{annotation}fn first() {{\n let work = later\n work()\n}}\nfn later() {{\n _ = process.command(\"compile-only-program\").run()\n}}\nfn main() {{ first() }}\n"
+        );
+        let output = execute(inline_module_request(
+            Operation::Check,
+            "late-effects.to",
+            source.as_bytes(),
+        ))
+        .unwrap();
+        if annotation.is_empty() {
+            assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+            assert!(output.diagnostics().is_empty());
+        } else {
+            assert_eq!(output.exit_code(), 1);
+            assert!(
+                output.diagnostics().human().contains("E1601"),
+                "{}",
+                output.diagnostics().human()
+            );
+        }
+    }
+}
+
+#[test]
+fn discarded_await_consumes_the_join_and_rejects_a_second_consumption() {
+    for (body, success) in [
+        ("_ = await pending", true),
+        ("let _ = await pending", true),
+        ("_ = await pending\n _ = await pending", false),
+        ("_ = pending", false),
+    ] {
+        let source = format!(
+            "fn child(): Int suspends {{ 42 }}\nfn main() {{\n scope {{\n let pending = spawn child()\n {body}\n }}\n}}\n"
+        );
+        let output = execute(inline_module_request(
+            Operation::Run,
+            "join-discard.to",
+            source.as_bytes(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.exit_code() == 0,
+            success,
+            "{body}: {}",
+            output.diagnostics().human()
+        );
+        if !success {
+            assert!(output.diagnostics().human().contains("E140"));
+        }
+    }
 }
 
 #[test]

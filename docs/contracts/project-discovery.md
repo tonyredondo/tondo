@@ -1,6 +1,11 @@
 # Convention-first project discovery
 
-**Status:** implemented for the unpublished Tondo 0.1 draft
+**Status:** conventional TOML discovery is implemented for the unpublished
+Tondo 0.1 draft. Public test compilation now validates production before the
+combined target and validates the full target before selection. Production
+semantics are retained for unit overlays and isolated integration consumers;
+workers execute captured bytecode. Development dependencies and general runtime
+input providers still require integration; discovery does not close those gates.
 
 The user-facing CLI accepts a project directory and never requires a JSON
 manifest. `tondo` uses the current directory by default; `--project <dir>`
@@ -44,6 +49,13 @@ JSON project configuration or compatibility fallback.
 TOML describes the closed `tondo-test-plan-draft` shape and is converted to the
 internal value model before validation. The sidecar is optional, and CLI flags
 overlay its selection/policy without rewriting it.
+
+Before selection and worker creation, an explicit sidecar is reconciled with
+conventional discovery by source class, physical path, logical path, module,
+input name and owning package. Missing or additional sources and changed
+identities are usage errors even for a list or an empty selection. The host
+currently reads sources while constructing internal lock hashes, before this
+reconciliation; this is not a claim of metadata-only discovery before source I/O.
 
 ## Determinism and boundary
 

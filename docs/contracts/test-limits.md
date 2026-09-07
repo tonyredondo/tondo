@@ -1,9 +1,10 @@
 # Finite test limits and phase deadlines
 
-**Status:** implemented for `UTEST-LIMIT-001`
+**Status:** bounded Rust model and partial public enforcement;
+`UTEST-LIMIT-001` remains open for per-phase worker integration.
 
-`tondo_compiler::test_limits` defines the coordinator-side resource profile
-used by every leaf and suite phase. Defaults are finite for work, memory,
+`tondo_compiler::test_limits` models a coordinator-side resource profile
+for leaves and suite phases. Defaults are finite for work, memory,
 depth, output, artifacts, snapshots, metadata, virtual timers, ready queues
 and instructions. The host-independent profile can represent a disabled
 wall-clock timeout, but the canonical CLI defaults and any sidecar always
@@ -29,4 +30,14 @@ the setup/teardown deadline. `None` represents an intentionally disabled
 wall-clock deadline for non-sidecar consumers and does not disable any
 structural budget. `InterruptController` models the first cancellation
 request, one finite grace period and forced termination of a non-cooperative
-worker. Clock regressions are rejected rather than wrapped.
+worker. Clock regressions are rejected rather than wrapped. These are model
+operations; the public worker watchdog currently measures an entire suite
+participation with one monotonic start time.
+
+The 2026-09-07 audit exercised one suite with two leaves, each awaiting
+`time.sleep(time.Duration.fromNanoseconds(350000000))`. Each selected alone
+passed with `--timeout 500ms`. Selecting both caused exit 3 and
+`test worker timed out`, while both passed with `--timeout 1500ms`. This
+contradicts the independent body/setup/teardown deadlines in testing section
+7.8. The public phase transition, watchdog, terminal reporting and retry paths
+must be verified together before this task or T0 can close.

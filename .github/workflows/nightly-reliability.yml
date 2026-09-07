@@ -35,6 +35,11 @@ jobs:
           restore-keys: |
             tondo-nightly-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: Install full-gate fuzz toolchain
+        run: |
+          rustup toolchain install nightly-2026-07-28 --profile minimal
+          cargo install cargo-fuzz --version 0.13.2 --locked
+
       - name: Run complete test gate
         env:
           TONDO_TEST_TARGET: linux-x86_64

@@ -28,7 +28,7 @@ jq -e \
     --slurpfile implementation testing/stdlib-implementation.json \
     --slurpfile integration testing/stdlib-spec.json \
     --slurpfile performance testing/stdlib-performance.json \
-    --slurpfile api testing/stdlib-public-api.json \
+    --slurpfile api "${TONDO_STDLIB_PUBLIC_API:-testing/stdlib-public-api.json}" \
     '
       . as $matrix
       | def expected_owners:

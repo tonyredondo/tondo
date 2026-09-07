@@ -1,11 +1,18 @@
 # Test-only dependency graph contract
 
-**Status:** implemented for `UTEST-DEPS-001`
+**Status:** bounded graph model; public integration remains open under
+`UTEST-DEPS-001`.
 
 `tondo_compiler::test_dependencies` validates the dev-dependency interface
 records alongside, but never inside, the production `PackageGraph`. It accepts
 already supplied lockfile metadata and performs no fetch, file read, resolution
 or source compilation.
+
+The production lockfile reader has no test-interface record section and the
+public CLI does not yet load or link these dev interfaces. The model's
+`resolve_alias` result is not evidence that an imported test dependency
+executes. Closing this task requires the ordinary test compilation and worker
+path, including transitive imports, stale hashes and production isolation.
 
 ## Closed records
 

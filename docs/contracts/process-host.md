@@ -126,6 +126,10 @@ reordering is performed.
 with an operating-system pipe. No unbounded Tondo buffer is inserted, so the
 kernel pipe applies backpressure. Stderr is never merged implicitly.
 
+The first stage has closed stdin.
+It never inherits the compiler terminal or the test worker's private control
+pipe. Pipeline stages continue to receive only the preceding stage's stream.
+
 `Command.mergeStderr()` and `Pipeline.mergeStderr()` are explicit typed
 redirections. On a non-final stage they connect both stdout and stderr to the
 next stage's stdin (`|&` / `2>&1 |`); on the final stage they expose both streams

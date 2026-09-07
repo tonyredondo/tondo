@@ -389,7 +389,7 @@ impl ResolvedModule {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct ResolvedProgram {
     modules: BTreeMap<ModuleId, ResolvedModule>,
     files: BTreeMap<FileId, FileResolution>,
@@ -500,6 +500,7 @@ pub enum ResolveError {
     PackageGraph(PackageGraphError),
     Diagnostic(DiagnosticError),
     DiagnosticLimit { file: FileId, offset: u32 },
+    SealedSource { file: FileId },
 }
 
 impl fmt::Display for ResolveError {
@@ -513,6 +514,9 @@ impl fmt::Display for ResolveError {
                     formatter,
                     "primary diagnostic count limit reached at byte {offset}"
                 )
+            }
+            Self::SealedSource { file } => {
+                write!(formatter, "resolution cannot reopen sealed source {file}")
             }
         }
     }
@@ -1119,32 +1123,68 @@ pub fn resolve<'a>(
         diagnostics: Vec::new(),
         max_diagnostics,
     };
-    resolver.resolve()
+    resolver.resolve(ResolvedProgram::default())
+}
+
+/// Resolves only appended source files against an immutable production result.
+/// Existing symbol, member, local and reference IDs are preserved. The caller
+/// must retain the production source database as an unchanged prefix and admit
+/// only a production result whose diagnostics and semantic checks succeeded.
+/// Supplying a parsed production file is an error, never a request to recheck it.
+pub fn resolve_extension<'a>(
+    packages: &'a PackageGraph,
+    sources: &'a SourceDatabase,
+    parsed: impl IntoIterator<Item = (FileId, &'a Parsed)>,
+    production: &ResolvedProgram,
+    max_diagnostics: usize,
+) -> Result<ResolveOutput, ResolveError> {
+    let mut resolver = Resolver {
+        packages,
+        sources,
+        parsed: parsed.into_iter().collect(),
+        diagnostics: Vec::new(),
+        max_diagnostics,
+    };
+    resolver.resolve(production.clone())
 }
 
 impl Resolver<'_> {
-    fn resolve(&mut self) -> Result<ResolveOutput, ResolveError> {
+    fn resolve(&mut self, mut program: ResolvedProgram) -> Result<ResolveOutput, ResolveError> {
         let mut declarations = Vec::new();
-        let mut files = BTreeMap::new();
         let mut edges = Vec::new();
+        // Imports already resolved in production still constrain module cycles,
+        // without requiring any production syntax or body to be revisited.
+        for (file, resolution) in &program.files {
+            let from = self.packages.module_for_file(self.sources, *file)?;
+            edges.extend(resolution.imports.values().map(|import| ImportEdge {
+                from: from.clone(),
+                to: import.module.clone(),
+                file: *file,
+                range: import.span.range(),
+            }));
+        }
         let ordered_files = self.ordered_files()?;
         for file in &ordered_files {
-            self.collect_file(*file, &mut declarations, &mut files, &mut edges)?;
+            if program.files.contains_key(file) {
+                return Err(ResolveError::SealedSource { file: *file });
+            }
+            self.collect_file(*file, &mut declarations, &mut program.files, &mut edges)?;
         }
         self.collect_script_entries(&mut declarations)?;
-        let (modules, symbols) = self.build_symbols(declarations, &ordered_files)?;
-        self.diagnose_import_declaration_conflicts(&modules, &files, &symbols, &ordered_files)?;
+        (program.modules, program.symbols) = self.build_symbols(
+            declarations,
+            &ordered_files,
+            program.modules,
+            program.symbols,
+        )?;
+        let all_files = program.files.keys().copied().collect::<Vec<_>>();
+        self.diagnose_import_declaration_conflicts(
+            &program.modules,
+            &program.files,
+            &program.symbols,
+            &all_files,
+        )?;
         self.diagnose_import_cycles(&edges)?;
-        let mut program = ResolvedProgram {
-            modules,
-            files,
-            symbols,
-            members: Vec::new(),
-            members_by_owner: BTreeMap::new(),
-            locals: Vec::new(),
-            references: BTreeMap::new(),
-            bootstrap_nominals: BTreeMap::new(),
-        };
         members::collect_members(
             self.packages,
             self.sources,
@@ -1261,6 +1301,12 @@ impl Resolver<'_> {
         let span = self.sources.span(file, TextRange::empty(0))?;
         for (name, kind, shape) in nominals {
             let name = Name::new(name).expect("bootstrap nominal type names are valid");
+            if program
+                .bootstrap_nominals
+                .contains_key(&(module.clone(), name.clone()))
+            {
+                continue;
+            }
             let id = SymbolId(
                 u32::try_from(program.symbols.len())
                     .expect("symbol count is bounded by resolved syntax"),
@@ -1615,9 +1661,10 @@ impl Resolver<'_> {
         &mut self,
         mut declarations: Vec<DeclarationCandidate>,
         ordered_files: &[FileId],
+        mut modules: BTreeMap<ModuleId, ResolvedModule>,
+        mut symbols: Vec<Symbol>,
     ) -> Result<(BTreeMap<ModuleId, ResolvedModule>, Vec<Symbol>), ResolveError> {
         declarations.sort_by_key(|candidate| self.candidate_key(candidate));
-        let mut modules = BTreeMap::<ModuleId, ResolvedModule>::new();
         for file in ordered_files {
             let module = self.packages.module_for_file(self.sources, *file)?;
             modules
@@ -1632,7 +1679,6 @@ impl Resolver<'_> {
                 .push(*file);
         }
 
-        let mut symbols = Vec::new();
         let mut index = 0;
         while index < declarations.len() {
             let start = index;
@@ -1650,8 +1696,15 @@ impl Resolver<'_> {
                 index += 1;
             }
             let first = &declarations[start];
-            let first_span = self.sources.span(first.file, first.range)?;
-            for duplicate in &declarations[start + 1..index] {
+            let existing = modules
+                .get(&first.module)
+                .and_then(|module| module.lookup(first.namespace, &first.name));
+            let first_span = match existing {
+                Some(id) => symbols[id.index() as usize].span(),
+                None => self.sources.span(first.file, first.range)?,
+            };
+            let duplicate_start = start + usize::from(existing.is_none());
+            for duplicate in &declarations[duplicate_start..index] {
                 let span = self.sources.span(duplicate.file, duplicate.range)?;
                 let diagnostic = Diagnostic::new(
                     Severity::Error,
@@ -1669,6 +1722,9 @@ impl Resolver<'_> {
                     first_span,
                 )?);
                 self.push(duplicate.file, duplicate.range.start(), diagnostic)?;
+            }
+            if existing.is_some() {
+                continue;
             }
 
             let identity = self.packages.symbol_identity(
@@ -2146,7 +2202,19 @@ mod tests {
             assert!(syntax.diagnostics().is_empty(), "{source}");
             parsed.push((file, syntax));
         }
-        let graph = PackageGraph::new(
+        let graph = test_graph(modules);
+        let output = resolve(
+            &graph,
+            &sources,
+            parsed.iter().map(|(file, parsed)| (*file, parsed)),
+            100,
+        )
+        .unwrap();
+        (sources, output)
+    }
+
+    fn test_graph(modules: &[&str]) -> PackageGraph {
+        PackageGraph::new(
             PackageId::new("pkg:app").unwrap(),
             PackageId::new("pkg:std").unwrap(),
             [
@@ -2172,15 +2240,7 @@ mod tests {
                 .unwrap(),
             ],
         )
-        .unwrap();
-        let output = resolve(
-            &graph,
-            &sources,
-            parsed.iter().map(|(file, parsed)| (*file, parsed)),
-            100,
-        )
-        .unwrap();
-        (sources, output)
+        .unwrap()
     }
 
     fn codes(sources: &SourceDatabase, output: ResolveOutput) -> Vec<String> {
@@ -2193,6 +2253,212 @@ mod tests {
             .iter()
             .map(|diagnostic| diagnostic.code().to_owned())
             .collect()
+    }
+
+    fn append_extension(
+        sources: &mut SourceDatabase,
+        module: &str,
+        text: &str,
+    ) -> (FileId, Parsed) {
+        let file = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("source:app").unwrap(),
+                ModulePath::new(module).unwrap(),
+                LogicalPath::new("extension_test.to").unwrap(),
+                Arc::<[u8]>::from(text.as_bytes()),
+            ))
+            .unwrap();
+        let lexed = lex(sources, file, LexMode::Module).unwrap();
+        let parsed = parse(
+            sources,
+            file,
+            lexed,
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        assert!(parsed.diagnostics().is_empty());
+        (file, parsed)
+    }
+
+    #[test]
+    fn resolution_extension_preserves_production_ids_and_private_references() {
+        let (mut sources, production) = resolve_sources(
+            &[(
+                "main",
+                "production.to",
+                "type Value = { number: Int }\nfn zeta(value: Int): Int { value }\nfn caller(): Int { zeta(42) }\n",
+            )],
+            &["main"],
+        );
+        assert!(production.diagnostics().is_empty());
+        let production = production.program();
+        let before = format!("{production:?}");
+        let symbols = production.symbols().len();
+        let locals = production.locals().len();
+        let members = production.members().len();
+        let (file, parsed) = append_extension(
+            &mut sources,
+            "main",
+            "type Auxiliary = { field: Int }\nfn alpha(value: Int): Int { zeta(value) }\n",
+        );
+        let result = resolve_extension(
+            &test_graph(&["main"]),
+            &sources,
+            [(file, &parsed)],
+            production,
+            100,
+        )
+        .unwrap();
+        assert!(
+            result.diagnostics().is_empty(),
+            "{:?}",
+            result.diagnostics()
+        );
+        let extended = result.program();
+        for (old, new) in production.symbols().zip(extended.symbols()) {
+            assert_eq!(old.id(), new.id());
+            assert_eq!(old.identity(), new.identity());
+            assert_eq!(old.span(), new.span());
+        }
+        assert!(
+            extended
+                .symbols()
+                .skip(symbols)
+                .any(|symbol| symbol.name().as_str() == "alpha")
+        );
+        assert!(extended.locals().len() > locals);
+        assert!(extended.members().len() > members);
+        for (key, reference) in &production.references {
+            assert_eq!(
+                format!("{:?}", extended.references.get(key).unwrap()),
+                format!("{reference:?}")
+            );
+        }
+        let zeta = production
+            .symbols()
+            .find(|symbol| symbol.name().as_str() == "zeta")
+            .unwrap()
+            .id();
+        assert!(extended.references.iter().any(|((reference_file, _, _), reference)| *reference_file == file && matches!(reference.entity(), ResolvedEntity::Name(ResolvedName::Symbol(symbol)) if *symbol == zeta)));
+        assert_eq!(format!("{production:?}"), before);
+    }
+
+    #[test]
+    fn resolution_extension_rejects_collisions_and_reopening_production_syntax() {
+        let (mut sources, production) =
+            resolve_sources(&[("main", "production.to", "fn helper() {}\n")], &["main"]);
+        let production = production.program();
+        let (file, parsed) = append_extension(&mut sources, "main", "fn helper() {}\n");
+        let graph = test_graph(&["main"]);
+        let result =
+            resolve_extension(&graph, &sources, [(file, &parsed)], production, 100).unwrap();
+        assert_eq!(codes(&sources, result), ["E1002"]);
+        assert!(matches!(
+            resolve_extension(&graph, &sources, [(file, &parsed)], production, 0),
+            Err(ResolveError::DiagnosticLimit { .. })
+        ));
+        let production_file = sources.iter().next().unwrap().0;
+        let lexed = lex(&sources, production_file, LexMode::Module).unwrap();
+        let parsed = parse(
+            &sources,
+            production_file,
+            lexed,
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        let error = resolve_extension(
+            &graph,
+            &sources,
+            [(production_file, &parsed)],
+            production,
+            100,
+        )
+        .unwrap_err();
+        assert!(matches!(error, ResolveError::SealedSource { file } if file == production_file));
+        assert!(error.to_string().contains("cannot reopen sealed source"));
+    }
+
+    #[test]
+    fn resolution_extension_preserves_production_import_constraints() {
+        for (extension, expected) in [
+            ("import app.a\nfn helper() {}\n", "E1006"),
+            ("fn dependency() {}\n", "E1003"),
+        ] {
+            let (mut sources, production) = resolve_sources(
+                &[
+                    ("a", "a.to", "import app.b\nfn left() {}\n"),
+                    ("b", "b.to", "import app.c as dependency\nfn right() {}\n"),
+                    ("c", "c.to", "fn last() {}\n"),
+                ],
+                &["a", "b", "c"],
+            );
+            assert!(production.diagnostics().is_empty());
+            let (file, parsed) = append_extension(&mut sources, "b", extension);
+            let result = resolve_extension(
+                &test_graph(&["a", "b", "c"]),
+                &sources,
+                [(file, &parsed)],
+                production.program(),
+                100,
+            )
+            .unwrap();
+            assert_eq!(codes(&sources, result), [expected]);
+        }
+    }
+
+    #[test]
+    fn resolution_extension_preserves_bootstrap_nominal_and_member_ids() {
+        let mut sources = SourceDatabase::new();
+        let root = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("source:app").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("production.to").unwrap(),
+                Arc::<[u8]>::from(
+                    b"import std.json\nfn recover(value: json.JsonError) {}\n".as_slice(),
+                ),
+            ))
+            .unwrap();
+        let graph = PackageGraph::loose(&sources, root).unwrap();
+        let parsed = parse(
+            &sources,
+            root,
+            lex(&sources, root, LexMode::Module).unwrap(),
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        let production = resolve(&graph, &sources, [(root, &parsed)], 100).unwrap();
+        assert!(production.diagnostics().is_empty());
+        assert!(!production.program().bootstrap_nominals.is_empty());
+        let (file, parsed) = append_extension(
+            &mut sources,
+            "main",
+            "import std.json\nfn another(value: json.JsonError) {}\n",
+        );
+        let result = resolve_extension(
+            &graph,
+            &sources,
+            [(file, &parsed)],
+            production.program(),
+            100,
+        )
+        .unwrap();
+        assert!(result.diagnostics().is_empty());
+        assert_eq!(
+            result.program().bootstrap_nominals,
+            production.program().bootstrap_nominals
+        );
+        assert_eq!(
+            result.program().members.len(),
+            production.program().members.len()
+        );
+        assert_eq!(
+            result.program().symbols.len(),
+            production.program().symbols.len() + 1
+        );
     }
 
     #[test]

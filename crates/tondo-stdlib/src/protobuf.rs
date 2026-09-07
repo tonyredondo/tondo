@@ -1,5 +1,7 @@
 use crate::CodecError;
 
+const MAX_FIELD_NUMBER: u32 = 536_870_911;
+
 #[path = "protobuf_api.rs"]
 mod protobuf_api;
 pub use protobuf_api::*;
@@ -16,7 +18,7 @@ pub struct Field<'a> {
 }
 
 pub fn encode_key(number: u32, wire_type: u8, output: &mut Vec<u8>) -> Result<(), CodecError> {
-    if number == 0 || number > 536_870_911 || wire_type > 5 {
+    if number == 0 || number > MAX_FIELD_NUMBER || wire_type > 5 {
         return Err(CodecError::InvalidWireType);
     }
     encode_varint((u64::from(number) << 3) | u64::from(wire_type), output);
@@ -55,7 +57,7 @@ pub fn decode_fields(input: &[u8]) -> Result<Vec<Field<'_>>, CodecError> {
         let key = decode_varint(input, &mut offset)?;
         let number = u32::try_from(key >> 3).map_err(|_| CodecError::InvalidWireType)?;
         let wire_type = (key & 7) as u8;
-        if number == 0 || wire_type == 4 {
+        if number == 0 || number > MAX_FIELD_NUMBER || wire_type == 4 {
             return Err(CodecError::InvalidWireType);
         }
         let payload = match wire_type {
@@ -97,7 +99,7 @@ fn skip_group(input: &[u8], offset: &mut usize, root: u32) -> Result<(), CodecEr
         let key = decode_varint(input, offset)?;
         let number = u32::try_from(key >> 3).map_err(|_| CodecError::InvalidWireType)?;
         let wire_type = (key & 7) as u8;
-        if number == 0 || wire_type > 5 {
+        if number == 0 || number > MAX_FIELD_NUMBER || wire_type > 5 {
             return Err(CodecError::InvalidWireType);
         }
         match wire_type {
@@ -144,7 +146,7 @@ fn group_payload_end(
         let key = decode_varint(input, &mut offset)?;
         let number = u32::try_from(key >> 3).map_err(|_| CodecError::InvalidWireType)?;
         let wire_type = (key & 7) as u8;
-        if number == 0 || wire_type > 5 {
+        if number == 0 || number > MAX_FIELD_NUMBER || wire_type > 5 {
             return Err(CodecError::InvalidWireType);
         }
         match wire_type {

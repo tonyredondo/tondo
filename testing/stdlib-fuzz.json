@@ -2,8 +2,15 @@
   "format": "tondo-stdlib-fuzz/1",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "promoted",
+  "status": "partial",
+  "promotion": "pending",
+  "scope": "mixed component probes; no whole-owner or native promotion",
   "target": "stdlib_owners",
+  "audited_sources": [
+    {"path":"fuzz/fuzz_targets/stdlib_owners.rs","sha256":"6327473dabcc6133cd7371430071c934c97913f40538b2cba65798bf5c1e7873"},
+    {"path":"crates/tondo-reliability/src/codec_fuzz.rs","sha256":"a67d748281a37bbad0678357927c939372fd425ec5fb27d6c0f5ba154d060b1e"},
+    {"path":"crates/tondo-reliability/src/scalar_fuzz.rs","sha256":"bdba8ed7eee6cbb16a81755e1b8ac76078b7c33726c5c403b11ecd70c95e2fed"}
+  ],
   "route_selector": "input[0] modulo 22; payload is input[1..]",
   "limits": {
     "max_input_bytes": 65536,
@@ -24,11 +31,12 @@
     }
   },
   "oracle": {
-    "type": "bounded-no-panic-and-owner-invariants",
+    "type": "bounded-component-probes",
     "requirements": [
-      "successful inputs preserve the owner round-trip or model invariant",
-      "invalid inputs return a typed rejection without panicking",
-      "compiler probes retain deterministic diagnostics and accepted contracts"
+      "every selected route runs under the no-panic boundary",
+      "only kernel-invariants routes claim the explicitly asserted component properties",
+      "constant admission, Rust references, models and unchecked kernel results do not promote owner coverage",
+      "source changes require review of the recorded route scope before refreshing audited hashes"
     ]
   },
   "regressions": {
@@ -37,27 +45,27 @@
     "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_owners fuzz/corpus/stdlib_owners -- -runs=0"
   },
   "owners": [
-    {"id":"std.async","route":"std.async","corpus":"fuzz/corpus/stdlib_owners/std-async/seed","seed":3001,"limits":"compile-check and deterministic suspension contract","oracle":"accepted async declaration without panic"},
-    {"id":"std.bytes","route":"std.bytes","corpus":"fuzz/corpus/stdlib_owners/std-bytes/seed","seed":3002,"limits":"input <= 65536 bytes","oracle":"UTF-8 rejection and byte identity are deterministic"},
-    {"id":"std.collections","route":"std.collections","corpus":"fuzz/corpus/stdlib_owners/std-collections/seed","seed":3003,"limits":"16 generated elements","oracle":"map/set membership and cardinality agree"},
-    {"id":"std.console","route":"std.console","corpus":"fuzz/corpus/stdlib_owners/std-console/seed","seed":3004,"limits":"compile-check only; no host output","oracle":"console capability declaration remains accepted"},
-    {"id":"std.core","route":"std.core","corpus":"fuzz/corpus/stdlib_owners/std-core/seed","seed":3005,"limits":"compile-check of Option algebra","oracle":"Option fallback contract remains accepted"},
-    {"id":"std.env","route":"std.env","corpus":"fuzz/corpus/stdlib_owners/std-env/seed","seed":3006,"limits":"compile-check only; no process mutation","oracle":"environment snapshot contract remains accepted"},
-    {"id":"std.format","route":"std.format","corpus":"fuzz/corpus/stdlib_owners/std-format/seed","seed":3007,"limits":"output <= 256 bytes","oracle":"format and join respect bounded output"},
-    {"id":"std.fs","route":"std.fs","corpus":"fuzz/corpus/stdlib_owners/std-fs/seed","seed":3008,"limits":"compile-check only; no filesystem mutation","oracle":"filesystem capability declaration remains accepted"},
-    {"id":"std.io","route":"std.io","corpus":"fuzz/corpus/stdlib_owners/std-io/seed","seed":3009,"limits":"input <= 1024 bytes; chunk <= 8","oracle":"short reads and writes round-trip exactly"},
-    {"id":"std.iter","route":"std.iter","corpus":"fuzz/corpus/stdlib_owners/std-iter/seed","seed":3010,"limits":"compile-check of bounded adapters","oracle":"map/take/collect composition remains accepted"},
-    {"id":"std.json","route":"std.json","corpus":"fuzz/corpus/stdlib_owners/std-json/seed","seed":3011,"limits":"input <= 65536 bytes","oracle":"valid JSON re-encodes and invalid JSON rejects"},
-    {"id":"std.math","route":"std.math","corpus":"fuzz/corpus/stdlib_owners/std-math/seed","seed":3012,"limits":"one finite scalar derived from input","oracle":"IEEE kernels terminate for all special boundaries"},
-    {"id":"std.messagepack","route":"std.messagepack","corpus":"fuzz/corpus/stdlib_owners/std-messagepack/seed","seed":3013,"limits":"input <= 65536 bytes","oracle":"valid MessagePack deterministically re-encodes"},
-    {"id":"std.meta","route":"std.meta","corpus":"fuzz/corpus/stdlib_owners/std-meta/seed","seed":3014,"limits":"input <= 65536 bytes","oracle":"snapshot/request/response protocol probes are deterministic"},
-    {"id":"std.path","route":"std.path","corpus":"fuzz/corpus/stdlib_owners/std-path/seed","seed":3015,"limits":"native path <= 1024 bytes","oracle":"byte snapshots never normalize or panic"},
-    {"id":"std.process","route":"std.process","corpus":"fuzz/corpus/stdlib_owners/std-process/seed","seed":3016,"limits":"compile-check only; no process spawn","oracle":"process command capability declaration remains accepted"},
-    {"id":"std.protobuf","route":"std.protobuf","corpus":"fuzz/corpus/stdlib_owners/std-protobuf/seed","seed":3017,"limits":"input <= 65536 bytes","oracle":"wire validation and varint/field decoders reject safely"},
-    {"id":"std.reflect","route":"std.reflect","corpus":"fuzz/corpus/stdlib_owners/std-reflect/seed","seed":3018,"limits":"one bounded record in a closed catalog","oracle":"linked metadata retains exactly the rooted type"},
-    {"id":"std.serialization","route":"std.serialization","corpus":"fuzz/corpus/stdlib_owners/std-serialization/seed","seed":3019,"limits":"32 events and 1024 bytes","oracle":"event balance and Base64 round-trip hold"},
-    {"id":"std.testing","route":"std.testing","corpus":"fuzz/corpus/stdlib_owners/std-testing/seed","seed":3020,"limits":"diff input <= 256 bytes","oracle":"diff output stays bounded and tolerance is reflexive"},
-    {"id":"std.text","route":"std.text","corpus":"fuzz/corpus/stdlib_owners/std-text/seed","seed":3021,"limits":"input <= 65536 bytes","oracle":"UTF-8 scalar iteration and case transforms terminate"},
-    {"id":"std.time","route":"std.time","corpus":"fuzz/corpus/stdlib_owners/std-time/seed","seed":3022,"limits":"compile-check only; no wall-clock assertion","oracle":"time capability declaration remains accepted"}
+    {"id":"std.async","route":"std.async","corpus":"fuzz/corpus/stdlib_owners/std-async/seed","seed":3001,"limits":"compile-check and deterministic suspension contract","oracle":"accepted async declaration without panic","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."},
+    {"id":"std.bytes","route":"std.bytes","corpus":"fuzz/corpus/stdlib_owners/std-bytes/seed","seed":3002,"limits":"input <= 65536 bytes","oracle":"UTF-8 rejection and byte identity are deterministic","evidence_kind":"rust-reference-only","status":"partial","component_status":"partial","reason":"The route exercises Rust standard types; it does not execute Tondo implementation code."},
+    {"id":"std.collections","route":"std.collections","corpus":"fuzz/corpus/stdlib_owners/std-collections/seed","seed":3003,"limits":"16 generated elements","oracle":"map/set membership and cardinality agree","evidence_kind":"rust-reference-only","status":"partial","component_status":"partial","reason":"The route exercises Rust standard types; it does not execute Tondo implementation code."},
+    {"id":"std.console","route":"std.console","corpus":"fuzz/corpus/stdlib_owners/std-console/seed","seed":3004,"limits":"compile-check only; no host output","oracle":"console capability declaration remains accepted","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."},
+    {"id":"std.core","route":"std.core","corpus":"fuzz/corpus/stdlib_owners/std-core/seed","seed":3005,"limits":"compile-check of Option algebra","oracle":"Option fallback contract remains accepted","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."},
+    {"id":"std.env","route":"std.env","corpus":"fuzz/corpus/stdlib_owners/std-env/seed","seed":3006,"limits":"compile-check only; no process mutation","oracle":"environment snapshot contract remains accepted","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."},
+    {"id":"std.format","route":"std.format","corpus":"fuzz/corpus/stdlib_owners/std-format/seed","seed":3007,"limits":"signed 128-bit scalar; output limit 0..255 bytes; text input <= 1024 bytes","oracle":"exact number/join output or ResourceLimit, UTF-8 byte budgets and failed append atomicity","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.fs","route":"std.fs","corpus":"fuzz/corpus/stdlib_owners/std-fs/seed","seed":3008,"limits":"compile-check only; no filesystem mutation","oracle":"filesystem capability declaration remains accepted","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."},
+    {"id":"std.io","route":"std.io","corpus":"fuzz/corpus/stdlib_owners/std-io/seed","seed":3009,"limits":"input <= 1024 bytes; chunk <= 8","oracle":"short reads and writes round-trip exactly","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.iter","route":"std.iter","corpus":"fuzz/corpus/stdlib_owners/std-iter/seed","seed":3010,"limits":"compile-check of bounded adapters","oracle":"map/take/collect composition remains accepted","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."},
+    {"id":"std.json","route":"std.json","corpus":"fuzz/corpus/stdlib_owners/std-json/seed","seed":3011,"limits":"arbitrary input <= 65536 bytes; independent generated text <= 4096 input bytes","oracle":"parse/validate error agreement, exact value replay and serde_json interchange in the generated common domain","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.math","route":"std.math","corpus":"fuzz/corpus/stdlib_owners/std-math/seed","seed":3012,"limits":"one arbitrary Float64 bit pattern and three bounded signed 16-bit operands","oracle":"rounding bounds and ties, signed zero, sqrt domain/non-finite errors and relative residual, exact integer fma","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.messagepack","route":"std.messagepack","corpus":"fuzz/corpus/stdlib_owners/std-messagepack/seed","seed":3013,"limits":"input <= 65536 bytes","oracle":"parse/validate agreement, ordinary encoding validation and canonical replay or exact key-collision rejection","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.meta","route":"std.meta","corpus":"fuzz/corpus/stdlib_owners/std-meta/seed","seed":3014,"limits":"input <= 65536 bytes","oracle":"snapshot/request/response protocol probes are deterministic","evidence_kind":"bounded-model","status":"partial","component_status":"partial","reason":"The route checks a bounded Rust model; it does not establish public Tondo provider or reflection execution."},
+    {"id":"std.path","route":"std.path","corpus":"fuzz/corpus/stdlib_owners/std-path/seed","seed":3015,"limits":"native path <= 1024 bytes","oracle":"byte snapshots never normalize or panic","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.process","route":"std.process","corpus":"fuzz/corpus/stdlib_owners/std-process/seed","seed":3016,"limits":"compile-check only; no process spawn","oracle":"process command capability declaration remains accepted","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."},
+    {"id":"std.protobuf","route":"std.protobuf","corpus":"fuzz/corpus/stdlib_owners/std-protobuf/seed","seed":3017,"limits":"arbitrary input <= 65536 bytes; generated bytes payload <= 127","oracle":"u128 varint oracle, exact raw-field partition, valid field numbers and independent scalar/bytes wire construction","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.reflect","route":"std.reflect","corpus":"fuzz/corpus/stdlib_owners/std-reflect/seed","seed":3018,"limits":"one bounded record in a closed catalog","oracle":"linked metadata retains exactly the rooted type","evidence_kind":"bounded-model","status":"partial","component_status":"partial","reason":"The route checks a bounded Rust model; it does not establish public Tondo provider or reflection execution."},
+    {"id":"std.serialization","route":"std.serialization","corpus":"fuzz/corpus/stdlib_owners/std-serialization/seed","seed":3019,"limits":"32 events and 1024 bytes","oracle":"post-UTF8 scalar byte limits, event replay and bounded Base64 round-trip","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.testing","route":"std.testing","corpus":"fuzz/corpus/stdlib_owners/std-testing/seed","seed":3020,"limits":"diff input <= 256 bytes","oracle":"diff output stays bounded and tolerance is reflexive","evidence_kind":"kernel-invariants","status":"partial","component_status":"verified","reason":"Bounded kernel invariants are executable; this route does not establish the complete owner API, hosted lifecycle or native lowering."},
+    {"id":"std.text","route":"std.text","corpus":"fuzz/corpus/stdlib_owners/std-text/seed","seed":3021,"limits":"input <= 65536 bytes","oracle":"UTF-8 scalar iteration and case transforms terminate","evidence_kind":"rust-reference-only","status":"partial","component_status":"partial","reason":"The route exercises Rust standard types; it does not execute Tondo implementation code."},
+    {"id":"std.time","route":"std.time","corpus":"fuzz/corpus/stdlib_owners/std-time/seed","seed":3022,"limits":"compile-check only; no wall-clock assertion","oracle":"time capability declaration remains accepted","evidence_kind":"constant-admission","status":"partial","component_status":"partial","reason":"The route checks a fixed source independent of payload and does not execute the owner API."}
   ]
 }

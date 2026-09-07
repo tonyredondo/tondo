@@ -57,7 +57,8 @@ pub enum ValueCopyStrategy {
 }
 
 /// Defensive limits for one VM execution request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VmLimits {
     pub max_verification_steps: u64,
     pub max_steps: u64,
@@ -378,6 +379,22 @@ pub struct VmPanic {
     pub span: BytecodeSpan,
     pub stack: Vec<VmStackFrame>,
     pub suppressed: Vec<VmPanic>,
+    pub(super) from_test_control: bool,
+}
+
+impl VmPanic {
+    /// Finds the first language panic, excluding the VM's private test-control
+    /// unwind. A skip or budget terminal must not hide an actual cleanup panic.
+    pub fn language_panic(&self) -> Option<&Self> {
+        let mut pending = vec![self];
+        while let Some(panic) = pending.pop() {
+            if !panic.from_test_control {
+                return Some(panic);
+            }
+            pending.extend(panic.suppressed.iter().rev());
+        }
+        None
+    }
 }
 
 #[derive(Debug)]

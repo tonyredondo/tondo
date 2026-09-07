@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-seal_dir="${TONDO_STDLIB_S1A_SEAL_DIR:-$root/target/reliability/evidence/stdlib-s1a-seal}"
+seal_dir="${TONDO_STDLIB_S1A_SEAL_DIR:-${CARGO_TARGET_DIR:-$root/target}/reliability/evidence/stdlib-s1a-seal}"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/tondo-stdlib-s1a-seal-test.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
 

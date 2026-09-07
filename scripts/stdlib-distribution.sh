@@ -1,22 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 022
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 contract="${TONDO_STDLIB_DISTRIBUTION_CONTRACT:-$root/testing/stdlib-distribution.json}"
-vm_binary="${TONDO_VM_BINARY:-$root/target/debug/tondo}"
-output_dir="${TONDO_STDLIB_DISTRIBUTION_DIR:-$root/target/reliability/evidence/stdlib-distribution}"
-mkdir -p "$output_dir" "$root/.tmp"
+target_dir="${CARGO_TARGET_DIR:-$root/target}"
+vm_binary="${TONDO_VM_BINARY:-$target_dir/debug/tondo}"
+output_dir="${TONDO_STDLIB_DISTRIBUTION_DIR:-$target_dir/reliability/evidence/stdlib-distribution}"
+mkdir -p "$root/.tmp"
 
 [[ -x "$vm_binary" ]] || {
     echo "stdlib distribution: VM binary is missing or not executable: ${vm_binary#"$root"/}" >&2
     exit 1
 }
-scripts/stdlib-distribution-check.sh >/dev/null
+TONDO_STDLIB_DISTRIBUTION_CONTRACT="$contract" scripts/stdlib-distribution-check.sh >/dev/null
 
 work="$(mktemp -d "$root/.tmp/tondo-stdlib-distribution.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
+
+input_binary="$vm_binary"
+input_contract="$contract"
+capture_args=(--root "$root" --destination "$work/inputs"
+    --binary "$input_binary" --contract "$input_contract")
+if [[ "${TONDO_STDLIB_DIST_ALLOW_DIRTY:-0}" == 1 ]]; then
+    capture_args+=(--allow-dirty)
+fi
+python3 scripts/stdlib_distribution_inputs.py capture "${capture_args[@]}"
+vm_binary="$work/inputs/runtime/tondo"
+contract="$work/inputs/contract.json"
+input_manifest="$work/inputs/inputs.json"
 
 sha256_file() {
     sha256sum "$1" | cut -d ' ' -f 1
@@ -104,7 +118,7 @@ assemble() {
     mkdir -p "$package/bin"
     cp -- "$vm_binary" "$package/bin/tondo"
     chmod 0755 "$package/bin/tondo"
-    printf 'bin\tbin/tondo\tvm:%s\n' "${vm_binary#"$root"/}" >> "$inventory"
+    printf 'bin\tbin/tondo\tvm:sha256:%s\n' "$(sha256_file "$vm_binary")" >> "$inventory"
     copy_contract "$package" "$inventory"
 
     local api_hash matrix_hash evidence_hash
@@ -205,7 +219,7 @@ assemble() {
         'edition = "0.1"' \
         "api_sha256 = \"$api_hash\"" \
         "matrix_sha256 = \"$matrix_hash\"" \
-        'source_policy = "content-addressed-clean-snapshot"' \
+        'source_policy = "content-addressed-captured-inputs"' \
         > "$package/manifests/tondo.lock.toml"
     copy_generated manifests manifests/tondo.lock.toml "$package" "$inventory"
 
@@ -230,6 +244,7 @@ assemble() {
         --arg evidence_hash "$evidence_hash" \
         --argjson files "$entries_json" \
         --argjson contract "$(cat "$contract")" \
+        --slurpfile inputs "$input_manifest" \
         ' {
             format: "tondo-stdlib-vm-distribution/1",
             package_id: $package_id,
@@ -248,6 +263,8 @@ assemble() {
             api_sha256: $api_hash,
             owner_evidence_sha256: $evidence_hash,
             contract_format: $contract.format,
+            inputs: ($inputs[0] | del(.source_files)),
+            promotion: "pending",
             payload_hash: $payload_hash,
             reproducible: true,
             public_release: false
@@ -260,15 +277,15 @@ assemble() {
     (
         cd "$package_parent"
         tar --format=ustar --sort=name --mtime='UTC 1970-01-01' \
-            --owner=0 --group=0 --numeric-owner \
+            --owner=0 --group=0 --numeric-owner --mode='u=rwX,go=rX' \
             -cf "$archive" tondo-std-0.1
     )
 }
 
-make_clean_snapshot() {
+make_snapshot() {
     local destination="$1"
     mkdir -p "$destination"
-    git archive --format=tar HEAD | tar -xf - -C "$destination"
+    cp -a -- "$work/inputs/source/." "$destination/"
     [[ ! -e "$destination/.git" && ! -e "$destination/target" ]] || {
         echo "stdlib distribution: clean snapshot contains repository/build state" >&2
         exit 1
@@ -279,8 +296,8 @@ workspace_a="$work/workspace-a"
 workspace_b="$work/workspace-b"
 archive_a="$work/stdlib-a.tar"
 archive_b="$work/stdlib-b.tar"
-make_clean_snapshot "$workspace_a"
-make_clean_snapshot "$workspace_b"
+make_snapshot "$workspace_a"
+make_snapshot "$workspace_b"
 assemble "$workspace_a" "$archive_a" a
 assemble "$workspace_b" "$archive_b" b
 
@@ -297,7 +314,8 @@ verify_manifest() {
     local package="$1" manifest="$package/metadata/manifest.json"
     jq -e \
         --arg package_id "toolchain:std:0.1-bootstrap" \
-        '.format == "tondo-stdlib-vm-distribution/1" and .package_id == $package_id and .edition == "0.1" and .target == "tondo-vm-hosted" and .profile == "hosted" and .reproducible == true and .public_release == false and (.files | length) > 0' \
+        --slurpfile inputs "$input_manifest" \
+        '.format == "tondo-stdlib-vm-distribution/1" and .package_id == $package_id and .edition == "0.1" and .target == "tondo-vm-hosted" and .profile == "hosted" and .reproducible == true and .public_release == false and .promotion == "pending" and .inputs == ($inputs[0] | del(.source_files)) and (.files | length) > 0' \
         "$manifest" >/dev/null
     while IFS= read -r record; do
         path="$(jq -r '.path' <<< "$record")"
@@ -327,13 +345,13 @@ rm -rf -- "$workspace_a" "$workspace_b"
     exit 1
 }
 
-expected_output="$(cat "$package/examples/m11-std-core-001.stdout")"
-actual_output="$(
+installed_stdout="$work/installed.stdout"
+(
     cd "$empty_workspace"
     env -i PATH=/usr/bin:/bin HOME="$work/home" \
         "$package/bin/tondo" run "$package/examples/m11-std-core-001.to"
-)"
-[[ "$actual_output" == "$expected_output" ]] || {
+) >"$installed_stdout"
+cmp -s "$installed_stdout" "$package/examples/m11-std-core-001.stdout" || {
     echo "stdlib distribution: installed example output mismatch" >&2
     exit 1
 }
@@ -350,6 +368,8 @@ archive_hash="$(sha256_file "$archive_a")"
 archive_bytes="$(wc -c < "$archive_a" | tr -d ' ')"
 manifest_hash="$(cat "$work/a/manifest.sha256")"
 payload_hash="$(cat "$work/a/payload.sha256")"
+python3 scripts/stdlib_distribution_inputs.py verify "${capture_args[@]}"
+mkdir -p "$output_dir"
 cp -- "$archive_a" "$output_dir/tondo-std-0.1.tar"
 jq -S -n \
     --arg package_id "toolchain:std:0.1-bootstrap" \
@@ -358,24 +378,30 @@ jq -S -n \
     --arg manifest_sha256 "$manifest_hash" \
     --arg payload_sha256 "$payload_hash" \
     --argjson archive_bytes "$archive_bytes" \
+    --slurpfile inputs "$input_manifest" \
+    --rawfile installed_output "$installed_stdout" \
     '{
       format: "tondo-stdlib-distribution-evidence/1",
       edition: "0.1",
       phase: "STD-0.1A",
-      status: "promoted-draft",
+      status: "verified-vm-bundle",
+      promotion: "pending",
+      scope: "archive-reproducibility-and-installed-core-example",
+      inputs: ($inputs[0] | del(.source_files)),
       package_id: $package_id,
       archive: $archive,
       archive_sha256: $archive_sha256,
       archive_bytes: $archive_bytes,
       manifest_sha256: $manifest_sha256,
       payload_sha256: $payload_sha256,
-      clean_source_workspaces: 2,
+      source_workspaces: 2,
+      clean_source_workspaces: (if $inputs[0].source_dirty then 0 else 2 end),
       byte_identical: true,
       installed_example: "examples/m11-std-core-001.to",
-      installed_output: "core-ok\\n",
+      installed_output: $installed_output,
       source_tree_required_after_install: false,
       uninstall_preserves_workspace: true,
       public_release: false
     }' > "$output_dir/stdlib-distribution.json"
 
-echo "stdlib distribution: OK (2 clean workspaces; byte-identical VM package; install/run/uninstall verified; evidence: ${output_dir#"$root"/}/stdlib-distribution.json)"
+echo "stdlib distribution: OK (2 captured workspaces; byte-identical VM bundle; install/run/uninstall verified; promotion pending; evidence: ${output_dir#"$root"/}/stdlib-distribution.json)"

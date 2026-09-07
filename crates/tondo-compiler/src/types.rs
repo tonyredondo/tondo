@@ -912,6 +912,15 @@ impl TypeInterner {
         self.kinds.len()
     }
 
+    /// Applies the current compilation budget while retaining all existing IDs.
+    pub(crate) fn set_limit(&mut self, limit: u32) -> Result<(), TypeError> {
+        if self.kinds.len() > limit as usize {
+            return Err(TypeError::ResourceLimit { limit });
+        }
+        self.limit = limit;
+        Ok(())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.kinds.is_empty()
     }

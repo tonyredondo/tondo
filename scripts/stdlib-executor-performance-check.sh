@@ -29,7 +29,7 @@ jq -e '
       profile: "test",
       probe: .targets.hosted_vm.probe
     }
-  and (.targets.hosted_vm.probe.path == "crates/tondo-vm/src/runtime/execute.rs")
+  and (.targets.hosted_vm.probe.path == "crates/tondo-vm/src/runtime/executor_performance.rs")
   and (.targets.hosted_vm.probe.test == "runtime::execute::tests::executor_performance::executor_performance_probe")
   and (.targets.hosted_vm.probe.sha256 | test("^[0-9a-f]{64}$"))
   and .targets.native_runtime == {

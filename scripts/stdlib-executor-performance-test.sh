@@ -34,6 +34,14 @@ expect_failure native-probe-hash \
     env TONDO_STDLIB_EXECUTOR_PERF_CONTRACT="$tmp_dir/native-hash.json" \
     scripts/stdlib-executor-performance-check.sh
 
+jq --arg engine_sha "$(sha256sum crates/tondo-vm/src/runtime/execute.rs | cut -d' ' -f1)" \
+    '.targets.hosted_vm.probe.path = "crates/tondo-vm/src/runtime/execute.rs"
+     | .targets.hosted_vm.probe.sha256 = $engine_sha' \
+    testing/stdlib-executor-performance.json >"$tmp_dir/engine-instead-of-probe.json"
+expect_failure engine-instead-of-probe \
+    env TONDO_STDLIB_EXECUTOR_PERF_CONTRACT="$tmp_dir/engine-instead-of-probe.json" \
+    scripts/stdlib-executor-performance-check.sh
+
 jq '.workloads[1].id = .workloads[0].id' \
     testing/stdlib-executor-performance.json >"$tmp_dir/duplicate-workload.json"
 expect_failure duplicate-workload \

@@ -47,6 +47,13 @@ kernel.
 
 ## Protocolo reproducible
 
+The hosted probe hash binds the actual measurement body in
+`crates/tondo-vm/src/runtime/executor_performance.rs`; `execute.rs` only
+declares its test module. The native probe hash binds
+`crates/tondo-native-runtime/src/lib.rs`. The clean Git revision binds the
+remaining runtime sources. Dirty-tree reports are local iteration evidence
+and must be regenerated from a clean revision before promotion.
+
 El contrato fija reloj monotónico, tres warmups, nueve repeticiones medidas y
 tres procesos independientes: cada workload tiene exactamente 27 muestras.
 Los outliers se conservan en `samples_ns`; no se descarta ninguna muestra para

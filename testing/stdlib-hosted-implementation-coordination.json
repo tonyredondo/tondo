@@ -17,6 +17,7 @@
     "hosted_stage_must_be_verified_or_not_applicable": true,
     "capability_boundary_must_match_contract": true,
     "callable_public_signatures_must_be_verified": true,
+    "empty_public_surface_is_unverified": true,
     "global_public_audit_is_not_promoted": true,
     "no_waivers": true
   },
@@ -49,6 +50,8 @@
       },
       "public_api": {
         "status": "verified",
+        "owner_status": "verified",
+        "owner_missing": [],
         "signature_count": 7,
         "verified_count": 7,
         "gap_count": 0,
@@ -123,6 +126,8 @@
       },
       "public_api": {
         "status": "verified",
+        "owner_status": "verified",
+        "owner_missing": [],
         "signature_count": 10,
         "verified_count": 10,
         "gap_count": 0,
@@ -229,6 +234,8 @@
       },
       "public_api": {
         "status": "verified",
+        "owner_status": "verified",
+        "owner_missing": [],
         "signature_count": 14,
         "verified_count": 14,
         "gap_count": 0,
@@ -358,6 +365,8 @@
       },
       "public_api": {
         "status": "verified",
+        "owner_status": "verified",
+        "owner_missing": [],
         "signature_count": 17,
         "verified_count": 17,
         "gap_count": 0,
@@ -472,16 +481,17 @@
     "owners": 4,
     "signatures": 48,
     "verified_signatures": 48,
+    "owners_with_public_gaps": 0,
     "capability_gated_owners": 3,
     "pure_owners": 1,
     "host_verified_owners": 3,
     "host_not_applicable_owners": 1
   },
   "global_public_api": {
-    "status": "verified",
-    "gaps": 0,
-    "reason": "STD-CODEC-PUBLIC-001 closed MessagePack/Protobuf callable exposure and indexed the build-only owners without a runtime waiver",
-    "next_coordination": "NATIVE-PUBLISH-SPEC-001"
+    "status": "open-gaps",
+    "gaps": 4,
+    "reason": "The current global public API audit is retained independently of this component coordinator",
+    "next_coordination": "STD-PUBLIC-API-AUDIT-001"
   },
-  "next_coordination": "NATIVE-PUBLISH-SPEC-001"
+  "next_coordination": "STD-B-INTEGRATION-PLAN-001"
 }

@@ -36,6 +36,15 @@ one borrowed domain per envelope. Its controller exposes only `settle` and
 non-negative `advance`; it is revoked on closure and its observations remain in
 the attempt report. A second active domain is rejected with `P2004`.
 
+The hosted bridge calls `record_host_error` after a failed synchronous evidence
+operation. It preserves the error's code and budget category, then asks the VM
+to unwind once. The typed terminal remains in the envelope after that control
+signal is consumed, so successful cleanup operations do not reissue it.
+`console.print/println` use this same path and preflight all bytes, including a
+println's newline, before appending to the current node's stdout. These hosted
+checks do not promote the still-open general worker isolation and runtime
+budget boundaries documented in `test-backend.md`.
+
 `admit_operation` rejects test intrinsics in production with `E2003`, providing
 the final runtime-facing check in addition to the static checker and lowering
 verifiers.

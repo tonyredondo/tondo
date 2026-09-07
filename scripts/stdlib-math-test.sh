@@ -35,6 +35,7 @@ for signature in \
     'pub fn floor(value: Float): Float' \
     'pub fn ceil(value: Float): Float' \
     'pub fn round(value: Float): Float' \
+    'pub fn roundTiesAway(value: Float): Float' \
     'pub fn truncate(value: Float): Float' \
     'pub fn sqrt(value: Float): Float ! MathError' \
     'pub fn fma(a: Float, b: Float, c: Float): Float' \
@@ -48,6 +49,7 @@ for symbol in \
     'HirBootstrapHostFunction::MathFloor' \
     'HirBootstrapHostFunction::MathCeil' \
     'HirBootstrapHostFunction::MathRound' \
+    'HirBootstrapHostFunction::MathRoundTiesAway' \
     'HirBootstrapHostFunction::MathTruncate' \
     'HirBootstrapHostFunction::MathSqrt' \
     'HirBootstrapHostFunction::MathFma' \
@@ -62,6 +64,7 @@ for symbol in \
     '"std.math.floor"' \
     '"std.math.ceil"' \
     '"std.math.round"' \
+    '"std.math.roundTiesAway"' \
     '"std.math.truncate"' \
     '"std.math.sqrt"' \
     '"std.math.fma"' \
@@ -99,7 +102,7 @@ if grep -En 'std::simd|packed_simd|target_feature.*(avx|sse|neon)|fast[-_ ]math'
 fi
 
 jq -e '
-  ([.rows[] | select(.owner == "std.math")] | length) == 9
+  ([.rows[] | select(.owner == "std.math")] | length) == 10
   and all(.rows[] | select(.owner == "std.math"); .missing == [])
   and all(.rows[] | select(.owner == "std.math"); .status == "verified")
 ' testing/stdlib-public-api.json >/dev/null

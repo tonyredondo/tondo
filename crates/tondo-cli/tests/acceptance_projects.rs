@@ -247,7 +247,7 @@ fn acceptance_control_project_publishes_source_attachments_and_snapshots() {
         &project,
         &[
             "--exact",
-            "testingControl::integration::tests::suiteEvidence",
+            "testingControl::integration::control::suiteEvidence",
             "--update-snapshots",
             "--artifacts",
             "target/suite-artifacts",
@@ -269,7 +269,7 @@ fn acceptance_control_project_publishes_source_attachments_and_snapshots() {
         &project,
         &[
             "--exact",
-            "testingControl::integration::tests::suiteEvidence",
+            "testingControl::integration::control::suiteEvidence",
             "--artifacts",
             "target/suite-check-artifacts",
             "--test-format",
@@ -304,7 +304,7 @@ fn testing_module_is_not_available_to_production_entries() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let diagnostic = String::from_utf8_lossy(&output.stderr);
-    assert!(diagnostic.contains("E1008") && diagnostic.contains("::testing"));
+    assert!(diagnostic.contains("E2003") && diagnostic.contains("std.testing"));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -451,7 +451,7 @@ fn acceptance_project_exercises_public_selection_and_sharding_contracts() {
         &[
             "--list",
             "--exact",
-            "acceptance::integration::tests::shared_service",
+            "acceptance::integration::service::shared_service",
             "--test-format",
             "json",
         ],

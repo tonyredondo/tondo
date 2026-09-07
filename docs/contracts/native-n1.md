@@ -1,5 +1,13 @@
 # Gate N1: native backend promotion
 
+**Implementation status:** promotion reopened by the 2026-09-07 audit. The
+historical report measured synthesized programs and a generated C runtime;
+the native conformance adapter copied expected values into observations.
+Those reports do not establish public source-to-executable AOT using the
+production runtime. The requirements below remain in force. Cranelift remains
+selected, but N1 is pending until the actual pipeline supplies independent
+observations and current evidence.
+
 `N1` is the promotion gate for Tondo 0.1's first native AOT backend. It is a
 composition gate, not another lowering implementation: every prerequisite
 campaign must already have produced a passing report for the exact Git

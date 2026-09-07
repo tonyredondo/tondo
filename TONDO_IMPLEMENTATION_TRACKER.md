@@ -1,260 +1,55 @@
-# Tondo: tracker de implementación
+# Tondo implementation tracker
 
-**Estado:** M0–M10.7 conservan su implementación y los gates vivos H0 y T0
-validan el borrador actual. G5 permanece abierto hasta el primer proceso real
-de release; no existe un candidato pre-release ni una revisión histórica que
-mantener. `STD-CODEC-PUBLIC-001` ya cerró la auditoría pública global: las 214
-firmas tienen ruta contract → HIR → lowering → host/VM → caso público y los
-tres owners sin runtime están indexados como `build-only`/`not-applicable` con
-razón verificable. STD-0.1A/S1A está sellado como draft técnico; la
-distribución VM, las dimensiones de rendimiento y la conformidad pública están
-promovidas con evidencia ejecutada y un bundle content-addressed independiente.
-`STD-A-FUZZ-001` ya cerró la dimensión
-FUZZ para los 22 owners y no se sobreafirma un cierre global.
-La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder,
-source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
-sigue en desarrollo y no ha sido publicado.
+**Status:** Tondo 0.1 is an unpublished draft. The 2026-09-07 audit reopened
+T0, S1A and N1: component tests and synthetic backend probes do not establish
+public language, testing, standard-library or native AOT conformance. Historical
+reports remain evidence of the programs they actually executed, not of missing
+integration. The hosted VM, frontend, bounded models and runtime kernels retain
+their independently verified scope.
 
-Gate N1 ya está cerrado por el contrato composicional `testing/native-n1.json` y
-la evidencia hash-bound `target/reliability/evidence/native-n1.json`: Cranelift
-queda promovido para el producto AOT primario
-`x86_64-unknown-linux-gnu`. La entrada física Linux ARM64 queda como smoke de
-candidato hasta completar allí la campaña AOT completa; Windows y macOS siguen
-siendo probes de portabilidad. Este cierre no publica Tondo, no cierra G5/S1 ni
-promete una ABI pública.
+Cranelift remains the selected native backend (`DEC-013`), and the adopted native
+memory design remains hybrid ARC with cycle collection. Native promotion for
+`x86_64-unknown-linux-gnu` is pending a real source-to-executable pipeline linked
+to the production runtime. LLVM remains an experimental comparison. ARM64,
+macOS and Windows probes do not promote additional product targets.
 
-El producto primario previsto para Tondo 0.1 es un ejecutable nativo AOT
-(`native-aot`). `tondo-vm-hosted` permanece como implementación de referencia,
-oráculo diferencial y opción bootstrap/hosted; no es una segunda semántica del
-lenguaje. JIT no es un perfil de producto ni una dimensión de `DEC-013` en
-0.1. `DEC-013` selecciona Cranelift para la ruta AOT de
-`x86_64-unknown-linux-gnu`; LLVM se conserva como comparativa experimental.
-La decisión se limita al mismo MIR, runtime, stdlib, target y protocolo de
-medición; la promoción efectiva queda registrada únicamente por Gate N1.
-El contrato del lenguaje sigue siendo independiente del recolector; para la
-ruta AOT nativa `NATIVE-MEM-ADR-001` fija `hybrid-arc-cycle-collector`, mientras
-la VM conserva el tracing GC de referencia de `ADR-009`.
+**Last updated:** 2026-09-07
 
-El tooling dinámico de diagnóstico también queda dentro del plan 0.1: race
-detection, detección de retención/leaks y crash dumps conservan una única
-frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
-`DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa y
-`DIAG-RUNTIME-001` ya cerró la instrumentación interna de la VM hosted;
-`RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001` ya cerraron sus lanes
-hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
-lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
-siendo una capacidad declarada por target.
+**Normative specifications:**
 
-**Última actualización:** 2026-09-07
+- [Language](./TONDO_LANGUAGE_SPEC.md)
+- [Standard library](./TONDO_STANDARD_LIBRARY_SPEC.md)
+- [Toolchain](./TONDO_TOOLCHAIN_SPEC.md)
+- [Testing](./TONDO_TESTING_SPEC.md)
+- [Optional Tondo LLM Form companion](./TONDO_LLM_FORM_SPEC.md)
 
-**Especificaciones normativas:**
+**Current work:** reconcile promotion and provenance; repair CI and fuzz oracles;
+complete the public testing pipeline; integrate reflection and metaprogramming;
+complete source-driven native AOT and observed conformance; then resume STD-0.1B
+with explicit public, hosted, ABI and AOT owner boundaries. Section 24 records
+this order. Reopened tasks retain their IDs so previous evidence remains
+traceable. A checked component task cannot discharge a missing integration task.
 
-- [Borrador normativo de Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
-- [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
-- [Contrato normativo del toolchain 0.1](./TONDO_TOOLCHAIN_SPEC.md)
-- [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
+`std.toml` implementation and model/test/fuzz evidence cover the hosted scalar
+kernel. `STD-TOML-PERF-001` remains the next owner block after the remediation
+prerequisites; it must not silently imply compiler API or native AOT coverage.
+Project manifests remain a separate TOML owner.
 
-**Contratos normativos por owner:**
+T0 requires full-target compilation, sealed production sources, isolated
+integration packages, declared worker inputs/dependencies and real interruption
+handling through the public CLI. S1A requires non-vacuous public API and owner
+evidence, including runtime reflection. N1 requires observations from the actual
+compiled source and production runtime; copying expected values into reports,
+linking a C demonstration, or timing synthesized MIR cannot close it.
 
-- [Contrato global de baseline de rendimiento previo al backend](./docs/contracts/performance.md)
-- [Contrato de tooling dinámico de diagnóstico](./docs/contracts/diagnostic-tooling.md)
-- [Contrato de instrumentación runtime de diagnóstico](./docs/contracts/diagnostic-runtime.md)
-- [Contrato del detector dinámico de races](./docs/contracts/diagnostic-race.md)
-- [Contrato del detector dinámico de retención y recursos](./docs/contracts/diagnostic-leak.md)
-- [Contrato del dump lógico de diagnóstico](./docs/contracts/diagnostic-dump.md)
-- [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
-- [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
-- [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
-- [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
-- [Contrato de owner de `std.encoding`](./docs/contracts/stdlib-encoding.md)
-- [Contrato de tests de `std.encoding`](./docs/contracts/stdlib-encoding-test.md)
-- [Contrato de rendimiento de `std.encoding`](./docs/contracts/stdlib-encoding-performance.md)
-- [Contrato de conformance VM/native de `std.encoding`](./docs/contracts/stdlib-encoding-conformance.md)
-- [Contrato de owner de `std.yaml`](./docs/contracts/stdlib-yaml.md)
-- [Contrato de tests de `std.yaml`](./docs/contracts/stdlib-yaml-test.md)
-- [Contrato de rendimiento de `std.yaml`](./docs/contracts/stdlib-yaml-performance.md)
-- [Contrato de owner de `std.toml`](./docs/contracts/stdlib-toml.md)
-- [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
-- [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
-- [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
-- [Contrato de owner de `std.sync`](./docs/contracts/stdlib-sync.md)
-- [Contrato de rendimiento de `std.sync`](./docs/contracts/stdlib-sync-performance.md)
-- [Contrato de rendimiento de colecciones de `std.sync`](./docs/contracts/stdlib-sync-collection-performance.md)
-- [Contrato de owner de `std.executor`](./docs/contracts/stdlib-executor.md)
-- [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
-- [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
-- [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
-- [Contrato de alcance de evaluación native AOT](./docs/contracts/native-aot-scope.md)
-- [Contrato de memoria de productos native AOT](./docs/contracts/native-aot-memory.md)
-- [Contrato de coordinación de implementación STD-0.1A](./docs/contracts/stdlib-implementation-coordination.md)
-- [Contrato de coordinación Hosted STD-0.1A](./docs/contracts/stdlib-hosted-implementation-coordination.md)
-- [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
-- [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
-- [Contrato de distribución VM STD-0.1A](./docs/contracts/stdlib-distribution.md)
-- [Contrato del seal S1A STD-0.1A](./docs/contracts/stdlib-s1a-seal.md)
-- [Contrato de promoción del backend nativo Gate N1](./docs/contracts/native-n1.md)
+G5 remains reserved for the first real release candidate. No release or package
+publication is authorized by this tracker. TLF remains optional and does not
+block the base language candidate. Technical integration work does not depend
+on creating a release candidate.
 
-**RFCs de planificación:**
-
-- [RFC-019 — tooling dinámico de diagnóstico](./docs/rfc/019-diagnostic-tooling.md)
-
-**Companion normativo con conformidad separada:**
-
-- [Tondo LLM Form](./TONDO_LLM_FORM_SPEC.md)
-
-G5 inventaría y sella exactamente lenguaje, testing y toolchain al preparar la
-primera release. La stdlib
-mantiene su conformidad separada en S1A/S1; fijar su spec por hash nunca se
-confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produce
-un bundle companion separado. El futuro candidato del lenguaje fijará G5 y S1;
-solo fijará L0 cuando se construya además una distribución TLF, sin convertirla
-en requisito de Tondo 0.1.
-
-**Objetivo inmediato:** continuar la implementación de `STD-0.1B` de Wave 8 tras
-cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001`,
-`STD-ASYNC-GROUP-PERF-001`, `STD-ASYNC-GROUP-CONF-001` y
-`STD-ASYNC-GROUP-DOC-001` ya están cerrados para la VM hosted y el ABI del
-runtime nativo; `STD-SYNC-IMPL-001`, `STD-SYNC-TEST-001` y
-`STD-SYNC-PERF-001` ya están cerrados para la superficie del compilador, el
-modelo hosted determinista y la campaña de rendimiento target-qualified;
-`STD-SYNC-COLLECTION-FRONTEND-001` también está cerrado para la sintaxis,
-resolución nominal, HIR/MIR boundary y diagnóstico, y
-`STD-SYNC-COLLECTION-IMPL-001` queda cerrado para la ejecución en la VM hosted
-y el ABI nativo privado (sin promoción de una API pública ni lowering AOT
-genérico). `STD-SYNC-COLLECTION-ITER-001` queda cerrado para el `for` directo
-finito en la VM hosted y el ABI nativo privado, sin reclamar lowering AOT
-genérico. `STD-SYNC-COLLECTION-TEST-001` queda cerrado para los modelos
-secuenciales independientes, histories de linearización, cursores, aliases,
-cleanup y fuzz acotado. `STD-SYNC-COLLECTION-PERF-001` queda cerrado para la
-campaña target-qualified de rendimiento de la VM hosted: 31 workloads, tres
-procesos independientes, 27 muestras por workload y métricas de latencia,
-throughput, allocations, memoria lógica, retries, wakeups, parking y handles
-vivos. `STD-SYNC-COLLECTION-CONF-001` queda cerrado para la equivalencia
-observable VM/native de ocho casos, incluidos aliases, outcomes, orden,
-cursores, snapshots, límites, cleanup y capability `threads`; la campaña no
-promueve fast paths nativos ni lowering AOT genérico. `STD-SYNC-CONF-001` y la
-conformance global ya están cerrados. `STD-SYNC-DOC-001` también queda cerrado
-con la guía ejecutable; `STD-CHANNEL-PERF-001` queda cerrado para la línea
-base de rendimiento hosted; `STD-CHANNEL-CONF-001` también queda cerrado para
-la equivalencia observable VM/native; `STD-CHANNEL-DOC-001` queda cerrado con
-la guía ejecutable de composición. `STD-EXEC-IMPL-001` queda cerrado para la
-implementación cooperativa hosted de pools, adquisición explícita de `ActorRef`,
-handlers y envíos `selectable`. `STD-EXEC-HOST-001` también queda cerrado: la
-VM hosted ejecuta `BlockingPool.run` en workers aislados con bridge de host y
-el runtime nativo aporta una lane privada de tokens para
-`x86_64-unknown-linux-gnu`; el lowering native AOT de callables y la API pública
-siguen sin promocionarse. `STD-EXEC-TEST-001` queda cerrado con el modelo
-acotado, replay de 4.096 semillas, stress real del bridge y smoke fuzz
-reproducible. `STD-EXEC-PERF-001` queda cerrado con una campaña 3 x 9
-target-qualified para la VM hosted y la lane privada nativa de tokens; el
-`STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la capability
-estática `threads`; `STD-EXEC-DOC-001` queda cerrado por la guía ejecutable y
-sus cinco composiciones. `STD-ENCODING-IMPL-001` queda cerrado para la ruta
-scalar de la stdlib y el bridge VM hosted, con materialización, `Reader`/`Writer`,
-handles afines y errores tipados; `native_aot_lowering: not-claimed` permanece
-explícito. `STD-ENCODING-TEST-001` queda cerrado. `STD-ENCODING-PERF-001`
-queda cerrado con un baseline scalar de la VM hosted: 16 workloads
-materializados e incrementales, 3 warmups, 9 repeticiones y 3 procesos
-independientes, con mediana/P95/P99, bytes copiados, allocations, memoria
-lógica y cleanup de handles. `STD-ENCODING-CONF-001` queda cerrado por una
-corpus común VM/native de seis casos, con interoperabilidad, streaming,
-errores/offsets, límites y cleanup hash-bound; la sonda usa el mismo kernel
-scalar y mantiene `native_aot_lowering: not-claimed` y
-`simd: not-measured-no-optimized-route`. `STD-ENCODING-DOC-001` queda cerrado
-por la guía ejecutable de policies, errores, costes y ejemplos. `STD-YAML-PERF-001`
-queda cerrado por el baseline scalar hosted de 13 workloads, 27 muestras por
-workload y métricas de latencia, tail, throughput, allocations, memoria lógica,
-bytes copiados, profundidad, aliases, expansión, rechazo adversarial y cleanup;
-`STD-YAML-CONF-001` cierra un corpus común VM/native de seis casos con typed/dynamic, interoperabilidad Core, streaming de un byte, errores/path, límites y lifecycle; la sonda reutiliza el kernel scalar y mantiene `native_aot_lowering: not-claimed` y `simd: not-measured-no-optimized-route`. `STD-YAML-DOC-001` queda cerrado por la guía ejecutable del subset seguro, policies, límites, costes, ownership y ejemplos materializados/streaming; el siguiente bloque de ese slice es `STD-TOML-PERF-001`. El modelo y
-tests/fuzz hosted de Group están respaldados por
-`STD-ASYNC-GROUP-TEST-001`. El slice
-ejecutable de `select` ya está cerrado en la VM hosted —frontend,
-semántica tipada, lowering verificable, runtime cooperativo, ownership
-branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
-presupuestos de rendimiento reproducibles y corpus de conformidad completo ya
-están cerrados. `STD-A-PERF-001` está promovido: diez owners portables tienen
-las ocho dimensiones en seis workloads y los doce owners restantes tienen
-fronteras normativas `not-applicable` hacia `PERF-001`. `STD-A-CONF-001`
-también está promovido: sus 22 owners, 385 filas y 206 casos del draft tienen
-observación ejecutada. `STD-A-DIST-001` también está promovido: dos snapshots
-limpios producen el mismo paquete VM content-addressed, con instalación,
-ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
-bundle técnico del draft con auditoría estricta y cero celdas aplicables
-abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y los contratos de
-`std.async.Group`, `std.channel`, `std.sync`, `std.executor`, `std.net` y el
-calendario civil de `std.time` ya están cerrados como contratos runtime-facing.
-`std.encoding`, `std.yaml`, `std.toml`, `std.cbor`, `std.regex`, `std.uuid` y
-`std.log` ya han cerrado sus fronteras contractuales B0. `DIAG-RUNTIME-001`
-ya consume esos contratos de observabilidad en la VM hosted; `RACE-001` y
-`LEAK-001`, `DUMP-001` y `DIAG-TEST-001` ya cerraron sus detectores, writer,
-integración y evidencia por intento. El grafo
-activo se valida con `TRACKER-LINT-001`; con el contrato D0, Wave 6 y la
-instrumentación D1, DUMP y el runner de tests cerrados, `DIAG-CI-001` ya está
-cerrado antes de la evaluación
-coordinada de `NATIVE-001`. El cierre coordinado de
-`STD-CODEC-PUBLIC-001` ya verificó su superficie, pero el conteo global
-214/214 ya incluye los tres adapters `selectable` de DEC-020;
-y los tres owners build-only tienen una frontera explícita; no se fabrican
-funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
-`NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
-cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
-baseline previo al backend. Con la conformance pública, la distribución, el
-seal S1A y el contrato D0 promovidos como evidencia técnica del draft,
-los contratos runtime-facing B0 se han cerrado en la VM y en las dos rutas
-nativas candidatas.
-`NATIVE-001` cerró la frontera de evidencia inicial y `DEC-013` ya seleccionó
-Cranelift para el target admitido: la slice de selección runtime se cerró en
-`NATIVE-SELECT-001`, el adaptador común está cerrado en
-`NATIVE-BACKEND-ADAPTER-001` y `NATIVE-002` cerró la coordinación mínima de
-lowering. `ARC-001` y `ARC-002` cerraron ownership, cleanup, ciclos y weak
-refs en el runtime nativo; `DIAG-NATIVE-001` cerró la paridad lógica de
-diagnóstico; `NATIVE-THREAD-001` cerró la lane física de workers OS. Las
-fronteras Core y Hosted de STD-0.1A están cerradas y la evidencia de enlace,
-targets, conformance y distribución ya está disponible para comparar
-Cranelift y LLVM. La campaña AOT completa, la normalización de artefactos
-enlazados, memoria, calidad y rendimiento ya tienen evidencia cerrada;
-Gate N1 queda cerrado por su informe compositivo. Las cifras rápidas
-anteriores no se usan para la decisión final: la campaña cerrada mide el
-producto enlazado completo y no mezcla buffers de código Cranelift con el
-objeto completo de LLVM.
-La campaña `NATIVE-AOT-MEM-001` ya está cerrada: ambos productos enlazados
-ejecutan el corpus completo y un workload instrumentado en tres procesos
-frescos, con tres warmups y nueve muestras por proceso; la evidencia registra
-allocations, bytes asignados/live/pico, ARC local/atómico, ciclos, weak
-upgrades, pausas, presión de worker y RSS, manteniendo la semántica de la VM
-como oráculo. `NATIVE-AOT-QUALITY-001` ya tiene su compuerta completa
-implementada en el
-contrato `testing/native-aot-quality.json`, la campaña
-`scripts/native-aot-quality.sh` y su suite de mutaciones negativas. La
-compuerta usa seis mutantes críticos deterministas (uno por frontera) además
-de los doce oráculos contractuales; la campaña completa de 30 mutantes queda
-explícitamente reservada para un carril posterior de rendimiento de calidad y
-no sustituye la evidencia AOT ya cerrada.
-FUZZ está promovido para los 22 owners; la distribución está promovida y el
-seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
-TLF ni una publicación.
-`CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` mantienen T0 verificable sobre el
-árbol actual. `CONF-SEAL-FINAL-001` queda reservado para el primer candidato
-real; los límites `TL01-26-*` pertenecen a S1A. Los contratos
-runtime-facing de STD-0.1B quedan ahora desbloqueados por Gate N1; M11 conserva
-la evidencia nativa promovida sin convertirla en un release. Todo pertenece a la primera versión 0.1; los slices
-son orden de implementación, no versiones públicas. La
-VM permanece como implementación de referencia y oracle diferencial del
-backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
-frontend/formatter ya cerrados; no reemplaza esas prioridades ni bloquea el
-futuro candidato base. Su bundle L0 se publicará únicamente como companion
-opcional.
-
-`NATIVE-AOT-SCOPE-001`, `NATIVE-AOT-LOWER-001`, `NATIVE-AOT-BINARY-001`,
-`NATIVE-AOT-MEM-001`, `NATIVE-AOT-QUALITY-001` y `NATIVE-AOT-PERF-001` ya están
-cerrados. `DEC-013` seleccionó Cranelift para el target admitido y el informe
-compositivo de Gate N1 promueve esa implementación únicamente para
-`x86_64-unknown-linux-gnu`; no existe promoción automática para otros targets.
-
-> Este documento no define semántica del lenguaje. La especificación es la única
-> fuente normativa. El tracker organiza el trabajo de implementación, registra
-> decisiones técnicas y permite distinguir entre una característica
-> implementada, una característica validada y una implementación conforme.
+> Specifications define behavior. This tracker records implementation and proof.
+> Contract, model, hosted execution, runtime ABI and native AOT are distinct
+> boundaries; promotion requires evidence for the boundary being claimed.
 
 ## 0. Contrato vigente de Tondo 0.1
 
@@ -697,23 +492,22 @@ necesaria; la fragmentación del workspace no.
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Corpus ejecutable** | Conformidad viva pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
-| **M10.5c — Infraestructura de conformidad** | Un único draft vivo y su ratchet | Completado; T0 verificable sobre el árbol actual |
-| **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
-| **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; incluido en el gate T0 vivo |
-| **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | Hosted y paridad native cerrados; capacidades físicas por target |
-| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | S1A sellado como draft técnico; bundle reproducible, auditoría 214/214, matriz sin gaps aplicables y claims de publicación/backend/TLF desactivados |
-| **M11 — Backend nativo y optimización** | Implementación de producción | Gate N1 cerrado para Cranelift/x86_64 GNU; optimizaciones posteriores pendientes |
-| **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; implementación desbloqueada y pendiente |
+| **M10.5c — Infraestructura de conformidad** | Un único draft vivo y su ratchet | Partial; current ratchet and public conformance must be renewed |
+| **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Partial; public generators, general providers and reflection remain open |
+| **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Partial; public pipeline integration and T0 remain open |
+| **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | Hosted evidence retained; real native detector integration pending |
+| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Partial; public reflection/meta, fuzz and S1A promotion reopened |
+| **M11 — Backend nativo y optimización** | Implementación de producción | Cranelift selected; real source-driven AOT and N1 pending |
+| **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Bounded owner work retained; public/hosted/ABI/AOT integration must be explicit |
 | **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio exploratorio completados; reproducción, implementación, evaluación y bundle L0 pendientes |
 
 Estado observado del workspace:
 
-- Repositorio local: `/mnt/media/Tony/Projects/tondo`, branch
-  `main`, con
-  upstream en
-  `github.com/tonyredondo/tondo`.
+- Repository: `github.com/tonyredondo/tondo`, branch `main`. Establish the
+  actual checkout, shared Git directory and target identity in each environment.
 - Workspace: `tondo-cli`, `tondo-compiler`, `tondo-conformance`,
-  `tondo-reference-adapter`, `tondo-reliability`, `tondo-stdlib` y `tondo-vm`.
+  `tondo-reference-adapter`, `tondo-reliability`, `tondo-native-runtime`,
+  `tondo-stdlib` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
 - Los conteos de tests, casos, requisitos y evidencia se derivan del árbol
@@ -802,7 +596,7 @@ Cada API posterior de STD-0.1A se implementa como slice vertical y amplía
 matriz, conformidad y dogfooding. Antes de `NATIVE-001` deben estar cerrados los
 contratos —no necesariamente las implementaciones— de `std.channel`,
 `std.sync`, `std.executor` y la frontera host de `std.net`, porque condicionan
-memoria, atomics, wakeups, bloqueo y ABI runtime. M11 depende de T0, G5, S1A y
+memoria, atomics, wakeups, bloqueo y ABI runtime. M11 depends on technical T0, meta integration, S1A and
 esos contratos. La implementación de STD-0.1B continúa tras N1 y sigue siendo
 requisito de la primera publicación STD 0.1.0.
 
@@ -3144,15 +2938,13 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   reproducibilidad y que el gate no presenta un requisito pendiente como
   conformidad completa.
 
-- [x] **CONF-RATCHET-001 — Hacer incremental la evidencia nueva.** El comando
-  `tondo-reliability ratchet check` valida el único draft vivo,
-  inventario, matriz, baseline de quality y el registro canónico de hashes.
-  `ratchet generate` solo escribe el registro después de comprobar todos esos
-  bytes; si existen case layers exige reports de coverage y mutation que pasen
-  la no-regresión. La Wave 0 no tiene capas ejecutables y registra ambos scopes
-  como `not-applicable` con razón explícita. Cada wave futura debe ejecutar este
-  mini-gate antes de integrarse; `META-CONF`, `UTEST-CONF` y los gates
-  estándar siguen siendo cierres acumulativos.
+- [ ] **CONF-RATCHET-001 — Keep current evidence bound to the measured tree.**
+  The local ratchet is regenerated with current inventory/matrix hashes,
+  2,067 passing Rust tests, 120 layer observations, coverage at 9,068 basis
+  points against the unchanged 9,061 baseline, and all six selected critical
+  mutants caught. Current-input verification passes; changing the recorded
+  build flags is rejected. This local evidence does not close the outstanding
+  promotion gates or the coherent-block publication/CI requirements.
 
 - [x] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
   El runner de quality debe calcular antes y después un digest canónico de
@@ -3236,14 +3028,10 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   ratchet vivo revalida el registro junto a matriz e inventario sin convertir
   la clasificación en cobertura.
 
-- [x] **CONF-GAP-IMPL-001 — Cerrar la trazabilidad descubierta por la
-  auditoría.** Cada ausencia generaría una tarea leaf enlazada al requisito, una
-  ruta pública real y tests positivos, negativos, de borde y composición. La
-  auditoría no encontró ausencias: los casos ya implementados requieren añadir
-  identidad y evidencia revisada, sin reescribir código que ya funciona. El
-  registro conserva sus 366 decisiones y permite que una fila auditada avance
-  únicamente a `covered` o, para los dos no aplicables, a
-  `target-not-applicable`; eliminar una decisión auditada falla por identidad.
+- [ ] **CONF-GAP-IMPL-001 — Close requirement gaps with actual public execution.**
+  Reconcile every toolchain-limit and absent row against current source and
+  cases. Neighboring component tests cannot stand in for missing testing,
+  reflection, generators or native integration.
 
   - [x] **CONF-GAP-IMPL-TC-001 — Toolchain.** Los 31 requisitos `TC01` tienen
     evidencia explícita en las seis dimensiones. Los oracles ejercitan los
@@ -3436,19 +3224,10 @@ reporters.
   Evidencia: `docs/contracts/test-cli-plan.md`, cinco tests unitarios del parser
   y tests CLI de los límites de uso y ejecución.
 
-- [x] **UTEST-INPUTS-001 — Materializar inputs públicos y secretos sin
-  filtraciones.** Después de `UTEST-INPUTS-PLAN-001`,
-  `UTEST-RUNTIME-001` y `STD-ENV-CONF-001`, resolver los descriptors del plan,
-  materializarlos exclusivamente dentro del worker y revocarlos al terminar.
-  Probar que valores secretos no entran en plan serializado, cache key de
-  compilación, diagnostics, reportes, snapshots, artifacts o productos salvo
-  copia explícita del programa, y documentar que el runner no realiza redacción
-  heurística. Un fallo de materialización termina con exit `1` sin reporte
-  parcial; un fallo de revocación pierde aislamiento y usa exit `3`. Evidencia:
-  `docs/contracts/test-input-runtime.md` y siete tests unitarios sobre selección
-  build/runtime, hash público, errores de proveedor, contención de pánicos,
-  revocación idempotente, metadata sin secretos y acceso a inputs no
-  materializados.
+- [ ] **UTEST-INPUTS-001 — Connect declared test inputs to actual workers.**
+  Existing input-plan and runtime helpers must be invoked by the public
+  pipeline with provider identity, environment selection, secret revocation
+  and failure evidence.
 
 - [x] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
   `tondo_compiler::test_discovery` recibe entradas enumeradas por el host y
@@ -3469,13 +3248,9 @@ reporters.
   Evidencia: `docs/contracts/test-owners.md` y nueve tests unitarios del
   compilador.
 
-- [x] **UTEST-DEPS-001 — Separar dev-dependencies del grafo de producción.**
-  `tondo_compiler::test_dependencies` valida records de interfaz por alias,
-  PackageId, path y hash exactos; limita edges transitivos al subgrafo de test
-  o `toolchain:std:0.1-bootstrap`, rechaza ciclos/overlap con producción y
-  expone aliases solo a unit/integration. `production_identity` deja explícita
-  la huella de inputs productivos sin plan ni records de test. Evidencia:
-  `docs/contracts/test-dependencies.md` y nueve tests unitarios del compilador.
+- [ ] **UTEST-DEPS-001 — Connect closed test dependency graphs to public project discovery and compilation.**
+  Keep production and test-only dependencies separate and validate
+  identities before workers execute.
 
 ### 17.2 Frontend y semántica estática
 
@@ -3570,32 +3345,14 @@ reporters.
   snapshots válidos, nesting, modos de binding/uso, capabilities, terminales,
   diagnósticos y entradas inválidas.
 
-- [x] **UTEST-OVERLAY-001 — Implementar el overlay unitario sellado.** Resolver
-  y comprobar producción primero, después permitir lectura privada y helpers
-  privados sin reabrir bodies, añadir exports ni cambiar interfaces. Casos
-  negativos demuestran que un overlay no repara producción inválida, altera
-  coherence ni entra en el grafo production. `test_overlay::ProductionSeal`
-  exige resolución, comprobación semántica y coherencia completas más hashes
-  de interfaz/capabilities/coherence/artefacto; `from_resolved` filtra un
-  conjunto explícito de fuentes de producción. `test_overlay::build` solo
-  acepta `UnitTest`, ordena imports/helpers/referencias de forma determinista,
-  conserva el árbol de tests separado y rechaza exports públicos, colisiones,
-  self-imports, visibilidad privada importada, mutaciones de coherence y
-  referencias desconocidas. Evidencia: `docs/contracts/test-overlay.md` y
-  once tests unitarios, incluidos el adapter del resolver y la invariancia de
-  los hashes de producción.
+- [ ] **UTEST-OVERLAY-001 — Seal production before applying a test overlay.**
+  Existing overlay helpers are not public integration. A symbol declared
+  only in a test file must never repair invalid production code.
 
-- [x] **UTEST-INTEG-001 — Implementar integration roots aislados.**
-  `test_integration::build` deriva un `PackageId` sintético estable a partir del
-  paquete probado y el path lógico `tests/*.to`, conserva el nombre del paquete
-  probado únicamente en el prefijo visible y mantiene el consumidor separado.
-  Los imports son explícitos y solo admiten el paquete probado o
-  dev-dependencies del grafo cerrado; interfaces privadas, paquetes
-  desconocidos, alias duplicados, self-imports y miembros duplicados se
-  rechazan. Los roots solo pueden declarar helpers privados propios, nunca
-  exports públicos ni acceso al scope unitario. `build_many` ordena por path y
-  rechaza roots duplicados. Evidencia: `docs/contracts/test-integration.md` y
-  ocho tests unitarios deterministas.
+- [ ] **UTEST-INTEG-001 — Compile each integration root as its own synthetic package.**
+  Existing integration helpers must drive discovery, dependencies and
+  workers; private declarations in separate integration files must not
+  collide.
 
 - [x] **UTEST-CHECK-001 — Inferir el contrato exacto del body.**
   `test_check::check` cierra las entradas privadas `fn(): Unit ! E` de
@@ -3686,21 +3443,19 @@ reporters.
   de hermanos, fases setup/teardown y retry de suite completa con contexto
   fresco.
 
-- [x] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
-  defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
-  contar la espera de descendientes, cargar tags/logs/stdout/stderr al mismo
-  presupuesto de output, artifacts/snapshot actual a límites separados de
-  cantidad/bytes y dominios/timers/cola/descriptores virtuales a presupuestos
-  finitos de trabajo, memoria y metadata. Aplicar deltas sin cambios parciales,
-  registrar valores efectivos, fijar grace period de interrupción y garantizar
-  que una entrada no cooperativa no continúa tras `timeout`. Cada intento obtiene
-  presupuestos nuevos bajo el mismo resource profile; timeout,
-  CPU/instrucciones, memoria y output siempre usan recursos reales aunque el
-  intento abra tiempo virtual. OOM, abort o pérdida de aislamiento nunca se
-  presentan como assertion failure ordinario. Evidencia:
-  `docs/contracts/test-limits.md` y ocho tests unitarios sobre defaults, hashes,
-  validación, reservas atómicas, deltas duplicados, pausas de timeout, timeout
-  desactivado, regresión de reloj y grace period de interrupción.
+- [ ] **UTEST-LIMIT-001 — Apply finite budgets and deadlines to each public test phase.**
+  The Rust profile, atomic budget ledger and pausable deadline model exist;
+  eight unit tests cover their bounded rules. Public output/artifact/snapshot
+  limits and a whole-worker watchdog also exist, but the CLI does not apply
+  the wall-clock deadline independently to each leaf and active suite phase.
+  The audit reproduced two 350 ms tests passing separately with `--timeout
+  500ms`, while their shared suite exits 3 with `test worker timed out`; both
+  pass together with `--timeout 1500ms`. Descendant waiting time incorrectly
+  consumes the participation deadline. Wire phase identity and active timing
+  through the isolated worker, preserve non-cooperative termination and
+  per-attempt resource bounds, and verify terminal/report/retry behavior.
+  Model success cannot close the public boundary. See
+  `docs/contracts/test-limits.md` and `TONDO_TESTING_SPEC.md` section 7.8.
 
 - [x] **UTEST-GLOB-001 — Implementar el selector glob portable.** Parsear
   componentes `::`, `*`, `?` y `**` con la gramática cerrada de la spec,
@@ -3863,25 +3618,10 @@ reporters.
   escapes. `docs/contracts/test-snapshots.md` documenta el contrato; los tests
   cubren parseo, matching, no-update implícito, separación del stage y rutas.
 
-- [x] **UTEST-INTERRUPT-001 — Cerrar la interrupción externa.** En la primera
-  señal, detener dispatch, cancelar cooperativamente, conducir cleanup
-  incluyendo `defer` durante el grace period y revocar secretos,
-  procesos, handles y recursos; una segunda señal puede forzar terminación.
-  Emitir exit `4` solo si se restauró aislamiento y exit `3` en caso contrario.
-  No publicar JSON, JUnit, manifest de artifacts ni snapshot update parcial;
-  cada output final conserva sus bytes anteriores o permanece ausente. Permitir
-  únicamente blobs content-addressed huérfanos y una salida humana marcada
-  `interrupted`, nunca un resultado machine-readable presentado como completo.
-  La tarea implementa y prueba la transacción coordinator/worker mediante un
-  evento de interrupción inyectable después de cerrar stores y reporters; el
-  mapping de señales del SO y su prueba pública quedan en `UTEST-CLI-001`.
-  Evidencia implementada en `crates/tondo-compiler/src/test_interrupt.rs` y
-  `docs/contracts/test-interrupt.md`: la primera solicitud corta dispatch y
-  staging, exige ACK de cleanup/revocación antes de cerrar workers, usa el
-  grace period de `LimitProfile`, separa exit `4` de pérdida de aislamiento en
-  exit `3`, conserva outputs previos y restringe huérfanos a hashes
-  content-addressed. Seis tests cubren la ruta segura, expiración, segunda
-  solicitud, ACK incompleto, ledger de outputs y validación de reloj/identidad.
+- [ ] **UTEST-INTERRUPT-001 — Connect OS interruption to coordinator and worker lifecycle.**
+  The state machine exists. Public SIGINT must stop dispatch, terminate and
+  reap workers, emit terminal evidence and exit with the specified
+  interruption code.
 
 - [x] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
   Implementar una sola vez `tondo-test-json-v1` y serializar con ella
@@ -3970,78 +3710,28 @@ reporters.
   `crates/tondo-cli/src/project_discovery.rs`, `main.rs`,
   `docs/contracts/project-discovery.md` y las pruebas CLI de proyecto/TOML.
 
-- [x] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** `tondo test`
-  materializa un plan canónico opinionado desde el proyecto cuando no existe
-  sidecar; `--test-plan <path>` o un `tondo.test.toml` adyacente seleccionan un
-  plan avanzado, cuyos hashes de proyecto y forma canónica se verifican antes
-  de compilar. Los overrides efímeros de CLI permiten selector, shard,
-  orden/seed, jobs, retry, repeat y outputs sin editar el TOML, pero no pueden
-  ampliar límites ni capabilities. Cada hoja se ejecuta en un proceso worker nuevo; el
-  coordinator importa evidencia y aplica el timeout wall-clock monotónico con
-  terminación del proceso, incluidos retry y repeat. Las snapshot stores se
-  cargan como inputs cerrados; `--update-snapshots` usa una
-  `SnapshotUpdateStage` y rename atómico solo tras una campaña completamente
-  verde. El artifact store del plan base fija el formato y el límite, mientras
-  `--artifacts` solo puede reubicar físicamente la salida. Un `--timeout none`
-  explícito se rechaza frente al límite cerrado. JSON/JUnit, artifacts,
-  CODEOWNERS, selección, shards, orden, jobs y exits 0/1/2/3 quedan cubiertos
-  por tests unitarios e integración. El plan de usuario solo admite TOML;
-  JSON queda restringido a informes y fronteras internas.
-  Evidencia en `crates/tondo-cli/src/main.rs`,
-  `crates/tondo-compiler/src/test_control.rs`,
-  `crates/tondo-compiler/src/test_runtime.rs` y los contratos de
-  `test-cli-plan`/`test-plan`. Las señales del SO siguen en
-  `UTEST-INTERRUPT-001`; no se implementan `--tag`, selector regex ni
-  `--fail-fast` bajo este contrato.
+- [ ] **UTEST-CLI-001 — Connect the complete public test pipeline.**
+  The coordinator, workers, selection, retry and reports exist. Compile and
+  validate the entire target before listing, filtering, sharding or allowing
+  an empty selection; connect production sealing, integration isolation,
+  inputs, dependencies and OS interruption.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
-- [x] **UTEST-CONF-001 — Ampliar la conformidad del draft Tondo 0.1.** No
-  presentar casos vecinos como evidencia de requisitos nuevos. El
-  manifiesto draft añade los cincuenta y dos grupos mínimos enumerados por la
-  spec de testing y mantiene adaptador público para VM y futuros backends.
+- [ ] **UTEST-CONF-001 — Run testing conformance through the public CLI.**
+  Cover full-target errors hidden by selection, production isolation,
+  separate integration roots, worker inputs, dependencies and interruption;
+  bind observations to the actual target.
 
-- [x] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
-  Incluir package unitario, integration roots, dev-dependency, suites anidadas,
-  servicio compartido, captura válida/inválida, async/error, fallos de
-  setup/teardown, `blocked-setup`, log directo/desde helper/task, `failNow`,
-  tags directos/desde helper/task, conflicto `P2002`, skip de hoja/suite,
-  `blocked-skip`, `P2001`, deny-skips, pánico/cleanup, host capabilities,
-  CODEOWNERS, substring/glob/exact, selección vacía, shards, orden/seed,
-  retries de hoja/setup/teardown, aislamiento externo idempotente,
-  `flaky-pass`/allow-flaky, campañas repeat, backoff/deadline/debounce con tiempo
-  virtual, quiescencia, deadlock/solapamiento/rango, cleanup mediante
-  `defer`, inputs públicos/secretos y sus fallos de
-  materialización/revocación, interrupción, attachments y snapshots en
-  check/update mode, y reporters JSON/JUnit. Cada proyecto debe poder ejecutarse
-  desde una copia en otro path físico con observaciones canónicas iguales salvo
-  duración JUnit y material secreto deliberadamente externo.
-  El corpus versionado `acceptance/projects/testing-acceptance` y
-  `acceptance/projects/testing-control` cruza discovery convencional, unit e
-  integration roots, suites anidadas, helper compartido, `std.testing`
-  sellado, `failNow`, skip, logs, tags, CODEOWNERS, selección, shards, seed y
-  reporters JSON/JUnit a través del binario real. La prueba copia el proyecto
-  a dos raíces físicas y compara los bytes canónicos. Los modelos de lifecycle,
-  retries/repeat, tiempo virtual, inputs, interrupción, artifacts/snapshots y
-  sus fallos quedan enlazados por los 52 grupos de `UTEST-CONF-001`; el host VM
-  tiene además cobertura directa de logs, tags, attachment y snapshot, y
-  `std.testing` permanece ausente de producción.
+- [ ] **UTEST-PROJECTS-001 — Complete public project discovery.**
+  TOML discovery exists, but must materialize the specified production,
+  unit-overlay, integration, dependency and input boundaries rather than one
+  merged source graph.
 
-- [x] **UTEST-PLATFORM-001 — Validar la matriz declarada.** Linux ejecuta el
-  gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
-  discovery, paths jerárquicos, substring/glob/exact de suite/test, lifecycle,
-  envelopes, tags/logs/skips, CODEOWNERS, sharding, orden/seed, workers nuevos
-  de retry y repeat, reloj virtual y ties de timers deterministas, cleanup async,
-  inputs, interrupción, artifacts/snapshots, aislamiento, timeout, captura y
-  reportes JSON/JUnit aplicables además del smoke test de binario.
-  `.github/workflows/test.yml` conserva el gate estricto en Linux x86_64 y
-  ejecuta `scripts/platform-test.sh` sobre runners nativos Linux ARM64, macOS
-  Intel/ARM64 y Windows x86_64. El gate portable recorre todos los tests Rust,
-  incluidos los contratos de lifecycle, scheduler, reloj virtual, inputs,
-  captura y reporters, y después ejecuta el proyecto público de aceptación con
-  seed fija mediante el binario de cada plataforma. Los resultados JSON/JUnit
-  se validan como no vacíos y se retienen como artifacts identificados por
-  target; el mismo binario debe superar además `--version` y Hello World.
+- [ ] **UTEST-PLATFORM-001 — Verify the complete test pipeline on supported hosts.**
+  Portable component tests do not prove public interruption, process cleanup
+  or isolated project execution. Retain failures and target capabilities
+  explicitly.
 
 - [x] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
@@ -4068,84 +3758,30 @@ reporters.
   producción `answerAfterBackoff` con `withVirtualTime`, `settle` y 25 ns
   virtuales, y la aceptación exige esa evidencia tanto en JSON como en JUnit.
 
-- [x] **UTEST-SPEC-EVIDENCE-001 — Cerrar la trazabilidad completa del spec de
-  testing.** Los 38 fences que el inventario clasifica hoy como
-  `draft-contract` deben mapearse a casos públicos existentes, convertirse en
-  aceptación ejecutable o declararse ilustrativos/no normativos con una razón
-  individual. La matriz multi-spec debe demostrar cada contrato aplicable de
-  `TONDO_TESTING_SPEC.md`; el número de grupos del manifest no sustituye esa
-  correspondencia. La matriz viva clasifica cada requisito `TT01` y exige
-  evidencia ejecutable o una razón normativa individual para cualquier no-goal.
+- [ ] **UTEST-SPEC-EVIDENCE-001 — Bind every testing requirement to its actual public execution.**
+  Existing fences and component cases remain useful. Full target
+  compilation, production sealing, integration isolation, inputs,
+  dependencies and interruption require renewed explicit traces before T0.
 
-### Gate T0 — Testing first-class conforme
+### Gate T0 — Public testing conformance
 
-- [x] El corpus vivo, su manifest y sus observaciones se regeneran y validan
-  contra el mismo borrador que consume el compilador.
-- [x] El borrador consolidado Tondo 0.1 incorpora el contrato de testing,
-  reserva `suite` y `test` y define `defer` con inferencia de cleanup,
-  infallible y verificable sin añadir hooks de testing ni un segundo dialecto.
-- [x] Lexer, CST, parser, formatter, HIR, MIR, bytecode y VM recorren la ruta
-  común y sus verifiers aceptan o rechazan árboles suite/test con diagnostics
-  exactos.
-- [x] Unit overlays ven privados sin alterar producción; integration roots solo
-  ven API pública; `std.testing`, dev-dependencies y operaciones test-only nunca
-  entran en productos publicables.
-- [x] Cada entrada recibe un envelope no observable ni falsificable que sigue
-  frames/tasks y nunca se deriva de un thread-local del host; tags, logs y
-  terminales se atribuyen al nodo exacto sin `TestContext` ni `currentTest()`.
-- [x] Suites ejecutan setup una vez por participación solo para subárboles
-  seleccionados, permiten únicamente capturas `let: Copy + Send + Share`,
-  hacen teardown tras todos los descendientes y reportan setup, teardown,
-  `blocked-setup`, skip y `blocked-skip` sin duplicar causas.
-- [x] Retorno, error, `assert`, `failNow`, skip, pánico, async, cancelación,
-  ownership, `defer` y `defer` conservan cleanup y precedencia; `P2001`,
-  resource limits, timeout e interrupción no esconden cleanup observado ni
-  rompen aislamiento.
-- [x] Inputs públicos se fijan por bytes/hash y secretos solo por descriptor;
-  ningún valor secreto entra en productos, cache keys, reportes o stores
-  implícitos, y cada worker materializa y revoca únicamente lo declarado.
-- [x] `Duration`, `Instant`, suspensión, timers y deadlines usan el sustrato
-  monotónico de producción; `withVirtualTime` lo sustituye solo dentro de su
-  closure, presta un controlador no escapable y conserva el timeout real.
-- [x] Quiescencia durable, `settle`, avance explícito/automático, cola y ties de
-  timers son deterministas; esperas externas no se virtualizan y `P2003`,
-  `P2004` y `P2005` conservan sus condiciones exactas.
-- [x] `tondo test` implementa discovery, compilación completa, selección,
-  substring/glob/exact de suite/test, CODEOWNERS, sharding estable, orden/seed,
-  ejecución serial/paralela, retries aislados por rondas, repeat aislado por
-  iteraciones, captura, artifacts, snapshots, reporters, interrupción y exit
-  codes deny-skips/allow-flaky/empty según contrato; no inventa regex, filtrado
-  por tags, retries/repeat implícitos ni fail-fast.
-- [x] Cada retry reutiliza solo el artefacto inmutable, arranca un worker nuevo,
-  conserva shard/configuración, respeta el máximo global de jobs y deja
-  procesos, recursos rastreados, heap, roots, tasks, handles, envelopes y
-  buffers sin supervivientes; cada dominio virtual vuelve al mismo cero.
-- [x] Cada iteración repeat ejecuta el plan completo en worker nuevo, no se
-  solapa con otra iteración y, con count mayor que uno, mantiene exit rojo ante
-  cualquier non-pass aunque otra oportunidad del mismo nodo pase; count uno
-  conserva la policy ordinaria.
-- [x] Attachments y snapshots pertenecen al intento exacto; los stores `/1`
-  son canónicos, acotados y atómicos, y snapshot update nunca se activa ni
-  elimina entries de forma implícita.
-- [x] Una interrupción deja de despachar, intenta cleanup/revocación y usa exit
-  `4` o `3` según aislamiento; nunca publica reportes, manifests o updates
-  parciales como completos.
-- [x] El reporte JSON `/7` es canónico y reproducible, conserva todos los
-  intentos, iteraciones, dominios y descriptors sin material secreto añadido
-  por el runner ni payloads externos embebidos; JUnit `/4` proyecta la misma
-  ejecución y policy con duración operacional real y tiempo virtual separado.
-  La salida humana no intercala suites/tests o intentos y muestra owners, tags,
-  evidence, tiempo virtual, logs, razones y fallos accionables.
-- [x] El grupo de testing de `tondo-conformance-draft` pasa en la VM, la matriz
-  de plataformas aplicable está verde y `UTEST-SPEC-EVIDENCE-001` demuestra
-  todos los contratos normativos de testing sin `draft-pending`.
-- [x] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
-  registration APIs, `TestContext`, annotations, reflection, subtests dinámicos
-  ni hooks ocultos.
+- [x] Suite/test syntax, shared frontend, hosted lowering, envelopes and
+  virtual-time components have executable evidence.
+- [ ] Compile the full target before listing, filtering, sharding or empty
+  selection, and reject invalid unselected tests before dispatch.
+- [ ] Seal production, apply immutable unit overlays and compile integration
+  roots as separate packages with closed dependencies.
+- [ ] Materialize and revoke declared inputs in actual workers; keep secret
+  values out of products, cache identities and reports.
+- [ ] Verify suite lifecycle, retries, repeat, snapshots, artifacts, reports,
+  cancellation and isolated cleanup together through the public pipeline.
+- [ ] Handle OS interruption, stop dispatch, terminate and reap workers, and
+  produce terminal evidence without partial publication.
+- [ ] Run applicable public conformance and portable checks with current
+  inventory, matrix, ratchet, coverage and mutation provenance.
 
-La implementación funcional y el gate T0 vivo están completos. La suite
-completa —incluida metaprogramación— alimenta el resultado compuesto del árbol
-actual; el primer candidato G5 se construirá únicamente al preparar la release.
+T0 is pending. Existing helper tests and hosted cases retain their individual
+scope; they do not replace the reopened integration tasks.
 
 ---
 
@@ -4240,9 +3876,9 @@ vez los errores de los slices anteriores.
   validación de duplicados/orden/UTF-8 y round-trip que audita la ausencia de
   datos ejecutables o de runtime.
 
-- [x] **META-QUERY-001 — Exponer expansiones y procedencia.** Tooling devuelve
-  fuente formateada, provider, request/output hashes, bounds introducidos y
-  source map sin revelar símbolos privados ajenos al target.
+- [ ] **META-QUERY-001 — Connect metadata queries to actual compiled providers and public project inputs.**
+  Internal query helpers require integration with the closed request model,
+  visibility and deterministic output.
 
 ### 18.3 Ejecución hermética
 
@@ -4253,24 +3889,23 @@ vez los errores de los slices anteriores.
   `STD-META-IMPL-001` compila después el companion especificado sobre este
   sustrato, y solo entonces se habilitan providers.
 
-- [x] **META-DERIVE-001 — Ejecutar providers derive.** Pasar requests tipados,
-  limitar outputs al impl autorizado, validar y formatear fuente, y fusionarla
-  solo cuando todos los providers terminan correctamente.
+- [ ] **META-DERIVE-001 — Execute general derive providers through the public frontend.**
+  Built-in serialization derives work; precomputed source returned by a
+  constant VM program does not establish arbitrary Tondo provider execution.
 
-- [x] **META-GEN-001 — Ejecutar generators de manifest.** Entregar únicamente
-  inputs declarados por valor y la clausura pública de roots explícitos, exigir
-  todos y solo los outputs cerrados, impedir lectura ambiental, generación
-  multi-round y observación de outputs hermanos.
+- [ ] **META-GEN-001 — Execute declared generators from public TOML projects.**
+  Existing internal generator plans are not accepted by ordinary project
+  discovery. Compile actual Tondo providers with closed inputs, roots,
+  outputs and sandbox limits.
 
-- [x] **META-ATOMIC-001 — Integrar identidad, cache y productos.** Incluir
-  model/provider/request/output hashes en interfaces y artifacts; reutilizar
-  cache solo con identidad completa y no publicar fuente, interface o artifact
-  parcial ante fallo.
+- [ ] **META-ATOMIC-001 — Integrate metadata identity, caching and atomic products into ordinary compilation.**
+  Internal helpers exist; provider failure must prevent publication of
+  source, interfaces and artifacts through the public command.
 
-- [x] **REFLECT-IMPL-001 — Implementar metadata runtime alcanzable.** Generar
-  metadata de `typeInfo[T]()` estáticamente, eliminar la no alcanzable y
-  demostrar que `TypeId` no escapa como identidad de wire ni habilita value
-  reflection.
+- [ ] **REFLECT-IMPL-001 — Expose reachable runtime metadata through public std.reflect.typeInfo[T]().**
+  The Rust catalog and linker exist; the ordinary frontend currently rejects
+  std.reflect. Connect typing, lowering, runtime metadata and reachability
+  without adding value reflection or wire-stable TypeId.
 
 ### 18.4 Evidencia y contribución a Gate G5
 
@@ -4289,26 +3924,23 @@ vez los errores de los slices anteriores.
   UTF-8 inválido y generadores hostiles sin panic del compilador ni publicación
   parcial.
 
-- [x] **META-CONF-001 — Extender `tondo-conformance-draft`.** Añadir syntax,
-  semantic, tooling, runtime metadata, toolchain y reproducibility cases en la
-  línea draft creada por `CONF-DRAFT-001`, sin presentar la regresión bootstrap
-  como conformidad completa. Ratchetear su contribución acumulada solo después de actualizar
-  inventario, trazabilidad, coverage y mutation evidence para la superficie
-  nueva; el sellado del primer artefacto publicable pertenece exclusivamente a
-  `CONF-SEAL-FINAL-001`.
+- [ ] **META-CONF-001 — Execute public metaprogramming and reflection conformance.**
+  Preserve model tests, but require actual provider programs, public
+  generator declarations, atomic failure and runtime metadata observations
+  before promotion.
 
 ### Gate G5 — Primer candidato completo del lenguaje
 
-- [x] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
+- [ ] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
   tiene conformidad aplicable sobre `tondo-vm-hosted`; la matriz multi-spec no
   conserva límites aplicables ni contratos pendientes.
-- [x] Gate T0 está cerrado y el grupo de testing forma parte de
+- [ ] Gate T0 está cerrado y el grupo de testing forma parte de
   `tondo-conformance-draft`, no de una edición o suite paralela.
-- [x] `tondo doc-test` aplica el contrato completo de 21.6 y valida los
+- [ ] `tondo doc-test` aplica el contrato completo de 21.6 y valida los
   ejemplos normativos sin harness paralelo ni resultados parciales.
-- [x] La suite y su manifest fijan el hash actual de la spec y no conservan un
+- [ ] La suite y su manifest fijan el hash actual de la spec y no conservan un
   snapshot pre-release paralelo.
-- [x] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
+- [ ] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
   meta.
 - [ ] `CONF-GAP-AUDIT-001`, cualquier leaf de `CONF-GAP-IMPL-001`,
   `CONF-LAYER-RESULT-001`, `QUALITY-EVIDENCE-BIND-001` y
@@ -4478,7 +4110,7 @@ layer pueden avanzar en paralelo.
 
 - [x] **STD-MATH-001 — Especificar `std.math`.** Fijar las operaciones escalares
   portables que completan los numéricos intrínsecos, incluidos floor, ceil,
-  round, truncate, sqrt y FMA explícita, conservando IEEE, ausencia de fast-math
+  round, roundTiesAway, truncate, sqrt y FMA explícita, conservando IEEE, ausencia de fast-math
   observable, dominio, errores y casos límite.
 
 - [x] **STD-COLL-001 — Especificar colecciones.** `Array`, `Map` y `Set` fijan
@@ -4645,17 +4277,14 @@ layer pueden avanzar en paralelo.
 
 ### 19.4 Implementación y evidencia
 
-- [x] **STD-META-IMPL-001 — Implementar `std.meta` sobre el target cerrado.**
-  Después de `META-VM-001`, materializar el companion meta dentro de la
-  distribución candidata, implementar requests, recorrido, renderizado y
-  builder en Tondo cuando sea posible y validar su descriptor/content hash. No
-  incorpora providers de serialization ni formatos.
+- [ ] **STD-META-IMPL-001 — Implement the specified public std.meta companion.**
+  Existing Limits, Output, SourceMap and environment values are partial;
+  connect MetaRequest, builders and provider-facing APIs to actual Tondo
+  execution.
 
-- [x] **STD-META-CONF-001 — Cerrar la evidencia build-only.** Ejecutar
-  round-trips canónicos, source maps, errores, límites, budgets y ausencia
-  efectiva de filesystem, environment, process, clock, entropy, network,
-  threads, FFI y unsafe. Debe pasar antes de `META-DERIVE-001` o
-  `META-GEN-001`.
+- [ ] **STD-META-CONF-001 — Verify the public std.meta surface with compiled Tondo providers.**
+  Rust model and protocol tests remain component evidence and cannot close
+  missing companion APIs.
 
 - [x] **STD-BYTES-IMPL-001 — Implementar la identidad binaria común.**
   La VM hosted implementa `Bytes`, `BytesBuilder`, conversiones, UTF-8, slicing,
@@ -4974,51 +4603,31 @@ Las leaves A3 solo pueden marcarse `[x]` cuando cumplen todos estos puntos:
   en orden estable y cada candidato usa un worker nuevo; los casos son una vista
   efímera de tooling y no crean `TestEntry`, suites ni subtests dinámicos.
 
-- [x] **STD-PUBLIC-API-AUDIT-001 — Verificar firma por firma todos los owners
-  A.** `scripts/stdlib-public-api-audit.sh` genera y valida
-  `testing/stdlib-public-api.json` con la cadena contract signature → símbolo
-  HIR → lowering → host/VM → caso público. `--check` detecta drift y mantiene
-  visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
-  aislado, un fixture que llama otra operación, una prueba documental ni un
-  alias bootstrap. El registro actual está verificado en `214/214`, con cero
-  gaps; el bundle `STD-S1A-SEAL-001` fija la promoción técnica del draft sin
-  convertirla en una release.
+- [ ] **STD-PUBLIC-API-AUDIT-001 — Verify every applicable owner signature without vacuous coverage.**
+  The audit generator exists, but accepted zero indexed signatures for
+  build-only owners and misclassified runtime reflection. Index the complete
+  callable/protocol surface, require actual public cases and preserve
+  explicit gaps.
 
-- [x] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
-  `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
-  `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001`, `STD-IO-IMPL-001`,
-  `STD-SER-IMPL-001`, los owners Core ya completos y
-  `STD-PUBLIC-API-AUDIT-001` no dejan ninguna firma sin ruta pública dentro
-  del grupo coordinado. La evidencia reproducible está en
-  `testing/stdlib-implementation-coordination.json` y su checker: verifica
-  las 64 firmas Core, la etapa `IMPL/HOST` y las rutas de implementación/tests
-  de los ocho owners Core/serialization. El auditor global está ahora en
-  `214/214` firmas verificadas y cero gaps; los owners build-only quedan
-  excluidos mediante una razón explícita y no son un waiver.
+- [ ] **STD-IMPL-001 — Coordinate complete Core implementation by owner.**
+  Existing Core kernels and public codec routes retain their scope. Reopened
+  public API, reflection and meta integration must close before claiming
+  every applicable Core signature is implemented.
 
-- [x] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
-  `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
-  bridges correctos de path/console y capabilities. El registro
-  `testing/stdlib-hosted-implementation-coordination.json` y su checker
-  verifican los cuatro owners Hosted, sus capabilities exactas, las etapas
-  `IMPL/HOST`, las celdas de evidencia y las 48/48 firmas públicas. `std.path`
-  queda explícitamente `HOST not-applicable` por ser puramente léxico; no se
-  inventa un provider. La auditoría global está en `214/214`, sin gaps; los
-  tres owners build-only conservan su frontera `not-applicable` explícita.
+- [x] **STD-IMPL-002 — Coordinate the four Hosted owner components.**
+  The generated register verifies the console/path/fs/process component
+  evidence, exact capabilities, host stages and 48 public signatures.
+  `std.path` retains a reasoned `HOST not-applicable` lexical boundary.
+  This bounded coordination remains separate from the reopened global public
+  audit, testing/metaprogramming integration, native AOT and S1A promotion.
+  The checker derives open/closed status and preserves global gaps; missing
+  signatures, missing owner routes or a pending host cannot close the record.
 
-- [x] **STD-CODEC-PUBLIC-001 — Cerrar la exposición pública restante de codecs
-  y owners build-only.** Las 32 firmas restantes de MessagePack y Protobuf
-  quedan trazadas hasta HIR, lowering, VM/host y casos públicos: la matriz
-  `testing/stdlib-public-api.json` verifica 214/214 filas bajo `--strict`.
-  `MessagePackValue` tiene la ruta dinámica `encode` además de la ruta typed
-  con bounds, y la fixture `m11-std-codecs-001.to` compila y ejecuta parse,
-  parseView, decode/encode typed y dynamic, validate, determinismo, raw,
-  timestamp/ext, readers/writers y Protobuf descriptor/readers/writers/
-  unknown fields. `std.meta`, `std.reflect` y `std.serialization` quedan
-  indexados explícitamente como `build-only` con runtime `not-applicable`,
-  paths compiler-owned y razones normativas; no se inventa una `pub fn`
-  runtime. `scripts/stdlib-public-api-audit.sh --strict`, los negativos del
-  auditor, `scripts/stdlib-codec-conformance.sh` y el smoke CLI pasan.
+- [ ] **STD-CODEC-PUBLIC-001 — Complete the remaining public owner audit.**
+  MessagePack and Protobuf public codec cases remain valid. The global
+  closure incorrectly treated std.reflect as build-only and omitted
+  callable/protocol inventories for other owners; renew strict proof after
+  those gaps close.
 
 - [x] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** El runtime,
   temp resources, generators, diffs, tolerancias y control sellado se conservan.
@@ -5040,31 +4649,23 @@ Los campos aplicables enlazan artefactos y casos exactos, no solo directorios o
 tests vecinos. Así se conserva granularidad por owner sin multiplicar tareas
 administrativas que no implementan comportamiento.
 
-- [x] **STD-A-META-EVIDENCE-001 — Cerrar evidencia de `std.meta`.**
-  `testing/stdlib-meta.json` fija el contrato A0, los seis requisitos del
-  owner y los límites de compilación/generación; `testing/stdlib-owner-evidence.json`
-  registra por separado `SPEC`, `IMPL`, `HOST`, `MODEL`, `TEST`, `FUZZ`, `PERF`,
-  `CONF` y `DOC`. `HOST` es explícitamente `not-applicable` por la frontera
-  build-only `tondo-meta`; el modelo, las pruebas y el corpus de fuzz enlazan
-  `meta.rs`, `std_meta.rs`, `meta_robust.rs` y el test de conformance. Los
-  presupuestos compile-time/generados quedan declarados como promoción
-  pendiente, sin inventar una captura runtime.
-- [x] **STD-A-REFLECT-EVIDENCE-001 — Cerrar evidencia de `std.reflect`.**
-  `testing/stdlib-reflect.json` fija los seis requisitos del owner y sus
-  límites de metadata estática; `testing/stdlib-owner-evidence.json` separa
-  raíces explícitas, clausura pública, privacidad, identidad local al artefacto,
-  ausencia de reflection de valores y documentación. `HOST` es explícitamente
-  `not-applicable` por la frontera metadata-only; link-work y tamaño de
-  descriptores quedan como presupuestos de promoción pendientes, y la
-  conformidad global continúa visible en la matriz.
+- [ ] **STD-A-META-EVIDENCE-001 — Bind std.meta owner evidence to executable public provider cases.**
+  Retain protocol fuzz and model coverage with their bounded scope; reopen
+  applicable integration cells.
+- [ ] **STD-A-REFLECT-EVIDENCE-001 — Bind std.reflect owner evidence to public runtime calls.**
+  Zero extracted signatures and a build-only Rust catalog case cannot prove
+  runtime typeInfo[T]().
 - [x] **STD-A-BYTES-EVIDENCE-001 — Cerrar evidencia de `std.bytes`.**
   `testing/stdlib-bytes.json` fija el contrato A0, sus límites, invariantes,
   corpora y seis requisitos ejecutables; `testing/stdlib-owner-evidence.json`
   separa identidad/snapshots, builders, UTF-8, límites/rangos,
   properties/hot paths, conformidad y docs. `HOST` es explícitamente
-  `not-applicable` por ser un intrinsic compiler/VM-owned; `STD-A-FUZZ-001`
-  promueve el fuzz owner-aware y la captura de rendimiento sigue como
-  promoción pendiente sin inventar métricas.
+  `not-applicable` por ser un intrinsic compiler/VM-owned.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-TIME-EVIDENCE-001 — Cerrar evidencia del time-base.**
   `testing/stdlib-time.json` fija el contrato A0 capability-gated, sus cinco
   límites, nueve invariantes, tres corpora y seis requisitos ejecutables.
@@ -5074,10 +4675,12 @@ administrativas que no implementan comportamiento.
   sellado, parte de cero y solo avanza explícitamente. `process_host` ejecuta
   el corpus común para ambos providers y `driver` prueba capability ausente,
   sustitución virtual, settle, cancelación, dominios y cleanup. `HOST` queda
-  `verified`; `STD-A-FUZZ-001` promueve el fuzz owner-aware y la captura de
-  rendimiento por provider permanece como promoción pendiente.
-  `scripts/stdlib-time-check.sh` y
-  `scripts/stdlib-time-test.sh` validan el contrato y sus negativos.
+  `verified`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-ENV-EVIDENCE-001 — Cerrar evidencia de `std.env`.**
   `testing/stdlib-env.json` fija el contrato A0 capability-gated, sus tres
   límites, nueve invariantes, tres corpora y seis requisitos ejecutables.
@@ -5086,29 +4689,36 @@ administrativas que no implementan comportamiento.
   límites atómicos, aislamiento ambiental y documentación. `process_host` usa
   solo el plan de inputs entregado en runtime; las pruebas cubren proveedor
   unavailable, nombres inválidos, entradas inyectadas, límites sin estado
-  parcial y ausencia de lecturas de `PATH`/`HOME`. `HOST` queda `verified`;
-  `STD-A-FUZZ-001` promueve el fuzz owner-aware y la captura de rendimiento por
-  capability permanece como promoción pendiente. `scripts/stdlib-env-check.sh` y
-  `scripts/stdlib-env-test.sh` validan el contrato y sus negativos.
+  parcial y ausencia de lecturas de `PATH`/`HOME`. `HOST` queda `verified`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-CORE-EVIDENCE-001 — Cerrar evidencia Core.** `testing/stdlib-owner-evidence.json`
   registra las nueve celdas del owner intrínseco `std.core`: protocolos y
   genéricos en HIR, composición `Option`/`Result`, dispatch y agregados
   bytecode/MIR, fixtures runtime y auditoría pública de las nueve firmas.
   `HOST` es explícitamente `not-applicable` por la frontera compiler/VM-owned.
   El corpus de admission fuzz cubre formas `Option`/`Result` y protocolos
-  genéricos; `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras la captura
-  de rendimiento por owner mantiene su frontera PERF-001 y la ejecución pública
-  de conformance está promovida por `STD-A-CONF-001`.
+  genéricos.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-TEXT-EVIDENCE-001 — Cerrar evidencia de texto.**
   `testing/stdlib-owner-evidence.json` registra las nueve celdas del owner
   intrínseco `std.text` y enlaza las quince firmas de `String` con el contrato
   de grupo, HIR/lowering, puente compiler/VM, fixtures Unicode, slicing por
   scalar, iteración y rechazo atómico de UTF-8 inválido. `HOST` es explícitamente
   `not-applicable`; el corpus bounded de UTF-8/admission fuzz y la auditoría
-  pública quedan verificados como evidencia disponible; `STD-A-FUZZ-001`
-  promueve el fuzz owner-aware y `STD-A-CONF-001` promueve la ejecución pública;
-  el coste sigue en la frontera PERF-001. `scripts/stdlib-text-test.sh` cubre negativos de contrato y
-  forma/cobertura de la API.
+  pública quedan verificados como evidencia disponible.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-COLL-EVIDENCE-001 — Cerrar evidencia de colecciones.**
   `testing/stdlib-owner-evidence.json` registra las nueve celdas del owner
   intrínseco `std.collections` y enlaza las dieciocho firmas de `Array`, `Map`
@@ -5116,12 +4726,12 @@ administrativas que no implementan comportamiento.
   `m11-std-collections-001.to`. La evidencia cubre COW y semántica de valor,
   capacidad/errores atómicos, protocolo `Key`, hashing, orden de inserción,
   membership, reemplazo/eliminación e iteración lazy. `HOST` es explícitamente
-  `not-applicable`; admission fuzz y properties eager/COW quedan ejecutables;
-  `STD-A-FUZZ-001` promueve el fuzz owner-aware y `STD-A-CONF-001` promueve la
-  ejecución pública; los baselines de memoria/hash siguen su frontera PERF-001.
-  `scripts/stdlib-collections-test.sh`
-  valida negativos del contrato, símbolos, runtime, properties y las 18/18 filas
-  de la auditoría pública.
+  `not-applicable`; admission fuzz y properties eager/COW quedan ejecutables.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-ITER-EVIDENCE-001 — Cerrar evidencia de iteradores.** `testing/stdlib-owner-evidence.json`
   registra las nueve celdas del owner intrínseco `std.iter` y enlaza las cuatro
   firmas de `Iterator` (`map`, `filter`, `take`, `collect`) con el protocolo HIR,
@@ -5130,34 +4740,37 @@ administrativas que no implementan comportamiento.
   rutas calificadas/genéricas, `take` negativo, `collect` acotado, cursores
   prestados, iteradores de usuario, agotamiento y trazado de callbacks. `HOST`
   es explícitamente `not-applicable`; admission fuzz y properties de cursor son
-  ejecutables; `STD-A-FUZZ-001` promueve el fuzz owner-aware y
-  `STD-A-CONF-001` promueve la ejecución pública; los baselines de
-  retención/allocations/materialización siguen su frontera PERF-001.
-  `scripts/stdlib-iter-test.sh` valida negativos de contrato, símbolos, fixture,
-  properties y las 4/4 filas de la auditoría pública.
+  ejecutables.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-MATH-EVIDENCE-001 — Cerrar evidencia matemática.** `testing/stdlib-owner-evidence.json`
-  registra las nueve celdas del owner intrínseco `std.math` y enlaza sus nueve
-  firmas escalares con dispatch HIR, puente `process_host`, `MathError`, kernel
-  portable y fixture público. La evidencia cubre IEEE-754, ties-to-even, cero
-  con signo, infinitudes, NaN, subnormales, overflow, dominio/no-finito de
-  `sqrt`, properties Float32, diagnósticos de constantes y la auditoría 9/9.
+  records the nine evidence cells of `std.math` and links its ten scalar
+  signatures to HIR dispatch, `process_host`, `MathError`, the portable kernel
+  and the public fixture. Evidence covers nearest rounding with ties to even
+  (`round`) or away from zero (`roundTiesAway`), signed zero, infinities, NaN,
+  subnormals, overflow, the domain/non-finite boundary of `sqrt`, Float32
+  properties, constant diagnostics and the 10/10 surface audit.
   El scalar oracle es la ruta normativa 0.1 y no existe un camino SIMD o
   fast-math alternativo; cualquier vectorización futura deberá probar
-  equivalencia bit a bit. `HOST` es `not-applicable`; `STD-A-FUZZ-001` promueve
-  el fuzz owner-aware y `STD-A-CONF-001` promueve la ejecución pública; los
-  baselines de coste siguen su frontera PERF-001.
-  `scripts/stdlib-math-test.sh` valida contratos negativos, símbolos, corpus,
-  ausencia de rutas SIMD/fast-math y las 9/9 filas públicas.
+  equivalencia bit a bit. `HOST` es `not-applicable`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-FMT-EVIDENCE-001 — Cerrar evidencia de formatting.** `std.format`
   queda trazado en nueve celdas del owner intrínseco: las cinco firmas de
   `Display`/builder pasan por HIR/MIR/bytecode/VM, fixture público y auditoría
   de API. El corpus cubre vacío, límites exactos, separadores, errores de
   `Display`, receivers inválidos y atomicidad; `HOST` es `not-applicable`.
-  `STD-A-FUZZ-001` promueve el fuzz owner-aware; baselines de
-  allocations/materialización permanecen visibles como promoción posterior,
-  sin inventar métricas.
-  `scripts/stdlib-format-test.sh` valida contrato, símbolos, corpus, docs y
-  las 5/5 filas públicas.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-IO-EVIDENCE-001 — Cerrar evidencia de I/O portable.** Las cuatro
   firmas de `std.io` quedan trazadas en nueve celdas del owner portable:
   Reader/Writer, `IoLimits`, `readAll` y `writeAll` pasan por HIR/lowering,
@@ -5166,8 +4779,12 @@ administrativas que no implementan comportamiento.
   sobreescrituras, errores de `flush` y cancelación sin éxito parcial. `HOST` es
   `not-applicable`; los adaptadores pertenecen a `std.console`, `std.fs` y
   `std.process`. `scripts/stdlib-io-test.sh` valida contrato, símbolos, corpus,
-  docs y las 4/4 filas públicas; `STD-A-FUZZ-001` promueve el fuzz owner-aware
-  y los baselines de coste quedan visibles como promoción posterior.
+  docs y las 4/4 filas públicas.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-PATH-EVIDENCE-001 — Cerrar evidencia de paths.** Las diez
   firmas de `std.path` quedan trazadas por contrato hosted, HIR/lowering,
   bytecode/VM, kernel portable, fixture público y auditoría de API. `Path` es
@@ -5176,22 +4793,24 @@ administrativas que no implementan comportamiento.
   ocultos, extensiones vacías, separadores finales, joins rechazados y
   atomicidad de errores sin consultar el filesystem. `toBytes` devuelve una
   copia exacta y la prueba de host confirma que la frontera conserva esos
-  bytes. `HOST` es `not-applicable`; `STD-A-FUZZ-001` promueve el fuzz
-  owner-aware y `STD-A-CONF-001` promueve la ejecución pública; los baselines por
-  owner siguen su frontera PERF-001.
-  `scripts/stdlib-path-test.sh` valida contrato, símbolos, corpus, ausencia de
-  capability, docs y las 10/10 filas públicas.
+  bytes. `HOST` es `not-applicable`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-CONSOLE-EVIDENCE-001 — Cerrar evidencia de consola.** Las siete
   firmas de `std.console` quedan trazadas con el modelo único de
   `std.io.Reader`/`Writer`, tokens distintos para stdin/stdout/stderr, frontera
   estática de capability `console`, partial I/O, EOF, LF estable, flush
   explícito, errores UTF-8 atómicos y mensajes host opacos. HIR/lowering,
   bytecode/VM, host, fixture `m11-std-console-001.to`, auditoría pública 7/7 y
-  la matriz de evidencia quedan enlazados. `HOST` es `verified`;
-  `STD-A-FUZZ-001` promueve el fuzz owner-aware y `STD-A-CONF-001` promueve la
-  ejecución pública; los baselines de bytes/chunks/work-units siguen su
-  frontera PERF-001. `scripts/stdlib-console-test.sh` valida negativos,
-  símbolos, corpus, capability, documentación y todas las filas públicas.
+  la matriz de evidencia quedan enlazados. `HOST` es `verified`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-FS-EVIDENCE-001 — Cerrar evidencia de filesystem.** Las catorce
   firmas públicas de `std.fs` quedan trazadas por contrato hosted, capability
   `filesystem`, modelo de handles afines, HIR/lowering, bytecode/VM y el
@@ -5200,9 +4819,12 @@ administrativas que no implementan comportamiento.
   tipados y redactados, límites de materialización, `atomicWrite`, cancelación,
   tokens stale y cleanup normal/unwind. La frontera estática rechaza imports
   sin capability antes del lowering, y la auditoría pública mantiene 14/14.
-  `HOST` queda `verified`; `STD-A-FUZZ-001` promueve el fuzz owner-aware y
-  `STD-A-CONF-001` promueve la ejecución pública; los baselines por target
-  siguen su frontera PERF-001.
+  `HOST` queda `verified`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-PROC-EVIDENCE-001 — Cerrar evidencia de procesos.** Las diecisiete
   firmas públicas quedan trazadas por el contrato hosted, capability `process`,
   planes inertes `Command`/`Pipeline`, handles terminales, HIR/lowering,
@@ -5210,9 +4832,12 @@ administrativas que no implementan comportamiento.
   shell explícito, las cuatro formas de pipe, backpressure por encima de la
   ventana del kernel, stdout/stderr separados, `combined`, redirección
   `mergeStderr`, estados de salida, errores de spawn, cancelación, panic/unwind
-  y reaping. La auditoría pública mantiene 17/17 y `HOST` queda `verified`;
-  `STD-A-FUZZ-001` promueve el fuzz owner-aware y `STD-A-CONF-001` promueve la
-  ejecución pública; los baselines por target siguen su frontera PERF-001.
+  y reaping. La auditoría pública mantiene 17/17 y `HOST` queda `verified`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-SER-EVIDENCE-001 — Cerrar evidencia de serialization.** El
   protocolo común queda trazado por `Encoder`/`Decoder`, `Encode`/`Decode`, la
   máquina de eventos con frames explícitos, `Value`/`ValueView`/`Raw`, paths,
@@ -5220,32 +4845,43 @@ administrativas que no implementan comportamiento.
   enlazados con la frontera `tondo-meta`, source maps y diagnostics reproducibles;
   las pruebas cubren records, enums, newtypes, genéricos, attributes, límites,
   duplicados, longitudes, chunking y publicación sin valores parciales. `HOST`
-  es `not-applicable`; `STD-A-FUZZ-001` promueve el fuzz owner-aware del
-  protocolo y `STD-A-CONF-001` promueve la ejecución pública; los baselines de
-  coste siguen su frontera PERF-001.
+  es `not-applicable`.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-JSON-EVIDENCE-001 — Cerrar evidencia de JSON.** Las rutas
   typed/dynamic/streaming quedan trazadas por el parser y writer de frames
   explícitos, `JsonNumber` exacto, límites, políticas, errores terminales,
   JCS/RFC 8785, fragmentos de un byte y la interoperabilidad bidireccional con
-  `serde_json`. `HOST` es no aplicable; `STD-A-FUZZ-001` promueve el fuzz
-  owner-aware y `STD-A-CONF-001` promueve la ejecución pública; los baselines de
-  allocations/memoria por target siguen su frontera PERF-001.
+  `serde_json`. `HOST` es no aplicable.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-MSGPACK-EVIDENCE-001 — Cerrar evidencia de MessagePack.** Las
   rutas typed/dynamic/streaming quedan trazadas por el modelo wire completo,
   formas no mínimas, enteros y bits de floats, binary/UTF-8, claves arbitrarias,
   ext/timestamp, determinismo, límites, fragmentos de un byte y la
-  interoperabilidad bidireccional con `rmpv`. `HOST` es no aplicable;
-  `STD-A-FUZZ-001` promueve el fuzz owner-aware y `STD-A-CONF-001` promueve la
-  ejecución pública; los baselines de allocations/memoria por target siguen su
-  frontera PERF-001.
+  interoperabilidad bidireccional con `rmpv`. `HOST` es no aplicable.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-PROTOBUF-EVIDENCE-001 — Cerrar evidencia de Protobuf.** La
   frontera TOML schema-first y las rutas wire typed/streaming quedan
   trazadas por proto3, presencia, repeated/packed, maps, oneof, enums abiertos,
   unknown fields/grupos, evolución, descriptor raíz, determinismo, límites,
   fragmentos de un byte y la interoperabilidad bidireccional con `prost`.
-  `HOST` es no aplicable; `STD-A-FUZZ-001` promueve el fuzz owner-aware de
-  schema/operaciones y `STD-A-CONF-001` promueve la ejecución pública; los
-  baselines de allocations/memoria por target siguen su frontera PERF-001.
+  `HOST` es no aplicable.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
+
 - [x] **STD-A-TESTING-EVIDENCE-001 — Cerrar evidencia de `std.testing`.**
   El contrato pasa a `closed-contract` y el leaf de evidencia registra las
   nueve celdas. Las 25 firmas públicas quedan enlazadas con assertions,
@@ -5253,38 +4889,26 @@ administrativas que no implementan comportamiento.
   generación replayable, shrinking sellado, control terminal y virtual time.
   El bridge `HOST` es verificado por el worker; los proyectos de aceptación
   dogfoodéan importación test-only, hooks de control, retries/repeats,
-  selección/sharding y JSON/JUnit. `STD-A-FUZZ-001` promueve el fuzz
-  owner-aware y `STD-A-CONF-001` promueve la ejecución pública; las dimensiones
-  de coste conservan la frontera PERF-001 explícita.
+  selección/sharding y JSON/JUnit.
+  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
+  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
+  target-qualified performance evidence do not close global public conformance
+  under `STD-A-CONF-001`.
 
-- [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
-  `testing/stdlib-matrix.json` contiene 22 owners (incluidos los owners
-  intrínsecos `std.bytes` y capability-gated `std.time`/`std.env`), 214 firmas y 171
-  requisitos de owner. Cada fila
-  enlaza explícitamente `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
-  DOC`, conserva las dimensiones públicas de PERF y queda `open-gaps` cuando
-  una celda es `partial`, `pending`, `gap` o `not-applicable` sin
-  sobreafirmar evidencia. `scripts/stdlib-matrix-check.sh` regenera y
-  compara byte a byte la matriz, valida owners, firmas, requisitos, stages,
-  razones y paths; `scripts/stdlib-matrix-test.sh` conserva dos fixtures
-  negativos. La matriz coordina STD-0.1A sin introducir el catálogo cerrado
-  STD-0.1B en G5; `STD-TEST-001`, `STD-DOC-001` y `STD-A-CONF-001` quedan
-  cerrados para sus respectivas dimensiones; `STD-A-DIST-001` promueve la
-  distribución VM reproducible y el sellado S1A queda explícitamente cerrado
-  como bundle técnico del draft.
+- [x] **STD-MATRIX-ALL-001 — Record the complete normative stdlib matrix.**
+  `testing/stdlib-matrix.json` records 22 owners, 216 signatures and 171
+  requirements, with explicit `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF →
+  CONF → DOC` cells. Supported generation and negative checks preserve missing
+  API rows, incomplete owner observations and pending conformance. This closes
+  the structural coordination only; public API, test/fuzz, conformance and
+  the S1A seal remain open under their owner tasks.
 
-- [x] **STD-TEST-001 — Coordinar modelos y properties por owner.**
-  `testing/stdlib-test-coordination.json` liga los 22 owners A, las 214 firmas
-  públicas y los 171 requisitos de owner a 66 leyes de modelo, comandos de test
-  y campañas de fuzz. `scripts/stdlib-test-coordination-check.sh` regenera el
-  registro y lo compara con la auditoría pública, la matriz normativa y
-  `stdlib-owner-evidence`; sus tests negativos rechazan superficies sin ley,
-  owners sin comandos, firmas ausentes o rutas de fuzz incompletas. El test Rust
-  `stdlib_owner_models` ejecuta la misma clausura y verifica que cada superficie
-  pública tenga un modelo, incluyendo requisitos de owners sin filas de firma.
-  Los campos `MODEL` y `TEST` quedan verificados; `STD-A-FUZZ-001` promueve los
-  22 campos `FUZZ` owner-aware con corpus y seeds explícitos. La siguiente
-  coordinación es `STD-CONF-001`.
+- [ ] **STD-TEST-001 — Coordinate executed owner models and properties.**
+  The registry links 22 owners, 216 signatures and 171 requirements to 66
+  declared model laws and test commands. Its structural tests do not prove
+  every mapped signature. All 22 owner fuzz cells remain partial; nine routes
+  retain bounded kernel assertions. Complete the missing implementation
+  oracles and actual public coverage before closing this coordination.
 
 - [x] **STD-CODEC-KERNEL-001 — Validar los kernels de formatos existentes.**
   `scripts/stdlib-codec-conformance.sh` prueba los kernels materializados y el
@@ -5321,21 +4945,18 @@ administrativas que no implementan comportamiento.
   baselines revisadas y promoción, pero ya no existe una coordinación implícita
   ni una cifra verde agregada entre targets incompatibles.
 
-- [x] **STD-CONF-001 — Coordinar conformidad por owner.**
-  `testing/stdlib-conformance-coordination.json` materializa los 22 owners y
-  las 385 filas de `STD-MATRIX-ALL-001` (214 firmas y 171 requisitos), con una
-  entrada `CONF` explícita por fila, estado, razón, referencias y comandos.
-  `scripts/stdlib-conformance-coordination-check.sh` regenera el registro,
-  cruza matriz/API/owner evidence y exige que no existan filas implícitas,
-  razones vacías, referencias inexistentes o comandos de script no ejecutables;
-  su test negativo rechaza omisiones, sobreclaims y una coordinación siguiente
-  obsoleta. `stdlib_conformance_coordination` replica la clausura en Rust.
-  La ejecución pública de `STD-A-CONF-001` queda separada en
-  `testing/stdlib-conformance.json` y su runner: todos los owners, sidecars y
-  los 206 casos del draft se observan antes de promover. La coordinación y la
-  matriz quedan promovidas para el draft; `STD-A-DIST-001` también queda
-  promovido mediante su paquete reproducible y el sellado S1A permanece
-  pendiente.
+- [x] **STD-CONF-001 — Record conformance coordination by owner.**
+  `testing/stdlib-conformance-coordination.json` records 22 owners and 387
+  rows (216 public signatures and 171 requirements), with explicit status,
+  reasons, references and commands. Its checker regenerates the register and
+  cross-checks matrix/API/owner evidence; negative tests reject omissions,
+  unsupported promotions and stale coordination. Rust integration tests verify
+  the same register boundary. No conformance row is verified: 26 are partial
+  and 361 pending. `testing/stdlib-conformance.json` and its runner observe
+  declared commands and cases, including the 206-case draft corpus, without
+  establishing public coverage for every row. `STD-A-CONF-001`,
+  `STD-A-DIST-001` and the S1A seal remain pending. A reproducible bundle does
+  not establish executable provenance or whole-library conformance.
 
 - [x] **STD-DOC-001 — Cerrar documentación por owner y programas
   representativos.** `testing/stdlib-documentation.json` registra los 22 owners
@@ -5388,14 +5009,13 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   `std.time`, tests estáticos de HIR y la fixture pública
   `tests/runtime/m11-std-async-selectable-001.to` (one-shot + timer).
 
-- [x] **STD-A-FUZZ-001 — Cerrar todas las celdas FUZZ aplicables de S1A.** El
-  target owner-aware `fuzz/fuzz_targets/stdlib_owners.rs` enruta las 22
-  superficies mediante selector reproducible, límites fijos y oráculos
-  ejecutables. `testing/stdlib-fuzz.json` registra target, corpus, seed,
-  límites, replay y persistencia de regresiones; `scripts/stdlib-fuzz-check.sh`
-  y su suite negativa comprueban rutas, corpus no vacíos, selectores y la
-  evidencia promovida. `testing/stdlib-owner-evidence.json` y las matrices
-  regeneradas muestran `FUZZ=verified` para los 22 owners (22/22, 0 partial).
+- [ ] **STD-A-FUZZ-001 — Exercise each claimed owner implementation with payload-dependent fuzz inputs.**
+  Audited routes comprise eight constant frontend checks, three Rust-reference
+  routes, nine bounded kernel-invariant routes and two compiler models.
+  MessagePack, serialization, JSON, Protobuf, format and math oracles are repaired;
+  whole-owner fuzz coverage remains partial. Source-bound classifications and
+  negative checks reject unsupported promotions. Add the missing executable
+  owner oracles before promotion.
 
 - [x] **STD-A-PERF-001 — Capturar presupuestos completos por owner S1A.** El
   probe owner-aware (`crates/tondo-stdlib/examples/stdlib_performance_probe.rs`)
@@ -5414,97 +5034,57 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   `testing/stdlib-owner-evidence.json` y la matriz regenerada cierran la
   promoción.
 
-- [x] **STD-A-CONF-001 — Ejecutar conformidad pública completa de S1A.**
-  `scripts/stdlib-conformance.sh` valida y ejecuta el contrato público,
-  conserva la procedencia del árbol y registra hashes de cada comando. Ejecuta
-  los 22 owner commands, compara los sidecars de los 22 fixtures runtime
-  únicos (incluido `args-unix`/`args-windows` cuando aplica), y ejecuta el
-  corpus draft completo de 206 casos con el adapter de referencia. La evidencia
-  queda en `target/reliability/evidence/stdlib-conformance.json`, mientras
-  `testing/stdlib-conformance.json` conserva la identidad reproducible de 385
-  filas/214 firmas/171 requisitos. `scripts/stdlib-conformance-check.sh` y su
-  suite negativa ratifican revisión, hashes, owners, filas y matriz `CONF`;
-  `STD-A-CONF-001` está promovido para el draft, sin convertirlo en release.
+- [ ] **STD-A-CONF-001 — Promote foundation owners only after all applicable public boundaries execute.**
+  Existing codec and hosted observations remain valid; missing reflection,
+  general meta and testing integration prevent global conformance.
 
-- [x] **STD-A-DIST-001 — Construir la distribución VM de STD-0.1A.**
-  `scripts/stdlib-distribution.sh` crea dos snapshots limpios con `git archive`
-  y produce el mismo paquete USTAR content-addressed en ambos. El paquete
-  `tondo-std-0.1` incluye fuentes, interfaces, units/providers, el
-  `PackageId` `toolchain:std:0.1-bootstrap`, hashes, manifests TOML, docs,
-  matriz derivada de capabilities, ejemplos y el VM CLI. Su manifest verifica
-  cada ruta, tamaño y SHA-256, y liga API, owner evidence y matriz normativa.
-  La prueba extrae la distribución en una instalación separada, verifica los
-  hashes antes de ejecutar `examples/m11-std-core-001.to` con `bin/tondo`,
-  elimina los snapshots fuente y confirma que el ejemplo sigue funcionando;
-  finalmente desinstala solo el package root y conserva un workspace vacío.
-  `scripts/stdlib-distribution-check.sh` y
-  `scripts/stdlib-distribution-test.sh` cierran el contrato y sus negativos.
-  La evidencia queda en `target/reliability/evidence/stdlib-distribution/`;
-  es una promoción del draft, no una publicación.
+- [ ] **STD-A-DIST-001 — Establish a coherent, source-bound VM distribution.**
+  The audit reproduced a `promoted-draft` report combining `HEAD` sources with
+  the current working binary and contract. The corrected capture binds current
+  source files, revision, dirty state, binary and contract bytes before either
+  assembly, and rejects subsequent drift. Local iteration records zero clean
+  source workspaces and never promotes S1A. Archive reproducibility and the
+  installed Core example remain bounded bundle evidence; the supplied binary's
+  build provenance and complete public owner integration remain unverified.
+  See `docs/contracts/stdlib-distribution.md` and the distribution input tests.
 
-- [x] **STD-S1A-SEAL-001 — Sellar Gate S1A desde evidencia derivada.** Exigir
-  `STD-A-ASYNC-IMPL-001`, `STD-A-SELECTABLE-IMPL-001`,
-  `ASYNC-SELECT-VM-CONF-001`, `STD-A-FUZZ-001`, `STD-A-PERF-001`,
-  `STD-A-CONF-001`, `STD-A-DIST-001`, auditoría pública estricta y cero celdas
-  aplicables abiertas en la matriz. Emitir un bundle content-addressed separado
-  de G5, del backend nativo y de TLF; no editar estados a mano. El contrato
-  `testing/stdlib-s1a-seal.json`, `scripts/stdlib-s1a-seal.sh` y su verificador
-  independiente producen y validan `tondo-stdlib-s1a-<payload-sha256>.tar`,
-  ligado al Git HEAD limpio, a los reportes frescos y a la distribución VM;
-  el bundle declara `public_release=false`, `g5=false`, `native_backend=false`
-  y `tlf=false`.
+- [ ] **STD-S1A-SEAL-001 — Seal S1A from complete current evidence.**
+  Reopened public API, fuzz, testing, reflection and meta prerequisites must
+  pass strict checks with non-vacuous owner coverage. Historical bundles
+  remain historical component evidence. The verifier now rejects an
+  integrity-only archive with no required inputs/results, binds the complete
+  check transcripts and embedded revision/tree identities, and rejects open
+  public/fuzz/conformance/distribution records. Nine bounded record tests
+  include the reproduced one-file public-checker failure. These checks do not
+  close the public integration prerequisites or promote a synthetic seal.
 
-### Gate S1A — Standard Library 0.1 foundation
+### Gate S1A — Foundation standard-library conformance
 
-- [x] La spec estándar fija todas las firmas de su catálogo Core + Hosted
-  incluidas en STD-0.1A y mantiene cerrado el catálogo posterior de STD-0.1B.
-- [x] Los slices tempranos de meta, reflect, bytes, time-base y env read-only
-  conservan las mismas identidades y contratos usados por M10.7/M10.6; S1A no
-  sustituye un shim ni mantiene dos propietarios públicos.
-- [x] Cada owner A registra por separado spec, implementación/host, tests/model,
-  performance aplicable, conformidad y docs; ninguna tarea umbrella oculta una
-  celda pendiente. `PERF` está promovido o tiene una frontera normativa
-  `not-applicable`, `CONF` está promovido mediante `STD-A-CONF-001` y la
-  distribución VM está promovida mediante `STD-A-DIST-001`; el sello S1A es un
-  bundle técnico independiente ya verificado.
-- [x] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
-  deadlines es único para producción/testing, está modelado y funciona con
-  proveedor real o virtual sin cambiar bytecode de usuario.
-- [x] Toda la superficie Core se ejecuta sobre la VM sin depender de una ABI
-  nativa; no basta con intrinsics y kernels parciales.
-- [x] `select` y los adapters `Waiter`/time ejecutan prepare/commit/rollback
-  sobre la VM con ownership y fairness conformes; una firma `suspends` antigua
-  no satisface esta celda.
-- [x] Cada API hosted exige la capability correcta y conserva los claims del
-  target candidato Tondo 0.1.
-- [x] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
-  ejecutan sin reflection runtime, DOM intermedio obligatorio ni inputs
-  ambientales.
-- [x] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
-  preservación y gates de rendimiento sobre oracle escalar y kernels
-  optimizados.
-- [x] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
-  positivos, negativos, límites y composición.
-- [x] La distribución de STD-0.1A es reproducible, cerrada y versionada con
-  firmas, units y providers realmente implementados; `STD-A-DIST-001` prueba
-  dos snapshots limpios, instalación, ejecución y desinstalación sin depender
-  del árbol fuente.
-- [x] `STD-S1A-SEAL-001` verifica cero gaps aplicables y reproduce el bundle
-  desde inputs cerrados; ninguna coordinación `[x]` sustituye esta compuerta.
-- [x] Los programas representativos pasan el gate estricto y proporcionan el
-  corpus funcional inicial para `PERF-001`, `DIAG-*` y `NATIVE-001`.
-- [x] `std.testing` está especificado, implementado y probado con su propio
-  runner público; un proyecto puede escribir tests útiles usando solo
-  `assert` y enriquecerlos mediante imports explícitos, sin crear un segundo
-  formato de snapshots, artifacts o generated cases.
-- [x] No se ha congelado una ABI FFI general ni un layout nativo público.
+- [x] Core and Hosted contracts, kernel/model tests and bounded hosted
+  execution evidence exist for implemented owners.
+- [ ] Every applicable public callable/protocol signature has a real compiled
+  caller; zero extracted signatures cannot establish owner coverage.
+- [ ] Public runtime reflection and the complete std.meta companion execute
+  through ordinary frontend and provider/runtime routes.
+- [ ] T0 passes with production isolation and the complete worker lifecycle.
+- [ ] Claimed fuzz routes exercise each owner implementation with varying
+  payloads and contract-correct success and rejection oracles.
+- [ ] All applicable owner cells and conformance cases pass, with performance
+  scoped to the measured route and current provenance.
+- [ ] Reproduce the distribution and seal from complete inputs; historical
+  bundles cannot discharge reopened integration requirements.
+- [x] S1A does not promote a general public FFI ABI or native layout.
+
+S1A is pending. Existing distribution and performance evidence retains its
+measured scope.
 
 ---
 
 ## 20. M11 — Backend nativo y optimización
 
 **Objetivo:** añadir una implementación nativa de producción sin introducir una
-segunda semántica. Comienza únicamente después de Gates H0, T0, G5 y S1A,
+segunda semántica. Technical promotion requires H0, T0, meta integration and S1A;
+the G5 release-candidate seal is not a development prerequisite. It also requires
 `DIAG-CI-001` y de cerrar los contratos runtime-facing
 `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001` y la frontera host/cancelación de
@@ -5905,23 +5485,9 @@ pueden retrasar el primer backend correcto.
   `arc-rooted-cycle-preservation`, `arc-cycle-pressure-and-quiescence` y
   `arc-weak-upgrade-linearization`.
 
-- [x] **DIAG-NATIVE-001 — Demostrar paridad nativa de diagnóstico.** Cerrado
-  después de `NATIVE-002` y `ARC-002`, con `NATIVE-THREAD-001` ya cerrado. El
-  runner `scripts/native-diagnostics.sh` ejecuta el corpus contra objetos y
-  procesos reales de Cranelift y LLVM, tomando los contratos hosted como oracle
-  y comparando exactamente el envelope portable `tondo-diagnostic-report/1`.
-  Los ocho casos (`race-conflict`, `race-clean`, `leak-growth`, `leak-clean`,
-  `arc-cycle-reclaimed`, `crash-dump`, `crash-corruption-rejected` y
-  `crash-limit-enforced`) verifican IDs lógicos de task/thread,
-  happens-before, roots/retainers ARC, ciclos recuperados, allocations FFI,
-  ledger de recursos, unwind, source maps, redacción, corrupción y límites.
-  `testing/native-diagnostics.json` y `docs/contracts/native-diagnostics.md`
-  fijan la ABI privada, el reporte y los negativos; `native_diagnostics` en
-  `target/reliability/evidence/native-evaluation-runner.json` conserva la
-  evidencia de ambos backends. No se exigen layouts o stacks físicos idénticos,
-  y una captura de señal física solo se declara cuando el target la soporta.
-  `NATIVE-STD-CORE-001` queda cerrado con la evidencia descrita a continuación;
-  el siguiente bloque es `NATIVE-STD-HOSTED-001`.
+- [ ] **DIAG-NATIVE-001 — Observe native race, leak and crash behavior in the actual runtime.**
+  Mode-selected counters and preencoded expected reports do not prove
+  detectors; preserve valid hosted and ARC component tests.
 
 - [x] **NATIVE-STD-CORE-001 — Implementar la frontera Core de STD-0.1A.** Cerrado
   con el MIR nativo normalizado y la evidencia ejecutable de ambos candidatos.
@@ -5953,114 +5519,44 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-std-hosted.json`; el siguiente bloque es
   `NATIVE-STD-001`.
 
-- [x] **NATIVE-STD-001 — Coordinar la frontera completa de STD-0.1A.** Cerrado
-  con una coordinación ejecutable de `std.core` y `std.hosted`: ambos owners
-  validan sus contratos de forma independiente y después comparan carrier
-  `tondo_rt_result_new/tag/payload`, tags de error, admission de capabilities,
-  ownership y cleanup. Cranelift y LLVM quedan registrados como rutas del
-  mismo `tondo-mir-backend/1`, sin API pública específica del backend ni lookup
-  ambiental. La evidencia queda en `testing/native-std.json`,
-  `docs/contracts/native-std.md`, `scripts/native-std-{check,test}.sh` y
-  `target/reliability/evidence/native-std.json`; el siguiente bloque es
-  `NATIVE-LINK-001`.
+- [ ] **NATIVE-STD-001 — Connect the required standard library to source-driven native lowering and the production runtime.**
+  Existing Rust kernels and private ABI tests do not alone establish public
+  AOT execution.
 
-- [x] **NATIVE-LINK-001 — Implementar el plan de enlace cerrado.** Cerrado con
-  una prueba física sobre los contratos tipados: descriptor, artifact y
-  `NativeLinkPlan` se validan antes de resolver inputs; el driver absoluto se
-  invoca directamente con argumentos ordenados, sin shell ni búsqueda de PATH,
-  y el producto se comprueba antes de publicarse. Dos workspaces limpios
-  generan el mismo ejecutable y SHA-256 con `--build-id=none`; un driver
-  relativo, hashes divergentes, límites y salidas no válidas fallan cerrado.
-  La evidencia está en `testing/native-link.json`,
-  `docs/contracts/native-link.md`, `scripts/native-link-{check,test}.sh` y
-  `target/reliability/evidence/native-link.json`; sigue `NATIVE-CLI-001`.
+- [ ] **NATIVE-LINK-001 — Link compiler-produced objects to the production runtime.**
+  The current C demonstration establishes tool availability only; verify
+  symbols, target compatibility and actual runtime behavior.
 
-- [x] **NATIVE-CLI-001 — Conectar `tondo build` y `tondo run` nativo.** Cerrado
-  con el comando `build` en la CLI compartiendo discovery TOML/lock y el
-  frontend común: publica atómicamente el artifact canónico y un envelope
-  `tondo-native-build/1` con backend `cranelift` seleccionado y promoción
-  `pending-gate-n1`. `run` conserva stdout, stderr, argv, exits y diagnostics
-  en la ruta existente, sin flags `--native`/`--vm` ni semánticas duplicadas.
-  La integración verifica repetición byte-a-byte, output existente, argumentos
-  y rechazo de opciones prohibidas; los productos parciales se limpian. Evidencia en
-  `testing/native-cli.json`, `docs/contracts/native-cli.md`,
-  `scripts/native-cli-{check,test}.sh` y el código de `crates/tondo-cli`;
-  sigue `NATIVE-CONF-ADAPTER-001`.
+- [ ] **NATIVE-CLI-001 — Emit an executable from the public build command.**
+  Existing build output is metadata and run uses the VM. Connect verified
+  MIR, Cranelift, linking and execution to the selected target.
 
 ### 20.3 Oracle diferencial, targets y empaquetado
 
-- [x] **NATIVE-CONF-ADAPTER-001 — Crear el adaptador nativo.** Cerrado con el
-  protocolo `tondo-native-observation/1`: recibe el probe común
-  `tondo-mir-backend/1`, backend/target/capabilities explícitos y emite
-  observaciones normalizadas de valores, errores, diagnostics, lifecycle de
-  tests y cleanup. Backend, target, capability y shapes desconocidos fallan
-  cerrado; los informes no contienen paths físicos. Cada owner se ejecuta por
-  separado para Cranelift y LLVM. Evidencia en
-  `testing/native-conf-adapter.json`, `testing/native-conf-probe.json`,
-  `docs/contracts/native-conf-adapter.md` y
-  `scripts/native-conf-adapter-{check,test}.sh`; siguen las tres hojas
-  `NATIVE-CONF-*`.
+- [ ] **NATIVE-CONF-ADAPTER-001 — Execute both conformance adapters independently.**
+  The current native adapter copies expected fields into observations.
+  Compile the case source, run the result and compare captured outcomes;
+  malformed or altered expectations must fail.
 
-- [x] **NATIVE-CONF-LANGUAGE-001 — Ejecutar conformidad base nativa.** Cerrado
-  con tres casos del probe común (`scalar`, `Result` con error y panic) en
-  Cranelift y LLVM, comparados contra el oráculo VM de forma independiente.
-  Backend/target son explícitos, los tags/diagnostics deben coincidir y las
-  rutas físicas se redactan. Evidencia en `testing/native-conf-language.json`,
-  `docs/contracts/native-conf-language.md`,
-  `scripts/native-conf-language-{check,test}.sh` y
-  `target/reliability/evidence/native-conf-language.json`.
+- [ ] **NATIVE-CONF-LANGUAGE-001 — Run language conformance from Tondo source through the production native pipeline.**
+  Fixed expected records and synthesized MIR are insufficient.
 
-- [x] **NATIVE-CONF-TESTING-001 — Ejecutar test targets nativos.** Cerrado con
-  los casos de pass/fail/aislamiento del protocolo del runner: logs, `P0007`,
-  exits, fresh-process y cleanup exactamente una vez se observan de forma
-  independiente en Cranelift y LLVM frente al oráculo VM. Evidencia en
-  `testing/native-conf-testing.json`, `docs/contracts/native-conf-testing.md`,
-  `scripts/native-conf-testing-{check,test}.sh` y
-  `target/reliability/evidence/native-conf-testing.json`.
+- [ ] **NATIVE-CONF-TESTING-001 — Run testing conformance through actual native test products and the public coordinator.**
+  Record observed statuses, outputs, cleanup and diagnostic evidence.
 
-- [x] **NATIVE-CONF-STDLIB-001 — Ejecutar STD-0.1A nativa.** Cerrado con los
-  owners `std.core` y `std.hosted`, las capabilities `console`, `filesystem`,
-  `process` y `clock`, y los casos de core, hosted y cleanup en Cranelift y
-  LLVM. Cada observación conserva el oráculo VM, bytes parciales, tags de
-  error y release exactamente una vez; los informes no contienen paths físicos.
-  Evidencia en `testing/native-conf-stdlib.json`,
-  `docs/contracts/native-conf-stdlib.md`,
-  `scripts/native-conf-stdlib-{check,test}.sh` y
-  `target/reliability/evidence/native-conf-stdlib.json`; sigue
-  `NATIVE-CONF-001`.
+- [ ] **NATIVE-CONF-STDLIB-001 — Run standard-library conformance through source-driven native lowering and the actual runtime.**
+  Private kernel/ABI probes retain only their explicit component scope.
 
-- [x] **NATIVE-CONF-001 — Coordinar conformidad nativa.** Cerrado con un
-  coordinador que ejecuta adaptador, lenguaje, testing y STD-0.1A de forma
-  independiente para Cranelift y LLVM, y compara las nueve observaciones con
-  el oráculo VM común. La coordinación rechaza hojas ausentes, divergencias,
-  duplicados, targets/MIR distintos y paths físicos; la evidencia path-free
-  queda en `testing/native-conf.json`, `docs/contracts/native-conf.md`,
-  `scripts/native-conf-{check,test}.sh` y
-  `target/reliability/evidence/native-conf.json`; sigue
-  `NATIVE-DIFF-001`.
+- [ ] **NATIVE-CONF-001 — Close native conformance from independently executed language, testing and standard-library cases.**
+  Never promote expected-value copies or unsupported source lowering.
 
-- [x] **NATIVE-DIFF-001 — Ejecutar differential testing generado.** Cerrado
-  con un generador determinista de las nueve observaciones del probe común:
-  cada caso se ejecuta para Cranelift y LLVM, se compara con el oráculo VM y
-  se exige igualdad de IDs, valores, tags, diagnostics, cleanup y redacción.
-  El harness prueba también que una mutación del oráculo falla cerrado. La
-  evidencia está en `testing/native-diff.json`,
-  `docs/contracts/native-diff.md`, `scripts/native-diff-{check,test}.sh` y
-  `target/reliability/evidence/native-diff.json`. El carril físico completo
-  de `native-evaluation-runner.sh` es opt-in y sigue siendo evidencia de
-  `NATIVE-001`; las campañas AOT posteriores de alcance, lowering, binarios,
-  memoria, calidad y rendimiento ya están cerradas para este target y el
-  informe compositivo de Gate N1 promueve Cranelift para el target primario.
+- [ ] **NATIVE-DIFF-001 — Compare actual hosted and native observations.**
+  Enable executable comparison as the required route, retain
+  source/provenance identity and fail when either route cannot execute.
 
-- [x] **NATIVE-TARGET-001 — Añadir targets uno a uno.** Cerrado para el primer
-  target físico admitido, `x86_64-unknown-linux-gnu`/ELF `release`, con registry
-  explícito, capacidades, candidatos, fixture y artefacto identificable. El
-  runner valida el descriptor, enlaza con driver absoluto y ejecuta el fixture
-  sobre la arquitectura destino en un workspace limpio; cross-compilar no se
-  cuenta como smoke. Evidencia en `testing/native-target.json`,
-  `docs/contracts/native-target.md`, `scripts/native-target-{check,test}.sh` y
-  `target/reliability/evidence/native-target.json`; sigue
-  `NATIVE-REL-001`.
+- [ ] **NATIVE-TARGET-001 — Verify the actual compiler product on x86_64-unknown-linux-gnu.**
+  C linker and packaging probes remain toolchain smoke evidence; N1
+  promotion requires real source and runtime execution.
 
 - [x] **NATIVE-TARGET-002 — Añadir el target físico Linux ARM64.** Cerrado como
   una entrada de target independiente para
@@ -6078,19 +5574,11 @@ pueden retrasar el primer backend correcto.
   evidencia composicional y ARM64 sigue siendo únicamente un smoke físico de
   candidato hasta completar su corpus AOT.
 
-- [x] **NATIVE-REL-001 — Empaquetar builds reproducibles.** Cerrado con un
-  paquete `tondo-native-package/1` que contiene binario, runtime, STD-0.1A,
-  metadatos y checksums del target admitido. Dos builds en staging aislado,
-  con tar determinista (mtime epoch-zero, owners numéricos cero y entradas
-  ordenadas), producen bytes idénticos y rechazan drift, paths, timestamps o
-  paquetes parciales. Evidencia en `testing/native-rel.json`,
-  `docs/contracts/native-rel.md`, `scripts/native-rel-{check,test}.sh` y
-  `target/reliability/evidence/native-rel.json`; el paquete identifica
-  Cranelift como backend seleccionado y mantiene `pending-gate-n1` como estado
-  histórico del paquete candidato. Gate N1 registra la promoción del backend,
-  pero este paquete no se presenta como STD 0.1.0 final.
+- [ ] **NATIVE-REL-001 — Package and verify the actual Tondo compiler and runtime locally.**
+  The C hello-world archive is a packaging prototype. No external release or
+  publication is authorized.
 
-#### Campaña AOT y promoción del backend (DEC-013 y Gate N1 cerrados)
+#### Native AOT campaign (Cranelift selected; N1 reopened)
 
 - [x] **NATIVE-AOT-SCOPE-001 — Fijar el alcance AOT y la matriz de decisión.**
   Cerrado en `testing/native-aot-scope.json` y
@@ -6109,130 +5597,45 @@ pueden retrasar el primer backend correcto.
   una compuerta de promoción. Las leaves posteriores hasta
   `NATIVE-AOT-PERF-001` ya están cerradas y Gate N1 compone su evidencia.
 
-- [x] **NATIVE-AOT-LOWER-001 — Completar el lowering AOT del MIR admitido.**
-  Extender el lowering común más allá de la slice mínima de `NATIVE-002` hasta
-  todo el corpus admitido por Tondo 0.1: storage concreto de valores y
-  colecciones, proyecciones, closures y capturas mutables, calls indirectas
-  verificadas, async/select/thread y cleanup/ownership completos. Cada caso
-  debe ejecutar el mismo MIR en Cranelift y LLVM, comparar observables con la
-  VM y fallar cerrado cuando una capacidad no esté admitida; no se acepta un
-  stub que solo cambie el contador de funciones. Cerrado con el corpus AOT
-  ejecutable de `testing/native-aot-lowering.json`: el runtime de handles ahora
-  materializa arrays, sets, records y closures; las proyecciones leen campos,
-  las capturas mutables se actualizan con `aggregate-set` y las llamadas
-  indirectas pasan por ordinales de función verificados. Los 7 casos de storage,
-  proyección, closure/captura, llamada directa/indirecta, metadata, set y
-  ownership se ejecutan junto a los 20 casos de cleanup/async/select/thread
-  existentes, siempre desde el mismo MIR en ambos candidatos y contra el
-  oráculo de referencia. La evidencia conserva el inventario por familia y dos
-  traps explícitos para storage opaco no admitido; no se modifica el alcance de
-  N1 ni se promociona automáticamente el backend seleccionado. El siguiente bloque es
-  `NATIVE-AOT-BINARY-001`.
+- [ ] **NATIVE-AOT-LOWER-001 — Lower actual verified frontend MIR across the required language corpus.**
+  Scalar lowering exists, but aggregate storage, projections and loan
+  operations remain unsupported; synthetic MIR cannot discharge them.
 
-- [x] **NATIVE-AOT-BINARY-001 — Medir el producto enlazado de forma comparable.**
-  Generar para cada candidato el ejecutable AOT completo con el mismo target,
-  runtime, stdlib, linker y perfil. Capturar por separado bytes del producto
-  stripped, bytes con debug, secciones relevantes, startup y reproducibilidad,
-  y ligar cada medida al receipt y a los hashes de inputs. Eliminar la actual
-  asimetría de `NATIVE-001` (buffer de código Cranelift frente a objeto LLVM),
-  rechazar productos parciales y conservar una comparación path-free. Cerrado
-  con `testing/native-aot-binary.json`: cada candidato construye dos veces el
-  mismo ejecutable con 29 funciones en su inventario (28 casos admitidos: 7 de
-  storage/ABI y 21 de runtime, más un trap explícito para la capacidad no
-  admitida), ejecuta el producto stripped en tres procesos frescos, captura
-  bytes debug/stripped y secciones ELF, y publica receipts ligados a MIR,
-  runtime, stdlib, target, linker, strip, readelf, flags y toolchain. Los
-  hashes y secciones coinciden entre builds y ninguna ruta física entra en la
-  evidencia; las compuertas de calidad y rendimiento AOT ya están cerradas y
-  la evidencia alimenta el informe compositivo de Gate N1 para Cranelift.
+- [ ] **NATIVE-AOT-BINARY-001 — Compare complete source-driven native artifacts.**
+  Retain historical prototype measurements separately; bind binaries to real
+  compiler output, production runtime and target.
 
-- [x] **NATIVE-AOT-MEM-001 — Capturar memoria y ARC en AOT.** Cerrado con
-  `testing/native-aot-memory.json`: cada candidato construye y ejecuta un
-  producto AOT enlazado con el mismo MIR/target/runtime/stdlib/perfil, valida
-  el corpus completo antes de publicar contadores y ejecuta tres warmups y
-  nueve muestras en cada uno de tres procesos frescos (27 por candidato).
-  La evidencia separa la semántica de la VM de las observaciones native y
-  captura allocations, bytes asignados/live/pico, retain/release local y
-  atómico, ciclos recuperados, weak upgrades, pausas de colección, presión de
-  worker OS y RSS. La instrumentación es process-local y fail-closed: un
-  resultado, trap, cleanup o byte vivo divergente invalida la muestra; no se
-  declara todavía N1. La evidencia de memoria alimenta la campaña de
-  rendimiento AOT ya cerrada y la promoción de Cranelift en Gate N1.
+- [ ] **NATIVE-AOT-MEM-001 — Measure memory on the production runtime linked to real Tondo programs.**
+  The generated C runtime is a bounded model, not the adopted Rust runtime
+  implementation.
 
-- [x] **NATIVE-AOT-QUALITY-001 — Ejecutar la compuerta completa de calidad AOT.**
-  Cerrado con `testing/native-aot-quality.json`: la campaña reutiliza la misma
-  entrada MIR/target/runtime/stdlib/perfil, ejecuta el inventario AOT completo
-  en Cranelift y LLVM contra la VM y el intérprete MIR normalizado, y exige
-  cero divergencias y cero `unsupported` admitidos. La evidencia incluye las
-  nueve hojas de conformance, differential generado con mutación fail-closed,
-  cinco targets de fuzz de owners y el target de diagnósticos (128 ejecuciones,
-  límites fijos y regresiones replayed), ASan/UBSan con wrapper absoluto, y la
-  compuerta workspace de cobertura/mutación manteniendo la baseline versionada
-  (actualmente 90,71%) y un suelo de política de 90,55%.
-  `scripts/native-aot-quality-check.sh` valida un resumen reproducible y sin
-  rutas físicas; `scripts/native-aot-quality-test.sh` muta los 12 oráculos
-  críticos y rechaza también reportes incompletos, baseline alterado o
-  divergencias. Su evidencia de calidad es el prerrequisito directo de la
-  campaña de rendimiento AOT.
+- [ ] **NATIVE-AOT-QUALITY-001 — Verify native quality on actual products and observations.**
+  Static conformance with executable comparison disabled cannot satisfy the
+  gate; preserve coverage and mutation thresholds.
 
-- [x] **NATIVE-AOT-PERF-001 — Capturar el rendimiento AOT completo.** Cerrado
-  con `testing/native-aot-performance.json` y
-  `docs/contracts/native-aot-performance.md`. La campaña ejecutable
-  `scripts/native-aot-performance.sh` reutiliza el runner de calidad y mide
-  productos enlazados completos de Cranelift y LLVM para el target del runner:
-  27 builds aislados y 27 lanzamientos medidos por candidato, cada cohorte con
-  tres warmups, nueve repeticiones y tres procesos frescos. La baseline separada
-  del intérprete MIR conserva 27 muestras sobre ocho casos soportados y marca
-  explícitamente los 20 casos no temporizados por esa referencia. El informe
-  path-free conserva cada muestra y publica median/p95/p99 de compile/link y
-  del tiempo end-to-end de build, medido por muestra desde el inicio de la
-  generación de código hasta la creación, cálculo de metadatos y validación
-  final del binario stripped; no se reconstruye sumando percentiles
-  independientes de fases. También publica tamaño debug/stripped/.text,
-  startup, throughput y latencia; las dimensiones
-  de allocations, memoria, retain/release y pausas se ligan a los 27 samples
-  ya validados por `NATIVE-AOT-MEM-001`. La VM y el intérprete MIR normalizado
-  son el oráculo separado, no se mide JIT, no se agregan targets y no se
-  selecciona backend automáticamente. `scripts/native-aot-performance-check.sh`
-  y `scripts/native-aot-performance-test.sh` cubren el contrato y sus
-  mutaciones negativas. El informe fue la entrada final de `DEC-013`, que
-  seleccionó Cranelift; Gate N1 ya promueve esa ruta para el target primario
-  admitido.
+- [ ] **NATIVE-AOT-PERF-001 — Measure the complete real AOT pipeline with current provenance.**
+  Existing 27-sample prototype campaigns remain valid for their synthesized
+  programs, not for unsupported source lowering.
 
-### Gate N1 — Backend nativo conforme
+### Gate N1 — Native backend conformance
 
-- [x] La campaña `NATIVE-AOT-SCOPE-001`, `NATIVE-AOT-LOWER-001`,
-  `NATIVE-AOT-BINARY-001`, `NATIVE-AOT-MEM-001`,
-  `NATIVE-AOT-QUALITY-001` y `NATIVE-AOT-PERF-001` está cerrada sin
-  divergencias ni dimensiones omitidas.
-- [x] El backend elegido tiene ADR, targets soportados y ABI runtime interna
-  explícitos.
-- [x] `tondo build` y `tondo run` atraviesan el mismo plan de enlace cerrado y
-  el producto ejecutable supera smoke tests reales sin inputs ambientales.
-- [x] DEC-014 está cerrado y ARC/ciclos correctos satisfacen los contratos de
-  concurrencia ya especificados sin layout público accidental.
-- [x] Todos los programas admitidos atraviesan el MIR verificado común; no
-  existe frontend, type checker ni semántica paralela.
-- [x] El adaptador nativo supera lenguaje y STD-0.1A con observaciones
-  compatibles con la VM, incluidos los estados y reportes de `tondo test`.
-- [x] Properties, fuzzing diferencial, GC/ARC/ciclos, async, pánicos y cleanup
-  pasan bajo stress y sanitización aplicable.
-- [x] `DIAG-NATIVE-001` demuestra race/leaks/dumps reales y nunca degrada un
-  perfil requerido a `unsupported` por silencio.
-- [x] Cada target publicado compila y ejecuta un corpus real sobre hardware del
-  target.
-- [x] Las optimizaciones aceptadas aportan una mejora medida y conservan todos
-  los oracles.
-- [x] Los paquetes nativos son reproducibles y no prometen una ABI pública no
-  especificada.
+- [x] DEC-013 selects Cranelift and DEC-014 selects hybrid ARC with cycle
+  collection; target and private ABI contracts exist.
+- [ ] Public build/run compile actual Tondo source through shared verified MIR
+  and link compiler output with the production runtime into an executable.
+- [ ] Language, testing and standard-library conformance captures independent
+  hosted/native observations and rejects unsupported required paths.
+- [ ] Ownership, cycles, weak references, async, panic and cleanup work in the
+  linked product under the required stress and instrumentation.
+- [ ] Race, leak and crash diagnostics observe real runtime events.
+- [ ] Binary, memory, quality and performance campaigns measure the real
+  source-driven product with retained samples and current provenance.
+- [ ] Product packaging is reproducible and the required corpus runs on the
+  admitted x86_64-unknown-linux-gnu hardware target.
 
-El gate queda cerrado por `scripts/native-n1.sh`, que genera el informe
-`target/reliability/evidence/native-n1.json` y lo valida con
-`scripts/native-n1-check.sh`; `scripts/native-n1-test.sh` demuestra que las
-mutaciones de contrato, procedencia, calidad, target, privacidad y claims
-fallan cerrado. La promoción es exclusivamente para Cranelift en
-`x86_64-unknown-linux-gnu`. ARM64 conserva un smoke físico de candidato y no
-se convierte en target publicado hasta completar su campaña AOT independiente.
+N1 is pending. The historical compositional report accepted synthesized MIR,
+a generated C runtime and copied expected observations. ARM64 remains a
+physical candidate smoke; macOS and Windows remain portability probes.
 
 ### 20.4 Trabajo posterior a Gate N1
 
@@ -7577,359 +6980,42 @@ cargo run -p tondo-reliability --locked -- tracker lint --root .
 `--json` expone el informe derivado para CI y tooling; no existe un segundo
 resumen manual que pueda divergir del tracker.
 
-Los puntos 1–19 conservan la secuencia ya completada. A partir del 20 la unidad
-de integración es una **wave vertical**. Una tarea puede empezar tan pronto
-como estén cerrados sus prerequisitos duros; la wave posterior no se integra ni
-se declara terminada antes del mini-gate anterior. Así, specs, algoritmos puros
-y spikes explícitamente independientes pueden avanzar sin convertir el orden de
-gates en una barrera artificial.
+### 24.2 Audit remediation order
 
-1. [x] Crear el repositorio y workspace Rust mínimo.
-2. [x] Escribir `architecture.md` y los ADR de partida.
-3. [x] Fijar contrato de CLI, source model y diagnostics JSON.
-4. [x] Crear el harness que pueda ejecutar casos extraídos del spec.
-5. [x] Implementar lexer con trivia, spans y errores léxicos.
-6. [x] Implementar CST sin pérdida y parser recuperable.
-7. [x] Implementar el formatter normativo y su corpus.
-8. [x] Implementar resolución de nombres y representación canónica de tipos.
-9. [x] Implementar el subconjunto semántico de G1.
-10. [x] Diseñar MIR con cleanup edges antes de escribir la VM.
-11. [x] Implementar bytecode verificado por slots.
-12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
-13. [x] Auditar cantidad física, casos lógicos, repeticiones, fuentes únicas y
-    técnicas de testing de Tondo 0.1.
-14. [x] Ejecutar **TEST-001** y crear el inventario machine-readable.
-15. [x] Ejecutar **TEST-002** y **TEST-003** para materializar trazabilidad y
-    dimensiones normativas.
-16. [x] Ejecutar **CI-TEST-001** a **CI-TEST-004** y convertir el gate existente
-    en evidencia continua.
-17. [x] Añadir generadores, properties, fuzz targets y modelos de M10.5.
-18. [x] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
-19. [x] Ejecutar **STD-FOUNDATION-SPEC-001** y cerrar **DEC-012** sin fingir
-    que las APIs de módulo o STD-0.1 completa ya están publicadas.
-20. [x] **Wave 0 — Evidencia del draft.** `CONF-DRAFT-001` y
-    `CONF-RATCHET-001` están cerrados; el manifest draft es la única identidad
-    activa. El registro
-    `testing/conformance-ratchet.json` fija hashes de manifest, inventario,
-    matriz y quality baseline; no atribuye las capas pendientes como pass y el
-    gate de quality lo valida con reports frescos y hashes semánticos portables;
-    el gate estricto valida los registros deterministas sin exigir herramientas
-    de coverage/mutation.
-21. [x] **Wave 1 — Formatos draft.** Implementar `META-FORMAT-001` con
-    parse/canonicalización/round-trip y rechazo de records no draft. El mini-gate
-    queda cerrado: manifest, lockfile, interface, artifact y descriptor estándar
-    usan una única forma draft; el corpus se regenera para esa forma.
-22. [x] **Wave 2 — Prerrequisitos y frontends, en paralelo.**
-    - [x] Base portable: cerrar `PARSER-STACK-001`; lexer y planes que no modifican
-      descenso sintáctico pueden avanzar en paralelo, y
-      `META-SYNTAX-001` y `UTEST-CST-001` esperan la pila explícita.
-    - Lane meta: `STD-META-SPEC-001 → META-VM-001`,
-      `META-SYNTAX-001 → META-SEM-001 → META-MODEL-001` y
-      `STD-REFLECT-001` avanzan en paralelo; después
-      `(META-VM-001 + META-MODEL-001) → STD-META-IMPL-001 →
-      STD-META-CONF-001`.
-    - Lane testing estándar: `STD-BYTES-SPEC-001 →
-      STD-BYTES-IMPL-001 → STD-BYTES-CONF-001` está cerrada; `STD-TIME-BASE-SPEC-001`
-      también está cerrado y sus tareas `IMPL → CONF` avanzan en paralelo con
-      `STD-ENV-SPEC-001`; desde el spec de bytes puede avanzar `STD-ENV-SPEC-001`, pero
-      `(STD-BYTES-CONF-001 + STD-ENV-SPEC-001) → STD-ENV-IMPL-001 →
-      STD-ENV-CONF-001`. En paralelo,
-      `STD-TIME-BASE-IMPL-001 →
-      STD-TIME-BASE-CONF-001`.
-    - Lane testing plan: `UTEST-PLAN-001 →
-      (UTEST-INPUTS-PLAN-001 + UTEST-DISC-001 + UTEST-OWNERS-001 +
-      UTEST-DEPS-001) → UTEST-CLI-PARSE-001`.
-    - Lane lenguaje: `UTEST-LEX-001 → UTEST-CST-001 → UTEST-FMT-001`; tras
-      unir formatter con plan/discovery/dev-dependencies,
-      `UTEST-ID-001 → UTEST-CAPTURE-001`, y después
-      `UTEST-OVERLAY-001` y `UTEST-INTEG-001` cierran en paralelo.
-      `ASYNC-DEFER-IMPL-001` ya está cerrado y no añade una lane pendiente al
-      lowering.
-    Mini-gate: cada frontend baja hasta su primer IR verificable, los cinco
-    slices tempranos tienen owner definitivo y la conformidad viva ratchetea.
-23. [x] **Wave 3 — Vertical slices ejecutables.**
-    - Meta: `META-DERIVE-001 + META-GEN-001 → META-ATOMIC-001`, seguido de
-      `META-QUERY-001` y `REFLECT-IMPL-001`.
-    - Testing core: `UTEST-CHECK-001 → UTEST-LOWER-001` y
-      `UTEST-RESULT-MODEL-001` avanzan en paralelo; su unión alimenta
-      `UTEST-CONTROL-001 → UTEST-RUNTIME-001`. Desde ahí,
-      `UTEST-INPUTS-001` avanza en paralelo con
-      `UTEST-SUITE-001 → UTEST-LIMIT-001`, y los tres cierran el worker estable.
-    - Testing puro: `UTEST-GLOB-001 → UTEST-SHARD-001 →
-      UTEST-SCHED-001`, después de plan e identidad.
-    Mini-gate: derive y un test mínimo recorren rutas públicas end-to-end; no
-    existen shims, productos parciales ni estado cruzado entre workers.
-24. [x] **Wave 4 — Features y cierre del lenguaje.**
-    - Meta: diagnostics, reproducibilidad, robustez y `META-CONF-001`.
-    - Testing sobre worker estable: `UTEST-VTIME-001`, `UTEST-RETRY-001`,
-      `UTEST-REPEAT-001`, `UTEST-ARTIFACT-001` y `UTEST-SNAPSHOT-001`
-      avanzan en paralelo; su unión alimenta `UTEST-REPORT-001 →
-      UTEST-JUNIT-001 → UTEST-INTERRUPT-001 → UTEST-CLI-001`.
-    - Aceptación testing: `UTEST-CONF-001`, `UTEST-PROJECTS-001`,
-      `UTEST-PLATFORM-001` y `UTEST-DOGFOOD-001`; después se cierra T0.
-    - Unión de implementación: `META-CONF-001 + UTEST-CONF-001` alimenta el
-      resultado vivo conjunto sin crear un bundle pre-release.
-    Mini-gate observado: meta/testing ejecutan sus rutas públicas sobre el
-    mismo corpus. El cierre evidencial de T0 y la preparación de G5 se asignan a
-    `DOC-TEST-001`, `DOC-TEST-CONF-001`, `UTEST-SPEC-EVIDENCE-001`, `CONF-MATRIX-ALL-001`,
-    `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`,
-    `QUALITY-EVIDENCE-BIND-001`; `CONF-SEAL-FINAL-001` queda para el primer
-    candidato real.
-25. [x] **Wave 4.5 — Suspensión inferida canónica.** Completar
-    `ASYNC-INFER-001`, `ASYNC-IMPLICIT-WAIT-001`, `ASYNC-EFFECT-API-001`,
-    `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`,
-    `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001` y `ASYNC-ITER-001`, junto a la actualización de `SCRIPT-004`, del ABI de
-    bytecode y de los contratos de I/O. El mini-gate exige `rg` sin firmas
-    fuente `async fn`, rechazo `E1611` de `await` sobre llamadas directas,
-    metadatos `suspends` con hash estable, `Join` transferible, one-shot,
-    inferencia en `defer` y el único `for` sobre `AsyncIterator`. `async` es un
-    identificador ordinario; no hay fixtures ni adapters de compatibilidad.
-    `ASYNC-ITER-EXT-001` continúa como leaf explícita; `NATIVE-THREAD-001`,
-    `NATIVE-002`, `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerradas y la
-    frontera Core nativa está cerrada y la siguiente es `NATIVE-STD-HOSTED-001`.
+The 2026-09-07 audit supersedes the previous wave-closure narrative. Complete
+one coherent boundary with observed proof before promoting its dependents:
 
-#### Evidencia de Wave 4.5
+1. Reconcile the tracker, dependency graph, promotion registers and provenance.
+2. Repair nightly setup, portable runtime validation, fuzz oracles and checks
+   that accept expected values or empty public API inventories as execution.
+3. Complete and verify the public testing pipeline and renew T0.
+4. Complete public reflection and metaprogramming; renew applicable S1A cells.
+5. Integrate source-driven Cranelift AOT with the production runtime; renew
+   actual conformance, diagnostics, quality and performance before N1.
+6. Resume STD-0.1B owner work with explicit integration leaves. The next TOML
+   sequence remains PERF, CONF, DOC within the stated hosted scalar boundary.
 
-El estado siguiente se basa en los tests ejecutables actuales y el gate local
-completo; los conteos se regeneran y no son contratos fijados a un commit:
+- [ ] **AUDIT-ALIGN-001 — Reconcile status, dependencies and provenance.**
+  Preserve valid component evidence, reopen unsupported promotions, remove
+  contradictory current claims and bind generated inventories to their inputs.
+  Tracker lint alone does not prove implementation or conformance.
 
-| Entrada | Estado auditado | Evidencia observada |
-| --- | --- | --- |
-| `ASYNC-001..004` | Cerradas | `cargo test -p tondo-compiler --lib`: 1.126/1.126; tests de inferencia de suspensión, diagnósticos de parámetros exclusivos, liveness `Send`, lowering/verificación de `Await`/`Spawn`/frames y ejecución de roots suspendidos. |
-| `SPAWN-001`, `JOIN-001` | Cerradas | Tests de `scope`/cleanup, `direct_suspension_is_inferred_and_join_can_cross_a_function_boundary`, `join_can_be_returned_as_an_explicit_scope_handoff`, consumo afín y rechazo de doble consumo; el contrato de ownership se completa en `ASYNC-JOIN-RETURN-001`. |
-| `SCRIPT-004` | Cerrada | `script_entry_infers_suspension_for_direct_waiter_calls`, `script_entry_executes_sync_and_async_top_level_work` y `tests/runtime/m10-defer-script.to`, además del gate de fixtures. |
-| `ASYNC-INFER-001`, `ASYNC-IMPLICIT-WAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | El efecto público es denotable en contratos y tipos, continúa infiriéndose en cuerpos, y el gate cubre inferencia, préstamos secuenciales, rechazo en `spawn`, `Join`, one-shot, thread lane e iteración async. |
-| `ASYNC-DEFER-IMPL-001` | **Cerrada** | Fixtures canónicos y de script cubren retorno, error exterior, pánico/supresión, LIFO, cancelación, host-backed cleanup e inferencia; negativos cubren `E1601`, `E1608`, `E1611`, `E1401`, `E1605`, `E1410` y `E1008`. Los tests de driver prueban `T0002`, capability y precedencia de panic; `test_runtime` fija timeout forzado y `test_interrupt` exige acknowledgement de cleanup antes de exit 4. |
-| `UTEST-SUSPENSION-CONTRACT-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_contracts.rs` fijan `E1611` para `await call()`, llamada directa a `Waiter.wait()` y hashes de interfaz `suspends`. |
-| `STD-A-ASYNC-IMPL-001` | **Cerrada** | Implementación VM completa de `std.async`: ruta directa y `spawn` de `collect`, cursor genérico, límites, cancelación cooperativa, liberación terminal y loans; rendimiento y conformance global siguen en sus leaves S1A. |
-| `STD-A-FUZZ-001` | **Cerrada** | Target owner-aware con 22 rutas, corpus y seeds reproducibles, límites de entrada/source/RSS/timeout, oráculos de no-panic e invariantes por owner, replay de minimizados y campañas smoke/nightly integradas; `FUZZ=verified` 22/22. |
-| `STD-CHANNEL-IMPL-001` | **Cerrada** | Compiler, VM hosted y bridge nativo privado verifican endpoints nominales, bounded/unbounded, FIFO, backpressure, fork, cierres, drenado terminal, cancelación y send/receive seleccionables; fixture y sonda nativa hash-bound, sin API pública ni lowering AOT. |
-| `STD-CHANNEL-ASYNC-ITER-001` | **Cerrada** | Witness privado `Receiver[T] -> AsyncIterator[T]` bajo `T: Discard`, lowering de `for` y `collect` genérico, scheduler FIFO, cleanup/cancelación y negativa affine `E1105` verificados en la VM hosted; ABI nativa y lowering AOT permanecen sin reclamar. |
-| `STD-EXEC-IMPL-001` | **Cerrada** | La VM hosted verifica la superficie cooperativa de pools y actores: admisión/backpressure FIFO, `Join`, lifecycle, handlers con estado, `Actor.ref` y `ActorRef.send` `selectable` con prepare/commit/rollback transaccional; workers host, runtime nativo y lowering AOT permanecen sin reclamar. |
-| `STD-ENCODING-IMPL-001` | **Cerrada** | El kernel scalar verifica Base64/hex materializado e incremental, canonicalidad estricta, límites y terminalidad; el compiler y la VM hosted verifican options, `Reader`/`Writer`, handles afines, errores y fixture `m11-std-encoding-impl-001`. Runtime nativo, SIMD y lowering AOT permanecen sin reclamar. |
-| `STD-ENCODING-TEST-001` | **Cerrada** | Modelo independiente de Base64/hex, vectores RFC 4648, fronteras de chunk, errores y offsets, límites atómicos, lifecycle y fuzz `stdlib_encoding` reproducible (128 runs, seed 4105); la frontera native AOT permanece sin reclamar. |
-| `STD-ENCODING-CONF-001` | **Cerrada** | Corpus compartida VM/native de seis casos sobre handles opacos: interoperabilidad Base64/hex, streaming por fragmentos, errores y offsets, límites/terminalidad, cleanup y frontera explícita `simd: not-measured-no-optimized-route`; native AOT y layout FFI permanecen sin reclamar. |
-| `STD-ENCODING-DOC-001` | **Cerrada** | Guía ejecutable con seis familias de ejemplos para la única forma por policy, errores, costes, ownership y materialización/streaming; fixture, sidecars, checker y negativos verificados. Cierre documental hosted sin reclamar runtime nativo público, SIMD optimizado ni lowering AOT. |
-| `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
-| `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
+- [ ] **CI-RELIABILITY-REPAIR-001 — Repair reproducible CI failures.**
+  Install the pinned fuzz toolchain in every lane that invokes it; correct
+  contract-invalid fuzz oracles and portable runtime error precedence. Keep
+  quality thresholds, regenerate current ratchets and inspect exact-SHA CI.
 
-El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
-reconciliación y selló la evidencia final de workspace, conformance, reliability,
-doc-tests, rustdoc y contratos de stdlib. La evidencia de calidad instrumentada
-alcanza 90,71% de líneas (`9071` bp), 87,21% de funciones y 89,08% de regiones;
-la baseline se recapturó sobre este árbol después de la evolución de los bloques
-de `select` y conserva esos floors sin exclusiones. La compuerta oficial de
-mutación ejecuta seis mutantes críticos deterministas, uno por frontera: seis
-detectados, cero supervivientes, cero timeouts y cero inviables; por tanto el
-score de la muestra es 100% (`10000` bp). El gate usa un staging hermano de
-`CARGO_TARGET_DIR`, no copia artefactos de `target` y limita la ejecución a
-un worker para evitar presión de memoria. La campaña completa de 30 mutantes
-queda reservada al carril de rendimiento. `testing/conformance-ratchet.json` se
-regenera contra el
-único corpus vivo y sus case layers actuales.
+- [ ] **CONF-PROMOTION-001 — Reject unobserved and vacuous promotion.**
+  Require actual independent outputs, source/runtime identities and applicable
+  public signatures. Negative tests must reject altered expectations, skipped
+  execution, missing owners and stale provenance without lowering the contract.
 
-Esta tabla es la fuente de reconciliación del estado actual.
-26. [x] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
-    iniciales están cerrados; la auditoría pública verifica 214/214 firmas y ya
-    incorpora el delta `selectable` de DEC-020. Las dimensiones de evidencia y
-    promoción de S1A quedaron cerradas por el bundle técnico reproducible. El
-    orden de cierre fue:
-    - lenguaje/select: `ASYNC-SELECT-FRONTEND-001 → ASYNC-SELECT-SEMA-001 →
-      ASYNC-SELECT-LOWER-001`; después runtime y ownership cierran en paralelo,
-      alimentan `STD-A-SELECTABLE-IMPL-001` —que además exige los ya cerrados
-      `STD-A-ASYNC-IMPL-001` y `STD-TIME-BASE-CONF-001`— y continúa con
-      `ASYNC-SELECT-TEST-001 →
-      ASYNC-SELECT-PERF-001 → ASYNC-SELECT-VM-CONF-001` (tests/model,
-      performance y conformidad VM hosted cerrados);
-    - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
-      `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001` y `STD-IO-IMPL-001`;
-    - A2: `STD-FS-IMPL-001` y `STD-PROC-IMPL-001`, preservando path/console;
-    - A3 spec: `STD-SER-001` y
-      `STD-JSON-API-001 / STD-MSGPACK-API-001 / STD-PROTOBUF-API-001 →
-      STD-SPEC-001`;
-    - A3 ABI migration: `STD-SER-IMPL-001 → STD-DERIVE-SER-001` must first
-      land the `Encode[C]`/`Decode[C]` and `Value` contracts; only then:
-      `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
-    - A3 implementation (after ABI migration):
-      `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`,
-      después `STD-JSON-PUBLIC-001 → STD-CODEC-DERIVE-POLICY-001` y las
-      superficies públicas equivalentes de MessagePack/Protobuf. Sus firmas
-      ya tienen auditoría pública completa; quedan sus gates de codec,
-      rendimiento, fuzzing y promoción;
-    - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
-    - A5: `STD-PUBLIC-API-AUDIT-001` (214/214 regenerado con DEC-020) → leaves
-      `STD-A-*-EVIDENCE` →
-      STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
-      STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001 →
-      (`STD-A-ASYNC-API-001` (cerrado) → `ASYNC-ITER-EXT-001` →
-      `STD-A-ASYNC-IMPL-001`; `ASYNC-DEFER-IMPL-001` cerrado) +
-      `STD-A-FUZZ-001` + `STD-A-PERF-001` + `STD-A-CONF-001` +
-      `STD-A-DIST-001` → `STD-S1A-SEAL-001`; el bundle técnico queda reproducible
-      y verificado, por lo que Wave 5 termina sin abrir G5 ni una publicación.
-    Los owners independientes pudieron avanzar en paralelo; el seal cerró S1A
-    únicamente después de que cada firma contractual atravesó una ruta pública
-    real.
-27. [x] **Wave 6 — Contratos que condicionan el backend.** Después de
-    `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, están cerrados
-    `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
-    `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`, `STD-ENCODING-001`,
-    `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`, `STD-REGEX-001`,
-    `STD-ID-001` y `STD-LOG-001`; la instrumentación hosted de
-    `DIAG-RUNTIME-001` ya está cerrada y la siguiente frontera contractual son
-    los detectores de M11. Mini-gate: DEC-013/014 reciben requisitos completos sin
-    implementar todavía STD-0.1B.
-28. [x] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada y
-    `DUMP-001`, `DIAG-TEST-001` y `DIAG-NATIVE-001` cerrados, continuar
-    `NATIVE-BACKEND-ADAPTER-001` (cerrado) → `NATIVE-MEM-ADR-001` →
-    `NATIVE-ABI-001` → leaves `NATIVE-LOWER-*` → `NATIVE-THREAD-001` (cerrado) →
-    NATIVE-SELECT-001 (cerrado) → NATIVE-002 (cerrado) → ARC-001 (cerrado) → ARC-002 (cerrado) →
-    DIAG-NATIVE-001 (cerrado) → NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
-    NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
-    NATIVE-DIFF-001 → targets → NATIVE-REL-001 →
-    `NATIVE-AOT-SCOPE-001` → `NATIVE-AOT-LOWER-001` →
-    (`NATIVE-AOT-BINARY-001` + `NATIVE-AOT-MEM-001` + `NATIVE-AOT-QUALITY-001`) →
-    `NATIVE-AOT-PERF-001` (cerrado) → `DEC-013` → Gate N1 (cerrado por
-    `scripts/native-n1.sh`; Cranelift promovido para x86_64 GNU y ARM64
-    conservado como smoke de candidato).
-29. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
-    cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
-    `PERF`, `CONF` y `DOC` de 21.3.1–21.3.13, y después los coordinadores
-    `STD-B-OWNER-MATRIX-001`, `STD-B-*` y `STD-S1-SEAL-001`; cerrar Gate S1. Solo después componer
-    `REL-0.1-RC-001` con G5/T0/N1/S1 y después `REL-SUPPLY-001` /
-    `REL-INSTALL-001` / `REL-PUBLISH-001`. Optimizaciones post-N1 avanzan por evidencia
-    y no bloquean el candidato salvo que un presupuesto publicado lo exija.
+- [ ] **STD-B-INTEGRATION-PLAN-001 — Make owner integration explicit.**
+  Distinguish public frontend/API, hosted runtime, private ABI, native AOT,
+  model/test/fuzz, performance, conformance and documentation tasks. Existing
+  bounded owner closures cannot imply missing execution routes. Resume TOML
+  PERF/CONF/DOC after the remediation prerequisites have real proof.
 
-Lane transversal TLF, independiente del orden de Waves 5–8:
-
-- [x] `TLF-RESEARCH-001 → TLF-SPEC-001`.
-- [ ] `TLF-BENCH-REPRO-001` puede avanzar desde research; en paralelo,
-  `TLF-CODEC-001 → (TLF-CANON-001 + TLF-MAP-001 + TLF-DIAG-001) →
-  TLF-CLI-001 → (TLF-PROP-001 + TLF-FUZZ-001 + TLF-EVAL-001) →
-  TLF-CONF-001 → TLF-BUNDLE-001`.
-
-Puede avanzar mientras se cierran stdlib/conformidad porque solo consume el
-frontend estable. Gate L0 no es prerrequisito de S1A, G5 o N1, pero sí de
-`TLF-REL-001`; el candidato base no depende de TLF.
-
-Resumen topológico:
-
-~~~text
-CONF-DRAFT
-  -> FORMAT draft
-  -> {PARSER-STACK -> meta/test syntax
-      meta prerequisites + meta frontend
-      bytes + env + time + test plan/frontend + defer inference}
-  -> {meta runtime
-      test runtime + algorithms}
-  -> {META-CONF + testing implementation}
-  -> {doc-test + matrix all specs + gap audit + final seal -> T0/G5
-      STD-0.1A leaf implementations + public API audit -> S1A}
-  -> STD-0.1B runtime contracts
-  -> native build/link/CLI correctness / N1
-  -> STD-0.1B leaves -> S1 -> REL-0.1-RC -> supply/install/publish
-
-G0 -> TLF spec + reproducible benchmark -> codec/maps/CLI
-   -> properties/fuzz/eval -> conformance -> L0 bundle -> TLF companion
-~~~
-
-M4, M5, M6, la base suspendible de M7, M8, M9, el corpus vivo M10, M10.5,
-M10.5b y Gates G4/H0 quedan cerrados como implementación/infraestructura. La
-extensión núcleo `select` de M7 está implementada en frontend, semántica,
-lowering, VM, ownership, modelo y adapters; su presupuesto y conformidad VM
-hosted están ratcheteados. M10.7 y la implementación
-funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
-cerrada. La auditoría mantiene T0 verificable sobre el árbol actual y G5 abierto
-hasta el primer candidato real. Wave 5/S1A queda cerrada como draft técnico
-por `STD-S1A-SEAL-001`;
-la superficie ejecutable está verificada en 214/214 firmas y FUZZ está promovido
-22/22; la auditoría ya incluye los efectos `selectable`, la conformidad hosted
-del selector está ratcheteada y la slice de selección runtime nativa está
-cerrada por `NATIVE-SELECT-001`; `DEC-013` seleccionó Cranelift para el target
-admitido y las dimensiones N1
-siguen abiertas; las capacidades de identidad/source maps
-quedan demostradas por `NATIVE-LOWER-DEBUG-001`.
-`CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` producen la trazabilidad y el
-resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
-primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
-Wave 6 continúa con los contratos runtime-facing B0 después del seal S1A y del
-contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
-`STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
-`STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
-`STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` ya tienen registros y negativos
-ejecutables; `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001` y
-`STD-ASYNC-GROUP-PERF-001`, `STD-ASYNC-GROUP-CONF-001` y
-`STD-ASYNC-GROUP-DOC-001` ya están cerrados para VM hosted y el ABI del
-runtime nativo; quedan pendientes el lowering AOT async portable y los
-detectores de M11.
-`STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
-coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
-`NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
-como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
-repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
-promueve Cranelift únicamente para el target primario x86_64 GNU. El frontend de
-colecciones compartidas ya está cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`;
-la ejecución hosted y el ABI nativo privado quedan cerrados por
-`STD-SYNC-COLLECTION-IMPL-001`; `STD-SYNC-COLLECTION-TEST-001` también está
-cerrado para el modelo/test/fuzz acotado y `STD-SYNC-COLLECTION-PERF-001`
-queda cerrado para la línea base de rendimiento hosted; la conformance
-observable de colecciones, la conformance global y la guía ejecutable de
-`std.sync` quedan cerradas por `STD-SYNC-COLLECTION-CONF-001`,
-`STD-SYNC-CONF-001` y `STD-SYNC-DOC-001`; el siguiente bloque crítico es
-`STD-CHANNEL-IMPL-001`;
-`STD-SYNC-HOST-001`,
-`STD-SYNC-TEST-001` y `STD-SYNC-PERF-001` ya cerraron la frontera de
-parking/atomics, la continuación de `Once`, el modelo hosted determinista y el
-presupuesto de rendimiento target-qualified. ARM64 conserva una clasificación
-de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
-`TRACKER-LINT-001` está cerrado y su informe deriva los
-conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
-cerró su contrato y auditoría, `ASYNC-DEFER-IMPL-001` cerró su hardening y
-`ASYNC-ITER-EXT-001` cerró el lowering genérico de `collect(limit:)` con
-evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
-`STD-A-FUZZ-001` cerró las 22 rutas owner-aware de fuzz y
-`STD-A-PERF-001` promovió los baselines portables y fronteras target-qualified.
-`STD-A-CONF-001` promovió la ejecución pública (22 owners, 385 filas y 206
-casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
-paquete VM reproducible (dos snapshots, instalación, ejecución y
-desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
-`DIAG-SPEC-001` cerró el contrato D0 y `DIAG-RUNTIME-001` cerró la
-instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
-`STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
-`STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
-`STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` cerraron trece fronteras B0;
-`RACE-001`, `LEAK-001`, el writer lógico de `DUMP-001` y la integración de
-`DIAG-TEST-001` y `DIAG-CI-001` ya están cerrados en hosted. `NATIVE-001`
-mantiene la evidencia reproducible y registra la selección de Cranelift, con
-mediciones rápidas y diferenciales reales de Cranelift/LLVM; la campaña AOT completa de producto,
-memoria, calidad y rendimiento también está cerrada; el adaptador común, su metadata de
-identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
-`NATIVE-002` están cerrados y `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` ya están
-implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
-la frontera AOT y Gate N1 están cerrados para el target primario; el backend
-seleccionado queda promovido únicamente para x86_64 GNU. El frontend de
-colecciones compartidas está cerrado y la ejecución hosted/ABI nativo privado
-de `STD-SYNC-COLLECTION-IMPL-001` ya tiene evidencia ejecutable;
-`STD-SYNC-COLLECTION-TEST-001` también está cerrado para el modelo/test/fuzz
-acotado, `STD-SYNC-COLLECTION-PERF-001` queda cerrado para la línea base
-hosted y `STD-SYNC-COLLECTION-CONF-001` queda cerrado para la equivalencia
-observable VM/native; `STD-SYNC-CONF-001` y `STD-SYNC-DOC-001` también quedan
-cerrados para el corpus común VM/native-bridge y la guía ejecutable; la adaptación
-hosted `Receiver[T] -> AsyncIterator[T]` de `STD-CHANNEL-ASYNC-ITER-001` también
-está cerrada; `STD-CHANNEL-TEST-001` queda cerrado para modelo, regresiones y
-fuzz acotado; `STD-CHANNEL-PERF-001` queda cerrado para la línea base hosted y
-`STD-CHANNEL-DOC-001` queda cerrado para la guía ejecutable de composición.
-`STD-EXEC-IMPL-001` queda cerrado para la implementación cooperativa hosted de
-su superficie y `STD-EXEC-HOST-001` queda cerrado para el bridge hosted y la
-lane nativa target-qualified; `STD-EXEC-TEST-001` queda cerrado con el modelo,
-replay, stress y fuzz acotados. `STD-EXEC-PERF-001` queda cerrado por la
-campaña target-qualified hosted/native 3 x 9 y su presupuesto reproducible;
-`STD-EXEC-CONF-001` queda cerrado por el corpus común VM/native y la capability
-estática `threads`; `STD-EXEC-DOC-001` queda cerrado por su guía ejecutable,
-fixture y negativos; el siguiente trabajo crítico es `DIAG-RUNTIME-001`. La
-implementación de
-superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
-el presupuesto de rendimiento y la conformance del ABI del runtime nativo de
-Group ya tienen fronteras explícitas, mientras la iteración directa, el
-lowering AOT async y la promoción pública siguen pendientes.
-
----
+G5, candidate preparation, licensing and publication remain separate human
+release decisions. They do not block technical integration or authorize it to
+claim a release. TLF stays an optional independent companion.

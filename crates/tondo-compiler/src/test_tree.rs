@@ -241,6 +241,7 @@ pub enum TestTreeError {
     Diagnostic(DiagnosticError),
     InvalidInput(String),
     InvalidNodeName { span: Span, message: String },
+    DiagnosticLimit { file: FileId, offset: u32 },
     Diagnostics(Vec<Diagnostic>),
 }
 
@@ -251,7 +252,8 @@ impl TestTreeError {
             Self::Source(_)
             | Self::Diagnostic(_)
             | Self::InvalidInput(_)
-            | Self::InvalidNodeName { .. } => &[],
+            | Self::InvalidNodeName { .. }
+            | Self::DiagnosticLimit { .. } => &[],
         }
     }
 }
@@ -263,6 +265,10 @@ impl fmt::Display for TestTreeError {
             Self::Diagnostic(error) => error.fmt(formatter),
             Self::InvalidInput(message) => formatter.write_str(message),
             Self::InvalidNodeName { message, .. } => formatter.write_str(message),
+            Self::DiagnosticLimit { offset, .. } => write!(
+                formatter,
+                "static test diagnostic limit reached at byte {offset}"
+            ),
             Self::Diagnostics(diagnostics) => {
                 write!(
                     formatter,
@@ -331,13 +337,35 @@ struct BuildContext<'a> {
     sources: &'a SourceDatabase,
     nodes: Vec<TestNode>,
     pending: Vec<PendingDiagnostic>,
+    max_diagnostics: usize,
     siblings: BTreeMap<ScopeKey, BTreeMap<String, Span>>,
+}
+
+impl BuildContext<'_> {
+    fn push(&mut self, diagnostic: PendingDiagnostic) -> Result<(), TestTreeError> {
+        if self.pending.len() >= self.max_diagnostics {
+            return Err(TestTreeError::DiagnosticLimit {
+                file: diagnostic.primary.file(),
+                offset: diagnostic.primary.range().start(),
+            });
+        }
+        self.pending.push(diagnostic);
+        Ok(())
+    }
 }
 
 /// Builds the static test tree from already parsed source files.
 pub fn build<'a>(
     sources: &'a SourceDatabase,
     inputs: impl IntoIterator<Item = TestSourceInput<'a>>,
+) -> Result<StaticTestTree, TestTreeError> {
+    build_with_diagnostic_limit(sources, inputs, usize::MAX)
+}
+
+pub(crate) fn build_with_diagnostic_limit<'a>(
+    sources: &'a SourceDatabase,
+    inputs: impl IntoIterator<Item = TestSourceInput<'a>>,
+    max_diagnostics: usize,
 ) -> Result<StaticTestTree, TestTreeError> {
     let mut inputs = inputs.into_iter().collect::<Vec<_>>();
     let mut seen_files = BTreeSet::new();
@@ -377,6 +405,7 @@ pub fn build<'a>(
         sources,
         nodes: Vec::new(),
         pending: Vec::new(),
+        max_diagnostics,
         siblings: BTreeMap::new(),
     };
     let mut source_ordinals = BTreeMap::<(PackageId, TestSourceClass, ModulePath), u32>::new();
@@ -470,7 +499,7 @@ fn visit_declaration<'a>(
         .or_default()
         .insert(name.clone(), name_span)
     {
-        context.pending.push(PendingDiagnostic {
+        context.push(PendingDiagnostic {
             key: diagnostic_key(context.sources, input.file, name_span.range(), E2002, &name),
             severity: Severity::Error,
             code: E2002,
@@ -479,27 +508,27 @@ fn visit_declaration<'a>(
             ),
             primary: name_span,
             related: Some(("first sibling with this name".into(), previous)),
-        });
+        })?;
     }
     if input.source_class == TestSourceClass::Production {
-        context.pending.push(PendingDiagnostic {
+        context.push(PendingDiagnostic {
             key: diagnostic_key(context.sources, input.file, span.range(), E2001, &name),
             severity: Severity::Error,
             code: E2001,
             message: "suite and test declarations are only allowed in test sources".into(),
             primary: span,
             related: None,
-        });
+        })?;
     }
     if !is_camel_case(&name) {
-        context.pending.push(PendingDiagnostic {
+        context.push(PendingDiagnostic {
             key: diagnostic_key(context.sources, input.file, name_span.range(), W1004, &name),
             severity: Severity::Warning,
             code: W1004,
             message: format!("`{name}` does not follow camelCase naming"),
             primary: name_span,
             related: None,
-        });
+        })?;
     }
 
     let identity = TestNodeIdentity {
@@ -521,7 +550,7 @@ fn visit_declaration<'a>(
 
     if kind == TestNodeKind::Suite {
         if children.is_empty() {
-            context.pending.push(PendingDiagnostic {
+            context.push(PendingDiagnostic {
                 key: diagnostic_key(context.sources, input.file, span.range(), E2004, &name),
                 severity: Severity::Error,
                 code: E2004,
@@ -530,7 +559,7 @@ fn visit_declaration<'a>(
                 ),
                 primary: span,
                 related: None,
-            });
+            })?;
         }
         scope_path.push(name);
         for (index, child) in children.into_iter().enumerate() {
@@ -581,11 +610,7 @@ fn node_name(
 }
 
 fn visible_id(input: &TestSourceInput<'_>, parent_names: &[String], name: &str) -> String {
-    let source_kind = match input.source_class {
-        TestSourceClass::UnitTest => "unit",
-        TestSourceClass::IntegrationTest => "integration",
-        TestSourceClass::Production => "production",
-    };
+    let source_kind = input.source_class.test_id_segment();
     let module = match input.source_class {
         TestSourceClass::IntegrationTest => integration_module_path(input.logical_path()),
         TestSourceClass::Production | TestSourceClass::UnitTest => input.module.to_string(),

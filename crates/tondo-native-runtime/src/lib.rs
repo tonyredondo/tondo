@@ -2556,10 +2556,15 @@ impl State {
     }
 
     fn blocking_pool_new(&mut self, workers: i64, capacity: i64) -> u64 {
-        if !native_blocking_supported() {
-            self.status(STATUS_BLOCKING_UNSUPPORTED_TARGET);
-            return 0;
-        }
+        self.blocking_pool_new_for_target(workers, capacity, native_blocking_supported())
+    }
+
+    fn blocking_pool_new_for_target(
+        &mut self,
+        workers: i64,
+        capacity: i64,
+        supported: bool,
+    ) -> u64 {
         let Ok(workers) = usize::try_from(workers) else {
             self.status(STATUS_BLOCKING_INVALID_WORKERS);
             return 0;
@@ -2574,6 +2579,12 @@ impl State {
         };
         if capacity > 1_000_000 {
             self.status(STATUS_BLOCKING_INVALID_CAPACITY);
+            return 0;
+        }
+        // Admission errors are target-independent. Only a valid request can
+        // reach the target capability check, before allocating any resources.
+        if !supported {
+            self.status(STATUS_BLOCKING_UNSUPPORTED_TARGET);
             return 0;
         }
         let pool = match NativeBlockingPool::new(workers, capacity) {
@@ -2602,10 +2613,6 @@ impl State {
     }
 
     fn blocking_pool_submit(&mut self, pool_handle: u64, payload: u64) -> u64 {
-        if !native_blocking_supported() {
-            self.status(STATUS_BLOCKING_UNSUPPORTED_TARGET);
-            return 0;
-        }
         let pool = match self.blocking_pool_ref(pool_handle) {
             Ok(pool) => pool,
             Err(status) => {
@@ -2691,9 +2698,6 @@ impl State {
     }
 
     fn blocking_pool_shutdown(&mut self, handle: u64, cancel: bool) -> u64 {
-        if !native_blocking_supported() {
-            return self.status(STATUS_BLOCKING_UNSUPPORTED_TARGET);
-        }
         let pool = match self.blocking_pool_ref(handle) {
             Ok(pool) => pool,
             Err(status) => return self.status(status),
@@ -7931,6 +7935,41 @@ mod tests {
         assert_eq!(tondo_rt_release(job), STATUS_OK);
         assert_eq!(tondo_rt_release(pool), STATUS_OK);
         assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_blocking_admission_validates_before_target_capability() {
+        let mut state = State::new();
+        for (workers, capacity, expected) in [
+            (0, 1, STATUS_BLOCKING_INVALID_WORKERS),
+            (-1, 1, STATUS_BLOCKING_INVALID_WORKERS),
+            (4097, 1, STATUS_BLOCKING_INVALID_WORKERS),
+            (1, -1, STATUS_BLOCKING_INVALID_CAPACITY),
+            (1, 1_000_001, STATUS_BLOCKING_INVALID_CAPACITY),
+            (1, 0, STATUS_BLOCKING_UNSUPPORTED_TARGET),
+            (1, 1, STATUS_BLOCKING_UNSUPPORTED_TARGET),
+        ] {
+            assert_eq!(
+                state.blocking_pool_new_for_target(workers, capacity, false),
+                0
+            );
+            assert_eq!(state.last_status, expected);
+            assert!(state.objects.is_empty());
+            assert!(state.blocking_pools.is_empty());
+            assert!(state.blocking_jobs.is_empty());
+        }
+        let invalid = HANDLE_BIT | 999_999;
+        assert_eq!(state.blocking_pool_submit(invalid, 42), 0);
+        assert_eq!(state.last_status, STATUS_BLOCKING_INVALID_HANDLE);
+        assert_eq!(
+            state.blocking_pool_shutdown(invalid, false),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert_eq!(
+            state.blocking_pool_shutdown(invalid, true),
+            STATUS_BLOCKING_INVALID_HANDLE
+        );
+        assert!(state.objects.is_empty());
     }
 
     #[test]

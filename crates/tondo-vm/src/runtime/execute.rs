@@ -49,6 +49,22 @@ type HeapMapEntry = (Option<Value>, Option<Value>);
 pub trait VmHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError>;
 
+    /// Requests cancellation of the complete execution, including its root.
+    /// The VM polls between instructions and while waiting for hosted work.
+    fn interruption_requested(&self) -> bool {
+        false
+    }
+
+    /// A cancellable host may return `None` to wake the executor for an
+    /// external request without inventing a completed asynchronous result.
+    fn wait_async_interruptible(
+        &mut self,
+        calls: &[u64],
+        _allow_interruption: bool,
+    ) -> Result<Option<(u64, RuntimeValue)>, VmError> {
+        self.wait_async(calls).map(Some)
+    }
+
     /// Announces the logical execution unit that is about to call the host.
     ///
     /// The hosted synchronization implementation uses this identity to
@@ -115,6 +131,14 @@ pub trait VmHost {
         Err(VmError::UnsupportedHostCall(format!("test node `{id}`")))
     }
 
+    /// Consumes the terminal emitted by the immediately preceding synchronous
+    /// host call. Its evidence and classification belong to the test envelope;
+    /// the VM uses its ordinary unwind to stop the current node and run cleanup.
+    /// Consuming it once lets later cleanup operations run without reissuing it.
+    fn take_test_control(&mut self) -> Option<String> {
+        None
+    }
+
     /// Completes the active compiler-owned test node after all language
     /// cleanup has run.
     fn finish_test_node(
@@ -144,6 +168,7 @@ pub enum VmTestNodeKind {
 pub enum VmTestNodeOutcome {
     Passed,
     Panicked(VmPanic),
+    Interrupted,
 }
 
 #[derive(Debug, Default)]
@@ -159,6 +184,8 @@ impl VmHost for RejectingHost {
 pub enum VmOutcome {
     Returned(RuntimeValue),
     Panicked(VmPanic),
+    /// External cancellation completed structured cleanup and root teardown.
+    Interrupted,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -384,6 +411,7 @@ fn run_blocking_job(
         Ok(execution) => match execution.outcome {
             VmOutcome::Returned(value) => BlockingCompletion::Returned(value),
             VmOutcome::Panicked(panic) => BlockingCompletion::Panicked(panic),
+            VmOutcome::Interrupted => BlockingCompletion::Cancelled,
         },
         Err(error) => BlockingCompletion::Failed(error),
     }
@@ -1123,7 +1151,7 @@ impl BlockingExecutionBridge {
         {
             drop(
                 self.host_wake
-                    .wait(state)
+                    .wait_timeout(state, Duration::from_millis(2))
                     .map_err(|_| VmError::invariant("blocking bridge wait was poisoned"))?,
             );
         }
@@ -1393,6 +1421,11 @@ struct Engine<'program, 'host> {
     frame_traces: Vec<crate::bytecode::BytecodeFrameTraceDescriptor>,
     temporary_roots: Vec<Value>,
     pending_unwind: Option<RuntimeUnwind>,
+    // Set only when a synchronous host result becomes the next panic operation.
+    // begin_panic consumes it before any cleanup or scheduling can intervene.
+    pending_test_control: bool,
+    interruption_observed: bool,
+    interrupt_unwind_pending: BTreeSet<usize>,
     tasks: Vec<TaskRecord>,
     runnable: VecDeque<usize>,
     current_task: usize,
@@ -1457,6 +1490,9 @@ impl<'program, 'host> Engine<'program, 'host> {
             frame_traces: trace.frames,
             temporary_roots: Vec::new(),
             pending_unwind: None,
+            pending_test_control: false,
+            interruption_observed: false,
+            interrupt_unwind_pending: BTreeSet::new(),
             tasks: Vec::new(),
             runnable: VecDeque::new(),
             current_task: 0,
@@ -1925,11 +1961,26 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.push_frame(entry, arguments, None)?;
 
         loop {
+            self.observe_interruption()?;
             if !self.resume_current_task()? {
                 if let Some(execution) = self.schedule_next()? {
                     return Ok(execution);
                 }
                 continue;
+            }
+            if !self.task_is_running_cleanup(self.current_task)
+                && self.interrupt_unwind_pending.remove(&self.current_task)
+                && self.pending_unwind.is_none()
+                && let Some(frame) = self.frames.len().checked_sub(1)
+            {
+                let function =
+                    &self.program.functions[self.frames[frame].function.index() as usize];
+                // The function's terminal unwind resumes propagation. External
+                // requests first enter its dynamic cleanup drain, just like a
+                // checked operation's unwind edge at this point in execution.
+                let unwind = function.blocks.iter().position(|block| matches!(block.terminator.kind, BytecodeTerminatorKind::DrainUnwind { target } if target == function.unwind))
+                    .map_or(function.unwind, |index| BytecodeBlockId::new(index as u32));
+                self.begin_cancel(frame, unwind)?;
             }
             if self.frames.is_empty() && self.tasks[self.current_task].async_collect.is_some() {
                 self.step_budget()?;
@@ -1969,6 +2020,22 @@ impl<'program, 'host> Engine<'program, 'host> {
                 return Ok(execution);
             }
         }
+    }
+
+    fn observe_interruption(&mut self) -> Result<(), VmError> {
+        if !self.interruption_observed && self.host.interruption_requested() {
+            self.interruption_observed = true;
+            for task in 0..self.tasks.len() {
+                if !matches!(
+                    self.tasks[task].status,
+                    TaskStatus::Complete(_) | TaskStatus::Consumed
+                ) {
+                    self.interrupt_unwind_pending.insert(task);
+                    self.request_cancel(task)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn resume_current_task(&mut self) -> Result<bool, VmError> {
@@ -3068,6 +3135,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.service_blocking_host_requests()?;
         self.poll_host_calls()?;
         loop {
+            self.observe_interruption()?;
             while let Some(next) = self.runnable.pop_front() {
                 let task = self.tasks.get_mut(next).ok_or_else(|| {
                     VmError::invariant("the runnable queue contains an invalid task")
@@ -3119,7 +3187,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                 })?;
                 record.bridge.wait()?;
             } else {
-                let (call, value) = self.host.wait_async(&host_calls)?;
+                let Some((call, value)) = self
+                    .host
+                    .wait_async_interruptible(&host_calls, !self.interruption_observed)?
+                else {
+                    continue;
+                };
                 if !host_calls.contains(&call) {
                     return Err(VmError::Host(format!(
                         "host completed unknown async call #{call}"
@@ -3552,7 +3625,41 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(Some(completion))
     }
 
+    fn task_is_running_cleanup(&self, task: usize) -> bool {
+        let Some(record) = self.tasks.get(task) else {
+            return false;
+        };
+        let frames = if task == self.current_task && !self.frames.is_empty() {
+            &self.frames
+        } else {
+            &record.frames
+        };
+        // A deferred invocation returns to its owning drain on both success
+        // and unwind. Ordinary verified calls have distinct normal/cleanup
+        // successor blocks. Include all enclosing frames of nested cleanup.
+        frames.iter().any(|frame| {
+            frame
+                .continuation
+                .as_ref()
+                .is_some_and(|continuation| continuation.target == Some(continuation.unwind))
+        }) || matches!(
+            record.status,
+            TaskStatus::Waiting(TaskWait::DeferredHostCall { .. })
+        ) || matches!(record.resume, Some(TaskWait::DeferredHostCall { .. }))
+    }
+
     fn request_cancel(&mut self, task: usize) -> Result<(), VmError> {
+        // Cancellation has already entered this task's unwind. Repeated
+        // requests from draining parent scopes must not cancel its defers.
+        if self.task_is_running_cleanup(task)
+            || (task == self.current_task && self.pending_unwind.is_some())
+            || self
+                .tasks
+                .get(task)
+                .is_some_and(|record| record.pending_unwind.is_some())
+        {
+            return Ok(());
+        }
         let (host_call, blocking_call, blocking_submit) = {
             let record = self
                 .tasks
@@ -3663,9 +3770,12 @@ impl<'program, 'host> Engine<'program, 'host> {
             )?),
             TaskCompletion::Panicked(panic) => VmOutcome::Panicked(panic),
             TaskCompletion::Cancelled => {
-                return Err(VmError::invariant(
-                    "the root task was cancelled without a propagating child panic",
-                ));
+                if !self.interruption_observed {
+                    return Err(VmError::invariant(
+                        "the root task was cancelled without a propagating child panic",
+                    ));
+                }
+                VmOutcome::Interrupted
             }
         };
         let roots = self.roots(&[])?;
@@ -7823,6 +7933,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     &boundary.id,
                                     VmTestNodeOutcome::Panicked(panic),
                                 )?;
+                                if self.interruption_observed {
+                                    self.pending_unwind = Some(RuntimeUnwind::Cancelled);
+                                    self.jump(caller, continuation.unwind);
+                                    return Ok(None);
+                                }
                                 if let Some(destination) = &continuation.destination {
                                     self.write_place(caller, destination, Value::Unit)?;
                                 }
@@ -7833,6 +7948,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 return Ok(None);
                             }
                             RuntimeUnwind::Cancelled => {
+                                self.host.finish_test_node(
+                                    boundary.kind,
+                                    &boundary.id,
+                                    VmTestNodeOutcome::Interrupted,
+                                )?;
                                 self.pending_unwind = Some(RuntimeUnwind::Cancelled);
                             }
                         }
@@ -8024,12 +8144,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 })
             })
             .collect::<Result<Vec<_>, VmError>>()?;
+        let from_test_control = std::mem::take(&mut self.pending_test_control);
         let panic = VmPanic {
             code,
             message,
             span,
             stack,
             suppressed: Vec::new(),
+            from_test_control,
         };
         if let Some(RuntimeUnwind::Panic(primary)) = &mut self.pending_unwind {
             primary.suppressed.push(panic);
@@ -8060,6 +8182,7 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn begin_cancel(&mut self, frame: usize, unwind: BytecodeBlockId) -> Result<(), VmError> {
         self.abort_select(frame)?;
+        self.tasks[self.current_task].cancel_requested = false;
         if self.pending_unwind.is_none() {
             self.pending_unwind = Some(RuntimeUnwind::Cancelled);
         }
@@ -11056,6 +11179,10 @@ impl Engine<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let returned = self.invoke_host(function.name(), &snapshots)?;
+                if let Some(message) = self.host.take_test_control() {
+                    self.pending_test_control = true;
+                    return Ok(OperationResult::Panic(PanicCode::ExplicitPanic, message));
+                }
                 if matches!(
                     function,
                     BytecodeBootstrapHostFunction::TestingFailNow
@@ -11468,6 +11595,10 @@ impl Engine<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let returned = self.invoke_host(function.name(), &snapshots)?;
+                if let Some(message) = self.host.take_test_control() {
+                    self.pending_test_control = true;
+                    return Ok(OperationResult::Panic(PanicCode::ExplicitPanic, message));
+                }
                 if matches!(
                     function,
                     BytecodeBootstrapHostFunction::TestingFailNow
@@ -13790,7 +13921,7 @@ impl Engine<'_, '_> {
                         message_place: preserved_moves.into_iter().next(),
                     })
                 }
-                result if !preserved_moves.is_empty() => Err(VmError::invariant(
+                _ if !preserved_moves.is_empty() => Err(VmError::invariant(
                     "a selectable call retained a move operand without a transaction",
                 )),
                 result => Ok(result),
@@ -14109,6 +14240,10 @@ impl Engine<'_, '_> {
                     })
                 } else {
                     let returned = self.invoke_host(&metadata.name, &snapshots)?;
+                    if let Some(message) = self.host.take_test_control() {
+                        self.pending_test_control = true;
+                        return Ok(OperationResult::Panic(PanicCode::ExplicitPanic, message));
+                    }
                     if matches!(
                         metadata.name.as_str(),
                         "std.testing.failNow" | "std.testing.skip"
@@ -17267,7 +17402,12 @@ impl Engine<'_, '_> {
                     }
                     return Ok(match completion {
                         TaskCompletion::Returned(value) => Ok(value),
-                        TaskCompletion::Panicked(panic) => Err((panic.code, panic.message)),
+                        TaskCompletion::Panicked(panic) => {
+                            let language_panic = panic.language_panic();
+                            self.pending_test_control = language_panic.is_none();
+                            let primary = language_panic.unwrap_or(&panic);
+                            Err((primary.code, primary.message.clone()))
+                        }
                         TaskCompletion::Cancelled => Err((
                             PanicCode::ExplicitPanic,
                             "iterator callback was cancelled".into(),
@@ -19119,6 +19259,7 @@ mod tests {
                     },
                     stack: Vec::new(),
                     suppressed: Vec::new(),
+                    from_test_control: false,
                 }),
             ),
             Err(VmError::Invariant(message)) if message.contains("no Result value")
@@ -19202,6 +19343,7 @@ mod tests {
                     },
                     stack: Vec::new(),
                     suppressed: Vec::new(),
+                    from_test_control: false,
                 }),
             ),
             (9, RuntimeUnwind::Cancelled),
@@ -19625,6 +19767,7 @@ mod tests {
             },
             stack: Vec::new(),
             suppressed: Vec::new(),
+            from_test_control: false,
         };
 
         for resolution in [
@@ -20150,6 +20293,7 @@ mod tests {
             },
             stack: Vec::new(),
             suppressed: Vec::new(),
+            from_test_control: false,
         };
         let wait_place = |ty, slot| BytecodePlace {
             slot: BytecodeSlotId::new(slot),
@@ -21967,6 +22111,7 @@ mod tests {
             },
             stack: Vec::new(),
             suppressed: Vec::new(),
+            from_test_control: false,
         };
         let mut host = RejectingHost;
         let mut engine = executor_engine_with_scope(&program, &mut host);
@@ -22139,6 +22284,7 @@ mod tests {
             },
             stack: Vec::new(),
             suppressed: Vec::new(),
+            from_test_control: false,
         };
         let mut host = RejectingHost;
         let mut engine = executor_engine_with_scope(&program, &mut host);
@@ -24078,6 +24224,7 @@ mod tests {
                 },
             }],
             suppressed: Vec::new(),
+            from_test_control: false,
         };
         panic_engine
             .tasks
@@ -29111,6 +29258,7 @@ mod tests {
                 },
                 stack: Vec::new(),
                 suppressed: Vec::new(),
+                from_test_control: false,
             }),
         ))));
         engine
@@ -29607,6 +29755,7 @@ mod tests {
                 },
                 stack: Vec::new(),
                 suppressed: Vec::new(),
+                from_test_control: false,
             })
         };
 
@@ -32266,6 +32415,7 @@ mod tests {
             },
             stack: Vec::new(),
             suppressed: Vec::new(),
+            from_test_control: false,
         };
         let mut host = RejectingHost;
         let mut engine = executor_engine(&program, &mut host);
