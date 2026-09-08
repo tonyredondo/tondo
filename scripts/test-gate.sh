@@ -35,6 +35,7 @@ draft_manifest_hash="$(sha256sum conformance/draft/manifest.json | cut -d ' ' -f
 cp conformance/draft/manifest.json \
     "$evidence/draft-manifest-$draft_manifest_hash.json"
 
+run_step fast-gate-contract-tests scripts/fast-gate-test.sh
 run_step fmt cargo fmt --all -- --check
 run_step check cargo check --workspace --all-targets --locked
 run_step clippy cargo clippy --workspace --all-targets --locked -- -D warnings

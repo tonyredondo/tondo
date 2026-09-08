@@ -41,12 +41,29 @@ workspace manifest, compiler/runtime frontier (including the monolithic
 `crates/tondo-compiler/src/mir.rs` module), executable conformance source or a
 full-gate script escalates automatically to `scripts/test-gate.sh`. Normative
 sources and their generated documentary records use the documentation tier.
-Unknown files remain in the impacted set and never silently bypass the
-formatter or package checks. `--dry-run` is deterministic and is used by
+Files without an explicit documentary, policy, evaluation or package owner
+run the full test gate. This includes otherwise unmapped JSON contracts,
+checker scripts and executable fixtures. An explicit shared path still
+requires the full gate when it also appears in the gate-policy list; policy
+self-tests cannot replace its integration checks. The smaller policy route
+is reserved for the fast selector and its own executable contract tests.
+Deletions remain in the impact set; renames include the removed and added
+paths. Generated diffs use explicit `a/` and `b/` prefixes regardless of the
+caller's Git display configuration. Explicit binary, quoted-path or
+metadata-only patch sections conservatively require the full gate when their
+paths cannot be classified. A nonempty patch never becomes a formatter-only
+success because its new file path is `/dev/null`.
+
+`--dry-run` is deterministic and is used by
 `scripts/fast-gate-test.sh` to keep all three classifications executable.
 Pull requests compare against their base SHA; pushes compare the complete
 `before..head` event range rather than `HEAD^`, so publishing several local
 commits together cannot omit earlier changes from the impact set.
+
+CI derives tool prerequisites from that same command plan. A full-gate plan
+installs the pinned fuzz toolchain even when no Rust source changed. Coverage
+and mutation tools are installed when the selected plan calls them; filename
+extensions do not decide whether those commands have their dependencies.
 
 The changed-line coverage rule is intentionally stricter than the global
 ratchet: executable lines added by a block must be covered by the package report

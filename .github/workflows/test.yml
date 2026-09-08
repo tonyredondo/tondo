@@ -49,29 +49,34 @@ jobs:
           restore-keys: |
             tondo-fast-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Detect fast quality tools
+      - name: Detect fast gate prerequisites
         id: fast-tools
         if: github.event_name != 'workflow_dispatch' || inputs.tier == 'fast'
         env:
           TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || 'HEAD^' }}
         run: |
-          if git diff --name-only "$TONDO_FAST_BASE...HEAD" | grep -Eq '\.rs$'; then
-            echo "install=true" >> "$GITHUB_OUTPUT"
+          plan="$(bash scripts/fast-gate.sh --dry-run)"
+          printf '%s\n' "$plan"
+          if grep -Eq '^(changed-line-coverage|diff-mutation) ' <<< "$plan"; then
+            echo "quality=true" >> "$GITHUB_OUTPUT"
           else
-            echo "install=false" >> "$GITHUB_OUTPUT"
+            echo "quality=false" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -q '^full-test-gate ' <<< "$plan"; then
+            echo "fuzz=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fuzz=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install fast quality tools
-        if: (github.event_name != 'workflow_dispatch' || inputs.tier == 'fast') && steps.fast-tools.outputs.install == 'true'
+        if: (github.event_name != 'workflow_dispatch' || inputs.tier == 'fast') && steps.fast-tools.outputs.quality == 'true'
         run: |
           rustup component add llvm-tools-preview
-          rustup toolchain install nightly-2026-07-28 --profile minimal
           cargo install cargo-llvm-cov --version 0.8.7 --locked
           cargo install cargo-mutants --version 27.1.0 --locked
-          cargo install cargo-fuzz --version 0.13.2 --locked
 
       - name: Install full-gate fuzz toolchain
-        if: github.event_name == 'workflow_dispatch' && inputs.tier == 'full'
+        if: (github.event_name == 'workflow_dispatch' && inputs.tier == 'full') || steps.fast-tools.outputs.fuzz == 'true'
         run: |
           rustup toolchain install nightly-2026-07-28 --profile minimal
           cargo install cargo-fuzz --version 0.13.2 --locked

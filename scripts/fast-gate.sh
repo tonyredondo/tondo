@@ -16,6 +16,7 @@ jq -e '
     and .mutation.required_for_production_rust_changes == true
     and (.shared_paths | length > 0)
     and (.packages | length > 0)
+    and .policy.unmapped_paths == "full test-gate"
 ' "$config" >/dev/null || {
     echo "fast gate: invalid policy: $config" >&2
     exit 2
@@ -97,12 +98,12 @@ if [[ -z "$diff_file" ]]; then
         fi
         if git rev-parse --verify "$base" >/dev/null 2>&1; then
             diff_file="$(mktemp "${TMPDIR:-/tmp}/tondo-fast-gate.XXXXXX.diff")"
-            git diff --binary --no-ext-diff "$base...HEAD" > "$diff_file"
-            git diff --binary --no-ext-diff >> "$diff_file"
-            git diff --binary --no-ext-diff --cached >> "$diff_file"
+            git diff --binary --no-ext-diff --no-renames --src-prefix=a/ --dst-prefix=b/ "$base...HEAD" > "$diff_file"
+            git diff --binary --no-ext-diff --no-renames --src-prefix=a/ --dst-prefix=b/ >> "$diff_file"
+            git diff --binary --no-ext-diff --no-renames --src-prefix=a/ --dst-prefix=b/ --cached >> "$diff_file"
             while IFS= read -r untracked; do
                 [[ -n "$untracked" ]] || continue
-                git diff --no-index --binary /dev/null "$untracked" >> "$diff_file" || [[ "$?" -eq 1 ]]
+                git diff --no-index --binary --src-prefix=a/ --dst-prefix=b/ /dev/null "$untracked" >> "$diff_file" || [[ "$?" -eq 1 ]]
             done < <(git ls-files --others --exclude-standard)
         else
             echo "fast gate: cannot resolve base '$base'; pass --base or --diff" >&2
@@ -117,12 +118,12 @@ if [[ -n "${TONDO_FAST_CHANGED_FILES:-}" ]]; then
     printf '%s\n' "$TONDO_FAST_CHANGED_FILES" | sed '/^$/d' | sort -u > "$changed_file_list"
 else
     {
-        sed -n 's#^+++ b/##p' "$diff_file"
+        sed -n -e 's#^--- a/##p' -e 's#^+++ b/##p' "$diff_file"
         if [[ -n "$base" ]] && git rev-parse --verify "$base" >/dev/null 2>&1; then
-            git diff --name-only --diff-filter=ACMR "$base...HEAD"
+            git diff --name-only --no-renames "$base...HEAD"
         fi
-        git diff --name-only --diff-filter=ACMR
-        git diff --cached --name-only --diff-filter=ACMR
+        git diff --name-only --no-renames
+        git diff --cached --name-only --no-renames
         git ls-files --others --exclude-standard
     } | sed '/^$/d' | sort -u > "$changed_file_list"
 fi
@@ -135,6 +136,23 @@ external_test_changed=0
 evaluation_changed=0
 full_required="$force_full"
 declare -A packages=()
+
+# A nonempty patch, or a Git patch section without an ordinary old/new path,
+# must not disappear from the impact set. This covers metadata-only, binary
+# and quoted-path sections, including mixed documentation/implementation diffs.
+if [[ -z "${TONDO_FAST_CHANGED_FILES:-}" ]]; then
+    if { [[ -s "$diff_file" ]] && (( ${#changed_files[@]} == 0 )); } || awk '
+        /^diff --git / {
+            if (section && ! path) unknown = 1
+            section = 1
+            path = 0
+        }
+        /^--- a\// || /^\+\+\+ b\// { path = 1 }
+        END { exit !(unknown || (section && ! path)) }
+    ' "$diff_file"; then
+        full_required=1
+    fi
+fi
 
 is_documentation() {
     local path="$1"
@@ -249,6 +267,9 @@ for path in "${changed_files[@]}"; do
     if is_gate_policy "$path"; then
         gate_policy_changed=1
         non_docs_changed=1
+        if is_shared "$path"; then
+            full_required=1
+        fi
         continue
     fi
     if is_documentation "$path"; then
@@ -261,6 +282,10 @@ for path in "${changed_files[@]}"; do
     fi
     if package="$(package_for "$path" 2>/dev/null)"; then
         packages["$package"]=1
+    else
+        # No declared owner means there is no justified smaller test surface.
+        # Contracts, scripts and fixtures must never receive formatter-only CI.
+        full_required=1
     fi
 done
 

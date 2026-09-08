@@ -35,14 +35,9 @@
   ],
   "gate_policy_paths": [
     ".github/workflows/test.yml",
-    "scripts/documentation-gate.sh",
     "scripts/fast-coverage-check.sh",
     "scripts/fast-gate-test.sh",
     "scripts/fast-gate.sh",
-    "scripts/native-arc-check.sh",
-    "scripts/native-arc-test.sh",
-    "scripts/native-memory-check.sh",
-    "scripts/native-memory-test.sh",
     "testing/fast-gate.json"
   ],
   "inline_test_tail_paths": [
@@ -157,6 +152,7 @@
     "documentation_gate": "doc-test + documentation conformance + normative evidence + tracker lint + stdlib contracts; no workspace tests, coverage or mutation",
     "fast_gate": "fmt + impacted package check/test; changed executable lines and diff mutation only for production Rust",
     "shared_frontier": "full test-gate",
+    "unmapped_paths": "full test-gate",
     "wave_boundary": "full test-gate + quality-gate + live conformance",
     "draft_evidence": "target/reliability/fast-gate/"
   }

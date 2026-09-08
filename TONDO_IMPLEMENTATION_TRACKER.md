@@ -7013,6 +7013,12 @@ one coherent boundary with observed proof before promoting its dependents:
   contract-invalid fuzz oracles and portable runtime error precedence. Keep
   quality thresholds, regenerate current ratchets and inspect exact-SHA CI.
 
+  Fast-gate regressions now cover unmapped contracts/checkers, deleted source,
+  metadata-only patches and shared policy paths. CI derives fuzz and quality
+  tool installation from the selected command plan. The clean Linux baseline
+  reached the S1A seal and correctly rejected the four recorded public API
+  gaps; full promotion and current portable verification remain open.
+
 - [ ] **CONF-PROMOTION-001 — Reject unobserved and vacuous promotion.**
   Require actual independent outputs, source/runtime identities and applicable
   public signatures. Negative tests must reject altered expectations, skipped
