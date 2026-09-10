@@ -90,7 +90,7 @@ fn route_std_collections(input: &[u8]) {
 fn route_std_console() {
     source_probe(
         "std.console",
-        "import std.console\nfn main() { console.print(\"fuzz\") }\n",
+        "import std.console\nfn main(): !console.ConsoleError { console.print(\"fuzz\")? }\n",
     );
 }
 

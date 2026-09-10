@@ -1363,8 +1363,20 @@ fn test_project_with_capabilities(source: &[u8], capabilities: &[&str]) -> std::
         .duration_since(UNIX_EPOCH)
         .expect("system clock must follow the Unix epoch")
         .as_nanos();
-    let directory =
-        std::env::temp_dir().join(format!("tondo-test-cli-{}-{nonce}", std::process::id()));
+    test_project_with_nonce(source, capabilities, nonce)
+}
+
+fn test_project_with_nonce(
+    source: &[u8],
+    capabilities: &[&str],
+    nonce: u128,
+) -> std::path::PathBuf {
+    let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "tondo-test-cli-{}-{nonce}-{id}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).unwrap();
     fs::create_dir_all(directory.join("src")).unwrap();
     fs::create_dir_all(directory.join("tests")).unwrap();
     fs::write(directory.join("src/main.to"), b"fn main() {}\n").unwrap();
@@ -2755,6 +2767,25 @@ fn test_command_accepts_an_explicit_canonical_plan_path() {
 
     assert!(output.status.success());
     assert_eq!(report.metadata().retry.max_additional_rounds, 2);
+}
+
+#[test]
+fn test_projects_with_the_same_clock_sample_keep_independent_inputs() {
+    let first_source = b"test first { assert(true) }\n";
+    let second_source = b"test second { assert(false) }\n";
+    let first = test_project_with_nonce(first_source, &[], u128::MAX);
+    let second = test_project_with_nonce(second_source, &[], u128::MAX);
+    let first_bytes = fs::read(first.join("tests/smoke.to")).unwrap();
+    let second_bytes = fs::read(second.join("tests/smoke.to")).unwrap();
+    for directory in std::collections::BTreeSet::from([&first, &second]) {
+        fs::remove_dir_all(directory).unwrap();
+    }
+    assert_ne!(
+        first, second,
+        "clock resolution cannot identify a test project"
+    );
+    assert_eq!(first_bytes, first_source);
+    assert_eq!(second_bytes, second_source);
 }
 
 fn rewrite_test_plan(directory: &std::path::Path, edit: impl FnOnce(&mut serde_json::Value)) {

@@ -13,7 +13,7 @@
       "probe": {
         "path": "crates/tondo-vm/src/runtime/executor_performance.rs",
         "test": "runtime::execute::tests::executor_performance::executor_performance_probe",
-        "sha256": "2f6d499aa1f379b25397afe90832023ca1680267b31e0a8b1c9fcc9d8b43a425"
+        "sha256": "f3b5b5a13d0233a670cfe3c60263d39e1346f11f246baecf7d3988dd07417990"
       }
     },
     "native_runtime": {

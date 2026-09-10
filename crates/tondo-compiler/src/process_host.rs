@@ -3549,7 +3549,11 @@ impl BootstrapHost {
         {
             Ok(PathBuf::from(OsString::from_vec(path.as_bytes().to_vec())))
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows_filesystem_path(path)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             path.to_string()
                 .map(PathBuf::from)
@@ -14480,6 +14484,47 @@ fn terminate(child: &mut Child) {
     {
         let _ = child.kill();
     }
+}
+
+#[cfg(any(windows, test))]
+fn windows_filesystem_path(path: &path::Path) -> Result<PathBuf, FsError> {
+    let mut bytes = path
+        .to_string()
+        .map_err(|_| FsError::InvalidPath)?
+        .into_bytes();
+    // Canonical Windows roots use the verbatim prefix, where the OS does not
+    // translate the forward separators produced by the portable Path.join.
+    // Reuse the admitted UTF-8 buffer; replacing ASCII preserves its encoding.
+    for byte in &mut bytes {
+        if *byte == b'/' {
+            *byte = b'\\';
+        }
+    }
+    String::from_utf8(bytes)
+        .map(PathBuf::from)
+        .map_err(|_| FsError::InvalidPath)
+}
+
+#[test]
+fn windows_filesystem_paths_normalize_portable_joins_inside_verbatim_roots() {
+    for (input, expected) in [
+        (r"C:/work/payload", r"C:\work\payload"),
+        (r"\\?\C:\work/é🦀/payload", r"\\?\C:\work\é🦀\payload"),
+        (
+            r"\\?\UNC\server\share/work/payload",
+            r"\\?\UNC\server\share\work\payload",
+        ),
+        (r"//server/share/work", r"\\server\share\work"),
+    ] {
+        let path = path::Path::from_string(input).unwrap();
+        assert_eq!(
+            windows_filesystem_path(&path).unwrap().to_str(),
+            Some(expected)
+        );
+        assert_eq!(path.as_bytes(), input.as_bytes());
+    }
+    let invalid = path::Path::from_bytes(&[0xff]).unwrap();
+    assert_eq!(windows_filesystem_path(&invalid), Err(FsError::InvalidPath));
 }
 
 #[cfg(test)]

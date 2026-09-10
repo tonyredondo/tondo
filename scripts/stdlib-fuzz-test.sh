@@ -53,7 +53,11 @@ jq '.owners[0].cells.FUZZ.status = "verified" | .owners[0].cells.FUZZ.reason = n
     testing/stdlib-owner-evidence.json > "$tmp_dir/false-owner.json"
 expect_failure false-owner env TONDO_STDLIB_OWNER_EVIDENCE="$tmp_dir/false-owner.json" scripts/stdlib-owner-evidence-check.sh
 
-jq '.owners[0].cells.CONF.status = "verified" | .owners[0].cells.CONF.reason = null' \
+# Select an explicitly unobserved owner: array position zero can be an owner
+# whose public conformance has already been verified.
+jq -e 'any(.owners[]; .id == "std.console" and .cells.CONF.status == "pending")' \
+    testing/stdlib-owner-evidence.json >/dev/null
+jq '(.owners[] | select(.id == "std.console")).cells.CONF |= (.status = "verified" | .reason = null)' \
     testing/stdlib-owner-evidence.json > "$tmp_dir/declared-as-observed.json"
 expect_failure declared-as-observed env TONDO_STDLIB_OWNER_EVIDENCE="$tmp_dir/declared-as-observed.json" scripts/stdlib-owner-evidence-check.sh
 

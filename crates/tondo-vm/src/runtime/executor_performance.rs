@@ -395,6 +395,56 @@ fn print_hosted_observation(workload: HostedWorkload, observation: ExecutorPerfO
     );
 }
 
+fn assert_hosted_backpressure() {
+    let (program, _) = executor_program();
+    let trace = derive_trace_metadata(&program).unwrap();
+    let state = Arc::new((
+        Mutex::new(BlockingBridgeState {
+            lifecycle: RuntimePoolLifecycle::Open,
+            workers: 1,
+            capacity: 1,
+            next_job: 1,
+            queue: VecDeque::new(),
+            active: 0,
+            host_requests_pending: 0,
+            completions: BTreeMap::new(),
+            worker_roots: BTreeMap::new(),
+        }),
+        Condvar::new(),
+    ));
+    let host_wake = Arc::new(Condvar::new());
+    let (host_sender, host_receiver) = mpsc::channel();
+    let bridge = BlockingExecutionBridge {
+        state: Arc::clone(&state),
+        host_wake: Arc::clone(&host_wake),
+        host_requests: Mutex::new(host_receiver),
+        workers: Mutex::new(Vec::new()),
+    };
+    let (start, ready) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        ready.recv().unwrap();
+        super::super::blocking_worker_loop(
+            0, state, Arc::new(program), Arc::new(trace), pressure_limits(),
+            ValueCopyStrategy::default(), host_sender, host_wake,
+        );
+    });
+    bridge.workers.lock().unwrap().push(worker);
+    let first = bridge.submit(BytecodeFunctionId::new(2), Vec::new()).unwrap();
+    let pending = bridge.submit(BytecodeFunctionId::new(2), Vec::new()).unwrap();
+    // Hold actual worker execution until admission has observed the full queue.
+    // Scheduler speed cannot turn this edge into two immediate successes.
+    start.send(()).unwrap();
+    let BlockingAdmission::Accepted(first) = first else { panic!("first job was rejected") };
+    assert!(matches!(pending, BlockingAdmission::Pending));
+    validate_hosted_completion(wait_for_blocking_completion(&bridge, first)).unwrap();
+    let BlockingAdmission::Accepted(second) = bridge.submit(BytecodeFunctionId::new(2), Vec::new()).unwrap() else {
+        panic!("drained capacity did not accept the next job")
+    };
+    validate_hosted_completion(wait_for_blocking_completion(&bridge, second)).unwrap();
+    bridge.shutdown().unwrap();
+    assert_eq!(bridge.lifecycle().unwrap(), RuntimePoolLifecycle::Closed);
+}
+
 #[test]
 fn executor_performance_probe() {
     for _ in 0..EXECUTOR_PERF_WARMUPS {
@@ -414,7 +464,8 @@ fn executor_performance_probe() {
         .expect("hosted executor backpressure edge should pass");
     assert_eq!(forced_backpressure.operations, 16);
     assert_eq!(forced_backpressure.accepted, 16);
-    assert!(forced_backpressure.pending > 0);
+    // Timed samples retain observed pending counts, including a zero count.
+    assert_hosted_backpressure();
     assert_eq!(forced_backpressure.bridge_events, 16);
     assert!(hosted_logical_memory_bytes(2, 0) > hosted_logical_memory_bytes(2, 1));
 
