@@ -9,7 +9,7 @@ reflection and native AOT promotion; T0, S1A and N1 remain pending in the
 is specified but its codec and CLI are not implemented yet.
 
 **Draft conformance target:** `tondo-vm-hosted` / `hosted` /
-`[console, process]`
+`[console, environment, process]`
 
 Reference workspace for the Tondo compiler.
 
@@ -23,7 +23,7 @@ The compiler and runtime are organized into three production boundaries:
 `tondo-reference-adapter` connects that protocol to the public compiler and VM
 paths plus the isolated collector observations.
 
-The CLI recognizes `fmt`, `check`, and `run`. Source validation, Unicode 16
+The CLI includes `fmt`, `check`, `run`, `build`, `test` and `doc-test`. Source validation, Unicode 16
 lexing, the lossless CST, recoverable parsing, the typed AST facade, and the
 canonical formatter are implemented. Syntax diagnostics run before formatting
 or semantic work. The closed package graph, deterministic name/member

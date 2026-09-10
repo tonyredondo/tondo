@@ -574,6 +574,10 @@ run_step stdlib-conformance-tests \
     scripts/stdlib-conformance-test.sh
 run_step stdlib-conformance-check \
     scripts/stdlib-conformance-check.sh
+run_step stdlib-meta-reflect-conformance \
+    scripts/stdlib-meta-reflect-conformance-check.sh
+run_step stdlib-meta-reflect-conformance-tests \
+    scripts/stdlib-meta-reflect-conformance-test.sh
 run_step stdlib-distribution-contract \
     scripts/stdlib-distribution-check.sh
 run_step stdlib-distribution-tests \

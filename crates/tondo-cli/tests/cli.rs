@@ -2978,12 +2978,20 @@ test second {
             .all(|test| test.status == AggregateStatus::Passed && test.attempts.len() == 2)
     );
     let mut roots = std::collections::BTreeSet::new();
+    // Project discovery resolves aliases such as macOS /var -> /private/var.
+    let expected_root = directory
+        .canonicalize()
+        .unwrap()
+        .join("target/.tondo-test-root");
     for marker in ["first-paths", "second-paths"] {
         let paths = fs::read_to_string(directory.join(marker)).unwrap();
         assert_eq!(paths.lines().count(), 2);
         for path in paths.lines() {
             let path = std::path::Path::new(path);
-            assert!(path.starts_with(directory.join("target/.tondo-test-root")));
+            assert!(
+                path.starts_with(&expected_root),
+                "{path:?} is outside {expected_root:?}"
+            );
             assert!(!path.exists());
             assert!(roots.insert(path.parent().unwrap().to_owned()));
             assert!(!String::from_utf8_lossy(&output.stdout).contains(path.to_str().unwrap()));
@@ -5700,7 +5708,7 @@ test headerValues {
 #[test]
 fn atomic_mutations_wait_for_complete_synchronous_vm_result_admission() {
     let mut failures = Vec::new();
-    for (initial, replacement, operation, rejected_memory) in [
+    for (initial, replacement, operation, historical_memory) in [
         (
             "7",
             "9",
@@ -5723,10 +5731,7 @@ fn atomic_mutations_wait_for_complete_synchronous_vm_result_admission() {
             "p".repeat(6000)
         );
         let directory = test_project(source.as_bytes());
-        for (memory, status, expected_log) in [
-            (rejected_memory, AggregateStatus::ResourceLimit, "original"),
-            (10240, AggregateStatus::Passed, "changed"),
-        ] {
+        let mut run_at = |memory: u64| {
             rewrite_test_plan(&directory, |plan| {
                 plan["limits"]["memory_bytes"] = memory.into()
             });
@@ -5742,7 +5747,12 @@ fn atomic_mutations_wait_for_complete_synchronous_vm_result_admission() {
                     String::from_utf8_lossy(&output.stdout)
                 )
             });
-            assert_eq!(report.tests()[0].status, status, "{operation} {memory}");
+            let status = report.tests()[0].status;
+            let expected_log = match status {
+                AggregateStatus::Passed => "changed",
+                AggregateStatus::ResourceLimit => "original",
+                _ => panic!("{operation} {memory}: unexpected {status:?}"),
+            };
             assert_eq!(report.tests()[0].attempts.len(), 1);
             assert_eq!(report.suites()[0].status, AggregateStatus::Passed);
             if report.suites()[0].attempts[0].logs != [expected_log] {
@@ -5751,7 +5761,27 @@ fn atomic_mutations_wait_for_complete_synchronous_vm_result_admission() {
                     report.suites()[0].attempts[0].logs
                 ));
             }
+            status
+        };
+        // Keep the original regression quota, but locate an adjacent rejection
+        // and success on this host: VM storage includes native Rust layouts.
+        run_at(historical_memory);
+        let mut rejected = 6144;
+        let mut accepted = 10240;
+        assert_eq!(run_at(rejected), AggregateStatus::ResourceLimit);
+        assert_eq!(run_at(accepted), AggregateStatus::Passed);
+        // This interval takes at most twelve probes, with fresh workers each
+        // time. Every rejected probe must preserve the suite-owned value.
+        while accepted - rejected > 1 {
+            let middle = rejected + (accepted - rejected) / 2;
+            match run_at(middle) {
+                AggregateStatus::ResourceLimit => rejected = middle,
+                AggregateStatus::Passed => accepted = middle,
+                _ => unreachable!(),
+            }
         }
+        assert_eq!(run_at(rejected), AggregateStatus::ResourceLimit);
+        assert_eq!(run_at(accepted), AggregateStatus::Passed);
         fs::remove_dir_all(directory).unwrap();
     }
     assert!(

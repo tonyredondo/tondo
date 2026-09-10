@@ -79,7 +79,7 @@ are outside report identity; content-addressed blobs may remain unreferenced.
 SIGINT to the public CLI on Unix. It covers a runnable loop, a hosted wait,
 cleanup already in progress, grace expiry, second requests to either endpoint,
 delivery to both endpoints, structured child teardown and hosted subprocess
-cancellation in fourteen cases. It checks
+cancellation in sixteen cases. It checks
 suspendible cleanup, worker exit, stopped subsequent dispatch and preservation
 of reports and staged snapshot updates. Both-endpoint cases pause both processes
 with SIGSTOP, queue SIGINT at both, then resume them with SIGCONT. This ensures
@@ -105,7 +105,7 @@ The public process regression covers success, panic and timeout with two
 iterations and two jobs. Its explicit shell starts a redirected child in a new
 session and exits. Each terminal leaves no live descendant or owned cgroup.
 Two additional interruption cases retain such a descendant during cooperative
-and forced worker cleanup. The remaining eleven non-process interruption cases
+and forced worker cleanup. The remaining thirteen non-process interruption cases
 signal readiness through the filesystem; they do not acquire `process` merely
 to identify the worker. On unsupported hosts the three process interruption
 cases verify rejection before dispatch and output preservation, not signal or

@@ -1,0 +1,592 @@
+{
+  "format": "tondo-stdlib-public-conformance-plan/1",
+  "edition": "0.1",
+  "owners": [
+    {
+      "id": "std.meta",
+      "scope": "ordinary-tondo-meta",
+      "signatures": [
+        {
+          "symbol": "std.meta.TypeRef.identity",
+          "signature": "pub fn TypeRef.identity(self): String"
+        },
+        {
+          "symbol": "std.meta.GenerateRequest.snapshot",
+          "signature": "pub fn GenerateRequest.snapshot(self): Snapshot"
+        },
+        {
+          "symbol": "std.meta.GenerateRequest.inputs",
+          "signature": "pub fn GenerateRequest.inputs(self): Array[Input]"
+        },
+        {
+          "symbol": "std.meta.GenerateRequest.outputs",
+          "signature": "pub fn GenerateRequest.outputs(self): Array[OutputSpec]"
+        },
+        {
+          "symbol": "std.meta.GenerateRequest.limits",
+          "signature": "pub fn GenerateRequest.limits(self): Limits"
+        },
+        {
+          "symbol": "std.meta.GenerateRequest.input",
+          "signature": "pub fn GenerateRequest.input(self, name: String): Input ! Error"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.snapshot",
+          "signature": "pub fn DeriveRequest.snapshot(self): Snapshot"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.target",
+          "signature": "pub fn DeriveRequest.target(self): String"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.module",
+          "signature": "pub fn DeriveRequest.module(self): String"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.traitIdentity",
+          "signature": "pub fn DeriveRequest.traitIdentity(self): String"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.bounds",
+          "signature": "pub fn DeriveRequest.bounds(self): Array[String]"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.span",
+          "signature": "pub fn DeriveRequest.span(self): Span"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.limits",
+          "signature": "pub fn DeriveRequest.limits(self): Limits"
+        },
+        {
+          "symbol": "std.meta.GenerateRequest.sourceBuilder",
+          "signature": "pub fn GenerateRequest.sourceBuilder(self): SourceBuilder"
+        },
+        {
+          "symbol": "std.meta.DeriveRequest.sourceBuilder",
+          "signature": "pub fn DeriveRequest.sourceBuilder(self): SourceBuilder"
+        },
+        {
+          "symbol": "std.meta.SourceBuilder.outputs",
+          "signature": "pub fn SourceBuilder.outputs(self): Array[OutputSpec]"
+        },
+        {
+          "symbol": "std.meta.SourceBuilder.renderType",
+          "signature": "pub fn SourceBuilder.renderType(mut self, path: String, ty: TypeRef): String ! Error"
+        },
+        {
+          "symbol": "std.meta.SourceBuilder.add",
+          "signature": "pub fn SourceBuilder.add(mut self, path: String, source: String): Unit ! Error"
+        },
+        {
+          "symbol": "std.meta.SourceBuilder.finish",
+          "signature": "pub fn SourceBuilder.finish(self): GenerateResponse ! Error"
+        },
+        {
+          "symbol": "std.meta.SourceBuilder.finishDerive",
+          "signature": "pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error"
+        },
+        {
+          "symbol": "std.meta.stringLiteral",
+          "signature": "pub fn stringLiteral(value: String): String"
+        },
+        {
+          "symbol": "std.meta.indentation",
+          "signature": "pub fn indentation(level: UInt32): String ! Error"
+        },
+        {
+          "symbol": "std.meta.api",
+          "signature": "pub fn api(): String"
+        },
+        {
+          "symbol": "std.meta.target",
+          "signature": "pub fn target(): String"
+        },
+        {
+          "symbol": "std.meta.profile",
+          "signature": "pub fn profile(): String"
+        }
+      ],
+      "callable_evidence": [
+        "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+      ],
+      "requirements": [
+        {
+          "id": "canonical-rendering",
+          "observables": [
+            "identifier",
+            "escaping",
+            "indentation",
+            "render-limit",
+            "reproducibility"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::project:meta_source_renderers_quote_controls_unicode_and_compile_generated_literals"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::meta_type:meta_type_source_builder_scopes_imports_and_failed_rendering_is_atomic"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::meta_provider:meta_public_derive_builder_enforces_one_output_and_matching_finish"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::project:meta_type_refs_render_distinct_standard_value_types_with_exact_imports"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::std_meta:renderer_escapes_strings_identifiers_and_indentation_canonically"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ]
+          }
+        },
+        {
+          "id": "compile-time-budget",
+          "observables": [
+            "steps",
+            "memory-bytes",
+            "output-bytes",
+            "generated-source-size",
+            "no-unbounded-work"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::meta_frontend:meta_source_frontend_rejects_wrong_package_and_enforces_locked_budget"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:tests::std_meta_conformance:build_only_budgets_fail_without_partial_response"
+            ],
+            "composition": [
+              "rust:tondo-cli:tests::cli:meta_toml_test_consumers_reuse_sealed_generated_production"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::meta_vm:artifacts_reload_with_orchestrator_owned_limits_and_semantic_metering"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ]
+          }
+        },
+        {
+          "id": "meta-target-boundary",
+          "observables": [
+            "capability-rejection",
+            "unsafe-rejection",
+            "no-ambient-host",
+            "closed-target"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:tests::std_meta_conformance:meta_target_admits_no_ambient_or_unsafe_surface"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::meta_compile:meta_public_source_entry_requires_exact_companion_signature_and_private_requests"
+            ],
+            "composition": [
+              "rust:tondo-cli:tests::cli:meta_toml_pins_inputs_sources_and_preserves_lock_on_failed_resolution"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::meta_vm:target_is_closed_to_meta_profile_and_zero_capabilities"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ]
+          }
+        },
+        {
+          "id": "request-response",
+          "observables": [
+            "api-version",
+            "owned-inputs",
+            "canonical-codec",
+            "hash",
+            "atomic-response"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::std_meta:canonical_codecs_reject_api_hash_snapshot_and_encoding_drift"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::meta_compile:meta_public_source_entry_requires_exact_companion_signature_and_private_requests"
+            ],
+            "composition": [
+              "rust:tondo-cli:tests::cli:meta_toml_lock_and_run_execute_generators_derives_and_transitive_sources"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::std_meta:request_and_response_round_trip_only_canonical_owned_values"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ]
+          }
+        },
+        {
+          "id": "snapshot-model",
+          "observables": [
+            "canonical-order",
+            "hash",
+            "public-structure",
+            "privacy",
+            "no-runtime-values"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::project:meta_model_includes_public_alias_function_and_constant_signatures"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::meta_source_api:meta_origins_authorize_only_actual_admitted_source_ranges"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::project:meta_model_includes_builtin_nominals_without_fabricated_source_spans"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::project:meta_model_trait_operations_preserve_self_local_binders_and_defaults"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::meta:meta_snapshot_shapes_expose_only_structural_data"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ]
+          }
+        },
+        {
+          "id": "source-builder",
+          "observables": [
+            "declared-outputs",
+            "utf8",
+            "source-maps",
+            "duplicates",
+            "output-limit",
+            "missing-output"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::meta_provider:meta_public_source_generator_plan_preserves_diagnostics_and_formats_atomically"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::meta_provider:meta_public_source_generator_plan_rejects_outputs_errors_and_nested_generation"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::meta_provider:meta_public_derive_builder_enforces_one_output_and_matching_finish"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::project:meta_derive_builder_renders_imported_types_and_maps_final_source"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:tests::std_meta_conformance:source_maps_reject_overlap_utf8_splits_and_out_of_bounds"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "std.reflect",
+      "scope": "tondo-vm-hosted-metadata",
+      "signatures": [
+        {
+          "symbol": "std.reflect.typeInfo",
+          "signature": "pub fn typeInfo[T](): TypeInfo"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.id",
+          "signature": "pub fn TypeInfo.id(self): TypeId"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.qualifiedName",
+          "signature": "pub fn TypeInfo.qualifiedName(self): String"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.kind",
+          "signature": "pub fn TypeInfo.kind(self): TypeKind"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.genericArguments",
+          "signature": "pub fn TypeInfo.genericArguments(self): Array[TypeInfo]"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.capabilities",
+          "signature": "pub fn TypeInfo.capabilities(self): Set[TypeCapability]"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.fields",
+          "signature": "pub fn TypeInfo.fields(self): Array[FieldInfo]"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.variants",
+          "signature": "pub fn TypeInfo.variants(self): Array[VariantInfo]"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.tupleElements",
+          "signature": "pub fn TypeInfo.tupleElements(self): Array[TypeInfo]"
+        },
+        {
+          "symbol": "std.reflect.TypeInfo.function",
+          "signature": "pub fn TypeInfo.function(self): FunctionInfo?"
+        },
+        {
+          "symbol": "std.reflect.FieldInfo.name",
+          "signature": "pub fn FieldInfo.name(self): String"
+        },
+        {
+          "symbol": "std.reflect.FieldInfo.typeInfo",
+          "signature": "pub fn FieldInfo.typeInfo(self): TypeInfo"
+        },
+        {
+          "symbol": "std.reflect.FieldInfo.ordinal",
+          "signature": "pub fn FieldInfo.ordinal(self): Int"
+        },
+        {
+          "symbol": "std.reflect.FieldInfo.docs",
+          "signature": "pub fn FieldInfo.docs(self): String?"
+        },
+        {
+          "symbol": "std.reflect.VariantInfo.name",
+          "signature": "pub fn VariantInfo.name(self): String"
+        },
+        {
+          "symbol": "std.reflect.VariantInfo.ordinal",
+          "signature": "pub fn VariantInfo.ordinal(self): Int"
+        },
+        {
+          "symbol": "std.reflect.VariantInfo.payloadKind",
+          "signature": "pub fn VariantInfo.payloadKind(self): VariantPayloadKind"
+        },
+        {
+          "symbol": "std.reflect.VariantInfo.tupleElements",
+          "signature": "pub fn VariantInfo.tupleElements(self): Array[TypeInfo]"
+        },
+        {
+          "symbol": "std.reflect.VariantInfo.fields",
+          "signature": "pub fn VariantInfo.fields(self): Array[FieldInfo]"
+        },
+        {
+          "symbol": "std.reflect.ParameterInfo.position",
+          "signature": "pub fn ParameterInfo.position(self): Int"
+        },
+        {
+          "symbol": "std.reflect.ParameterInfo.typeInfo",
+          "signature": "pub fn ParameterInfo.typeInfo(self): TypeInfo"
+        },
+        {
+          "symbol": "std.reflect.ParameterInfo.mode",
+          "signature": "pub fn ParameterInfo.mode(self): ParameterMode"
+        },
+        {
+          "symbol": "std.reflect.FunctionInfo.parameters",
+          "signature": "pub fn FunctionInfo.parameters(self): Array[ParameterInfo]"
+        },
+        {
+          "symbol": "std.reflect.FunctionInfo.outcome",
+          "signature": "pub fn FunctionInfo.outcome(self): TypeInfo"
+        },
+        {
+          "symbol": "std.reflect.FunctionInfo.variadic",
+          "signature": "pub fn FunctionInfo.variadic(self): Bool"
+        },
+        {
+          "symbol": "std.reflect.FunctionInfo.suspends",
+          "signature": "pub fn FunctionInfo.suspends(self): Bool"
+        },
+        {
+          "symbol": "std.reflect.FunctionInfo.isUnsafe",
+          "signature": "pub fn FunctionInfo.isUnsafe(self): Bool"
+        }
+      ],
+      "callable_evidence": [
+        "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
+      ],
+      "requirements": [
+        {
+          "id": "artifact-local-identity",
+          "observables": [
+            "artifact-tag",
+            "slot",
+            "cross-artifact-rejection",
+            "no-public-bits"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_handles_cross_frames_but_not_external_entry_arguments"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-vm:src::runtime::reflection:reflection_receiver_rejects_foreign_identity_and_malformed_handles"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::driver:reflection_public_api_rejects_identity_construction_ordering_and_value_access"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_metadata_is_deterministic_and_drops_removed_roots"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::reflect:removed_roots_remove_metadata_and_ids_are_artifact_local"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
+            ]
+          }
+        },
+        {
+          "id": "catalog-shape",
+          "observables": [
+            "closed-kind",
+            "primitive-family",
+            "applied-family",
+            "reference-family",
+            "capabilities"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_nominal_payloads_and_structural_kinds_are_concrete"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_metadata_rejects_broken_roots_and_capabilities"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_function_describes_modes_variadic_tail_and_flags"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_secondary_descriptors_execute_typed_queries"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::reflect:enums_tuples_generics_newtypes_and_functions_are_compacted_statically"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
+            ]
+          }
+        },
+        {
+          "id": "malformed-inputs-and-cost",
+          "observables": [
+            "invalid-text",
+            "invalid-shape",
+            "duplicate-members",
+            "unknown-types",
+            "bounded-linking"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_secondary_descriptors_execute_typed_queries"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_metadata_rejects_broken_roots_and_capabilities"
+            ],
+            "boundary": [
+              "rust:tondo-vm:src::runtime::execute:reflection_reply_admission_precedes_allocation_and_releases_its_owner"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_handles_cross_frames_but_not_external_entry_arguments"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::reflect:malformed_catalogs_and_unknown_public_dependencies_fail_before_linking"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
+            ]
+          }
+        },
+        {
+          "id": "no-runtime-reflection",
+          "observables": [
+            "no-value-channel",
+            "no-get-set-invoke",
+            "no-global-registry",
+            "no-ambient-host"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_primitive_queries_execute_without_a_host"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::driver:reflection_public_api_rejects_identity_construction_ordering_and_value_access"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_handles_cross_frames_but_not_external_entry_arguments"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_entry_lowering_drops_queries_in_unreachable_functions"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::reflect:explicit_roots_retain_only_the_public_descriptor_closure"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
+            ]
+          }
+        },
+        {
+          "id": "privacy",
+          "observables": [
+            "private-fields",
+            "private-variant-fields",
+            "no-private-dependency-leak",
+            "public-ordinals"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_records_retain_only_public_field_types_and_docs"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::driver:reflection_public_api_rejects_identity_construction_ordering_and_value_access"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_nominal_payloads_and_structural_kinds_are_concrete"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_secondary_descriptors_execute_typed_queries"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::reflect:explicit_roots_retain_only_the_public_descriptor_closure"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
+            ]
+          }
+        },
+        {
+          "id": "root-closure",
+          "observables": [
+            "explicit-roots",
+            "public-dependencies",
+            "dead-type-removal",
+            "deterministic-compaction"
+          ],
+          "dimensions": {
+            "positive": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_metadata_is_deterministic_and_drops_removed_roots"
+            ],
+            "rejection_or_failure": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_metadata_rejects_broken_roots_and_capabilities"
+            ],
+            "boundary": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_entry_lowering_drops_queries_in_unreachable_functions"
+            ],
+            "composition": [
+              "rust:tondo-compiler:src::bytecode::lower:reflection_public_applied_queries_preserve_concrete_arguments"
+            ],
+            "oracle": [
+              "rust:tondo-compiler:src::reflect:explicit_roots_retain_only_the_public_descriptor_closure"
+            ],
+            "public_boundary": [
+              "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

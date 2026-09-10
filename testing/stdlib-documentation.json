@@ -1349,13 +1349,15 @@
         }
       ],
       "conformance": {
-        "status": "pending",
-        "reason": "The conformance registry declares cases; current execution has not been promoted",
+        "status": "verified",
+        "reason": null,
         "refs": [
           "crates/tondo-compiler/tests/std_meta_conformance.rs",
-          "testing/stdlib-conformance.json",
+          "docs/contracts/stdlib-meta-reflect-conformance.md",
+          "scripts/stdlib-meta-reflect-conformance-check.sh",
           "testing/stdlib-conformance.json#owners/std.meta",
           "testing/stdlib-matrix.json",
+          "testing/stdlib-meta-reflect-conformance.json",
           "testing/stdlib-public-api.json"
         ]
       },
@@ -1788,13 +1790,15 @@
         }
       ],
       "conformance": {
-        "status": "pending",
-        "reason": "The conformance registry declares cases; current execution has not been promoted",
+        "status": "verified",
+        "reason": null,
         "refs": [
           "crates/tondo-compiler/src/reflect.rs",
-          "testing/stdlib-conformance.json",
+          "docs/contracts/stdlib-meta-reflect-conformance.md",
+          "scripts/stdlib-meta-reflect-conformance-check.sh",
           "testing/stdlib-conformance.json#owners/std.reflect",
           "testing/stdlib-matrix.json",
+          "testing/stdlib-meta-reflect-conformance.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-reflect-public-001.to"
         ]

@@ -15,7 +15,8 @@ trap 'rm -f "$generated"' EXIT
 
 # Other cells remain authored component evidence. FUZZ and CONF are projections
 # of their current contracts; a declared case is not an observed execution.
-jq --slurpfile fuzz "$contract" --slurpfile conformance "$conformance" '
+jq --slurpfile fuzz "$contract" --slurpfile conformance "$conformance" \
+   --slurpfile public testing/stdlib-meta-reflect-conformance.json '
   . as $registry
   | if ([$registry.owners[].id] | sort) != ([$fuzz[0].owners[].id] | sort)
        or ([$registry.owners[].id] | sort) != ([$conformance[0].owners[].id] | sort)
@@ -35,9 +36,20 @@ jq --slurpfile fuzz "$contract" --slurpfile conformance "$conformance" '
                  "testing/stdlib-fuzz.json#owner=" + $owner.id,
                  "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         }
-      | .cells.CONF.status = $conf.status
-      | .cells.CONF.reason = $conf.reason
-      | .cells.CONF.scope = $conf.scope
+      | if .cells.CONF.status == "verified"
+           and any($public[0].owners[]; .id == $owner.id)
+        then first($public[0].owners[] | select(.id == $owner.id)) as $scope
+          | .cells.CONF.reason = null
+          | .cells.CONF.scope = $scope.scope
+          | .cells.CONF.refs |= ((. + [
+              "testing/stdlib-meta-reflect-conformance.json",
+              "scripts/stdlib-meta-reflect-conformance-check.sh",
+              "docs/contracts/stdlib-meta-reflect-conformance.md"
+            ]) | unique)
+        else .cells.CONF.status = $conf.status
+          | .cells.CONF.reason = $conf.reason
+          | .cells.CONF.scope = $conf.scope
+        end
       | .cells.CONF.refs |= ((. + ["testing/stdlib-conformance.json#owners/" + $owner.id]) | unique))
 ' "$source" > "$generated"
 cat "$generated" > "$output"

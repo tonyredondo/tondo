@@ -31,7 +31,9 @@
       "evidence": [
         "rust:tondo-compiler:src::meta_repro:complete_matrix_accepts_only_byte_identical_outputs",
         "rust:tondo-compiler:src::meta_repro:denied_capability_catalog_is_closed_and_exact",
-        "rust:tondo-compiler:src::meta_repro:fresh_meta_vms_produce_identical_bytes_for_every_variation"
+        "rust:tondo-compiler:src::meta_repro:fresh_meta_vms_produce_identical_bytes_for_every_variation",
+        "rust:tondo-compiler:src::project:meta_source_renderers_quote_controls_unicode_and_compile_generated_literals",
+        "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests"
       ]
     },
     {
@@ -41,8 +43,10 @@
         "TL01-27-1-R001"
       ],
       "evidence": [
+        "rust:tondo-compiler:src::driver:reflection_public_api_rejects_identity_construction_ordering_and_value_access",
         "rust:tondo-compiler:src::reflect:explicit_roots_retain_only_the_public_descriptor_closure",
-        "rust:tondo-compiler:src::reflect:removed_roots_remove_metadata_and_ids_are_artifact_local"
+        "rust:tondo-compiler:src::reflect:removed_roots_remove_metadata_and_ids_are_artifact_local",
+        "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars"
       ]
     },
     {
@@ -52,14 +56,27 @@
         "TL01-27-2-R002",
         "TL01-27-2-R003",
         "TL01-27-3-R001",
-        "TL01-27-4-R001"
+        "TL01-27-3-R002",
+        "TL01-27-4-R001",
+        "TL01-27-6-R001"
       ],
       "evidence": [
+        "rust:tondo-compiler:src::driver:derive_rejects_duplicate_pairs_before_publishing_generated_sources",
         "rust:tondo-compiler:src::meta:invalid_target_shapes_and_binders_use_e2101",
         "rust:tondo-compiler:src::meta:valid_requests_are_resolved_in_source_order_and_provider_bounds_are_canonical",
+        "rust:tondo-compiler:src::meta_compile:meta_source_provider_rejects_invalid_entry_and_nested_derivation",
         "rust:tondo-compiler:src::meta_derive:failure_invalid_body_and_registry_drift_publish_nothing",
         "rust:tondo-compiler:src::meta_derive:providers_return_only_validated_formatted_impl_bodies",
-        "rust:tondo-compiler:src::meta_diagnostics:every_meta_code_has_the_normative_identity_and_stable_name"
+        "rust:tondo-compiler:src::meta_diagnostics:every_meta_code_has_the_normative_identity_and_stable_name",
+        "rust:tondo-compiler:src::meta_frontend:meta_source_derive_accepts_only_necessary_added_bounds",
+        "rust:tondo-compiler:src::meta_frontend:meta_source_derive_obeys_ordinary_coherence_and_publishes_nothing_on_conflict",
+        "rust:tondo-compiler:src::meta_frontend:meta_source_frontend_executes_ordinary_derive_and_retains_notes",
+        "rust:tondo-compiler:src::meta_provider:meta_public_source_derive_rejects_foreign_target_and_unmappable_ranges",
+        "rust:tondo-compiler:src::meta_source_api:meta_origins_authorize_only_actual_admitted_source_ranges",
+        "rust:tondo-compiler:src::project:meta_model_closes_prelude_operation_signatures_and_codec_bounds",
+        "rust:tondo-compiler:src::project:meta_model_includes_builtin_nominals_without_fabricated_source_spans",
+        "rust:tondo-compiler:src::project:meta_model_includes_public_methods_without_their_bodies",
+        "rust:tondo-compiler:src::project:meta_model_trait_operations_preserve_self_local_binders_and_defaults"
       ]
     },
     {
@@ -83,11 +100,55 @@
         "TL01-27-8-R001"
       ],
       "evidence": [
+        "rust:tondo-cli:tests::cli:meta_toml_lock_and_run_execute_generators_derives_and_transitive_sources",
+        "rust:tondo-cli:tests::cli:meta_toml_pins_inputs_sources_and_preserves_lock_on_failed_resolution",
+        "rust:tondo-cli:tests::cli:meta_toml_test_consumers_reuse_sealed_generated_production",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_entry_lowering_drops_queries_in_unreachable_functions",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_applied_queries_preserve_concrete_arguments",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_function_describes_modes_variadic_tail_and_flags",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_handles_cross_frames_but_not_external_entry_arguments",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_metadata_is_deterministic_and_drops_removed_roots",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_metadata_rejects_broken_roots_and_capabilities",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_nominal_payloads_and_structural_kinds_are_concrete",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_primitive_queries_execute_without_a_host",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_records_retain_only_public_field_types_and_docs",
+        "rust:tondo-compiler:src::bytecode::lower:reflection_public_secondary_descriptors_execute_typed_queries",
+        "rust:tondo-compiler:src::driver:reflection_public_api_rejects_identity_construction_ordering_and_value_access",
+        "rust:tondo-compiler:src::meta:meta_snapshot_shapes_expose_only_structural_data",
         "rust:tondo-compiler:src::meta_atomic:transaction_publishes_sources_interface_and_artifact_together",
+        "rust:tondo-compiler:src::meta_compile:meta_public_source_entry_requires_exact_companion_signature_and_private_requests",
+        "rust:tondo-compiler:src::meta_frontend:meta_source_frontend_rejects_wrong_package_and_enforces_locked_budget",
         "rust:tondo-compiler:src::meta_generate:generator_receives_only_locked_values_and_publishes_formatted_outputs",
         "rust:tondo-compiler:src::meta_generate:output_collisions_are_rejected_before_any_provider_runs",
+        "rust:tondo-compiler:src::meta_provider:meta_public_derive_builder_enforces_one_output_and_matching_finish",
+        "rust:tondo-compiler:src::meta_provider:meta_public_source_generator_plan_preserves_diagnostics_and_formats_atomically",
+        "rust:tondo-compiler:src::meta_provider:meta_public_source_generator_plan_rejects_outputs_errors_and_nested_generation",
         "rust:tondo-compiler:src::meta_robust:deterministic_arbitrary_protocol_corpus_never_panics",
-        "rust:tondo-compiler:src::meta_robust:hostile_outputs_maps_utf8_collisions_and_limits_are_atomic"
+        "rust:tondo-compiler:src::meta_robust:hostile_outputs_maps_utf8_collisions_and_limits_are_atomic",
+        "rust:tondo-compiler:src::meta_source_api:meta_origins_authorize_only_actual_admitted_source_ranges",
+        "rust:tondo-compiler:src::meta_type:meta_type_source_builder_scopes_imports_and_failed_rendering_is_atomic",
+        "rust:tondo-compiler:src::meta_vm:artifacts_reload_with_orchestrator_owned_limits_and_semantic_metering",
+        "rust:tondo-compiler:src::meta_vm:target_is_closed_to_meta_profile_and_zero_capabilities",
+        "rust:tondo-compiler:src::project:meta_derive_builder_renders_imported_types_and_maps_final_source",
+        "rust:tondo-compiler:src::project:meta_model_includes_builtin_nominals_without_fabricated_source_spans",
+        "rust:tondo-compiler:src::project:meta_model_includes_public_alias_function_and_constant_signatures",
+        "rust:tondo-compiler:src::project:meta_model_trait_operations_preserve_self_local_binders_and_defaults",
+        "rust:tondo-compiler:src::project:meta_source_renderers_quote_controls_unicode_and_compile_generated_literals",
+        "rust:tondo-compiler:src::project:meta_type_refs_render_distinct_standard_value_types_with_exact_imports",
+        "rust:tondo-compiler:src::reflect:enums_tuples_generics_newtypes_and_functions_are_compacted_statically",
+        "rust:tondo-compiler:src::reflect:explicit_roots_retain_only_the_public_descriptor_closure",
+        "rust:tondo-compiler:src::reflect:malformed_catalogs_and_unknown_public_dependencies_fail_before_linking",
+        "rust:tondo-compiler:src::reflect:removed_roots_remove_metadata_and_ids_are_artifact_local",
+        "rust:tondo-compiler:src::std_meta:canonical_codecs_reject_api_hash_snapshot_and_encoding_drift",
+        "rust:tondo-compiler:src::std_meta:renderer_escapes_strings_identifiers_and_indentation_canonically",
+        "rust:tondo-compiler:src::std_meta:request_and_response_round_trip_only_canonical_owned_values",
+        "rust:tondo-compiler:tests::bootstrap_harness:repository_fixtures_match_their_sidecars",
+        "rust:tondo-compiler:tests::std_meta_conformance:build_only_budgets_fail_without_partial_response",
+        "rust:tondo-compiler:tests::std_meta_conformance:meta_target_admits_no_ambient_or_unsafe_surface",
+        "rust:tondo-compiler:tests::std_meta_conformance:ordinary_companion_queries_and_builders_execute_with_fresh_owned_requests",
+        "rust:tondo-compiler:tests::std_meta_conformance:source_maps_reject_overlap_utf8_splits_and_out_of_bounds",
+        "rust:tondo-vm:src::runtime::execute:reflection_reply_admission_precedes_allocation_and_releases_its_owner",
+        "rust:tondo-vm:src::runtime::reflection:reflection_receiver_rejects_foreign_identity_and_malformed_handles"
       ]
     },
     {

@@ -134,7 +134,11 @@ the default checker requires current execution evidence. Even a passed
 declared-case campaign retains `public_row_coverage=unverified` and
 `promotion=pending` until every applicable public boundary is demonstrated.
 
-The generated CONF cells remain pending. Existing codec interoperability
+The meta and reflection CONF cells record the ordinary-provider and hosted
+descriptor scopes checked by `stdlib-meta-reflect-conformance-check.sh`.
+Their complete callable and requirement traces are described in
+[`stdlib-meta-reflect-conformance.md`](stdlib-meta-reflect-conformance.md).
+Other CONF cells and aggregate promotion remain pending. Existing codec interoperability
 with `serde_json`, `rmpv` and `prost`, one-byte fragmentation tests and
 bounded hosted fixtures remain valuable component evidence. They do not
 establish public reflection, general metaprogramming, full testing integration

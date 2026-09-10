@@ -105,7 +105,8 @@ jq -n \
                   or ($signatures | length) == 0
                   or any($signatures[]; .status != "verified")) then
             {status: "partial", reason: "Public owner signatures or implementation routes remain unverified", refs: ["testing/stdlib-public-api.json"]}
-          elif $stage == "CONF" and $public_conformance[0].status != "promoted" then
+          elif $stage == "CONF" and $public_conformance[0].status != "promoted"
+               and ([$owner.id] | inside(["std.meta", "std.reflect"])) == false then
             {status: "pending", reason: "The conformance registry declares cases; current execution has not been promoted", refs: ["testing/stdlib-conformance.json"]}
           elif all($cells[];
               (.refs | type == "array" and length > 0)

@@ -1122,6 +1122,33 @@ pub fn expand(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
     const DERIVING_SOURCE: &str = "trait ValueOf {\n    fn value(self): Int\n}\ntype User = { secret: Int }\ntype Unrelated = { hidden: String }\nderive ValueOf for User\nfn extract[T: ValueOf + Discard](item: T): Int { item.value() }\nfn main() {\n    assert(extract(User { secret: 42 }) == 42)\n}\n";
 
     #[test]
+    fn meta_source_derive_obeys_ordinary_coherence_and_publishes_nothing_on_conflict() {
+        let implementation = "impl ValueOf for User {\nfn value(self): Int { self.secret }\n}\n";
+        let provider = format!(
+            "import std.meta\npub fn expand(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {{\nok(meta.DeriveResponse {{ source: {}, diagnostics: [], mappings: [] }})\n}}\n",
+            serde_json::to_string(&implementation.replace('{', "{{").replace('}', "}}")).unwrap()
+        );
+        for (source, expected) in [
+            (DERIVING_SOURCE.to_owned(), 0),
+            (format!("{DERIVING_SOURCE}\n{implementation}"), 1),
+        ] {
+            let output =
+                crate::driver::execute(source_derive_request(&provider, &source, true, 100_000))
+                    .unwrap();
+            assert_eq!(
+                output.exit_code(),
+                expected,
+                "{}",
+                output.diagnostics().human()
+            );
+            if expected != 0 {
+                assert!(output.diagnostics().json_lines().unwrap().contains("E1111"));
+                assert!(output.artifact().is_none());
+            }
+        }
+    }
+
+    #[test]
     fn meta_source_derive_accepts_only_necessary_added_bounds() {
         let source = "trait ValueOf {\nfn value(self): Int\n}\ntrait ReadValue {\nfn read(self): Int\n}\nimpl ReadValue for Int {\nfn read(self): Int { self }\n}\ntype User[T: Discard] = { secret: T }\nderive[T] ValueOf for User[T]\nfn extract[T: ValueOf + Discard](item: T): Int { item.value() }\nfn main() { assert(extract(User[Int] { secret: 42 }) == 42) }\n";
         let implementation = "impl[T: Discard + ReadValue] ValueOf for User[T] {\nfn value(self): Int { self.secret.read() }\n}\n";

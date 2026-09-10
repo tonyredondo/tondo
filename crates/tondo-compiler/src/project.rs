@@ -2389,6 +2389,7 @@ builder.finish()
 pub trait Mapper[T] {
     fn map[U: Copy](self, value: U): U
     fn fallback(self, value: T): T { value }
+    fn transfer(self) suspends
 }
 "#;
         let body = r#"
@@ -2398,12 +2399,14 @@ for declaration in request.snapshot().declarations {
     if declaration.identity == "Mapper" {
         match declaration.kind {
             meta.DeclarationKind.Trait(operations) => {
-                assert(operations.length() == 2)
+                assert(operations.length() == 3)
                 assert(operations[0].genericParameters[0].name == "U")
                 assert(operations[0].genericParameters[0].bounds == ["Copy"])
                 assert(not operations[0].hasDefault)
                 assert(operations[1].hasDefault)
                 assert(not operations[0].requiresSelfSend)
+                assert(operations[2].requiresSelfSend)
+                assert(not operations[2].hasDefault)
                 assert(builder.renderType(path, operations[0].signature)? == "fn(ref Self, U): U")
                 assert(builder.renderType(path, operations[1].signature)? == "fn(ref Self, T): T")
             }

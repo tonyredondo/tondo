@@ -221,11 +221,8 @@ fn quality_capture_and_verify_are_reproducible_in_an_isolated_workspace() {
         "--root",
         root,
     ]);
-    assert!(capture.status.success(), "{}", text(&capture.stderr));
-    assert!(text(&capture.stdout).contains("quality baseline updated"));
-    let baseline = fs::read_to_string(workspace.0.join("testing/quality-baseline.json")).unwrap();
-    assert!(baseline.ends_with('\n'));
-    assert!(baseline.contains("\"revision\": \"test-revision\""));
+    assert!(!capture.status.success());
+    assert!(!workspace.0.join("testing/quality-baseline.json").exists());
 
     let before_coverage = workspace.0.join("coverage.before.json");
     let after_coverage = workspace.0.join("coverage.after.json");
@@ -282,6 +279,28 @@ fn quality_capture_and_verify_are_reproducible_in_an_isolated_workspace() {
         );
     }
 
+    let capture = run(&[
+        "quality",
+        "capture",
+        "--coverage",
+        coverage,
+        "--coverage-binding",
+        coverage_binding.to_str().unwrap(),
+        "--mutants",
+        mutants,
+        "--mutants-binding",
+        mutation_binding.to_str().unwrap(),
+        "--revision",
+        "test-revision",
+        "--root",
+        root,
+    ]);
+    assert!(capture.status.success(), "{}", text(&capture.stderr));
+    assert!(text(&capture.stdout).contains("quality baseline updated"));
+    let baseline = fs::read_to_string(workspace.0.join("testing/quality-baseline.json")).unwrap();
+    assert!(baseline.ends_with('\n'));
+    assert!(baseline.contains("\"revision\": \"test-revision\""));
+
     for arguments in [
         vec![
             "quality",
@@ -322,8 +341,12 @@ fn quality_capture_and_verify_are_reproducible_in_an_isolated_workspace() {
         "capture",
         "--coverage",
         coverage,
+        "--coverage-binding",
+        coverage_binding.to_str().unwrap(),
         "--mutants",
         mutants,
+        "--mutants-binding",
+        mutation_binding.to_str().unwrap(),
         "--revision",
         "test-revision",
         "--root",
@@ -331,6 +354,144 @@ fn quality_capture_and_verify_are_reproducible_in_an_isolated_workspace() {
     ]);
     assert!(second_capture.status.success());
     assert!(text(&second_capture.stdout).contains("quality baseline unchanged"));
+
+    let bind_coverage = || {
+        run(&[
+            "quality",
+            "bind",
+            "--kind",
+            "coverage",
+            "--report",
+            coverage,
+            "--before",
+            before_coverage.to_str().unwrap(),
+            "--after",
+            after_coverage.to_str().unwrap(),
+            "--output",
+            coverage_binding.to_str().unwrap(),
+            "--root",
+            root,
+        ])
+    };
+    let verify_arguments = [
+        "quality",
+        "verify",
+        "--coverage",
+        coverage,
+        "--coverage-binding",
+        coverage_binding.to_str().unwrap(),
+        "--mutants",
+        mutants,
+        "--mutants-binding",
+        mutation_binding.to_str().unwrap(),
+        "--root",
+        root,
+    ];
+    let mut at_floor = synthetic_coverage();
+    for metric in ["lines", "functions", "regions"] {
+        at_floor["data"][0]["totals"][metric] =
+            serde_json::json!({"count": 10000, "covered": 8000});
+    }
+    fs::write(coverage, serde_json::to_vec(&at_floor).unwrap()).unwrap();
+    assert!(bind_coverage().status.success());
+    assert!(run(&verify_arguments).status.success());
+    for metric in ["lines", "functions", "regions"] {
+        let mut below = at_floor.clone();
+        below["data"][0]["totals"][metric]["covered"] = 7999.into();
+        fs::write(coverage, serde_json::to_vec(&below).unwrap()).unwrap();
+        assert!(bind_coverage().status.success());
+        let rejected = run(&verify_arguments);
+        assert!(!rejected.status.success(), "accepted {metric} below 80%");
+        assert!(text(&rejected.stderr).contains("coverage"));
+    }
+    // Accept the threshold without rewriting historical measurements.
+    assert_eq!(
+        fs::read_to_string(workspace.0.join("testing/quality-baseline.json")).unwrap(),
+        baseline
+    );
+    let raw = serde_json::to_vec(&at_floor).unwrap();
+    fs::write(coverage, &raw).unwrap();
+    assert!(bind_coverage().status.success());
+    let binding_bytes = fs::read(&coverage_binding).unwrap();
+    let binding: serde_json::Value = serde_json::from_slice(&binding_bytes).unwrap();
+    assert_eq!(binding["report_sha256"], tondo_reliability::sha256(&raw));
+    assert_eq!(binding["before"], binding["after"]);
+    assert!(binding_bytes.ends_with(b"\n"));
+
+    // Equivalent metrics cannot conceal a changed raw tool artifact.
+    fs::write(coverage, serde_json::to_vec_pretty(&at_floor).unwrap()).unwrap();
+    let rejected = run(&verify_arguments);
+    assert!(text(&rejected.stderr).contains("report changed"));
+    let rejected_capture = run(&[
+        "quality",
+        "capture",
+        "--coverage",
+        coverage,
+        "--coverage-binding",
+        coverage_binding.to_str().unwrap(),
+        "--mutants",
+        mutants,
+        "--mutants-binding",
+        mutation_binding.to_str().unwrap(),
+        "--revision",
+        "unbound",
+        "--root",
+        root,
+    ]);
+    assert!(!rejected_capture.status.success());
+    assert_eq!(
+        fs::read_to_string(workspace.0.join("testing/quality-baseline.json")).unwrap(),
+        baseline
+    );
+    fs::write(coverage, &raw).unwrap();
+    let mut unknown_field = binding.clone();
+    unknown_field["unexpected"] = true.into();
+    fs::write(
+        &coverage_binding,
+        serde_json::to_vec(&unknown_field).unwrap(),
+    )
+    .unwrap();
+    assert!(!run(&verify_arguments).status.success());
+    fs::write(&coverage_binding, &binding_bytes).unwrap();
+
+    let mut changed_after = binding["after"].clone();
+    fs::write(&coverage_binding, serde_json::to_vec(&binding).unwrap()).unwrap();
+    let noncanonical = run(&verify_arguments);
+    assert!(!noncanonical.status.success());
+    assert!(text(&noncanonical.stderr).contains("canonical JSON bytes"));
+    fs::write(&coverage_binding, &binding_bytes).unwrap();
+    changed_after["tree_sha256"] = "0".repeat(64).into();
+    fs::write(&after_coverage, serde_json::to_vec(&changed_after).unwrap()).unwrap();
+    assert!(!bind_coverage().status.success());
+    assert_eq!(fs::read(&coverage_binding).unwrap(), binding_bytes);
+    fs::copy(&before_coverage, &after_coverage).unwrap();
+
+    for relative in [
+        "crates/example/src/lib.rs",
+        "scripts/check.sh",
+        "stdlib/example/main.to",
+    ] {
+        let path = workspace.0.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "changed input\n").unwrap();
+        let rejected = run(&verify_arguments);
+        assert!(!rejected.status.success(), "unbound input {relative}");
+        assert!(text(&rejected.stderr).contains("different source tree"));
+        fs::remove_file(path).unwrap();
+    }
+    let changed_flags = Command::new(binary())
+        .args(verify_arguments)
+        .env("RUSTFLAGS", "--cfg quality_input_changed")
+        .output()
+        .unwrap();
+    assert!(!changed_flags.status.success());
+    assert!(text(&changed_flags.stderr).contains("different source tree"));
+    for relative in ["target/new-cache", ".tmp/new-report"] {
+        let path = workspace.0.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "unmeasured output\n").unwrap();
+    }
+    assert!(run(&verify_arguments).status.success());
 }
 
 #[test]

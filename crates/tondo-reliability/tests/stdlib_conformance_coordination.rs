@@ -56,19 +56,27 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
         assert_eq!(row["reason"], owner_conf["stages"]["CONF"]["reason"]);
         assert_eq!(row["refs"], owner_conf["stages"]["CONF"]["refs"]);
         assert!(!row["refs"].as_array().unwrap().is_empty());
-        assert_ne!(row["status"], "verified");
-        assert!(
-            row["reason"]
-                .as_str()
-                .is_some_and(|reason| !reason.is_empty())
-        );
+        let observed_owner = matches!(owner_id, "std.meta" | "std.reflect");
+        assert_eq!(row["status"] == "verified", observed_owner);
+        if observed_owner {
+            assert!(row["reason"].is_null());
+        } else {
+            assert!(
+                row["reason"]
+                    .as_str()
+                    .is_some_and(|reason| !reason.is_empty())
+            );
+        }
     }
 
     assert_eq!(registry["summary"]["rows"], matrix_rows.len());
-    assert_eq!(registry["summary"]["verified_rows"], 0);
+    // 25 meta and 27 reflection callables, plus six requirements per owner.
+    assert_eq!(registry["summary"]["verified_rows"], 64);
+    assert_eq!(registry["summary"]["owner_verified"], 2);
     assert_eq!(
         registry["summary"]["pending_rows"].as_u64().unwrap()
-            + registry["summary"]["partial_rows"].as_u64().unwrap(),
+            + registry["summary"]["partial_rows"].as_u64().unwrap()
+            + registry["summary"]["verified_rows"].as_u64().unwrap(),
         matrix_rows.len() as u64
     );
 }
@@ -91,18 +99,42 @@ fn owner_closure_and_promotion_boundary_are_explicit() {
 
     for owner in owners(&registry) {
         let rows = owner["rows"].as_array().unwrap();
-        let expected_status = if owner["id"] == "std.bytes" {
-            "partial"
-        } else {
-            "pending"
+        let expected_scope = match owner["id"].as_str().unwrap() {
+            "std.meta" => Some("ordinary-tondo-meta"),
+            "std.reflect" => Some("tondo-vm-hosted-metadata"),
+            _ => None,
+        };
+        let expected_status = match owner["id"].as_str().unwrap() {
+            "std.bytes" => "partial",
+            "std.meta" | "std.reflect" => "verified",
+            _ => "pending",
         };
         assert_eq!(owner["status"], expected_status);
         assert_eq!(owner["evidence"]["status"], expected_status);
-        assert!(
-            owner["reason"]
-                .as_str()
-                .is_some_and(|reason| !reason.is_empty())
-        );
+        if let Some(scope) = expected_scope {
+            assert!(owner["reason"].is_null());
+            assert_eq!(owner["evidence"]["scope"], scope);
+            assert!(
+                owner["evidence"]["commands"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&Value::from(
+                        "scripts/stdlib-meta-reflect-conformance-check.sh"
+                    ))
+            );
+            assert!(
+                owner["evidence"]["refs"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&Value::from("testing/stdlib-meta-reflect-conformance.json"))
+            );
+        } else {
+            assert!(
+                owner["reason"]
+                    .as_str()
+                    .is_some_and(|reason| !reason.is_empty())
+            );
+        }
         assert!(!owner["evidence"]["refs"].as_array().unwrap().is_empty());
         assert!(!owner["evidence"]["commands"].as_array().unwrap().is_empty());
         assert!(rows.iter().all(|row| row["status"] == expected_status));

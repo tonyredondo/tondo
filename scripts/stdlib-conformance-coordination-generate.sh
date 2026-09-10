@@ -47,9 +47,9 @@ jq -n \
             evidence: {
               status: $status,
               refs: ((($matrix_conf.refs // []) + (($evidence_owner.cells.CONF.refs // []) | unique) + ($public_owner.refs // []) + ["testing/stdlib-matrix.json"] + (if ([$rows[].kind] | index("signature")) != null then ["testing/stdlib-public-api.json"] else [] end)) | unique | sort),
-              commands: (((($evidence_owner.commands // []) + ["scripts/stdlib-matrix-check.sh", "scripts/stdlib-test-coordination-check.sh"] + (if (codec_owners | index($id)) != null then ["scripts/stdlib-codec-conformance.sh"] else [] end)) | unique | sort)),
+              commands: (((($evidence_owner.commands // []) + ["scripts/stdlib-matrix-check.sh", "scripts/stdlib-test-coordination-check.sh"] + (if $status == "verified" and ($id | IN("std.meta", "std.reflect")) then ["scripts/stdlib-meta-reflect-conformance-check.sh"] else [] end) + (if (codec_owners | index($id)) != null then ["scripts/stdlib-codec-conformance.sh"] else [] end)) | unique | sort)),
               cases: ($public_owner.cases | map(.id) | sort),
-              scope: (if $evidence_owner == null then "synthetic-owner-gap" else $public_owner.scope end)
+              scope: (if $evidence_owner == null then "synthetic-owner-gap" else $evidence_owner.cells.CONF.scope end)
             }
           }) | sort_by(.id)) as $owners
     | ($owners | map(.rows[]) ) as $rows

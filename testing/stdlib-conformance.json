@@ -14,7 +14,7 @@
   "runner": {
     "lineage": "draft",
     "manifest": "conformance/0.1/manifest.json",
-    "manifest_sha256": "3a96796651be772a54058f350cff92e7608f002e6c63dae775d9cef9611da69e",
+    "manifest_sha256": "804f05135d9ac7c134ff0bd8ad6d0d959b48250185a59ce229b7f26ddd476537",
     "full_suite_case_count": 206,
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
@@ -777,8 +777,10 @@
       ],
       "refs": [
         "crates/tondo-compiler/tests/std_meta_conformance.rs",
-        "testing/stdlib-conformance.json",
+        "docs/contracts/stdlib-meta-reflect-conformance.md",
+        "scripts/stdlib-meta-reflect-conformance-check.sh",
         "testing/stdlib-conformance.json#owners/std.meta",
+        "testing/stdlib-meta-reflect-conformance.json",
         "testing/stdlib-public-api.json"
       ],
       "scope": "ordinary-tondo-companion-and-compiler-components"
@@ -1035,8 +1037,10 @@
       ],
       "refs": [
         "crates/tondo-compiler/src/reflect.rs",
-        "testing/stdlib-conformance.json",
+        "docs/contracts/stdlib-meta-reflect-conformance.md",
+        "scripts/stdlib-meta-reflect-conformance-check.sh",
         "testing/stdlib-conformance.json#owners/std.reflect",
+        "testing/stdlib-meta-reflect-conformance.json",
         "testing/stdlib-public-api.json",
         "tests/runtime/m11-std-reflect-public-001.to"
       ],

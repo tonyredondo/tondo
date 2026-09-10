@@ -2778,8 +2778,8 @@
     {
       "id": "std.meta",
       "layer": "A0",
-      "status": "pending",
-      "reason": "The conformance registry declares cases; current execution has not been promoted",
+      "status": "verified",
+      "reason": null,
       "public_signatures": [
         "std.meta:15",
         "std.meta:16",
@@ -2819,290 +2819,385 @@
         {
           "id": "requirement:std.meta:canonical-rendering",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.meta:compile-time-budget",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.meta:meta-target-boundary",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.meta:request-response",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.meta:snapshot-model",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.meta:source-builder",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:15",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:16",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:17",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:18",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:19",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:20",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:21",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:22",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:23",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:24",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:25",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:26",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:27",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:28",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:29",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:30",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:31",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:32",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:33",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:34",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:35",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:36",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:37",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:38",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.meta:39",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         }
       ],
       "evidence": {
-        "status": "pending",
+        "status": "verified",
         "refs": [
           "crates/tondo-compiler/tests/std_meta_conformance.rs",
-          "testing/stdlib-conformance.json",
+          "docs/contracts/stdlib-meta-reflect-conformance.md",
+          "scripts/stdlib-meta-reflect-conformance-check.sh",
           "testing/stdlib-conformance.json#owners/std.meta",
           "testing/stdlib-matrix.json",
+          "testing/stdlib-meta-reflect-conformance.json",
           "testing/stdlib-public-api.json"
         ],
         "commands": [
@@ -3112,6 +3207,7 @@
           "cargo test -p tondo-compiler --locked --test std_meta_conformance",
           "scripts/stdlib-matrix-check.sh",
           "scripts/stdlib-meta-check.sh",
+          "scripts/stdlib-meta-reflect-conformance-check.sh",
           "scripts/stdlib-meta-test.sh",
           "scripts/stdlib-owner-evidence-check.sh",
           "scripts/stdlib-test-coordination-check.sh"
@@ -3119,7 +3215,7 @@
         "cases": [
           "meta-conformance"
         ],
-        "scope": "ordinary-tondo-companion-and-compiler-components"
+        "scope": "ordinary-tondo-meta"
       }
     },
     {
@@ -3979,8 +4075,8 @@
     {
       "id": "std.reflect",
       "layer": "A0",
-      "status": "pending",
-      "reason": "The conformance registry declares cases; current execution has not been promoted",
+      "status": "verified",
+      "reason": null,
       "public_signatures": [
         "std.reflect:45",
         "std.reflect:46",
@@ -4022,314 +4118,416 @@
         {
           "id": "requirement:std.reflect:artifact-local-identity",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.reflect:catalog-shape",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.reflect:malformed-inputs-and-cost",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.reflect:no-runtime-reflection",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.reflect:privacy",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "requirement:std.reflect:root-closure",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:45",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:46",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:47",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:48",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:49",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:50",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:51",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:52",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:53",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:54",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:55",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:56",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:57",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:58",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:59",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:60",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:61",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:62",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:63",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:64",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:65",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:66",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:67",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:68",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:69",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:70",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         },
         {
           "id": "signature:std.reflect:71",
           "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ]
         }
       ],
       "evidence": {
-        "status": "pending",
+        "status": "verified",
         "refs": [
           "crates/tondo-compiler/src/reflect.rs",
-          "testing/stdlib-conformance.json",
+          "docs/contracts/stdlib-meta-reflect-conformance.md",
+          "scripts/stdlib-meta-reflect-conformance-check.sh",
           "testing/stdlib-conformance.json#owners/std.reflect",
           "testing/stdlib-matrix.json",
+          "testing/stdlib-meta-reflect-conformance.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-reflect-public-001.to"
         ],
         "commands": [
           "cargo test -p tondo-compiler --locked --lib reflect::tests",
           "scripts/stdlib-matrix-check.sh",
+          "scripts/stdlib-meta-reflect-conformance-check.sh",
           "scripts/stdlib-reflect-check.sh",
           "scripts/stdlib-reflect-test.sh",
           "scripts/stdlib-test-coordination-check.sh"
@@ -4338,7 +4536,7 @@
           "reflect-metadata",
           "reflect-public"
         ],
-        "scope": "public-hosted-descriptors-and-metadata-model"
+        "scope": "tondo-vm-hosted-metadata"
       }
     },
     {
@@ -5526,12 +5724,12 @@
     "rows": 469,
     "public_signatures": 298,
     "requirements": 171,
-    "verified_rows": 0,
+    "verified_rows": 64,
     "partial_rows": 6,
-    "pending_rows": 463,
-    "owner_verified": 0,
+    "pending_rows": 399,
+    "owner_verified": 2,
     "owner_partial": 1,
-    "owner_pending": 21
+    "owner_pending": 19
   },
   "promotion": {
     "status": "pending",

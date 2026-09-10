@@ -185,10 +185,13 @@ impl ReportBinding {
         if before != after {
             return Err("quality report input tree changed during the run".into());
         }
+        // Validate the tool payload, but bind its exact retained bytes. The
+        // ratchet separately compares canonical metrics across tool runs.
+        canonical_report_bytes(kind, report_bytes)?;
         Ok(Self {
             format: BINDING_FORMAT.into(),
             kind: kind.into(),
-            report_sha256: sha256(&canonical_report_bytes(kind, report_bytes)?),
+            report_sha256: sha256(report_bytes),
             before,
             after,
         })
@@ -200,6 +203,9 @@ impl ReportBinding {
         let binding: Self = serde_json::from_slice(&bytes)
             .map_err(|error| format!("invalid report binding `{}`: {error}", path.display()))?;
         binding.validate()?;
+        if canonical_json(&binding)? != bytes {
+            return Err("quality report binding must use canonical JSON bytes".into());
+        }
         Ok(binding)
     }
 
@@ -216,7 +222,7 @@ impl ReportBinding {
         Ok(())
     }
 
-    /// Verifies the canonical parsed report and the live source identity.
+    /// Verifies the exact retained report bytes and the live source identity.
     pub fn verify(
         &self,
         root: &Path,
@@ -233,7 +239,7 @@ impl ReportBinding {
         }
         let report = fs::read(report_path)
             .map_err(|error| format!("cannot read `{}`: {error}", report_path.display()))?;
-        let actual_report = sha256(&canonical_report_bytes(expected_kind, &report)?);
+        let actual_report = sha256(&report);
         if actual_report != self.report_sha256 {
             return Err(format!(
                 "{expected_kind} report changed after its binding was created"
@@ -404,7 +410,10 @@ mod tests {
             br#"{"name":"frontier","outcome":"Killed","timing":17}"#,
         )
         .unwrap();
-        binding.verify(&root, &report, "mutation").unwrap();
+        assert!(binding.verify(&root, &report, "mutation").is_err());
+        let moved = root.join("moved-report.json");
+        fs::write(&moved, report_bytes).unwrap();
+        binding.verify(&root, &moved, "mutation").unwrap();
         fs::write(&report, br#"{"outcome":"Missed","name":"frontier"}"#).unwrap();
         assert!(binding.verify(&root, &report, "mutation").is_err());
         let _ = fs::remove_dir_all(root);

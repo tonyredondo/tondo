@@ -1780,11 +1780,15 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ],
-          "status": "pending"
+          "scope": "ordinary-tondo-meta",
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2344,11 +2348,15 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ],
-          "status": "pending"
+          "scope": "tondo-vm-hosted-metadata",
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -15060,7 +15068,8 @@
     "stage_counts": {
       "CONF": {
         "partial": 6,
-        "pending": 463
+        "pending": 399,
+        "verified": 64
       },
       "DOC": {
         "partial": 6,

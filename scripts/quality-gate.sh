@@ -36,7 +36,11 @@ mutation_tmp="$(cd "$mutation_tmp" && pwd)"
 
 cargo run -p tondo-reliability --locked -- quality provenance --root . > "$coverage_before"
 
+# Discard previous counters while retaining Cargo's build cache. The default
+# llvm-cov cleanup also removes workspace binaries and forces a full rebuild.
+cargo llvm-cov clean --profraw-only
 cargo llvm-cov \
+    --no-clean \
     --workspace \
     --all-targets \
     --json \

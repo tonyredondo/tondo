@@ -105,6 +105,49 @@
     },
     {
       "requirements": [
+        "TC01-10-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-56-process-containment"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
         "TC01-13-R001"
       ],
       "dimensions": {
@@ -503,6 +546,51 @@
         "public_boundary": {
           "evidence": [
             "draft-layer:testing:testing-47-inputs"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-5-2-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_execute_transitive_code_and_keep_production_identical"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_check_rehashed_interfaces_and_alias_collisions",
+            "rust:tondo-cli:tests::cli:public_test_dependencies_reject_drift_before_selection_or_publication",
+            "rust:tondo-cli:tests::cli:public_test_dependencies_reject_unclosed_lock_graphs"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_use_locked_defaults_in_test_only_projects"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_are_visible_to_unit_overlays_with_sealed_production"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_dependencies:production_identity_is_framed_and_does_not_depend_on_test_records"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-23-dev-dependencies"
           ],
           "waiver": null
         }
@@ -9581,9 +9669,181 @@
     },
     {
       "requirements": [
-        "TL01-27-2-R002",
-        "TL01-27-2-R003",
-        "TL01-27-3-R001",
+        "TL01-27-2-R002"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-2-R003"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-3-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-3-R002"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_frontend:meta_source_frontend_executes_ordinary_derive_and_retains_notes"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_compile:meta_source_provider_rejects_invalid_entry_and_nested_derivation",
+            "rust:tondo-compiler:src::meta_frontend:meta_source_derive_obeys_ordinary_coherence_and_publishes_nothing_on_conflict",
+            "rust:tondo-compiler:src::meta_provider:meta_public_source_derive_rejects_foreign_target_and_unmappable_ranges"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::driver:derive_rejects_duplicate_pairs_before_publishing_generated_sources",
+            "rust:tondo-compiler:src::meta_frontend:meta_source_derive_accepts_only_necessary_added_bounds"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:meta_toml_lock_and_run_execute_generators_derives_and_transitive_sources"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_derive:providers_return_only_validated_formatted_impl_bodies"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
         "TL01-27-4-R001"
       ],
       "dimensions": {
@@ -9665,6 +9925,51 @@
         "public_boundary": {
           "evidence": [
             "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-6-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:meta_model_includes_builtin_nominals_without_fabricated_source_spans",
+            "rust:tondo-compiler:src::project:meta_model_trait_operations_preserve_self_local_binders_and_defaults"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_source_api:meta_origins_authorize_only_actual_admitted_source_ranges"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:meta_model_closes_prelude_operation_signatures_and_codec_bounds"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:meta_model_includes_public_methods_without_their_bodies"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta:meta_snapshot_origin_is_hashed_and_revalidated_when_decoded",
+            "rust:tondo-compiler:src::meta:meta_snapshot_shapes_expose_only_structural_data"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
           ],
           "waiver": null
         }
@@ -14673,6 +14978,137 @@
     },
     {
       "requirements": [
+        "TT01-13-1-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-reliability:src::quality:explicit_coverage_floor_preserves_observations_and_rejects_below_eighty_percent"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-54-quality"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TT01-13-1-R002"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-reliability:src::provenance:binding_rejects_changed_reports_and_trees",
+            "rust:tondo-reliability:src::provenance:current_identity_is_stable_and_tracks_inputs"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-54-quality"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TT01-13-1-R003"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-reliability:src::provenance:binding_rejects_changed_reports_and_trees",
+            "rust:tondo-reliability:src::provenance:current_identity_is_stable_and_tracks_inputs"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-54-quality"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
         "TT01-15-1-R001"
       ],
       "dimensions": {
@@ -16479,6 +16915,228 @@
     },
     {
       "requirements": [
+        "TT01-7-8-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:minimum_phase_instruction_limit_still_publishes_a_terminal_report",
+            "rust:tondo-cli:tests::cli:test_reports_bind_captured_inputs_and_effective_resource_limits"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_frame_memory_is_admitted_before_local_storage_and_preserves_siblings",
+            "rust:tondo-cli:tests::cli:phase_heap_exhaustion_is_reported_without_losing_sibling_evidence",
+            "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_scheduler_metadata_is_admitted_before_task_publication",
+            "rust:tondo-cli:tests::cli:phase_virtual_timer_limits_restore_the_clock_and_allow_released_slots",
+            "rust:tondo-cli:tests::cli:testing_host_evidence_limits_are_atomic_and_are_not_retried"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_instruction_budget_is_shared_with_blocking_workers"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-55-phase-limits"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TT01-7-8-R002"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_deadlines_do_not_sum_descendants_or_setup_and_teardown"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_timeout_retry_keeps_complete_attempts_and_fresh_participations"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:statuses_cover_return_skip_error_panic_resource_timeout_and_infrastructure"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-55-phase-limits"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TT01-7-8-R003"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-56-process-containment"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TT01-7-8-R004"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs",
+            "rust:tondo-cli:tests::cli:temporary_testing_cleanup_failure_preserves_outputs_and_never_retries"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_interrupt:complete_cleanup_and_close_restore_isolation_and_select_exit_four"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-56-process-containment"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TT01-7-8-R005"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_deadlines_do_not_sum_descendants_or_setup_and_teardown"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_retry_units_cover_suite_failures_and_independent_leaf_failures",
+            "rust:tondo-cli:tests::cli:phase_timeout_retry_keeps_complete_attempts_and_fresh_participations"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:cleanup_runs_lifo_after_error_and_is_skipped_for_forced_termination"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-55-phase-limits"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
         "TT01-7-9-R001"
       ],
       "dimensions": {
@@ -17031,6 +17689,49 @@
         "public_boundary": {
           "evidence": [
             "draft-layer:testing:testing-52-lossless-reporting"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TT01-9-3-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:writer_bytes_are_captured_per_attempt_and_projected_without_loss"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_report:report_preserves_metadata_and_rejects_unknown_or_noncanonical_output"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:binary_capture_is_retained_separately_for_retries_and_repeats"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_control:logs_tags_streams_and_report_are_isolated_and_ordered"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-57-binary-streams"
           ],
           "waiver": null
         }

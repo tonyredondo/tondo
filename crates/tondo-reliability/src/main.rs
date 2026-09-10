@@ -28,7 +28,7 @@ Usage:
   tondo-reliability ratchet <generate|check> [--coverage <json>] [--mutants <json>] [--coverage-binding <json>] [--mutants-binding <json>] [--root <directory>]
   tondo-reliability quality check [--root <directory>]
   tondo-reliability quality provenance [--root <directory>]
-  tondo-reliability quality capture --coverage <json> --mutants <json> --revision <id> [--root <directory>]
+  tondo-reliability quality capture --coverage <json> --coverage-binding <json> --mutants <json> --mutants-binding <json> --revision <id> [--root <directory>]
   tondo-reliability quality bind --kind <coverage|mutation> --report <json> --before <json> --after <json> --output <json> [--root <directory>]
   tondo-reliability quality verify --coverage <json> --coverage-binding <json> [--mutants <json> --mutants-binding <json>] [--root <directory>]
   tondo-reliability tracker lint [--json] [--root <directory>]";
@@ -151,6 +151,16 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
             reject_capture_options(&arguments)?;
             let coverage = required_path(&arguments.coverage, "--coverage")?;
             let mutants = required_path(&arguments.mutants, "--mutants")?;
+            ReportBinding::load(required_path(
+                &arguments.coverage_binding,
+                "--coverage-binding",
+            )?)?
+            .verify(&root, coverage, "coverage")?;
+            ReportBinding::load(required_path(
+                &arguments.mutants_binding,
+                "--mutants-binding",
+            )?)?
+            .verify(&root, mutants, "mutation")?;
             let revision = arguments
                 .revision
                 .as_deref()
@@ -383,9 +393,7 @@ fn reject_binding_options(arguments: &Arguments) -> Result<(), String> {
 }
 
 fn reject_capture_options(arguments: &Arguments) -> Result<(), String> {
-    if arguments.coverage_binding.is_some()
-        || arguments.mutants_binding.is_some()
-        || arguments.kind.is_some()
+    if arguments.kind.is_some()
         || arguments.report.is_some()
         || arguments.before.is_some()
         || arguments.after.is_some()

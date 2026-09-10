@@ -281,9 +281,16 @@
       "id": "testing-23-dev-dependencies",
       "surface": "dependencies",
       "requirements": [
+        "TC01-5-2-R001",
         "TL01-28-5-R001"
       ],
       "evidence": [
+        "rust:tondo-cli:tests::cli:public_test_dependencies_are_visible_to_unit_overlays_with_sealed_production",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_check_rehashed_interfaces_and_alias_collisions",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_execute_transitive_code_and_keep_production_identical",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_reject_drift_before_selection_or_publication",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_reject_unclosed_lock_graphs",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_use_locked_defaults_in_test_only_projects",
         "rust:tondo-compiler:src::test_dependencies:production_identity_is_framed_and_does_not_depend_on_test_records"
       ]
     },
@@ -594,6 +601,70 @@
         "rust:tondo-reference-adapter:tests::suspension_contracts:explicit_await_rejects_a_direct_call_with_e1611",
         "rust:tondo-reference-adapter:tests::suspension_contracts:runtime_direct_suspension_uses_the_same_interface_observation",
         "rust:tondo-reference-adapter:tests::suspension_contracts:sync_boundaries_reject_inferred_suspension_with_e1601"
+      ]
+    },
+    {
+      "id": "testing-54-quality",
+      "surface": "quality",
+      "requirements": [
+        "TT01-13-1-R001",
+        "TT01-13-1-R002",
+        "TT01-13-1-R003"
+      ],
+      "evidence": [
+        "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+      ]
+    },
+    {
+      "id": "testing-55-phase-limits",
+      "surface": "phase-limits",
+      "requirements": [
+        "TT01-7-8-R001",
+        "TT01-7-8-R002",
+        "TT01-7-8-R005"
+      ],
+      "evidence": [
+        "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:minimum_phase_instruction_limit_still_publishes_a_terminal_report",
+        "rust:tondo-cli:tests::cli:phase_deadlines_do_not_sum_descendants_or_setup_and_teardown",
+        "rust:tondo-cli:tests::cli:phase_frame_memory_is_admitted_before_local_storage_and_preserves_siblings",
+        "rust:tondo-cli:tests::cli:phase_heap_exhaustion_is_reported_without_losing_sibling_evidence",
+        "rust:tondo-cli:tests::cli:phase_instruction_budget_is_shared_with_blocking_workers",
+        "rust:tondo-cli:tests::cli:phase_retry_units_cover_suite_failures_and_independent_leaf_failures",
+        "rust:tondo-cli:tests::cli:phase_scheduler_metadata_is_admitted_before_task_publication",
+        "rust:tondo-cli:tests::cli:phase_timeout_retry_keeps_complete_attempts_and_fresh_participations",
+        "rust:tondo-cli:tests::cli:phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results",
+        "rust:tondo-cli:tests::cli:phase_virtual_timer_limits_restore_the_clock_and_allow_released_slots",
+        "rust:tondo-cli:tests::cli:test_reports_bind_captured_inputs_and_effective_resource_limits",
+        "rust:tondo-cli:tests::cli:testing_host_evidence_limits_are_atomic_and_are_not_retried",
+        "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried"
+      ]
+    },
+    {
+      "id": "testing-56-process-containment",
+      "surface": "process-containment",
+      "requirements": [
+        "TC01-10-R001",
+        "TT01-7-8-R003",
+        "TT01-7-8-R004"
+      ],
+      "evidence": [
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication",
+        "rust:tondo-cli:tests::cli:temporary_testing_cleanup_failure_preserves_outputs_and_never_retries"
+      ]
+    },
+    {
+      "id": "testing-57-binary-streams",
+      "surface": "binary-streams",
+      "requirements": [
+        "TT01-9-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-cli:tests::cli:binary_capture_is_retained_separately_for_retries_and_repeats",
+        "rust:tondo-cli:tests::cli:writer_bytes_are_captured_per_attempt_and_projected_without_loss",
+        "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried"
       ]
     }
   ]

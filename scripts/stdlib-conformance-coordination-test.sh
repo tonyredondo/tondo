@@ -44,13 +44,16 @@ jq '.owners[0].evidence.refs = []' testing/stdlib-conformance-coordination.json 
 expect_failure missing-ref env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/missing-ref.json" \
     scripts/stdlib-conformance-coordination-check.sh
 
-jq -e '
+jq -e --slurpfile evidence testing/stdlib-owner-evidence.json '
   . as $root
   | $root.status == "planned"
   and $root.promotion.status == "pending"
-  and $root.summary.verified_rows == 0
-  and $root.summary.partial_rows + $root.summary.pending_rows == $root.summary.rows
-  and any($root.owners[]; .id == "std.reflect" and .status == "pending"
+  and $root.summary.verified_rows + $root.summary.partial_rows + $root.summary.pending_rows == $root.summary.rows
+  and all($root.owners[]; . as $owner |
+    if (.id | IN("std.meta", "std.reflect")) then
+      .status == (first($evidence[0].owners[] | select(.id == $owner.id)).cells.CONF.status)
+    else .status != "verified" end)
+  and any($root.owners[]; .id == "std.reflect"
     and (.evidence.cases | index("reflect-public")) != null)
   and any($root.owners[]; .id == "std.async" and .status == "pending" and (.rows | length) == 12)
   and all(["std.serialization", "std.json", "std.messagepack", "std.protobuf"][];
@@ -58,5 +61,14 @@ jq -e '
     | any($root.owners[]; .id == $owner_id and (.evidence.cases | length) > 0)
   )
 ' testing/stdlib-conformance-coordination.json >/dev/null
+
+for mutation in \
+    '(.owners[] | select(.id == "std.meta")).evidence.scope = "native-aot"' \
+    '(.owners[] | select(.id == "std.reflect")).rows[0].status = "unobserved"' \
+    '(.owners[] | select(.id == "std.meta")).evidence.commands = []'; do
+    jq "$mutation" testing/stdlib-conformance-coordination.json > "$tmp_dir/changed-scope.json"
+    expect_failure changed-public-scope env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/changed-scope.json" \
+        scripts/stdlib-conformance-coordination-check.sh
+done
 
 echo "stdlib conformance coordination tests: OK"

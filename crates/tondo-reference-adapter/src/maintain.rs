@@ -11,7 +11,9 @@ use tondo_compiler::project::{
     BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
 };
 use tondo_conformance::document::{DocumentFence, extract_fences};
-use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineageManifest};
+use tondo_conformance::lineage::{
+    DRAFT_LINEAGE_PATH, DraftCaseLayerManifest, DraftLineageManifest,
+};
 use tondo_conformance::manifest::{
     BuildInput, CaseAction, CaseGroup, ConformanceCase, DeterminismAction, DocumentAction,
     Expectation, MemoryScenario, NormativeRegistry, PinnedFile, SemanticAction, SemanticQuery,
@@ -133,9 +135,17 @@ fn refresh_draft_manifest(root: &Path) -> Result<(), String> {
             tondo_conformance::sha256(&fs::read(root.join(&specification.path)).map_err(io_error)?);
     }
     for layer in &mut draft.case_layers {
-        layer.manifest.sha256 = tondo_conformance::sha256(
-            &fs::read(root.join(&layer.manifest.path)).map_err(io_error)?,
-        );
+        let bytes = fs::read(root.join(&layer.manifest.path)).map_err(io_error)?;
+        let cases: DraftCaseLayerManifest =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        layer.manifest.sha256 = tondo_conformance::sha256(&bytes);
+        layer.requirements = cases
+            .cases
+            .iter()
+            .flat_map(|case| case.requirements.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
     }
 
     let mut bytes = serde_json::to_vec_pretty(&draft).map_err(|error| error.to_string())?;

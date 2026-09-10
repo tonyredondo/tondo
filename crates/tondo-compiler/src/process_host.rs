@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::fmt::{self, Write as _};
 use std::fs::OpenOptions;
@@ -14481,6 +14482,70 @@ fn terminate(child: &mut Child) {
     }
 }
 
+#[cfg(test)]
+fn compile_host_admission_source(
+    source: &str,
+    capabilities: BTreeSet<crate::driver::CapabilityName>,
+    operation: crate::driver::Operation,
+) -> (
+    tondo_vm::bytecode::BytecodeProgram,
+    tondo_vm::bytecode::BytecodeFunctionId,
+) {
+    use crate::driver::{
+        BuildTarget, CompilationRequest, DiagnosticFormat, Edition, HostProfile, Operation,
+        ResourceLimits, SourceForm, compile,
+    };
+    use crate::package::PackageGraph;
+    use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
+
+    let mut sources = SourceDatabase::new();
+    let root = sources
+        .add(SourceInput::virtual_file(
+            SourceId::new("root:channel-admission").unwrap(),
+            ModulePath::new("channel_admission").unwrap(),
+            LogicalPath::new("channel-admission.to").unwrap(),
+            source.as_bytes(),
+        ))
+        .unwrap();
+    let request = CompilationRequest::new(
+        operation,
+        Edition::V0_1,
+        BuildTarget::vm_hosted(),
+        HostProfile::Hosted,
+        capabilities,
+        DiagnosticFormat::Json,
+        SourceForm::Module,
+        ResourceLimits::default(),
+        PackageGraph::loose(&sources, root).unwrap(),
+        sources,
+        root,
+    )
+    .unwrap();
+    let request = if operation == Operation::Test {
+        let entries = crate::driver::discover_tests(&request).unwrap();
+        request
+            .for_test_participation(
+                &entries,
+                TestParticipation::new(
+                    crate::test_control::EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                ),
+            )
+            .unwrap()
+    } else {
+        request
+    };
+    let compiled = compile(request).unwrap();
+    assert_eq!(
+        compiled.exit_code(),
+        0,
+        "{}",
+        compiled.diagnostics().human()
+    );
+    compiled.into_compiled_program().unwrap()
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use std::fs;
@@ -17065,69 +17130,6 @@ mod tests {
             crate::driver::BuildTarget::vm_hosted_capabilities(),
             crate::driver::Operation::Run,
         )
-    }
-
-    pub(super) fn compile_host_admission_source(
-        source: &str,
-        capabilities: BTreeSet<crate::driver::CapabilityName>,
-        operation: crate::driver::Operation,
-    ) -> (
-        tondo_vm::bytecode::BytecodeProgram,
-        tondo_vm::bytecode::BytecodeFunctionId,
-    ) {
-        use crate::driver::{
-            BuildTarget, CompilationRequest, DiagnosticFormat, Edition, HostProfile, Operation,
-            ResourceLimits, SourceForm, compile,
-        };
-        use crate::package::PackageGraph;
-        use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
-
-        let mut sources = SourceDatabase::new();
-        let root = sources
-            .add(SourceInput::virtual_file(
-                SourceId::new("root:channel-admission").unwrap(),
-                ModulePath::new("channel_admission").unwrap(),
-                LogicalPath::new("channel-admission.to").unwrap(),
-                source.as_bytes(),
-            ))
-            .unwrap();
-        let request = CompilationRequest::new(
-            operation,
-            Edition::V0_1,
-            BuildTarget::vm_hosted(),
-            HostProfile::Hosted,
-            capabilities,
-            DiagnosticFormat::Json,
-            SourceForm::Module,
-            ResourceLimits::default(),
-            PackageGraph::loose(&sources, root).unwrap(),
-            sources,
-            root,
-        )
-        .unwrap();
-        let request = if operation == Operation::Test {
-            let entries = crate::driver::discover_tests(&request).unwrap();
-            request
-                .for_test_participation(
-                    &entries,
-                    TestParticipation::new(
-                        crate::test_control::EnvelopeLimits::new(65536, 65536, 65536),
-                        BTreeMap::new(),
-                        false,
-                    ),
-                )
-                .unwrap()
-        } else {
-            request
-        };
-        let compiled = compile(request).unwrap();
-        assert_eq!(
-            compiled.exit_code(),
-            0,
-            "{}",
-            compiled.diagnostics().human()
-        );
-        compiled.into_compiled_program().unwrap()
     }
 
     #[test]

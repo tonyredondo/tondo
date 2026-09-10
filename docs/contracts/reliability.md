@@ -38,7 +38,10 @@ mutation reports that pass the baseline non-regression gates; a wave without
 executable draft layers records both scopes as not-applicable with an explicit
 reason. `ratchet generate` writes the canonical record only after all those
 checks pass. Report identities hash the parsed, canonical metrics rather than
-the host-specific raw tool output. The strict gate validates the deterministic
+the host-specific raw tool output. Each supplied binding separately hashes the
+exact retained raw bytes before the ratchet accepts those metrics. Moving a
+report preserves its binding; rewriting it, even with equivalent metrics,
+requires its own capture evidence. The strict gate validates the deterministic
 repository records; the quality gate supplies fresh coverage and mutation
 reports to the ratchet. The record never contains physical paths or report
 contents, only portable logical paths and SHA-256 identities.
@@ -47,6 +50,11 @@ The ratchet binds report identities to the canonical digest of the measured
 workspace. `QUALITY-EVIDENCE-BIND-001` verifies that sources, tests, flags,
 toolchain and raw report match before a quality result can advance the current
 baseline.
+
+`quality capture` also requires both report bindings before it can write a
+baseline, including the first capture. Missing, stale or modified inputs leave
+the existing baseline untouched. Binding a report is independent of having a
+baseline, so initialization uses the same before/run/after protocol.
 
 The provenance input walk includes the reviewed fuzz targets, corpus and
 contracts, but excludes `fuzz/artifacts/`. That directory contains generated
@@ -352,7 +360,9 @@ mutation outcomes, close real gaps, then run:
 cargo run -p tondo-reliability --locked -- quality capture \
   --root . \
   --coverage target/reliability/quality/coverage.json \
+  --coverage-binding target/reliability/quality/coverage.binding.json \
   --mutants target/reliability/quality/mutation/mutants.out/outcomes.json \
+  --mutants-binding target/reliability/quality/mutation.binding.json \
   --revision M10.5b-H0-COV90
 ~~~
 

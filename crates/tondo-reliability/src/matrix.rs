@@ -1383,12 +1383,7 @@ Mustard, shallow, cancellation and `must_use` describe no obligation.\n\n\
         for requirement in toolchain {
             if matches!(
                 requirement.id.as_str(),
-                "TC01-10-1-2-R001"
-                    | "TC01-10-1-3-R001"
-                    | "TC01-10-1-4-R001"
-                    | "TC01-10-1-5-R001"
-                    | "TC01-10-R001"
-                    | "TC01-5-2-R001"
+                "TC01-10-1-2-R001" | "TC01-10-1-3-R001" | "TC01-10-1-4-R001" | "TC01-10-1-5-R001"
             ) {
                 assert_eq!(requirement.status, "toolchain-limit", "{}", requirement.id);
                 continue;
@@ -1430,19 +1425,7 @@ Mustard, shallow, cancellation and `must_use` describe no obligation.\n\n\
             open.iter()
                 .map(|requirement| requirement.id.as_str())
                 .collect::<Vec<_>>(),
-            [
-                // Quality-tooling tests are not the former Tondo test-report
-                // evidence. Keep the unreviewed six-dimension traces open.
-                "TT01-13-1-R001",
-                "TT01-13-1-R002",
-                "TT01-13-1-R003",
-                "TT01-7-8-R001",
-                "TT01-7-8-R002",
-                "TT01-7-8-R003",
-                "TT01-7-8-R004",
-                "TT01-7-8-R005",
-                "TT01-9-3-R001",
-            ]
+            Vec::<&str>::new()
         );
         assert_eq!(testing.len(), 83);
         assert_eq!(covered.len() + open.len() + 1, testing.len());
@@ -1503,10 +1486,7 @@ Mustard, shallow, cancellation and `must_use` describe no obligation.\n\n\
             .iter()
             .filter(|requirement| audited_language.contains(requirement.id.as_str()))
         {
-            if matches!(
-                requirement.id.as_str(),
-                "TL01-11-10-R003" | "TL01-27-3-R002" | "TL01-27-6-R001"
-            ) {
+            if matches!(requirement.id.as_str(), "TL01-11-10-R003") {
                 assert_eq!(requirement.status, "toolchain-limit", "{}", requirement.id);
                 for (name, dimension) in claim_dimensions(&requirement.dimensions) {
                     assert!(

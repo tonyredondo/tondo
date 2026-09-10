@@ -2955,13 +2955,15 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   reproducibilidad y que el gate no presenta un requisito pendiente como
   conformidad completa.
 
-- [ ] **CONF-RATCHET-001 — Keep current evidence bound to the measured tree.**
-  The local ratchet is regenerated with current inventory/matrix hashes,
-  2,067 passing Rust tests, 120 layer observations, coverage at 9,068 basis
-  points against the unchanged 9,061 baseline, and all six selected critical
-  mutants caught. Current-input verification passes; changing the recorded
-  build flags is rejected. This local evidence does not close the outstanding
-  promotion gates or the coherent-block publication/CI requirements.
+- [x] **CONF-RATCHET-001 — Keep current evidence bound to the measured tree.**
+  The current ratchet binds 2,464 passing Rust tests, 196 layer observations
+  and the live inventory/matrix. The consolidated campaign covers 282,982 of
+  309,746 lines (9,135 basis points), above the authorized 80% acceptance floor;
+  all six selected critical mutants are caught. Report bindings retain exact
+  raw bytes, while the ratchet separately compares canonical metrics.
+  Current-input verification passes and changed reports, source inputs and
+  build flags are rejected. This local evidence does not replace portable CI
+  or promote unrelated native, standard-library or release gates.
 
 - [x] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
   El runner de quality debe calcular antes y después un digest canónico de
@@ -3050,23 +3052,27 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   cases. Neighboring component tests cannot stand in for missing testing,
   reflection, generators or native integration.
 
-  - [x] **CONF-GAP-IMPL-TC-001 — Toolchain.** Los 31 requisitos `TC01` tienen
-    evidencia explícita en las seis dimensiones. Los oracles ejercitan los
-    records cerrados, resolución, proyectos convencionales, planes de test,
-    inputs y meta-generación; la frontera pública usa las layers existentes de
-    finalización, meta y testing. La matriz pasa de 45 a 76 filas cubiertas.
-  - [x] **CONF-GAP-IMPL-TT-001 — Testing.** Las 80 filas aplicables `TT01`
-    enlazan ahora su layer pública exacta y pruebas internas separadas de
-    rechazo, borde, composición y oracle. La fila `TT01-13-R001`, que enumera
-    funcionalidad deliberadamente ausente, se reconoce por identidad auditada
-    y avanza a `target-not-applicable`; una prueba estructural exige el reparto
-    exacto 80+1 y evidencia completa en las seis dimensiones aplicables.
-  - [x] **CONF-GAP-IMPL-TL-001 — Lenguaje.** Las 253 filas aplicables `TL01`
-    enlazan su prueba auditada con rechazo, borde, composición y oracle internos,
-    más casos públicos de conformidad elegidos por la sección normativa. El
-    no-goal `TL01-2-2-R001` se clasifica por identidad exacta. Una prueba
-    estructural exige 298 requisitos cubiertos, ocho no aplicables y tres
-    fronteras reservadas a la conformidad independiente de stdlib.
+  - [ ] **CONF-GAP-IMPL-TC-001 — Toolchain.** The current matrix covers 33
+    requirements with reviewed evidence in all six dimensions. Public testing
+    traces include test-only dependencies and explicit process containment.
+    Four native integration requirements remain `toolchain-limit`:
+    `TC01-10-1-2-R001`, `TC01-10-1-3-R001`, `TC01-10-1-4-R001` and
+    `TC01-10-1-5-R001`. This leaf cannot close before their native proof exists.
+  - [x] **CONF-GAP-IMPL-TT-001 — Testing.** All 82 applicable `TT01` rows
+    identify their public layer and separate rejection, boundary, composition
+    and oracle evidence. `TT01-13-R001` describes deliberately absent behavior
+    and remains `target-not-applicable`. Structural tests require exactly 82
+    covered rows and this one non-goal, with complete applicable dimensions.
+    These reviewed traces do not replace the current execution and portable
+    checks required to renew T0.
+  - [ ] **CONF-GAP-IMPL-TL-001 — Language.** The current matrix contains 296
+    covered requirements, 14 `toolchain-limit` rows, seven `stdlib-pending`
+    rows and eight non-goals. Ordinary derive coherence and provider trait
+    operations now have public traces. Remaining language traces concern
+    async/select, effectful trait and closure contracts, `Self: Send` and
+    concurrent collection cursors. Missing reviewed traces are not proof of
+    missing implementations, but the previous whole-language closure was
+    unsupported and is reopened until each applicable row has current proof.
 
 - [x] **CONF-LAYER-RESULT-001 — Ejecutar y atestar cada caso de layer.** El
   resultado de `tondo-conformance run` debe quedar ligado al hash del draft e
@@ -3819,7 +3825,7 @@ reporters.
   cubren parseo, matching, no-update implícito, separación del stage y rutas.
 
 - [ ] **UTEST-INTERRUPT-001 — Connect OS interruption to coordinator and worker lifecycle.**
-  The public CLI has fourteen Linux SIGINT scenarios covering cooperative cleanup,
+  The public CLI has sixteen Linux SIGINT scenarios covering cooperative cleanup,
   grace expiry, repeated delivery, worker reaping and output rollback. Worker
   temporary roots are removed before publication, including forced exits.
   Process-capable test targets require an explicit OS containment provider;
@@ -3969,10 +3975,12 @@ reporters.
 - [ ] **UTEST-SPEC-EVIDENCE-001 — Bind every testing requirement to its actual public execution.**
   Public pipeline regressions execute full-target compilation, production
   sealing, integration isolation, inputs, dependencies and interruption.
-  The current matrix still leaves `TT01-13-1-R001`, `TT01-13-1-R002` and
-  `TT01-13-1-R003` without complete public-boundary traces for the quality
-  policy, report pipeline and input identity. A passing quality campaign
-  does not itself complete these normative evidence records or close T0.
+  All 82 applicable testing requirements now have reviewed six-dimension
+  traces, including quality thresholds, exact report bytes and input identity.
+  The public quality CLI rejects unbound capture, changed reports, unknown
+  binding fields and source/toolchain drift before altering the baseline.
+  Current joint execution, quality provenance and portable validation remain
+  required before this leaf and T0 can close.
 
 ### Gate T0 — Public testing conformance
 
@@ -4844,10 +4852,12 @@ Las leaves A3 solo pueden marcarse `[x]` cuando cumplen todos estos puntos:
   efímera de tooling y no crean `TestEntry`, suites ni subtests dinámicos.
 
 - [ ] **STD-PUBLIC-API-AUDIT-001 — Verify every applicable owner signature without vacuous coverage.**
-  The audit generator exists, but accepted zero indexed signatures for
-  build-only owners and misclassified runtime reflection. Index the complete
-  callable/protocol surface, require actual public cases and preserve
-  explicit gaps.
+  The generator now traces all 298 indexed signatures, including ordinary
+  meta providers and runtime reflection, and rejects missing or empty indexed
+  owners. The additional `std.bytes` owner in the 22-owner matrix still has
+  no indexed signature rows; its documentation record explicitly stays partial.
+  Reconcile public ownership of compiler-owned Bytes operations before closing
+  this global leaf. Existing byte execution remains independently evidenced.
 
 - [ ] **STD-IMPL-001 — Coordinate complete Core implementation by owner.**
   Existing Core kernels and public codec routes retain their scope. Reopened
@@ -4865,9 +4875,9 @@ Las leaves A3 solo pueden marcarse `[x]` cuando cumplen todos estos puntos:
 
 - [ ] **STD-CODEC-PUBLIC-001 — Complete the remaining public owner audit.**
   MessagePack and Protobuf public codec cases remain valid. The global
-  closure incorrectly treated std.reflect as build-only and omitted
-  callable/protocol inventories for other owners; renew strict proof after
-  those gaps close.
+  audit now includes runtime reflection and ordinary meta callables. Its
+  remaining compiler-owned Bytes attribution gap keeps this dependent leaf
+  open; codec interoperability does not resolve that inventory boundary.
 
 - [x] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** El runtime,
   temp resources, generators, diffs, tolerancias y control sellado se conservan.

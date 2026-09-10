@@ -91,8 +91,12 @@ queries, including concrete generics, TypeId map/set keys, public field
 filtering, declaration documentation, enum payloads, function modes and
 variadic tails. `reflection_entry_lowering_drops_queries_in_unreachable_functions`
 checks the closed-entry lowering boundary. VM tests cover foreign descriptor
-rejection and result admission with complete memory release. These tests do not
-replace the pending owner conformance and performance campaigns.
+rejection and result admission with complete memory release. The public
+conformance checker requires a current draft execution report for the complete
+callable and requirement table, as defined in
+[`stdlib-meta-reflect-conformance.md`](stdlib-meta-reflect-conformance.md).
+Owner promotion remains pending until that report and the joint gate pass.
+Performance measurements retain their separate boundary.
 
 The owner contract is [`testing/stdlib-reflect.json`](../../testing/stdlib-reflect.json)
 and the current cell record is maintained in

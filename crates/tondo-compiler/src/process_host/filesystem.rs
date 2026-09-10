@@ -501,7 +501,7 @@ mod tests {
             let source = format!(
                 "import std.fs\nimport std.path\nimport std.bytes\ntest observation {{\n{body}\n}}\n"
             );
-            let (program, entry) = super::super::tests::compile_host_admission_source(
+            let (program, entry) = super::super::compile_host_admission_source(
                 &source,
                 crate::driver::BuildTarget::vm_hosted_capabilities(),
                 crate::driver::Operation::Test,

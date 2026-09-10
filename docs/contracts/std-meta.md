@@ -250,8 +250,11 @@ Each mapping retains its own locked limits and exact compiled artifact hash.
 Notes and warnings survive final compilation; domain errors retain the request
 as their primary location and authorized input locations as related entries.
 Conventional TOML meta discovery and locked source loading are implemented in
-the public `lock`, `run` and `test` routes. Full model and owner conformance
-verification remain unfinished, so their tracker leaves stay open.
+the public `lock`, `run` and `test` routes. The public conformance checker requires
+observations for the complete callable and requirement table in
+[`stdlib-meta-reflect-conformance.md`](stdlib-meta-reflect-conformance.md).
+Owner promotion remains pending until the current execution report and joint
+gate pass; the table alone does not close the tracker leaves.
 The manifest groups these owners under
 `[meta.dependencies]`, `[[meta.inputs]]`, `[[meta.generators]]` and
 `[[meta.derive_providers]]`.

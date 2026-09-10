@@ -242,12 +242,15 @@
           ]
         },
         "CONF": {
-          "status": "pending",
-          "reason": "Declared cases require a current execution report; generation does not observe execution",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json#owners/std.meta"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.meta",
+            "testing/stdlib-meta-reflect-conformance.json"
           ],
-          "scope": "ordinary-tondo-companion-and-compiler-components"
+          "scope": "ordinary-tondo-meta"
         },
         "DOC": {
           "status": "verified",
@@ -354,12 +357,15 @@
           ]
         },
         "CONF": {
-          "status": "pending",
-          "reason": "Declared cases require a current execution report; generation does not observe execution",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "testing/stdlib-conformance.json#owners/std.reflect"
+            "docs/contracts/stdlib-meta-reflect-conformance.md",
+            "scripts/stdlib-meta-reflect-conformance-check.sh",
+            "testing/stdlib-conformance.json#owners/std.reflect",
+            "testing/stdlib-meta-reflect-conformance.json"
           ],
-          "scope": "public-hosted-descriptors-and-metadata-model"
+          "scope": "tondo-vm-hosted-metadata"
         },
         "DOC": {
           "status": "verified",

@@ -507,8 +507,8 @@ mod tests {
         assert_eq!(first.case_layers()[3].layer, "meta");
         assert_eq!(first.case_layers()[3].cases.len(), 6);
         assert_eq!(first.case_layers()[4].layer, "testing");
-        assert_eq!(first.case_layers()[4].cases.len(), 53);
-        assert_eq!(first.implemented_requirements().len(), 60);
+        assert_eq!(first.case_layers()[4].cases.len(), 57);
+        assert_eq!(first.implemented_requirements().len(), 73);
         assert_eq!(first.manifest().pending_tasks, ["CONF-SEAL-FINAL-001"]);
         assert!(first.check_sealable().is_err());
     }

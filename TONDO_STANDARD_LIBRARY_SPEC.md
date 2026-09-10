@@ -3858,6 +3858,14 @@ de API, la evidencia de owners, la coordinación de modelos y el harness
 externo de codecs; no permite declarar `verified` sin la observación de la
 fila ni convierte la coordinación en promoción.
 
+The public meta/reflection boundary additionally has an explicit row plan in
+`testing/stdlib-meta-reflect-conformance.json`: 25 ordinary companion callables,
+27 hosted descriptor callables and six requirements per owner. Its checker
+requires current draft execution observations for every referenced test, with
+exact source, inventory and manifest identities. `--plan` validates declarations
+only. This scoped conformance does not change the separate FUZZ or performance
+cells and cannot promote the other standard-library owners or the S1A seal.
+
 `std.async` retains its verified hosted implementation. Its model/test/fuzz
 stage remains partial and global conformance pending; the owner performance
 stage is explicitly not applicable with a recorded reason. The contract has

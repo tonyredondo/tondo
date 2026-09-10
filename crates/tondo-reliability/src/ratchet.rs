@@ -227,13 +227,13 @@ fn scope_evidence(
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let baseline = QualityBaseline::load(&root.join(QUALITY_BASELINE_PATH))
         .map_err(|error| format!("cannot load quality baseline for {name}: {error}"))?;
-    verify(&bytes, &baseline)
+    let canonical = verify(&bytes, &baseline)
         .map_err(|error| format!("{name} report failed the quality gate: {error}"))?;
     let provenance_sha256 = binding.provenance_digest()?;
     Ok(ScopeEvidence {
         status: "validated".into(),
         reason: format!("the supplied {name} report passed the quality and provenance gates"),
-        report_sha256: Some(binding.report_sha256),
+        report_sha256: Some(sha256(&canonical)),
         provenance_sha256: Some(provenance_sha256),
         tree_sha256: Some(binding.after.tree_sha256),
         input_set_sha256: Some(binding.after.input_set_sha256),
@@ -388,6 +388,38 @@ mod tests {
         let report =
             std::env::temp_dir().join(format!("tondo-ratchet-report-{}", std::process::id()));
         std::fs::write(&report, b"validated report").unwrap();
+        let provenance = crate::provenance::QualityProvenance::current(&root).unwrap();
+        let binding_path = report.with_extension("binding.json");
+        let metrics = canonical_json(&serde_json::json!({"caught": 1})).unwrap();
+        let mut observations = Vec::new();
+        for raw in [
+            br#"{"outcomes":[{"outcome":"CaughtMutant"}]}"#.as_slice(),
+            b"{\n  \"outcomes\": [{\"outcome\": \"Killed\", \"duration\": 17}]\n}\n",
+        ] {
+            std::fs::write(&report, raw).unwrap();
+            let binding = crate::provenance::ReportBinding::new(
+                "mutation",
+                raw,
+                provenance.clone(),
+                provenance.clone(),
+            )
+            .unwrap();
+            std::fs::write(&binding_path, canonical_json(&binding).unwrap()).unwrap();
+            let observation = scope_evidence(
+                &root,
+                "mutation",
+                Some(&report),
+                Some(&binding_path),
+                true,
+                |_, _| Ok(metrics.clone()),
+            )
+            .unwrap();
+            assert_eq!(binding.report_sha256, sha256(raw));
+            assert_eq!(observation.report_sha256, Some(sha256(&metrics)));
+            observations.push(observation);
+        }
+        assert_eq!(observations[0], observations[1]);
+        std::fs::remove_file(binding_path).unwrap();
         std::fs::remove_file(report).unwrap();
     }
 }

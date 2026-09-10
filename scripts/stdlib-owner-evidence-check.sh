@@ -62,8 +62,12 @@ jq -e '
     and (.owners | length == 22)
     and (all(.owners[]; .cells.FUZZ.status == "partial" and (.cells.FUZZ.reason | length > 0)))
     and (all(.owners[];
-      .cells.CONF.status == "pending"
-      and (.cells.CONF.reason | length > 0)
+      (if .cells.CONF.status == "verified" then
+        (.id | IN("std.meta", "std.reflect"))
+        and .cells.CONF.reason == null
+        and any(.cells.CONF.refs[]; . == "scripts/stdlib-meta-reflect-conformance-check.sh")
+       else .cells.CONF.status == "pending" and (.cells.CONF.reason | length > 0)
+       end)
       and any(.cells.CONF.refs[]; startswith("testing/stdlib-conformance.json#owners/"))
     ))
 ' "$evidence" >/dev/null || die "invalid component evidence registry"
@@ -73,6 +77,7 @@ trap 'rm -f "$generated"' EXIT
 TONDO_STDLIB_OWNER_EVIDENCE="$evidence" scripts/stdlib-owner-evidence-generate.sh "$generated" >/dev/null
 cmp -s "$evidence" "$generated" || die "FUZZ/CONF cells are stale or overstate their source contracts"
 TONDO_STDLIB_OWNER_EVIDENCE="$evidence" scripts/stdlib-fuzz-check.sh >/dev/null
+scripts/stdlib-meta-reflect-conformance-check.sh --plan >/dev/null
 
 while IFS=$'\t' read -r leaf contract owner; do
     [[ -f "$root/$contract" ]] || die "missing owner contract: $contract"
@@ -94,4 +99,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (22 owners; component evidence retained; FUZZ and CONF promotion pending)"
+echo "stdlib owner evidence: OK (22 owners; recorded public scopes checked; aggregate promotion pending)"

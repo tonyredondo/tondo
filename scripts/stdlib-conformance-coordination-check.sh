@@ -49,12 +49,19 @@ jq -e '
     owner_pending: ([.owners[] | select(.status == "pending")] | length)
   })
   and all(.owners[];
+    . as $owner
+    |
     ((.id | type) == "string" and (.id | test("^std\\.[a-z]+$")))
     and (.rows | type == "array" and length > 0)
     and (.public_signatures | type == "array")
     and (.requirements | type == "array")
-    and (.status | IN("pending", "partial"))
-    and (.reason | type == "string" and length > 0)
+    and (if .status == "verified" then
+      (.id | IN("std.meta", "std.reflect")) and .reason == null
+      and (.evidence.commands | index("scripts/stdlib-meta-reflect-conformance-check.sh")) != null
+      and (.evidence.refs | index("testing/stdlib-meta-reflect-conformance.json")) != null
+      and .evidence.scope == (if .id == "std.meta" then "ordinary-tondo-meta" else "tondo-vm-hosted-metadata" end)
+     else (.status | IN("pending", "partial")) and (.reason | type == "string" and length > 0)
+     end)
     and (.evidence.status == .status)
     and (.evidence.refs | type == "array" and length > 0)
     and (.evidence.commands | type == "array" and length > 0)
@@ -63,8 +70,8 @@ jq -e '
     and all(.rows[];
       ((.id | type) == "string" and (.id | (startswith("signature:") or startswith("requirement:"))))
       and (.kind | IN("signature", "requirement"))
-      and (.status | IN("pending", "partial"))
-      and (.reason | type == "string" and length > 0)
+      and .status == $owner.status
+      and .reason == $owner.reason
       and (.refs | type == "array" and length > 0)
     )
   )
@@ -115,4 +122,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].evidence.commands[]' "$coordination")
 
-echo "stdlib conformance coordination: consistent case plan; execution promotion remains pending"
+echo "stdlib conformance coordination: recorded owner scopes are consistent; aggregate promotion remains pending"

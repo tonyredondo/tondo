@@ -141,6 +141,7 @@ fn exercise_bytecode_admission(input: &[u8]) {
             },
         ],
         nominals: Vec::new(),
+        reflection: Default::default(),
         callables: Vec::new(),
         constants: Vec::new(),
         functions: Vec::new(),

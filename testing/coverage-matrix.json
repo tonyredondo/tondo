@@ -15,7 +15,7 @@
       "sha256": "c7a6090383da27cf1b737f4315b87549bf8c54e3f36b3d186af97730e58bf738"
     }
   ],
-  "inventory_sha256": "eeabc5da24a7aa5b1e75d6f9bd03188ed522d1bdc4861382a41e48972df58f6b",
+  "inventory_sha256": "e6e1bc0b1a5b1e6b0f3d980dbe283951dc4ffed01265e5d8266c934a7035ad44",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 445,
@@ -25,10 +25,10 @@
       "TONDO_TOOLCHAIN_SPEC.md": 37
     },
     "by_status": {
-      "covered": 398,
+      "covered": 411,
       "stdlib-pending": 7,
       "target-not-applicable": 9,
-      "toolchain-limit": 31
+      "toolchain-limit": 18
     },
     "by_risk": {
       "critical": 263,
@@ -36,7 +36,7 @@
       "low": 40,
       "medium": 18
     },
-    "with_executable_evidence": 398
+    "with_executable_evidence": 411
   },
   "requirements": [
     {
@@ -348,35 +348,51 @@
       "text_sha256": "e7d0b965e32a398b11e3527c61487190627c95392e886156dc6f80201e05470b",
       "phase": "cli",
       "risk": "high",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:1309#10-cli-de-proyecto"
+        "draft-layer:testing:testing-56-process-containment",
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication",
+        "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-56-process-containment"
+          ],
+          "waiver": null
         }
       }
     },
@@ -1869,35 +1885,56 @@
       "text_sha256": "c56ae4733b7fd3867ab7e4a25cc910f43e389c1252db03e1502e29caae8163a9",
       "phase": "resolution",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:862#5-2-correspondencia-exacta"
+        "draft-layer:testing:testing-23-dev-dependencies",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_are_visible_to_unit_overlays_with_sealed_production",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_check_rehashed_interfaces_and_alias_collisions",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_execute_transitive_code_and_keep_production_identical",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_reject_drift_before_selection_or_publication",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_reject_unclosed_lock_graphs",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_use_locked_defaults_in_test_only_projects",
+        "rust:tondo-compiler:src::test_dependencies:production_identity_is_framed_and_does_not_depend_on_test_records"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_execute_transitive_code_and_keep_production_identical"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_check_rehashed_interfaces_and_alias_collisions",
+            "rust:tondo-cli:tests::cli:public_test_dependencies_reject_drift_before_selection_or_publication",
+            "rust:tondo-cli:tests::cli:public_test_dependencies_reject_unclosed_lock_graphs"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_use_locked_defaults_in_test_only_projects"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:public_test_dependencies_are_visible_to_unit_overlays_with_sealed_production"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_dependencies:production_identity_is_framed_and_does_not_depend_on_test_records"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-23-dev-dependencies"
+          ],
+          "waiver": null
         }
       }
     },
@@ -16752,35 +16789,58 @@
       "text_sha256": "a5ec5a2ef68e541b09fedcf67865d35057b01b589638946a5ad751d0bad22c73",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The named diagnostic has no complete executable evidence set linked to this prose requirement.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10506#27-3-providers-y-resultado-de-derive"
+        "draft-layer:meta:meta-semantics",
+        "rust:tondo-cli:tests::cli:meta_toml_lock_and_run_execute_generators_derives_and_transitive_sources",
+        "rust:tondo-compiler:src::driver:derive_rejects_duplicate_pairs_before_publishing_generated_sources",
+        "rust:tondo-compiler:src::meta_compile:meta_source_provider_rejects_invalid_entry_and_nested_derivation",
+        "rust:tondo-compiler:src::meta_derive:providers_return_only_validated_formatted_impl_bodies",
+        "rust:tondo-compiler:src::meta_frontend:meta_source_derive_accepts_only_necessary_added_bounds",
+        "rust:tondo-compiler:src::meta_frontend:meta_source_derive_obeys_ordinary_coherence_and_publishes_nothing_on_conflict",
+        "rust:tondo-compiler:src::meta_frontend:meta_source_frontend_executes_ordinary_derive_and_retains_notes",
+        "rust:tondo-compiler:src::meta_provider:meta_public_source_derive_rejects_foreign_target_and_unmappable_ranges"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "evidence": [
+            "rust:tondo-compiler:src::meta_frontend:meta_source_frontend_executes_ordinary_derive_and_retains_notes"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "evidence": [
+            "rust:tondo-compiler:src::meta_compile:meta_source_provider_rejects_invalid_entry_and_nested_derivation",
+            "rust:tondo-compiler:src::meta_frontend:meta_source_derive_obeys_ordinary_coherence_and_publishes_nothing_on_conflict",
+            "rust:tondo-compiler:src::meta_provider:meta_public_source_derive_rejects_foreign_target_and_unmappable_ranges"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "evidence": [
+            "rust:tondo-compiler:src::driver:derive_rejects_duplicate_pairs_before_publishing_generated_sources",
+            "rust:tondo-compiler:src::meta_frontend:meta_source_derive_accepts_only_necessary_added_bounds"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:meta_toml_lock_and_run_execute_generators_derives_and_transitive_sources"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "evidence": [
+            "rust:tondo-compiler:src::meta_derive:providers_return_only_validated_formatted_impl_bodies"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         }
       }
     },
@@ -17020,35 +17080,56 @@
       "text_sha256": "2970fd7e0bf8952441fb10c3730a486983e75203a5757fb8e73f2a85e8bc0383",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10590#27-6-modelo-semántico-meta"
+        "draft-layer:meta:meta-semantics",
+        "rust:tondo-compiler:src::meta:meta_snapshot_origin_is_hashed_and_revalidated_when_decoded",
+        "rust:tondo-compiler:src::meta:meta_snapshot_shapes_expose_only_structural_data",
+        "rust:tondo-compiler:src::meta_source_api:meta_origins_authorize_only_actual_admitted_source_ranges",
+        "rust:tondo-compiler:src::project:meta_model_closes_prelude_operation_signatures_and_codec_bounds",
+        "rust:tondo-compiler:src::project:meta_model_includes_builtin_nominals_without_fabricated_source_spans",
+        "rust:tondo-compiler:src::project:meta_model_includes_public_methods_without_their_bodies",
+        "rust:tondo-compiler:src::project:meta_model_trait_operations_preserve_self_local_binders_and_defaults"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::project:meta_model_includes_builtin_nominals_without_fabricated_source_spans",
+            "rust:tondo-compiler:src::project:meta_model_trait_operations_preserve_self_local_binders_and_defaults"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::meta_source_api:meta_origins_authorize_only_actual_admitted_source_ranges"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::project:meta_model_closes_prelude_operation_signatures_and_codec_bounds"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::project:meta_model_includes_public_methods_without_their_bodies"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::meta:meta_snapshot_origin_is_hashed_and_revalidated_when_decoded",
+            "rust:tondo-compiler:src::meta:meta_snapshot_shapes_expose_only_structural_data"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         }
       }
     },
@@ -24726,35 +24807,49 @@
       "text_sha256": "aae0b202b9a7cef38fa9948d67592825f43824bd288c5cc4fda366bd87c92c69",
       "phase": "testing",
       "risk": "high",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:2812#13-1-identidad-de-quality-evidence"
+        "draft-layer:testing:testing-54-quality",
+        "rust:tondo-reliability:src::quality:explicit_coverage_floor_preserves_observations_and_rejects_below_eighty_percent",
+        "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:src::quality:explicit_coverage_floor_preserves_observations_and_rejects_below_eighty_percent"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-54-quality"
+          ],
+          "waiver": null
         }
       }
     },
@@ -24770,35 +24865,51 @@
       "text_sha256": "6604c54572cd56895802c21bb7bf5ed8fa83ac66ff3009253cbc19605b4f7bf9",
       "phase": "testing",
       "risk": "high",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:2820#13-1-identidad-de-quality-evidence"
+        "draft-layer:testing:testing-54-quality",
+        "rust:tondo-reliability:src::provenance:binding_rejects_changed_reports_and_trees",
+        "rust:tondo-reliability:src::provenance:current_identity_is_stable_and_tracks_inputs",
+        "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:src::provenance:binding_rejects_changed_reports_and_trees",
+            "rust:tondo-reliability:src::provenance:current_identity_is_stable_and_tracks_inputs"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-54-quality"
+          ],
+          "waiver": null
         }
       }
     },
@@ -24814,35 +24925,51 @@
       "text_sha256": "c7d586bcfd55dc59a292bd9e361bae309c1d858b1d5d0c6571be1a94fa4053e6",
       "phase": "testing",
       "risk": "high",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:2842#13-1-identidad-de-quality-evidence"
+        "draft-layer:testing:testing-54-quality",
+        "rust:tondo-reliability:src::provenance:binding_rejects_changed_reports_and_trees",
+        "rust:tondo-reliability:src::provenance:current_identity_is_stable_and_tracks_inputs",
+        "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:tests::cli_contract:quality_capture_and_verify_are_reproducible_in_an_isolated_workspace"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-reliability:src::provenance:binding_rejects_changed_reports_and_trees",
+            "rust:tondo-reliability:src::provenance:current_identity_is_stable_and_tracks_inputs"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-54-quality"
+          ],
+          "waiver": null
         }
       }
     },
@@ -27422,35 +27549,62 @@
       "text_sha256": "37f96546a9193670ab7aeca4e578d069a5551349463ea1a810794ca3517f3cae",
       "phase": "testing",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:1223#7-8-límites-y-timeouts"
+        "draft-layer:testing:testing-55-phase-limits",
+        "rust:tondo-cli:tests::cli:minimum_phase_instruction_limit_still_publishes_a_terminal_report",
+        "rust:tondo-cli:tests::cli:phase_frame_memory_is_admitted_before_local_storage_and_preserves_siblings",
+        "rust:tondo-cli:tests::cli:phase_heap_exhaustion_is_reported_without_losing_sibling_evidence",
+        "rust:tondo-cli:tests::cli:phase_instruction_budget_is_shared_with_blocking_workers",
+        "rust:tondo-cli:tests::cli:phase_scheduler_metadata_is_admitted_before_task_publication",
+        "rust:tondo-cli:tests::cli:phase_virtual_timer_limits_restore_the_clock_and_allow_released_slots",
+        "rust:tondo-cli:tests::cli:test_reports_bind_captured_inputs_and_effective_resource_limits",
+        "rust:tondo-cli:tests::cli:testing_host_evidence_limits_are_atomic_and_are_not_retried",
+        "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried",
+        "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:minimum_phase_instruction_limit_still_publishes_a_terminal_report",
+            "rust:tondo-cli:tests::cli:test_reports_bind_captured_inputs_and_effective_resource_limits"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_frame_memory_is_admitted_before_local_storage_and_preserves_siblings",
+            "rust:tondo-cli:tests::cli:phase_heap_exhaustion_is_reported_without_losing_sibling_evidence",
+            "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_scheduler_metadata_is_admitted_before_task_publication",
+            "rust:tondo-cli:tests::cli:phase_virtual_timer_limits_restore_the_clock_and_allow_released_slots",
+            "rust:tondo-cli:tests::cli:testing_host_evidence_limits_are_atomic_and_are_not_retried"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_instruction_budget_is_shared_with_blocking_workers"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-55-phase-limits"
+          ],
+          "waiver": null
         }
       }
     },
@@ -27466,35 +27620,52 @@
       "text_sha256": "794342fec961c225eb74d5e32a70765d2208daba60425e8111e1c4b2a9e5680f",
       "phase": "testing",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:1242#7-8-límites-y-timeouts"
+        "draft-layer:testing:testing-55-phase-limits",
+        "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:phase_deadlines_do_not_sum_descendants_or_setup_and_teardown",
+        "rust:tondo-cli:tests::cli:phase_timeout_retry_keeps_complete_attempts_and_fresh_participations",
+        "rust:tondo-cli:tests::cli:phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results",
+        "rust:tondo-compiler:src::test_runtime:statuses_cover_return_skip_error_panic_resource_timeout_and_infrastructure"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_deadlines_do_not_sum_descendants_or_setup_and_teardown"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_timeout_retry_keeps_complete_attempts_and_fresh_participations"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:statuses_cover_return_skip_error_panic_resource_timeout_and_infrastructure"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-55-phase-limits"
+          ],
+          "waiver": null
         }
       }
     },
@@ -27510,35 +27681,51 @@
       "text_sha256": "9384c65512e8049a10bd9c63e56e943020faa58197f3479f8298fae470142235",
       "phase": "testing",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:1249#7-8-límites-y-timeouts"
+        "draft-layer:testing:testing-56-process-containment",
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication",
+        "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:runtime_config_and_resource_limits_are_closed"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-56-process-containment"
+          ],
+          "waiver": null
         }
       }
     },
@@ -27554,35 +27741,53 @@
       "text_sha256": "7a533b5d57241d4db09aed08a43110dddb5966801d71a12ea2e6e7d9bbeaa4df",
       "phase": "testing",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:1257#7-8-límites-y-timeouts"
+        "draft-layer:testing:testing-56-process-containment",
+        "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:temporary_testing_cleanup_failure_preserves_outputs_and_never_retries",
+        "rust:tondo-compiler:src::test_interrupt:complete_cleanup_and_close_restore_isolation_and_select_exit_four"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs",
+            "rust:tondo-cli:tests::cli:temporary_testing_cleanup_failure_preserves_outputs_and_never_retries"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_interrupt:complete_cleanup_and_close_restore_isolation_and_select_exit_four"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-56-process-containment"
+          ],
+          "waiver": null
         }
       }
     },
@@ -27598,35 +27803,54 @@
       "text_sha256": "fcbb897fa67cc9e0c2da8131d944ca5b238e9e90a46d8140fc45baaf301c7ebe",
       "phase": "testing",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:1273#7-8-límites-y-timeouts"
+        "draft-layer:testing:testing-55-phase-limits",
+        "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs",
+        "rust:tondo-cli:tests::cli:phase_deadlines_do_not_sum_descendants_or_setup_and_teardown",
+        "rust:tondo-cli:tests::cli:phase_retry_units_cover_suite_failures_and_independent_leaf_failures",
+        "rust:tondo-cli:tests::cli:phase_timeout_retry_keeps_complete_attempts_and_fresh_participations",
+        "rust:tondo-cli:tests::cli:phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results",
+        "rust:tondo-compiler:src::test_runtime:cleanup_runs_lifo_after_error_and_is_skipped_for_forced_termination"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_deadlines_do_not_sum_descendants_or_setup_and_teardown"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_timeouts_preserve_siblings_setup_blocking_and_teardown_results"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:external_interrupt_drains_cleanup_and_preserves_complete_outputs"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:phase_retry_units_cover_suite_failures_and_independent_leaf_failures",
+            "rust:tondo-cli:tests::cli:phase_timeout_retry_keeps_complete_attempts_and_fresh_participations"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_runtime:cleanup_runs_lifo_after_error_and_is_skipped_for_forced_termination"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-55-phase-limits"
+          ],
+          "waiver": null
         }
       }
     },
@@ -28422,35 +28646,52 @@
       "text_sha256": "45338ea8f2c0b31bc721583a47069006a2e41023c7748b1937099a50ff92c1ac",
       "phase": "testing",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
+      "status": "covered",
+      "classification_reason": "The normative evidence map links this requirement to executable public-boundary evidence in the live draft.",
       "evidence": [
-        "TONDO_TESTING_SPEC.md:1877#9-3-logs-y-captura-de-output"
+        "draft-layer:testing:testing-57-binary-streams",
+        "rust:tondo-cli:tests::cli:binary_capture_is_retained_separately_for_retries_and_repeats",
+        "rust:tondo-cli:tests::cli:writer_bytes_are_captured_per_attempt_and_projected_without_loss",
+        "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried",
+        "rust:tondo-compiler:src::test_control:logs_tags_streams_and_report_are_isolated_and_ordered",
+        "rust:tondo-compiler:src::test_report:report_preserves_metadata_and_rejects_unknown_or_noncanonical_output"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:writer_bytes_are_captured_per_attempt_and_projected_without_loss"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_report:report_preserves_metadata_and_rejects_unknown_or_noncanonical_output"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-cli:tests::cli:binary_capture_is_retained_separately_for_retries_and_repeats"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "rust:tondo-compiler:src::test_control:logs_tags_streams_and_report_are_isolated_and_ordered"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage."
+          "evidence": [
+            "draft-layer:testing:testing-57-binary-streams"
+          ],
+          "waiver": null
         }
       }
     },

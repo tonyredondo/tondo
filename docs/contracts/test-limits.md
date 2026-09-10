@@ -782,6 +782,8 @@ have a finite 30-second envelope. Completed leaf results survive a suite
 teardown timeout. Retry integration uses the same immutable compiled artifact
 and independent process for each selected retry unit.
 
-This does not close all structural limits per phase or prove every native and
-non-cooperative cleanup route. `UTEST-LIMIT-001` and T0 remain open until those
-remaining integration boundaries and the required gates are verified.
+The hosted public regressions also exercise structural admission for scheduler
+metadata, collections, paths, environment names, binary streams and result
+publication. Their reviewed traces belong to the testing draft layer.
+`UTEST-LIMIT-001` and T0 remain open pending the current joint gate and portable
+validation. Native AOT cleanup remains a separate integration boundary.
