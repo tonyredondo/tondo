@@ -1,19 +1,22 @@
-import std.process
+import std.fs
+import std.path
+import std.bytes
 import std.testing
 
 suite retry_group {
     testing.log("suite participation")
 
     test deterministicFlaky {
-        match process.command(
-                "sh",
-                "-c",
-                "if test -f dogfood-retry.marker; then rm dogfood-retry.marker; exit 0; else : > dogfood-retry.marker; exit 7; fi",
-            )
-            .check() {
-            ok(_) => testing.log("isolated retry passed")
-            err(process.ProcessExitError(_)) => testing.failNow("controlled first attempt")
-            err(process.ProcessError(_)) => testing.failNow("retry fixture could not start")
+        let marker = path.Path.fromString("dogfood-retry.marker")?
+        match fs.readAll(marker) {
+            ok(_) => {
+                fs.remove(marker)?
+                testing.log("isolated retry passed")
+            }
+            err(_) => {
+                fs.writeAll(marker, bytes.Bytes("retry")?)?
+                testing.failNow("controlled first attempt")
+            }
         }
     }
 

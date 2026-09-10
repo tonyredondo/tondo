@@ -16,6 +16,9 @@ pub const STD_META_PROFILE: &str = "meta";
 const SOURCE_BYTES: &[u8] = include_bytes!("../../../stdlib/meta/src/meta.to");
 const DESCRIPTOR_BYTES: &[u8] = include_bytes!("../../../stdlib/meta/descriptor.json");
 
+#[path = "meta_source_api.rs"]
+pub mod source_api;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StdMetaSourceDescriptor {
@@ -275,7 +278,7 @@ mod tests {
         assert_eq!(package.descriptor().source_hash(), sha256(package.source()));
         assert_eq!(
             package.content_hash(),
-            "sha256:0ca6b7cd70d4aaca4f3c222f8d681620f7fa937955e4328f25c7088634bc7226"
+            "sha256:45628c83b0e8d95afb8d07ead31b4051af944c96f0dc43aefd58af92fb39ed91"
         );
     }
 
@@ -356,7 +359,7 @@ mod tests {
     #[test]
     fn request_and_response_round_trip_only_canonical_owned_values() {
         let request = MetaRequest::new(
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             [MetaInput::new("schema", b"value").unwrap()],
             [MetaOutputSpec::new("generated/value.to", "generated.value").unwrap()],
             MetaLimits::new(100, 1024, 1024).unwrap(),
@@ -379,7 +382,7 @@ mod tests {
     #[test]
     fn canonical_codecs_reject_api_hash_snapshot_and_encoding_drift() {
         let request = MetaRequest::new(
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             [MetaInput::new("input", b"bytes").unwrap()],
             [MetaOutputSpec::new("out.to", "out").unwrap()],
             MetaLimits::new(1, 1, 1).unwrap(),
@@ -417,7 +420,7 @@ mod tests {
     #[test]
     fn response_codec_rejects_source_hash_and_encoding_drift() {
         let request = MetaRequest::new(
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             [],
             [MetaOutputSpec::new("out.to", "out").unwrap()],
             MetaLimits::new(1, 1, 32).unwrap(),

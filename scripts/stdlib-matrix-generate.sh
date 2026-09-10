@@ -252,7 +252,7 @@ jq -n \
             | (audit_implementation_stage($row)) as $impl_stage
             | (audit_model_stage($row; $owner_impl)) as $model_stage
             | [{id: "SPEC", value: evidence_stage($id; "SPEC"; {status: "verified", reason: null, refs: [$row.contract + "#" + ($row.line | tostring)]}; $evidence)}, {id: "IMPL/HOST", value: evidence_stage($id; "IMPL/HOST"; $impl_stage; $evidence)}, {id: "MODEL/TEST/FUZZ", value: evidence_stage($id; "MODEL/TEST/FUZZ"; $model_stage; $evidence)}, {id: "PERF", value: evidence_stage($id; "PERF"; $perf; $evidence)}, {id: "CONF", value: evidence_stage($id; "CONF"; conformance_stage($id; $public_conformance); $evidence)}, {id: "DOC", value: evidence_stage($id; "DOC"; $doc; $evidence)}] as $stages
-            | {id: ("signature:" + $row.id), kind: "signature", owner: $id, layer: ($implementation.layer // ($spec.source_set // "A0")), scope: "STD-0.1A", signature: $row.signature, symbol: $row.symbol, source: {contract: $row.contract, line: $row.line, audit: ("testing/stdlib-public-api.json#rows/" + $row.id)}, dimensions: $dimensions, stages: $stages, status: row_status($stages | map(.value))}
+            | {id: ("signature:" + $row.id), kind: "signature", owner: $id, layer: ($implementation.layer // ($spec.source_set // "A0")), scope: "STD-0.1A", signature: $row.signature, declaring_trait: ($row.declaring_trait // null), symbol: $row.symbol, source: {contract: $row.contract, line: $row.line, audit: ("testing/stdlib-public-api.json#rows/" + $row.id)}, dimensions: $dimensions, stages: $stages, status: row_status($stages | map(.value))}
         )) as $signature_rows
         | ($requirement_rows + $signature_rows);
 
@@ -317,6 +317,7 @@ jq -S '
                 layer: $row.layer,
                 scope: $row.scope,
                 signature: ($row.signature // null),
+                declaring_trait: ($row.declaring_trait // null),
                 symbol: ($row.symbol // null),
                 requirement: ($row.requirement // null),
                 source: $row.source,

@@ -89,5 +89,5 @@ fn main() {
     assert(not (nan > 0.0f32))
     assert(not (nan >= 0.0f32))
 
-    console.print("ieee-floats\n")
+    _ = console.print("ieee-floats\n")
 }

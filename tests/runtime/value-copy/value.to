@@ -93,5 +93,5 @@ fn main() {
     assert(copiedRef == originalRef)
     assert(copiedRef.value == [42])
 
-    console.print("value\n")
+    _ = console.print("value\n")
 }

@@ -78,8 +78,8 @@ jq -n \
               + ($cases | map(.source))
               + (if ($signatures | length) > 0 then ["testing/stdlib-public-api.json"] else [] end)
             ) | unique | sort),
-            scope: (if $owner.id == "std.meta" then "compiler-component-only"
-                    elif $owner.id == "std.reflect" then "metadata-model-only"
+            scope: (if $owner.id == "std.meta" then "ordinary-tondo-companion-and-compiler-components"
+                    elif $owner.id == "std.reflect" then "public-hosted-descriptors-and-metadata-model"
                     else "public-owner-and-runtime" end)
           }
       )) as $owners

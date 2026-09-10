@@ -7,10 +7,13 @@ y su salida reproducible es
 [`testing/stdlib-public-api.json`](../../testing/stdlib-public-api.json). El
 script [`scripts/stdlib-public-api-audit.sh`](../../scripts/stdlib-public-api-audit.sh)
 extrae las firmas de los contratos y genera una fila por firma.
-Solo se indexan declaraciones fuente canónicas `pub fn`: no existe una familia
-`async fn`. El efecto postfix `suspends` pertenece a la firma publicada y al
-hash de API; es obligatorio en contratos sin cuerpo e inferible en
-implementaciones con cuerpo.
+The index includes canonical `pub fn` declarations and methods inside public
+traits. A trait-method row retains its exact source signature and
+`declaring_trait`, including that trait's generic parameters. Private trait
+methods and method bodies are not extracted as public declarations.
+There is no `async fn` declaration family. The postfix `suspends` effect belongs
+to the published signature and its API hash. It is required for bodyless
+contracts and inferred in implementations with bodies.
 
 ## Cadena exigida
 
@@ -27,13 +30,12 @@ el caso contiene una llamada al nombre canónico. La llamada no se satisface
 con un path Rust aislado, un test que ejerce otra operación, una documentación,
 un alias bootstrap ni un registro runtime paralelo.
 
-Los owners build-only pueden declarar `host_vm.kind = not-applicable`, pero la
-razón debe ser normativa y el caso debe apuntar a una raíz compiler-owned
-`crates/...` con `case.kind = build-only`. Si el contrato no expone ninguna
-firma indexable, el owner queda verificado solo cuando esa frontera build-only
-es explícita; un owner runtime sin firmas sigue abierto con
-`no-callable-signatures-indexed`. Esto evita confundir una implementación de
-soporte con una API pública auditada.
+Build-only owners may declare `host_vm.kind = not-applicable` with a normative
+reason and an executable compiler-owned case. Every audited callable owner
+requires a nonempty index; a build-only label cannot turn an empty extraction
+into evidence. Empty owners retain `no-callable-signatures-indexed`.
+Shared protocols with static dispatch, including `std.serialization`, link
+their HIR contracts and bytecode dispatch to ordinary public Tondo calls.
 
 Los intrinsics Core que se materializan como agregados y ramas MIR usan
 `host_vm.kind = vm-inline`: la matriz conserva los símbolos exactos del
@@ -63,12 +65,12 @@ solo promueve los cuatro owners Hosted cuando sus capabilities, bridges y
 firmas públicas están verificadas; el resultado global de `--strict` queda
 determinado por la matriz completa y sus razones normativas.
 
-La auditoría actual registra `verified` con 214/214 firmas y cero gaps. Las
-llamadas públicas de codecs incluyen rutas dynamic/typed y streaming; las
-fronteras build-only se verifican por su caso compiler-owned y razón
-`not-applicable`, sin fabricar una llamada runtime. La matriz normativa puede
-seguir `open-gaps` por requisitos de fuzz, rendimiento, conformance o promoción;
-eso es una señal fail-closed del tracker, no un waiver de esta auditoría.
+The generated registry contains the current counts and gaps. An indexed call
+is static traceability evidence; the index does not prove that the call ran
+or that every behavior of the owner conforms. Runtime tests separately compare
+actual outputs with fixture sidecars. The normative matrix can remain
+`open-gaps` for implementation, fuzz, performance, conformance or promotion;
+the index cannot override those open tracker requirements.
 
 ## Invariantes de la matriz
 

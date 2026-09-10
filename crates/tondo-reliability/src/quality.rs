@@ -30,6 +30,10 @@ pub struct CoverageBaseline {
     pub global: CoverageMetrics,
     pub risk_scopes: Vec<CoverageScope>,
     pub maximum_drop_basis_points: u32,
+    /// An explicit acceptance policy, separate from the historical counts.
+    /// Risk dimensions already below this floor retain their prior threshold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_floor_basis_points: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +116,15 @@ impl QualityBaseline {
             return Err("quality baseline contains incomplete provenance".into());
         }
         self.provenance.validate()?;
+        if self
+            .coverage
+            .acceptance_floor_basis_points
+            .is_some_and(|floor| floor == 0 || floor > 10_000)
+            || (self.coverage.acceptance_floor_basis_points.is_some()
+                && self.coverage.maximum_drop_basis_points != 0)
+        {
+            return Err("coverage acceptance floor must be in 1..=10000 and cannot combine with a relative drop".into());
+        }
         validate_metrics("global", &self.coverage.global)?;
         let mut scope_names = BTreeSet::new();
         for scope in &self.coverage.risk_scopes {
@@ -182,9 +195,15 @@ impl QualityBaseline {
                 observed.regions.basis_points,
             ),
         ] {
-            if current.saturating_add(self.coverage.maximum_drop_basis_points) < baseline {
+            let required = self
+                .coverage
+                .acceptance_floor_basis_points
+                .unwrap_or_else(|| {
+                    baseline.saturating_sub(self.coverage.maximum_drop_basis_points)
+                });
+            if current < required {
                 return Err(format!(
-                    "{name} coverage regressed from {baseline} to {current} basis points"
+                    "{name} coverage is {current} basis points, below required {required} (historical {baseline})"
                 ));
             }
         }
@@ -207,14 +226,21 @@ impl QualityBaseline {
                 ("function", &baseline.metrics.functions, &observed.functions),
                 ("region", &baseline.metrics.regions, &observed.regions),
             ] {
-                if observed_metric
-                    .basis_points
-                    .saturating_add(self.coverage.maximum_drop_basis_points)
-                    < baseline_metric.basis_points
-                {
+                let required = self.coverage.acceptance_floor_basis_points.map_or_else(
+                    || {
+                        baseline_metric
+                            .basis_points
+                            .saturating_sub(self.coverage.maximum_drop_basis_points)
+                    },
+                    |floor| baseline_metric.basis_points.min(floor),
+                );
+                if observed_metric.basis_points < required {
                     return Err(format!(
-                        "{} {name} coverage regressed from {} to {} basis points",
-                        baseline.name, baseline_metric.basis_points, observed_metric.basis_points
+                        "{} {name} coverage is {} basis points, below required {} (historical {})",
+                        baseline.name,
+                        observed_metric.basis_points,
+                        required,
+                        baseline_metric.basis_points
                     ));
                 }
             }
@@ -306,6 +332,7 @@ pub fn capture(
             global: coverage.global,
             risk_scopes: coverage.risk_scopes,
             maximum_drop_basis_points: 0,
+            acceptance_floor_basis_points: Some(8000),
         },
         mutation: MutationBaseline {
             tool: "cargo-mutants 27.1.0".into(),
@@ -753,6 +780,7 @@ mod tests {
                     metrics,
                 }],
                 maximum_drop_basis_points: 25,
+                acceptance_floor_basis_points: None,
             },
             mutation: MutationBaseline {
                 tool: "cargo-mutants".into(),
@@ -819,6 +847,53 @@ mod tests {
                 })
                 .is_err()
         );
+    }
+
+    #[test]
+    fn explicit_coverage_floor_preserves_observations_and_rejects_below_eighty_percent() {
+        let mut baseline = baseline();
+        let historical = CoverageMetrics {
+            lines: metric(10000, 9061).unwrap(),
+            functions: metric(10000, 8701).unwrap(),
+            regions: metric(10000, 8891).unwrap(),
+        };
+        baseline.coverage.global = historical.clone();
+        baseline.coverage.maximum_drop_basis_points = 0;
+        baseline.coverage.acceptance_floor_basis_points = Some(8000);
+        baseline.validate().unwrap();
+        let at_floor = CoverageMetrics {
+            lines: metric(10000, 8000).unwrap(),
+            functions: metric(10000, 8000).unwrap(),
+            regions: metric(10000, 8000).unwrap(),
+        };
+        baseline.verify_coverage(&at_floor).unwrap();
+        for dimension in 0..3 {
+            let mut below = at_floor.clone();
+            *match dimension {
+                0 => &mut below.lines,
+                1 => &mut below.functions,
+                _ => &mut below.regions,
+            } = metric(10000, 7999).unwrap();
+            assert!(baseline.verify_coverage(&below).is_err());
+        }
+        assert_eq!(baseline.coverage.global, historical);
+        let report = CoverageReport {
+            global: at_floor,
+            risk_scopes: baseline.coverage.risk_scopes.clone(),
+        };
+        // The fixture's 75% region scope retains its historical minimum.
+        baseline.verify_coverage_report(&report).unwrap();
+        let mut below = report;
+        below.risk_scopes[0].metrics.regions = metric(10000, 7499).unwrap();
+        assert!(baseline.verify_coverage_report(&below).is_err());
+        assert!(baseline.verify_mutation_score(7499).is_err());
+        for floor in [0, 10001] {
+            baseline.coverage.acceptance_floor_basis_points = Some(floor);
+            assert!(baseline.validate().is_err());
+        }
+        baseline.coverage.acceptance_floor_basis_points = Some(8000);
+        baseline.coverage.maximum_drop_basis_points = 1;
+        assert!(baseline.validate().is_err());
     }
 
     #[test]

@@ -22,5 +22,5 @@ fn main(): !(time.ClockError | time.DurationError) {
     timer.wait()?
     let cancelled = time.Timer.after(zero)?
     cancelled.cancel()
-    console.print("time-ok\n")
+    _ = console.print("time-ok\n")
 }

@@ -244,8 +244,8 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendE
     scope {
         let affine_actor = pool.actor(0, 0, actor_select_file)?
         let affine_ref = affine_actor.ref()
-        let file_path = path.fromString("Cargo.toml")?
-        let message = fs.open(file_path, fs.OpenMode.Read())?
+        let file_path = path.Path.fromString("Cargo.toml")?
+        let message = fs.open(file_path, fs.OpenMode.Read)?
         let selected = select {
             affine_ref.send(message) => false
             else => {
@@ -258,5 +258,5 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendE
     }
     pool.shutdown()
     cancel_pool_with_job()?
-    console.println("executor-ok")
+    _ = console.println("executor-ok")
 }

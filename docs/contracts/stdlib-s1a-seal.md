@@ -22,7 +22,7 @@ seal consumes the tracked owner, API, matrix, conformance, performance,
 documentation, distribution and async/select registries. It also consumes
 fresh reports from the current clean Git revision:
 
-- `stdlib-conformance.json` (22 owners, 387 rows and 206 draft cases);
+- `stdlib-conformance.json` (22 owners, 469 rows and 206 draft cases);
 - `stdlib-performance-report.json` plus its promoted coordinator;
 - `async-select-conformance.json` and `async-select-performance.json`; and
 - the reproducible VM distribution evidence and archive.
@@ -31,7 +31,7 @@ The runner executes the contract checks and negative-test suites, then rejects
 the seal if any of these is true:
 
 - the working tree is dirty or a report is bound to another revision/tree;
-- the strict public API audit is not `216/216` with zero gaps;
+- the strict public API audit is not `298/298` with zero gaps;
 - the normative matrix contains an applicable open cell;
 - FUZZ has fewer than 22 verified owners, PERF has a deferred dimension, or
   CONF/DIST/async-select evidence is not passed and draft-only;
@@ -41,6 +41,18 @@ the seal if any of these is true:
 
 No state is promoted by editing a JSON status. Every claim is derived from the
 registries and executable reports named above.
+
+The daily engineering gate records current prerequisites in
+`stdlib-s1a-readiness.json`, with hashes of every input registry. Open owner,
+matrix, fuzz or public API requirements keep S1A pending. The gate exercises
+the actual seal producer and verifies its explicit refusal before any bundle
+construction. It continues to run the bounded payload tests. Once all
+prerequisites are eligible, it runs the complete seal and bundle tests;
+eligibility alone never establishes conformance or promotes the draft.
+
+The standalone seal command always requires these prerequisites and all of
+its existing fresh execution, provenance and payload checks. A passing daily
+build/test job must report S1A as pending while this readiness report is open.
 
 ## Content-addressed bundle
 

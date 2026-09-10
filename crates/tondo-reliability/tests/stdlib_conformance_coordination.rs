@@ -36,7 +36,7 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
     assert_eq!(registry["rules"]["coordination_does_not_promote"], true);
 
     let matrix_rows = matrix["rows"].as_array().unwrap();
-    assert_eq!(matrix_rows.len(), 387);
+    assert_eq!(matrix_rows.len(), 469);
     assert_eq!(coordinated.len(), matrix_rows.len());
 
     for matrix_row in matrix_rows {
@@ -91,10 +91,7 @@ fn owner_closure_and_promotion_boundary_are_explicit() {
 
     for owner in owners(&registry) {
         let rows = owner["rows"].as_array().unwrap();
-        let expected_status = if matches!(
-            owner["id"].as_str().unwrap(),
-            "std.bytes" | "std.meta" | "std.reflect" | "std.serialization"
-        ) {
+        let expected_status = if owner["id"] == "std.bytes" {
             "partial"
         } else {
             "pending"

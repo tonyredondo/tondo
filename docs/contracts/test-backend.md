@@ -45,15 +45,49 @@ share its output budget with logs and tags. A println's newline participates in
 the same atomic preflight. Suite setup and teardown share their own capture;
 leaf capture does not enter the suite buffer or the worker protocol stream.
 
-This evidence does not yet establish independent VM instruction/heap budgets
-or OS processes for siblings in a suite participation, per-phase wall-clock
-deadlines, generalized async Writer capture, runtime input providers,
-dev-dependencies, or native execution. The hosted external interruption route
-and its remaining boundaries are recorded in `test-interrupt.md`. Whole-VM resource
-failures still abort the participation without a complete per-node report.
-The focused CLI regressions exercise assertions, budget rejection without
-retry, sibling evidence, stdout attribution, newline preflight and cleanup
-panic precedence through actual worker processes.
+Each leaf and suite phase has an independent instruction counter. Cooperative
+children and blocking workers share their owner's counter. Live VM heap charges
+follow the allocating node, including across blocking workers; retained suite
+objects do not consume a child's budget. GC and heap destruction release those
+charges. Compiler entry and structural cleanup have separate finite instruction
+allowances. Resource exhaustion terminates the affected node, cancels its work
+and preserves completed and unrelated sibling evidence; it is not retried.
+Explicit user defers are not guaranteed after a resource terminal.
+
+Blocking host responses carry their own testing control signal back to the
+worker. `skip` retains its reason and status through worker and parent cleanup;
+ordinary worker failures are delivered when the owning task resumes. Deferred
+pool shutdown uses the same pending lifecycle state as an ordinary call.
+
+The public coordinator admits closed test dependencies and runtime input
+descriptors before executing its immutable compiled participation; see
+`test-dependencies.md` and `test-input-runtime.md`. Phase deadlines and external
+interruption are described in `test-limits.md` and `test-interrupt.md`.
+
+Aggregate hosted-value memory accounting, complete scheduler capacity
+accounting, generalized async Writer capture and native execution remain
+separate open boundaries. An infrastructure failure that prevents isolation
+does not become a successful partial report. Current whole-tree promotion
+evidence is still required for T0.
+
+## Error and source identity
+
+Hidden leaf and setup callbacks infer `Unit ! E` using ordinary generic closure
+checking and require `E: Discard`. The VM consumes an error after cleanup and
+reports its concrete type without implicitly serializing its payload. Retries,
+repeats and blocked suite attempts preserve that original error record.
+
+Copied source ranges map static diagnostics, related locations and runtime
+terminal spans back to the original file. Diagnostic IDs are regenerated from
+the mapped locations. A fix is retained only if every edit maps to verbatim
+user source; generated helper edits are not presented as user fixes.
+
+Private runner calls carry the exact identifier ranges emitted by the compiler.
+The checker requires that provenance for every direct participation operation;
+the generated file's origin alone grants no access to copied user bodies,
+suite setup, deferred code or ordinary helpers. These operations cannot be
+function values. The public runner rejects such calls before listing or
+filtering, with diagnostics at the original source location.
 
 ## Canonical suspension migration
 

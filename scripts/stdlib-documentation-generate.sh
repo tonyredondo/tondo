@@ -75,9 +75,11 @@ jq -n \
           {id: "codecs-protobuf-external", kind: "external", source: "crates/tondo-stdlib/tests/codec_conformance.rs", command: "scripts/stdlib-codec-conformance.sh"}
         ],
         "std.reflect": [
-          {id: "reflect-metadata", kind: "compiler", source: "crates/tondo-compiler/src/reflect.rs", command: "scripts/stdlib-reflect-test.sh"}
+          {id: "reflect-public", kind: "runtime", source: "tests/runtime/m11-std-reflect-public-001.to", command: "scripts/stdlib-reflect-test.sh"},
+          {id: "reflect-metadata", kind: "compiler", source: "crates/tondo-compiler/src/reflect.rs", command: "cargo test -p tondo-compiler --locked --lib reflect::tests"}
         ],
         "std.serialization": [
+          {id: "serialization-public-protocols", kind: "runtime", source: "tests/runtime/m11-std-serialization-public-001.to", command: "scripts/stdlib-serialization-test.sh"},
           {id: "serialization-codec-entry", kind: "runtime", source: "tests/runtime/m11-std-codecs-001.to", command: "scripts/stdlib-serialization-test.sh"},
           {id: "serialization-external", kind: "external", source: "crates/tondo-stdlib/tests/codec_conformance.rs", command: "scripts/stdlib-codec-conformance.sh"}
         ],
@@ -142,8 +144,8 @@ jq -n \
                 refs: (if ($api_rows | length) == 0 then ["testing/stdlib-public-api.json"] else ["testing/stdlib-public-api.json"] end)
               }
             },
-            runtime_applicable: ($id != "std.meta" and $id != "std.reflect"),
-            runtime_reason: (if $id == "std.meta" then "current examples exercise compiler components; public provider integration is pending" elif $id == "std.reflect" then "current examples exercise the Rust metadata catalog; public Tondo runtime reflection is pending" else null end),
+            runtime_applicable: ($id != "std.meta"),
+            runtime_reason: (if $id == "std.meta" then "build-only owner; ordinary Tondo companion execution uses the closed meta VM" else null end),
             examples: ($verified_examples | sort_by(.id)),
             conformance: (first($c.owners[] | select(.id == $id)) | {status, reason, refs: .evidence.refs}),
             documentation_claim: "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."

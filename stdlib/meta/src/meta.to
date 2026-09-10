@@ -18,6 +18,360 @@ pub type SourceMap = {
     originEnd: UInt32
 }
 
+pub type Span = { file: UInt32, start: UInt32, end: UInt32 }
+pub enum Origin { Source(Span), Builtin(String) }
+pub type Root = { package: String, module: String }
+pub type Module = { identity: String, docs: String? }
+pub enum Visibility { Public, Private }
+pub type GenericParameter = { name: String, bounds: Array[String] }
+pub type Bound = { binder: String, traitIdentity: String }
+pub type Attribute = { name: String, argument: String? }
+type TypeName = { module: String, local: Bool, public: Bool, name: String, importSource: String?, alias: String }
+enum TypePart { Text(String), Name(TypeName), Unavailable(String) }
+/// An immutable canonical type and the explicit data needed to name it in source.
+pub type TypeRef = { priv identityValue: String, priv parts: Array[TypePart] }
+pub fn TypeRef.identity(self): String { self.identityValue }
+pub type Field = {
+    name: String
+    typeRef: TypeRef
+    visibility: Visibility
+    ordinal: UInt32
+    origin: Origin
+    docs: String?
+    attributes: Array[Attribute]
+}
+pub enum VariantPayload {
+    Unit
+    Tuple(Array[TypeRef])
+    Record(Array[Field])
+}
+pub type Variant = {
+    name: String
+    payload: VariantPayload
+    ordinal: UInt32
+    origin: Origin
+    docs: String?
+    attributes: Array[Attribute]
+}
+pub type Operation = {
+    name: String
+    signature: TypeRef
+    visibility: Visibility
+    ordinal: UInt32
+    origin: Origin
+    docs: String?
+    genericParameters: Array[GenericParameter]
+    hasDefault: Bool
+    requiresSelfSend: Bool
+}
+pub enum DeclarationKind {
+    Record(Array[Field])
+    Enum(Array[Variant])
+    Newtype(TypeRef)
+    Trait(Array[Operation])
+    Alias(TypeRef)
+    Function(TypeRef)
+    Constant(TypeRef)
+}
+pub type Declaration = {
+    identity: String
+    module: String
+    visibility: Visibility
+    genericParameters: Array[GenericParameter]
+    bounds: Array[Bound]
+    origin: Origin
+    docs: String?
+    kind: DeclarationKind
+}
+pub type Environment = {
+    edition: String
+    target: String
+    profile: String
+    capabilities: Array[String]
+    features: Array[String]
+    packages: Array[String]
+}
+pub type Implementation = {
+    module: String
+    target: String
+    traitIdentity: String
+    arguments: Array[String]
+    genericParameters: Array[GenericParameter]
+    origin: Origin
+    docs: String?
+}
+pub type Snapshot = {
+    format: String
+    environment: Environment
+    roots: Array[Root]
+    modules: Array[Module]
+    declarations: Array[Declaration]
+    implementations: Array[Implementation]
+}
+pub type Input = { name: String, bytes: Array[Byte], hash: String }
+pub type OutputSpec = { path: String, module: String }
+pub enum DiagnosticSeverity { Note, Warning, Error }
+pub type Diagnostic = { severity: DiagnosticSeverity, message: String, origin: Span? }
+pub enum Error {
+    UnknownInput(String)
+    UnknownOutput(String)
+    DuplicateOutput(String)
+    MissingOutput(String)
+    OutputLimit
+    Provider(String)
+    TypeRendering(String)
+}
+pub type GenerateResponse = { outputs: Map[String, String], diagnostics: Array[Diagnostic] }
+pub type DeriveResponse = { source: String, diagnostics: Array[Diagnostic], mappings: Array[SourceMap] }
+
+/// Constructed only by the toolchain from the closed, authorized input set.
+pub type GenerateRequest = {
+    priv snapshotValue: Snapshot
+    priv inputValues: Array[Input]
+    priv outputSpecs: Array[OutputSpec]
+    priv executionLimits: Limits
+}
+pub fn GenerateRequest.snapshot(self): Snapshot { self.snapshotValue }
+pub fn GenerateRequest.inputs(self): Array[Input] { self.inputValues }
+pub fn GenerateRequest.outputs(self): Array[OutputSpec] { self.outputSpecs }
+pub fn GenerateRequest.limits(self): Limits { self.executionLimits }
+pub fn GenerateRequest.input(self, name: String): Input ! Error {
+    for input in self.inputValues {
+        if input.name == name {
+            return ok(input)
+        }
+    }
+    err(Error.UnknownInput(name))
+}
+
+/// The private view is limited to the single target named by this request.
+pub type DeriveRequest = {
+    priv snapshotValue: Snapshot
+    priv targetName: String
+    priv moduleName: String
+    priv traitName: String
+    priv writtenBounds: Array[String]
+    priv requestSpan: Span
+    priv executionLimits: Limits
+}
+pub fn DeriveRequest.snapshot(self): Snapshot { self.snapshotValue }
+pub fn DeriveRequest.target(self): String { self.targetName }
+pub fn DeriveRequest.module(self): String { self.moduleName }
+pub fn DeriveRequest.traitIdentity(self): String { self.traitName }
+pub fn DeriveRequest.bounds(self): Array[String] { self.writtenBounds }
+pub fn DeriveRequest.span(self): Span { self.requestSpan }
+pub fn DeriveRequest.limits(self): Limits { self.executionLimits }
+
+pub type SourceBuilder = {
+    priv expected: Array[OutputSpec]
+    priv sources: Map[String, String]
+    priv remainingBytes: UInt64
+    priv imports: Map[String, Map[String, String]]
+    priv deriveOutput: Bool
+}
+pub fn GenerateRequest.sourceBuilder(self): SourceBuilder {
+    SourceBuilder { expected: self.outputSpecs, sources: [:], remainingBytes: self.executionLimits.outputBytes, imports: [:], deriveOutput: false }
+}
+pub fn DeriveRequest.sourceBuilder(self): SourceBuilder {
+    SourceBuilder { expected: [OutputSpec { path: "derive/result.to", module: self.moduleName }], sources: [:], remainingBytes: self.executionLimits.outputBytes, imports: [:], deriveOutput: true }
+}
+pub fn SourceBuilder.outputs(self): Array[OutputSpec] { self.expected }
+/// Stage imports for this output. Failed rendering leaves the builder unchanged.
+pub fn SourceBuilder.renderType(mut self, path: String, ty: TypeRef): String ! Error {
+    var module: String? = none
+    for output in self.expected {
+        if output.path == path {
+            module = some(output.module)
+        }
+    }
+    let destination = match module {
+        some(value) => value
+        none => {
+            return err(Error.UnknownOutput(path))
+        }
+    }
+    if path in self.sources {
+        return err(Error.DuplicateOutput(path))
+    }
+    var imports: Map[String, String] = match self.imports.get(path) {
+        some(value) => value
+        none => [:]
+    }
+    var source = ""
+    for part in ty.parts {
+        let text = match part {
+            TypePart.Text(value) => value
+            TypePart.Unavailable(reason) => {
+                return err(Error.TypeRendering(reason))
+            }
+            TypePart.Name(name) => {
+                if name.local and name.module == destination {
+                    name.name
+                } else {
+                    if not name.public {
+                        return err(Error.TypeRendering("type is private to another module"))
+                    }
+                    let importSource = match name.importSource {
+                        some(value) => value
+                        none => {
+                            return err(Error.TypeRendering("type package is not a direct dependency"))
+                        }
+                    }
+                    imports[name.alias] = importSource
+                    "{name.alias}.{name.name}"
+                }
+            }
+        }
+        source = "{source}{text}"
+    }
+    self.imports[path] = imports
+    ok(source)
+}
+pub fn SourceBuilder.add(mut self, path: String, source: String): Unit ! Error {
+    var declared = false
+    for output in self.expected {
+        if output.path == path {
+            declared = true
+        }
+    }
+    if not declared {
+        return err(Error.UnknownOutput(path))
+    }
+    if path in self.sources {
+        return err(Error.DuplicateOutput(path))
+    }
+    var prefix = ""
+    var imports: Map[String, String] = match self.imports.get(path) {
+        some(value) => value
+        none => [:]
+    }
+    // Canonical ordering does not depend on the order of renderType calls.
+    for {
+        var first: String? = none
+        for (key, _) in imports {
+            match first {
+                none => {
+                    first = some(key)
+                }
+                some(previous) => {
+                    if key < previous {
+                        first = some(key)
+                    }
+                }
+            }
+        }
+        let key = match first {
+            some(value) => value
+            none => {
+                break
+            }
+        }
+        let text = match imports.remove(key) {
+            some(value) => value
+            none => panic("selected import is present")
+        }
+        prefix = "{prefix}{text}"
+    }
+    let complete = "{prefix}{source}"
+    var bytes: UInt64 = 0
+    for character in complete {
+        if character < '\u{80}' {
+            bytes += 1
+        } else if character < '\u{800}' {
+            bytes += 2
+        } else if character < '\u{10000}' {
+            bytes += 3
+        } else {
+            bytes += 4
+        }
+    }
+    if bytes > self.remainingBytes {
+        return err(Error.OutputLimit)
+    }
+    self.sources[path] = complete
+    self.remainingBytes -= bytes
+    ok(())
+}
+pub fn SourceBuilder.finish(self): GenerateResponse ! Error {
+    if self.deriveOutput {
+        return err(Error.Provider("derive builder requires finishDerive"))
+    }
+    for output in self.expected {
+        if not (output.path in self.sources) {
+            return err(Error.MissingOutput(output.path))
+        }
+    }
+    ok(GenerateResponse { outputs: self.sources, diagnostics: [] })
+}
+
+/// Complete the one declared derive source; the compiler checks its exact impl.
+pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error {
+    if not self.deriveOutput {
+        return err(Error.Provider("generator builder requires finish"))
+    }
+    let path = self.expected[0].path
+    let source = match self.sources.get(path) {
+        some(value) => value
+        none => {
+            return err(Error.MissingOutput(path))
+        }
+    }
+    ok(DeriveResponse { source: source, diagnostics: [], mappings: [] })
+}
+
+/// Quote a string as Tondo source, including braces and Unicode controls.
+pub fn stringLiteral(value: String): String {
+    var source = "\""
+    for character in value {
+        let escaped = match character {
+            '\n' => "\\n"
+            '\r' => "\\r"
+            '\t' => "\\t"
+            '\0' => "\\0"
+            '\\' => "\\\\"
+            '"' => "\\\""
+            '{' => "{{{{"
+            '}' => "}}}}"
+            _ => {
+                if character < '\u{20}' or (character >= '\u{7F}' and character <= '\u{9F}') {
+                    escapedControl(character)
+                } else {
+                    "{character}"
+                }
+            }
+        }
+        source = "{source}{escaped}"
+    }
+    "{source}\""
+}
+
+fn escapedControl(value: Char): String {
+    let digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"]
+    var code = 0
+    for character in '\0'..='\u{9F}' {
+        if character == value {
+            if code < 16 {
+                return "\\u{{{digits[code]}}}"
+            }
+            return "\\u{{{digits[code / 16]}{digits[code % 16]}}}"
+        }
+        code += 1
+    }
+    panic("expected a Unicode control character")
+}
+
+/// Four spaces per nesting level; execution and memory budgets also apply.
+pub fn indentation(level: UInt32): String ! Error {
+    if level > 1000000u32 {
+        return err(Error.Provider("indentation limit exceeded"))
+    }
+    var source = ""
+    for _ in 0u32..level {
+        source = "{source}    "
+    }
+    ok(source)
+}
+
 pub fn api(): String {
     "tondo-std-meta-0.1/1"
 }

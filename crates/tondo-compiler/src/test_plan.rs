@@ -423,6 +423,26 @@ pub struct TestProjectPlan {
 }
 
 impl TestProjectPlan {
+    pub(crate) fn with_dev_dependencies(
+        mut self,
+        dependencies: impl IntoIterator<Item = (String, String, String, String)>,
+    ) -> Result<Self, TestPlanError> {
+        self.dev_dependencies = normalize_dev_dependencies(
+            dependencies
+                .into_iter()
+                .map(
+                    |(alias, package, interface_path, sha256)| DevDependencyWire {
+                        alias,
+                        package,
+                        interface_path,
+                        sha256,
+                    },
+                )
+                .collect(),
+        )?;
+        Ok(self)
+    }
+
     /// Materialize the opinionated test plan used when no sidecar is
     /// supplied. The production project is already closed, so its selected
     /// source graph is the only source input that needs to be repeated here.

@@ -21,6 +21,7 @@ struct Candidate {
     span: Span,
     generic_arity: u32,
     synthetic: bool,
+    docs: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -184,6 +185,7 @@ impl<'a> MemberCollector<'a> {
                     .span(),
                 generic_arity: 0,
                 synthetic: true,
+                docs: None,
             });
         }
         Ok(())
@@ -219,6 +221,7 @@ impl<'a> MemberCollector<'a> {
                 span: self.sources.span(file, token.range())?,
                 generic_arity: 0,
                 synthetic: false,
+                docs: None,
             });
             pending.push(PendingVariant {
                 file,
@@ -263,6 +266,7 @@ impl<'a> MemberCollector<'a> {
                 span: self.sources.span(file, token.range())?,
                 generic_arity: generic_arity(method),
                 synthetic: false,
+                docs: None,
             });
         }
         Ok(())
@@ -351,6 +355,7 @@ impl<'a> MemberCollector<'a> {
             span: self.sources.span(file, names[1].range())?,
             generic_arity: method_generic_arity(head, names[1]),
             synthetic: false,
+            docs: None,
         });
         Ok(())
     }
@@ -427,6 +432,14 @@ impl<'a> MemberCollector<'a> {
         } else {
             Visibility::Private
         };
+        let docs_token = field
+            .child_nodes()
+            .find(|node| node.kind() == SyntaxKind::Attribute)
+            .and_then(|node| {
+                node.child_tokens()
+                    .find(|token| token.kind() == TokenKind::At)
+            })
+            .unwrap_or(name_token);
         Ok(Some(Candidate {
             owner,
             name,
@@ -435,6 +448,7 @@ impl<'a> MemberCollector<'a> {
             span: self.sources.span(file, name_token.range())?,
             generic_arity: 0,
             synthetic: false,
+            docs: self.leading_docs(self.sources.span(file, docs_token.range())?),
         }))
     }
 
@@ -510,6 +524,11 @@ impl<'a> MemberCollector<'a> {
             u32::try_from(self.program.members.len())
                 .expect("member count is bounded by syntax nodes"),
         );
+        let docs = candidate.docs.or_else(|| {
+            (!candidate.synthetic)
+                .then(|| self.leading_docs(candidate.span))
+                .flatten()
+        });
         self.program.members.push(Member {
             id,
             owner: candidate.owner,
@@ -519,6 +538,7 @@ impl<'a> MemberCollector<'a> {
             span: candidate.span,
             generic_arity: candidate.generic_arity,
             synthetic: candidate.synthetic,
+            docs,
         });
         self.program
             .members_by_owner
@@ -526,6 +546,10 @@ impl<'a> MemberCollector<'a> {
             .or_default()
             .push(id);
         id
+    }
+
+    fn leading_docs(&self, span: Span) -> Option<String> {
+        super::leading_docs(self.sources, self.parsed.get(&span.file())?, span)
     }
 
     fn validate_conflicts(&mut self) -> Result<(), ResolveError> {

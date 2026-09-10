@@ -23,6 +23,14 @@ identity. A benchmark cannot silently change its source, input size, malformed
 case, seed or limit and retain the old baseline. Changing a workload requires a
 new contract revision and a new reviewed baseline.
 
+The current fixture pins include explicit handling of fallible console output.
+The VM and hosted probe pins also include the phase-accounting and ordinary I/O
+integration changes. These are new measurement identities: historical reports
+remain evidence only for their recorded source hashes. Updating a contract pin
+does not transfer a previous measurement or promote a new baseline. Local
+dirty-tree runs validate the current protocol; promotion still requires a clean
+revision, a fresh campaign and the unchanged regression budgets below.
+
 The report records CPU model/features, memory, operating system/kernel, target,
 backend, profile, compiler/toolchain, flags and source revision. Timestamp,
 process ID, physical path, CPU frequency and ambient environment are never

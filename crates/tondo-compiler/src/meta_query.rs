@@ -527,7 +527,7 @@ mod tests {
 
     fn accepted(kind: MetaProducerKind, id: &str, path: &str, mapped: bool) -> AcceptedMetaResult {
         let request = MetaRequest::new(
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             [],
             [MetaOutputSpec::new(path, "generated").unwrap()],
             MetaLimits::new(10_000, 4096, 4096).unwrap(),
@@ -555,6 +555,18 @@ mod tests {
         )
         .unwrap();
         let source = b"fn generated(): String {\n    \"ok\"\n}\n";
+        let path = if kind == MetaProducerKind::Derive {
+            invocation.derive_output_path()
+        } else {
+            path
+        };
+        let request = MetaRequest::new(
+            request.snapshot().clone(),
+            [],
+            [MetaOutputSpec::new(path, "generated").unwrap()],
+            request.limits(),
+        )
+        .unwrap();
         let mut builder = request.into_source_builder();
         if mapped {
             builder
@@ -621,17 +633,17 @@ mod tests {
         assert!(text.contains("app.User"));
         assert!(!text.contains("app.SecretOutsideTarget"));
 
-        let derive = document.by_producer(
-            "derive",
-            "derive:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        );
+        let derive = document.by_producer("derive", &derive().record().id);
         assert_eq!(derive.len(), 1);
         let expansion = derive[0];
         assert_eq!(expansion.kind(), "derive");
         assert!(expansion.id().starts_with("derive:"));
         assert_eq!(expansion.target(), Some("app.User"));
         assert_eq!(expansion.module(), "generated");
-        assert_eq!(expansion.path(), "generated/derive.to");
+        assert_eq!(
+            expansion.path(),
+            format!("@generated/derive/{}.to", &expansion.request_hash()[7..])
+        );
         assert_eq!(
             expansion.source(),
             "fn generated(): String {\n    \"ok\"\n}\n"
@@ -733,7 +745,7 @@ mod tests {
     #[test]
     fn query_rejects_unformatted_or_invalid_generated_source() {
         let request = MetaRequest::new(
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             [],
             [MetaOutputSpec::new("generated/bad.to", "generated").unwrap()],
             MetaLimits::new(100, 1000, 1000).unwrap(),

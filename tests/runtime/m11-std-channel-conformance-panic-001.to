@@ -1,6 +1,10 @@
 import std.channel
 import std.console
 
+fn emitCleanup(text: String) {
+    _ = console.println(text)
+}
+
 fn cleanup_receiver(receiver: channel.Receiver[Int]) {
     let _ = receiver.close()
 }
@@ -14,7 +18,7 @@ fn main(): !channel.ChannelError {
         err(_) => assert(false)
     }
     defer cleanup_receiver(receiver)
-    defer console.println("channel-panic-cleanup")
+    defer emitCleanup("channel-panic-cleanup")
     sender.close()
     panic("channel conformance panic")
 }

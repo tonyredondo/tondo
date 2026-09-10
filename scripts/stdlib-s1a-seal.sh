@@ -32,6 +32,8 @@ jq -e '
   and .public_release == false
 ' "$contract" >/dev/null || die "invalid seal contract"
 
+python3 -B scripts/stdlib_s1a_readiness.py --require-ready
+
 if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
     die "workspace must be clean before sealing"
 fi
@@ -90,17 +92,17 @@ async_perf="$evidence_root/async-select-performance.json"
 jq -e '
   .format == "tondo-stdlib-public-api-audit/1"
   and .status == "verified"
-  and .summary.signatures == 216
-  and .summary.verified == 216
+  and .summary.signatures == 298
+  and .summary.verified == 298
   and .summary.gaps == 0
-' "$public_api" >/dev/null || die "public API audit is not strict 216/216"
+' "$public_api" >/dev/null || die "public API audit is not strict 298/298"
 
 jq -e '
   .format == "tondo-stdlib-normative-matrix/1"
   and .status == "verified"
   and .summary.owners == 22
   and .summary.requirements == 171
-  and .summary.rows == 387
+  and .summary.rows == 469
   and .summary.open_rows == 0
   and all(.rows[]; .status == "verified")
   and all(.owners[].stages[]; .status == "verified" or .status == "not-applicable")
@@ -191,7 +193,7 @@ jq -e '
 jq -e '
   .format == "tondo-stdlib-conformance/1"
   and .status == "promoted"
-  and .summary == {owners:22,signatures:216,requirements:171,rows:387,cases:32}
+  and .summary == {owners:22,signatures:298,requirements:171,rows:469,cases:34}
 ' testing/stdlib-conformance.json >/dev/null || die "conformance registry is not promoted"
 
 stage="$work/tondo-stdlib-s1a"

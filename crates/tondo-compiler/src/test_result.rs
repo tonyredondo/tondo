@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact::validate_sha256;
 
-pub const TEST_REPORT_FORMAT: &str = "tondo-test-report-0.1/7";
+pub const TEST_REPORT_FORMAT: &str = "tondo-test-report-0.1/8";
 pub const TEST_WORKER_PROTOCOL_FORMAT: &str = "tondo-test-worker-0.1/1";
 pub const DIAGNOSTIC_REPORT_FORMAT: &str = "tondo-diagnostic-report/1";
 
@@ -131,8 +131,19 @@ pub struct SourceSpan {
 pub struct FailureRecord {
     pub kind: String,
     pub code: Option<String>,
+    pub error_type: Option<String>,
     pub message: String,
     pub source: Option<SourceSpan>,
+    pub stack: Vec<FailureStackFrame>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailureStackFrame {
+    pub function: String,
+    pub file: String,
+    pub start: u64,
+    pub end: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,8 +259,8 @@ pub struct TestAttempt {
     pub snapshots: Vec<SnapshotRecord>,
     pub virtual_time: Vec<VirtualTimeRecord>,
     pub logs: Vec<String>,
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: crate::test_output::CapturedOutput,
+    pub stderr: crate::test_output::CapturedOutput,
     #[serde(default)]
     pub diagnostics: Vec<DiagnosticRecord>,
 }
@@ -277,8 +288,8 @@ impl TestAttempt {
             snapshots: Vec::new(),
             virtual_time: Vec::new(),
             logs: Vec::new(),
-            stdout: String::new(),
-            stderr: String::new(),
+            stdout: Default::default(),
+            stderr: Default::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -1256,8 +1267,39 @@ fn validate_attempt(
     if let Some(failure) = &attempt.failure {
         validate_text("failure.kind", &failure.kind)?;
         validate_text("failure.message", &failure.message)?;
+        let expected_kind = match attempt.status {
+            AttemptStatus::FailedError => "error",
+            AttemptStatus::FailedPanic => "panic",
+            AttemptStatus::ResourceLimit => "resource-limit",
+            AttemptStatus::Timeout => "timeout",
+            AttemptStatus::Infrastructure => "infrastructure",
+            _ => {
+                return Err(ResultModelError::InvalidAttempt {
+                    node: node.unwrap_or("<protocol>").into(),
+                    message: "only executed failures contain a failure record".into(),
+                });
+            }
+        };
+        if failure.kind != expected_kind
+            || failure.error_type.is_some() != (expected_kind == "error")
+        {
+            return Err(ResultModelError::InvalidField {
+                field: "failure",
+                message: "kind and error_type must match the executed failure status".into(),
+            });
+        }
+        if let Some(error_type) = &failure.error_type {
+            validate_text("failure.error_type", error_type)?;
+        }
         if let Some(code) = &failure.code {
             validate_text("failure.code", code)?;
+        }
+        if let Some(source) = &failure.source {
+            validate_failure_source(&source.file, source.start, source.end)?;
+        }
+        for frame in &failure.stack {
+            validate_text("failure.stack.function", &frame.function)?;
+            validate_failure_source(&frame.file, frame.start, frame.end)?;
         }
     }
     for (name, value) in &attempt.tags {
@@ -1480,6 +1522,21 @@ fn non_empty(field: &'static str, value: String) -> Result<String, ProtocolError
     Ok(value)
 }
 
+fn validate_failure_source(file: &str, start: u64, end: u64) -> Result<(), ResultModelError> {
+    validate_text("failure.source.file", file)?;
+    if start > end
+        || file.contains(['\\', '\0'])
+        || file.as_bytes().get(1) == Some(&b':')
+        || file.split('/').any(|part| matches!(part, "" | "." | ".."))
+    {
+        return Err(ResultModelError::InvalidField {
+            field: "failure.source",
+            message: "expected a logical file path and ordered source range".into(),
+        });
+    }
+    Ok(())
+}
+
 fn validate_text(field: &'static str, value: &str) -> Result<(), ResultModelError> {
     if value.is_empty() || value.contains(['\n', '\r']) {
         return Err(ResultModelError::InvalidField {
@@ -1551,10 +1608,81 @@ mod tests {
     }
 
     #[test]
+    fn failure_payload_validates_type_identity_kind_and_logical_stack() {
+        let mut test = passing_test("suite::root::error");
+        test.attempts[0].status = AttemptStatus::FailedError;
+        test.attempts[0].failure = Some(FailureRecord {
+            kind: "error".into(),
+            code: None,
+            error_type: Some("app.Error".into()),
+            message: "unhandled error".into(),
+            source: Some(SourceSpan {
+                file: "src/tests.to".into(),
+                start: 2,
+                end: 4,
+            }),
+            stack: vec![FailureStackFrame {
+                function: "app::test".into(),
+                file: "src/tests.to".into(),
+                start: 1,
+                end: 5,
+            }],
+        });
+        let report = TestResultTree::assemble(
+            vec![test.id.clone()],
+            ResultPolicy::default(),
+            vec![passing_suite()],
+            vec![test],
+        )
+        .unwrap();
+        let bytes = report.canonical_bytes().unwrap();
+        assert_eq!(TestResultTree::parse(&bytes).unwrap(), report);
+        let original: Value = serde_json::from_slice(&bytes).unwrap();
+        for field in [
+            "missing-type",
+            "empty-type",
+            "wrong-kind",
+            "missing-stack",
+            "stack-range",
+            "absolute",
+            "parent",
+            "windows",
+            "empty-function",
+        ] {
+            let mut wire = original.clone();
+            let failure = &mut wire["tests"][0]["attempts"][0]["failure"];
+            match field {
+                "missing-type" => failure["error_type"] = Value::Null,
+                "empty-type" => failure["error_type"] = "".into(),
+                "wrong-kind" => failure["kind"] = "panic".into(),
+                "missing-stack" => {
+                    failure.as_object_mut().unwrap().remove("stack");
+                }
+                "stack-range" => failure["stack"][0]["start"] = 9.into(),
+                "absolute" => failure["source"]["file"] = "/tmp/tests.to".into(),
+                "parent" => failure["stack"][0]["file"] = "../tests.to".into(),
+                "windows" => failure["stack"][0]["file"] = "C:/tests.to".into(),
+                "empty-function" => failure["stack"][0]["function"] = "".into(),
+                _ => unreachable!(),
+            }
+            assert!(
+                TestResultTree::parse(&serde_json::to_vec(&wire).unwrap()).is_err(),
+                "{field}"
+            );
+        }
+        let mut panic_wire = original;
+        panic_wire["tests"][0]["attempts"][0]["status"] = "failed-panic".into();
+        panic_wire["tests"][0]["attempts"][0]["failure"]["kind"] = "panic".into();
+        assert!(TestResultTree::parse(&serde_json::to_vec(&panic_wire).unwrap()).is_err());
+    }
+
+    #[test]
     fn assemble_derives_one_summary_and_flaky_status_for_reporters() {
         let mut flaky = passing_test("suite::root::flaky");
         let mut failed = TestAttempt::new(1, 1, 0, None, AttemptStatus::FailedPanic);
         failed.failure = Some(FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "panic".into(),
             code: Some("P0007".into()),
             message: "boom".into(),
@@ -1876,6 +2004,8 @@ mod tests {
         suite.status = AggregateStatus::FailedPanic;
         suite.attempts[0].status = AttemptStatus::FailedPanic;
         suite.attempts[0].failure = Some(FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "panic".into(),
             code: None,
             message: "boom".into(),
@@ -1922,6 +2052,8 @@ mod tests {
 
         let mut invalid = TestAttempt::new(1, 1, 0, None, AttemptStatus::Passed);
         invalid.failure = Some(FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "x".into(),
             code: None,
             message: "x".into(),
@@ -1943,6 +2075,8 @@ mod tests {
             source: None,
         });
         invalid.failure = Some(FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "x".into(),
             code: None,
             message: "x".into(),
@@ -1955,6 +2089,8 @@ mod tests {
         invalid = TestAttempt::new(1, 1, 0, None, AttemptStatus::FailedError);
         assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
         invalid.failure = Some(FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "x".into(),
             code: None,
             message: "x".into(),
@@ -1969,6 +2105,7 @@ mod tests {
         invalid.phase = Some(AttemptPhase::Teardown);
         assert!(validate_attempt(&invalid, ResultNodeKind::Suite, Some("suite"), 0).is_err());
         invalid.status = AttemptStatus::FailedPanic;
+        invalid.failure.as_mut().unwrap().kind = "panic".into();
         assert!(validate_attempt(&invalid, ResultNodeKind::Suite, Some("suite"), 0).is_ok());
 
         let mut payload = TestAttempt::new(1, 1, 0, None, AttemptStatus::Passed);

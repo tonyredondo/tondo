@@ -9,7 +9,7 @@ consumers expect. It never reruns tests or reconstructs aggregate state.
 
 ## Format and topology
 
-The exporter emits `tondo-junit-report-0.1/4` as UTF-8 XML with no BOM, DTD,
+The exporter emits `tondo-junit-report-0.1/5` as UTF-8 XML with no BOM, DTD,
 external entity, or extra processing instruction. The declaration is followed
 by LF-delimited output with one final LF. The root is `testsuites`. Tondo suites
 are flat `testsuite` elements, and top-level tests are grouped by
@@ -39,6 +39,15 @@ artifacts, snapshots, virtual-time observations, and the execution metadata
 limits, plan, and summary). Artifact bytes and complete snapshot values are
 never embedded. `system-out` and `system-err` contain only the decisive
 attempt's streams; previous attempts remain in `tondo.attempts`.
+The ordered properties `tondo.stdout.encoding` and `tondo.stderr.encoding`
+immediately follow `tondo.attempts`. They describe the respective conventional
+element as `utf8` or `base64`. Empty streams use `utf8` and omit the element.
+Valid XML 1.0 UTF-8 without CR is emitted as escaped text; every other stream
+is emitted as padded standard Base64 of its original bytes. This includes
+valid UTF-8 containing NUL, U+FFFE/U+FFFF or CR, preventing XML character loss
+and newline normalization. `tondo.attempts` retains the canonical JSON stream
+representation, which can therefore use a different encoding from the XML
+element while preserving identical bytes.
 
 The JUnit `tests`, `failures`, `errors`, `skipped`, and `time` attributes count
 the cases actually emitted, including synthetic cases. Durations are supplied
@@ -49,5 +58,8 @@ rejected.
 
 XML scalar escaping covers attributes and text, including the XML 1.0 control
 range. Unsupported scalars are rendered as visible `\u{HEX}` text while
-structured JSON properties retain the original value. Output construction is
+structured JSON properties retain the original value.
+JSON embedded in properties and failure bodies escapes U+FFFE/U+FFFF as valid
+JSON `\uXXXX` sequences before XML escaping; it remains parseable without
+substituting a visible XML fallback inside a JSON string. Output construction is
 deterministic and uses no XML dependency or external parser state.

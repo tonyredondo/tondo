@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+#[path = "project_discovery_meta.rs"]
+mod meta;
+
 use tondo_compiler::artifact::{CAPABILITY_REGISTRY, sha256};
 use tondo_compiler::driver::BuildTarget;
 use tondo_compiler::package::PackageAlias;
@@ -27,6 +30,8 @@ pub(crate) struct DiscoveredProject {
     pub(crate) manifest_bytes: Vec<u8>,
     pub(crate) lockfile_bytes: Vec<u8>,
     pub(crate) production: Option<(Vec<u8>, Vec<u8>)>,
+    pub(crate) test_dependencies: Option<Vec<u8>>,
+    pub(crate) runtime_inputs: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +47,17 @@ struct TondoConfig {
     target: Option<TargetConfig>,
     #[serde(default)]
     dependencies: BTreeMap<String, DependencyConfig>,
+    #[serde(default)]
+    test: TestConfig,
+    #[serde(default)]
+    meta: meta::MetaConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestConfig {
+    #[serde(default)]
+    inputs: Vec<toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,18 +225,84 @@ fn project_manifest(
 
 /// Discover a project rooted at `root`.
 pub(crate) fn discover(root: &Path) -> Result<DiscoveredProject, String> {
-    discover_with_selection(root, SourceSelection::Production)
+    discover_with_selection(root, SourceSelection::Production, LockPolicy::Pinned)
 }
 
 /// Discover the closed production and test source sets used only by
 /// `tondo test`. Normal compilation deliberately never calls this entrypoint.
 pub(crate) fn discover_for_tests(root: &Path) -> Result<DiscoveredProject, String> {
-    discover_with_selection(root, SourceSelection::ProductionAndTests)
+    discover_with_selection(
+        root,
+        SourceSelection::ProductionAndTests,
+        LockPolicy::Pinned,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LockPolicy {
+    Pinned,
+    RefreshLocal,
+}
+
+/// Resolve local source packages and return the complete TOML lock, retaining
+/// the separately owned test records. The caller publishes only after this
+/// candidate has passed the ordinary project validator.
+pub(crate) fn resolve_local_lock(root: &Path) -> Result<Vec<u8>, String> {
+    let existing = match fs::read(root.join("tondo.lock.toml")) {
+        Ok(bytes) => Some(toml_to_json(&bytes, &root.join("tondo.lock.toml"))?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("cannot read existing lockfile: {error}")),
+    };
+    let project =
+        discover_with_selection(root, SourceSelection::Production, LockPolicy::RefreshLocal)?;
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&project.lockfile_bytes).map_err(|error| error.to_string())?;
+    if let Some(existing) = existing {
+        let existing: serde_json::Value =
+            serde_json::from_slice(&existing).map_err(|error| error.to_string())?;
+        if let Some(test) = existing.get("test") {
+            value["test"] = test.clone();
+        }
+    }
+    // TOML represents absent optional values by omitting the corresponding
+    // key. Its decoded lock is validated again, including the resulting bytes.
+    fn omit_nulls(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.retain(|_, value| !value.is_null());
+                for value in fields.values_mut() {
+                    omit_nulls(value);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    omit_nulls(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    omit_nulls(&mut value);
+    let text = toml::to_string_pretty(&value)
+        .map_err(|error| format!("cannot encode lockfile TOML: {error}"))?;
+    let mut decoded: serde_json::Value = serde_json::from_slice(&toml_to_json(
+        text.as_bytes(),
+        &root.join("tondo.lock.toml"),
+    )?)
+    .map_err(|error| error.to_string())?;
+    decoded.as_object_mut().unwrap().remove("test");
+    ProjectPlan::parse(
+        &project.manifest_bytes,
+        &serde_json::to_vec(&decoded).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("resolved lockfile is inconsistent: {error}"))?;
+    Ok(text.into_bytes())
 }
 
 fn discover_with_selection(
     root: &Path,
     selection: SourceSelection,
+    lock_policy: LockPolicy,
 ) -> Result<DiscoveredProject, String> {
     let root = root.canonicalize().map_err(|error| {
         format!(
@@ -306,6 +388,16 @@ fn discover_with_selection(
     });
     let features = target.features.unwrap_or_default();
     let package_id = format!("workspace:{package_name}@local");
+    if lock_policy == LockPolicy::RefreshLocal && !config.dependencies.is_empty() {
+        return Err("local lock resolution does not resolve external runtime dependencies".into());
+    }
+    let meta = meta::DiscoveredMeta::discover(
+        &root,
+        &config.meta,
+        &package_id,
+        &package_name,
+        &config.dependencies,
+    )?;
     let production_manifest_bytes = (!production_sources.is_empty())
         .then(|| {
             project_manifest(
@@ -320,12 +412,14 @@ fn discover_with_selection(
                 &production_sources,
             )
         })
+        .transpose()?
+        .map(|bytes| meta.extend_manifest(bytes))
         .transpose()?;
     let manifest_bytes = match selection {
         SourceSelection::Production => production_manifest_bytes
             .clone()
             .expect("production discovery rejected an empty production source set"),
-        SourceSelection::ProductionAndTests => project_manifest(
+        SourceSelection::ProductionAndTests => meta.extend_manifest(project_manifest(
             &package_name,
             &edition,
             &target_name,
@@ -335,12 +429,18 @@ fn discover_with_selection(
             &features,
             &config.dependencies,
             &sources,
-        )?,
+        )?)?,
     };
 
     let lock_path = root.join("tondo.lock.toml");
     let mut production_lockfile_bytes = None;
-    let lockfile_bytes = match fs::read(&lock_path) {
+    let mut test_dependencies = None;
+    let locked_bytes = if lock_policy == LockPolicy::RefreshLocal {
+        Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+    } else {
+        fs::read(&lock_path)
+    };
+    let lockfile_bytes = match locked_bytes {
         Ok(bytes) => {
             if config
                 .dependencies
@@ -359,39 +459,69 @@ fn discover_with_selection(
                     }
                 }
             }
-            let production_lock = toml_to_json(&bytes, &lock_path)?;
-            let production_manifest = production_manifest_bytes.as_deref().ok_or_else(|| {
-                "a persistent lockfile requires at least one production source".to_owned()
-            })?;
-            ProjectPlan::parse(production_manifest, &production_lock).map_err(|error| {
-                format!(
-                    "production lockfile `{}` does not match the publishable project: {error}",
-                    lock_path.display()
-                )
-            })?;
-            production_lockfile_bytes = Some(production_lock.clone());
-            match selection {
-                SourceSelection::Production => production_lock,
-                SourceSelection::ProductionAndTests => {
-                    derive_test_lockfile(&production_lock, &manifest_bytes, &package_id, &sources)?
+            let mut lock: serde_json::Value =
+                serde_json::from_slice(&toml_to_json(&bytes, &lock_path)?)
+                    .map_err(|error| format!("cannot normalize lockfile: {error}"))?;
+            // Test-only records never participate in the production lock
+            // identity and normal builds never open their referenced inputs.
+            let test = lock.as_object_mut().and_then(|lock| lock.remove("test"));
+            if selection == SourceSelection::ProductionAndTests {
+                test_dependencies = test
+                    .map(|value| serde_json::to_vec(&value))
+                    .transpose()
+                    .map_err(|error| format!("cannot normalize test lock: {error}"))?;
+            }
+            let production_lock = serde_json::to_vec(&lock)
+                .map_err(|error| format!("cannot normalize production lock: {error}"))?;
+            if let Some(production_manifest) = production_manifest_bytes.as_deref() {
+                ProjectPlan::parse(production_manifest, &production_lock).map_err(|error| {
+                    format!(
+                        "production lockfile `{}` does not match the publishable project: {error}",
+                        lock_path.display()
+                    )
+                })?;
+                production_lockfile_bytes = Some(production_lock.clone());
+                match selection {
+                    SourceSelection::Production => production_lock,
+                    SourceSelection::ProductionAndTests => derive_test_lockfile(
+                        &production_lock,
+                        &manifest_bytes,
+                        &package_id,
+                        &sources,
+                    )?,
                 }
+            } else {
+                if !lock.as_object().is_some_and(serde_json::Map::is_empty)
+                    || !config.dependencies.is_empty()
+                {
+                    return Err("a test-only project cannot consume production lock records or dependencies".into());
+                }
+                generated_lockfile(&manifest_bytes, &package_id, &sources)?
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if !config.dependencies.is_empty() {
+            if !config.dependencies.is_empty()
+                || (!meta.is_empty() && lock_policy == LockPolicy::Pinned)
+            {
                 return Err(format!(
-                    "external dependencies require `{}`; run the dependency resolver first",
+                    "external or meta dependencies require `{}`; resolve local meta packages with `tondo lock`",
                     lock_path.display()
                 ));
             }
             if let Some(manifest) = production_manifest_bytes.as_deref() {
-                production_lockfile_bytes = Some(generated_lockfile(
+                production_lockfile_bytes = Some(meta.extend_lock(generated_lockfile(
                     manifest,
                     &package_id,
                     &production_sources,
-                )?);
+                )?)?);
             }
-            generated_lockfile(&manifest_bytes, &package_id, &sources)?
+            if selection == SourceSelection::Production {
+                production_lockfile_bytes
+                    .clone()
+                    .expect("production sources were required")
+            } else {
+                meta.extend_lock(generated_lockfile(&manifest_bytes, &package_id, &sources)?)?
+            }
         }
         Err(error) => {
             return Err(format!("cannot read `{}`: {error}", lock_path.display()));
@@ -403,6 +533,9 @@ fn discover_with_selection(
         manifest_bytes,
         lockfile_bytes,
         production: production_manifest_bytes.zip(production_lockfile_bytes),
+        test_dependencies,
+        runtime_inputs: serde_json::to_vec(&config.test.inputs)
+            .map_err(|error| format!("cannot normalize runtime inputs: {error}"))?,
     })
 }
 

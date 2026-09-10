@@ -47,9 +47,22 @@ for mutation in \
         scripts/stdlib-implementation-coordination-check.sh
 done
 
+# An already verified global index is not a rejection probe. Introduce a real
+# input gap, generate its valid observation, then forge only the promotion.
+jq -e 'any(.rows[]; .symbol == "std.core.Option.some" and .status == "verified")' \
+    testing/stdlib-public-api.json >/dev/null
+jq '.status = "open-gaps" | .summary.gaps = 1
+    | (.rows[] | select(.symbol == "std.core.Option.some") | .status) = "open-gaps"' \
+    testing/stdlib-public-api.json > "$tmp/global-api-gap.json"
+TONDO_STDLIB_PUBLIC_API="$tmp/global-api-gap.json" \
+    scripts/stdlib-implementation-coordination-generate.sh "$tmp/global-gap.json"
+TONDO_STDLIB_PUBLIC_API="$tmp/global-api-gap.json" \
+    TONDO_STDLIB_IMPLEMENTATION_COORDINATION="$tmp/global-gap.json" \
+    scripts/stdlib-implementation-coordination-check.sh
 jq '.global_public_api.status = "verified" | .global_public_api.gaps = 0' \
-    testing/stdlib-implementation-coordination.json > "$tmp/global-promotion.json"
+    "$tmp/global-gap.json" > "$tmp/global-promotion.json"
 expect_failure global-promotion env \
+    TONDO_STDLIB_PUBLIC_API="$tmp/global-api-gap.json" \
     TONDO_STDLIB_IMPLEMENTATION_COORDINATION="$tmp/global-promotion.json" \
     scripts/stdlib-implementation-coordination-check.sh
 

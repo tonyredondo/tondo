@@ -1,6 +1,6 @@
 # Bootstrap standard-library host boundary
 
-**Status:** implemented and conformant for Tondo 0.1
+**Status:** hosted implementation; full owner promotion remains tracked separately
 **Language baseline:** Tondo 0.1
 
 This contract makes hosted effects observable without freezing a native ABI.
@@ -10,13 +10,14 @@ It defines the console bridge here and delegates the process surface to
 ~~~tondo
 import std.console
 
-fn main() {
-    console.print("Hello, world")
+fn main(): !console.ConsoleError {
+    console.print("Hello, world")?
 }
 ~~~
 
-The exact bootstrap signature is `std.console.print(value: String): Unit`.
-There are no named, borrowed, mutable, variadic, generic, or fallible forms.
+The exact signature is `std.console.print(value: String): Unit ! ConsoleError`.
+Callers handle, propagate or explicitly discard the result. `ConsoleError` is
+an ordinary nominal enum, including `Io(std.io.IoError)`.
 `print` appends the UTF-8 bytes of its argument and adds no separator or
 newline.
 
@@ -32,23 +33,27 @@ capability. There is no runtime stub that always fails. The monotonic time
 boundary is documented in [`stdlib-time.md`](./stdlib-time.md); the environment
 snapshot boundary is documented in [`stdlib-env.md`](./stdlib-env.md).
 
-The module is source-less and belongs to package
-`toolchain:std:0.1-bootstrap`. Resolution may expose only the exact `print`
-value identity above. The bootstrap does not treat arbitrary unresolved names
-inside a source-less module as callable host functions.
+The module belongs to package `toolchain:std:0.1-bootstrap`. Its registered
+declarations and selected standard sources expose only the documented console
+surface. The compiler does not treat arbitrary unresolved names as callable
+host functions. Ordinary source implements the static I/O trait adapters for
+the concrete `Input` and `Output` types.
 
 ## Compiler and VM representation
 
-The call becomes a dedicated typed HIR node, then a dedicated MIR operation,
-then `BytecodeBootstrapHostFunction::ConsolePrint`. Every verifier independently
-checks one `String` argument and a `Unit` result. It does not lower through a
-stringly typed general-purpose FFI or through a callable with a missing body.
+Public console calls lower through registered typed host callables. The
+compiler and bytecode verifier preserve the argument and fallible result
+types. The internal legacy `BytecodeBootstrapHostFunction::ConsolePrint`
+operation is not emitted for the public `print` declaration and does not
+define its signature. This is not a general-purpose FFI.
 
 Only verified bytecode can invoke the host. The VM passes detached
 `RuntimeValue` snapshots, never heap handles, frame references, or mutable VM
 state. Retaining or mutating such a snapshot does not retain or mutate its
 former VM object. A returned compound snapshot is rematerialized while
-completed children remain operation-local roots. `print` must return `Unit`.
+completed children remain operation-local roots. `print` returns a typed
+successful `Unit` or nominal `ConsoleError` result. Its complete VM result is
+admitted before output bytes are emitted.
 Process plans and opaque results use typed run-local host identities; process
 waits run independently and enter the VM again only through the verified suspendible
 completion path. Any shape mismatch is a toolchain host error, not a Tondo
@@ -68,14 +73,13 @@ stdout and keeps all compiler/runtime diagnostics on stderr. Output produced
 before a language panic remains program output; an internal VM/toolchain
 failure does not masquerade as a successful partial run.
 
-## Provisional status
+## Promotion boundary
 
-This boundary does not specify buffering, flushing, terminal detection,
-encoding APIs, formatting, stderr, input, or the eventual implementation layout
-of `std.console`. Those belong to the standard-library and toolchain
-specifications. A later implementation may replace this dedicated opcode with
-ordinary linked standard-library code if it preserves source behavior, target
-capability admission, stream routing, evaluation order, and diagnostics.
+The complete public signatures, input cursor rules, output routing and flushing
+contract are defined in [`stdlib-hosted.md`](./stdlib-hosted.md) and the
+standard-library specification. This hosted implementation does not establish
+a native ABI or native AOT support. Whole-owner fuzzing and public conformance
+remain separate tracker obligations.
 
 Required regression coverage includes accepted and rejected call shapes,
 capability-present and capability-absent imports, HIR-to-bytecode preservation,

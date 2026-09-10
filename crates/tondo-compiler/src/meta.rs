@@ -12,6 +12,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::hir::HirProgram;
+use crate::meta_type::MetaTypeRef;
 use crate::source::Span;
 
 /// The only meta model accepted by the Tondo 0.1 toolchain.
@@ -56,6 +57,44 @@ impl From<Span> for MetaSpan {
             start: span.range().start(),
             end: span.range().end(),
         }
+    }
+}
+
+/// Authored source or a stable compiler-defined identity. Builtins never
+/// authorize source diagnostics or mappings.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MetaOrigin {
+    Source(MetaSpan),
+    Builtin(String),
+}
+
+impl MetaOrigin {
+    pub fn source_span(&self) -> Option<MetaSpan> {
+        match self {
+            Self::Source(span) => Some(*span),
+            Self::Builtin(_) => None,
+        }
+    }
+
+    fn validate(&self) -> Result<(), MetaModelError> {
+        match self {
+            Self::Source(span) => MetaSpan::new(span.file, span.start, span.end).map(|_| ()),
+            Self::Builtin(identity) => {
+                required_text("origin.builtin", identity.clone()).map(|_| ())
+            }
+        }
+    }
+}
+
+impl From<MetaSpan> for MetaOrigin {
+    fn from(span: MetaSpan) -> Self {
+        Self::Source(span)
+    }
+}
+
+impl From<Span> for MetaOrigin {
+    fn from(span: Span) -> Self {
+        Self::Source(span.into())
     }
 }
 
@@ -129,6 +168,8 @@ pub enum MetaVisibility {
 pub struct MetaGenericParameter {
     name: String,
     bounds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_bounds: Option<Vec<String>>,
 }
 
 impl MetaGenericParameter {
@@ -139,6 +180,7 @@ impl MetaGenericParameter {
         let mut parameter = Self {
             name: required_text("generic_parameter.name", name.into())?,
             bounds: bounds.into_iter().map(Into::into).collect(),
+            source_bounds: None,
         };
         parameter.canonicalize()?;
         Ok(parameter)
@@ -152,7 +194,23 @@ impl MetaGenericParameter {
         &self.bounds
     }
 
+    pub(crate) fn with_source_bounds(mut self, bounds: Vec<String>) -> Self {
+        self.source_bounds = Some(bounds);
+        self
+    }
+
+    pub(crate) fn source_bounds(&self) -> &[String] {
+        self.source_bounds.as_deref().unwrap_or(&self.bounds)
+    }
+
     fn canonicalize(&mut self) -> Result<(), MetaModelError> {
+        if let Some(bounds) = &mut self.source_bounds {
+            for bound in bounds.iter() {
+                required_text("generic_parameter.source_bound", bound.clone())?;
+            }
+            bounds.sort();
+            bounds.dedup();
+        }
         for bound in &self.bounds {
             required_text("generic_parameter.bound", bound.clone())?;
         }
@@ -230,10 +288,10 @@ impl MetaAttribute {
 #[serde(deny_unknown_fields)]
 pub struct MetaField {
     name: String,
-    ty: String,
+    ty: MetaTypeRef,
     visibility: MetaVisibility,
     ordinal: u32,
-    span: MetaSpan,
+    origin: MetaOrigin,
     docs: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attributes: Vec<MetaAttribute>,
@@ -242,18 +300,22 @@ pub struct MetaField {
 impl MetaField {
     pub fn new(
         name: impl Into<String>,
-        ty: impl Into<String>,
+        ty: impl Into<MetaTypeRef>,
         visibility: MetaVisibility,
         ordinal: u32,
-        span: MetaSpan,
+        origin: impl Into<MetaOrigin>,
         docs: Option<impl Into<String>>,
     ) -> Result<Self, MetaModelError> {
+        let origin = origin.into();
+        origin.validate()?;
+        let ty = ty.into();
+        validate_type_reference(&ty)?;
         Ok(Self {
             name: required_text("field.name", name.into())?,
-            ty: required_text("field.type", ty.into())?,
+            ty,
             visibility,
             ordinal,
-            span,
+            origin,
             docs: canonical_docs(docs.map(Into::into))?,
             attributes: Vec::new(),
         })
@@ -273,6 +335,10 @@ impl MetaField {
     }
 
     pub fn ty(&self) -> &str {
+        self.ty.source()
+    }
+
+    pub fn type_ref(&self) -> &MetaTypeRef {
         &self.ty
     }
 
@@ -284,8 +350,8 @@ impl MetaField {
         self.ordinal
     }
 
-    pub fn span(&self) -> MetaSpan {
-        self.span
+    pub fn origin(&self) -> &MetaOrigin {
+        &self.origin
     }
 
     pub fn docs(&self) -> Option<&str> {
@@ -322,7 +388,7 @@ impl MetaField {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MetaVariantPayload {
     Unit,
-    Tuple(Vec<String>),
+    Tuple(Vec<MetaTypeRef>),
     Record(Vec<MetaField>),
 }
 
@@ -331,7 +397,7 @@ impl MetaVariantPayload {
         Self::Unit
     }
 
-    pub fn tuple(types: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn tuple(types: impl IntoIterator<Item = impl Into<MetaTypeRef>>) -> Self {
         Self::Tuple(types.into_iter().map(Into::into).collect())
     }
 
@@ -352,7 +418,7 @@ impl MetaVariantPayload {
             Self::Unit => Ok(()),
             Self::Tuple(types) => {
                 for ty in types {
-                    required_text("variant.type", ty.clone())?;
+                    validate_type_reference(ty)?;
                 }
                 Ok(())
             }
@@ -368,7 +434,7 @@ pub struct MetaVariant {
     name: String,
     payload: MetaVariantPayload,
     ordinal: u32,
-    span: MetaSpan,
+    origin: MetaOrigin,
     docs: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attributes: Vec<MetaAttribute>,
@@ -379,14 +445,16 @@ impl MetaVariant {
         name: impl Into<String>,
         payload: MetaVariantPayload,
         ordinal: u32,
-        span: MetaSpan,
+        origin: impl Into<MetaOrigin>,
         docs: Option<impl Into<String>>,
     ) -> Result<Self, MetaModelError> {
+        let origin = origin.into();
+        origin.validate()?;
         Ok(Self {
             name: required_text("variant.name", name.into())?,
             payload,
             ordinal,
-            span,
+            origin,
             docs: canonical_docs(docs.map(Into::into))?,
             attributes: Vec::new(),
         })
@@ -413,8 +481,8 @@ impl MetaVariant {
         self.ordinal
     }
 
-    pub fn span(&self) -> MetaSpan {
-        self.span
+    pub fn origin(&self) -> &MetaOrigin {
+        &self.origin
     }
 
     pub fn docs(&self) -> Option<&str> {
@@ -427,6 +495,7 @@ impl MetaVariant {
 
     fn canonicalize(&mut self) -> Result<(), MetaModelError> {
         required_text("variant.name", self.name.clone())?;
+        self.origin.validate()?;
         self.canonicalize_attributes()?;
         self.payload.canonicalize()
     }
@@ -458,30 +527,64 @@ impl MetaVariant {
 #[serde(deny_unknown_fields)]
 pub struct MetaOperation {
     name: String,
-    signature: String,
+    signature: MetaTypeRef,
     visibility: MetaVisibility,
     ordinal: u32,
-    span: MetaSpan,
+    origin: MetaOrigin,
     docs: Option<String>,
+    generic_parameters: Vec<MetaGenericParameter>,
+    has_default: bool,
+    requires_self_send: bool,
 }
 
 impl MetaOperation {
     pub fn new(
         name: impl Into<String>,
-        signature: impl Into<String>,
+        signature: impl Into<MetaTypeRef>,
         visibility: MetaVisibility,
         ordinal: u32,
-        span: MetaSpan,
+        origin: impl Into<MetaOrigin>,
         docs: Option<impl Into<String>>,
     ) -> Result<Self, MetaModelError> {
+        let origin = origin.into();
+        origin.validate()?;
+        let signature = signature.into();
+        validate_type_reference(&signature)?;
         Ok(Self {
             name: required_text("operation.name", name.into())?,
-            signature: required_text("operation.signature", signature.into())?,
+            signature,
             visibility,
             ordinal,
-            span,
+            origin,
             docs: canonical_docs(docs.map(Into::into))?,
+            generic_parameters: Vec::new(),
+            has_default: false,
+            requires_self_send: false,
         })
+    }
+
+    pub(crate) fn with_contract(
+        mut self,
+        generic_parameters: Vec<MetaGenericParameter>,
+        has_default: bool,
+        requires_self_send: bool,
+    ) -> Self {
+        self.generic_parameters = generic_parameters;
+        self.has_default = has_default;
+        self.requires_self_send = requires_self_send;
+        self
+    }
+
+    pub fn generic_parameters(&self) -> &[MetaGenericParameter] {
+        &self.generic_parameters
+    }
+
+    pub fn has_default(&self) -> bool {
+        self.has_default
+    }
+
+    pub fn requires_self_send(&self) -> bool {
+        self.requires_self_send
     }
 
     pub fn name(&self) -> &str {
@@ -489,6 +592,10 @@ impl MetaOperation {
     }
 
     pub fn signature(&self) -> &str {
+        self.signature.source()
+    }
+
+    pub fn type_ref(&self) -> &MetaTypeRef {
         &self.signature
     }
 
@@ -500,8 +607,8 @@ impl MetaOperation {
         self.ordinal
     }
 
-    pub fn span(&self) -> MetaSpan {
-        self.span
+    pub fn origin(&self) -> &MetaOrigin {
+        &self.origin
     }
 
     pub fn docs(&self) -> Option<&str> {
@@ -515,11 +622,21 @@ impl MetaOperation {
 pub enum MetaDeclarationKind {
     Record(Vec<MetaField>),
     Enum(Vec<MetaVariant>),
-    Newtype(String),
+    Newtype(MetaTypeRef),
     Trait(Vec<MetaOperation>),
+    Alias(MetaTypeRef),
+    Function(MetaTypeRef),
+    Constant(MetaTypeRef),
 }
 
 impl MetaDeclarationKind {
+    fn namespace(&self) -> &'static str {
+        match self {
+            Self::Function(_) | Self::Constant(_) => "value",
+            _ => "type",
+        }
+    }
+
     pub fn record(fields: impl IntoIterator<Item = MetaField>) -> Self {
         Self::Record(fields.into_iter().collect())
     }
@@ -528,7 +645,7 @@ impl MetaDeclarationKind {
         Self::Enum(variants.into_iter().collect())
     }
 
-    pub fn newtype(underlying: impl Into<String>) -> Self {
+    pub fn newtype(underlying: impl Into<MetaTypeRef>) -> Self {
         Self::Newtype(underlying.into())
     }
 
@@ -542,6 +659,9 @@ impl MetaDeclarationKind {
             Self::Enum(_) => "enum",
             Self::Newtype(_) => "newtype",
             Self::Trait(_) => "trait",
+            Self::Alias(_) => "alias",
+            Self::Function(_) => "function",
+            Self::Constant(_) => "constant",
         }
     }
 
@@ -560,14 +680,28 @@ impl MetaDeclarationKind {
                     "variant",
                 )
             }
-            Self::Newtype(underlying) => {
-                required_text("newtype.underlying", underlying.clone())?;
+            Self::Newtype(underlying)
+            | Self::Alias(underlying)
+            | Self::Function(underlying)
+            | Self::Constant(underlying) => {
+                validate_type_reference(underlying)?;
                 Ok(())
             }
             Self::Trait(operations) => {
-                for operation in operations.iter() {
+                for operation in operations.iter_mut() {
                     required_text("operation.name", operation.name.clone())?;
-                    required_text("operation.signature", operation.signature.clone())?;
+                    operation.origin.validate()?;
+                    for parameter in &mut operation.generic_parameters {
+                        parameter.canonicalize()?;
+                    }
+                    ensure_unique_keys(
+                        operation
+                            .generic_parameters
+                            .iter()
+                            .map(|parameter| parameter.name.clone()),
+                        "operation generic parameter",
+                    )?;
+                    validate_type_reference(&operation.signature)?;
                 }
                 operations.sort_by_key(|operation| (operation.ordinal, operation.name.clone()));
                 ensure_unique_ordinals_and_names(
@@ -590,12 +724,41 @@ pub struct MetaDeclaration {
     visibility: MetaVisibility,
     generic_parameters: Vec<MetaGenericParameter>,
     bounds: Vec<MetaBound>,
-    span: MetaSpan,
+    origin: MetaOrigin,
     docs: Option<String>,
     kind: MetaDeclarationKind,
 }
 
 impl MetaDeclaration {
+    pub(crate) fn with_docs(mut self, docs: Option<String>) -> Result<Self, MetaModelError> {
+        self.docs = canonical_docs(docs)?;
+        Ok(self)
+    }
+
+    /// Restricts members while preserving source ordinals and canonical order.
+    pub(crate) fn public_view(mut self) -> Self {
+        match &mut self.kind {
+            MetaDeclarationKind::Record(fields) => {
+                fields.retain(|field| field.visibility == MetaVisibility::Public)
+            }
+            MetaDeclarationKind::Enum(variants) => {
+                for variant in variants {
+                    if let MetaVariantPayload::Record(fields) = &mut variant.payload {
+                        fields.retain(|field| field.visibility == MetaVisibility::Public);
+                    }
+                }
+            }
+            MetaDeclarationKind::Trait(operations) => {
+                operations.retain(|operation| operation.visibility == MetaVisibility::Public)
+            }
+            MetaDeclarationKind::Newtype(_)
+            | MetaDeclarationKind::Alias(_)
+            | MetaDeclarationKind::Function(_)
+            | MetaDeclarationKind::Constant(_) => {}
+        }
+        self
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         identity: impl Into<String>,
@@ -603,17 +766,19 @@ impl MetaDeclaration {
         visibility: MetaVisibility,
         generic_parameters: impl IntoIterator<Item = MetaGenericParameter>,
         bounds: impl IntoIterator<Item = MetaBound>,
-        span: MetaSpan,
+        origin: impl Into<MetaOrigin>,
         docs: Option<impl Into<String>>,
         kind: MetaDeclarationKind,
     ) -> Result<Self, MetaModelError> {
+        let origin = origin.into();
+        origin.validate()?;
         let mut declaration = Self {
             identity: required_text("declaration.identity", identity.into())?,
             module: required_text("declaration.module", module.into())?,
             visibility,
             generic_parameters: generic_parameters.into_iter().collect(),
             bounds: bounds.into_iter().collect(),
-            span,
+            origin,
             docs: canonical_docs(docs.map(Into::into))?,
             kind,
         };
@@ -641,8 +806,8 @@ impl MetaDeclaration {
         &self.bounds
     }
 
-    pub fn span(&self) -> MetaSpan {
-        self.span
+    pub fn origin(&self) -> &MetaOrigin {
+        &self.origin
     }
 
     pub fn docs(&self) -> Option<&str> {
@@ -653,8 +818,32 @@ impl MetaDeclaration {
         &self.kind
     }
 
+    pub(crate) fn type_references(&self) -> Vec<&MetaTypeRef> {
+        match &self.kind {
+            MetaDeclarationKind::Record(fields) => fields.iter().map(MetaField::type_ref).collect(),
+            MetaDeclarationKind::Enum(variants) => variants
+                .iter()
+                .flat_map(|variant| match variant.payload() {
+                    MetaVariantPayload::Unit => Vec::new(),
+                    MetaVariantPayload::Tuple(types) => types.iter().collect(),
+                    MetaVariantPayload::Record(fields) => {
+                        fields.iter().map(MetaField::type_ref).collect()
+                    }
+                })
+                .collect(),
+            MetaDeclarationKind::Trait(operations) => {
+                operations.iter().map(MetaOperation::type_ref).collect()
+            }
+            MetaDeclarationKind::Newtype(ty)
+            | MetaDeclarationKind::Alias(ty)
+            | MetaDeclarationKind::Function(ty)
+            | MetaDeclarationKind::Constant(ty) => vec![ty],
+        }
+    }
+
     fn canonicalize(&mut self) -> Result<(), MetaModelError> {
         required_text("declaration.identity", self.identity.clone())?;
+        self.origin.validate()?;
         required_text("declaration.module", self.module.clone())?;
         for parameter in &mut self.generic_parameters {
             parameter.canonicalize()?;
@@ -678,33 +867,116 @@ impl MetaDeclaration {
     }
 }
 
+/// Explicit compilation context. Package identities describe only the model
+/// closure; they are not an inventory of unrelated dependencies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaEnvironment {
+    pub edition: String,
+    pub target: String,
+    pub profile: String,
+    pub capabilities: Vec<String>,
+    pub features: Vec<String>,
+    pub packages: Vec<String>,
+}
+
+impl MetaEnvironment {
+    /// Context for a standalone model compiled for the closed meta target.
+    pub fn meta() -> Self {
+        Self {
+            edition: crate::LANGUAGE_EDITION.into(),
+            target: "tondo-meta".into(),
+            profile: "meta".into(),
+            capabilities: Vec::new(),
+            features: Vec::new(),
+            packages: Vec::new(),
+        }
+    }
+
+    fn canonicalize(&mut self) -> Result<(), MetaModelError> {
+        for (field, value) in [
+            ("environment.edition", &self.edition),
+            ("environment.target", &self.target),
+            ("environment.profile", &self.profile),
+        ] {
+            required_text(field, value.clone())?;
+        }
+        for (field, values) in [
+            ("environment.capability", &mut self.capabilities),
+            ("environment.feature", &mut self.features),
+            ("environment.package", &mut self.packages),
+        ] {
+            for value in values.iter() {
+                required_text(field, value.clone())?;
+            }
+            values.sort();
+            values.dedup();
+        }
+        Ok(())
+    }
+}
+
+/// A visible implementation header; no method body crosses the model boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaImplementation {
+    pub module: String,
+    pub target: String,
+    pub trait_identity: String,
+    pub arguments: Vec<String>,
+    pub generic_parameters: Vec<MetaGenericParameter>,
+    pub origin: MetaOrigin,
+    pub docs: Option<String>,
+}
+
 /// A deterministic, immutable snapshot of one authorized semantic closure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetaSnapshot {
     format: String,
+    environment: MetaEnvironment,
     roots: Vec<MetaRoot>,
     modules: Vec<MetaModule>,
     declarations: Vec<MetaDeclaration>,
+    implementations: Vec<MetaImplementation>,
 }
 
 impl MetaSnapshot {
     pub fn new(
+        environment: MetaEnvironment,
         roots: impl IntoIterator<Item = MetaRoot>,
         modules: impl IntoIterator<Item = MetaModule>,
         declarations: impl IntoIterator<Item = MetaDeclaration>,
     ) -> Result<Self, MetaModelError> {
         Self {
             format: META_MODEL.into(),
+            environment,
             roots: roots.into_iter().collect(),
             modules: modules.into_iter().collect(),
             declarations: declarations.into_iter().collect(),
+            implementations: Vec::new(),
         }
         .canonicalize()
     }
 
     pub fn format(&self) -> &str {
         &self.format
+    }
+
+    pub fn environment(&self) -> &MetaEnvironment {
+        &self.environment
+    }
+
+    pub fn implementations(&self) -> &[MetaImplementation] {
+        &self.implementations
+    }
+
+    pub fn with_implementations(
+        mut self,
+        implementations: Vec<MetaImplementation>,
+    ) -> Result<Self, MetaModelError> {
+        self.implementations = implementations;
+        self.canonicalize()
     }
 
     pub fn roots(&self) -> &[MetaRoot] {
@@ -748,6 +1020,56 @@ impl MetaSnapshot {
         if self.format != META_MODEL {
             return Err(MetaModelError::UnsupportedFormat(self.format));
         }
+        self.environment
+            .packages
+            .extend(self.roots.iter().map(|root| root.package.clone()));
+        self.environment.canonicalize()?;
+        for implementation in &mut self.implementations {
+            for (field, value) in [
+                ("implementation.module", &implementation.module),
+                ("implementation.target", &implementation.target),
+                ("implementation.trait", &implementation.trait_identity),
+            ] {
+                required_text(field, value.clone())?;
+            }
+            for argument in &implementation.arguments {
+                required_text("implementation.argument", argument.clone())?;
+            }
+            for parameter in &mut implementation.generic_parameters {
+                parameter.canonicalize()?;
+            }
+            ensure_unique_keys(
+                implementation
+                    .generic_parameters
+                    .iter()
+                    .map(|parameter| parameter.name.clone()),
+                "implementation generic parameter",
+            )?;
+            implementation.origin.validate()?;
+            implementation.docs = canonical_docs(implementation.docs.take())?;
+        }
+        self.implementations.sort_by(|a, b| {
+            (
+                &a.module,
+                &a.target,
+                &a.trait_identity,
+                &a.arguments,
+                &a.origin,
+            )
+                .cmp(&(
+                    &b.module,
+                    &b.target,
+                    &b.trait_identity,
+                    &b.arguments,
+                    &b.origin,
+                ))
+        });
+        ensure_unique_keys(
+            self.implementations.iter().map(|implementation| {
+                format!("{}:{:?}", implementation.module, implementation.origin)
+            }),
+            "implementation",
+        )?;
 
         self.roots
             .sort_by_key(|root| (root.package.clone(), root.module.clone()));
@@ -771,12 +1093,22 @@ impl MetaSnapshot {
         for declaration in &mut self.declarations {
             declaration.canonicalize()?;
         }
-        self.declarations
-            .sort_by_key(|declaration| (declaration.module.clone(), declaration.identity.clone()));
+        self.declarations.sort_by_key(|declaration| {
+            (
+                declaration.module.clone(),
+                declaration.identity.clone(),
+                declaration.kind.namespace(),
+            )
+        });
         ensure_unique_keys(
-            self.declarations
-                .iter()
-                .map(|declaration| format!("{}::{}", declaration.module, declaration.identity)),
+            self.declarations.iter().map(|declaration| {
+                format!(
+                    "{}::{}::{}",
+                    declaration.module,
+                    declaration.kind.namespace(),
+                    declaration.identity
+                )
+            }),
             "declaration",
         )?;
         Ok(self)
@@ -1208,8 +1540,26 @@ impl MetaSourceBuilder {
         }
         Ok(MetaResponse {
             outputs: self.outputs.into_values().collect(),
+            diagnostics: Vec::new(),
         })
     }
+}
+
+/// Closed severities in ordinary provider responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MetaDiagnosticSeverity {
+    Note,
+    Warning,
+    Error,
+}
+
+/// A provider message whose origin is checked against its authorized snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaProviderDiagnostic {
+    pub origin: Option<MetaSpan>,
+    pub severity: MetaDiagnosticSeverity,
+    pub message: String,
 }
 
 /// A successful response contains all and only the declared outputs.
@@ -1217,11 +1567,37 @@ impl MetaSourceBuilder {
 #[serde(deny_unknown_fields)]
 pub struct MetaResponse {
     outputs: Vec<MetaSource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    diagnostics: Vec<MetaProviderDiagnostic>,
 }
 
 impl MetaResponse {
     pub fn outputs(&self) -> &[MetaSource] {
         &self.outputs
+    }
+
+    pub fn diagnostics(&self) -> &[MetaProviderDiagnostic] {
+        &self.diagnostics
+    }
+
+    pub fn with_diagnostics(
+        mut self,
+        mut diagnostics: Vec<MetaProviderDiagnostic>,
+    ) -> Result<Self, MetaContractError> {
+        for diagnostic in &diagnostics {
+            if diagnostic.message.is_empty()
+                || diagnostic
+                    .message
+                    .chars()
+                    .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
+                || diagnostic.origin.is_some_and(|span| span.start > span.end)
+            {
+                return Err(MetaContractError::InvalidDiagnostic);
+            }
+        }
+        diagnostics.sort();
+        self.diagnostics = diagnostics;
+        Ok(self)
     }
 
     pub fn output(&self, path: &str) -> Option<&MetaSource> {
@@ -1258,7 +1634,7 @@ impl MetaResponse {
             .iter()
             .map(|source| MetaOutputSpec::new(source.path.clone(), source.module.clone()))
             .collect::<Result<Vec<_>, _>>()?;
-        let snapshot = MetaSnapshot::new([], [], [])
+        let snapshot = MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], [])
             .map_err(|error| MetaContractError::InvalidSnapshot(error.to_string()))?;
         let mut builder = MetaRequest::new(snapshot, [], specs, limits)?.into_source_builder();
         for source in outputs {
@@ -1268,7 +1644,7 @@ impl MetaResponse {
             }
             builder.add_mapped_source(source.path, source.module, source.bytes, source.mappings)?;
         }
-        builder.finish()
+        builder.finish()?.with_diagnostics(self.diagnostics)
     }
 }
 
@@ -1276,6 +1652,8 @@ impl MetaResponse {
 /// for invoking a callback or acquiring a host capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetaContractError {
+    InvalidDiagnostic,
+    UnknownInput(String),
     UnsupportedApi(String),
     InvalidLimit,
     InvalidSnapshot(String),
@@ -1298,6 +1676,8 @@ pub enum MetaContractError {
 impl fmt::Display for MetaContractError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidDiagnostic => formatter.write_str("invalid provider diagnostic"),
+            Self::UnknownInput(name) => write!(formatter, "unknown named meta input `{name}`"),
             Self::UnsupportedApi(api) => write!(formatter, "unsupported std.meta API `{api}`"),
             Self::InvalidLimit => formatter.write_str("meta limits must be positive"),
             Self::InvalidSnapshot(error) => write!(formatter, "invalid meta snapshot: {error}"),
@@ -1386,7 +1766,17 @@ fn required_text(field: &str, value: String) -> Result<String, MetaModelError> {
 fn canonical_docs(docs: Option<String>) -> Result<Option<String>, MetaModelError> {
     match docs {
         Some(value) if value.is_empty() => Ok(None),
-        Some(value) => Ok(Some(required_text("docs", value)?)),
+        Some(value)
+            if value
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\t')) =>
+        {
+            Err(MetaModelError::InvalidValue {
+                field: "docs".into(),
+                reason: "invalid documentation control character".into(),
+            })
+        }
+        Some(value) => Ok(Some(value)),
         None => Ok(None),
     }
 }
@@ -1394,7 +1784,8 @@ fn canonical_docs(docs: Option<String>) -> Result<Option<String>, MetaModelError
 fn canonicalize_fields(fields: &mut [MetaField]) -> Result<(), MetaModelError> {
     for field in fields.iter_mut() {
         required_text("field.name", field.name.clone())?;
-        required_text("field.type", field.ty.clone())?;
+        field.origin.validate()?;
+        validate_type_reference(&field.ty)?;
         field.canonicalize_attributes()?;
     }
     fields.sort_by_key(|field| (field.ordinal, field.name.clone()));
@@ -1404,6 +1795,18 @@ fn canonicalize_fields(fields: &mut [MetaField]) -> Result<(), MetaModelError> {
             .map(|field| (field.ordinal, field.name.as_str())),
         "field",
     )
+}
+
+fn validate_type_reference(ty: &MetaTypeRef) -> Result<(), MetaModelError> {
+    required_text("type.identity", ty.identity().into())?;
+    required_text("type.source", ty.source().into())?;
+    if ty.parts().is_empty() {
+        return Err(MetaModelError::InvalidValue {
+            field: "type.parts".into(),
+            reason: "must not be empty".into(),
+        });
+    }
+    Ok(())
 }
 
 fn ensure_unique_ordinals_and_names<'a>(
@@ -1542,6 +1945,7 @@ pub struct DeriveRequest {
     module: String,
     target: String,
     generic_parameters: Vec<String>,
+    generic_bounds: Vec<Vec<String>>,
     traits: Vec<String>,
     span: Option<Span>,
 }
@@ -1557,6 +1961,7 @@ impl DeriveRequest {
             module: module.into(),
             target: target.into(),
             generic_parameters: generic_parameters.into_iter().map(Into::into).collect(),
+            generic_bounds: Vec::new(),
             traits: traits.into_iter().map(Into::into).collect(),
             span: None,
         }
@@ -1588,13 +1993,15 @@ impl DeriveRequest {
     }
 
     pub fn from_hir(module: impl Into<String>, request: &crate::hir::HirDeriveRequest) -> Self {
-        Self::new(
+        let mut result = Self::new(
             module,
             request.target(),
             request.generic_parameters().iter().cloned(),
             request.traits().iter().cloned(),
         )
-        .with_span(request.span())
+        .with_span(request.span());
+        result.generic_bounds = request.generic_bounds().to_vec();
+        result
     }
 }
 
@@ -1647,11 +2054,33 @@ impl DeriveContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedDerive {
     request_index: usize,
+    request_span: Option<Span>,
     target: DeriveTarget,
+    generic_bounds: Vec<Vec<String>>,
     traits: Vec<ValidatedTrait>,
 }
 
 impl ValidatedDerive {
+    pub(crate) fn generic_bounds(&self) -> &[Vec<String>] {
+        &self.generic_bounds
+    }
+
+    pub(crate) fn written_bounds(&self) -> Vec<String> {
+        self.target
+            .generic_parameters()
+            .iter()
+            .zip(&self.generic_bounds)
+            .flat_map(|(parameter, bounds)| {
+                bounds
+                    .iter()
+                    .map(move |bound| format!("{parameter}: {bound}"))
+            })
+            .collect()
+    }
+
+    pub fn request_span(&self) -> Option<Span> {
+        self.request_span
+    }
     pub fn request_index(&self) -> usize {
         self.request_index
     }
@@ -1904,7 +2333,9 @@ pub fn validate_derive_requests(
         if !output_traits.is_empty() {
             validated.push(ValidatedDerive {
                 request_index,
+                request_span: request.span,
                 target: target.clone(),
+                generic_bounds: request.generic_bounds.clone(),
                 traits: output_traits,
             });
         }
@@ -2265,7 +2696,13 @@ mod tests {
             modules.reverse();
             declarations.reverse();
         }
-        MetaSnapshot::new(roots, modules, declarations).unwrap()
+        MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
+            roots,
+            modules,
+            declarations,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -2290,7 +2727,10 @@ mod tests {
             first.declarations()[0].bounds()[0].trait_identity(),
             "std.Eq"
         );
-        assert_eq!(first.declarations()[0].span(), snapshot_span(10));
+        assert_eq!(
+            first.declarations()[0].origin().source_span(),
+            Some(snapshot_span(10))
+        );
         assert_eq!(first.declarations()[0].docs(), Some("public declaration"));
         assert_eq!(first.declarations()[0].kind().name(), "enum");
         assert_eq!(first.declarations()[1].kind().name(), "record");
@@ -2307,6 +2747,24 @@ mod tests {
     }
 
     #[test]
+    fn meta_snapshot_origin_is_hashed_and_revalidated_when_decoded() {
+        let original = snapshot(false);
+        let mut builtin = original.clone();
+        builtin.declarations[0].origin = MetaOrigin::Builtin("prelude:State".into());
+        let bytes = builtin.canonical_bytes().unwrap();
+        assert_ne!(original.hash().unwrap(), builtin.hash().unwrap());
+        assert_eq!(MetaSnapshot::decode(&bytes).unwrap(), builtin);
+        for origin in [
+            serde_json::json!({"Builtin": ""}),
+            serde_json::json!({"Source": {"file": 0, "start": 10, "end": 1}}),
+        ] {
+            let mut changed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            changed["declarations"][0]["origin"] = origin;
+            assert!(MetaSnapshot::decode(&serde_json::to_vec(&changed).unwrap()).is_err());
+        }
+    }
+
+    #[test]
     fn meta_snapshot_shapes_expose_only_structural_data() {
         let tuple = MetaVariantPayload::tuple(["Int", "String"]);
         assert_eq!(tuple.kind(), "tuple");
@@ -2316,7 +2774,7 @@ mod tests {
         assert_eq!(field.ty(), "String");
         assert_eq!(field.visibility(), MetaVisibility::Public);
         assert_eq!(field.ordinal(), 0);
-        assert_eq!(field.span(), snapshot_span(0));
+        assert_eq!(field.origin().source_span(), Some(snapshot_span(0)));
         assert_eq!(field.docs(), Some("x docs"));
 
         let variant =
@@ -2324,7 +2782,7 @@ mod tests {
         assert_eq!(variant.name(), "Tuple");
         assert_eq!(variant.payload().kind(), "tuple");
         assert_eq!(variant.ordinal(), 0);
-        assert_eq!(variant.span(), snapshot_span(4));
+        assert_eq!(variant.origin().source_span(), Some(snapshot_span(4)));
         assert_eq!(variant.docs(), Some("tuple docs"));
 
         let operation = MetaOperation::new(
@@ -2340,7 +2798,7 @@ mod tests {
         assert_eq!(operation.signature(), "fn(Self): Bytes");
         assert_eq!(operation.visibility(), MetaVisibility::Public);
         assert_eq!(operation.ordinal(), 0);
-        assert_eq!(operation.span(), snapshot_span(30));
+        assert_eq!(operation.origin().source_span(), Some(snapshot_span(30)));
         assert_eq!(operation.docs(), Some("operation docs"));
 
         let trait_declaration = MetaDeclaration::new(
@@ -2394,6 +2852,7 @@ mod tests {
         ));
         let duplicate_root = MetaRoot::new("app", "main").unwrap();
         let duplicate = MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [duplicate_root.clone(), duplicate_root],
             std::iter::empty::<MetaModule>(),
             std::iter::empty::<MetaDeclaration>(),
@@ -2410,13 +2869,9 @@ mod tests {
             MetaSnapshot::decode(&serde_json::to_vec(&duplicate_json).unwrap()).unwrap_err();
         assert!(duplicate_fields.to_string().contains("duplicate field"));
 
-        let mut unsupported = serde_json::to_vec(&serde_json::json!({
-            "format": "tondo-meta-model-0.2/1",
-            "roots": [],
-            "modules": [],
-            "declarations": []
-        }))
-        .unwrap();
+        let mut future_snapshot = snapshot(false);
+        future_snapshot.format = "tondo-meta-model-0.2/1".into();
+        let mut unsupported = serde_json::to_vec(&future_snapshot).unwrap();
         assert!(matches!(
             MetaSnapshot::decode(&unsupported),
             Err(MetaModelError::UnsupportedFormat(_))

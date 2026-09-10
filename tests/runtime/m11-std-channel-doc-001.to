@@ -212,5 +212,5 @@ fn main(): !channel.ChannelError {
     let _ = select_cancel_safe()?
     let _ = close_and_drain()?
     let _ = discardable_iteration()?
-    console.println("channel-doc-ok")
+    _ = console.println("channel-doc-ok")
 }

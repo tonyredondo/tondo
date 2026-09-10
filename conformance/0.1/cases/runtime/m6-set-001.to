@@ -34,5 +34,5 @@ fn main() {
     let empty: Set[Int] = Set[]
     assert(not (1 in empty))
 
-    console.print("set-ordered-membership\n")
+    _ = console.print("set-ordered-membership\n")
 }

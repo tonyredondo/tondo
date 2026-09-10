@@ -589,6 +589,20 @@ fn intrinsic_node(
         )
     };
     match constructor {
+        IntrinsicType::Reflection(kind) => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) || kind == tondo_vm::reflection::ReflectionDescriptorKind::TypeId
+            {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::Array => {
             if capability == HirCapability::Key {
                 fixed(HirCapabilityStatus::Unsatisfied)
@@ -862,7 +876,6 @@ fn intrinsic_node(
         }
         IntrinsicType::EnvName
         | IntrinsicType::EnvError
-        | IntrinsicType::GenerationId
         | IntrinsicType::Path
         | IntrinsicType::PathError
         | IntrinsicType::Metadata
@@ -870,10 +883,6 @@ fn intrinsic_node(
         | IntrinsicType::FsError
         | IntrinsicType::MathError
         | IntrinsicType::FloatTolerance
-        | IntrinsicType::FloatToleranceError
-        | IntrinsicType::TextDiff
-        | IntrinsicType::TempError
-        | IntrinsicType::GenerationError
         | IntrinsicType::IoError
         | IntrinsicType::ConsoleError => {
             if matches!(

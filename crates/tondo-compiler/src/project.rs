@@ -32,16 +32,16 @@ pub const LOCKFILE_FORMAT: &str = "tondo-lock-draft";
 pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
 pub const BOOTSTRAP_STANDARD_PACKAGE: &str = "toolchain:std:0.1-bootstrap";
 
-const BOOTSTRAP_STANDARD_FINGERPRINT: &[u8] =
-    b"tondo-bootstrap-standard/0.1;modules=console,process;compiler-owned";
-
+/// Identity of the hosted standard source bundle embedded at compiler build time.
+/// Project planning does not consult the build machine or checkout at runtime.
 pub fn bootstrap_standard_hash() -> String {
-    sha256(BOOTSTRAP_STANDARD_FINGERPRINT)
+    env!("TONDO_BOOTSTRAP_STANDARD_HASH").to_owned()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProjectInputKind {
     Source,
+    MetaSource,
     DependencyInterface,
     GeneratorInput,
     PrivilegedUnit,
@@ -51,6 +51,7 @@ impl ProjectInputKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Source => "source",
+            Self::MetaSource => "meta-source",
             Self::DependencyInterface => "dependency-interface",
             Self::GeneratorInput => "generator-input",
             Self::PrivilegedUnit => "privileged-unit",
@@ -229,15 +230,58 @@ pub struct ProjectPlan {
     required_inputs: BTreeMap<String, PlannedInput>,
     generator_names: BTreeMap<String, String>,
     privileged_ids: BTreeMap<String, String>,
+    meta: Option<crate::project_meta::ProjectMetaPlan>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProjectRole {
+    Build,
+    DependencySet,
 }
 
 impl ProjectPlan {
     pub fn parse(manifest_bytes: &[u8], lockfile_bytes: &[u8]) -> Result<Self, ProjectError> {
-        let manifest: ManifestWire = serde_json::from_slice(manifest_bytes)
+        Self::parse_for(manifest_bytes, lockfile_bytes, ProjectRole::Build)
+    }
+
+    /// An isolated dependency set has no publishable root. Every package,
+    /// including the one used to anchor source ordering, consumes an interface.
+    pub(crate) fn parse_dependency_sources(
+        manifest_bytes: &[u8],
+        lockfile_bytes: &[u8],
+    ) -> Result<Self, ProjectError> {
+        Self::parse_for(manifest_bytes, lockfile_bytes, ProjectRole::DependencySet)
+    }
+
+    fn parse_for(
+        manifest_bytes: &[u8],
+        lockfile_bytes: &[u8],
+        role: ProjectRole,
+    ) -> Result<Self, ProjectError> {
+        let (manifest, lockfile, meta) =
+            crate::project_meta::ProjectMetaPlan::extract(manifest_bytes, lockfile_bytes)?;
+        let manifest: ManifestWire = serde_json::from_value(manifest)
             .map_err(|error| ProjectError::InvalidManifest(error.to_string()))?;
-        let lockfile: LockfileWire = serde_json::from_slice(lockfile_bytes)
+        let lockfile: LockfileWire = serde_json::from_value(lockfile)
             .map_err(|error| ProjectError::InvalidLockfile(error.to_string()))?;
-        Self::from_wire(manifest_bytes, lockfile_bytes, manifest, lockfile)
+        let mut plan = Self::from_wire(manifest_bytes, lockfile_bytes, manifest, lockfile, role)?;
+        if let Some(meta) = &meta {
+            for source in meta
+                .lock
+                .meta_packages
+                .iter()
+                .flat_map(|package| &package.sources)
+            {
+                insert_required_input(
+                    &mut plan.required_inputs,
+                    source.physical_path.clone(),
+                    ProjectInputKind::MetaSource,
+                    source.sha256.clone(),
+                )?;
+            }
+        }
+        plan.meta = meta;
+        Ok(plan)
     }
 
     /// Parses the current draft toolchain records. The returned plan is pure:
@@ -265,6 +309,12 @@ impl ProjectPlan {
     /// Canonical source path selected as the project entry point.
     pub fn root_source_path(&self) -> &str {
         &self.root.physical_path
+    }
+
+    /// The declared project identity, before test consumers receive synthetic
+    /// package IDs for compilation isolation.
+    pub fn root_package_id(&self) -> &str {
+        self.root.package.as_str()
     }
 
     pub fn profile(&self) -> HostProfile {
@@ -543,6 +593,7 @@ impl ProjectPlan {
             root,
             build_inputs,
             privileged_units,
+            meta: self.meta.as_ref().map(|meta| meta.close(supplied)),
         })
     }
 
@@ -551,6 +602,7 @@ impl ProjectPlan {
         lockfile_bytes: &[u8],
         manifest: ManifestWire,
         lockfile: LockfileWire,
+        role: ProjectRole,
     ) -> Result<Self, ProjectError> {
         if manifest.format != MANIFEST_FORMAT {
             return Err(ProjectError::UnsupportedManifestFormat(manifest.format));
@@ -745,7 +797,10 @@ impl ProjectPlan {
                 }
             }
 
-            let interface_hash = match (&locked.interface, id == &root_package) {
+            let interface_hash = match (
+                &locked.interface,
+                id == &root_package && role == ProjectRole::Build,
+            ) {
                 (None, true) => None,
                 (Some(_), true) => {
                     return Err(ProjectError::LockGraphMismatch(
@@ -847,6 +902,7 @@ impl ProjectPlan {
             required_inputs,
             generator_names,
             privileged_ids,
+            meta: None,
         })
     }
 }
@@ -863,6 +919,7 @@ pub struct ResolvedProject {
     root: FileId,
     build_inputs: DeclaredBuildInputs,
     privileged_units: BTreeMap<String, PrivilegedUnit>,
+    meta: Option<crate::project_meta::ClosedSourceMeta>,
 }
 
 impl ResolvedProject {
@@ -876,6 +933,12 @@ impl ResolvedProject {
         diagnostic_format: DiagnosticFormat,
         limits: ResourceLimits,
     ) -> Result<CompilationRequest, ProjectError> {
+        let providers = self
+            .meta
+            .as_ref()
+            .map(|meta| meta.compile_derives(limits))
+            .transpose()?
+            .unwrap_or_default();
         Ok(CompilationRequest::new(
             operation,
             self.edition,
@@ -889,7 +952,9 @@ impl ResolvedProject {
             self.sources,
             self.root,
         )?
-        .with_declared_build_inputs(self.build_inputs))
+        .with_declared_build_inputs(self.build_inputs)
+        .with_source_derive_providers(providers)
+        .with_source_meta(self.meta))
     }
 }
 
@@ -1771,6 +1836,24 @@ mod tests {
     }
 
     #[test]
+    fn standard_source_identity_rejects_legacy_and_changed_lock_hashes() {
+        let (manifest, lockfile, _) = root_project(b"fn main() {}\n", b"");
+        ProjectPlan::parse(&manifest, &lockfile).unwrap();
+        for stale in [
+            sha256(b"tondo-bootstrap-standard/0.1;modules=console,process;compiler-owned"),
+            sha256(b"another standard source bundle"),
+        ] {
+            let mut changed: serde_json::Value = serde_json::from_slice(&lockfile).unwrap();
+            changed["standard"]["content_hash"] = stale.into();
+            assert!(matches!(
+                ProjectPlan::parse(&manifest, &serde_json::to_vec(&changed).unwrap()),
+                Err(ProjectError::LockGraphMismatch(message))
+                    if message.contains("unexpected content hash")
+            ));
+        }
+    }
+
+    #[test]
     fn root_forms_and_privileged_unit_ids_use_closed_parsers() {
         assert_eq!(parse_edition("0.1").unwrap(), Edition::V0_1);
         assert_eq!(parse_profile("hosted").unwrap(), HostProfile::Hosted);
@@ -1893,6 +1976,1286 @@ mod tests {
             plan.resolve(&extra),
             Err(ProjectError::UndeclaredInput(path)) if path == "ambient.txt"
         ));
+    }
+
+    fn source_generator_project(model: Option<&str>, body: &str) -> ProjectFixture {
+        use crate::toolchain::{LockedMetaPackage, LockedMetaSource, MetaPackage, Source};
+        let consumer =
+            b"import app.generated\nfn main() {\n    assert(generated.value() == 42)\n}\n";
+        let provider = format!(
+            "import std.meta\npub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {{\n{body}\n}}\n"
+        );
+        let (manifest, lock, mut supplied) = root_project(consumer, b"unused");
+        let mut manifest: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        let mut lock: serde_json::Value = serde_json::from_slice(&lock).unwrap();
+        if let Some(model) = model {
+            manifest["packages"][0]["source_sets"][0]["sources"].as_array_mut().unwrap().push(json!({
+                "physical_path":"app/src/model.to", "logical_path":"src/model.to", "module":"model"
+            }));
+            let mut sources: Vec<LockedSourceWire> =
+                serde_json::from_value(lock["packages"][0]["sources"].clone()).unwrap();
+            sources.push(LockedSourceWire {
+                source_set: "common".into(),
+                physical_path: "app/src/model.to".into(),
+                logical_path: "src/model.to".into(),
+                module: "model".into(),
+                sha256: sha256(model.as_bytes()),
+            });
+            sources.sort_by(|a, b| {
+                (&a.source_set, &a.physical_path).cmp(&(&b.source_set, &b.physical_path))
+            });
+            lock["packages"][0]["content_hash"] = json!(
+                package_content_hash(
+                    &PackageId::new("workspace:app@1").unwrap(),
+                    &[],
+                    &sources,
+                    None
+                )
+                .unwrap()
+            );
+            lock["packages"][0]["sources"] = json!(sources);
+            supplied.insert("app/src/model.to".into(), Arc::from(model.as_bytes()));
+        }
+        let package = MetaPackage {
+            id: "workspace:builder@1".into(),
+            local_name: "builder".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![Source {
+                physical_path: "tools/builder/src/generator.to".into(),
+                logical_path: "src/generator.to".into(),
+                module: "generator".into(),
+            }],
+        };
+        let mut locked_package = LockedMetaPackage {
+            id: package.id.clone(),
+            content_hash: String::new(),
+            dependencies: vec![],
+            sources: vec![LockedMetaSource {
+                physical_path: package.sources[0].physical_path.clone(),
+                logical_path: package.sources[0].logical_path.clone(),
+                module: package.sources[0].module.clone(),
+                sha256: sha256(provider.as_bytes()),
+            }],
+        };
+        locked_package.content_hash = locked_package.computed_content_hash().unwrap();
+        supplied.insert(
+            package.sources[0].physical_path.clone(),
+            Arc::from(provider.as_bytes()),
+        );
+        let compiled = crate::project_meta::compile_source_provider(
+            std::slice::from_ref(&package),
+            &supplied,
+            &package.id,
+            "generator.generate",
+            crate::meta_vm::MetaEntryKind::Generate,
+            ResourceLimits::default(),
+        )
+        .unwrap();
+        let descriptor = crate::project_meta::bootstrap_meta_descriptor().unwrap();
+        let mut generator = json!({"id":"build-values", "owner_package":"workspace:app@1",
+            "provider":{"package":package.id,"entry":"generator.generate"}, "meta_model":crate::meta::META_MODEL,
+            "inputs":[],"model_roots":[],"outputs":[{"logical_path":"generated/values.to","module":"generated"}],
+            "limits":{"steps":100_000,"memory_bytes":1_048_576,"output_bytes":8_192}});
+        if model.is_some() {
+            generator["model_roots"] = json!([{"package":"workspace:app@1","module":"model"}]);
+        }
+        manifest["meta_packages"] = json!([package]);
+        manifest["derive_providers"] = json!([]);
+        manifest["generators"] = json!([generator]);
+        generator.as_object_mut().unwrap().remove("provider");
+        generator["provider_package"] = json!("workspace:builder@1");
+        generator["entry"] = json!("generator.generate");
+        generator["provider_hash"] = json!(compiled.hash().unwrap());
+        let manifest = serde_json::to_vec(&manifest).unwrap();
+        lock["manifest_hash"] = json!(sha256(&manifest));
+        lock["meta_standard"] = json!(descriptor.meta);
+        lock["meta_packages"] = json!([locked_package]);
+        lock["derive_providers"] = json!(descriptor.derive_providers);
+        lock["generators"] = json!([generator]);
+        (manifest, serde_json::to_vec(&lock).unwrap(), supplied)
+    }
+
+    #[test]
+    fn meta_project_generator_executes_with_empty_or_public_model_and_stable_sources() {
+        for (model, assertion) in [
+            (
+                None,
+                "assert(request.snapshot().declarations.length() == 0)",
+            ),
+            (
+                Some(
+                    "pub type User = {\n    value: Int\n    priv secret: String\n}\ntype Hidden = { value: Int }\n",
+                ),
+                "let model = request.snapshot()\nassert(model.declarations.length() == 1)\nassert(model.declarations[0].identity == \"User\")\nmatch model.declarations[0].kind {\nmeta.DeclarationKind.Record(fields) => assert(fields.length() == 1)\n_ => panic(\"expected record\")\n}",
+            ),
+        ] {
+            let body = format!(
+                "{assertion}\nok(meta.GenerateResponse {{ outputs: [request.outputs()[0].path: \"pub fn value():Int{{{{42}}}}\\n\"], diagnostics: [] }})"
+            );
+            let (manifest, lock, supplied) = source_generator_project(model, &body);
+            let mut products = Vec::new();
+            for _ in 0..2 {
+                let request = ProjectPlan::parse(&manifest, &lock)
+                    .unwrap()
+                    .resolve(&supplied)
+                    .unwrap()
+                    .into_compilation_request(
+                        Operation::Run,
+                        DiagnosticFormat::Json,
+                        ResourceLimits::default(),
+                    )
+                    .unwrap();
+                let output = execute(request).unwrap();
+                assert_eq!(
+                    output.status(),
+                    CompilationStatus::Success,
+                    "{}",
+                    output.diagnostics().human()
+                );
+                let generated = output
+                    .semantic_model()
+                    .unwrap()
+                    .sources()
+                    .iter()
+                    .filter(|(_, source)| source.origin() == SourceOrigin::GeneratedMeta)
+                    .collect::<Vec<_>>();
+                assert_eq!(generated.len(), 1);
+                assert!(generated[0].1.source_id().as_str().starts_with("gen:"));
+                let artifact = output.artifact().unwrap();
+                assert_eq!(artifact.generation().len(), 1);
+                let query = output.semantic_model().unwrap().meta_expansions().unwrap();
+                assert_eq!(query.expansions().len(), 1);
+                let record = &artifact.generation()[0];
+                assert_eq!(
+                    record.outputs[0].source_id,
+                    format!("gen:{}:0", &record.request_hash[7..])
+                );
+                assert_eq!(
+                    query.expansions()[0].source_id(),
+                    record.outputs[0].source_id
+                );
+                let record = &artifact.generation()[0];
+                assert_eq!(record.id, "build-values");
+                assert_eq!(
+                    record.outputs[0].source_id,
+                    generated[0].1.source_id().as_str()
+                );
+                assert_eq!(record.outputs[0].sha256, sha256(generated[0].1.bytes()));
+                assert_eq!(
+                    output.interface().unwrap().generation(),
+                    artifact.generation()
+                );
+                assert_eq!(
+                    crate::artifact::BuildArtifact::decode(&artifact.encode().unwrap()).unwrap(),
+                    *artifact
+                );
+                products.push(output.artifact().unwrap().encode().unwrap());
+            }
+            assert_eq!(products[0], products[1]);
+        }
+    }
+
+    #[test]
+    fn meta_type_refs_resolve_aliases_and_compile_with_destination_imports() {
+        let model = "pub type Item = { value: Int }\npub alias Alias = Item\npub type User = { left: Item, right: Alias }\n";
+        let body = r#"
+let model = request.snapshot()
+var builder = request.sourceBuilder()
+let path = request.outputs()[0].path
+var rendered = ""
+for declaration in model.declarations {
+    if declaration.identity == "User" {
+        match declaration.kind {
+            meta.DeclarationKind.Record(fields) => {
+                assert(fields[0].typeRef.identity() == fields[1].typeRef.identity())
+                let first = builder.renderType(path, fields[0].typeRef)?
+                let second = builder.renderType(path, fields[1].typeRef)?
+                assert(first == second)
+                rendered = first
+                assert(match builder.renderType("undeclared.to", fields[0].typeRef) {
+                    err(meta.Error.UnknownOutput(_)) => true
+                    _ => false
+                })
+            }
+            _ => panic("expected fields")
+        }
+    }
+}
+assert(rendered != "")
+builder.add(path, "pub fn value(): Int {{\nlet item: {rendered} = {rendered} {{ value: 42 }}\nitem.value\n}}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let model = output.semantic_model().unwrap();
+        let source = model
+            .sources()
+            .iter()
+            .find(|(_, source)| source.origin() == SourceOrigin::GeneratedMeta)
+            .unwrap()
+            .1
+            .text()
+            .unwrap();
+        assert_eq!(
+            source.matches("import app.model as __tondo_meta_").count(),
+            1,
+            "{source}"
+        );
+        assert!(!source.contains("Alias"), "{source}");
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_project_generator_rejects_current_round_dependencies_before_execution() {
+        let (manifest, lock, supplied) = source_generator_project(
+            Some("import app.generated\npub type User = { value: generated.Value }\n"),
+            "panic(\"provider must not execute\")",
+        );
+        let request = ProjectPlan::parse(&manifest, &lock)
+            .unwrap()
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Run,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(
+            output.diagnostics().human().contains("E2109"),
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(
+            !output
+                .diagnostics()
+                .human()
+                .contains("provider must not execute")
+        );
+        assert!(output.interface().is_none());
+        assert!(output.artifact().is_none());
+    }
+
+    #[test]
+    fn meta_model_includes_public_alias_function_and_constant_signatures() {
+        let model = r#"
+pub alias Label = String
+/// Public answer type, without its value.
+/// Documentation keeps its line boundaries.
+pub const answer: Int = 42
+pub fn identity[T: Copy](value: T): T { value }
+fn hidden(): String { "private body" }
+const privateValue: String = "private value"
+"#;
+        let body = r#"
+let snapshot = request.snapshot()
+assert(snapshot.declarations.length() == 4)
+assert(snapshot.declarations[0].identity == "Copy")
+assert(snapshot.declarations[0].origin == meta.Origin.Builtin("prelude:Copy"))
+let declarations = [snapshot.declarations[1], snapshot.declarations[2], snapshot.declarations[3]]
+assert(declarations.length() == 3)
+assert(declarations[0].identity == "Label")
+assert(declarations[1].identity == "answer")
+assert(declarations[2].identity == "identity")
+match declarations[0].kind {
+    meta.DeclarationKind.Alias(ty) => assert(ty.identity() == "String")
+    _ => panic("alias kind expected")
+}
+match declarations[1].kind {
+    meta.DeclarationKind.Constant(ty) => assert(ty.identity() == "Int")
+    _ => panic("constant kind expected")
+}
+assert(declarations[1].docs == some("Public answer type, without its value.\nDocumentation keeps its line boundaries."))
+assert(declarations[2].genericParameters[0].name == "T")
+assert(declarations[2].genericParameters[0].bounds == ["Copy"])
+var builder = request.sourceBuilder()
+let path = request.outputs()[0].path
+let signature = match declarations[2].kind {
+    meta.DeclarationKind.Function(ty) => builder.renderType(path, ty)?
+    _ => panic("function kind expected")
+}
+assert(signature == "fn(T): T")
+builder.add(path, "import app.model\npub alias Identity[T: Copy] = {signature}\npub fn value(): Int {{ model.identity(model.answer) }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_model_includes_builtin_nominals_without_fabricated_source_spans() {
+        let model = "import std.json\npub type User = { location: json.JsonLocation }\n";
+        let body = r#"
+var sawBuiltin = false
+var sawSource = false
+for declaration in request.snapshot().declarations {
+    if declaration.identity == "User" {
+        sawSource = match declaration.origin {
+            meta.Origin.Source(span) => span.end > span.start
+            _ => false
+        }
+    }
+    if declaration.identity == "JsonLocation" {
+        sawBuiltin = match declaration.origin {
+            meta.Origin.Builtin(identity) => identity != ""
+            _ => false
+        }
+        match declaration.kind {
+            meta.DeclarationKind.Record(fields) => {
+                assert(fields.length() == 3)
+                for field in fields {
+                    assert(match field.origin {
+                        meta.Origin.Builtin(identity) => identity != ""
+                        _ => false
+                    })
+                }
+            }
+            _ => panic("builtin record expected")
+        }
+    }
+}
+assert(sawBuiltin and sawSource)
+var builder = request.sourceBuilder()
+let path = builder.outputs()[0].path
+builder.add(path, "pub fn value(): Int {{ 42 }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_model_trait_operations_preserve_self_local_binders_and_defaults() {
+        let model = r#"
+pub trait Mapper[T] {
+    fn map[U: Copy](self, value: U): U
+    fn fallback(self, value: T): T { value }
+}
+"#;
+        let body = r#"
+var builder = request.sourceBuilder()
+let path = builder.outputs()[0].path
+for declaration in request.snapshot().declarations {
+    if declaration.identity == "Mapper" {
+        match declaration.kind {
+            meta.DeclarationKind.Trait(operations) => {
+                assert(operations.length() == 2)
+                assert(operations[0].genericParameters[0].name == "U")
+                assert(operations[0].genericParameters[0].bounds == ["Copy"])
+                assert(not operations[0].hasDefault)
+                assert(operations[1].hasDefault)
+                assert(not operations[0].requiresSelfSend)
+                assert(builder.renderType(path, operations[0].signature)? == "fn(ref Self, U): U")
+                assert(builder.renderType(path, operations[1].signature)? == "fn(ref Self, T): T")
+            }
+            _ => panic("trait expected")
+        }
+    }
+}
+builder.add(path, "pub fn value(): Int {{ 42 }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_model_closes_prelude_operation_signatures_and_codec_bounds() {
+        let model = r#"
+import std.serialization
+pub fn accepts[T: serialization.Encode[Json] + Discard](item: T) {}
+pub fn displayed[T: Display + Discard](item: T) {}
+"#;
+        let body = r#"
+var builder = request.sourceBuilder()
+let path = builder.outputs()[0].path
+var encoded = false
+var encoder = false
+var displayed = false
+for declaration in request.snapshot().declarations {
+    if declaration.module == "prelude" {
+        assert(declaration.origin == meta.Origin.Builtin("prelude:{declaration.identity}"))
+        match declaration.kind {
+            meta.DeclarationKind.Trait(operations) => {
+                if declaration.identity == "Encode" {
+                    encoded = true
+                    assert(declaration.genericParameters[0].name == "Codec")
+                    assert(operations.length() == 1)
+                    assert(operations[0].name == "encode")
+                    assert(operations[0].genericParameters[0].name == "E")
+                    assert(operations[0].genericParameters[1].bounds == ["Encoder[$0, $2]"])
+                    assert(not operations[0].hasDefault)
+                    assert(builder.renderType(path, operations[0].signature)? != "")
+                }
+                if declaration.identity == "Encoder" {
+                    encoder = true
+                    assert(operations.length() == 19)
+                    assert(operations[0].name == "null")
+                    assert(operations[18].name == "endEnum")
+                }
+                if declaration.identity == "Display" {
+                    displayed = true
+                    assert(operations.length() == 1)
+                    assert(builder.renderType(path, operations[0].signature)? == "fn(ref Self): String")
+                }
+            }
+            _ => panic("prelude trait expected")
+        }
+    }
+}
+assert(encoded and encoder and displayed)
+builder.add(path, "pub fn value(): Int {{ 42 }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_model_signature_closure_defers_body_only_generation_dependencies() {
+        for model in [
+            "import app.generated\npub type User = { value: Int }\n",
+            "import app.generated\npub fn value(): Int { generated.value() }\n",
+            "import app.generated\npub type User = { value: Int }\ntype Later = { item: generated.Item }\n",
+        ] {
+            let (manifest, lock, supplied) = source_generator_project(
+                Some(model),
+                r#"ok(meta.GenerateResponse { outputs: [request.outputs()[0].path: "pub type Item = {{ value: Int }}\npub fn value(): Int {{ 42 }}\n"], diagnostics: [] })"#,
+            );
+            let output = execute(
+                ProjectPlan::parse(&manifest, &lock)
+                    .unwrap()
+                    .resolve(&supplied)
+                    .unwrap()
+                    .into_compilation_request(
+                        Operation::Run,
+                        DiagnosticFormat::Json,
+                        ResourceLimits::default(),
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{model}\n{}",
+                output.diagnostics().human()
+            );
+            assert_eq!(output.exit_code(), 0);
+        }
+    }
+
+    #[test]
+    fn meta_type_refs_render_distinct_standard_value_types_with_exact_imports() {
+        let model = "import std.json\nimport std.messagepack\npub type Pair = { left: json.Value, right: messagepack.Value }\n";
+        let body = r#"
+let fields = match request.snapshot().declarations[0].kind {
+    meta.DeclarationKind.Record(value) => value
+    _ => panic("expected record")
+}
+assert(fields[0].typeRef.identity() != fields[1].typeRef.identity())
+var builder = request.sourceBuilder()
+let path = request.outputs()[0].path
+let right = builder.renderType(path, fields[1].typeRef)?
+let left = builder.renderType(path, fields[0].typeRef)?
+builder.add(path, "pub type Pair = {{ left: {left}, right: {right} }}\npub fn value(): Int {{ 42 }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let model = output.semantic_model().unwrap();
+        let source = model
+            .sources()
+            .iter()
+            .find(|(_, source)| source.origin() == SourceOrigin::GeneratedMeta)
+            .unwrap()
+            .1
+            .text()
+            .unwrap();
+        assert_eq!(source.matches("import std.json as ").count(), 1, "{source}");
+        assert_eq!(
+            source.matches("import std.messagepack as ").count(),
+            1,
+            "{source}"
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_model_preserves_separate_type_and_value_namespaces() {
+        let model = "pub type Item = { value: Int }\npub const Item: Int = 42\n";
+        let body = r#"
+let declarations = request.snapshot().declarations
+assert(declarations.length() == 2)
+assert(declarations[0].identity == "Item")
+assert(declarations[1].identity == "Item")
+assert(match declarations[0].kind {
+    meta.DeclarationKind.Record(_) => true
+    _ => false
+})
+assert(match declarations[1].kind {
+    meta.DeclarationKind.Constant(_) => true
+    _ => false
+})
+var builder = request.sourceBuilder()
+builder.add(request.outputs()[0].path, "import app.model\npub fn value(): Int {{ model.Item }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_model_includes_public_methods_without_their_bodies() {
+        let model = r#"
+pub type Item = { value: Int }
+/// Return the stored value.
+pub fn Item.read(self): Int { self.value }
+pub fn Item.create(): Item { Item { value: 42 } }
+fn Item.hidden(self): String { "private body" }
+"#;
+        let body = r#"
+let declarations = request.snapshot().declarations
+assert(declarations.length() == 3)
+assert(declarations[0].identity == "Item")
+assert(declarations[1].identity == "Item.create")
+assert(declarations[2].identity == "Item.read")
+assert(declarations[2].docs == some("Return the stored value."))
+var builder = request.sourceBuilder()
+let path = request.outputs()[0].path
+let signature = match declarations[2].kind {
+    meta.DeclarationKind.Function(ty) => builder.renderType(path, ty)?
+    _ => panic("method signature expected")
+}
+builder.add(path, "import app.model\npub alias Read = {signature}\npub fn value(): Int {{ model.Item.create().read() }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_model_renders_generic_member_binders_in_their_declared_order() {
+        let model = r#"
+pub type Box[T] = { value: T }
+pub fn Box[T: Copy].get(self): T { self.value }
+pub fn Box[T: Copy].convert[U: Copy](self, value: U): U { value }
+"#;
+        let body = r#"
+var builder = request.sourceBuilder()
+let path = request.outputs()[0].path
+var source = "import app.model\n"
+var found = 0
+for declaration in request.snapshot().declarations {
+    if declaration.identity == "Box.get" or declaration.identity == "Box.convert" {
+        assert(declaration.genericParameters[0].name == "T")
+        assert(declaration.genericParameters[0].bounds == ["Copy"])
+        let signature = match declaration.kind {
+            meta.DeclarationKind.Function(ty) => builder.renderType(path, ty)?
+            _ => panic("method signature expected")
+        }
+        if declaration.identity == "Box.get" {
+            source = "{source}pub alias Getter[T: Copy] = {signature}\n"
+        } else {
+            assert(declaration.genericParameters[1].name == "U")
+            assert(declaration.genericParameters[1].bounds == ["Copy"])
+            source = "{source}pub alias Converter[T: Copy, U: Copy] = {signature}\n"
+        }
+        found += 1
+    }
+}
+assert(found == 2)
+builder.add(path, "{source}pub fn value(): Int {{ model.Box[Int] {{ value: 41 }}.convert(42) }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_type_refs_reject_opaque_result_source_names_without_partial_imports() {
+        let model = "pub fn opaque(): impl Discard { 42 }\n";
+        let body = r#"
+var builder = request.sourceBuilder()
+let path = request.outputs()[0].path
+let snapshot = request.snapshot()
+assert(snapshot.declarations.length() == 2)
+assert(snapshot.declarations[0].identity == "Discard")
+assert(snapshot.declarations[1].identity == "opaque")
+let signature = match snapshot.declarations[1].kind {
+    meta.DeclarationKind.Function(ty) => ty
+    _ => panic("function signature expected")
+}
+assert(match builder.renderType(path, signature) {
+    err(meta.Error.TypeRendering(_)) => true
+    _ => false
+})
+builder.add(path, "pub fn value(): Int {{ 42 }}\n")?
+builder.finish()
+"#;
+        let (manifest, lock, supplied) = source_generator_project(Some(model), body);
+        let output = execute(
+            ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+        let semantic = output.semantic_model().unwrap();
+        let source = semantic
+            .sources()
+            .iter()
+            .find(|(_, source)| source.origin() == SourceOrigin::GeneratedMeta)
+            .unwrap()
+            .1;
+        assert!(!source.text().unwrap().contains("import"));
+    }
+
+    #[test]
+    fn meta_source_renderers_quote_controls_unicode_and_compile_generated_literals() {
+        let original = "a{b}\n\r\t\0\\\"\u{7}\u{85}é🙂";
+        let literal = crate::std_meta::MetaRenderer::string(original);
+        let mut body = format!(
+            "let original = {}\nlet expected = {}\n",
+            crate::std_meta::MetaRenderer::string(original),
+            crate::std_meta::MetaRenderer::string(&literal)
+        );
+        body.push_str(r#"let rendered = meta.stringLiteral(original)
+assert(rendered == expected)
+assert(meta.indentation(0u32)? == "")
+assert(meta.indentation(3u32)? == "            ")
+match meta.indentation(1000001u32) {
+    err(meta.Error.Provider(_)) => ()
+    _ => panic("expected render limit")
+}
+let indent = meta.indentation(1u32)?
+var builder = request.sourceBuilder()
+builder.add(request.outputs()[0].path, "pub fn value(): Int {{\n{indent}assert({rendered} == {expected})\n{indent}42\n}}\n")?
+builder.finish()"#);
+        let (manifest, lock, supplied) = source_generator_project(None, &body);
+        let request = ProjectPlan::parse(&manifest, &lock)
+            .unwrap()
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Run,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.artifact().unwrap().generation().len(), 1);
+    }
+
+    #[test]
+    fn meta_project_model_retains_environment_and_only_visible_implementation_headers() {
+        let model = "pub trait ValueOf {\n    fn value(self): Int\n}\npub type User = { value: Int }\n/// Existing implementation.\nimpl ValueOf for User {\n    fn value(self): Int { self.value }\n}\ntype Hidden = { secret: Int }\nimpl ValueOf for Hidden {\n    fn value(self): Int { self.secret }\n}\n";
+        let source_id = "pkg:15:workspace:app@1";
+        let canonical_target = format!("@{}:{source_id}::model::type::User", source_id.len());
+        let body = format!(
+            r#"let model = request.snapshot()
+assert(model.environment.edition == "0.1")
+assert(model.environment.target == "tondo-vm-hosted")
+assert(model.environment.profile == "hosted")
+assert(model.environment.features == ["fast"])
+assert(model.environment.capabilities == ["console", "process"])
+assert(model.environment.packages == ["workspace:app@1"])
+assert(model.declarations.length() == 2)
+assert(model.implementations.length() == 1)
+let implementation = model.implementations[0]
+assert(implementation.module == "workspace:app@1::model")
+assert(implementation.target == "{canonical_target}")
+assert(implementation.arguments.length() == 0)
+assert(implementation.genericParameters.length() == 0)
+assert(implementation.docs != none)
+ok(meta.GenerateResponse {{ outputs: [request.outputs()[0].path: "pub fn value(): Int {{{{ 42 }}}}\n"], diagnostics: [] }})"#
+        );
+        let (manifest, lock, supplied) = source_generator_project(Some(model), &body);
+        let request = ProjectPlan::parse(&manifest, &lock)
+            .unwrap()
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Run,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+    }
+
+    #[test]
+    fn meta_project_generator_failures_never_publish_partial_products() {
+        for (body, expected) in [
+            ("panic(\"provider panic\")", "E2105"),
+            (
+                "ok(meta.GenerateResponse { outputs: [:], diagnostics: [] })",
+                "E2106",
+            ),
+            (
+                r#"ok(meta.GenerateResponse { outputs: [request.outputs()[0].path: "pub fn value():Int{{\"wrong\"}}\n"], diagnostics: [] })"#,
+                "E",
+            ),
+        ] {
+            let (manifest, lock, supplied) = source_generator_project(None, body);
+            let request = ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(
+                    Operation::Run,
+                    DiagnosticFormat::Json,
+                    ResourceLimits::default(),
+                )
+                .unwrap();
+            let output = execute(request).unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{body}");
+            assert!(
+                output.diagnostics().human().contains(expected),
+                "{}",
+                output.diagnostics().human()
+            );
+            assert!(output.interface().is_none(), "partial interface for {body}");
+            assert!(output.artifact().is_none(), "partial artifact for {body}");
+        }
+    }
+
+    #[test]
+    fn meta_project_generator_honors_caller_limits_and_preserves_all_error_messages() {
+        for (body, limits, expected) in [
+            (
+                "ok(meta.GenerateResponse { outputs: [request.outputs()[0].path: \"pub fn value():Int{{42}}\\n\"], diagnostics: [] })",
+                ResourceLimits {
+                    max_vm_steps: 1,
+                    ..ResourceLimits::default()
+                },
+                vec!["E2107"],
+            ),
+            (
+                "ok(meta.GenerateResponse { outputs: [:], diagnostics: [meta.Diagnostic { severity: meta.DiagnosticSeverity.Error, message: \"first field\", origin: none }, meta.Diagnostic { severity: meta.DiagnosticSeverity.Error, message: \"second field\", origin: none }] })",
+                ResourceLimits::default(),
+                vec!["E2105", "first field", "second field"],
+            ),
+        ] {
+            let (manifest, lock, supplied) = source_generator_project(None, body);
+            let request = ProjectPlan::parse(&manifest, &lock)
+                .unwrap()
+                .resolve(&supplied)
+                .unwrap()
+                .into_compilation_request(Operation::Run, DiagnosticFormat::Json, limits)
+                .unwrap();
+            let output = execute(request).unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert!(output.artifact().is_none());
+            if body.contains("provider panic") {
+                assert!(output.diagnostics().human().contains("provider panicked"));
+                assert!(output.diagnostics().human().contains("provider panic"));
+            }
+            assert!(output.interface().is_none());
+            let diagnostics = output.diagnostics().human();
+            for expected in expected {
+                assert!(diagnostics.contains(expected), "{diagnostics}");
+            }
+        }
+    }
+
+    #[test]
+    fn meta_generated_diagnostics_do_not_offer_edits_to_generated_source() {
+        let (manifest, lock, supplied) = source_generator_project(
+            None,
+            "ok(meta.GenerateResponse { outputs: [request.outputs()[0].path: \"type Hidden = {{priv value:Int}}\\npub fn value():Int{{42}}\\n\"], diagnostics: [] })",
+        );
+        let request = ProjectPlan::parse(&manifest, &lock)
+            .unwrap()
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Run,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(output.artifact().is_none());
+        let diagnostics = output
+            .diagnostics()
+            .json_lines()
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic["code"] == "E1115")
+            .unwrap();
+        assert!(
+            diagnostic["source_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("gen:")
+        );
+        assert!(diagnostic["fixes"].as_array().unwrap().is_empty());
+    }
+
+    fn source_meta_project() -> ProjectFixture {
+        let source = b"trait ValueOf {\n    fn value(self): Int\n}\ntype User = { secret: Int }\nderive ValueOf for User\nfn extract[T: ValueOf + Discard](item: T): Int { item.value() }\nfn main() {\n    assert(extract(User { secret: 42 }) == 42)\n}\n";
+        let provider = br#"import std.meta
+pub fn expand(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+    ok(meta.DeriveResponse { source: "impl {request.traitIdentity()} for {request.target()} {{\nfn value(self):Int{{self.secret}}\n}}\n", diagnostics: [], mappings: [] })
+}
+"#;
+        source_meta_project_with(source, provider)
+    }
+
+    fn source_meta_project_with(source: &[u8], provider: &[u8]) -> ProjectFixture {
+        use crate::toolchain::{Limits, LockedMetaPackage, LockedMetaSource, MetaPackage, Source};
+        let (manifest, lock, mut supplied) = root_project(source, b"unused");
+        let package = MetaPackage {
+            id: "workspace:builder@1".into(),
+            local_name: "builder".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![Source {
+                physical_path: "tools/builder/src/derive.to".into(),
+                logical_path: "src/derive.to".into(),
+                module: "deriveImpl".into(),
+            }],
+        };
+        let mut locked_package = LockedMetaPackage {
+            id: package.id.clone(),
+            content_hash: String::new(),
+            dependencies: vec![],
+            sources: vec![LockedMetaSource {
+                physical_path: package.sources[0].physical_path.clone(),
+                logical_path: package.sources[0].logical_path.clone(),
+                module: package.sources[0].module.clone(),
+                sha256: sha256(provider),
+            }],
+        };
+        locked_package.content_hash = locked_package.computed_content_hash().unwrap();
+        supplied.insert(
+            package.sources[0].physical_path.clone(),
+            Arc::from(provider),
+        );
+        let compiled = crate::project_meta::compile_source_provider(
+            std::slice::from_ref(&package),
+            &supplied,
+            &package.id,
+            "deriveImpl.expand",
+            crate::meta_vm::MetaEntryKind::Derive,
+            ResourceLimits::default(),
+        )
+        .unwrap();
+        let limits = Limits {
+            steps: 100_000,
+            memory_bytes: 1_048_576,
+            output_bytes: 8_192,
+        };
+        let mapping = crate::toolchain::DeriveProvider {
+            trait_: crate::toolchain::TraitIdentity {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+                name: "ValueOf".into(),
+            },
+            provider: crate::toolchain::Provider {
+                package: package.id.clone(),
+                entry: "deriveImpl.expand".into(),
+            },
+            meta_model: crate::meta::META_MODEL.into(),
+            limits,
+        };
+        let mut manifest: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        manifest["meta_packages"] = json!([package]);
+        manifest["derive_providers"] = json!([mapping]);
+        manifest["generators"] = json!([]);
+        let manifest = serde_json::to_vec(&manifest).unwrap();
+        let descriptor = crate::project_meta::bootstrap_meta_descriptor().unwrap();
+        let mut providers = descriptor.derive_providers;
+        providers.push(crate::toolchain::LockedDeriveProvider {
+            origin: "manifest".into(),
+            trait_package: mapping.trait_.package,
+            trait_module: mapping.trait_.module,
+            trait_name: mapping.trait_.name,
+            provider_package: mapping.provider.package,
+            entry: mapping.provider.entry,
+            meta_model: mapping.meta_model,
+            provider_hash: compiled.hash().unwrap(),
+            limits,
+        });
+        let mut lock: serde_json::Value = serde_json::from_slice(&lock).unwrap();
+        lock["manifest_hash"] = json!(sha256(&manifest));
+        lock["meta_standard"] = json!(descriptor.meta);
+        lock["meta_packages"] = json!([locked_package]);
+        lock["derive_providers"] = json!(providers);
+        lock["generators"] = json!([]);
+        (manifest, serde_json::to_vec(&lock).unwrap(), supplied)
+    }
+
+    #[test]
+    fn meta_derive_builder_renders_imported_types_and_maps_final_source() {
+        let source = br#"import std.json as codec
+trait ValueOf {
+    fn value(self): Int
+}
+type User = { location: codec.JsonLocation }
+derive ValueOf for User
+fn extract[T: ValueOf + Discard](item: T): Int { item.value() }
+fn main() {
+    assert(extract(User { location: codec.JsonLocation { offset: 0, line: 42, column: 1 } }) == 42)
+}
+"#;
+        let provider = r#"import std.meta
+pub fn expand(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
+    var builder = request.sourceBuilder()
+    let path = builder.outputs()[0].path
+    var fieldType = ""
+    for declaration in request.snapshot().declarations {
+        if declaration.identity == request.target() {
+            match declaration.kind {
+                meta.DeclarationKind.Record(fields) => {
+                    fieldType = builder.renderType(path, fields[0].typeRef)?
+                    assert(builder.renderType(path, fields[0].typeRef)? == fieldType)
+                }
+                _ => panic("expected derive target record")
+            }
+        }
+    }
+    assert(fieldType != "")
+    builder.add(path, "impl {request.traitIdentity()} for {request.target()} {{\nfn value(self): Int {{\nlet position: {fieldType} = self.location\nposition.line\n}}\n}}\n")?
+    var response = builder.finishDerive()?
+    let origin = request.span()
+    response.mappings = [meta.SourceMap { generatedStart: 0u32, generatedEnd: 6u32, originFile: origin.file, originStart: origin.start, originEnd: origin.end }]
+    ok(response)
+}
+"#;
+        for invalid_import in [false, true] {
+            let provider = if invalid_import {
+                provider.replace(
+                    "impl {request.traitIdentity()}",
+                    "import std.console\\nimpl {request.traitIdentity()}",
+                )
+            } else {
+                provider.to_owned()
+            };
+            let (manifest, lock, supplied) = source_meta_project_with(source, provider.as_bytes());
+            let output = execute(
+                ProjectPlan::parse(&manifest, &lock)
+                    .unwrap()
+                    .resolve(&supplied)
+                    .unwrap()
+                    .into_compilation_request(
+                        Operation::Run,
+                        DiagnosticFormat::Json,
+                        ResourceLimits::default(),
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+            if invalid_import {
+                assert_eq!(output.status(), CompilationStatus::Rejected);
+                assert!(
+                    output.diagnostics().human().contains("E2105"),
+                    "{}",
+                    output.diagnostics().human()
+                );
+                assert!(output.artifact().is_none());
+                continue;
+            }
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{}",
+                output.diagnostics().human()
+            );
+            assert_eq!(output.exit_code(), 0);
+            let model = output.semantic_model().unwrap();
+            let generated = model
+                .sources()
+                .iter()
+                .find(|(_, source)| source.origin() == SourceOrigin::GeneratedMeta)
+                .unwrap()
+                .1;
+            let text = generated.text().unwrap();
+            assert_eq!(
+                text.matches("import std.json as __tondo_meta_").count(),
+                1,
+                "{text}"
+            );
+            let query = model.meta_expansions().unwrap();
+            let mappings = query.expansions()[0].mappings();
+            assert_eq!(mappings.len(), 1);
+            let mapping = &mappings[0];
+            assert_eq!(
+                &generated.bytes()
+                    [mapping.generated_start() as usize..mapping.generated_end() as usize],
+                b"import"
+            );
+        }
+    }
+
+    #[test]
+    fn meta_project_executes_hash_pinned_source_provider_through_public_plan() {
+        let (manifest, lock, supplied) = source_meta_project();
+        let plan = ProjectPlan::parse(&manifest, &lock).unwrap();
+        assert_eq!(
+            plan.required_inputs()
+                .filter(|input| input.kind() == ProjectInputKind::MetaSource)
+                .count(),
+            1
+        );
+        let request = plan
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Run,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn meta_project_rejects_source_package_companion_and_executable_hash_drift() {
+        let (manifest, lock, supplied) = source_meta_project();
+        let plan = ProjectPlan::parse(&manifest, &lock).unwrap();
+        let mut changed = supplied.clone();
+        changed.insert(
+            "tools/builder/src/derive.to".into(),
+            Arc::from(b"changed".as_slice()),
+        );
+        assert!(matches!(
+            plan.resolve(&changed),
+            Err(ProjectError::InputHashMismatch { .. })
+        ));
+        let locked: serde_json::Value = serde_json::from_slice(&lock).unwrap();
+        for field in ["meta_standard", "meta_packages"] {
+            let mut changed = locked.clone();
+            if field == "meta_standard" {
+                changed[field]["content_hash"] = json!(sha256(b"other companion"));
+            } else {
+                changed[field][0]["content_hash"] = json!(sha256(b"other package"));
+            }
+            assert!(ProjectPlan::parse(&manifest, &serde_json::to_vec(&changed).unwrap()).is_err());
+        }
+        let mut changed = locked;
+        changed["derive_providers"][2]["provider_hash"] = json!(sha256(b"another executable"));
+        let plan = ProjectPlan::parse(&manifest, &serde_json::to_vec(&changed).unwrap()).unwrap();
+        let error = plan
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Check,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("executable hash"), "{error}");
     }
 
     #[test]

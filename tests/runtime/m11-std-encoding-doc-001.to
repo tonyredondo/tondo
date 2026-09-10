@@ -107,7 +107,7 @@ fn writer_example(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError
     let standard = encoding.Base64Options.standard(limits)
     var output = console.stdout()?
     standard.encodeTo(source, var output)?
-    console.println("encoding-doc-ok")
+    _ = console.println("encoding-doc-ok")
 }
 
 fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {

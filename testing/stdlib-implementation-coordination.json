@@ -376,16 +376,22 @@
         "tests/runtime/m11-std-iter-001.to"
       ],
       "proof": "lazy-single-consumption-adapters-with-sync-callbacks-and-bounded-collection",
-      "implementation_status": "verified",
-      "matrix_impl_host": "verified",
+      "implementation_status": "open-gaps",
+      "matrix_impl_host": "partial",
       "public_api": {
         "status": "verified",
         "owner_status": "verified",
         "owner_missing": [],
-        "signature_count": 4,
-        "verified_count": 4,
+        "signature_count": 5,
+        "verified_count": 5,
         "gap_count": 0,
         "signatures": [
+          {
+            "id": "std.iter:162",
+            "symbol": "std.iter.Iterator.next",
+            "signature": "fn next(mut self): T?",
+            "status": "verified"
+          },
           {
             "id": "std.iter:164",
             "symbol": "std.iter.Iterator.map",
@@ -437,61 +443,61 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.math:235",
+            "id": "std.math:240",
             "symbol": "std.math.floor",
             "signature": "pub fn floor(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:236",
+            "id": "std.math:241",
             "symbol": "std.math.ceil",
             "signature": "pub fn ceil(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:237",
+            "id": "std.math:242",
             "symbol": "std.math.round",
             "signature": "pub fn round(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:238",
+            "id": "std.math:243",
             "symbol": "std.math.roundTiesAway",
             "signature": "pub fn roundTiesAway(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:239",
+            "id": "std.math:244",
             "symbol": "std.math.truncate",
             "signature": "pub fn truncate(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:240",
+            "id": "std.math:245",
             "symbol": "std.math.sqrt",
             "signature": "pub fn sqrt(value: Float): Float ! MathError",
             "status": "verified"
           },
           {
-            "id": "std.math:241",
+            "id": "std.math:246",
             "symbol": "std.math.fma",
             "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:242",
+            "id": "std.math:247",
             "symbol": "std.math.abs",
             "signature": "pub fn abs(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:243",
+            "id": "std.math:248",
             "symbol": "std.math.min",
             "signature": "pub fn min(a: Float, b: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:244",
+            "id": "std.math:249",
             "symbol": "std.math.max",
             "signature": "pub fn max(a: Float, b: Float): Float",
             "status": "verified"
@@ -536,31 +542,31 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.format:256",
+            "id": "std.format:261",
             "symbol": "std.format.Builder.new",
             "signature": "pub fn Builder.new(): Builder",
             "status": "verified"
           },
           {
-            "id": "std.format:257",
+            "id": "std.format:262",
             "symbol": "std.format.Builder.append",
             "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:258",
+            "id": "std.format:263",
             "symbol": "std.format.Builder.finish",
             "signature": "pub fn Builder.finish(var self): String ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:259",
+            "id": "std.format:264",
             "symbol": "std.format.format",
             "signature": "pub fn format[T: Display](value: T): String ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:260",
+            "id": "std.format:265",
             "symbol": "std.format.join",
             "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
             "status": "verified"
@@ -600,32 +606,50 @@
         "status": "verified",
         "owner_status": "verified",
         "owner_missing": [],
-        "signature_count": 4,
-        "verified_count": 4,
+        "signature_count": 7,
+        "verified_count": 7,
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.io:286",
+            "id": "std.io:285",
+            "symbol": "std.io.Reader.read",
+            "signature": "fn read(var self, max: Int): ReadResult ! IoError suspends",
+            "status": "verified"
+          },
+          {
+            "id": "std.io:288",
+            "symbol": "std.io.Writer.write",
+            "signature": "fn write(var self, data: Bytes): Int ! IoError suspends",
+            "status": "verified"
+          },
+          {
+            "id": "std.io:289",
+            "symbol": "std.io.Writer.flush",
+            "signature": "fn flush(var self): Unit ! IoError suspends",
+            "status": "verified"
+          },
+          {
+            "id": "std.io:291",
             "symbol": "std.io.defaultLimits",
             "signature": "pub fn defaultLimits(): IoLimits",
             "status": "verified"
           },
           {
-            "id": "std.io:287",
+            "id": "std.io:292",
             "symbol": "std.io.limits",
             "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
             "status": "verified"
           },
           {
-            "id": "std.io:288",
+            "id": "std.io:293",
             "symbol": "std.io.readAll",
-            "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends",
+            "signature": "pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends",
             "status": "verified"
           },
           {
-            "id": "std.io:289",
+            "id": "std.io:294",
             "symbol": "std.io.writeAll",
-            "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends",
+            "signature": "pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends",
             "status": "verified"
           }
         ]
@@ -648,32 +672,187 @@
       ],
       "proof": "static-event-protocol-bounded-atomic; hermetic-derive-providers-with-source-maps",
       "implementation_status": "verified",
-      "matrix_impl_host": "partial",
+      "matrix_impl_host": "verified",
       "public_api": {
-        "status": "open-gaps",
-        "owner_status": "open-gaps",
-        "owner_missing": [
-          "no-callable-signatures-indexed"
-        ],
-        "signature_count": 0,
-        "verified_count": 0,
+        "status": "verified",
+        "owner_status": "verified",
+        "owner_missing": [],
+        "signature_count": 26,
+        "verified_count": 26,
         "gap_count": 0,
-        "signatures": []
+        "signatures": [
+          {
+            "id": "std.serialization:61",
+            "symbol": "std.serialization.Encoder.null",
+            "signature": "fn null(var self): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:62",
+            "symbol": "std.serialization.Encoder.bool",
+            "signature": "fn bool(var self, value: Bool): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:63",
+            "symbol": "std.serialization.Encoder.int",
+            "signature": "fn int(var self, value: Int64): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:64",
+            "symbol": "std.serialization.Encoder.uint",
+            "signature": "fn uint(var self, value: UInt64): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:65",
+            "symbol": "std.serialization.Encoder.float32",
+            "signature": "fn float32(var self, value: Float32): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:66",
+            "symbol": "std.serialization.Encoder.float64",
+            "signature": "fn float64(var self, value: Float64): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:67",
+            "symbol": "std.serialization.Encoder.string",
+            "signature": "fn string(var self, value: String): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:68",
+            "symbol": "std.serialization.Encoder.bytes",
+            "signature": "fn bytes(var self, value: Bytes): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:69",
+            "symbol": "std.serialization.Encoder.base64",
+            "signature": "fn base64(var self, value: Bytes): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:71",
+            "symbol": "std.serialization.Encoder.startArray",
+            "signature": "fn startArray(var self, length: Int?): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:72",
+            "symbol": "std.serialization.Encoder.endArray",
+            "signature": "fn endArray(var self): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:74",
+            "symbol": "std.serialization.Encoder.startMap",
+            "signature": "fn startMap(var self, length: Int?): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:75",
+            "symbol": "std.serialization.Encoder.mapKey",
+            "signature": "fn mapKey(var self): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:76",
+            "symbol": "std.serialization.Encoder.endMap",
+            "signature": "fn endMap(var self): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:78",
+            "symbol": "std.serialization.Encoder.startRecord",
+            "signature": "fn startRecord(var self, name: String, fields: Int?): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:79",
+            "symbol": "std.serialization.Encoder.field",
+            "signature": "fn field(var self, name: String): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:80",
+            "symbol": "std.serialization.Encoder.endRecord",
+            "signature": "fn endRecord(var self): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:82",
+            "symbol": "std.serialization.Encoder.startEnum",
+            "signature": "fn startEnum(var self, name: String, variant: String): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:83",
+            "symbol": "std.serialization.Encoder.endEnum",
+            "signature": "fn endEnum(var self): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:87",
+            "symbol": "std.serialization.Decoder.peek",
+            "signature": "fn peek(var self): SerializationEvent? ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:88",
+            "symbol": "std.serialization.Decoder.next",
+            "signature": "fn next(var self): SerializationEvent ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:89",
+            "symbol": "std.serialization.Decoder.base64",
+            "signature": "fn base64(var self): Bytes ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:90",
+            "symbol": "std.serialization.Decoder.own",
+            "signature": "fn own(var self, event: SerializationEvent): SerializationEvent ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:91",
+            "symbol": "std.serialization.Decoder.reject",
+            "signature": "fn reject(var self, error: SerializationError): E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:95",
+            "symbol": "std.serialization.Encode.encode",
+            "signature": "fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.serialization:99",
+            "symbol": "std.serialization.Decode.decode",
+            "signature": "fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E",
+            "status": "verified"
+          }
+        ]
       },
-      "public_surface_reason": "No callable signatures are indexed; the public surface remains unverified"
+      "public_surface_reason": null
     }
   ],
   "summary": {
     "owners": 8,
-    "signatures": 65,
-    "verified_signatures": 65,
-    "owners_with_public_surface": 7,
-    "owners_without_callable_surface": 1,
-    "owners_with_public_gaps": 1
+    "signatures": 95,
+    "verified_signatures": 95,
+    "owners_with_public_surface": 8,
+    "owners_without_callable_surface": 0,
+    "owners_with_public_gaps": 0
   },
   "global_public_api": {
-    "status": "open-gaps",
-    "gaps": 4,
+    "status": "verified",
+    "gaps": 0,
     "reason": "The current global public API audit is retained independently of this component coordinator",
     "next_coordination": "STD-PUBLIC-API-AUDIT-001"
   },

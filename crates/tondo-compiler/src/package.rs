@@ -373,6 +373,7 @@ pub struct PackageGraph {
     standard: PackageId,
     packages: BTreeMap<PackageId, PackageNode>,
     by_source: BTreeMap<SourceId, PackageId>,
+    meta_companion: Option<PackageId>,
 }
 
 impl PackageGraph {
@@ -422,6 +423,7 @@ impl PackageGraph {
             standard,
             packages,
             by_source,
+            meta_companion: None,
         })
     }
 
@@ -522,10 +524,72 @@ impl PackageGraph {
         self.packages.get(id)
     }
 
+    pub(crate) fn install_meta_companion(
+        &mut self,
+        node: PackageNode,
+    ) -> Result<(), PackageGraphError> {
+        if self.packages.contains_key(node.id()) {
+            return Err(PackageGraphError::DuplicatePackage(node.id().clone()));
+        }
+        if self.by_source.contains_key(node.source_id()) {
+            return Err(PackageGraphError::DuplicateSourceId(
+                node.source_id().clone(),
+            ));
+        }
+        self.meta_companion = Some(node.id().clone());
+        self.by_source
+            .insert(node.source_id().clone(), node.id().clone());
+        self.packages.insert(node.id().clone(), node);
+        Ok(())
+    }
+
     pub fn package_for_source(&self, source: &SourceId) -> Option<&PackageNode> {
         self.by_source
             .get(source)
             .and_then(|package| self.packages.get(package))
+    }
+
+    /// Bind a compiler-produced source identity to its existing package. This
+    /// does not introduce a dependency edge or change the package identity.
+    pub(crate) fn register_generated_source(
+        &mut self,
+        owner: &PackageId,
+        source: SourceId,
+        module: ModulePath,
+    ) -> Result<(), PackageGraphError> {
+        if self.by_source.contains_key(&source) {
+            return Err(PackageGraphError::DuplicateSourceId(source));
+        }
+        let node = self
+            .packages
+            .get_mut(owner)
+            .ok_or_else(|| PackageGraphError::UnknownRootPackage(owner.clone()))?;
+        node.modules.insert(module);
+        self.by_source.insert(source, owner.clone());
+        Ok(())
+    }
+
+    /// Graph projections retain generated identities for packages that remain
+    /// selected. Their module sets and dependency edges are still chosen by
+    /// the caller; this only preserves the compiler-owned source association.
+    pub(crate) fn retain_generated_owners_from(
+        &mut self,
+        original: &Self,
+    ) -> Result<(), PackageGraphError> {
+        for (source, owner) in &original.by_source {
+            if original.packages[owner].source_id() == source || !self.packages.contains_key(owner)
+            {
+                continue;
+            }
+            if let Some(existing) = self.by_source.get(source) {
+                if existing != owner {
+                    return Err(PackageGraphError::DuplicateSourceId(source.clone()));
+                }
+            } else {
+                self.by_source.insert(source.clone(), owner.clone());
+            }
+        }
+        Ok(())
     }
 
     pub fn module(&self, package: &PackageId, path: &ModulePath) -> Option<ModuleId> {
@@ -586,7 +650,13 @@ impl PackageGraph {
             .packages
             .get(from)
             .ok_or_else(|| ImportResolutionError::UnknownFromPackage(from.clone()))?;
-        let package = if first.as_str() == "std" {
+        let package = if first.as_str() == "std"
+            && segments.len() == 2
+            && segments[1].as_str() == "meta"
+            && let Some(companion) = &self.meta_companion
+        {
+            companion
+        } else if first.as_str() == "std" {
             &self.standard
         } else if first.as_str() == from_node.local_name.as_str() {
             from
@@ -676,6 +746,7 @@ pub(crate) fn bootstrap_standard_modules() -> Result<Vec<ModulePath>, PackageGra
         "messagepack",
         "protobuf",
         "path",
+        "reflect",
         "fs",
     ]
     .into_iter()

@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::bytecode::{
     BytecodeCallableId, BytecodeCursorMode, BytecodeNominalId, BytecodeRangeKind,
@@ -9,7 +10,7 @@ use crate::bytecode::{
 };
 
 use super::value::{AggregatePayload, Value};
-use super::{VmError, VmLimits, VmStatistics};
+use super::{VmError, VmHostRoots, VmLimits, VmMemoryBudget, VmMemoryCharge, VmStatistics};
 
 #[derive(Debug, Clone)]
 pub(super) struct SharedBuffer<T>(Arc<Vec<T>>);
@@ -248,6 +249,55 @@ struct HeapSlot {
     descriptor: BytecodeTypeId,
     object: Option<HeapObject>,
     bytes: u64,
+    charge: Option<VmMemoryCharge>,
+}
+
+#[derive(Debug)]
+pub(super) struct ImportObjectReservation {
+    reserved: Arc<AtomicU32>,
+    remaining: u32,
+}
+
+impl Drop for ImportObjectReservation {
+    fn drop(&mut self) {
+        self.reserved.fetch_sub(self.remaining, Ordering::AcqRel);
+    }
+}
+
+/// Object capacity exported only while a blocking worker is stopped inside
+/// its scoped host call. The worker must not allocate until the context returns.
+/// Other threads can release reservations, but cannot allocate in that heap.
+#[derive(Debug)]
+pub(super) struct PausedImportCapacity {
+    reserved: Arc<AtomicU32>,
+    live_objects: u32,
+    live_bytes: u64,
+    limit: u32,
+}
+
+impl PausedImportCapacity {
+    pub(super) fn reserve(&mut self, objects: u32) -> Result<ImportObjectReservation, VmError> {
+        if self
+            .live_objects
+            .checked_add(self.reserved.load(Ordering::Acquire))
+            .and_then(|total| total.checked_add(objects))
+            .is_none_or(|total| total > self.limit)
+        {
+            return Err(VmError::OutOfMemory {
+                live_objects: self.live_objects,
+                live_bytes: self.live_bytes,
+            });
+        }
+        self.reserved.fetch_add(objects, Ordering::AcqRel);
+        Ok(ImportObjectReservation {
+            reserved: self.reserved.clone(),
+            remaining: objects,
+        })
+    }
+
+    pub(super) fn owns(&self, reservation: &ImportObjectReservation) -> bool {
+        Arc::ptr_eq(&self.reserved, &reservation.reserved)
+    }
 }
 
 #[derive(Debug)]
@@ -256,9 +306,11 @@ pub(super) struct Heap {
     slots: Vec<HeapSlot>,
     free: Vec<u32>,
     live_objects: u32,
+    reserved_objects: Arc<AtomicU32>,
     live_bytes: u64,
     next_collection: u32,
     limits: VmLimits,
+    budget: Option<VmMemoryBudget>,
 }
 
 struct CapacityDemand<'object> {
@@ -267,6 +319,7 @@ struct CapacityDemand<'object> {
     threshold_reached: bool,
     protected: Option<HeapHandle>,
     pending: Option<(BytecodeTypeId, &'object HeapObject)>,
+    budget: Option<VmMemoryBudget>,
 }
 
 impl Heap {
@@ -276,10 +329,16 @@ impl Heap {
             slots: Vec::new(),
             free: Vec::new(),
             live_objects: 0,
+            reserved_objects: Arc::new(AtomicU32::new(0)),
             live_bytes: 0,
             next_collection: limits.initial_gc_threshold.min(limits.max_heap_objects),
             limits,
+            budget: None,
         }
+    }
+
+    pub(super) fn set_budget(&mut self, budget: Option<VmMemoryBudget>) {
+        self.budget = budget;
     }
 
     pub(super) fn type_descriptor(
@@ -298,19 +357,141 @@ impl Heap {
         roots: &[Value],
         statistics: &mut VmStatistics,
     ) -> Result<HeapHandle, VmError> {
-        Self::visit_object(&self.descriptors, descriptor, &object, |_| {})?;
-        let bytes = object.estimated_bytes();
+        self.allocate_with_charge(descriptor, object, roots, statistics, None)
+    }
+
+    /// Check a complete response before constructing any of its heap objects.
+    /// With a phase account, bytes are the additional reservation after moving
+    /// already admitted String payloads; otherwise they are full heap storage.
+    pub(super) fn preflight_import(
+        &mut self,
+        objects: u32,
+        bytes: u64,
+        budget: Option<VmMemoryBudget>,
+        roots: &[Value],
+        statistics: &mut VmStatistics,
+    ) -> Result<(), VmError> {
         self.ensure_capacity(
             CapacityDemand {
-                objects: 1,
+                objects,
                 bytes,
-                threshold_reached: self.live_objects >= self.next_collection,
+                threshold_reached: false,
                 protected: None,
-                pending: Some((descriptor, &object)),
+                pending: None,
+                budget,
+            },
+            roots,
+            statistics,
+        )
+    }
+
+    /// Hold object capacity while a prepared host result waits for delivery.
+    /// Other tasks can allocate only outside these held slots. Dropping a
+    /// cancelled or rejected result releases its unconsumed capacity.
+    pub(super) fn reserve_import_objects(
+        &mut self,
+        objects: u32,
+        roots: &[Value],
+        statistics: &mut VmStatistics,
+    ) -> Result<ImportObjectReservation, VmError> {
+        self.ensure_capacity(
+            CapacityDemand {
+                objects,
+                bytes: 0,
+                threshold_reached: false,
+                protected: None,
+                pending: None,
+                budget: self.budget.clone(),
             },
             roots,
             statistics,
         )?;
+        // Only this heap can increase the counter; concurrently dropped
+        // reservations can only make the checked capacity larger.
+        self.reserved_objects.fetch_add(objects, Ordering::AcqRel);
+        Ok(ImportObjectReservation {
+            reserved: self.reserved_objects.clone(),
+            remaining: objects,
+        })
+    }
+
+    pub(super) fn pause_import_capacity(
+        &mut self,
+        roots: &[Value],
+        statistics: &mut VmStatistics,
+    ) -> Result<PausedImportCapacity, VmError> {
+        // The servicing thread cannot collect the worker's heap. Reclaim its
+        // garbage while its verified roots and exclusive heap access are here.
+        self.collect(roots, statistics)?;
+        Ok(PausedImportCapacity {
+            reserved: self.reserved_objects.clone(),
+            live_objects: self.live_objects,
+            live_bytes: self.live_bytes,
+            limit: self.limits.max_heap_objects,
+        })
+    }
+
+    pub(super) fn consume_import_object(
+        &self,
+        reservation: &mut ImportObjectReservation,
+    ) -> Result<(), VmError> {
+        if !self.owns_import_reservation(reservation) || reservation.remaining == 0 {
+            return Err(VmError::invariant(
+                "import object reservation is foreign or exhausted",
+            ));
+        }
+        reservation.remaining -= 1;
+        self.reserved_objects.fetch_sub(1, Ordering::AcqRel);
+        Ok(())
+    }
+
+    pub(super) fn owns_import_reservation(&self, reservation: &ImportObjectReservation) -> bool {
+        Arc::ptr_eq(&self.reserved_objects, &reservation.reserved)
+    }
+
+    /// An imported payload already owns its reservation. Admit only the
+    /// additional heap storage and move the existing charge into the slot.
+    pub(super) fn allocate_with_charge(
+        &mut self,
+        descriptor: BytecodeTypeId,
+        object: HeapObject,
+        roots: &[Value],
+        statistics: &mut VmStatistics,
+        charge: Option<VmMemoryCharge>,
+    ) -> Result<HeapHandle, VmError> {
+        Self::visit_object(&self.descriptors, descriptor, &object, |_| {})?;
+        let bytes = object.estimated_bytes();
+        let admitted = charge.as_ref().map_or(0, VmMemoryCharge::bytes);
+        let growth = bytes.checked_sub(admitted).ok_or_else(|| {
+            VmError::invariant("imported charge exceeds the heap object's storage")
+        })?;
+        let budget = charge
+            .as_ref()
+            .map(|charge| charge.budget().clone())
+            .or_else(|| self.budget.clone());
+        self.ensure_capacity(
+            CapacityDemand {
+                objects: 1,
+                bytes: growth,
+                threshold_reached: self.live_objects >= self.next_collection,
+                protected: None,
+                pending: Some((descriptor, &object)),
+                budget: budget.clone(),
+            },
+            roots,
+            statistics,
+        )?;
+
+        let charge = match charge {
+            Some(mut charge) => {
+                charge.resize(bytes)?;
+                Some(charge)
+            }
+            None => budget
+                .as_ref()
+                .map(|budget| budget.reserve(bytes))
+                .transpose()?,
+        };
 
         let handle = if let Some(index) = self.free.pop() {
             let slot = self
@@ -324,6 +505,7 @@ impl Heap {
             slot.object = Some(object);
             slot.descriptor = descriptor;
             slot.bytes = bytes;
+            slot.charge = charge;
             HeapHandle {
                 index,
                 generation: slot.generation,
@@ -337,6 +519,7 @@ impl Heap {
                 descriptor,
                 object: Some(object),
                 bytes,
+                charge,
             });
             HeapHandle {
                 index,
@@ -390,6 +573,10 @@ impl Heap {
         let new_bytes = object.estimated_bytes();
         let new_storage = object.collection_storage();
         let growth = new_bytes.saturating_sub(old_bytes);
+        let budget = self.slots[handle.index as usize]
+            .charge
+            .as_ref()
+            .map(|charge| charge.budget().clone());
         self.ensure_capacity(
             CapacityDemand {
                 objects: 0,
@@ -397,6 +584,7 @@ impl Heap {
                 threshold_reached: false,
                 protected: Some(handle),
                 pending: Some((descriptor, &object)),
+                budget,
             },
             roots,
             statistics,
@@ -418,6 +606,9 @@ impl Heap {
                 "collected heap handle used during mutation",
             ));
         }
+        if let Some(charge) = &mut slot.charge {
+            charge.resize(new_bytes)?;
+        }
         self.live_bytes = self.live_bytes.saturating_sub(slot.bytes);
         slot.bytes = new_bytes;
         slot.object = Some(object);
@@ -438,6 +629,36 @@ impl Heap {
         self.collect_with_pending(roots, None, None, statistics)
     }
 
+    pub(super) fn trace_host_roots(
+        &self,
+        roots: &[Value],
+        pending: Option<(BytecodeTypeId, &HeapObject)>,
+        output: &mut VmHostRoots,
+    ) -> Result<(), VmError> {
+        let mut work = roots.to_vec();
+        if let Some((descriptor, object)) = pending {
+            Self::visit_object(&self.descriptors, descriptor, object, |value| {
+                work.push(value.clone())
+            })?;
+        }
+        let mut visited = BTreeSet::new();
+        while let Some(value) = work.pop() {
+            match value {
+                Value::Host(value) => value.trace_host_roots(output),
+                Value::Heap(handle) if visited.insert(handle) => {
+                    Self::visit_object(
+                        &self.descriptors,
+                        self.descriptor(handle)?,
+                        self.get(handle)?,
+                        |value| work.push(value.clone()),
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn ensure_capacity(
         &mut self,
         demand: CapacityDemand<'_>,
@@ -446,10 +667,12 @@ impl Heap {
     ) -> Result<(), VmError> {
         // Threshold or capacity pressure permits at most one full collection.
         // The protected handle keeps a replacement target stable until publication.
-        if demand.threshold_reached || !self.has_capacity(demand.objects, demand.bytes) {
+        if demand.threshold_reached
+            || !self.has_capacity(demand.objects, demand.bytes, demand.budget.as_ref())
+        {
             self.collect_with_pending(roots, demand.protected, demand.pending, statistics)?;
         }
-        if self.has_capacity(demand.objects, demand.bytes) {
+        if self.has_capacity(demand.objects, demand.bytes, demand.budget.as_ref()) {
             Ok(())
         } else {
             Err(VmError::OutOfMemory {
@@ -459,14 +682,24 @@ impl Heap {
         }
     }
 
-    fn has_capacity(&self, additional_objects: u32, additional_bytes: u64) -> bool {
+    fn has_capacity(
+        &self,
+        additional_objects: u32,
+        additional_bytes: u64,
+        budget: Option<&VmMemoryBudget>,
+    ) -> bool {
         self.live_objects
-            .checked_add(additional_objects)
+            .checked_add(self.reserved_objects.load(Ordering::Acquire))
+            .and_then(|total| total.checked_add(additional_objects))
             .is_some_and(|total| total <= self.limits.max_heap_objects)
-            && self
-                .live_bytes
-                .checked_add(additional_bytes)
-                .is_some_and(|total| total <= self.limits.max_heap_bytes)
+            && budget.map_or_else(
+                || {
+                    self.live_bytes
+                        .checked_add(additional_bytes)
+                        .is_some_and(|total| total <= self.limits.max_heap_bytes)
+                },
+                |budget| budget.can_reserve(additional_bytes),
+            )
     }
 
     fn collect_with_pending(
@@ -517,6 +750,7 @@ impl Heap {
         for (index, slot) in self.slots.iter_mut().enumerate() {
             if slot.object.is_some() && !slot.marked {
                 slot.object = None;
+                slot.charge = None;
                 self.live_objects -= 1;
                 self.live_bytes = self.live_bytes.saturating_sub(slot.bytes);
                 slot.bytes = 0;
@@ -728,6 +962,163 @@ mod tests {
     use super::*;
 
     #[test]
+    fn imported_heap_storage_keeps_its_owner_through_growth_and_collection() {
+        let mut heap = Heap::new(VmLimits::default(), vec![BytecodeTraceDescriptor::String]);
+        let mut statistics = VmStatistics::default();
+        let owner = VmMemoryBudget::new(1024);
+        let sibling = VmMemoryBudget::new(0);
+        heap.set_budget(Some(sibling.clone()));
+        let object = HeapObject::String("imported".into());
+        let original_bytes = object.estimated_bytes();
+        let handle = heap
+            .allocate_with_charge(
+                BytecodeTypeId::new(0),
+                object,
+                &[],
+                &mut statistics,
+                Some(owner.reserve(1).unwrap()),
+            )
+            .unwrap();
+        assert_eq!(owner.live_bytes(), original_bytes);
+        assert_eq!(sibling.live_bytes(), 0);
+        let roots = [Value::Heap(handle)];
+        let grown = HeapObject::String("imported and extended".into());
+        let grown_bytes = grown.estimated_bytes();
+        heap.replace(handle, grown, &roots, &mut statistics)
+            .unwrap();
+        assert_eq!(owner.live_bytes(), grown_bytes);
+        assert_eq!(sibling.live_bytes(), 0);
+        assert!(matches!(
+            heap.replace(
+                handle,
+                HeapObject::String("x".repeat(2048)),
+                &roots,
+                &mut statistics
+            ),
+            Err(VmError::OutOfMemory { .. })
+        ));
+        assert!(
+            matches!(heap.get(handle).unwrap(), HeapObject::String(text) if text == "imported and extended")
+        );
+        assert_eq!(owner.live_bytes(), grown_bytes);
+        heap.collect(&roots, &mut statistics).unwrap();
+        assert_eq!(owner.live_bytes(), grown_bytes);
+        heap.collect(&[], &mut statistics).unwrap();
+        assert_eq!(owner.live_bytes(), 0);
+        assert_eq!(sibling.live_bytes(), 0);
+        assert_eq!(heap.live_objects, 0);
+    }
+
+    #[test]
+    fn rejected_import_charges_and_collected_roots_do_not_publish_objects() {
+        let mut heap = Heap::new(VmLimits::default(), vec![BytecodeTraceDescriptor::String]);
+        let mut statistics = VmStatistics::default();
+        let object = HeapObject::String("payload".into());
+        let budget = VmMemoryBudget::new(1024);
+        let excessive = budget.reserve(object.estimated_bytes() + 1).unwrap();
+        assert!(matches!(
+            heap.allocate_with_charge(BytecodeTypeId::new(0), object, &[], &mut statistics, Some(excessive)),
+            Err(VmError::Invariant(message)) if message.contains("imported charge exceeds")
+        ));
+        assert_eq!(budget.live_bytes(), 0);
+        assert_eq!(heap.live_objects, 0);
+        let original = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("first".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        heap.collect(&[], &mut statistics).unwrap();
+        assert!(matches!(
+            heap.collect(&[Value::Heap(original)], &mut statistics),
+            Err(VmError::Invariant(message)) if message.contains("collected object")
+        ));
+        let replacement = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("second".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        assert_ne!(original, replacement);
+        assert!(matches!(
+            heap.collect(&[Value::Heap(original)], &mut statistics),
+            Err(VmError::Invariant(message)) if message.contains("stale heap handle")
+        ));
+        assert!(heap.get(replacement).is_ok());
+        heap.collect(&[Value::Heap(replacement)], &mut statistics)
+            .unwrap();
+        assert_eq!(heap.live_objects, 1);
+    }
+
+    #[test]
+    fn prepared_import_object_slots_survive_other_allocations_and_release_on_drop() {
+        let limits = VmLimits {
+            max_heap_objects: 3,
+            ..VmLimits::default()
+        };
+        let mut heap = Heap::new(limits, vec![BytecodeTraceDescriptor::String]);
+        let mut stats = VmStatistics::default();
+        let mut reservation = heap.reserve_import_objects(2, &[], &mut stats).unwrap();
+        let first = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("first".into()),
+                &[],
+                &mut stats,
+            )
+            .unwrap();
+        let mut roots = vec![Value::Heap(first)];
+        assert!(matches!(
+            heap.allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("no slot".into()),
+                &roots,
+                &mut stats
+            ),
+            Err(VmError::OutOfMemory { .. })
+        ));
+        assert_eq!(heap.live_objects, 1);
+        assert_eq!(heap.reserved_objects.load(Ordering::Acquire), 2);
+        let foreign = Heap::new(limits, vec![BytecodeTraceDescriptor::String]);
+        assert!(foreign.consume_import_object(&mut reservation).is_err());
+        assert_eq!(reservation.remaining, 2);
+        for expected in [2, 3] {
+            heap.consume_import_object(&mut reservation).unwrap();
+            let object = heap
+                .allocate(
+                    BytecodeTypeId::new(0),
+                    HeapObject::String("imported".into()),
+                    &roots,
+                    &mut stats,
+                )
+                .unwrap();
+            roots.push(Value::Heap(object));
+            assert_eq!(heap.live_objects, expected);
+        }
+        assert!(heap.consume_import_object(&mut reservation).is_err());
+        drop(reservation);
+        assert_eq!(heap.reserved_objects.load(Ordering::Acquire), 0);
+        roots.clear();
+        let cancelled = heap.reserve_import_objects(3, &roots, &mut stats).unwrap();
+        assert_eq!(heap.live_objects, 0);
+        assert!(matches!(
+            heap.reserve_import_objects(1, &roots, &mut stats),
+            Err(VmError::OutOfMemory { .. })
+        ));
+        drop(cancelled);
+        assert_eq!(heap.reserved_objects.load(Ordering::Acquire), 0);
+        let after_drop = heap.reserve_import_objects(3, &roots, &mut stats).unwrap();
+        let counter = heap.reserved_objects.clone();
+        drop(heap);
+        drop(after_drop);
+        assert_eq!(counter.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn recycled_generation_never_exposes_the_reserved_zero_handle() {
         let mut heap = Heap::new(VmLimits::default(), vec![BytecodeTraceDescriptor::String]);
         heap.free.push(1);
@@ -748,6 +1139,7 @@ mod tests {
             descriptor: BytecodeTypeId::new(0),
             object: None,
             bytes: 0,
+            charge: None,
         });
         heap.free.push(0);
 

@@ -27,5 +27,5 @@ fn main() {
         sum = sum + value
     }
     assert(sum == 10)
-    console.print("core-ok\n")
+    _ = console.print("core-ok\n")
 }

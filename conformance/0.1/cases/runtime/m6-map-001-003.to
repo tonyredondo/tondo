@@ -38,5 +38,5 @@ fn main() {
     var generic = [1: "generic"]
     assert(removeValue(var generic, 1) == some("generic"))
 
-    console.print("map-ordered-remove\n")
+    _ = console.print("map-ordered-remove\n")
 }

@@ -43,5 +43,5 @@ fn main() {
     scaled *= [2.0, 4.0]
     assert(scaled == [2.0, 8.0])
 
-    console.print("array-arithmetic\n")
+    _ = console.print("array-arithmetic\n")
 }

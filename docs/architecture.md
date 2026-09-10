@@ -546,7 +546,7 @@ Replacement roots its target internally and remains unchanged if the retry
 cannot fit. The exact object, tracing, panic, host, and admission boundary is
 recorded in `docs/contracts/vm-runtime.md`.
 The capability-gated standard-library bridges are
-`std.console.print(String): Unit` and the closed `std.process` surface. They are
+the fallible `std.console` surface and the closed `std.process` surface. They are
 isolated by `docs/contracts/bootstrap-host.md` and
 `docs/contracts/process-host.md`; neither is a general FFI or a frozen stdlib
 ABI. Raw Pointer operations use six separate verified privileged-host

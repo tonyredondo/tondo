@@ -1340,6 +1340,21 @@ impl Parser<'_> {
     }
 
     fn parse_expression_or_assignment_statement(&mut self, allow_tail: bool) -> ParseResult {
+        if self.at_any(&[
+            TokenKind::Comma,
+            TokenKind::RParen,
+            TokenKind::RBracket,
+            TokenKind::FatArrow,
+        ]) {
+            // Expression recovery preserves delimiters for their owner. At a
+            // statement boundary none of these tokens can close a valid body;
+            // consume it here so the enclosing block makes physical progress.
+            self.syntax_error("unexpected delimiter at a statement boundary")?;
+            self.start(SyntaxKind::Error)?;
+            self.bump();
+            self.finish();
+            return Ok(());
+        }
         if self.test_suite_decl_discriminator().is_some() {
             self.syntax_error("test and suite declarations are not allowed in this block")?;
             self.recover_to_statement_boundary()?;
@@ -1501,12 +1516,24 @@ impl Parser<'_> {
     }
 
     fn parse_expression(&mut self) -> ParseResult {
-        self.parse_expression_bp(0)
+        // A nested argument, element or grouped expression owns its braces;
+        // only the enclosing header operand competes with the control body.
+        let header = std::mem::take(&mut self.header_expression_depth);
+        let result = self.parse_expression_bp(0);
+        self.header_expression_depth = header;
+        result
+    }
+
+    fn parse_nested_expression_spilled(&mut self) -> ParseResult {
+        let header = std::mem::take(&mut self.header_expression_depth);
+        let result = self.parse_expression_spilled_inner(0);
+        self.header_expression_depth = header;
+        result
     }
 
     fn parse_header_expression(&mut self) -> ParseResult {
         self.header_expression_depth = self.header_expression_depth.saturating_add(1);
-        let result = self.parse_expression();
+        let result = self.parse_expression_bp(0);
         self.header_expression_depth -= 1;
         result
     }
@@ -1604,6 +1631,10 @@ impl Parser<'_> {
             });
             minimum_binding_power = operator.right_binding_power;
             checkpoint = self.checkpoint();
+            // Each right operand has the same fresh chain state as a
+            // recursive parse_expression_bp call. Restore the left state
+            // only when its saved frame resumes.
+            last_non_associative = None;
             if kind == TokenKind::With {
                 self.parse_record_update_body()?;
                 shape = ExprShape::ordinary();
@@ -1756,19 +1787,19 @@ impl Parser<'_> {
                 })?;
                 self.bump();
             }
-            self.parse_expression_spilled_inner(0)?;
+            self.parse_nested_expression_spilled()?;
             for &is_tuple in tuple_layers.iter().rev() {
                 if is_tuple {
                     self.expect(TokenKind::Comma)?;
                     if self.at(TokenKind::RParen) {
                         self.syntax_error("a tuple requires at least two items")?;
                     } else {
-                        self.parse_expression_spilled_inner(0)?;
+                        self.parse_nested_expression_spilled()?;
                         while self.eat(TokenKind::Comma) {
                             if self.at(TokenKind::RParen) {
                                 break;
                             }
-                            self.parse_expression_spilled_inner(0)?;
+                            self.parse_nested_expression_spilled()?;
                         }
                     }
                 }
@@ -1790,7 +1821,7 @@ impl Parser<'_> {
                     self.start(SyntaxKind::BracketLiteralExpr)?;
                     self.bump();
                 }
-                self.parse_expression_spilled_inner(0)?;
+                self.parse_nested_expression_spilled()?;
                 for _ in 0..count {
                     self.expect(TokenKind::RBracket)?;
                     self.finish();
@@ -1956,7 +1987,7 @@ impl Parser<'_> {
             }
         }
 
-        self.parse_expression_spilled_inner(0)?;
+        self.parse_nested_expression_spilled()?;
         for layer in 0..layers {
             self.finish();
             if layer > 0 {
@@ -1988,7 +2019,7 @@ impl Parser<'_> {
             self.bump();
             self.expect(TokenKind::LParen)?;
         }
-        self.parse_expression_spilled_inner(0)?;
+        self.parse_nested_expression_spilled()?;
         for _ in 0..count {
             self.expect(TokenKind::RParen)?;
             self.finish();
@@ -1999,7 +2030,9 @@ impl Parser<'_> {
     fn parenthesized_chain_layers(&self) -> Option<Vec<bool>> {
         let mut offset = 0;
         let mut layers = Vec::new();
-        while self.nth(offset) == TokenKind::LParen {
+        // `()` is one literal, not a wrapper requiring an inner expression.
+        // Leave that atom for the ordinary literal/closure discriminator.
+        while self.nth(offset) == TokenKind::LParen && self.nth(offset + 1) != TokenKind::RParen {
             layers.push(false);
             offset += 1;
         }
@@ -2344,7 +2377,7 @@ impl Parser<'_> {
             }
         }
         self.finish();
-        if self.at(TokenKind::LBrace) && self.brace_belongs_to_record_expression() {
+        if self.at(TokenKind::LBrace) && self.brace_belongs_to_expression_at(0) {
             self.start_at(checkpoint, SyntaxKind::RecordLikeExpr)?;
             self.parse_record_initializer_body()?;
             self.finish();
@@ -3457,7 +3490,7 @@ impl Parser<'_> {
             after_effects += 1;
         }
         if self.nth(after_effects) == TokenKind::LBrace {
-            return true;
+            return self.brace_belongs_to_expression_at(after_effects);
         }
         if self.nth(after_parameters) != TokenKind::Colon {
             return false;
@@ -3502,12 +3535,11 @@ impl Parser<'_> {
         self.nth(offset) == TokenKind::RBrace
     }
 
-    fn brace_belongs_to_record_expression(&self) -> bool {
-        if self.header_expression_depth == 0 || !self.at(TokenKind::LBrace) {
+    fn brace_belongs_to_expression_at(&self, mut offset: usize) -> bool {
+        if self.header_expression_depth == 0 || self.nth(offset) != TokenKind::LBrace {
             return true;
         }
         let mut depth = 0_u32;
-        let mut offset = 0;
         loop {
             match self.nth(offset) {
                 TokenKind::LBrace => depth = depth.saturating_add(1),
@@ -6041,6 +6073,188 @@ fn after(): Int {
                 ..ParseLimits::default()
             },
         );
+    }
+
+    #[test]
+    fn spilled_unit_literals_keep_their_literal_shape_in_groups_and_match_arms() {
+        for depth in [0, 3, 4, 8, 32] {
+            for expression in [
+                "()",
+                "((), ())",
+                "match value {\n ok(_) => ()\n err(_) => ()\n }",
+            ] {
+                let source = format!("{}{}{}\n", "(".repeat(depth), expression, ")".repeat(depth));
+                let (sources, file, parsed) = parse_source(source.as_bytes(), ParseMode::Fragment);
+                assert!(
+                    parsed.diagnostics().is_empty(),
+                    "{source}: {:?}",
+                    parsed.diagnostics()
+                );
+                assert_lossless(&sources, file, &parsed, source.as_bytes());
+                assert_eq!(
+                    parsed
+                        .cst()
+                        .nodes()
+                        .iter()
+                        .filter(|node| node.kind() == SyntaxKind::GroupExpr)
+                        .count(),
+                    depth
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn header_operands_distinguish_groups_tuples_and_nested_closures() {
+        let mut failures = Vec::new();
+        for depth in [0, 3, 4, 8, 32] {
+            for (expression, closures) in [
+                ("if pair == (9, 10) { () }", 0),
+                ("if pair == (left, right) { () }", 0),
+                ("if (ready) { () }", 0),
+                ("if (true) { () }", 0),
+                ("if (left == right) { () }", 0),
+                ("if () { () }", 0),
+                ("if accepts((item) { item }) { () }", 1),
+                ("if accepts((item: Int): Bool { true }) { () }", 1),
+                ("if accepts(() { true }) { () }", 1),
+                ("if accepts(((item) { item })) { () }", 1),
+                ("if ((() { true }))() { () }", 1),
+                ("if accepts(Pair { value: 1 }) { () }", 0),
+                ("if accepts([[Pair { value: 1 }]]) { () }", 0),
+                (
+                    "if accepts(some(some(some(some(Pair { value: 1 }))))) { () }",
+                    0,
+                ),
+                (
+                    "if accepts(Wrap { inner: Wrap { inner: Wrap { inner: Wrap { inner: Pair { value: 1 } } } } }) { () }",
+                    0,
+                ),
+                ("match (left, right) { _ => ()\n }", 0),
+                ("match accepts((item) { item }) { _ => ()\n }", 1),
+                ("{ for item in (left, right) { item\n }\n }", 0),
+                ("{ for item in accepts((item) { item }) { item\n }\n }", 1),
+            ] {
+                let source = format!("{}{}{}\n", "(".repeat(depth), expression, ")".repeat(depth));
+                match parse_source_result(
+                    source.as_bytes(),
+                    ParseMode::Fragment,
+                    ParseLimits {
+                        max_nodes: 2048,
+                        ..ParseLimits::default()
+                    },
+                ) {
+                    Ok((sources, file, parsed)) => {
+                        assert_lossless(&sources, file, &parsed, source.as_bytes());
+                        let actual = parsed
+                            .cst()
+                            .nodes()
+                            .iter()
+                            .filter(|node| node.kind() == SyntaxKind::ClosureExpr)
+                            .count();
+                        if !parsed.diagnostics().is_empty() || actual != closures {
+                            failures.push(format!("depth={depth} {expression}: diagnostics={:?}, closures={actual}/{closures}", codes(&parsed)));
+                        }
+                    }
+                    Err(error) => failures.push(format!("depth={depth} {expression}: {error:?}")),
+                }
+            }
+        }
+        assert!(failures.is_empty(), "header parse failures: {failures:?}");
+    }
+
+    #[test]
+    fn malformed_statement_delimiters_recover_within_a_small_node_budget() {
+        let mut failures = Vec::new();
+        for depth in [0, 4, 16] {
+            for statement in [
+                "assert(!second)",
+                "assert(left || right)",
+                ",",
+                ")",
+                "]",
+                "=>",
+            ] {
+                let source = format!(
+                    "fn bad() {{\n{}\n{statement}\nlet kept = 1\n{}\n}}\nfn after() {{}}\n",
+                    "{".repeat(depth),
+                    "}".repeat(depth)
+                );
+                match parse_source_result(
+                    source.as_bytes(),
+                    ParseMode::Module,
+                    ParseLimits {
+                        max_nodes: 2048,
+                        ..ParseLimits::default()
+                    },
+                ) {
+                    Ok((sources, file, parsed)) => {
+                        assert_lossless(&sources, file, &parsed, source.as_bytes());
+                        assert!(!parsed.diagnostics().is_empty(), "{statement}");
+                        assert_eq!(
+                            parsed
+                                .cst()
+                                .nodes()
+                                .iter()
+                                .filter(|node| node.kind() == SyntaxKind::FunctionDecl)
+                                .count(),
+                            2,
+                            "{statement}"
+                        );
+                    }
+                    Err(error) => failures.push(format!("depth={depth} {statement}: {error:?}")),
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "statement recovery failures: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn spilled_binary_operands_preserve_non_associative_boundaries() {
+        for depth in [0, 3, 4, 8, 32] {
+            for expression in [
+                "value == 1 or value == 2",
+                "value < 1 and other < 2",
+                "a < b == c < d",
+            ] {
+                let source = format!("{}{}{}\n", "(".repeat(depth), expression, ")".repeat(depth));
+                let (sources, file, parsed) = parse_source_with_limits(
+                    source.as_bytes(),
+                    ParseMode::Fragment,
+                    ParseLimits {
+                        max_nodes: 2048,
+                        ..ParseLimits::default()
+                    },
+                );
+                assert!(
+                    parsed.diagnostics().is_empty(),
+                    "depth={depth}, {expression}: {:?}",
+                    parsed.diagnostics()
+                );
+                assert_lossless(&sources, file, &parsed, source.as_bytes());
+            }
+            for expression in ["a == b == c", "a < b < c", "a..b..c"] {
+                let source = format!("{}{}{}\n", "(".repeat(depth), expression, ")".repeat(depth));
+                let (_, _, parsed) = parse_source_with_limits(
+                    source.as_bytes(),
+                    ParseMode::Fragment,
+                    ParseLimits {
+                        max_nodes: 2048,
+                        ..ParseLimits::default()
+                    },
+                );
+                assert!(
+                    parsed
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.code().as_str() == "E0005"),
+                    "{expression}"
+                );
+            }
+        }
     }
 
     #[test]

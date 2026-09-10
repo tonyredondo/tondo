@@ -6,6 +6,6 @@ fn main() {
     copied[0][0] = 9
     assert(original[0][0] == 1)
     assert(copied[0][0] == 9)
-    console.print("panic\n")
+    _ = console.print("panic\n")
     _ = copied[2]
 }

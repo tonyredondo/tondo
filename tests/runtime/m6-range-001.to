@@ -73,5 +73,5 @@ fn main() {
     assert(scalarMaximumCount == 2)
     assert(scalarMaximumLast == '\u{10ffff}')
 
-    console.print("range-safe-boundaries\n")
+    _ = console.print("range-safe-boundaries\n")
 }

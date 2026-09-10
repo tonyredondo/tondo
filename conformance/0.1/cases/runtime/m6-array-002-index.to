@@ -16,5 +16,5 @@ fn main() {
     assert(values == [10, 21, 31, 40])
     assert(inspect(ref values[-1]) == 40)
 
-    console.print("array-index\n")
+    _ = console.print("array-index\n")
 }

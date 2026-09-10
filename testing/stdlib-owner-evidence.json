@@ -178,7 +178,15 @@
           "refs": [
             "crates/tondo-compiler/src/meta.rs",
             "crates/tondo-compiler/src/std_meta.rs",
-            "crates/tondo-compiler/src/meta_vm.rs"
+            "crates/tondo-compiler/src/meta_vm.rs",
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs",
+            "crates/tondo-compiler/src/meta_source_api.rs",
+            "crates/tondo-compiler/src/meta_snapshot.rs",
+            "crates/tondo-compiler/src/meta_type.rs",
+            "crates/tondo-compiler/src/meta_frontend.rs",
+            "crates/tondo-compiler/src/meta_generation.rs",
+            "crates/tondo-compiler/src/project_meta.rs"
           ]
         },
         "HOST": {
@@ -204,7 +212,10 @@
           "refs": [
             "crates/tondo-compiler/src/meta.rs",
             "crates/tondo-compiler/src/std_meta.rs",
-            "crates/tondo-compiler/tests/std_meta_conformance.rs"
+            "crates/tondo-compiler/tests/std_meta_conformance.rs",
+            "crates/tondo-compiler/src/meta_frontend.rs",
+            "crates/tondo-compiler/src/project.rs",
+            "crates/tondo-cli/tests/cli.rs"
           ]
         },
         "FUZZ": {
@@ -236,7 +247,7 @@
           "refs": [
             "testing/stdlib-conformance.json#owners/std.meta"
           ],
-          "scope": "compiler-component-only"
+          "scope": "ordinary-tondo-companion-and-compiler-components"
         },
         "DOC": {
           "status": "verified",
@@ -264,6 +275,7 @@
       },
       "commands": [
         "scripts/stdlib-meta-check.sh",
+        "scripts/stdlib-meta-test.sh",
         "scripts/stdlib-owner-evidence-check.sh",
         "cargo test -p tondo-compiler --locked --lib meta::tests",
         "cargo test -p tondo-compiler --locked --lib std_meta::tests",
@@ -287,12 +299,15 @@
           "status": "verified",
           "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/reflect.rs"
+            "crates/tondo-compiler/src/reflect.rs",
+            "crates/tondo-compiler/src/hir/reflection.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs",
+            "crates/tondo-vm/src/runtime/reflection.rs"
           ]
         },
         "HOST": {
           "status": "not-applicable",
-          "reason": "std.reflect is metadata-only and has no runtime host adapter or ambient provider",
+          "reason": "std.reflect descriptors execute directly in the hosted VM and require no external host adapter or ambient provider",
           "refs": [
             "docs/contracts/std-reflect.md",
             "testing/stdlib-reflect.json"
@@ -309,7 +324,10 @@
           "status": "verified",
           "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/reflect.rs"
+            "crates/tondo-compiler/src/reflect.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "tests/runtime/m11-std-reflect-public-001.to",
+            "scripts/stdlib-reflect-test.sh"
           ]
         },
         "FUZZ": {
@@ -341,7 +359,7 @@
           "refs": [
             "testing/stdlib-conformance.json#owners/std.reflect"
           ],
-          "scope": "metadata-model-only"
+          "scope": "public-hosted-descriptors-and-metadata-model"
         },
         "DOC": {
           "status": "verified",
@@ -1098,14 +1116,15 @@
           ]
         },
         "IMPL": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Own adapters chain and collect, but do not implement the public Iterator bound or direct next; STD-ITER-PROTOCOL-001 retains the reproduced integration gap.",
           "refs": [
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/heap.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md#STD-ITER-PROTOCOL-001"
           ]
         },
         "HOST": {
@@ -1486,7 +1505,10 @@
             "crates/tondo-compiler/src/mir/verify.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/bytecode/verify.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bootstrap/console_io.to",
+            "crates/tondo-cli/tests/cli.rs"
           ]
         },
         "HOST": {
@@ -1515,7 +1537,10 @@
             "crates/tondo-stdlib/src/io.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "tests/runtime/m11-std-io-001.to",
-            "scripts/stdlib-io-test.sh"
+            "scripts/stdlib-io-test.sh",
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bootstrap/console_io.to",
+            "crates/tondo-cli/tests/cli.rs"
           ]
         },
         "FUZZ": {
@@ -1737,7 +1762,9 @@
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/bootstrap/console_io.to",
+            "crates/tondo-cli/tests/cli.rs#console_public_errors_and_results_execute"
           ]
         },
         "HOST": {
@@ -1746,7 +1773,9 @@
           "refs": [
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-compiler/src/driver.rs",
-            "docs/contracts/stdlib-hosted.md"
+            "docs/contracts/stdlib-hosted.md",
+            "crates/tondo-compiler/src/bootstrap/console_io.to",
+            "crates/tondo-cli/tests/cli.rs"
           ]
         },
         "MODEL": {
@@ -1765,7 +1794,10 @@
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-compiler/src/driver.rs",
             "tests/runtime/m11-std-console-001.to",
-            "scripts/stdlib-console-test.sh"
+            "scripts/stdlib-console-test.sh",
+            "crates/tondo-cli/tests/cli.rs#console_public_errors_and_results_execute",
+            "crates/tondo-compiler/src/process_host.rs#console_line_waits_for_complete_vm_result_admission",
+            "crates/tondo-compiler/src/process_host.rs#console_cancellation_retains_its_nominal_error_at_the_exact_budget"
           ]
         },
         "FUZZ": {
@@ -1975,19 +2007,21 @@
           ]
         },
         "IMPL": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Enums, File I/O, path mutations, ordinary Metadata snapshots, Directory storage and bounded readAll/listing admission have executable regressions included in joint workspace validation. Complete owner promotion and public-row conformance evidence remain pending.",
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/bytecode.rs",
             "crates/tondo-vm/src/bytecode/verify.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-stdlib/src/fs.rs",
+            "crates/tondo-compiler/src/bootstrap/fs_io.to"
           ]
         },
         "HOST": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Enums, File I/O, path mutations, ordinary Metadata snapshots, Directory storage and bounded readAll/listing admission have executable regressions included in joint workspace validation. Complete owner promotion and public-row conformance evidence remain pending.",
           "refs": [
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-compiler/src/driver.rs",
@@ -2004,13 +2038,22 @@
           ]
         },
         "TEST": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Enums, File I/O, path mutations, ordinary Metadata snapshots, Directory storage and bounded readAll/listing admission have executable regressions included in joint workspace validation. Complete owner promotion and public-row conformance evidence remain pending.",
           "refs": [
             "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/process_host.rs#filesystem_open_admits_the_result_before_creating_or_truncating",
+            "crates/tondo-compiler/src/process_host.rs#filesystem_open_releases_path_storage_and_preserves_error_results",
+            "crates/tondo-compiler/src/process_host.rs#filesystem_mutations_wait_for_complete_vm_result_admission",
+            "crates/tondo-compiler/src/process_host.rs#filesystem_atomic_write_preserves_unowned_temporaries_and_cleans_its_own",
+            "crates/tondo-compiler/src/process_host.rs#filesystem_metadata_admission_releases_scratch_without_allocating_handles",
+            "crates/tondo-compiler/src/process_host.rs#filesystem_metadata_nominal_results_survive_phase_admission_and_cleanup",
+            "crates/tondo-cli/tests/cli.rs#filesystem_metadata_exposes_public_snapshot_values",
+            "crates/tondo-cli/tests/cli.rs#filesystem_metadata_observes_symlinks_and_other_entries_without_following_them",
             "crates/tondo-compiler/src/driver.rs",
             "tests/runtime/m11-std-fs-001.to",
-            "scripts/stdlib-fs-test.sh"
+            "scripts/stdlib-fs-test.sh",
+            "crates/tondo-cli/tests/cli.rs"
           ]
         },
         "FUZZ": {

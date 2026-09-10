@@ -30,7 +30,7 @@ jq '.owners[0].examples = []' testing/stdlib-documentation.json \
 expect_failure missing-example env TONDO_STDLIB_DOCUMENTATION="$tmp_dir/missing-example.json" \
     scripts/stdlib-documentation-check.sh
 
-jq '(.owners[] | select(.id == "std.serialization") | .boundary.public_api.status) = "complete"' \
+jq '(.owners[] | select(.id == "std.bytes") | .boundary.public_api.status) = "complete"' \
     testing/stdlib-documentation.json > "$tmp_dir/overclaim-api.json"
 expect_failure overclaim-api env TONDO_STDLIB_DOCUMENTATION="$tmp_dir/overclaim-api.json" \
     scripts/stdlib-documentation-check.sh
@@ -56,21 +56,23 @@ jq -e '
   . as $root
   | $root.summary == {
     owners: 22,
-    examples: 32,
-    runtime_examples: 26,
+    examples: 34,
+    runtime_examples: 28,
     external_examples: 4,
     compiler_examples: 2,
-    api_complete: 18,
-    api_partial: 4,
+    api_complete: 21,
+    api_partial: 1,
     api_not_applicable: 0
   }
   and any($root.owners[]; .id == "std.meta" and .runtime_applicable == false and (.runtime_reason | length) > 0)
-  and any($root.owners[]; .id == "std.reflect" and .runtime_applicable == false and (.runtime_reason | length) > 0)
+  and any($root.owners[]; .id == "std.reflect" and .runtime_applicable == true
+    and any(.examples[]; .source == "tests/runtime/m11-std-reflect-public-001.to"))
   and all(["std.json", "std.messagepack", "std.protobuf"][];
     . as $owner_id
     | any($root.owners[]; .id == $owner_id and .boundary.public_api.status == "complete")
   )
-  and any($root.owners[]; .id == "std.serialization" and .boundary.public_api.status == "partial")
+  and any($root.owners[]; .id == "std.serialization" and .boundary.public_api.status == "complete")
+  and any($root.owners[]; .id == "std.bytes" and .boundary.public_api.status == "partial")
 ' testing/stdlib-documentation.json >/dev/null
 
 echo "stdlib documentation tests: OK"

@@ -1,6 +1,8 @@
 //! Host-independent lexical paths.  No operation in this module touches the
 //! filesystem or resolves links.
 
+pub const MAX_PATH_BYTES: usize = 32 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path {
     bytes: Vec<u8>,
@@ -21,15 +23,26 @@ impl Path {
     }
 
     pub fn from_bytes(value: &[u8]) -> Result<Self, PathError> {
-        if value.contains(&0) {
-            return Err(PathError::Nul);
-        }
-        if value.len() > 32 * 1024 {
-            return Err(PathError::ResourceLimit);
-        }
+        Self::validate_bytes(value)?;
         Ok(Self {
             bytes: value.to_vec(),
         })
+    }
+
+    /// Adopts an already admitted buffer without another byte copy.
+    pub fn from_owned_bytes(value: Vec<u8>) -> Result<Self, PathError> {
+        Self::validate_bytes(&value)?;
+        Ok(Self { bytes: value })
+    }
+
+    fn validate_bytes(value: &[u8]) -> Result<(), PathError> {
+        if value.contains(&0) {
+            return Err(PathError::Nul);
+        }
+        if value.len() > MAX_PATH_BYTES {
+            return Err(PathError::ResourceLimit);
+        }
+        Ok(())
     }
 
     pub fn join(&self, component: &str) -> Result<Self, PathError> {

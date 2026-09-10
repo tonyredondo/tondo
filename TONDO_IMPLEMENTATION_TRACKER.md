@@ -385,8 +385,8 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   en workers nuevos, tiempo virtual opt-in sobre la API monotónica de
   producción, inputs públicos/secretos, interrupción, artifacts
   content-addressed, snapshots versionados, límites, output, exit status y
-  reportes `tondo-test-report-0.1/7`, `tondo-test-list-0.1/6` y
-  `tondo-junit-report-0.1/4`. No se introducen `TestContext`, attributes,
+  reportes `tondo-test-report-0.1/8`, `tondo-test-list-0.1/6` y
+  `tondo-junit-report-0.1/5`. No se introducen `TestContext`, attributes,
   clases, reflection, registro runtime, hooks, selección regex o por tags
   runtime, retries/repeat implícitos, actualización automática de snapshots ni
   un reloj exclusivo de testing.
@@ -488,7 +488,7 @@ necesaria; la fragmentación del workspace no.
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
 | **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks, frontend, semántica tipada, lowering verificable, selector cooperativo, ownership branch-sensitive, modelo/tests, adapters `selectable`, baseline de rendimiento y conformidad VM del selector cerrados |
-| **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
+| **M8 — Scripts y procesos** | Experiencia de scripting | Partial; descendant process cleanup reopened |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Corpus ejecutable** | Conformidad viva pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
@@ -2526,7 +2526,15 @@ shell implícito ni efectos de importación.
 - [x] **PROC-007 — Modelar handles, streams y ownership one-shot como recursos
   terminales.**
 
-- [x] **PROC-008 — Integrar cancelación y cleanup con el scope raíz.**
+- [ ] **PROC-008 — Complete process cleanup through the owning scope.**
+  Direct child cancellation and reaping have executable evidence. A public
+  test that runs a shell which starts `sleep` with redirected streams and then
+  exits previously reported `passed` while that descendant remained running.
+  The test CLI now requires a separate Linux cgroup-v2 provider and verifies
+  descendant cleanup after success, failure, timeout and interruption.
+  Unix group setup alone does not establish complete cleanup after leader exit
+  in ordinary VM execution. General process scope cleanup remains pending;
+  the test-only provider is not evidence for that broader guarantee.
 
 - [x] **PROC-009 — Traducir exit status y errores de spawn a tipos nominales de
   stdlib.**
@@ -2538,7 +2546,7 @@ shell implícito ni efectos de importación.
 
 - [x] El ejemplo 24.17 funciona sin invocar un shell implícito.
 - [x] Un import nunca ejecuta código.
-- [x] No quedan procesos huérfanos al terminar, cancelar o panicar un scope.
+- [ ] No orphaned processes remain after scope completion, cancellation or panic.
 - [x] Los argumentos conservan exactamente sus caracteres.
 - [x] Los pipes aplican backpressure y no bloquean el executor cooperativo.
 
@@ -2927,6 +2935,15 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   de los 2.048 inputs arbitrarios y fuzz targets existentes. La evidencia
   observada en Linux x86_64 pasa; la matriz Linux ARM64/macOS/Windows queda
   como ejecución CI de targets, no como una afirmación local no verificada.
+  Header parsing now keeps grouped and tuple operands distinct from closures,
+  including nested closure/record arguments in shallow and spilled paths.
+  Unmatched statement delimiters recover losslessly with ordinary syntax
+  diagnostics within a 2,048-node regression budget, preserving later functions.
+  Public testing cases cover the original tuple condition and malformed bodies
+  rejected before listing, without substituting a resource-limit diagnostic.
+  Integration also verifies that literal patterns exclude surrounding trivia
+  from semantic spellings while retaining numeric signs/suffixes and String
+  contents; commented tuple patterns execute through the strict bytecode verifier.
 
 - [x] **CONF-DRAFT-001 — Consolidar una única conformidad de draft.** Mantener
   `conformance/draft/manifest.json` como única identidad activa y
@@ -3197,7 +3214,7 @@ reporters.
   y cinco tests unitarios en `tondo-compiler`.
 
 - [x] **UTEST-RESULT-MODEL-001 — Fijar el modelo interno de ejecución.**
-  `TestResultTree` implementa el report format `tondo-test-report-0.1/7` como
+  `TestResultTree` implementa el report format `tondo-test-report-0.1/8` como
   una única representación validada de nodes, participation, phase, attempt,
   iteration, retry unit, outcome agregado, causalidad, `blocked_by`, policy y
   summary. `assemble` deriva status/decisive attempt/counts una sola vez y
@@ -3229,6 +3246,12 @@ reporters.
   pipeline with provider identity, environment selection, secret revocation
   and failure evidence.
 
+  The public hosted route now accepts explicit `[[test.inputs]]` environment
+  descriptors, captures public bytes before selection and materializes secrets
+  only in fresh workers. Runtime-only admission, revocation, isolated environment,
+  input failure without report publication and complete input-profile metadata
+  are under integration validation; current joint gate evidence remains open.
+
 - [x] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
   `tondo_compiler::test_discovery` recibe entradas enumeradas por el host y
   aplica, sin I/O, la precedencia de `tests/`, `_test.to` y roots explícitos,
@@ -3251,6 +3274,13 @@ reporters.
 - [ ] **UTEST-DEPS-001 — Connect closed test dependency graphs to public project discovery and compilation.**
   Keep production and test-only dependencies separate and validate
   identities before workers execute.
+
+  Public hosted integration now admits the separate `test.packages` lock
+  section, compiles pinned dependency sources after sealing production, and
+  transports the resulting bytecode to workers. Focused CLI evidence covers
+  transitive calls, unit overlays, default plans, test-only projects, invalid
+  graphs, input drift and unchanged production bytes. Full integration,
+  provenance and promotion verification remain open.
 
 ### 17.2 Frontend y semántica estática
 
@@ -3354,19 +3384,23 @@ reporters.
   workers; private declarations in separate integration files must not
   collide.
 
-- [x] **UTEST-CHECK-001 — Inferir el contrato exacto del body.**
-  `test_check::check` cierra las entradas privadas `fn(): Unit ! E` de
-  tests y setups, permite `Unit`/`Never`, prohíbe valores retornados y
-  `return` en setup, normaliza la unión de errores y exige `Discard`. Consume
-  las pruebas de ownership, préstamos, terminales, `Send`, `Share` y `unsafe`
-  sin relajarlas, infiere suspensión desde `await` y tiempo virtual y rechaza
-  `std.testing` desde producción con `E2003`. Valida las formas monomórficas de
-  `log`, `tags`, `failNow`, `skip`, `attach`, `snapshot`, `withVirtualTime`,
-  `settle` y `advance`, incluyendo nombres/media types, duplicados de
-  evidencia, `P2005`/`P2006` y la clausura
-  `Send + CallOnce[fn(ref VirtualTime): Unit ! E]` con efecto suspendible
-  inferido. Evidencia:
-  `docs/contracts/test-check.md` y diez tests unitarios deterministas.
+- [ ] **UTEST-CHECK-001 — Inferir el contrato exacto del body.**
+  Public integration now infers `Unit ! E`, checks `Discard`, rejects suite
+  returns and preserves error types and original terminal locations through
+  cleanup, suite blocking, retries and repeats. Public regressions and the
+  complete CLI suite pass. Current compiler/VM integration, provenance, quality
+  and the complete testing gate remain pending; model evidence alone is
+  insufficient to close this task.
+
+  `test_check::check` independently models supplied body facts. Ordinary HIR
+  checks the public callback: normal results and explicit leaf returns admit
+  `Unit`/`Never`, suite returns use `E1205`, incompatible normal results use
+  `E1102`, and non-Discard error members use `E1105`. Repeated inferred error
+  members collapse to one union member. Ownership, suspension and production
+  rejection remain ordinary compiler checks, not assertions supplied to the
+  model. Static diagnostics and runtime failure locations map to original
+  source; fixes are retained only for verbatim source edits. See
+  `docs/contracts/test-check.md` and `docs/contracts/test-backend.md`.
 
 ### 17.3 Lowering, runtime y CLI
 
@@ -3452,6 +3486,158 @@ reporters.
   watchdog. Two 350 ms leaves, 350 ms setup and 350 ms teardown now pass under
   the same 500 ms per-phase cap. Focused regressions cover setup blocking,
   sibling continuation, teardown result preservation and isolated retry units.
+  Instruction accounting is now independent per node and shared with its
+  cooperative children and blocking workers. Live VM heap charges retain their
+  allocating owner across phases/workers and release on GC or destruction;
+  ancestor state no longer consumes the child's memory allowance. Minimum
+  instruction limits, body/setup/teardown exhaustion, concurrent workers,
+  bounded evidence and virtual timer lifecycle have public regressions.
+  Host `skip` control is returned to the originating worker, preserving its
+  terminal and worker/parent cleanup. The closed transport rejects invalid
+  limits before opening runtime providers.
+  Frame locals and loans are reserved before construction and counted across
+  parked tasks; phase depth excludes ancestor frames. Public regressions cover
+  an oversized scalar frame and parent roots surviving collection during spawn.
+  Hosted byte and formatting buffers share the allocating phase's memory
+  account. Growth and batch publication preflight atomically; tracing through
+  VM roots, hosted containers and blocking-worker transfers releases dead
+  buffers while preserving live views, pending operations and returned values.
+  Public retained/discarded-buffer and concurrent-worker regressions pass.
+  Paths and environment values/snapshots now use the same owner accounting;
+  snapshot getters reserve their selected copies and the snapshot cache is weak.
+  Task and scope slots, select arms and cleanup registrations have explicit
+  storage admission and lifecycle tests. Async collect buffers are charged;
+  spawned collection cannot hide a phase quota as a recoverable language error.
+  VM one-shot/Once/Group state, Group children, pool workers/queues and actor
+  mailbox capacity are admitted before publication. Constructor quota failure
+  preserves identities and leaves no pool or blocking workers behind.
+  Hosted concurrent collection copies, growth and iteration generations now
+  share that account. Guard and permit admission preserves lock state on quota
+  failure, and hosted async jobs retain their phase owner during polling.
+  Channels reserve configured capacity, endpoints and retained queue values;
+  receive admission preserves the original sender on a receiver quota failure.
+  Focused tests cover rejection atomicity, removal, collection and ownership.
+  VM/compiler/CLI integration covers per-call resource terminals and scope
+  unwind before Join fallback registration, preserving Group ownership.
+  Text diff now uses linear-space Myers with an independent bounded edit-distance
+  oracle. Workspace, retained hunks and rendering are admitted before allocation;
+  public tests cover line-workspace rejection, retained/discarded results and
+  assertion diagnostics exhausting memory without losing sibling evidence.
+  Generator state is committed only after successful multi-draw operations;
+  planned byte/text capacity is admitted before advancing the stream. Generator,
+  generation-ID, tolerance and typed-error descriptors follow owner collection.
+  Public tests cover generated-output quotas that cannot be caught as language
+  errors, repeated descriptor reclamation and Bytes methods without an explicit
+  std.bytes reference.
+  Admitted synchronous responses and async completions carry their
+  receiving account through worker replies, ready queues and VM import;
+  ready responses remain typed host roots. String import moves admitted storage.
+  Detached measurement uses an admitted cursor per active parent, independent
+  of collection width. Internal owned arguments move without another copy.
+  Console and I/O Reader/Writer responses prepay their fixed descriptors before
+  consuming input or emitting output; exact and rejected budgets preserve
+  cursor, registry and stream atomicity. Fixed Set/Stack/Queue mutation replies
+  are also prepaid. Immediate async replies and admitted channel deliveries
+  retain their response charge in the host and move it through owned poll/wait;
+  ready cancellation releases the old detached payload and remains repeatable.
+  Typed owned replies and blocking argument batches preflight their complete
+  VM heap graphs before construction. Iterative import preserves generic
+  nominal payloads, opaque descriptors and partial GC roots; 256-level values
+  and closure captures execute while deeper inputs reject before allocation.
+  Complete generic payload graphs are specialized during bytecode admission,
+  including nested containers and inactive enum variants, under the finite
+  type-table budget. MIR and bytecode preserve canonical disjoint union
+  semantics when substitution changes member order; runtime import consumes
+  concrete descriptors without another substitution or type search.
+  Valid-index sync.Array.set now admits the typed VM result before host
+  dispatch, in addition to the existing transport and storage admission. Its
+  borrowed previous-item preview holds heap bytes, import workspace and object
+  slots until direct or spawned delivery. Cancellation, malformed responses and
+  provider failures release the reservation with its original phase account.
+  A public regression verifies unchanged suite-owned state after a child's
+  memory rejection. Other combined host-effect/import routes remain open.
+  Map.remove, Stack.pop and Queue.dequeue also preview present/absent optional
+  replies before removal. Public rejected-budget regressions preserve the
+  suite's contents; direct and spawned paths retain nested generic payloads and
+  subsequently return None. Other operations retain their recorded boundaries.
+  Map.insert also admits its nested Result/Option response before replacing or
+  adding an entry. Exact rejected-budget regressions preserve both existing and
+  absent keys; direct/spawned nested payload and collection-capacity cases cover
+  both optional outcomes and the existing recoverable error route.
+  Set.insert, Stack.push and Queue.enqueue preadmit their fixed Result graph
+  before growth. Exact rejected-budget tests preserve the suite's length;
+  duplicate Set insertion, capacity errors, malformed tokens and spawned
+  calls preserve their existing behavior. Array/Map compareExchange now also
+  preadmits the selected enum and observed payload before changing storage.
+  Exchanged/Mismatch, nested generic and optional payloads, absence/removal,
+  invalid index/capacity and cloned String storage have focused evidence.
+  Synchronous Atomic.swap and compareExchange likewise admit their complete
+  typed result before mutation, including Copy tuple and record payloads.
+  Public exact-budget regressions preserve suite-owned storage; direct calls,
+  helpers, function values and defer return the observed value correctly.
+  Memory-order combinations and malformed registry values have focused checks.
+  Buffered channel reception now admits its typed result before queue removal:
+  tryReceive uses a synchronous preview, while receive previews at its committing
+  FIFO poll using the waiting task's account. Rejected admission retires only
+  that waiter, preserving the queued value and other phases. A compiled Tondo
+  regression observes actual host state after rejection; public generic payload
+  and terminal-state cases cover direct and spawned receive. Pending rendezvous
+  now reserves both typed VM results and detached responses before transferring
+  the message. Atomic batch publication validates recipients, original accounts
+  and heap identity; rejected admission preserves the uncommitted peer.
+  Shared/separate-account, invalid-batch, cancellation/failure and public generic
+  Join-order regressions pass. Pending sends also admit their typed
+  acknowledgement before enqueueing into finite or unbounded buffers; exact
+  rejected-budget regressions preserve empty queues. Synchronous trySend and
+  tryReceive jointly admit their active caller and pending peer; buffered
+  trySend also reserves its typed acknowledgement before growth. Shared and
+  separate accounts, published-pool release and public generic/terminal
+  outcomes are covered. Constructors and endpoint forks stage their exact
+  replies and reserve complete VM results before publishing identities or
+  changing counts. Receiver close uses a borrowed two-slice array preview
+  before draining; the actual result moves the original payloads. Fixed-budget
+  registry/counter/queue regressions, split-array validation and public generic
+  bounded/unbounded fork/close lifecycle tests pass. Known host previews and
+  admitted channel methods now use a blocking worker's own paused heap
+  capacity and original phase account. Cancellation is ordered against joint
+  publication with waiting parent peers; failed/disconnected replies release
+  the worker pool. Independent heaps/accounts, byte/object exhaustion,
+  recipient validation, real worker-thread lifecycle and public generic
+  bounded/unbounded channel regressions pass. Other bridge metadata and
+  unconverted host effects retain their open accounting boundaries.
+  Other host operations still require their joint admission boundary.
+  Collection mutation/read/snapshot replies prepay their exact detached
+  response before copying values or changing storage. Channel construction,
+  fork, close, send acknowledgements and receive/send-error replies now admit
+  their responses before publication or consumption. Rendezvous reserves both
+  endpoint responses, keeps each phase's owner and releases tentative charges
+  when the peer cannot admit its reply. Focused exact/short quota, lifecycle,
+  FIFO and malformed-input tests cover these boundaries.
+  Mutex/RwLock guard and Semaphore permit replies now prepay acquisition,
+  reads and release before changing resource ownership or copying payloads.
+  Pending acquisition retains its originating phase and does not reserve a
+  reply while still parked. Exact/short shared and independent accounts,
+  contended/reentrant errors and empty try-acquisition have focused regressions.
+  Condition waits now prepay before releasing their mutex and keep that reply
+  through notification, cancellation and reacquisition. Barrier participants
+  prepay before arrival; generation completion and cancellation preserve each
+  original phase. Cancelling parked guard/permit acquisition reuses retired
+  request metadata without acquiring the resource or needing additional quota.
+  Exact/short budgets, repeated generations and invalid registry values have
+  focused regressions; the remaining public promotion boundary stays open.
+  The seven synchronization constructors admit response and retained storage
+  before publishing identities. Atomic mutations prepay their exact returned
+  values, and raw-host Once views prepay payloads or fixed errors without
+  replacing the VM initializer continuation. Shared/independent accounts,
+  constructor validation errors and exact/short mutation replies have tests.
+  All five concurrent collection literals prepay their token before copying
+  storage or publishing identities; Map/Set deduplication has no uncharged
+  temporary index. Cursor start/next prepay their complete detached shape and
+  validate registry kind and metadata length even when no item is selected.
+  Exact/short shared and independent accounts, iteration order, validation
+  priority and rejected-storage cleanup have focused regressions.
+  Host construction, remaining pending-output ownership, payloads and
+  failure/lifecycle integration stay open.
   Remaining work includes complete per-phase structural accounting and every
   non-cooperative cleanup route, followed by the required promotion gates.
   Model success cannot close the public boundary. See
@@ -3570,7 +3756,13 @@ reporters.
   passing siblings excluded from leaf retries. Full input-provider/resource
   integration and the required promotion gates remain pending.
 
-- [x] **UTEST-REPEAT-001 — Implementar repetición completa y aislada.** Parsear
+- [ ] **UTEST-REPEAT-001 — Implementar repetición completa y aislada.**
+  Reopened by integration: repeated attempts discarded their error and snapshot
+  updates. The runtime model and CLI now retain both; public repeated panic and
+  recoverable-error regressions pass. Final T0 lifecycle and gate evidence are
+  still required.
+
+  Parsear
   `--repeat N` con default uno y `N >= 1`; rechazar retry, allow-flaky, list y
   snapshot update. Ejecutar cada iteración completa de forma secuencial en un
   proceso worker nuevo, sin recompilar y conservando selección, shard,
@@ -3627,13 +3819,19 @@ reporters.
   cubren parseo, matching, no-update implícito, separación del stage y rutas.
 
 - [ ] **UTEST-INTERRUPT-001 — Connect OS interruption to coordinator and worker lifecycle.**
-  The state machine exists. Public SIGINT must stop dispatch, terminate and
-  reap workers, emit terminal evidence and exit with the specified
-  interruption code.
+  The public CLI has fourteen Linux SIGINT scenarios covering cooperative cleanup,
+  grace expiry, repeated delivery, worker reaping and output rollback. Worker
+  temporary roots are removed before publication, including forced exits.
+  Process-capable test targets require an explicit OS containment provider;
+  the Linux cgroup-v2 route closes descendants after parent exit and forced
+  worker termination. Unsupported environments reject before dispatch.
+  General process scope cleanup under `PROC-008` remains a separate task;
+  it is not a prerequisite of this explicit test-worker provider. Portable
+  execution and final integration evidence remain pending.
 
 - [x] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
   Implementar una sola vez `tondo-test-json-v1` y serializar con ella
-  `tondo-test-report-0.1/7` y `tondo-test-list-0.1/6`, con arrays separados de
+  `tondo-test-report-0.1/8` y `tondo-test-list-0.1/6`, con arrays separados de
   suites/tests, parents, source, owners, paths, estado agregado,
   intento decisivo e historial por intento de phase, `blocked_by` causal,
   iteración/ronda/unidad, `failure`, `skip`, tags, artifacts, snapshots,
@@ -3660,7 +3858,7 @@ reporters.
   policies, identidad y rechazo de schema.
 
 - [x] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
-  Proyectar la misma ejecución como `tondo-junit-report-0.1/4`, XML 1.0 UTF-8,
+  Proyectar la misma ejecución como `tondo-junit-report-0.1/5`, XML 1.0 UTF-8,
   con un testcase agregado por hoja, testcases sintéticos únicos para fallos de
   lifecycle y flaky suite, y
   `tondo.retry/repeat/decisive_attempt/attempts`. Mapear `flaky-pass` a failure
@@ -3719,10 +3917,11 @@ reporters.
   `docs/contracts/project-discovery.md` y las pruebas CLI de proyecto/TOML.
 
 - [ ] **UTEST-CLI-001 — Connect the complete public test pipeline.**
-  The coordinator, workers, selection, retry and reports exist. Compile and
-  validate the entire target before listing, filtering, sharding or allowing
-  an empty selection; connect production sealing, integration isolation,
-  inputs, dependencies and OS interruption.
+  The public pipeline now validates the entire target before listing,
+  filtering, sharding or allowing an empty selection. Production sealing,
+  immutable overlays, separate integration packages, worker inputs, closed
+  dependencies and Linux OS interruption have joint workspace regression
+  evidence. Renewed formal traces and portable evidence remain pending.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
@@ -3732,9 +3931,10 @@ reporters.
   bind observations to the actual target.
 
 - [ ] **UTEST-PROJECTS-001 — Complete public project discovery.**
-  TOML discovery exists, but must materialize the specified production,
-  unit-overlay, integration, dependency and input boundaries rather than one
-  merged source graph.
+  Public TOML discovery now materializes production, immutable unit overlays,
+  separate integration roots, closed dependencies and declared worker inputs.
+  Public CLI regressions passed in the joint workspace campaign. Promotion
+  remains dependent on the complete public pipeline evidence.
 
 - [ ] **UTEST-PLATFORM-001 — Verify the complete test pipeline on supported hosts.**
   Portable component tests do not prove public interruption, process cleanup
@@ -3767,9 +3967,12 @@ reporters.
   virtuales, y la aceptación exige esa evidencia tanto en JSON como en JUnit.
 
 - [ ] **UTEST-SPEC-EVIDENCE-001 — Bind every testing requirement to its actual public execution.**
-  Existing fences and component cases remain useful. Full target
-  compilation, production sealing, integration isolation, inputs,
-  dependencies and interruption require renewed explicit traces before T0.
+  Public pipeline regressions execute full-target compilation, production
+  sealing, integration isolation, inputs, dependencies and interruption.
+  The current matrix still leaves `TT01-13-1-R001`, `TT01-13-1-R002` and
+  `TT01-13-1-R003` without complete public-boundary traces for the quality
+  policy, report pipeline and input identity. A passing quality campaign
+  does not itself complete these normative evidence records or close T0.
 
 ### Gate T0 — Public testing conformance
 
@@ -3885,8 +4088,13 @@ vez los errores de los slices anteriores.
   datos ejecutables o de runtime.
 
 - [ ] **META-QUERY-001 — Connect metadata queries to actual compiled providers and public project inputs.**
-  Internal query helpers require integration with the closed request model,
-  visibility and deterministic output.
+  Ordinary providers now receive resolved TypeRef values, public type/value
+  signatures and visible method/implementation headers. Destination-specific
+  rendering stages deterministic imports. Semantic queries retain accepted
+  source and provenance. Source/Builtin origins, prelude operations and generic
+  binders now have executable regressions, including the joint workspace run.
+  Complete owner conformance remains open; the bounded META-MODEL-001 schema
+  is not full integration proof.
 
 ### 18.3 Ejecución hermética
 
@@ -3898,22 +4106,30 @@ vez los errores de los slices anteriores.
   sustrato, y solo entonces se habilitan providers.
 
 - [ ] **META-DERIVE-001 — Execute general derive providers through the public frontend.**
-  Built-in serialization derives work; precomputed source returned by a
-  constant VM program does not establish arbitrary Tondo provider execution.
+  Hash-pinned ordinary Tondo providers now execute typed derive requests with
+  exact target visibility, limits, diagnostics and final source maps. Focused
+  tests cover invalid targets, failures and publication. Companion rendering,
+  derive builders, imports and necessary additional generic bounds now have
+  executable proof. Complete owner conformance remains open.
 
 - [ ] **META-GEN-001 — Execute declared generators from public TOML projects.**
-  Existing internal generator plans are not accepted by ordinary project
-  discovery. Compile actual Tondo providers with closed inputs, roots,
-  outputs and sandbox limits.
+  Public TOML discovery, lock resolution and ordinary source providers now
+  connect explicit inputs, roots, outputs and limits. Signature projection
+  excludes unrelated bodies and rejects actual current-round dependencies.
+  Complete model coverage and owner conformance remain open.
 
 - [ ] **META-ATOMIC-001 — Integrate metadata identity, caching and atomic products into ordinary compilation.**
-  Internal helpers exist; provider failure must prevent publication of
-  source, interfaces and artifacts through the public command.
+  Public generator and derive failures now reject the whole output batch;
+  accepted records bind final source, request and provider identities. Sealed
+  test consumers reuse generated production. Regressions passed in the joint
+  workspace and source-bound quality campaigns. Renewed owner conformance
+  remains pending.
 
 - [ ] **REFLECT-IMPL-001 — Expose reachable runtime metadata through public std.reflect.typeInfo[T]().**
-  The Rust catalog and linker exist; the ordinary frontend currently rejects
-  std.reflect. Connect typing, lowering, runtime metadata and reachability
-  without adding value reflection or wire-stable TypeId.
+  The ordinary frontend and hosted VM now execute typeInfo and all 26 descriptor
+  queries. Focused tests cover concrete types, public structure, documentation,
+  identity, admission and entry-point reachability. Complete owner conformance
+  and promotion remain open; this does not establish native AOT execution.
 
 ### 18.4 Evidencia y contribución a Gate G5
 
@@ -4286,9 +4502,12 @@ layer pueden avanzar en paralelo.
 ### 19.4 Implementación y evidencia
 
 - [ ] **STD-META-IMPL-001 — Implement the specified public std.meta companion.**
-  Existing Limits, Output, SourceMap and environment values are partial;
-  connect MetaRequest, builders and provider-facing APIs to actual Tondo
-  execution.
+  Ordinary GenerateRequest/DeriveRequest, typed model/response/diagnostics,
+  SourceBuilder and TypeRef rendering execute in Tondo. Source/Builtin origins,
+  prelude operation closure and derive imports/bounds have focused executable
+  proof, including the joint workspace campaign. The public API inventory traces
+  all 25 companion callables. Complete owner conformance remains open; callable
+  traceability does not establish whole-companion promotion.
 
 - [ ] **STD-META-CONF-001 — Verify the public std.meta surface with compiled Tondo providers.**
   Rust model and protocol tests remain component evidence and cannot close
@@ -4437,6 +4656,16 @@ Las leaves A3 solo pueden marcarse `[x]` cuando cumplen todos estos puntos:
   cualificadas `std.iter.*`; `tests/runtime/m11-std-iter-001.to` cubre map,
   filter, take, collect, callbacks, rangos, encadenamiento y tipos explícitos.
 
+- [ ] **STD-ITER-PROTOCOL-001 — Admit adapter cursors through the public Iterator protocol.**
+  The current own adapters support combinator chaining and collection, but
+  `var cursor = [1, 2].map(transform); cursor.next()` is rejected with E1102,
+  and passing that cursor to `I: Iterator[Int]` is rejected with E1105. Expose
+  the same stateful cursor through direct, qualified and constrained `next`,
+  with one consumption order, terminal `none`, callback and lifecycle proof.
+  Ordinary user-defined Iterator implementations are already executable.
+  This newly reproduced integration gap is separate from the testing and
+  reflection/meta remediation blocks; it prevents a whole-owner promotion.
+
 - [x] **STD-FMT-IMPL-001 — Exponer `std.format` a programas Tondo.** Conectar
   `Builder`, `format` y `join` a `Display`, con crecimiento acotado, error
   atómico y tests end-to-end. Cerrado con tipos intrínsecos dedicados,
@@ -4446,27 +4675,30 @@ Las leaves A3 solo pueden marcarse `[x]` cuando cumplen todos estos puntos:
   para implementaciones de usuario. `tests/runtime/m11-std-format-001.to` y la
   prueba host de límites cubren la ruta pública completa.
 
-- [x] **STD-IO-IMPL-001 — Completar protocolos y helpers de I/O.** Mantener los
-  handles `Reader`/`Writer` existentes y añadir `readAll`/`IoLimits`, partial
-  I/O, EOF, cancelación, límite prospectivo y cleanup por la ruta pública.
-  Cerrado con `IoLimits` validable y default seguro, `readAll`/`writeAll`
-  expuestos desde `std.io`, operaciones `Reader`/`Writer` async con jobs
-  inmediatos cancelables en el host, short reads/writes, EOF y errores tipados.
-  `readAll` comprueba el límite agregado antes de consumir stdin, y el cleanup
-  público retira los tokens `Reader`/`Writer` para que no puedan reutilizarse.
-  La prueba kernel cubre progreso parcial, EOF, límites, cancelación y flush;
-  `tests/runtime/m11-std-io-001.to` valida la cadena HIR → MIR → bytecode → VM
-  con `await`, lectura acotada y escritura drenada.
+- [ ] **STD-IO-IMPL-001 — Complete ordinary I/O protocols and helpers.**
+  Reopened by the public-shape audit: Reader/Writer were opaque hosted handles
+  rather than implementable static traits. The current repair adds ordinary
+  Reader/Writer, ReadResult/IoError, private IoLimits and generic readAll/writeAll.
+  Console owns concrete Input/Output adapters. Focused public tests cover user
+  implementations, errors, limits, progress and flush; hosted regressions cover
+  admission before effects and cleanup. Source selection, generated evidence,
+  full integration and the required promotion gates remain in progress.
 
-- [x] **STD-FS-IMPL-001 — Completar filesystem hosted.** `open`,
-  `openDirectory`, `metadata`, `File`/`Directory` y sus operaciones async ya
-  atraviesan HIR, MIR, bytecode, VM y bootstrap host con `FsError` nominal.
-  `File` conserva el descriptor y la posición, expone `read`/`write`/`flush`,
-  `Directory.list` mantiene orden por bytes nativos y ambos handles se revocan
-  en cleanup normal/unwind. `readAll/writeAll/list/rename/atomicWrite` existentes
-  también quedan registrados como awaitables y mantienen límites y atomicidad.
-  La fixture `tests/runtime/m11-std-fs-001.to` y la prueba host cubren apertura,
-  metadata, directorio, partial writes, lectura, errores y cleanup.
+- [ ] **STD-FS-IMPL-001 — Complete hosted filesystem contracts.** Reopened:
+  the nominal FsError claim was an opaque handle, File lacked ordinary I/O
+  trait implementations, a rejected read consumed input, and OpenMode retained
+  an uncollected host token. Public enums, File adapters and File result
+  admission now have focused corrections and regression tests. `fs.open`
+  also admits its result and path storage before creation or truncation.
+  Path mutations admit results and scratch before effects or write-quota
+  consumption; atomic cleanup preserves temporaries owned by other operations.
+  Metadata now exposes ordinary snapshot fields `kind: FileKind`, `size: Int`
+  and `readOnly: Bool`, with typed-result/path admission and no host identity.
+  Public tests cover value semantics, attributes and links without following
+  them. Directory storage, bounded readAll with an exact EOF probe, staged
+  native-order listings and admission before publishing handles now have
+  executable regressions, included in the joint workspace campaign. Integrated
+  owner promotion and its evidence cells remain pending.
 
 - [x] **STD-PROC-IMPL-001 — Alinear procesos con el contrato público.** La
   superficie hosted expone `command/shell/pipe` (con `cmd` documentado solo como
@@ -4550,7 +4782,7 @@ Las leaves A3 solo pueden marcarse `[x]` cuando cumplen todos estos puntos:
   DOM. Los enums JSON usan un object externally tagged único y el reader
   detecta trailing data antes de publicar `T`. `Decoder.peek` es no consumidor
   y permite composición estática sin rewind. La fixture CLI cubre round-trip y
-  formas inválidas; la auditoría global verifica ahora las 214/214 firmas,
+  formas inválidas; la auditoría global verifica ahora las 298/298 firmas,
   incluidas las 23/23 de `std.json`. Quedan fuera de esta leaf únicamente los
   gates de rendimiento, fuzzing, conformance y promoción de S1A.
 
@@ -4779,19 +5011,13 @@ administrativas que no implementan comportamiento.
   target-qualified performance evidence do not close global public conformance
   under `STD-A-CONF-001`.
 
-- [x] **STD-A-IO-EVIDENCE-001 — Cerrar evidencia de I/O portable.** Las cuatro
-  firmas de `std.io` quedan trazadas en nueve celdas del owner portable:
-  Reader/Writer, `IoLimits`, `readAll` y `writeAll` pasan por HIR/lowering,
-  bytecode/VM, fixture público y auditoría de API. El kernel prueba particiones
-  deterministas de chunks, partial I/O, EOF, límites, progreso cero,
-  sobreescrituras, errores de `flush` y cancelación sin éxito parcial. `HOST` es
-  `not-applicable`; los adaptadores pertenecen a `std.console`, `std.fs` y
-  `std.process`. `scripts/stdlib-io-test.sh` valida contrato, símbolos, corpus,
-  docs y las 4/4 filas públicas.
-  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
-  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
-  target-qualified performance evidence do not close global public conformance
-  under `STD-A-CONF-001`.
+- [ ] **STD-A-IO-EVIDENCE-001 — Close portable I/O evidence.**
+  Reopened with STD-IO-IMPL-001. Kernel chunk tests and four symbol rows did not
+  establish ordinary public traits or generic helper execution. The repair now
+  has compiled user implementations and concrete console adapter regressions;
+  owner registers and required integration evidence must be regenerated and
+  verified before closure. Whole-owner fuzzing and global public conformance
+  remain pending under STD-A-FUZZ-001 and STD-A-CONF-001.
 
 - [x] **STD-A-PATH-EVIDENCE-001 — Cerrar evidencia de paths.** Las diez
   firmas de `std.path` quedan trazadas por contrato hosted, HIR/lowering,
@@ -4807,27 +5033,32 @@ administrativas que no implementan comportamiento.
   target-qualified performance evidence do not close global public conformance
   under `STD-A-CONF-001`.
 
-- [x] **STD-A-CONSOLE-EVIDENCE-001 — Cerrar evidencia de consola.** Las siete
-  firmas de `std.console` quedan trazadas con el modelo único de
-  `std.io.Reader`/`Writer`, tokens distintos para stdin/stdout/stderr, frontera
-  estática de capability `console`, partial I/O, EOF, LF estable, flush
-  explícito, errores UTF-8 atómicos y mensajes host opacos. HIR/lowering,
-  bytecode/VM, host, fixture `m11-std-console-001.to`, auditoría pública 7/7 y
-  la matriz de evidencia quedan enlazados. `HOST` es `verified`.
-  Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
-  route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
-  target-qualified performance evidence do not close global public conformance
-  under `STD-A-CONF-001`.
+- [ ] **STD-A-CONSOLE-EVIDENCE-001 — Close console evidence.**
+  Reopened by the exact public-shape audit. Concrete Input/Output now implement
+  ordinary io.Reader/io.Writer, with bounded reads, writes and handle cleanup.
+  ConsoleError is now an ordinary nominal enum, and print/println/flush return
+  the specified Unit ! ConsoleError. Focused compiler and public CLI tests
+  pass, including readLine admission and nominal cancellation. Corpus and
+  generated evidence integration remain in progress; the seven symbol rows
+  alone cannot close this owner.
+  Whole-owner fuzzing and global public conformance remain pending under
+  STD-A-FUZZ-001 and STD-A-CONF-001.
 
-- [x] **STD-A-FS-EVIDENCE-001 — Cerrar evidencia de filesystem.** Las catorce
-  firmas públicas de `std.fs` quedan trazadas por contrato hosted, capability
-  `filesystem`, modelo de handles afines, HIR/lowering, bytecode/VM y el
-  adaptador `process_host`. El fixture `m11-std-fs-001.to` y las pruebas host
-  cubren bytes nativos, orden de directorios, modos, EOF/short I/O, errores
-  tipados y redactados, límites de materialización, `atomicWrite`, cancelación,
-  tokens stale y cleanup normal/unwind. La frontera estática rechaza imports
-  sin capability antes del lowering, y la auditoría pública mantiene 14/14.
-  `HOST` queda `verified`.
+- [ ] **STD-A-FS-EVIDENCE-001 — Complete executable filesystem evidence.**
+  Reopened with STD-FS-IMPL-001: fourteen function-symbol rows did not prove
+  public enum matching, File protocol integration or admission before effects.
+  Focused compiled tests now cover the enums, generic File calls, EOF, errors,
+  phase-memory rejection, cursor preservation, creation/truncation admission
+  and host retirement. A compiled budget sweep covers the five path mutations;
+  atomic-write tests cover temporary collisions and cleanup after rename failure.
+  Metadata tests cover public fields, exhaustive kinds, snapshot copies,
+  immutable bindings, host attributes, dangling links and typed errors. A
+  compiled memory sweep covers pending metadata results and phase cleanup;
+  exact-budget tests verify path scratch release and absence of Metadata handles.
+  Capability,
+  native-path, directory ordering and file-mode tests remain component evidence.
+  IMPL/HOST/TEST stay partial until the remaining filesystem admission paths
+  and integrated evidence satisfy the complete owner contract.
   Owner fuzz coverage remains partial under `STD-A-FUZZ-001`; the reviewed
   route scope is recorded in `testing/stdlib-fuzz.json`. Component tests and
   target-qualified performance evidence do not close global public conformance
@@ -4904,7 +5135,7 @@ administrativas que no implementan comportamiento.
   under `STD-A-CONF-001`.
 
 - [x] **STD-MATRIX-ALL-001 — Record the complete normative stdlib matrix.**
-  `testing/stdlib-matrix.json` records 22 owners, 216 signatures and 171
+  `testing/stdlib-matrix.json` records 22 owners, 298 signatures and 171
   requirements, with explicit `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF →
   CONF → DOC` cells. Supported generation and negative checks preserve missing
   API rows, incomplete owner observations and pending conformance. This closes
@@ -4912,7 +5143,7 @@ administrativas que no implementan comportamiento.
   the S1A seal remain open under their owner tasks.
 
 - [ ] **STD-TEST-001 — Coordinate executed owner models and properties.**
-  The registry links 22 owners, 216 signatures and 171 requirements to 66
+  The registry links 22 owners, 298 signatures and 171 requirements to 66
   declared model laws and test commands. Its structural tests do not prove
   every mapped signature. All 22 owner fuzz cells remain partial; nine routes
   retain bounded kernel assertions. Complete the missing implementation
@@ -4954,32 +5185,29 @@ administrativas que no implementan comportamiento.
   ni una cifra verde agregada entre targets incompatibles.
 
 - [x] **STD-CONF-001 — Record conformance coordination by owner.**
-  `testing/stdlib-conformance-coordination.json` records 22 owners and 387
-  rows (216 public signatures and 171 requirements), with explicit status,
+  `testing/stdlib-conformance-coordination.json` records 22 owners and 469
+  rows (298 public signatures and 171 requirements), with explicit status,
   reasons, references and commands. Its checker regenerates the register and
   cross-checks matrix/API/owner evidence; negative tests reject omissions,
   unsupported promotions and stale coordination. Rust integration tests verify
-  the same register boundary. No conformance row is verified: 26 are partial
-  and 361 pending. `testing/stdlib-conformance.json` and its runner observe
+  the same register boundary. No conformance row is verified: 6 are partial
+  and 463 pending. `testing/stdlib-conformance.json` and its runner observe
   declared commands and cases, including the 206-case draft corpus, without
   establishing public coverage for every row. `STD-A-CONF-001`,
   `STD-A-DIST-001` and the S1A seal remain pending. A reproducible bundle does
   not establish executable provenance or whole-library conformance.
 
-- [x] **STD-DOC-001 — Cerrar documentación por owner y programas
-  representativos.** `testing/stdlib-documentation.json` registra los 22 owners
-  con contrato, documentación normativa, estado de `kernel`/`bridge`/`public_api`
-  y 32 ejemplos verificables. Hay 26 casos runtime/acceptance con sidecars
-  `.exit` y `.stdout`/`.codes`, cuatro casos externos de codecs y dos casos de
-  compiler/meta; `std.meta` y `std.reflect` declaran explícitamente que no les
-  aplica un caso runtime. El registro distingue 14 APIs auditadas completas,
-  cuatro parciales (incluidos los codecs y `std.serialization`) y cuatro
-  intrínsecas/build-only sin filas públicas, sin promover gaps. El checker
-  regenera el JSON, cruza matriz/conformance/API/owner evidence, valida
-  comandos y sidecars, y sus negativos rechazan owners, ejemplos, sidecars o
-  claims de API ausentes; `stdlib_documentation` replica la clausura en Rust.
-  `docs/contracts/stdlib-s1a.md` fija el vocabulario de fronteras y mantiene el
-  claim de draft no publicado; no se afirma una release ni una matriz verde.
+- [x] **STD-DOC-001 — Record owner documentation and executable examples.**
+  `testing/stdlib-documentation.json` records 22 owners, their contracts and
+  distinct kernel, bridge and public API boundaries. Its 34 examples comprise
+  28 runtime cases with exact sidecars, four external codec cases and two
+  compiler cases. Reflection has an ordinary Tondo runtime example; the meta
+  companion executes during compilation. Static API traceability is complete
+  for 21 owners; `std.bytes` remains partial without indexed callable rows.
+  The checker regenerates the record and validates references, commands and
+  sidecars. Negative tests reject missing owners, examples and unsupported API
+  claims. Documentation coverage does not promote implementation, fuzzing,
+  performance, conformance or an unpublished draft into a release.
 
 Las coordinaciones anteriores prueban que cada gap tiene identidad, no que el
 gap esté cerrado. Las siguientes leaves son las únicas que pueden promocionar
@@ -4990,7 +5218,7 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   efecto denotable `suspends`, la regla de inferencia solo en cuerpos presentes,
   `Join`, `Waiter`/`Completer`, `AsyncIterator`, `collect(limit:)`, cierre y
   backpressure sin `Channel`, que pertenece a STD-0.1B. La auditoría pública
-  verificó las cinco firmas callable ejecutables de esa base (214/214 en total);
+  verificó las cinco firmas callable ejecutables de esa base;
   DEC-020 ya está incorporada en la auditoría y en los hashes de interfaz;
   `STD-A-SELECTABLE-IMPL-001` queda cerrado, mientras la
   implementación genérica de iteradores, materialización y cancelación queda
@@ -5013,7 +5241,7 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   auditorías públicas, sin renombrar métodos ni duplicarlos. La VM registra
   sus operaciones como brazos atómicos, conserva ownership, cancela/descarte
   perdedores y mantiene el resultado de la llamada directa. Evidencia:
-  `testing/stdlib-public-api.json` (214/214), los checkers de `std.async` y
+  `testing/stdlib-public-api.json`, los checkers de `std.async` y
   `std.time`, tests estáticos de HIR y la fixture pública
   `tests/runtime/m11-std-async-selectable-001.to` (one-shot + timer).
 
@@ -7010,14 +7238,18 @@ one coherent boundary with observed proof before promoting its dependents:
 
 - [ ] **CI-RELIABILITY-REPAIR-001 — Repair reproducible CI failures.**
   Install the pinned fuzz toolchain in every lane that invokes it; correct
-  contract-invalid fuzz oracles and portable runtime error precedence. Keep
-  quality thresholds, regenerate current ratchets and inspect exact-SHA CI.
+  contract-invalid fuzz oracles and portable runtime error precedence. Apply
+  the authorized 80% coverage floor and existing mutation requirements,
+  regenerate current ratchets and inspect exact-SHA CI.
 
   Fast-gate regressions now cover unmapped contracts/checkers, deleted source,
   metadata-only patches and shared policy paths. CI derives fuzz and quality
   tool installation from the selected command plan. The clean Linux baseline
-  reached the S1A seal and correctly rejected the four recorded public API
-  gaps; full promotion and current portable verification remain open.
+  reached the S1A seal and rejected the then-open public API gaps. The current
+  API index has 298 traced signatures; S1A remains pending on owner test/fuzz,
+  conformance and implementation prerequisites. The daily gate verifies the
+  seal producer refuses those prerequisites. Current portable verification
+  remains open.
 
 - [ ] **CONF-PROMOTION-001 — Reject unobserved and vacuous promotion.**
   Require actual independent outputs, source/runtime identities and applicable

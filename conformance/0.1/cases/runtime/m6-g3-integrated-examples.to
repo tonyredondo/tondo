@@ -99,5 +99,5 @@ fn main() {
     assert(labels[identities] == some("primary"))
     assert(labels[otherIdentities] == some("secondary"))
 
-    console.print("g3-integrated-examples\n")
+    _ = console.print("g3-integrated-examples\n")
 }

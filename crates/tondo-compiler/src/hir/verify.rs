@@ -543,13 +543,8 @@ impl Verifier<'_> {
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance
-                        | IntrinsicType::FloatToleranceError
-                        | IntrinsicType::TextDiff
                         | IntrinsicType::TempDirectory
-                        | IntrinsicType::TempError
                         | IntrinsicType::Generator
-                        | IntrinsicType::GenerationId
-                        | IntrinsicType::GenerationError
                         | IntrinsicType::Reader
                         | IntrinsicType::Writer
                         | IntrinsicType::IoLimits
@@ -610,6 +605,7 @@ impl Verifier<'_> {
                         | IntrinsicType::ProtoUnknownPolicy
                         | IntrinsicType::ProtoReader
                         | IntrinsicType::ProtoWriter
+                        | IntrinsicType::Reflection(_)
                         | IntrinsicType::UnknownFields => None,
                     };
                     if let Some((required, capability, reason)) = requirement {
@@ -1443,7 +1439,14 @@ impl Verifier<'_> {
                         "callable does not preserve the implementation generic prefix",
                     ));
                 }
-                if callable.function_type != contract.function_type {
+                if callable.function_type != contract.function_type
+                    && (self.program.expression_check_complete
+                        || !super::can_infer_required_suspension(
+                            &self.program.interner,
+                            callable,
+                            contract.function_type,
+                        ))
+                {
                     return Err(HirInvariantError::new(
                         &method_context,
                         "callable signature differs from its instantiated trait contract",
@@ -2061,9 +2064,13 @@ impl Verifier<'_> {
                                 return Err(HirInvariantError::new(context, error.to_string()));
                             }
                         };
-                        let generation_error = match contract_interner
-                            .intrinsic(IntrinsicType::GenerationError, Vec::new())
-                        {
+                        let generation_error = match contract_interner.nominal(
+                            crate::package::SymbolIdentity::bootstrap_standard(
+                                "testing",
+                                "GenerationError",
+                            ),
+                            Vec::new(),
+                        ) {
                             Ok(generation_error) => generation_error,
                             Err(error) => {
                                 return Err(HirInvariantError::new(context, error.to_string()));
@@ -6404,7 +6411,7 @@ impl Verifier<'_> {
     }
 }
 
-fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
+pub(super) fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
     let mut children = Vec::new();
     match &expression.kind {
         HirExpressionKind::Recovery
@@ -7051,14 +7058,21 @@ mod tests {
         .unwrap();
         assert!(parsed.diagnostics().is_empty());
         let packages = PackageGraph::loose(&sources, file).unwrap();
-        let (resolved, diagnostics) = resolve(&packages, &sources, [(file, &parsed)], 100)
-            .unwrap()
-            .into_parts();
+        let parsed_files =
+            crate::driver::bootstrap_parsed_for_test(&packages, &mut sources, file, parsed);
+        let (resolved, diagnostics) = resolve(
+            &packages,
+            &sources,
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
+            100,
+        )
+        .unwrap()
+        .into_parts();
         assert!(diagnostics.is_empty());
         let (program, diagnostics) = lower_types(
             &packages,
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 10_000,
@@ -7071,7 +7085,7 @@ mod tests {
         assert!(diagnostics.is_empty());
         let (program, diagnostics, complete) = check_expressions(
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             program,
             ExpressionCheckLimits {
@@ -9922,7 +9936,7 @@ mod tests {
 
     #[test]
     fn effect_and_collection_expression_corruption_matrix_is_closed() {
-        const SOURCE: &str = "import std.console\n\
+        const SOURCE: &str = "import std.console\nimport std.process\n\
              fn identity(value: Int): Int { value }\n\
              fn inspect(\n\
                  value: Int,\n\
@@ -9931,12 +9945,14 @@ mod tests {
                  messages: Array[String],\n\
                  values: Array[Int],\n\
                  entries: var Map[String, Int],\n\
+                 left: process.Command, right: process.Command,\n\
              ) {\n\
                  _ = values.concat(values)\n\
                  _ = entries.remove(text)\n\
                  _ = identity(1)\n\
                  assert(flag, text, ...messages)\n\
-                 console.print(text)\n\
+                 _ = console.print(text)\n\
+                 _ = left | right\n\
                  _ = \"value {value}\"\n\
                  match values {\n\
                      [ref first, ..] => {\n\

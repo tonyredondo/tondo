@@ -53,7 +53,7 @@ fn bounded_fifo_case(): !channel.ChannelError {
     }
     let drained = receiver.close()
     assert(drained.length() == 0)
-    console.println("bounded-fifo:12:full:closed")
+    _ = console.println("bounded-fifo:12:full:closed")
 }
 
 fn rendezvous_case(): !channel.ChannelError {
@@ -70,7 +70,7 @@ fn rendezvous_case(): !channel.ChannelError {
     }
     let drained = receiver.close()
     assert(drained.length() == 0)
-    console.println("rendezvous-wakeup:7:cleanup")
+    _ = console.println("rendezvous-wakeup:7:cleanup")
 }
 
 fn receiver_drain_case(): !channel.ChannelError {
@@ -90,7 +90,7 @@ fn receiver_drain_case(): !channel.ChannelError {
         order = order * 10 + value
     }
     assert(order == 45)
-    console.println("receiver-drain:45:fifo")
+    _ = console.println("receiver-drain:45:fifo")
 }
 
 fn closed_error_case(): !channel.ChannelError {
@@ -106,7 +106,7 @@ fn closed_error_case(): !channel.ChannelError {
         err(channel.TrySendError.ResourceLimit(_)) => assert(false)
     }
     sender.close()
-    console.println("closed-error:9:payload-preserved")
+    _ = console.println("closed-error:9:payload-preserved")
 }
 
 fn invalid_capacity_case() {
@@ -115,7 +115,7 @@ fn invalid_capacity_case() {
         err(channel.ChannelError.InvalidCapacity) => ()
         err(channel.ChannelError.ResourceLimit) => assert(false)
     }
-    console.println("invalid-capacity:rejected")
+    _ = console.println("invalid-capacity:rejected")
 }
 
 fn select_case(): !channel.ChannelError {
@@ -134,7 +134,7 @@ fn select_case(): !channel.ChannelError {
     sender.close()
     let drained = receiver.close()
     assert(drained.length() == 0)
-    console.println("select-commit:1:6")
+    _ = console.println("select-commit:1:6")
 }
 
 fn closed_wakeup_case(): !channel.ChannelError {
@@ -148,7 +148,7 @@ fn closed_wakeup_case(): !channel.ChannelError {
         assert(drained.length() == 0)
         let _ = await child
     }
-    console.println("closed-wakeup:42:cleanup")
+    _ = console.println("closed-wakeup:42:cleanup")
 }
 
 fn main(): !channel.ChannelError {
@@ -159,5 +159,5 @@ fn main(): !channel.ChannelError {
     invalid_capacity_case()
     let _ = select_case()?
     let _ = closed_wakeup_case()?
-    console.println("channel-conformance-ok")
+    _ = console.println("channel-conformance-ok")
 }

@@ -74,5 +74,5 @@ fn main() {
     arithmetic -= 1i16
     assert(arithmetic == 0i16)
 
-    console.print("integer-operators\n")
+    _ = console.print("integer-operators\n")
 }

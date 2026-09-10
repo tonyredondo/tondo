@@ -3,4 +3,4 @@ name = "acceptance"
 edition = "0.1"
 
 [target]
-capabilities = ["console", "process", "clock", "environment"]
+capabilities = ["console", "clock", "environment"]

@@ -4,15 +4,15 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "f9b039855fc17d1804276c210bcb28806fe907b1c882c1570e974e816b811e95"
+      "sha256": "317cb2a2c68d44bedd77b21a406f052421293d61a3d8cb41e8c7caf57185041e"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "f3c663a98e15a882018e2168b3e2a12a55b28f987d22762a9940d65fa904d599"
+      "sha256": "479bf4986ff40ff1a222e274ad5e069e7d05edca779165248888d2ee6e338ac0"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "00a57af904ae2440d14dc6de66618371064e2c40724ea6b38e736925bc6da751"
+      "sha256": "c7a6090383da27cf1b737f4315b87549bf8c54e3f36b3d186af97730e58bf738"
     }
   ],
   "target": "tondo-vm-hosted",
@@ -510,9 +510,9 @@
     },
     {
       "requirements": [
-        "TC01-5-2-R001",
         "TC01-5-2-R002",
-        "TC01-5-2-R003"
+        "TC01-5-2-R003",
+        "TC01-5-2-R004"
       ],
       "dimensions": {
         "positive": {
@@ -14673,92 +14673,6 @@
     },
     {
       "requirements": [
-        "TT01-13-1-R001"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "draft-layer:testing:testing-52-lossless-reporting"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:report_preserves_metadata_and_rejects_unknown_or_noncanonical_output"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:list_contains_only_descriptors_and_round_trips"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:report_keeps_source_and_attempt_payloads"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:report_is_compact_lossless_and_round_trips"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "draft-layer:testing:testing-52-lossless-reporting"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TT01-13-1-R002"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "draft-layer:testing:testing-52-lossless-reporting"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:report_preserves_metadata_and_rejects_unknown_or_noncanonical_output"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:list_contains_only_descriptors_and_round_trips"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:report_keeps_source_and_attempt_payloads"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_report:report_is_compact_lossless_and_round_trips"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "draft-layer:testing:testing-52-lossless-reporting"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
         "TT01-15-1-R001"
       ],
       "dimensions": {
@@ -15857,7 +15771,7 @@
         },
         "composition": {
           "evidence": [
-            "rust:tondo-compiler:src::test_dependencies:transitive_edges_are_closed_to_dev_nodes_or_standard"
+            "rust:tondo-compiler:src::test_dependencies:transitive_edges_require_records_and_cannot_name_the_implicit_standard"
           ],
           "waiver": null
         },
@@ -16558,135 +16472,6 @@
         "public_boundary": {
           "evidence": [
             "draft-layer:testing:testing-47-inputs"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TT01-7-8-R001"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "draft-layer:testing:testing-48-interruption"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:zero_structural_limits_and_zero_timeout_are_rejected"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:phase_deadline_supports_disabled_timeout_and_rejects_clock_regression"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:ledger_preflights_all_dimensions_without_partial_charge"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:effective_limits_publish_every_dimension"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "draft-layer:testing:testing-48-interruption"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TT01-7-8-R002"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "draft-layer:testing:testing-48-interruption"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:zero_structural_limits_and_zero_timeout_are_rejected"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:phase_deadline_supports_disabled_timeout_and_rejects_clock_regression"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:ledger_preflights_all_dimensions_without_partial_charge"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:effective_limits_publish_every_dimension"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "draft-layer:testing:testing-48-interruption"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TT01-7-8-R003"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "draft-layer:testing:testing-48-interruption"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:zero_structural_limits_and_zero_timeout_are_rejected"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:phase_deadline_supports_disabled_timeout_and_rejects_clock_regression"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:ledger_preflights_all_dimensions_without_partial_charge"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "rust:tondo-compiler:src::test_limits:effective_limits_publish_every_dimension"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "draft-layer:testing:testing-48-interruption"
           ],
           "waiver": null
         }

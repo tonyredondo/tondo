@@ -141,8 +141,13 @@ for fixture in \
 done
 
 jq -e '
-  ([.rows[] | select(.owner == "std.testing")] | length) == 25
+  ([.rows[] | select(.owner == "std.testing")] | length) == 26
   and any(.rows[] | select(.owner == "std.testing"); .symbol == "std.testing.assertEqual")
+  and any(.rows[]; .owner == "std.testing"
+    and .symbol == "std.testing.Shrink.candidates"
+    and .declaring_trait == "Shrink"
+    and .signature == "fn candidates(self, limit: Int): Array[Self] ! GenerationError"
+    and .missing == [])
 ' testing/stdlib-public-api.json >/dev/null
 
 jq -e '

@@ -151,6 +151,9 @@ pub(super) fn retry_units(
             invocation += 1;
             let unit_index = index as u32 + 1;
             let result = spawn_test_worker(
+                &group.project_root,
+                group.process_root.as_ref(),
+                group.temporary_filesystem,
                 group.input.clone(),
                 &unit.execution_plan,
                 group.timeout_ms,
@@ -165,6 +168,7 @@ pub(super) fn retry_units(
                 },
             )
             .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            check_worker_group_inputs(&result)?;
             for id in &unit.execution_plan {
                 let response = result.leaves.get(id).cloned().ok_or_else(|| {
                     TestCommandError::Internal("retry worker omitted selected leaf".into())

@@ -84,7 +84,10 @@ for symbol in \
 done
 
 jq -e '
-  ([.rows[] | select(.owner == "std.iter")] | length) == 4
+  ([.rows[] | select(.owner == "std.iter")] | length) == 5
+  and any(.rows[]; .owner == "std.iter"
+    and .declaring_trait == "Iterator[T]"
+    and .signature == "fn next(mut self): T?")
   and all(.rows[] | select(.owner == "std.iter"); .missing == [])
 ' testing/stdlib-public-api.json >/dev/null
 

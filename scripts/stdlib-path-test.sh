@@ -89,8 +89,8 @@ for symbol in \
 done
 
 for marker in \
-    'let root = path.fromString("/tmp")?' \
-    'let native = path.fromBytes' \
+    'let root = path.Path.fromString("/tmp")?' \
+    'let native = path.Path.fromBytes' \
     'match native.toString()' \
     'String(file.toBytes())? == "/tmp/tondo.txt"'; do
     grep -Fq "$marker" tests/runtime/m11-std-path-001.to

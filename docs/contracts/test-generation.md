@@ -58,7 +58,7 @@ el mismo máximo de candidatos y solo acepta las formas intrínsecas del
 protocolo sellado; un tipo de usuario no puede instalar una implementación
 alternativa. Un límite inválido no materializa un prefijo parcial.
 
-La campaña no cambia `tondo-test-report-0.1/7`, JUnit, snapshots, tags,
+La campaña no cambia `tondo-test-report-0.1/8`, JUnit, snapshots, tags,
 retries ni repeat. Es una API de tooling sobre el runner; un proyecto Tondo
 continúa escribiendo tests y usando `Generator` explícitamente dentro de una
 hoja ordinaria.

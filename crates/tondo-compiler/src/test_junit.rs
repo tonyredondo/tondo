@@ -12,10 +12,11 @@ use std::fmt;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::test_output::CapturedOutput;
 use crate::test_report::{ReportError, TEST_REPORT_FORMAT, TestReport};
 use crate::test_result::{AggregateStatus, AttemptStatus, FailureRecord, TestAttempt, TestNode};
 
-pub const JUNIT_FORMAT: &str = "tondo-junit-report-0.1/4";
+pub const JUNIT_FORMAT: &str = "tondo-junit-report-0.1/5";
 
 /// Attempt duration input in nanoseconds.  Missing entries are zero; entries
 /// are indexed by the one-based attempt index in the report.
@@ -138,8 +139,8 @@ struct Case {
     time_ns: u64,
     properties: Vec<Property>,
     outcome: Outcome,
-    stdout: String,
-    stderr: String,
+    stdout: CapturedOutput,
+    stderr: CapturedOutput,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -479,6 +480,20 @@ fn node_properties(node: &TestNode, decisive: &TestAttempt) -> Result<Vec<Proper
         &node.decisive_attempt,
     )?;
     push_json(&mut properties, "tondo.attempts", &node.attempts)?;
+    for (name, stream) in [
+        ("tondo.stdout.encoding", &decisive.stdout),
+        ("tondo.stderr.encoding", &decisive.stderr),
+    ] {
+        push_json(
+            &mut properties,
+            name,
+            &if xml_stream_text(stream).is_some() {
+                "utf8"
+            } else {
+                "base64"
+            },
+        )?;
+    }
     push_json(&mut properties, "tondo.artifacts", &decisive.artifacts)?;
     push_json(&mut properties, "tondo.diagnostics", &decisive.diagnostics)?;
     push_json(&mut properties, "tondo.snapshots", &decisive.snapshots)?;
@@ -548,16 +563,48 @@ fn property_value(value: &Value) -> Result<String, JUnitError> {
     if let Value::String(value) = value {
         Ok(value.clone())
     } else {
-        serde_json::to_string(value).map_err(|error| {
-            JUnitError::Report(Box::new(ReportError::Serialization(error.to_string())))
-        })
+        compact_json(value)
     }
 }
 
 fn compact_json<T: Serialize>(value: &T) -> Result<String, JUnitError> {
-    serde_json::to_string(value).map_err(|error| {
-        JUnitError::Report(Box::new(ReportError::Serialization(error.to_string())))
-    })
+    let mut output = Vec::new();
+    value
+        .serialize(&mut serde_json::Serializer::with_formatter(
+            &mut output,
+            XmlJsonFormatter,
+        ))
+        .map_err(|error| {
+            JUnitError::Report(Box::new(ReportError::Serialization(error.to_string())))
+        })?;
+    Ok(String::from_utf8(output).expect("JSON serialization produces UTF-8"))
+}
+
+/// JSON accepts U+FFFE/U+FFFF, while XML 1.0 forbids their literal scalars.
+/// Escape them inside JSON strings before XML escaping. The ordinary visible
+/// XML fallback would corrupt JSON properties containing captured stream data.
+struct XmlJsonFormatter;
+
+impl serde_json::ser::Formatter for XmlJsonFormatter {
+    fn write_string_fragment<W: std::io::Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        let bytes = fragment.as_bytes();
+        let mut start = 0;
+        for (index, scalar) in fragment.char_indices() {
+            let escape = match scalar {
+                '\u{fffe}' => b"\\ufffe",
+                '\u{ffff}' => b"\\uffff",
+                _ => continue,
+            };
+            writer.write_all(&bytes[start..index])?;
+            writer.write_all(escape)?;
+            start = index + scalar.len_utf8();
+        }
+        writer.write_all(&bytes[start..])
+    }
 }
 
 fn replace_property(mut properties: Vec<Property>, name: &str, value: &str) -> Vec<Property> {
@@ -731,13 +778,29 @@ fn write_case(writer: &mut XmlWriter, case: &Case) -> Result<(), JUnitError> {
         }
     }
     if !case.stdout.is_empty() {
-        writer.element_text("system-out", &case.stdout);
+        write_stream(writer, "system-out", &case.stdout);
     }
     if !case.stderr.is_empty() {
-        writer.element_text("system-err", &case.stderr);
+        write_stream(writer, "system-err", &case.stderr);
     }
     writer.close("testcase");
     Ok(())
+}
+
+/// XML normalizes literal CR and excludes several valid UTF-8 scalars. Use
+/// Base64 for those streams too, so decoding system-out/err preserves bytes.
+fn xml_stream_text(stream: &CapturedOutput) -> Option<&str> {
+    stream.as_text().filter(|text| {
+        text.chars()
+            .all(|scalar| scalar != '\r' && is_xml_scalar(scalar as u32))
+    })
+}
+
+fn write_stream(writer: &mut XmlWriter, name: &str, stream: &CapturedOutput) {
+    match xml_stream_text(stream) {
+        Some(text) => writer.element_text(name, text),
+        None => writer.element_text(name, &stream.base64()),
+    }
 }
 
 fn seconds(nanoseconds: u64) -> Result<String, JUnitError> {
@@ -914,6 +977,59 @@ mod tests {
     }
 
     #[test]
+    fn junit_stream_encoding_preserves_binary_and_xml_normalized_bytes() {
+        for (bytes, encoding, text) in [
+            ("é<&>\n".as_bytes().to_vec(), "utf8", "é&lt;&amp;&gt;\n"),
+            (vec![0xff], "base64", "/w=="),
+            (vec![0], "base64", "AA=="),
+            (b"\r\n".to_vec(), "base64", "DQo="),
+            ("\u{fffe}".as_bytes().to_vec(), "base64", "77++"),
+            ("\u{ffff}".as_bytes().to_vec(), "base64", "77+/"),
+        ] {
+            let mut leaf = node("application::unit::math::bytes", ResultNodeKind::Test);
+            leaf.attempts[0].stdout = bytes.clone().into();
+            leaf.attempts[0].stderr = bytes.clone().into();
+            let report = TestReport::assemble(
+                metadata(),
+                vec![leaf.id.clone()],
+                vec![node("application::unit::math", ResultNodeKind::Suite)],
+                vec![leaf],
+            )
+            .unwrap();
+            let projected = JUnitReport::from_report(&report).unwrap();
+            let xml = std::str::from_utf8(projected.canonical_bytes()).unwrap();
+            let properties =
+                node_properties(&report.tests()[0], &report.tests()[0].attempts[0]).unwrap();
+            let attempts = &properties
+                .iter()
+                .find(|property| property.name == "tondo.attempts")
+                .unwrap()
+                .value;
+            assert!(
+                attempts.chars().all(|scalar| is_xml_scalar(scalar as u32)),
+                "structured output cannot be represented exactly in XML: {attempts}"
+            );
+            let decoded: Vec<TestAttempt> = serde_json::from_str(attempts).unwrap();
+            assert_eq!(decoded[0].stdout.as_bytes(), bytes);
+            for (property, element) in [("stdout", "system-out"), ("stderr", "system-err")] {
+                assert!(
+                    xml.contains(&format!(
+                        "<property name=\"tondo.{property}.encoding\" value=\"{encoding}\"/>"
+                    )),
+                    "{xml}"
+                );
+                assert!(
+                    xml.contains(&format!("<{element}>{text}</{element}>")),
+                    "{xml}"
+                );
+            }
+            let restored = TestReport::parse(&report.canonical_bytes().unwrap()).unwrap();
+            assert_eq!(restored.tests()[0].attempts[0].stdout.as_bytes(), bytes);
+            assert_eq!(JUnitReport::from_report(&restored).unwrap(), projected);
+        }
+    }
+
+    #[test]
     fn projects_failures_skips_flaky_and_repeat_instability_without_duplicate_leaf_cases() {
         let mut metadata = metadata();
         metadata.repeat.count = 2;
@@ -921,6 +1037,8 @@ mod tests {
         let mut fail = node("application::unit::math::fails", ResultNodeKind::Test);
         fail.attempts[0].status = AttemptStatus::FailedPanic;
         fail.attempts[0].failure = Some(crate::test_result::FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "panic".into(),
             code: Some("P0007".into()),
             message: "bad <value>".into(),
@@ -961,6 +1079,8 @@ mod tests {
         suite.attempts[0].status = AttemptStatus::FailedPanic;
         suite.attempts[0].phase = Some(AttemptPhase::Setup);
         suite.attempts[0].failure = Some(crate::test_result::FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "panic".into(),
             code: None,
             message: "setup".into(),
@@ -988,6 +1108,8 @@ mod tests {
         let mut suite = node("application::unit::math", ResultNodeKind::Suite);
         let mut failed = TestAttempt::new(1, 1, 0, None, AttemptStatus::FailedPanic);
         failed.failure = Some(crate::test_result::FailureRecord {
+            error_type: None,
+            stack: Vec::new(),
             kind: "panic".into(),
             code: Some("P0007".into()),
             message: "first attempt failed".into(),

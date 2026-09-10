@@ -837,6 +837,12 @@ fn normalize_markdown_paragraph(lines: &[(u32, String)]) -> String {
 
 fn is_normative(text: &str) -> bool {
     let lower = text.to_lowercase();
+    if lower
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|word| matches!(word, "must" | "shall" | "cannot"))
+    {
+        return true;
+    }
     [
         " debe ",
         " debe.",
@@ -1070,6 +1076,23 @@ El compilador debe aceptar el caso.
         let error =
             extract_requirements("~~~tondo\nlet value = 1\n", G5_SPECIFICATIONS[0]).unwrap_err();
         assert!(error.contains("unclosed fence"));
+    }
+
+    #[test]
+    fn extraction_preserves_english_obligations_and_ignores_similar_words() {
+        let document = "# Contract\n\n## 1. Isolation\n\n\
+The runner MUST isolate each worker.\n\n\
+A worker shall not outlive its owner.\n\n\
+The provider cannot publish partial output.\n\n\
+Mustard, shallow, cancellation and `must_use` describe no obligation.\n\n\
+~~~tondo\n// This code must not be extracted.\n~~~\n";
+        let requirements = extract_requirements(document, G5_SPECIFICATIONS[1]).unwrap();
+        assert_eq!(requirements.len(), 3);
+        assert_eq!(requirements[0].id, "TT01-1-R001");
+        assert_eq!(requirements[1].id, "TT01-1-R002");
+        assert_eq!(requirements[2].id, "TT01-1-R003");
+        assert_eq!(requirements[0].text, "The runner MUST isolate each worker.");
+        assert_eq!(requirements[2].line_start, 9);
     }
 
     #[test]
@@ -1343,7 +1366,7 @@ El compilador debe aceptar el caso.
     }
 
     #[test]
-    fn toolchain_contract_has_complete_reviewed_six_dimension_traceability() {
+    fn toolchain_contract_preserves_reviewed_dimensions_and_exact_open_requirements() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
@@ -1356,11 +1379,16 @@ El compilador debe aceptar el caso.
             .filter(|requirement| requirement.document == "TONDO_TOOLCHAIN_SPEC.md")
             .collect::<Vec<_>>();
 
-        assert_eq!(toolchain.len(), 35);
+        assert_eq!(toolchain.len(), 37);
         for requirement in toolchain {
             if matches!(
                 requirement.id.as_str(),
-                "TC01-10-1-2-R001" | "TC01-10-1-3-R001" | "TC01-10-1-4-R001" | "TC01-10-1-5-R001"
+                "TC01-10-1-2-R001"
+                    | "TC01-10-1-3-R001"
+                    | "TC01-10-1-4-R001"
+                    | "TC01-10-1-5-R001"
+                    | "TC01-10-R001"
+                    | "TC01-5-2-R001"
             ) {
                 assert_eq!(requirement.status, "toolchain-limit", "{}", requirement.id);
                 continue;
@@ -1377,7 +1405,7 @@ El compilador debe aceptar el caso.
     }
 
     #[test]
-    fn testing_contract_has_complete_reviewed_traceability_except_its_exact_non_goal() {
+    fn testing_contract_preserves_reviewed_dimensions_and_exact_open_requirements() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
@@ -1394,7 +1422,36 @@ El compilador debe aceptar el caso.
             .iter()
             .filter(|requirement| requirement.status == "covered")
             .collect::<Vec<_>>();
-        assert_eq!(covered.len() + 1, testing.len());
+        let open = testing
+            .iter()
+            .filter(|requirement| requirement.status == "toolchain-limit")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            open.iter()
+                .map(|requirement| requirement.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                // Quality-tooling tests are not the former Tondo test-report
+                // evidence. Keep the unreviewed six-dimension traces open.
+                "TT01-13-1-R001",
+                "TT01-13-1-R002",
+                "TT01-13-1-R003",
+                "TT01-7-8-R001",
+                "TT01-7-8-R002",
+                "TT01-7-8-R003",
+                "TT01-7-8-R004",
+                "TT01-7-8-R005",
+                "TT01-9-3-R001",
+            ]
+        );
+        assert_eq!(testing.len(), 83);
+        assert_eq!(covered.len() + open.len() + 1, testing.len());
+        for requirement in open {
+            for (_, dimension) in claim_dimensions(&requirement.dimensions) {
+                assert!(dimension.evidence.is_empty(), "{}", requirement.id);
+                assert!(dimension.waiver.is_some(), "{}", requirement.id);
+            }
+        }
         for requirement in covered {
             for (name, dimension) in claim_dimensions(&requirement.dimensions) {
                 assert!(
@@ -1446,7 +1503,10 @@ El compilador debe aceptar el caso.
             .iter()
             .filter(|requirement| audited_language.contains(requirement.id.as_str()))
         {
-            if requirement.id == "TL01-11-10-R003" {
+            if matches!(
+                requirement.id.as_str(),
+                "TL01-11-10-R003" | "TL01-27-3-R002" | "TL01-27-6-R001"
+            ) {
                 assert_eq!(requirement.status, "toolchain-limit", "{}", requirement.id);
                 for (name, dimension) in claim_dimensions(&requirement.dimensions) {
                     assert!(

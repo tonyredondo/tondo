@@ -40,6 +40,9 @@ use tondo_vm::runtime::{
     VmOutcome, VmPanic, execute_with_limits, execute_with_limits_and_copy_strategy_and_diagnostics,
 };
 
+#[path = "meta_derive_check.rs"]
+mod derive_check;
+
 /// Dynamic diagnostic profiles requested by a tool invocation.  They are
 /// deliberately a compiler/CLI concern: no source keyword or stdlib API is
 /// introduced by opting into runtime observations.
@@ -338,11 +341,17 @@ pub struct CompilationRequest {
     retain_bytecode: bool,
     test_entry: Option<String>,
     test_envelope: Option<crate::test_control::EnvelopeHandle>,
+    test_temporary_root: Option<std::path::PathBuf>,
     test_participation_entries: Vec<String>,
     test_participation: Option<crate::test_backend::TestParticipation>,
     test_package_names: BTreeMap<PackageId, String>,
     test_source_classes: BTreeMap<FileId, crate::test_plan::TestSourceClass>,
     sealed_production: Option<std::sync::Arc<SemanticModel>>,
+    source_derive_providers: crate::meta_provider::SourceDeriveProviders,
+    source_meta: Option<std::sync::Arc<crate::project_meta::ClosedSourceMeta>>,
+    meta_results: Vec<crate::meta_atomic::AcceptedMetaResult>,
+    meta_descriptors: Vec<crate::meta_query::MetaQueryDescriptor>,
+    derive_bound_probe: bool,
 }
 
 impl CompilationRequest {
@@ -416,11 +425,17 @@ impl CompilationRequest {
             retain_bytecode: false,
             test_entry: None,
             test_envelope: None,
+            test_temporary_root: None,
             test_participation_entries: Vec::new(),
             test_participation: None,
             test_package_names: BTreeMap::new(),
             test_source_classes,
             sealed_production: None,
+            source_derive_providers: crate::meta_provider::SourceDeriveProviders::default(),
+            source_meta: None,
+            meta_results: Vec::new(),
+            meta_descriptors: Vec::new(),
+            derive_bound_probe: false,
         })
     }
 
@@ -432,6 +447,37 @@ impl CompilationRequest {
         self
     }
 
+    /// Install the immutable build-only companion for an ordinary meta provider.
+    /// Its package identity and bytes are owned by the selected toolchain.
+    pub fn with_meta_companion(mut self) -> Result<Self, DriverError> {
+        if self.target.name() != "tondo-meta" || self.profile != HostProfile::Meta {
+            return Err(DriverError::Invariant(
+                "std.meta requires tondo-meta/meta".into(),
+            ));
+        }
+        let companion = crate::std_meta::StdMetaPackage::load_candidate()
+            .map_err(|error| DriverError::Invariant(error.to_string()))?;
+        let source_id = SourceId::new(crate::std_meta::STD_META_PACKAGE)?;
+        let module = crate::source::ModulePath::new("meta")?;
+        let node = crate::package::PackageNode::new(
+            crate::package::PackageId::new(crate::std_meta::STD_META_PACKAGE)?,
+            source_id.clone(),
+            crate::package::PackageAlias::new("tondoMeta")?,
+            Edition::V0_1,
+            [module.clone()],
+            [],
+        )?;
+        self.packages.install_meta_companion(node)?;
+        self.sources.add(crate::source::SourceInput::virtual_file(
+            source_id,
+            module,
+            crate::source::LogicalPath::new("src/meta.to")?,
+            companion.source(),
+        ))?;
+        self.packages.validate_sources(&self.sources, self.root)?;
+        Ok(self)
+    }
+
     /// Supplies the argument values exposed by `std.env.snapshot()` during `run`.
     pub fn with_program_arguments(mut self, arguments: Vec<String>) -> Self {
         self.program_arguments = arguments;
@@ -440,6 +486,22 @@ impl CompilationRequest {
 
     pub fn with_declared_build_inputs(mut self, inputs: DeclaredBuildInputs) -> Self {
         self.build_inputs = inputs;
+        self
+    }
+
+    pub(crate) fn with_source_derive_providers(
+        mut self,
+        providers: crate::meta_provider::SourceDeriveProviders,
+    ) -> Self {
+        self.source_derive_providers = providers;
+        self
+    }
+
+    pub(crate) fn with_source_meta(
+        mut self,
+        meta: Option<crate::project_meta::ClosedSourceMeta>,
+    ) -> Self {
+        self.source_meta = meta.map(std::sync::Arc::new);
         self
     }
 
@@ -480,6 +542,13 @@ impl CompilationRequest {
     /// Ordinary compilation requests never carry this handle.
     pub fn with_test_envelope(mut self, envelope: crate::test_control::EnvelopeHandle) -> Self {
         self.test_envelope = Some(envelope);
+        self
+    }
+
+    /// Explicit temporary-root provider for embedded test execution. The
+    /// embedding runner owns cleanup; compilation never creates a root.
+    pub fn with_test_temporary_root(mut self, root: std::path::PathBuf) -> Self {
+        self.test_temporary_root = Some(root);
         self
     }
 
@@ -653,7 +722,9 @@ impl CompilationRequest {
                     source.origin(),
                     std::sync::Arc::<[u8]>::from(source.bytes()),
                 )
-                .with_diagnostic_origin(source.diagnostic_origin()),
+                .with_diagnostic_origin(source.diagnostic_origin())
+                .with_diagnostic_mappings(source.diagnostic_mappings())
+                .with_testing_calls(source.testing_calls()),
             )?;
             if actual != file {
                 return Err(DriverError::Invariant(
@@ -669,6 +740,7 @@ impl CompilationRequest {
             .id()
             .clone();
         let mut packages = PackageGraph::new(root, self.packages.standard().clone(), nodes)?;
+        packages.retain_generated_owners_from(&self.packages)?;
         packages.enable_bootstrap_testing()?;
         packages.validate_sources(&sources, self.root)?;
         self.sources = sources;
@@ -730,6 +802,7 @@ impl CompilationRequest {
                 "production seal has a different compilation environment".into(),
             ));
         }
+        let generation = interface.generation().to_vec();
         let model = production
             .into_semantic_model()
             .filter(SemanticModel::expression_check_complete)
@@ -737,6 +810,33 @@ impl CompilationRequest {
                 DriverError::Invariant("production seal requires complete semantic checking".into())
             })?;
         let mut sources = clone_source_database(model.sources(), None)?;
+        for (_, source) in model
+            .sources()
+            .iter()
+            .filter(|(_, source)| source.origin() == crate::source::SourceOrigin::GeneratedMeta)
+        {
+            let owner = model
+                .packages()
+                .package_for_source(source.source_id())
+                .ok_or_else(|| {
+                    DriverError::Invariant("sealed generated source has no package".into())
+                })?;
+            match self.packages.package_for_source(source.source_id()) {
+                Some(existing) if existing.id() != owner.id() => {
+                    return Err(DriverError::Invariant(
+                        "test graph changed a generated source owner".into(),
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    self.packages.register_generated_source(
+                        owner.id(),
+                        source.source_id().clone(),
+                        source.module().clone(),
+                    )?;
+                }
+            }
+        }
         for production_package in model.packages().packages() {
             let compatible =
                 self.packages
@@ -809,20 +909,28 @@ impl CompilationRequest {
             }
         }
         for (file, source) in appended {
-            let origin = source
-                .diagnostic_origin()
-                .map(|span| {
-                    mapping
-                        .get(&span.file())
-                        .copied()
-                        .map(|file| span.with_file(file))
-                        .ok_or_else(|| {
-                            DriverError::Invariant(
-                                "test source diagnostic origin is outside the pinned graph".into(),
-                            )
-                        })
+            let remap_span = |span: crate::source::Span| {
+                mapping
+                    .get(&span.file())
+                    .copied()
+                    .map(|file| span.with_file(file))
+                    .ok_or_else(|| {
+                        DriverError::Invariant(
+                            "test source diagnostic origin is outside the pinned graph".into(),
+                        )
+                    })
+            };
+            let origin = source.diagnostic_origin().map(remap_span).transpose()?;
+            let diagnostic_mappings = source
+                .diagnostic_mappings()
+                .iter()
+                .map(|entry| {
+                    Ok(crate::source::SourceDiagnosticMapping {
+                        generated: entry.generated,
+                        origin: remap_span(entry.origin)?,
+                    })
                 })
-                .transpose()?;
+                .collect::<Result<Vec<_>, DriverError>>()?;
             let actual = sources.add(
                 crate::source::SourceInput::new(
                     source.source_id().clone(),
@@ -831,7 +939,9 @@ impl CompilationRequest {
                     source.origin(),
                     std::sync::Arc::<[u8]>::from(source.bytes()),
                 )
-                .with_diagnostic_origin(origin),
+                .with_diagnostic_origin(origin)
+                .with_diagnostic_mappings(&diagnostic_mappings)
+                .with_testing_calls(source.testing_calls()),
             )?;
             if actual != mapping[&file] {
                 return Err(DriverError::Invariant(
@@ -843,7 +953,166 @@ impl CompilationRequest {
         self.packages.validate_sources(&sources, self.root)?;
         self.sources = sources;
         self.test_source_classes = classes;
+        self.build_inputs = self.build_inputs.with_generation(generation)?;
+        // Production producers have already completed atomically. Workers
+        // consume the sealed sources; none can start another generation round.
+        self.source_meta = None;
+        self.meta_results = model.meta_results().to_vec();
+        self.meta_descriptors = model.meta_descriptors().to_vec();
         self.sealed_production = Some(std::sync::Arc::new(model));
+        Ok(self)
+    }
+
+    /// Attach an admitted dependency set only to test consumers. Production
+    /// has already been checked and sealed; its resolved imports and bodies
+    /// are preserved. The new sources are ordinary dependency declarations,
+    /// not test overlays, and keep their own package visibility.
+    pub fn with_test_dependencies(
+        mut self,
+        dependencies: &crate::test_dependencies::TestDependencySources,
+        supplied: &BTreeMap<String, std::sync::Arc<[u8]>>,
+    ) -> Result<Self, DriverError> {
+        if self.sealed_production.is_none()
+            && self
+                .test_source_classes
+                .values()
+                .any(|class| *class == TestSourceClass::Production)
+        {
+            return Err(DriverError::Invariant(
+                "test dependencies require sealed production".into(),
+            ));
+        }
+        let Some(project) = dependencies.project() else {
+            return Ok(self);
+        };
+        let inputs = dependencies
+            .required_inputs()
+            .map(|input| {
+                supplied
+                    .get(input.path())
+                    .cloned()
+                    .map(|bytes| (input.path().to_owned(), bytes))
+                    .ok_or_else(|| {
+                        DriverError::Invariant(format!(
+                            "missing test dependency input `{}`",
+                            input.path()
+                        ))
+                    })
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let dependency = project
+            .resolve(&inputs)
+            .map_err(|error| DriverError::TestDependency(error.to_string()))?
+            .into_compilation_request(Operation::Check, self.diagnostic_format, self.limits)
+            .map_err(|error| DriverError::TestDependency(error.to_string()))?;
+        let mut consumers = self
+            .test_source_classes
+            .iter()
+            .filter_map(|(file, class)| {
+                (*class != TestSourceClass::Production)
+                    .then(|| {
+                        self.packages
+                            .package_for_source(self.sources.get(*file).unwrap().source_id())
+                            .map(|package| package.id().clone())
+                    })
+                    .flatten()
+            })
+            .collect::<BTreeSet<_>>();
+        // The unit-overlay compilation validates the complete dependency set
+        // even when selection is empty or there are only integration roots.
+        consumers.insert(self.packages.root().clone());
+        let mut nodes = Vec::new();
+        for package in self.packages.packages() {
+            if dependency.packages.package(package.id()).is_some()
+                && package.id() != self.packages.standard()
+            {
+                return Err(DriverError::TestDependency(format!(
+                    "test dependency overlaps package `{}`",
+                    package.id()
+                )));
+            }
+            let mut edges = package.dependencies().clone();
+            if consumers.contains(package.id()) {
+                for (alias, target) in dependencies.graph().aliases() {
+                    let alias = PackageAlias::new(alias)?;
+                    if &alias == package.local_name()
+                        || edges.insert(alias.clone(), target.clone()).is_some()
+                    {
+                        return Err(DriverError::TestDependency(format!(
+                            "test dependency alias `{alias}` conflicts with an existing dependency"
+                        )));
+                    }
+                }
+            }
+            nodes.push(PackageNode::new(
+                package.id().clone(),
+                package.source_id().clone(),
+                package.local_name().clone(),
+                package.edition(),
+                package.modules().clone(),
+                edges,
+            )?);
+        }
+        nodes.extend(
+            dependency
+                .packages
+                .packages()
+                .filter(|node| node.id() != self.packages.standard())
+                .cloned(),
+        );
+        for (_, source) in dependency.sources.iter() {
+            self.sources.add(crate::source::SourceInput::new(
+                source.source_id().clone(),
+                source.module().clone(),
+                source.path().clone(),
+                source.origin(),
+                std::sync::Arc::<[u8]>::from(source.bytes()),
+            ))?;
+        }
+        let mut packages = PackageGraph::new(
+            self.packages.root().clone(),
+            self.packages.standard().clone(),
+            nodes,
+        )?;
+        packages.retain_generated_owners_from(&self.packages)?;
+        packages.enable_bootstrap_testing()?;
+        packages.validate_sources(&self.sources, self.root)?;
+        let mut interfaces = self.build_inputs.dependency_interfaces().clone();
+        interfaces.extend(dependency.build_inputs.dependency_interfaces().clone());
+        let source_sets = self
+            .build_inputs
+            .source_sets()
+            .union(dependency.build_inputs.source_sets())
+            .cloned()
+            .collect();
+        let mut build_inputs =
+            DeclaredBuildInputs::new(self.build_inputs.features().clone(), source_sets)
+                .with_generator_inputs(self.build_inputs.generator_inputs().clone())?
+                .with_generation(self.build_inputs.generation().to_vec())?
+                .with_dependency_interfaces(interfaces, true);
+        for (kind, original, extra) in [
+            (
+                "manifest",
+                self.build_inputs.manifest_hash(),
+                project.manifest_hash(),
+            ),
+            (
+                "lockfile",
+                self.build_inputs.lockfile_hash(),
+                project.lockfile_hash(),
+            ),
+        ] {
+            let hash = crate::artifact::sha256(
+                format!("test-{kind}:{}:{extra}", original.unwrap_or("")).as_bytes(),
+            );
+            build_inputs = if kind == "manifest" {
+                build_inputs.with_manifest_hash(hash)?
+            } else {
+                build_inputs.with_lockfile_hash(hash)?
+            };
+        }
+        self.packages = packages;
+        self.build_inputs = build_inputs;
         Ok(self)
     }
 
@@ -886,6 +1155,7 @@ impl CompilationRequest {
         let mut sources = SourceDatabase::new();
         let mut classes = BTreeMap::new();
         let mut selected_root = None;
+        let mut source_mapping = BTreeMap::new();
         for (file, source) in self.sources.iter() {
             let package = self
                 .packages
@@ -912,6 +1182,26 @@ impl CompilationRequest {
                 }
                 continue;
             }
+            let remap_span = |span: crate::source::Span| {
+                source_mapping
+                    .get(&span.file())
+                    .copied()
+                    .map(|file| span.with_file(file))
+                    .ok_or_else(|| {
+                        DriverError::Invariant("test consumer omitted a diagnostic origin".into())
+                    })
+            };
+            let origin = source.diagnostic_origin().map(remap_span).transpose()?;
+            let diagnostic_mappings = source
+                .diagnostic_mappings()
+                .iter()
+                .map(|entry| {
+                    Ok(crate::source::SourceDiagnosticMapping {
+                        generated: entry.generated,
+                        origin: remap_span(entry.origin)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, DriverError>>()?;
             let actual = sources.add(
                 crate::source::SourceInput::new(
                     source.source_id().clone(),
@@ -920,9 +1210,12 @@ impl CompilationRequest {
                     source.origin(),
                     std::sync::Arc::<[u8]>::from(source.bytes()),
                 )
-                .with_diagnostic_origin(source.diagnostic_origin()),
+                .with_diagnostic_origin(origin)
+                .with_diagnostic_mappings(&diagnostic_mappings)
+                .with_testing_calls(source.testing_calls()),
             )?;
             classes.insert(actual, class);
+            source_mapping.insert(file, actual);
             if file == root {
                 selected_root = Some(actual);
             }
@@ -936,7 +1229,11 @@ impl CompilationRequest {
             .map(|package| {
                 let present = sources
                     .iter()
-                    .filter(|(_, source)| source.source_id() == package.source_id())
+                    .filter(|(_, source)| {
+                        self.packages
+                            .package_for_source(source.source_id())
+                            .is_some_and(|owner| owner.id() == package.id())
+                    })
                     .map(|(_, source)| source.module().clone())
                     .collect::<BTreeSet<_>>();
                 let modules = if package.id() == self.packages.standard() || present.is_empty() {
@@ -944,14 +1241,21 @@ impl CompilationRequest {
                 } else {
                     present
                 };
+                let dependencies = if integration && package.id() != &owner {
+                    self.sealed_production
+                        .as_ref()
+                        .and_then(|model| model.packages().package(package.id()))
+                        .map_or_else(|| package.dependencies(), PackageNode::dependencies)
+                } else {
+                    package.dependencies()
+                };
                 PackageNode::new(
                     package.id().clone(),
                     package.source_id().clone(),
                     package.local_name().clone(),
                     package.edition(),
                     modules,
-                    package
-                        .dependencies()
+                    dependencies
                         .iter()
                         .map(|(alias, package)| (alias.clone(), package.clone())),
                 )
@@ -959,6 +1263,7 @@ impl CompilationRequest {
             .collect::<Result<Vec<_>, _>>()?;
         let mut packages =
             PackageGraph::new(owner.clone(), self.packages.standard().clone(), nodes)?;
+        packages.retain_generated_owners_from(&self.packages)?;
         packages.enable_bootstrap_testing()?;
         let interfaces = self
             .build_inputs
@@ -996,6 +1301,10 @@ impl CompilationRequest {
             .collect();
         request.test_source_classes = classes;
         request.sealed_production = self.sealed_production.clone();
+        request.source_derive_providers = self.source_derive_providers.clone();
+        request.source_meta = self.source_meta.clone();
+        request.meta_results = self.meta_results.clone();
+        request.meta_descriptors = self.meta_descriptors.clone();
         Ok(request)
     }
 
@@ -1135,6 +1444,7 @@ pub enum DriverError {
         capability: String,
     },
     Artifact(ArtifactError),
+    TestDependency(String),
     PackageGraph(PackageGraphError),
     Source(SourceError),
     Diagnostic(DiagnosticError),
@@ -1166,6 +1476,9 @@ impl fmt::Display for DriverError {
                 "target `{target}` does not provide capability `{capability}`"
             ),
             Self::Artifact(error) => error.fmt(formatter),
+            Self::TestDependency(message) => {
+                write!(formatter, "invalid test dependency: {message}")
+            }
             Self::PackageGraph(error) => error.fmt(formatter),
             Self::Source(error) => error.fmt(formatter),
             Self::Diagnostic(error) => error.fmt(formatter),
@@ -1281,6 +1594,25 @@ pub fn compile(mut request: CompilationRequest) -> Result<CompilationOutput, Dri
 }
 
 fn execute_with_derives(
+    request: CompilationRequest,
+    expand_derives: bool,
+) -> Result<CompilationOutput, DriverError> {
+    let results = request.meta_results.clone();
+    let descriptors = request.meta_descriptors.clone();
+    let mut output = execute_pipeline(request, expand_derives)?;
+    if output.status == CompilationStatus::Success
+        && !results.is_empty()
+        && let Some(model) = output.semantic_model.as_mut()
+        && model.meta_results().is_empty()
+    {
+        model
+            .set_meta_expansions(results, descriptors)
+            .map_err(|error| DriverError::Invariant(error.to_string()))?;
+    }
+    Ok(output)
+}
+
+fn execute_pipeline(
     mut request: CompilationRequest,
     expand_derives: bool,
 ) -> Result<CompilationOutput, DriverError> {
@@ -1457,6 +1789,82 @@ fn execute_with_derives(
         });
     }
 
+    if expand_derives
+        && let Some(meta) = request.source_meta.clone()
+        && !meta.plan.lock.generators.is_empty()
+    {
+        let expansion = match crate::meta_generation::expand(
+            &request,
+            &parsed_sources,
+            &meta,
+            &request.source_derive_providers,
+        ) {
+            Ok(expansion) => expansion,
+            Err(crate::meta_generation::GenerationError::Driver(error)) => return Err(error),
+            Err(crate::meta_generation::GenerationError::Diagnostics(diagnostics)) => {
+                return Ok(CompilationOutput {
+                    status: CompilationStatus::Rejected,
+                    exit_code: 1,
+                    diagnostics,
+                    stdout: Vec::new(),
+                    diagnostic_trace: None,
+                    mir_summary: None,
+                    bytecode: None,
+                    semantic_model: None,
+                    products: None,
+                });
+            }
+        };
+        drop(parsed_sources);
+        let mut diagnostics = expansion.diagnostics;
+        diagnostics.append(crate::meta_diagnostics::render_meta_diagnostics(
+            expansion.derives.diagnostics,
+            request.target.diagnostic_source_id().clone(),
+            &request.sources,
+        )?);
+        for generated in expansion.sources {
+            let file = request.sources.add(generated.source)?;
+            let source = request.sources.get(file)?;
+            request.packages.register_generated_source(
+                &generated.owner,
+                source.source_id().clone(),
+                source.module().clone(),
+            )?;
+        }
+        if let Some(output) = derive_check::validate(&request, &expansion.derives.sources)? {
+            return Ok(output);
+        }
+        admit_derive_sources(&mut request, expansion.derives.sources)?;
+        request.meta_results.extend(expansion.derives.accepted);
+        request
+            .meta_descriptors
+            .extend(expansion.derives.descriptors);
+        for result in &expansion.accepted {
+            request.meta_descriptors.push(
+                crate::meta_query::MetaQueryDescriptor::new(
+                    result.identity_hash(),
+                    None::<String>,
+                    Vec::<String>::new(),
+                )
+                .map_err(|error| DriverError::Invariant(error.to_string()))?,
+            );
+        }
+        request.meta_results.extend(expansion.accepted);
+        request.build_inputs = request.build_inputs.with_generation(
+            request
+                .meta_results
+                .iter()
+                .map(|result| result.record().clone())
+                .collect(),
+        )?;
+        request
+            .packages
+            .validate_sources(&request.sources, request.root)?;
+        let mut output = execute_with_derives(request, false)?;
+        output.diagnostics.append(diagnostics);
+        return Ok(output);
+    }
+
     let test_diagnostics =
         match validate_test_source_contracts(&request, &parsed_sources, remaining_diagnostics) {
             Ok(diagnostics) => diagnostics,
@@ -1543,6 +1951,8 @@ fn execute_with_derives(
     for symbol in resolved_program.symbols() {
         if symbol.visibility() == Visibility::Public
             && request.source_class(symbol.span().file()) != TestSourceClass::Production
+            && !(symbol.is_synthetic()
+                && symbol.identity().package() == request.packages.standard())
         {
             if resolution_diagnostics.len() >= remaining_diagnostics {
                 return syntax_resource_output(
@@ -1643,6 +2053,28 @@ fn execute_with_derives(
         });
     }
 
+    if request.target.name() == "tondo-meta"
+        && let Some(derive) = hir_program.derive_requests().first()
+    {
+        let span = derive.span();
+        drop(parsed_sources);
+        let diagnostic = Diagnostic::new(
+            Severity::Error,
+            DiagnosticCode::new("E2109")?,
+            "a meta provider cannot contain a derive request",
+            PrimaryLocation::Source(span),
+        )?;
+        return semantic_output(
+            request,
+            resolved_program,
+            hir_program,
+            Vec::new(),
+            Some(diagnostic),
+            1,
+            Vec::new(),
+        );
+    }
+
     if expand_derives
         && hir_program.derive_requests().iter().any(|derive| {
             parsed_sources
@@ -1662,7 +2094,11 @@ fn execute_with_derives(
             &parsed_sources,
             &resolved_program,
             &hir_program,
-            limits,
+            crate::meta_frontend::DeriveSettings {
+                limits,
+                source_providers: &request.source_derive_providers,
+                environment: &crate::meta_snapshot::environment(&request),
+            },
         ) {
             Err(crate::meta_frontend::DeriveFrontendError::Diagnostics(entries)) => {
                 let diagnostics = crate::meta_diagnostics::render_meta_diagnostics(
@@ -1692,33 +2128,33 @@ fn execute_with_derives(
                 return Err(DriverError::Invariant(message));
             }
             Ok(generated) => {
+                let provider_diagnostics = crate::meta_diagnostics::render_meta_diagnostics(
+                    generated.diagnostics,
+                    request.target.diagnostic_source_id().clone(),
+                    &request.sources,
+                )?;
                 drop(parsed_sources);
                 drop(resolved_program);
                 drop(hir_program);
-                for (index, source) in generated.into_iter().enumerate() {
-                    let base = format!("__tondo_generated__/{}", source.path);
-                    let path = unique_generated_path(
-                        &request.sources,
-                        &source.source_id,
-                        &source.module,
-                        &base,
-                        index,
-                    )?;
-                    request.sources.add(
-                        crate::source::SourceInput::new(
-                            source.source_id,
-                            source.module,
-                            path,
-                            crate::source::SourceOrigin::GeneratedMeta,
-                            source.bytes,
-                        )
-                        .with_diagnostic_origin(Some(source.diagnostic_origin)),
-                    )?;
+                if let Some(output) = derive_check::validate(&request, &generated.sources)? {
+                    return Ok(output);
                 }
+                admit_derive_sources(&mut request, generated.sources)?;
+                request.meta_results.extend(generated.accepted);
+                request.meta_descriptors.extend(generated.descriptors);
+                request.build_inputs = request.build_inputs.with_generation(
+                    request
+                        .meta_results
+                        .iter()
+                        .map(|result| result.record().clone())
+                        .collect(),
+                )?;
                 request
                     .packages
                     .validate_sources(&request.sources, request.root)?;
-                return execute_with_derives(request, false);
+                let mut output = execute_with_derives(request, false)?;
+                output.diagnostics.append(provider_diagnostics);
+                return Ok(output);
             }
         }
     }
@@ -1817,6 +2253,41 @@ fn execute_with_derives(
         }
     }
 
+    if !request
+        .capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "filesystem")
+        && let Some((expression, function)) = hir_program.expressions().find_map(|expression| {
+            let function = match expression.kind() {
+                HirExpressionKind::Function(HirCallableId::Host(function))
+                | HirExpressionKind::SpecializedFunction {
+                    callable: HirCallableId::Host(function),
+                    ..
+                }
+                | HirExpressionKind::BootstrapHostCall { function, .. } => *function,
+                _ => return None,
+            };
+            matches!(
+                function,
+                HirBootstrapHostFunction::TestingTempDirectory
+                    | HirBootstrapHostFunction::TestingTempDirectoryCleanup
+            )
+            .then_some((expression, function))
+        })
+    {
+        // std.testing is a Core module. Its filesystem helpers still require
+        // an explicit target capability, including aliases and deferred calls.
+        expression_diagnostics.push(Diagnostic::new(
+            Severity::Error,
+            DiagnosticCode::new("E1008")?,
+            format!(
+                "capability `filesystem` is missing for `{}`",
+                function.name()
+            ),
+            PrimaryLocation::Source(expression.span()),
+        )?);
+    }
+
     if expression_diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity() == Severity::Error)
@@ -1853,6 +2324,13 @@ fn execute_with_derives(
         }
     }
 
+    if request.derive_bound_probe && !expression_check_complete {
+        return backend_diagnostic_output(
+            &request,
+            "E2105",
+            "derive bound necessity requires complete expression checking",
+        );
+    }
     if request.operation == Operation::Check && expression_check_complete {
         if request.source_form == SourceForm::Script {
             let diagnostic = match select_hosted_main(
@@ -2018,6 +2496,9 @@ fn execute_with_derives(
                 if let Some(envelope) = request.test_envelope.clone() {
                     host.install_testing_envelope(envelope);
                 }
+                if let Some(root) = request.test_temporary_root.clone() {
+                    host.install_testing_temporary_root(root);
+                }
                 if let Some(participation) = request.test_participation.clone() {
                     host.install_testing_participation(participation);
                 }
@@ -2131,48 +2612,168 @@ fn execute_with_derives(
 }
 
 fn install_bootstrap_standard_sources(request: &mut CompilationRequest) -> Result<(), DriverError> {
-    const SOURCE_ID: &str = "toolchain:std:0.1-bootstrap";
-    const MODULE: &str = "__json_typed";
-    const PATH: &str = "compiler/json_typed.to";
-    let module = crate::source::ModulePath::new(MODULE)?;
-    let standard_source = request
-        .packages
-        .package(request.packages.standard())
-        .expect("the package graph always contains its selected standard package")
-        .source_id()
-        .clone();
+    install_selected_standard_sources(&request.packages, &mut request.sources, request.root)
+}
 
-    if request.packages.standard().as_str() != SOURCE_ID
-        || request
-            .packages
-            .module(request.packages.standard(), &module)
-            .is_none()
-        || !request
-            .sources
-            .iter()
-            .any(|(_, source)| imports_bootstrap_json(source.bytes()))
-        || request.sources.iter().any(|(_, source)| {
-            source.source_id() == &standard_source
-                && source.module().as_str() == MODULE
-                && source.path().as_str() == PATH
-        })
-    {
+fn install_selected_standard_sources(
+    packages: &PackageGraph,
+    sources: &mut SourceDatabase,
+    root: FileId,
+) -> Result<(), DriverError> {
+    if packages.standard().as_str() != "toolchain:std:0.1-bootstrap" {
         return Ok(());
     }
-    request.sources.add(crate::source::SourceInput::new(
-        standard_source,
-        module,
-        crate::source::LogicalPath::new(PATH)?,
-        crate::source::SourceOrigin::GeneratedStandard,
-        include_bytes!("bootstrap/json_typed.to").as_slice(),
-    ))?;
-    request
-        .packages
-        .validate_sources(&request.sources, request.root)?;
+    let console_available = packages
+        .module(
+            packages.standard(),
+            &crate::source::ModulePath::new("console")?,
+        )
+        .is_some();
+    let filesystem_available = packages
+        .module(packages.standard(), &crate::source::ModulePath::new("fs")?)
+        .is_some();
+    let standard_source = packages
+        .package(packages.standard())
+        .expect("the package graph contains its selected standard package")
+        .source_id()
+        .clone();
+    let imports = |module: &[u8]| {
+        sources
+            .iter()
+            .any(|(_, source)| imports_bootstrap_module(source.bytes(), module))
+    };
+    let io_selected = [
+        b"std.io".as_slice(),
+        b"std.console",
+        b"std.fs",
+        b"std.encoding",
+        b"std.yaml",
+        b"std.serialization",
+        b"std.messagepack",
+        b"std.protobuf",
+        b"std.json",
+    ]
+    .iter()
+    .any(|module| {
+        (*module != b"std.console" || console_available)
+            && (*module != b"std.fs" || filesystem_available)
+            && imports(module)
+    });
+    let console_selected = console_available && imports(b"std.console");
+    // An explicitly supplied fs source module (for example a documentation
+    // fixture) owns its declarations and need not expose the hosted File API.
+    let filesystem_selected = filesystem_available
+        && imports(b"std.fs")
+        && !sources.iter().any(|(_, source)| {
+            source.source_id() == &standard_source && source.module().as_str() == "fs"
+        });
+    let json_selected = sources
+        .iter()
+        .any(|(_, source)| imports_bootstrap_json(source.bytes()));
+
+    // Ordinary standard declarations and implementations retain their owning
+    // module. Reuse only exact compiler-owned bytes from a sealed compilation.
+    for (module, path, bytes, selected) in [
+        (
+            "io",
+            "compiler/io.to",
+            include_bytes!("bootstrap/io.to").as_slice(),
+            io_selected,
+        ),
+        (
+            "io",
+            "compiler/console_io.to",
+            include_bytes!("bootstrap/console_io.to").as_slice(),
+            console_selected,
+        ),
+        (
+            "io",
+            "compiler/fs_io.to",
+            include_bytes!("bootstrap/fs_io.to").as_slice(),
+            filesystem_selected,
+        ),
+        (
+            "__json_typed",
+            "compiler/json_typed.to",
+            include_bytes!("bootstrap/json_typed.to").as_slice(),
+            json_selected,
+        ),
+    ] {
+        let module = crate::source::ModulePath::new(module)?;
+        let path = crate::source::LogicalPath::new(path)?;
+        if !selected || packages.module(packages.standard(), &module).is_none() {
+            continue;
+        }
+        if let Some((_, source)) = sources.iter().find(|(_, source)| {
+            source.source_id() == &standard_source
+                && source.module() == &module
+                && source.path() == &path
+        }) {
+            if source.origin() != crate::source::SourceOrigin::GeneratedStandard
+                || source.bytes() != bytes
+            {
+                return Err(DriverError::Invariant(format!(
+                    "generated standard source `{path}` differs from the selected compiler"
+                )));
+            }
+            continue;
+        }
+        sources.add(crate::source::SourceInput::new(
+            standard_source.clone(),
+            module,
+            path,
+            crate::source::SourceOrigin::GeneratedStandard,
+            bytes,
+        ))?;
+    }
+    packages.validate_sources(sources, root)?;
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) fn bootstrap_parsed_for_test(
+    packages: &PackageGraph,
+    sources: &mut SourceDatabase,
+    root: FileId,
+    parsed: Parsed,
+) -> BTreeMap<FileId, Parsed> {
+    let mut files = BTreeMap::from([(root, parsed)]);
+    // Layer fixtures can intentionally omit the standard implementation. A
+    // console fixture needs its actual IoError declaration and trait sources;
+    // otherwise the new public ConsoleError has an unresolved nominal payload.
+    if !imports_bootstrap_module(sources.get(root).unwrap().bytes(), b"std.console") {
+        return files;
+    }
+    install_selected_standard_sources(packages, sources, root).unwrap();
+    for (file, _) in sources.iter() {
+        if file == root {
+            continue;
+        }
+        let lexed = crate::syntax::lex(sources, file, LexMode::Module).unwrap();
+        assert!(lexed.diagnostics().is_empty());
+        let parsed = parse(
+            sources,
+            file,
+            lexed,
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:?}",
+            parsed.diagnostics()
+        );
+        files.insert(file, parsed);
+    }
+    files
+}
+
 fn imports_bootstrap_json(bytes: &[u8]) -> bool {
+    imports_bootstrap_module(bytes, b"std.json")
+}
+
+fn imports_bootstrap_module(bytes: &[u8], module: &[u8]) -> bool {
     bytes.split(|byte| *byte == b'\n').any(|line| {
         let line = line
             .strip_suffix(b"\r")
@@ -2194,37 +2795,35 @@ fn imports_bootstrap_json(bytes: &[u8]) -> bool {
         else {
             return false;
         };
-        let Some(rest) = rest.strip_prefix(b"std.json") else {
+        let Some(rest) = rest.strip_prefix(module) else {
             return false;
         };
         rest.first().is_none_or(|byte| byte.is_ascii_whitespace())
     })
 }
 
-fn unique_generated_path(
-    sources: &SourceDatabase,
-    source_id: &SourceId,
-    module: &crate::source::ModulePath,
-    base: &str,
-    seed: usize,
-) -> Result<crate::source::LogicalPath, DriverError> {
-    for attempt in seed.. {
-        let candidate = if attempt == 0 {
-            base.to_owned()
-        } else {
-            format!("{base}.{attempt}")
-        };
-        let path = crate::source::LogicalPath::new(candidate)?;
-        let exists = sources.iter().any(|(_, source)| {
-            source.source_id() == source_id && source.module() == module && source.path() == &path
-        });
-        if !exists {
-            return Ok(path);
-        }
+fn admit_derive_sources(
+    request: &mut CompilationRequest,
+    sources: Vec<crate::meta_frontend::GeneratedDeriveSource>,
+) -> Result<(), DriverError> {
+    for source in sources {
+        request.packages.register_generated_source(
+            &source.owner,
+            source.source_id.clone(),
+            source.module.clone(),
+        )?;
+        request.sources.add(
+            crate::source::SourceInput::new(
+                source.source_id,
+                source.module,
+                crate::source::LogicalPath::new(source.path)?,
+                crate::source::SourceOrigin::GeneratedMeta,
+                source.bytes,
+            )
+            .with_diagnostic_mappings(&source.diagnostic_mappings),
+        )?;
     }
-    Err(DriverError::Invariant(
-        "generated source path space was exhausted".into(),
-    ))
+    Ok(())
 }
 
 /// Discovers executable test leaves in the request's root package. Parsing is
@@ -2410,8 +3009,9 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             package_name,
             request.test_entry(),
         )
+        .map(|bytes| (bytes, None))
     } else {
-        test_backend::lower_participation(
+        test_backend::lower_participation_mapped(
             &request.sources,
             request.root,
             parsed.cst(),
@@ -2422,8 +3022,9 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
                 .iter()
                 .map(String::as_str),
         )
+        .map(|mut lowered| (std::mem::take(&mut lowered.bytes), Some(lowered)))
     };
-    let lowered = match lowered_result {
+    let (lowered, source_map) = match lowered_result {
         Ok(lowered) => lowered,
         Err(test_backend::TestBackendError::Source(error)) => return Err(error.into()),
         Err(test_backend::TestBackendError::ProductionMain) => {
@@ -2437,16 +3038,20 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             return backend_diagnostic_output(&request, "E2012", error.to_string());
         }
     };
+    let lowered_bytes: std::sync::Arc<[u8]> = std::sync::Arc::from(lowered);
     let sources = clone_source_database(
         &request.sources,
-        Some((
-            request.root,
-            std::sync::Arc::from(lowered),
-            crate::source::SourceOrigin::GeneratedTesting,
-        )),
+        Some(TestingSourceReplacement {
+            file: request.root,
+            bytes: lowered_bytes.clone(),
+            calls: source_map
+                .as_ref()
+                .map_or(&[][..], |map| map.testing_calls.as_slice()),
+        }),
     )?;
     let root = request.root;
     let test_envelope = request.test_envelope.clone();
+    let test_temporary_root = request.test_temporary_root.clone();
     let test_participation = request.test_participation.clone();
     let mut nested = CompilationRequest::new(
         Operation::Run,
@@ -2468,6 +3073,7 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
     if let Some(envelope) = test_envelope {
         nested = nested.with_test_envelope(envelope);
     }
+    nested.test_temporary_root = test_temporary_root;
     if let Some(participation) = test_participation {
         nested.test_participation = Some(participation);
     }
@@ -2477,7 +3083,84 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
     nested.test_source_classes = request.test_source_classes;
     nested.test_package_names = request.test_package_names;
     nested.sealed_production = request.sealed_production;
-    execute(nested)
+    nested.source_derive_providers = request.source_derive_providers;
+    nested.source_meta = request.source_meta;
+    nested.meta_results = request.meta_results;
+    nested.meta_descriptors = request.meta_descriptors;
+    let mut output = execute(nested)?;
+    if let Some(source_map) = &source_map {
+        output.diagnostics.remap_source(
+            request.edition.as_str(),
+            &request.sources,
+            root,
+            |range| {
+                source_map
+                    .original_span(
+                        tondo_vm::bytecode::BytecodeSpan {
+                            file: root.index(),
+                            start: range.start(),
+                            end: range.end(),
+                        },
+                        &lowered_bytes,
+                    )
+                    .and_then(|span| crate::source::TextRange::new(span.start, span.end).ok())
+            },
+            |range| source_map.copied_range(range),
+        )?;
+    }
+    if let Some(source_map) = source_map
+        && let Some((program, _)) = &mut output.bytecode
+    {
+        let remap = |span: &mut tondo_vm::bytecode::BytecodeSpan| {
+            if span.file == root.index() {
+                *span = source_map.original_span(*span, &lowered_bytes).unwrap_or(
+                    tondo_vm::bytecode::BytecodeSpan {
+                        file: span.file,
+                        start: 0,
+                        end: 0,
+                    },
+                );
+            }
+        };
+        for function in &mut program.functions {
+            if function.source.file != root.index() {
+                continue;
+            }
+            remap(&mut function.source);
+            for span in &mut function.spans {
+                remap(span);
+            }
+            // Mapping can reorder or merge locations. Preserve the bytecode
+            // span-table contract and rebind every reference to that table.
+            let mapped = function.spans.clone();
+            function.spans.sort();
+            function.spans.dedup();
+            let indices = function
+                .spans
+                .iter()
+                .enumerate()
+                .map(|(index, span)| (*span, tondo_vm::bytecode::BytecodeSpanId::new(index as u32)))
+                .collect::<BTreeMap<_, _>>();
+            let rebind = |id: &mut tondo_vm::bytecode::BytecodeSpanId| {
+                *id = indices[&mapped[id.index() as usize]];
+            };
+            for slot in &mut function.slots {
+                rebind(&mut slot.span);
+            }
+            for block in &mut function.blocks {
+                rebind(&mut block.terminator.span);
+                for instruction in &mut block.instructions {
+                    rebind(&mut instruction.span);
+                }
+            }
+        }
+        tondo_vm::bytecode::verify_bytecode(program).map_err(|error| {
+            DriverError::Invariant(format!(
+                "test source mapping produced invalid bytecode: {error}"
+            ))
+        })?;
+    }
+    Ok(output)
 }
 
 fn validate_test_source_contracts(
@@ -2578,21 +3261,33 @@ fn validate_test_source_contracts(
     Ok(diagnostics)
 }
 
+struct TestingSourceReplacement<'a> {
+    file: FileId,
+    bytes: std::sync::Arc<[u8]>,
+    calls: &'a [TextRange],
+}
+
 fn clone_source_database(
     original: &SourceDatabase,
-    replacement: Option<(FileId, std::sync::Arc<[u8]>, crate::source::SourceOrigin)>,
+    replacement: Option<TestingSourceReplacement<'_>>,
 ) -> Result<SourceDatabase, DriverError> {
     let mut sources = SourceDatabase::new();
     for (file, source) in original.iter() {
         let bytes = replacement
             .as_ref()
-            .filter(|(replacement_file, _, _)| *replacement_file == file)
-            .map(|(_, bytes, _)| bytes.clone())
+            .filter(|replacement| replacement.file == file)
+            .map(|replacement| replacement.bytes.clone())
             .unwrap_or_else(|| std::sync::Arc::from(source.bytes()));
         let origin = replacement
             .as_ref()
-            .filter(|(replacement_file, _, _)| *replacement_file == file)
-            .map_or(source.origin(), |(_, _, origin)| *origin);
+            .filter(|replacement| replacement.file == file)
+            .map_or(source.origin(), |_| {
+                crate::source::SourceOrigin::GeneratedTesting
+            });
+        let testing_calls = replacement
+            .as_ref()
+            .filter(|replacement| replacement.file == file)
+            .map_or(source.testing_calls(), |replacement| replacement.calls);
         let actual = sources.add(
             crate::source::SourceInput::new(
                 source.source_id().clone(),
@@ -2601,7 +3296,9 @@ fn clone_source_database(
                 origin,
                 bytes,
             )
-            .with_diagnostic_origin(source.diagnostic_origin()),
+            .with_diagnostic_origin(source.diagnostic_origin())
+            .with_diagnostic_mappings(source.diagnostic_mappings())
+            .with_testing_calls(testing_calls),
         )?;
         if actual != file {
             return Err(DriverError::Invariant(
@@ -2854,21 +3551,25 @@ fn semantic_output(
     if let Some(diagnostic) = runtime_diagnostic {
         bag.push(diagnostic);
     }
-    let products = build_products(
-        request.edition.as_str(),
-        request.source_form.as_str(),
-        request.target.name(),
-        request.profile.as_str(),
-        request
-            .capabilities
-            .iter()
-            .map(|capability| capability.as_str().to_owned()),
-        &request.build_inputs,
-        &request.packages,
-        &request.sources,
-        &resolved,
-        &hir,
-    )?;
+    let products = if request.derive_bound_probe {
+        None
+    } else {
+        Some(build_products(
+            request.edition.as_str(),
+            request.source_form.as_str(),
+            request.target.name(),
+            request.profile.as_str(),
+            request
+                .capabilities
+                .iter()
+                .map(|capability| capability.as_str().to_owned()),
+            &request.build_inputs,
+            &request.packages,
+            &request.sources,
+            &resolved,
+            &hir,
+        )?)
+    };
     let diagnostics = bag.resolve(request.edition.as_str(), &request.sources)?;
     Ok(CompilationOutput {
         status: if exit_code == 0 {
@@ -2888,7 +3589,7 @@ fn semantic_output(
             resolved,
             hir,
         )),
-        products: Some(products),
+        products,
     })
 }
 
@@ -3180,7 +3881,7 @@ mod tests {
         assert!(expected_files > 1);
         let request = unsealed_test_request(
             production,
-            b"import std.console\ntest sealed { console.print(\"\")\n assert(secret() == 42) }\n",
+            b"import std.console\ntest sealed { _ = console.print(\"\")\n assert(secret() == 42)\n }\n",
             ResourceLimits::default(),
         )
         .with_production_compilation(checked)
@@ -3306,7 +4007,497 @@ mod tests {
     }
 
     #[test]
+    fn standard_function_values_retain_their_callable_signatures() {
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            b"import std.math\nfn main() {\n let round = math.round\n let away = math.roundTiesAway\n assert(round(2.5) == 2.0)\n assert(away(2.5) == 3.0)\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        )).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+    }
+
+    #[test]
+    fn testing_result_assertion_bounds_apply_to_the_displayed_payload() {
+        for (body, expected) in [
+            (
+                "let value: Hidden ! String = ok(Hidden { value: 1 })\n let check = testing.assertOk[Hidden, String]\n _ = check(value)",
+                CompilationStatus::Success,
+            ),
+            (
+                "let value: String ! Hidden = err(Hidden { value: 1 })\n let check = testing.assertErr[String, Hidden]\n _ = check(value)",
+                CompilationStatus::Success,
+            ),
+            (
+                "let check = testing.assertOk[Int, Hidden]\n _ = check",
+                CompilationStatus::Rejected,
+            ),
+            (
+                "let check = testing.assertErr[Hidden, String]\n _ = check",
+                CompilationStatus::Rejected,
+            ),
+            (
+                "_ = testing.assertErr(testing.FloatTolerance.from(-1.0, 0.0))",
+                CompilationStatus::Rejected,
+            ),
+        ] {
+            let source = format!(
+                "import std.testing\ntype Hidden = {{ value: Int }}\ntest bounds {{\n {body}\n}}\n"
+            );
+            let request = operation_request(
+                Operation::Test,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            );
+            let entries = discover_tests(&request).unwrap();
+            let output = compile(request.for_test_entry(&entries[0]).unwrap()).unwrap();
+            assert_eq!(
+                output.status(),
+                expected,
+                "{body}: {}",
+                output.diagnostics().human()
+            );
+            if expected == CompilationStatus::Rejected {
+                assert!(
+                    output.diagnostics().human().contains("Display"),
+                    "{}",
+                    output.diagnostics().human()
+                );
+                assert!(output.bytecode().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn testing_assertion_display_metadata_is_closed_and_bound_to_the_callable() {
+        use tondo_vm::bytecode::{BytecodeCallableId, BytecodeTypeId, verify_bytecode};
+        let production = b"type Label = { value: Int }\nimpl Display for Label {\n fn display(self): String { \"label\" }\n}\n";
+        let companion = b"import std.testing\ntest display {\n let value = Label { value: 1 }\n testing.assertEqual(ref value, ref value)\n}\n";
+        let request = unsealed_test_request(production, companion, ResourceLimits::default())
+            .with_production_compilation(checked_production(production))
+            .unwrap();
+        let entries = discover_tests(&request).unwrap();
+        if entries.is_empty() {
+            panic!("{}", compile(request).unwrap().diagnostics().human());
+        }
+        let output = compile(request.for_test_entry(&entries[0]).unwrap()).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let program = output.bytecode().unwrap();
+        verify_bytecode(program).unwrap();
+        let index = program
+            .callables
+            .iter()
+            .position(|callable| callable.name.starts_with("std.testing.assertEqual["))
+            .unwrap();
+        let display = program.callables[index].assertion_display.unwrap();
+        assert!(display.callable.is_some());
+        for mutation in [
+            "missing",
+            "type",
+            "target",
+            "host target",
+            "intrinsic",
+            "name",
+            "receiver",
+        ] {
+            let mut invalid = program.clone();
+            let callable = &mut invalid.callables[index];
+            match mutation {
+                "missing" => callable.assertion_display = None,
+                "type" => {
+                    callable.assertion_display.as_mut().unwrap().value_type =
+                        BytecodeTypeId::new(u32::MAX)
+                }
+                "target" => {
+                    callable.assertion_display.as_mut().unwrap().callable =
+                        Some(BytecodeCallableId::new(u32::MAX))
+                }
+                "host target" => {
+                    callable.assertion_display.as_mut().unwrap().callable =
+                        Some(BytecodeCallableId::new(index as u32))
+                }
+                "intrinsic" => callable.assertion_display.as_mut().unwrap().callable = None,
+                "name" => callable.name = "user.assertEqual".into(),
+                "receiver" => callable.parameters[0].receiver = true,
+                _ => unreachable!(),
+            }
+            assert!(verify_bytecode(&invalid).is_err(), "{mutation}");
+        }
+        let bytes = serde_json::to_vec(program).unwrap();
+        let decoded = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(*program, decoded);
+    }
+
+    #[test]
+    fn qualified_calls_do_not_inherit_an_unrelated_free_function_effect() {
+        for (call, expected) in [
+            (
+                "assert(self.text.length() == 5)",
+                CompilationStatus::Success,
+            ),
+            ("self.wait()", CompilationStatus::Rejected),
+            ("length()", CompilationStatus::Rejected),
+        ] {
+            let source = format!(
+                "fn length() suspends {{}}\ntype Label = {{ text: String }}\nfn Label.wait(self) suspends {{}}\nimpl Display for Label {{\n fn display(self): String {{\n {call}\n \"label\"\n }}\n}}\nfn main() {{\n let value = Label {{ text: \"label\" }}\n assert(Display.display(value) == \"label\")\n}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                expected,
+                "{source}\n{}",
+                output.diagnostics().human()
+            );
+            if expected == CompilationStatus::Success {
+                assert_eq!(output.exit_code(), 0);
+            } else {
+                assert!(
+                    output
+                        .diagnostics()
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.code() == "E1114")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn implementation_effects_are_checked_after_receiver_dispatch() {
+        // This includes the pure-body drift case formerly checked before
+        // expressions: a body must actually infer (or declare) the effect.
+        for (body, annotation, expected) in [
+            ("self.work()\n 1", "", CompilationStatus::Success),
+            ("1", "", CompilationStatus::Rejected),
+            ("1", "@nosuspend\n", CompilationStatus::Rejected),
+        ] {
+            let source = format!(
+                "trait Contract {{\n fn run(self): Int suspends\n}}\ntype Item = {{}}\nfn Item.work(self) suspends {{}}\nimpl Contract for Item {{\n {annotation}fn run(self): Int {{\n {body}\n }}\n}}\nfn main() {{\n let item = Item {{}}\n assert(Contract.run(item) == 1)\n}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                expected,
+                "{source}\n{}",
+                output.diagnostics().human()
+            );
+            if expected == CompilationStatus::Success {
+                assert_eq!(output.exit_code(), 0);
+            } else {
+                assert!(
+                    output
+                        .diagnostics()
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.code() == "E1114")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_unwind_bytecode_entry_is_closed_even_without_an_ordinary_exit() {
+        use tondo_vm::bytecode::{
+            BytecodeBlockKind, BytecodeInstructionKind, BytecodeTerminatorKind, verify_bytecode,
+        };
+        let output = compile(operation_request(
+            Operation::Run,
+            b"fn cleanup() {}\nfn spin(): Never {\n defer cleanup()\n for {}\n}\nfn main() { spin() }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        )).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let program = output.bytecode().unwrap();
+        verify_bytecode(program).unwrap();
+        let index = program
+            .functions
+            .iter()
+            .position(|function| {
+                function.blocks.iter().any(|block| {
+                    block.instructions.iter().any(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            BytecodeInstructionKind::RegisterDefer { .. }
+                        )
+                    })
+                })
+            })
+            .unwrap();
+        let drain = program.functions[index]
+            .blocks
+            .iter()
+            .position(|block| {
+                matches!(
+                    block.terminator.kind,
+                    BytecodeTerminatorKind::DrainUnwind { .. }
+                )
+            })
+            .unwrap();
+        for mutation in [
+            "missing",
+            "duplicate",
+            "normal",
+            "target",
+            "instructions",
+            "arbitrary",
+        ] {
+            let mut invalid = program.clone();
+            let function = &mut invalid.functions[index];
+            match mutation {
+                "missing" => {
+                    function.blocks[drain].terminator.kind = BytecodeTerminatorKind::Unreachable
+                }
+                "duplicate" => function.blocks.push(function.blocks[drain].clone()),
+                "normal" => function.blocks[drain].kind = BytecodeBlockKind::Normal,
+                "target" => {
+                    function.blocks[drain].terminator.kind = BytecodeTerminatorKind::DrainUnwind {
+                        target: function.entry,
+                    }
+                }
+                "instructions" => {
+                    let instruction =
+                        function.blocks[function.entry.index() as usize].instructions[0].clone();
+                    function.blocks[drain].instructions.push(instruction);
+                }
+                "arbitrary" => {
+                    function.blocks[drain].terminator.kind = BytecodeTerminatorKind::Goto {
+                        target: function.unwind,
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let error = verify_bytecode(&invalid).unwrap_err();
+            if mutation == "arbitrary" {
+                assert!(
+                    error.to_string().contains("contains executable bytecode"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn temporary_testing_helpers_require_filesystem_at_every_reference() {
+        for source in [
+            "import std.testing\ntest temporary {\n let temporary = testing.assertOk(testing.tempDirectory(\"capability\"))\n defer temporary.cleanup()\n}\n",
+            "import std.testing\ntest temporary {\n let make = testing.tempDirectory\n let temporary = testing.assertOk(make(\"capability\"))\n temporary.cleanup()\n}\n",
+            "import std.testing\nfn dispose(value: testing.TempDirectory) { value.cleanup() }\ntest temporary {}\n",
+        ] {
+            for (capabilities, expected) in [
+                (BTreeSet::new(), CompilationStatus::Rejected),
+                (
+                    BTreeSet::from([CapabilityName::new("filesystem").unwrap()]),
+                    CompilationStatus::Success,
+                ),
+            ] {
+                let request = operation_request_with_capabilities(
+                    Operation::Test,
+                    source.as_bytes(),
+                    SourceForm::Module,
+                    ResourceLimits::default(),
+                    capabilities,
+                );
+                let entries = discover_tests(&request).unwrap();
+                let output = compile(request.for_test_entry(&entries[0]).unwrap()).unwrap();
+                assert_eq!(
+                    output.status(),
+                    expected,
+                    "{source}\n{}",
+                    output.diagnostics().human()
+                );
+                if expected == CompilationStatus::Rejected {
+                    let diagnostic = output
+                        .diagnostics()
+                        .diagnostics()
+                        .iter()
+                        .find(|diagnostic| diagnostic.code() == "E1008")
+                        .unwrap_or_else(|| panic!("{source}\n{}", output.diagnostics().human()));
+                    assert!(
+                        diagnostic
+                            .message()
+                            .contains("capability `filesystem` is missing"),
+                        "{}",
+                        diagnostic.message()
+                    );
+                    assert!(output.bytecode().is_none());
+                } else {
+                    assert!(output.bytecode().is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn standard_function_values_specialize_generics_and_keep_testing_functions_private() {
+        for (body, expected_code) in [
+            (
+                "let unwrap = testing.assertOk[Int, String]\n let value: Int ! String = ok(42)\n assert(unwrap(value) == 42)",
+                None,
+            ),
+            ("let invoke = testing.__runLeaf", Some("E1102")),
+            ("let invoke = testing.__runSuite", Some("E1102")),
+            ("let invoke = testing.__beginSuiteCleanup", Some("E1102")),
+        ] {
+            let source = format!("import std.testing\ntest functions {{\n {body}\n}}\n");
+            let request = operation_request(
+                Operation::Test,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            );
+            let entries = discover_tests(&request).unwrap();
+            let envelope = crate::test_control::EnvelopeHandle::new(
+                "functions",
+                crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+            );
+            let output = execute(
+                request
+                    .for_test_entry(&entries[0])
+                    .unwrap()
+                    .with_test_envelope(envelope),
+            )
+            .unwrap();
+            if let Some(code) = expected_code {
+                assert_eq!(output.status(), CompilationStatus::Rejected, "{source}");
+                assert!(
+                    output
+                        .diagnostics()
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.code() == code),
+                    "{source}\n{}",
+                    output.diagnostics().human()
+                );
+            } else {
+                assert_eq!(
+                    output.status(),
+                    CompilationStatus::Success,
+                    "{source}\n{}",
+                    output.diagnostics().human()
+                );
+                assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+            }
+        }
+    }
+
+    #[test]
+    fn temporary_paths_expose_receiver_methods_without_a_path_module_reference() {
+        let request = operation_request(
+            Operation::Test,
+            b"import std.testing\ntest temporary {\n let temporary = testing.tempDirectory(\"methods\")?\n defer temporary.cleanup()\n let text = temporary.path().toString()?\n _ = text\n let bytes = temporary.path().toBytes()\n assert(bytes.length() > 0)\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&request).unwrap();
+        let participation = crate::test_backend::TestParticipation::new(
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+            BTreeMap::new(),
+            false,
+        );
+        let output = compile(
+            request
+                .for_test_participation(&entries, participation)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(output.bytecode().is_some());
+    }
+
+    #[test]
+    fn shrink_candidates_bytecode_preserves_the_immutable_host_receiver_contract() {
+        use tondo_vm::bytecode::{BytecodeParameterMode, BytecodeTypeKind, verify_bytecode};
+        let request = operation_request(
+            Operation::Test,
+            b"test shrink {\n match Shrink.candidates(13, 2) {\n ok(values) => assert(values == [6, 3])\n err(_) => assert(false)\n }\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&request).unwrap();
+        let output = compile(request.for_test_entry(&entries[0]).unwrap()).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let bytecode = output.bytecode().unwrap();
+        verify_bytecode(bytecode).unwrap();
+        let index = bytecode
+            .callables
+            .iter()
+            .position(|callable| callable.name.starts_with("std.testing.Shrink.candidates["))
+            .unwrap();
+        for mutation in ["mutable", "resizable", "receiver", "name", "borrowed limit"] {
+            let mut invalid = bytecode.clone();
+            let callable = &mut invalid.callables[index];
+            match mutation {
+                "mutable" => callable.parameters[0].mode = BytecodeParameterMode::Mut,
+                "resizable" => callable.parameters[0].mode = BytecodeParameterMode::Var,
+                "receiver" => callable.parameters[0].receiver = false,
+                "name" => callable.name = "std.testing.Shrink.unrelated[Int]".into(),
+                "borrowed limit" => callable.parameters[1].mode = BytecodeParameterMode::Ref,
+                _ => unreachable!(),
+            }
+            let BytecodeTypeKind::Function(function) =
+                &mut invalid.types[callable.function_type.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            for (parameter, source) in function.parameters.iter_mut().zip(&callable.parameters) {
+                parameter.mode = source.mode;
+            }
+            let error = verify_bytecode(&invalid).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("host callable ABI cannot receive borrowed parameters"),
+                "{mutation}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn test_operation_executes_std_testing_value_helpers_through_the_vm() {
+        let mut temporary_root = crate::test_temporaries::TemporaryRoot::create(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .unwrap();
         let base = operation_request(
             Operation::Test,
             b"import std.testing\ntest helpers {\n let tolerance = match testing.FloatTolerance.from(0.01, 0.1) {\n  ok(value) => value\n  err(_) => testing.failNow(\"invalid tolerance\")\n }\n testing.assertTextEqual(\"same\", \"same\")\n testing.assertFloatNear(10.0, 10.5, ref tolerance)\n testing.assertFloat32Near(10.0, 10.5, ref tolerance)\n let diff = testing.diffText(\"old\\n\", \"new\\n\")\n testing.assertTextEqual(diff.render(), \"--- expected\\n+++ actual\\n-old\\n+new\\n\")\n let workspace = match testing.tempDirectory(\"wave5\") {\n  ok(value) => value\n  err(_) => testing.failNow(\"temp directory unavailable\")\n }\n let root = workspace.path()\n workspace.cleanup()\n var generator = testing.Generator.new(7)\n let first = match generator.nextUInt() {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator failed\")\n }\n let second = match generator.nextUInt() {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator failed\")\n }\n testing.assertNotEqual(ref first, ref second)\n let shrunk = match testing.shrink(ref first) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator shrink failed\")\n }\n _ = shrunk\n var replay = testing.Generator.forCase(7, 2)\n let replayId = replay.id()\n let replayDrawCount = replay.drawCount()\n _ = replayId\n _ = replayDrawCount\n let replayBool = match replay.nextBool() {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator bool failed\")\n }\n let replayInt = match replay.nextInt(0, 4) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator int failed\")\n }\n let replayBytes = match replay.nextBytes(4) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator bytes failed\")\n }\n _ = replayBool\n _ = replayInt\n _ = replayBytes\n let generated = match generator.nextText(16) {\n  ok(value) => value\n  err(_) => testing.failNow(\"generator text failed\")\n }\n testing.assertTextEqual(generated, generated)\n}\n",
@@ -3324,6 +4515,7 @@ mod tests {
         let request = base
             .for_test_entry(&entries[0])
             .unwrap()
+            .with_test_temporary_root(temporary_root.path().to_owned())
             .with_test_envelope(envelope.clone());
         let output = execute(request).unwrap();
         assert_eq!(
@@ -3334,13 +4526,15 @@ mod tests {
         );
         assert_eq!(output.exit_code(), 0);
         assert!(envelope.report().unwrap().terminal().is_none());
+        temporary_root.cleanup().unwrap();
+        assert!(!temporary_root.path().exists());
     }
 
     #[test]
     fn test_operation_checks_console_stream_protocol_through_the_hir() {
         let request = operation_request(
             Operation::Check,
-            b"import std.console\nimport std.io\nimport std.bytes\nfn acquire(): io.Writer ! console.ConsoleError {\n console.stdout()\n}\nfn emit(data: bytes.Bytes): Int ! (io.IoError | console.ConsoleError) {\n var output = console.stdout()?\n output.write(data)?\n}\n",
+            b"import std.console\nimport std.io\nimport std.bytes\nfn acquire(): console.Output ! console.ConsoleError {\n console.stdout()\n}\nfn emit(data: bytes.Bytes): Int ! (io.IoError | console.ConsoleError) {\n var output = console.stdout()?\n output.write(data)?\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );
@@ -3781,7 +4975,7 @@ mod tests {
 
     #[test]
     fn bootstrap_standard_modules_follow_the_closed_target_capabilities() {
-        let source = b"import std.console\nfn main() { console.print(\"ready\") }\n";
+        let source = b"import std.console\nfn main() { _ = console.print(\"ready\")\n }\n";
         let rejected = execute(operation_request_with_capabilities(
             Operation::Check,
             source,
@@ -3791,6 +4985,12 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(rejected.status(), CompilationStatus::Rejected);
+        assert_eq!(
+            rejected.diagnostics().diagnostics().len(),
+            2,
+            "{}",
+            rejected.diagnostics().human()
+        );
         let diagnostic = &rejected.diagnostics().diagnostics()[0];
         assert_eq!(diagnostic.code(), "E1008");
         assert!(
@@ -3798,6 +4998,22 @@ mod tests {
                 .message()
                 .contains("capability `console` is missing")
         );
+        assert_eq!(rejected.diagnostics().diagnostics()[1].code(), "E1001");
+        let import_only = execute(operation_request_with_capabilities(
+            Operation::Check,
+            b"import std.console\nfn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            import_only.diagnostics().diagnostics().len(),
+            1,
+            "{}",
+            import_only.diagnostics().human()
+        );
+        assert_eq!(import_only.diagnostics().diagnostics()[0].code(), "E1008");
 
         let accepted = execute(operation_request(
             Operation::Check,
@@ -3811,7 +5027,7 @@ mod tests {
 
         assert!(CapabilityName::new("console").is_ok());
         assert!(CapabilityName::new("civil-clock").is_ok());
-        let stream_source = b"import std.console\nimport std.io\n\nfn acquire_input(): io.Reader ! console.ConsoleError {\n    console.stdin()\n}\n\nfn acquire_output(): io.Writer ! console.ConsoleError {\n    console.stdout()\n}\n";
+        let stream_source = b"import std.console\nimport std.io\n\nfn acquire_input(): console.Input ! console.ConsoleError {\n    console.stdin()\n}\n\nfn acquire_output(): console.Output ! console.ConsoleError {\n    console.stdout()\n}\n";
         let stream_checked = execute(operation_request(
             Operation::Check,
             stream_source,
@@ -3971,8 +5187,55 @@ mod tests {
     }
 
     #[test]
+    fn path_constructors_use_the_documented_type_qualified_surface() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/runtime/m11-std-path-001.to"),
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        assert_eq!(output.stdout(), b"path-ok\n");
+        for (call, code) in [
+            ("path.fromString(\"a\")", "E1102"),
+            ("path.fromBytes(bytes.empty()?)", "E1102"),
+            ("path.Path.fromString(1)", "E1102"),
+            ("path.Path.fromBytes(\"a\")", "E1102"),
+            ("path.Path.fromString[Int](\"a\")", "E1104"),
+            ("path.Path[Int].fromString(\"a\")", "E1104"),
+        ] {
+            let source = format!(
+                "import std.path\nimport std.bytes\nfn main(): !(path.PathError | bytes.BytesError) {{\n _ = {call}\n}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{call}");
+            assert!(
+                output
+                    .diagnostics()
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code() == code),
+                "{call}: {:?}",
+                output.diagnostics()
+            );
+        }
+    }
+
+    #[test]
     fn filesystem_module_requires_the_explicit_target_capability() {
-        let source = b"import std.path\nimport std.fs\nfn main(): !(path.PathError | fs.FsError) {\n    let file_path = path.fromString(\"Cargo.toml\")?\n    let contents = fs.readAll(file_path)?\n}\n";
+        let source = b"import std.path\nimport std.fs\nfn main(): !(path.PathError | fs.FsError) {\n    let file_path = path.Path.fromString(\"Cargo.toml\")?\n    let contents = fs.readAll(file_path)?\n}\n";
         let rejected = execute(operation_request_with_capabilities(
             Operation::Check,
             source,
@@ -4052,7 +5315,7 @@ fn main(): !env.EnvError {
     assert(text(arguments[1]) == "two words")
     assert(text(arguments[2]) == "*")
     assert(text(arguments[3]) == "$HOME")
-    console.print("args-ok\n")
+    _ = console.print("args-ok\n")
 }
 "#;
         let output = execute(
@@ -4614,6 +5877,162 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn io_bootstrap_sources_require_real_imports_and_exact_reuse() {
+        for (source, expected) in [
+            (b"import std.io\nfn main() {}\n".as_slice(), 1),
+            (b"import std.console\nfn main() {}\n".as_slice(), 2),
+            (b"import std.fs\nfn main() {}\n".as_slice(), 2),
+            (b"// import std.fs\nfn main() {}\n".as_slice(), 0),
+            (b"// import std.io\nfn main() {}\n".as_slice(), 0),
+            (b"import std.ioExtra\nfn main() {}\n".as_slice(), 0),
+        ] {
+            let mut request = source_request(source, SourceForm::Module, ResourceLimits::default());
+            let initial = request.sources.len();
+            install_bootstrap_standard_sources(&mut request).unwrap();
+            assert_eq!(request.sources.len(), initial + expected);
+            install_bootstrap_standard_sources(&mut request).unwrap();
+            assert_eq!(request.sources.len(), initial + expected);
+        }
+        for (origin, bytes) in [
+            (
+                crate::source::SourceOrigin::Virtual,
+                include_bytes!("bootstrap/io.to").as_slice(),
+            ),
+            (
+                crate::source::SourceOrigin::GeneratedStandard,
+                b"pub trait Reader {}\n".as_slice(),
+            ),
+        ] {
+            let mut request = source_request(
+                b"import std.io\nfn main() {}\n",
+                SourceForm::Module,
+                ResourceLimits::default(),
+            );
+            let source_id = request
+                .packages
+                .package(request.packages.standard())
+                .unwrap()
+                .source_id()
+                .clone();
+            request
+                .sources
+                .add(crate::source::SourceInput::new(
+                    source_id,
+                    crate::source::ModulePath::new("io").unwrap(),
+                    crate::source::LogicalPath::new("compiler/io.to").unwrap(),
+                    origin,
+                    bytes,
+                ))
+                .unwrap();
+            let error = install_bootstrap_standard_sources(&mut request).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("differs from the selected compiler")
+            );
+        }
+    }
+
+    #[test]
+    fn filesystem_adapter_does_not_replace_an_explicit_source_module() {
+        let mut request = source_request(
+            b"import std.fs\nfn consume(value: fs.Marker) {}\nfn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let standard = request
+            .packages
+            .package(request.packages.standard())
+            .unwrap()
+            .source_id()
+            .clone();
+        request
+            .sources
+            .add(crate::source::SourceInput::virtual_file(
+                standard,
+                crate::source::ModulePath::new("fs").unwrap(),
+                crate::source::LogicalPath::new("provided-fs.to").unwrap(),
+                b"pub type Marker = Int\n".as_slice(),
+            ))
+            .unwrap();
+        install_bootstrap_standard_sources(&mut request).unwrap();
+        assert!(
+            !request
+                .sources
+                .iter()
+                .any(|(_, source)| { source.path().as_str() == "compiler/fs_io.to" })
+        );
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+    }
+
+    #[test]
+    fn incomplete_bootstrap_io_dependencies_return_a_package_error() {
+        let mut request = source_request(
+            b"import std.console\nfn main() {\n _ = console.print(\"value\")\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let standard = request.packages.standard().clone();
+        let nodes = request
+            .packages
+            .packages()
+            .map(|node| {
+                if node.id() == &standard {
+                    crate::package::PackageNode::new(
+                        node.id().clone(),
+                        node.source_id().clone(),
+                        node.local_name().clone(),
+                        node.edition(),
+                        [crate::source::ModulePath::new("console").unwrap()],
+                        [],
+                    )
+                    .unwrap()
+                } else {
+                    node.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        request.packages =
+            PackageGraph::new(request.packages.root().clone(), standard, nodes).unwrap();
+        let result = execute(request);
+        assert!(
+            matches!(&result, Err(DriverError::Hir(HirError::Package(
+            crate::package::PackageGraphError::UndeclaredModule { module, .. }
+        ))) if module.as_str() == "io"),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn unused_parameter_warnings_require_an_implementation_body() {
+        let source = b"trait Protocol {\n\
+            fn required(self, value: Int)\n\
+            fn provided(self, unused: Int) {}\n\
+        }\n\
+        fn ordinary(unused: Int) {}\n";
+        let output = execute(
+            source_request(source, SourceForm::Module, ResourceLimits::default())
+                .with_warning_profiles([WarningProfile::Core]),
+        )
+        .unwrap();
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+        let diagnostics = output.diagnostics().diagnostics();
+        assert_eq!(diagnostics.len(), 2, "{}", output.diagnostics().human());
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code() == "W1003")
+        );
+        assert!(!output.diagnostics().human().contains("parameter `value`"));
+    }
+
+    #[test]
     fn warning_profiles_are_closed_and_opt_in() {
         let source = b"fn main() {\n    return\n    let unreachable = 1\n}\n";
         let without_profile = execute(source_request(
@@ -4785,7 +6204,7 @@ fn main(): !env.EnvError {
             b"#!/usr/bin/env tondo\n\
               import std.console\n\
               let answer = 6 * 7\n\
-              console.print(\"{answer}\")\n",
+              _ = console.print(\"{answer}\")\n",
             SourceForm::Script,
             ResourceLimits::default(),
         ))
@@ -4822,6 +6241,19 @@ fn main(): !env.EnvError {
         .unwrap();
         assert_eq!(output.status(), CompilationStatus::Rejected);
         assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1001");
+    }
+
+    #[test]
+    fn script_direct_fail_and_nested_closures_keep_separate_inferred_error_channels() {
+        for source in [
+            b"enum Fault { Broken }\nfail Fault.Broken\n".as_slice(),
+            b"enum Fault { Broken }\nfn invoke[E: Discard](body: fn(): Unit ! E): Unit ! E { body()? }\ninvoke(() {\n fail Fault.Broken\n})?\n".as_slice(),
+        ] {
+            let output = execute(operation_request(Operation::Run, source, SourceForm::Script, ResourceLimits::default())).unwrap();
+            assert_eq!(output.exit_code(), 1);
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "R0001", "{:?}", output.diagnostics());
+            assert!(output.diagnostics().diagnostics()[0].message().contains("Fault"));
+        }
     }
 
     #[test]
@@ -6389,7 +7821,7 @@ fn main() {
     fn g2_002_hello_world_is_captured_as_exact_program_stdout() {
         let output = execute(operation_request(
             Operation::Run,
-            b"import std.console\n\nfn main() {\n    console.print(\"Hello, world\")\n}\n",
+            b"import std.console\n\nfn main() {\n    _ = console.print(\"Hello, world\")\n}\n",
             SourceForm::Script,
             ResourceLimits::default(),
         ))
@@ -6427,7 +7859,7 @@ fn main() {
             Operation::Run,
             b"import std.console\n\
               fn cleanup() suspends {\n\
-                  console.print(\"cleanup\\n\")\n\
+                  _ = console.print(\"cleanup\\n\")\n\
               }\n\
               fn main() {\n\
                   defer cleanup()\n\
@@ -6592,6 +8024,38 @@ fn main() {
     }
 
     #[test]
+    fn reflection_public_api_rejects_identity_construction_ordering_and_value_access() {
+        for body in [
+            "fn invalid(): reflect.TypeId { reflect.TypeId(1) }",
+            "fn invalid(): String { \"{reflect.typeInfo[Int]().id()}\" }",
+            "fn invalid(): Bool { reflect.typeInfo[Int]().id() < reflect.typeInfo[String]().id() }",
+            "fn invalid(): Int { reflect.typeInfo[Int]().get() }",
+            "fn invalid(): Int { reflect.allTypes() }",
+            "fn invalid(): reflect.TypeInfo { reflect.typeInfo[Int](1) }",
+        ] {
+            let source = format!("import std.reflect\n{body}\n");
+            let output = execute(operation_request(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{source}");
+            assert!(!output.diagnostics().diagnostics().is_empty());
+            assert!(
+                output
+                    .diagnostics()
+                    .diagnostics()
+                    .iter()
+                    .all(|diagnostic| !diagnostic.code().starts_with("E000")),
+                "{}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
     fn derive_providers_are_compiled_in_one_atomic_frontend_round() {
         let output = execute(operation_request(
             Operation::Check,
@@ -6631,6 +8095,161 @@ fn main() {
         assert_eq!(
             output.status(),
             CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+    }
+
+    #[test]
+    fn meta_derive_publication_retains_final_source_provenance_and_query() {
+        let text = b"import std.serialization\n\
+            /// Public schema documentation.\n\
+            type User = { id: Int, name: String }\n\
+            derive serialization.Encode[Json] + serialization.Decode[Json] for User\n";
+        let mut hashes = Vec::new();
+        for _ in 0..2 {
+            let output = execute(operation_request(
+                Operation::Check,
+                text,
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{}",
+                output.diagnostics().human()
+            );
+            let artifact = output.artifact().unwrap();
+            assert_eq!(artifact.generation().len(), 2);
+            let model = output.semantic_model().unwrap();
+            let query = model.meta_expansions().unwrap();
+            assert_eq!(query.expansions().len(), 2);
+            for record in artifact.generation() {
+                assert_eq!(record.kind, "derive");
+                assert_eq!(record.outputs.len(), 1);
+                let source = &record.outputs[0];
+                assert_eq!(
+                    record.id,
+                    record.request_hash.replacen("sha256:", "derive:", 1)
+                );
+                assert_eq!(source.source_id, record.id);
+                assert_eq!(
+                    source.path,
+                    format!("@generated/derive/{}.to", &record.request_hash[7..])
+                );
+                let expansion = query.by_output(&source.source_id).unwrap();
+                assert!(expansion.target().unwrap().ends_with("::type::User"));
+                assert!(expansion.source().starts_with("import std.serialization\n"));
+                assert_eq!(
+                    crate::artifact::sha256(expansion.source().as_bytes()),
+                    source.sha256
+                );
+                let (_, file) = model
+                    .sources()
+                    .iter()
+                    .find(|(_, file)| file.source_id().as_str() == source.source_id)
+                    .unwrap();
+                assert_eq!(file.path().as_str(), source.path);
+                assert_eq!(file.bytes(), expansion.source().as_bytes());
+                assert!(!file.diagnostic_mappings().is_empty());
+            }
+            let bytes = query.canonical_bytes().unwrap();
+            assert_eq!(
+                crate::meta_query::MetaQueryDocument::decode(&bytes).unwrap(),
+                query
+            );
+            hashes.push((artifact.build_hash().to_owned(), bytes));
+        }
+        assert_eq!(hashes[0], hashes[1]);
+    }
+
+    #[test]
+    fn meta_standard_derives_resolve_aliases_and_reject_duplicate_trait_identity() {
+        let source = b"import std.serialization as codec\n\
+            type User = { id: Int }\n\
+            derive codec.Encode[Json] + codec.Decode[Json] for User\n";
+        let output = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.artifact().unwrap().generation().len(), 2);
+        let source = b"import std.serialization\nimport std.serialization as codec\n\
+            type User = { id: Int }\n\
+            derive serialization.Encode[Json] for User\n\
+            derive codec.Encode[Json] for User\n";
+        let output = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(output.artifact().is_none());
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "E2103")
+        );
+    }
+
+    #[test]
+    fn meta_module_ownership_keeps_other_module_private_fields_inaccessible() {
+        let output = execute(multimodule_request(
+            Operation::Check,
+            b"import app.api\nfn inspect(value: api.User): Int { value.secret }\n",
+            b"pub type User = { priv secret: Int }\n",
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "E1501")
+        );
+        assert!(output.artifact().is_none());
+    }
+
+    #[test]
+    fn meta_derive_duplicate_detection_uses_resolved_argument_types() {
+        let source = b"import std.serialization\n\
+            alias JsonAlias = Json\n\
+            type User = { id: Int }\n\
+            derive serialization.Encode[Json] for User\n\
+            derive serialization.Encode[JsonAlias] for User\n";
+        let output = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(output.artifact().is_none());
+        assert_eq!(
+            output.diagnostics().diagnostics().len(),
+            1,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(
+            output.diagnostics().diagnostics()[0].code(),
+            "E2103",
             "{}",
             output.diagnostics().human()
         );

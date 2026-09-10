@@ -53,5 +53,5 @@ fn main() {
     assert(names.insert("tondo"))
     assert(names.contains("tondo"))
 
-    console.print("collections-ok\n")
+    _ = console.print("collections-ok\n")
 }

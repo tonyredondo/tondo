@@ -5,22 +5,22 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "f9b039855fc17d1804276c210bcb28806fe907b1c882c1570e974e816b811e95"
+      "sha256": "317cb2a2c68d44bedd77b21a406f052421293d61a3d8cb41e8c7caf57185041e"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "f3c663a98e15a882018e2168b3e2a12a55b28f987d22762a9940d65fa904d599"
+      "sha256": "479bf4986ff40ff1a222e274ad5e069e7d05edca779165248888d2ee6e338ac0"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "00a57af904ae2440d14dc6de66618371064e2c40724ea6b38e736925bc6da751"
+      "sha256": "c7a6090383da27cf1b737f4315b87549bf8c54e3f36b3d186af97730e58bf738"
     }
   ],
   "summary": {
-    "total": 375,
+    "total": 383,
     "by_outcome": {
       "absent": 14,
-      "implemented-without-trace": 359,
+      "implemented-without-trace": 367,
       "not-applicable": 2
     }
   },
@@ -76,7 +76,7 @@
         "testing/performance.json"
       ],
       "tests": [
-        "rust:tondo-reliability:src::matrix:toolchain_contract_has_complete_reviewed_six_dimension_traceability"
+        "rust:tondo-reliability:src::matrix:toolchain_contract_preserves_reviewed_dimensions_and_exact_open_requirements"
       ],
       "follow_up": null
     },
@@ -103,6 +103,22 @@
       ],
       "tests": [
         "rust:tondo-cli:src::main:project_products_cannot_overwrite_a_declared_input"
+      ],
+      "follow_up": null
+    },
+    {
+      "requirement": "TC01-10-R001",
+      "text_sha256": "e7d0b965e32a398b11e3527c61487190627c95392e886156dc6f80201e05470b",
+      "outcome": "implemented-without-trace",
+      "reason": "TC01-10-R001: The Linux CLI explicitly admits a delegated cgroup-v2 provider and rejects missing or unusable providers before dispatch. Local CLI lifecycle tests pass; portable execution and the complete normative trace remain open.",
+      "implementation": [
+        "crates/tondo-cli/src/main.rs",
+        "crates/tondo-cli/src/test_cli.rs",
+        "crates/tondo-cli/src/test_processes.rs"
+      ],
+      "tests": [
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication"
       ],
       "follow_up": null
     },
@@ -420,20 +436,24 @@
     },
     {
       "requirement": "TC01-5-2-R001",
-      "text_sha256": "f06503b9da714a79736739611e5789e04a174720dbbd79da817369039268ed54",
+      "text_sha256": "c56ae4733b7fd3867ab7e4a25cc910f43e389c1252db03e1502e29caae8163a9",
       "outcome": "implemented-without-trace",
-      "reason": "TC01-5-2-R001 has an existing implementation at crates/tondo-cli/src/project_discovery.rs and executable evidence rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph; its six-dimension normative trace remains incomplete.",
+      "reason": "TC01-5-2-R001: Closed test-only dependency records are loaded, validated and executed without changing the sealed production artifact. The executable CLI cases cover drift and test-only defaults; complete reviewed normative dimensions remain open.",
       "implementation": [
-        "crates/tondo-cli/src/project_discovery.rs"
+        "crates/tondo-cli/src/project_discovery.rs",
+        "crates/tondo-cli/src/test_inputs.rs",
+        "crates/tondo-compiler/src/test_dependencies.rs"
       ],
       "tests": [
-        "rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph"
+        "rust:tondo-cli:tests::cli:public_test_dependencies_execute_transitive_code_and_keep_production_identical",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_reject_drift_before_selection_or_publication",
+        "rust:tondo-cli:tests::cli:public_test_dependencies_use_locked_defaults_in_test_only_projects"
       ],
       "follow_up": null
     },
     {
       "requirement": "TC01-5-2-R002",
-      "text_sha256": "3d30ae67f43e5156f88ddb9cdb329b45fb4a7538b2f4768ddf410208e64f664b",
+      "text_sha256": "f06503b9da714a79736739611e5789e04a174720dbbd79da817369039268ed54",
       "outcome": "implemented-without-trace",
       "reason": "TC01-5-2-R002 has an existing implementation at crates/tondo-cli/src/project_discovery.rs and executable evidence rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -446,9 +466,22 @@
     },
     {
       "requirement": "TC01-5-2-R003",
-      "text_sha256": "4307d4d676aae033d2888762b2398d671c8034d86c29d3fac71baad3efde98a0",
+      "text_sha256": "3d30ae67f43e5156f88ddb9cdb329b45fb4a7538b2f4768ddf410208e64f664b",
       "outcome": "implemented-without-trace",
       "reason": "TC01-5-2-R003 has an existing implementation at crates/tondo-cli/src/project_discovery.rs and executable evidence rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph; its six-dimension normative trace remains incomplete.",
+      "implementation": [
+        "crates/tondo-cli/src/project_discovery.rs"
+      ],
+      "tests": [
+        "rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph"
+      ],
+      "follow_up": null
+    },
+    {
+      "requirement": "TC01-5-2-R004",
+      "text_sha256": "4307d4d676aae033d2888762b2398d671c8034d86c29d3fac71baad3efde98a0",
+      "outcome": "implemented-without-trace",
+      "reason": "TC01-5-2-R004 has an existing implementation at crates/tondo-cli/src/project_discovery.rs and executable evidence rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph; its six-dimension normative trace remains incomplete.",
       "implementation": [
         "crates/tondo-cli/src/project_discovery.rs"
       ],
@@ -2805,6 +2838,32 @@
       "follow_up": null
     },
     {
+      "requirement": "TL01-27-3-R002",
+      "text_sha256": "a5ec5a2ef68e541b09fedcf67865d35057b01b589638946a5ad751d0bad22c73",
+      "outcome": "implemented-without-trace",
+      "reason": "TL01-27-3-R002 has focused compiler validation and executable regression evidence; its six-dimension normative trace remains incomplete.",
+      "implementation": [
+        "crates/tondo-compiler/src/meta_derive.rs"
+      ],
+      "tests": [
+        "rust:tondo-compiler:src::meta_derive:providers_return_only_validated_formatted_impl_bodies"
+      ],
+      "follow_up": null
+    },
+    {
+      "requirement": "TL01-27-6-R001",
+      "text_sha256": "2970fd7e0bf8952441fb10c3730a486983e75203a5757fb8e73f2a85e8bc0383",
+      "outcome": "implemented-without-trace",
+      "reason": "TL01-27-6-R001 has focused compiler validation and executable regression evidence; its six-dimension normative trace remains incomplete.",
+      "implementation": [
+        "crates/tondo-compiler/src/meta_source_api.rs"
+      ],
+      "tests": [
+        "rust:tondo-compiler:src::meta_source_api:meta_origins_authorize_only_actual_admitted_source_ranges"
+      ],
+      "follow_up": null
+    },
+    {
       "requirement": "TL01-4-2-R001",
       "text_sha256": "80a6b53f14e2ccca91717a279e5fc3c10005b446c963b2d45e96cf7085641e15",
       "outcome": "implemented-without-trace",
@@ -3972,27 +4031,40 @@
     },
     {
       "requirement": "TT01-13-1-R001",
-      "text_sha256": "6604c54572cd56895802c21bb7bf5ed8fa83ac66ff3009253cbc19605b4f7bf9",
+      "text_sha256": "aae0b202b9a7cef38fa9948d67592825f43824bd288c5cc4fda366bd87c92c69",
       "outcome": "implemented-without-trace",
-      "reason": "TT01-13-1-R001 has an existing implementation at crates/tondo-compiler/src/test_report.rs and executable evidence draft-layer:testing:testing-52-lossless-reporting; its six-dimension normative trace remains incomplete.",
+      "reason": "TT01-13-1-R001 is implemented in the quality tooling and has focused executable evidence; its six-dimension normative trace remains incomplete. Tondo test-report serialization is not evidence for coverage policy or source-bound quality reports.",
       "implementation": [
-        "crates/tondo-compiler/src/test_report.rs"
+        "crates/tondo-reliability/src/quality.rs"
       ],
       "tests": [
-        "draft-layer:testing:testing-52-lossless-reporting"
+        "rust:tondo-reliability:src::quality:explicit_coverage_floor_preserves_observations_and_rejects_below_eighty_percent"
       ],
       "follow_up": null
     },
     {
       "requirement": "TT01-13-1-R002",
-      "text_sha256": "c7d586bcfd55dc59a292bd9e361bae309c1d858b1d5d0c6571be1a94fa4053e6",
+      "text_sha256": "6604c54572cd56895802c21bb7bf5ed8fa83ac66ff3009253cbc19605b4f7bf9",
       "outcome": "implemented-without-trace",
-      "reason": "TT01-13-1-R002 has an existing implementation at crates/tondo-compiler/src/test_report.rs and executable evidence draft-layer:testing:testing-52-lossless-reporting; its six-dimension normative trace remains incomplete.",
+      "reason": "TT01-13-1-R002 is implemented in the quality tooling and has focused executable evidence; its six-dimension normative trace remains incomplete. Tondo test-report serialization is not evidence for coverage policy or source-bound quality reports.",
       "implementation": [
-        "crates/tondo-compiler/src/test_report.rs"
+        "crates/tondo-reliability/src/provenance.rs"
       ],
       "tests": [
-        "draft-layer:testing:testing-52-lossless-reporting"
+        "rust:tondo-reliability:src::provenance:binding_rejects_changed_reports_and_trees"
+      ],
+      "follow_up": null
+    },
+    {
+      "requirement": "TT01-13-1-R003",
+      "text_sha256": "c7d586bcfd55dc59a292bd9e361bae309c1d858b1d5d0c6571be1a94fa4053e6",
+      "outcome": "implemented-without-trace",
+      "reason": "TT01-13-1-R003 is implemented in the quality tooling and has focused executable evidence; its six-dimension normative trace remains incomplete. Tondo test-report serialization is not evidence for coverage policy or source-bound quality reports.",
+      "implementation": [
+        "crates/tondo-reliability/src/provenance.rs"
+      ],
+      "tests": [
+        "rust:tondo-reliability:src::provenance:current_identity_is_stable_and_tracks_inputs"
       ],
       "follow_up": null
     },
@@ -4488,7 +4560,7 @@
     },
     {
       "requirement": "TT01-7-5-R001",
-      "text_sha256": "f340c691705cd1c67283e5aea57a9e693bf351fe1eb85f27624528fb050cb972",
+      "text_sha256": "d0dca69b68c9f2f7ee4b61df4acac064e7f7db9fcd56d6a91960dc98ff0136ae",
       "outcome": "implemented-without-trace",
       "reason": "TT01-7-5-R001 has an existing implementation at crates/tondo-compiler/src/test_result.rs and executable evidence draft-layer:testing:testing-18-terminal-statuses; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -4555,7 +4627,7 @@
       "requirement": "TT01-7-8-R001",
       "text_sha256": "37f96546a9193670ab7aeca4e578d069a5551349463ea1a810794ca3517f3cae",
       "outcome": "implemented-without-trace",
-      "reason": "TT01-7-8-R001 has an existing implementation at crates/tondo-compiler/src/test_limits.rs and executable evidence draft-layer:testing:testing-48-interruption; its six-dimension normative trace remains incomplete.",
+      "reason": "TT01-7-8-R001 has per-phase VM, scheduler and selected hosted memory admission with executable limit tests. Detached host transport, remaining host owners and traversal scratch are still being completed; the existing component tests do not close this whole requirement.",
       "implementation": [
         "crates/tondo-compiler/src/test_limits.rs"
       ],
@@ -4568,25 +4640,64 @@
       "requirement": "TT01-7-8-R002",
       "text_sha256": "794342fec961c225eb74d5e32a70765d2208daba60425e8111e1c4b2a9e5680f",
       "outcome": "implemented-without-trace",
-      "reason": "TT01-7-8-R002 has an existing implementation at crates/tondo-compiler/src/test_limits.rs and executable evidence draft-layer:testing:testing-48-interruption; its six-dimension normative trace remains incomplete.",
+      "reason": "TT01-7-8-R002: The coordinator enforces worker deadlines and the approved Linux descendant provider, including failed cleanup and forced termination. Local CLI evidence exists, but complete resource, interruption and portable integration remain open; test-limit model evidence alone does not close the public requirement.",
       "implementation": [
+        "crates/tondo-cli/src/main.rs",
+        "crates/tondo-cli/src/test_processes.rs",
         "crates/tondo-compiler/src/test_limits.rs"
       ],
       "tests": [
-        "draft-layer:testing:testing-48-interruption"
+        "draft-layer:testing:testing-48-interruption",
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs"
       ],
       "follow_up": null
     },
     {
       "requirement": "TT01-7-8-R003",
+      "text_sha256": "9384c65512e8049a10bd9c63e56e943020faa58197f3479f8298fae470142235",
+      "outcome": "implemented-without-trace",
+      "reason": "TT01-7-8-R003: Process-capable targets preflight the explicit Linux provider before dispatch, including an empty selection, while compilation-only listing remains available. Local public CLI checks pass; the six-dimension trace and portable rejection evidence remain incomplete.",
+      "implementation": [
+        "crates/tondo-cli/src/main.rs",
+        "crates/tondo-cli/src/test_processes.rs"
+      ],
+      "tests": [
+        "rust:tondo-cli:tests::cli:process_tests_require_containment_before_dispatch_and_output_publication"
+      ],
+      "follow_up": null
+    },
+    {
+      "requirement": "TT01-7-8-R004",
+      "text_sha256": "7a533b5d57241d4db09aed08a43110dddb5966801d71a12ea2e6e7d9bbeaa4df",
+      "outcome": "implemented-without-trace",
+      "reason": "TT01-7-8-R004: Fresh Linux containment groups close before inherited pipe reads and terminal publication; normal, failed, timed-out and interrupted workers are covered locally. Revoked-provider reproduction preserves prior reports and stops dispatch. Full integration, portable evidence and the reviewed normative trace remain open.",
+      "implementation": [
+        "crates/tondo-cli/src/main.rs",
+        "crates/tondo-cli/src/test_interrupt.rs",
+        "crates/tondo-cli/src/test_processes.rs"
+      ],
+      "tests": [
+        "rust:tondo-cli:src::main:worker_containment_closes_inherited_pipes_after_leader_exit_and_forced_timeout",
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs"
+      ],
+      "follow_up": null
+    },
+    {
+      "requirement": "TT01-7-8-R005",
       "text_sha256": "fcbb897fa67cc9e0c2da8131d944ca5b238e9e90a46d8140fc45baaf301c7ebe",
       "outcome": "implemented-without-trace",
-      "reason": "TT01-7-8-R003 has an existing implementation at crates/tondo-compiler/src/test_limits.rs and executable evidence draft-layer:testing:testing-48-interruption; its six-dimension normative trace remains incomplete.",
+      "reason": "TT01-7-8-R005: The coordinator enforces worker deadlines and the approved Linux descendant provider, including failed cleanup and forced termination. Local CLI evidence exists, but complete resource, interruption and portable integration remain open; test-limit model evidence alone does not close the public requirement.",
       "implementation": [
+        "crates/tondo-cli/src/main.rs",
+        "crates/tondo-cli/src/test_processes.rs",
         "crates/tondo-compiler/src/test_limits.rs"
       ],
       "tests": [
-        "draft-layer:testing:testing-48-interruption"
+        "draft-layer:testing:testing-48-interruption",
+        "rust:tondo-cli:tests::cli:process_containment_removes_redirected_descendants_after_success_failure_and_timeout",
+        "rust:tondo-cli:tests::cli:process_provider_failure_stops_dispatch_and_preserves_complete_outputs"
       ],
       "follow_up": null
     },
@@ -4760,6 +4871,25 @@
       "follow_up": null
     },
     {
+      "requirement": "TT01-9-3-R001",
+      "text_sha256": "45338ea8f2c0b31bc721583a47069006a2e41023c7748b1937099a50ff92c1ac",
+      "outcome": "implemented-without-trace",
+      "reason": "TT01-9-3-R001 has exact byte transport, active writer capture, atomic raw-byte quotas and JSON/JUnit projections with focused executable evidence; its integrated six-dimension normative trace remains incomplete.",
+      "implementation": [
+        "crates/tondo-compiler/src/process_host.rs",
+        "crates/tondo-compiler/src/test_control.rs",
+        "crates/tondo-compiler/src/test_junit.rs",
+        "crates/tondo-compiler/src/test_output.rs"
+      ],
+      "tests": [
+        "rust:tondo-cli:tests::cli:writer_bytes_are_captured_per_attempt_and_projected_without_loss",
+        "rust:tondo-cli:tests::cli:writer_output_quotas_count_raw_bytes_and_cannot_be_recovered_or_retried",
+        "rust:tondo-compiler:src::process_host:codec_writer_output_uses_the_active_envelope_and_atomic_raw_byte_quota",
+        "rust:tondo-compiler:src::test_output:output_transport_rejects_ambiguous_or_malformed_representations"
+      ],
+      "follow_up": null
+    },
+    {
       "requirement": "TT01-9-4-R001",
       "text_sha256": "4d98117b2b3b30dbe55539b6e540d1ee1d200526159ae95f81561793498827e1",
       "outcome": "implemented-without-trace",
@@ -4826,7 +4956,7 @@
     },
     {
       "requirement": "TT01-9-8-R001",
-      "text_sha256": "f4fee559d61310c59b987f3bdcbbc0e15897c535e655290d636af0563fb23a38",
+      "text_sha256": "994b75521a30039bbe2f9c15f3fe1326fc7fca92c2c8e09b768584930feb36f8",
       "outcome": "implemented-without-trace",
       "reason": "TT01-9-8-R001 has an existing implementation at crates/tondo-compiler/src/test_report.rs and executable evidence draft-layer:testing:testing-52-lossless-reporting; its six-dimension normative trace remains incomplete.",
       "implementation": [

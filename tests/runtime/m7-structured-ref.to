@@ -19,5 +19,5 @@ fn main() {
         assert(value == "after")
     }
 
-    console.print("structured-ref-ok\n")
+    _ = console.print("structured-ref-ok\n")
 }

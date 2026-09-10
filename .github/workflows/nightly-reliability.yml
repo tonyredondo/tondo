@@ -43,7 +43,7 @@ jobs:
       - name: Run complete test gate
         env:
           TONDO_TEST_TARGET: linux-x86_64
-        run: bash scripts/test-gate.sh
+        run: bash scripts/ci-test-scope.sh bash scripts/test-gate.sh
 
       - name: Upload full-gate evidence
         if: always()
@@ -102,7 +102,7 @@ jobs:
           cargo install cargo-mutants --version 27.1.0 --locked
 
       - name: Measure and enforce quality baselines
-        run: bash scripts/quality-gate.sh
+        run: bash scripts/ci-test-scope.sh bash scripts/quality-gate.sh
 
       - name: Upload quality reports
         if: always()

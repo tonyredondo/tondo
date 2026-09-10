@@ -351,7 +351,7 @@ fn fixture_sources(
                 standard_source,
                 PackageAlias::new("tondoStd").map_err(|error| error.to_string())?,
                 Edition::V0_1,
-                ["console", "env", "process", "fs", "json"]
+                ["console", "env", "process", "fs", "json", "io", "bytes"]
                     .into_iter()
                     .map(ModulePath::new)
                     .collect::<Result<Vec<_>, _>>()

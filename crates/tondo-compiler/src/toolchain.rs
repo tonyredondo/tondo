@@ -225,6 +225,9 @@ fn require_generated_path(field: &str, value: &str) -> Result<(), FormatError> {
 }
 
 fn standard_meta_id(standard: &str) -> String {
+    if standard == crate::project::BOOTSTRAP_STANDARD_PACKAGE {
+        return crate::std_meta::STD_META_PACKAGE.into();
+    }
     standard.replace(":std:", ":std-meta:")
 }
 
@@ -255,12 +258,14 @@ fn validate_compilation_target(
 ) -> Result<(), FormatError> {
     match (target, profile) {
         ("tondo-vm-hosted", "hosted") => {
-            if capabilities
-                .iter()
-                .any(|capability| !matches!(capability.as_str(), "console" | "process"))
-            {
+            let supported = crate::driver::BuildTarget::vm_hosted_capabilities();
+            if capabilities.iter().any(|capability| {
+                !supported
+                    .iter()
+                    .any(|candidate| candidate.as_str() == capability)
+            }) {
                 return Err(FormatError::Invalid(
-                    "tondo-vm-hosted only implements console and process capabilities".into(),
+                    "tondo-vm-hosted capability is not implemented by the selected target".into(),
                 ));
             }
         }
@@ -1326,6 +1331,15 @@ pub struct LockedMetaPackage {
 }
 
 impl LockedMetaPackage {
+    /// Canonical package fingerprint used by lock producers and consumers.
+    pub fn computed_content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&meta_content_bytes(
+            &self.id,
+            &self.dependencies,
+            &self.sources,
+        )?))
+    }
+
     fn validate(&self) -> Result<(), FormatError> {
         require_package_id("locked meta package.id", &self.id)?;
         require_hash(&self.content_hash, "locked meta package.content_hash")?;
@@ -1928,8 +1942,7 @@ fn validate_meta_packages(manifest: &Manifest, lock: &Lockfile) -> Result<(), Fo
                 package.id
             )));
         }
-        let bytes = meta_content_bytes(&package.id, &package.dependencies, &locked.sources)?;
-        if locked.content_hash != sha256(&bytes) {
+        if locked.content_hash != locked.computed_content_hash()? {
             return Err(FormatError::Invalid(format!(
                 "content_hash for meta package `{}` is inconsistent",
                 package.id
@@ -4220,7 +4233,7 @@ pub struct GenerationRecord {
 }
 
 impl GenerationRecord {
-    fn validate(&self) -> Result<(), FormatError> {
+    pub(crate) fn validate(&self) -> Result<(), FormatError> {
         if !matches!(self.kind.as_str(), "derive" | "generator") {
             return Err(FormatError::Invalid(format!(
                 "unknown generation kind `{}`",

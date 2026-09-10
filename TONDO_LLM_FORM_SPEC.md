@@ -483,14 +483,14 @@ fn greet(user: User): String {
 
 fn main() {
     let user = User { name: "Tony", age: 42 }
-    console.println(greet(user))
+    _ = console.println(greet(user))
 }
 ~~~
 
 TLF canónico:
 
 ~~~text
-import std.console;type User={name:String;age:Int;};fn greet(user:User):String{"Hello, {user.name}";};fn main(){let user=User{name:"Tony",age:42};console.println(greet(user));}
+import std.console;type User={name:String;age:Int;};fn greet(user:User):String{"Hello, {user.name}";};fn main(){let user=User{name:"Tony",age:42};_=console.println(greet(user));}
 ~~~
 
 La expansión vuelve a producir la fuente Tondo canónica anterior. Los `;`
@@ -512,7 +512,7 @@ Esos saltos físicos son trivia. `tondo llm fmt` devuelve la única línea canó
 Los separadores dentro de strings no cambian:
 
 ~~~text
-fn main(){let text="a;b";console.println(text);}
+fn main(){let text="a;b";_=console.println(text);}
 ~~~
 
 ## 18. Conformidad

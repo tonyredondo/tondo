@@ -12,7 +12,7 @@
   "api": "tondo-std-reflect-0.1/1",
   "source": {
     "path": "crates/tondo-compiler/src/reflect.rs",
-    "sha256": "sha256:8ad04e53b10072c6342b384672354040ac94a37f7b69d72f54bd8a0624f5b8fb"
+    "sha256": "sha256:b6ca9ee1227690c6678c158b01a01d4ae0a7b7195b12f431f4c3ff81d5768077"
   },
   "capabilities": {
     "required": [],

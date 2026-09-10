@@ -71,7 +71,7 @@ fn every_public_signature_has_a_declared_model_law() {
         assert!(seen.insert(id.to_owned()), "duplicate model signature {id}");
     }
 
-    assert_eq!(seen.len(), 216);
+    assert_eq!(seen.len(), 298);
     assert_eq!(registry["summary"]["public_signatures"], seen.len());
 }
 
@@ -116,7 +116,18 @@ fn component_fuzz_evidence_does_not_promote_complete_owner_coverage() {
     for coordinated in registry["owners"].as_array().unwrap() {
         let id = coordinated["id"].as_str().unwrap();
         let test = &coordinated["test"];
-        assert_eq!(test["status"], "verified", "test evidence for {id}");
+        // The filesystem audit reopened full owner evidence: focused File
+        // tests do not establish admission for the other filesystem calls.
+        if id == "std.fs" {
+            assert_eq!(test["status"], "partial", "test evidence for {id}");
+            assert!(
+                test["reason"]
+                    .as_str()
+                    .is_some_and(|reason| !reason.is_empty())
+            );
+        } else {
+            assert_eq!(test["status"], "verified", "test evidence for {id}");
+        }
         assert!(!test["commands"].as_array().unwrap().is_empty());
         assert!(!test["refs"].as_array().unwrap().is_empty());
         for reference in test["refs"].as_array().unwrap() {

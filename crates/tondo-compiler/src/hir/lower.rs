@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "reflection.rs"]
+mod reflection;
+
 use crate::diagnostics::{Diagnostic, DiagnosticCode, PrimaryLocation, Related, Severity};
 use crate::package::{DeclarationPath, ModuleId, Name, Namespace, PackageGraph, SymbolIdentity};
 use crate::resolve::{
@@ -378,6 +381,7 @@ impl<'a> TypeLowerer<'a> {
                 },
             );
         }
+        self.lower_bootstrap_testing_nominal_declarations()?;
         self.lower_bootstrap_yaml_nominal_declarations()?;
         self.lower_bootstrap_encoding_nominal_declarations()?;
         self.lower_bootstrap_serialization_nominal_declarations()?;
@@ -386,7 +390,221 @@ impl<'a> TypeLowerer<'a> {
         self.lower_bootstrap_async_nominal_declarations()?;
         self.lower_bootstrap_sync_nominal_declarations()?;
         self.lower_bootstrap_channel_nominal_declarations()?;
-        self.lower_bootstrap_executor_nominal_declarations()
+        self.lower_bootstrap_executor_nominal_declarations()?;
+        self.lower_reflection_nominals()?;
+        self.lower_bootstrap_fs_nominal_declarations()?;
+        self.lower_bootstrap_console_nominal_declarations()
+    }
+
+    fn lower_bootstrap_fs_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("fs")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        for (name, variants) in [
+            ("FsError", tondo_stdlib::fs::ERROR_VARIANTS),
+            ("OpenMode", tondo_stdlib::fs::OPEN_MODE_VARIANTS),
+            ("FileKind", tondo_stdlib::fs::FILE_KIND_VARIANTS),
+        ] {
+            let name = Name::new(name).expect("filesystem enum name is valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &name) else {
+                return Ok(());
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("filesystem nominal is indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = HirNominalShape::Enum {
+                variants: variants
+                    .iter()
+                    .map(|name| self.bootstrap_variant(symbol, name, Vec::new()))
+                    .collect(),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        let name = Name::new("Metadata").expect("filesystem type name is valid");
+        if let Some(symbol) = self.resolved.bootstrap_nominal(&module, &name) {
+            let declaration = self.resolved.symbol(symbol).expect("metadata is indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let kind = self.bootstrap_nominal_type(&module, "FileKind")?;
+            let size = self.interner.scalar(ScalarType::Int);
+            let read_only = self.interner.scalar(ScalarType::Bool);
+            let shape = HirNominalShape::Record {
+                fields: vec![
+                    self.bootstrap_field(symbol, "kind", kind),
+                    self.bootstrap_field(symbol, "size", size),
+                    self.bootstrap_field(symbol, "readOnly", read_only),
+                ],
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn lower_bootstrap_console_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("console")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let name = Name::new("ConsoleError").expect("console error type name is valid");
+        let Some(symbol) = self.resolved.bootstrap_nominal(&module, &name) else {
+            return Ok(());
+        };
+        let declaration = self
+            .resolved
+            .symbol(symbol)
+            .expect("console nominal is indexed");
+        let self_type = self
+            .interner
+            .nominal(declaration.identity().clone(), Vec::new())?;
+        let io_error = self.standard_io_type("IoError")?;
+        let shape = HirNominalShape::Enum {
+            variants: vec![
+                self.bootstrap_variant(symbol, "Unavailable", Vec::new()),
+                self.bootstrap_variant(symbol, "Closed", Vec::new()),
+                self.bootstrap_variant(symbol, "Cancelled", Vec::new()),
+                self.bootstrap_variant(symbol, "Io", vec![io_error]),
+            ],
+        };
+        self.declarations.insert(
+            symbol,
+            HirTypeDeclaration {
+                symbol,
+                span: declaration.span(),
+                parameters: Vec::new(),
+                kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition { self_type, shape }),
+            },
+        );
+        Ok(())
+    }
+
+    fn lower_bootstrap_testing_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("testing")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let hunk_name = Name::new("TextDiffHunk").expect("testing nominal names are valid");
+        if self
+            .resolved
+            .bootstrap_nominal(&module, &hunk_name)
+            .is_none()
+        {
+            return Ok(());
+        }
+        let uint64 = self.interner.scalar(ScalarType::UInt64);
+        let bool_type = self.interner.scalar(ScalarType::Bool);
+        let int = self.interner.scalar(ScalarType::Int);
+        let string = self.interner.scalar(ScalarType::String);
+        let hunk = self.bootstrap_nominal_type(&module, "TextDiffHunk")?;
+        let hunks = self.interner.intrinsic(IntrinsicType::Array, vec![hunk])?;
+        for name in [
+            "GenerationId",
+            "TextDiffHunk",
+            "TextDiff",
+            "FloatToleranceError",
+            "TempError",
+            "GenerationError",
+        ] {
+            let type_name = Name::new(name).expect("testing nominal names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("nominal symbol is indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name {
+                "GenerationId" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "seed", uint64),
+                        self.bootstrap_field(symbol, "caseIndex", uint64),
+                    ],
+                },
+                "TextDiffHunk" => HirNominalShape::Enum {
+                    variants: ["Equal", "Delete", "Insert"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, vec![string]))
+                        .collect(),
+                },
+                "TextDiff" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "equal", bool_type),
+                        self.bootstrap_field(symbol, "hunks", hunks),
+                        self.bootstrap_field(symbol, "expectedBytes", int),
+                        self.bootstrap_field(symbol, "actualBytes", int),
+                        self.bootstrap_field(symbol, "truncated", bool_type),
+                    ],
+                },
+                "FloatToleranceError" => HirNominalShape::Enum {
+                    variants: ["Negative", "NonFinite", "Overflow"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                        .collect(),
+                },
+                "TempError" => HirNominalShape::Enum {
+                    variants: [
+                        "InvalidPrefix",
+                        "Unavailable",
+                        "PermissionDenied",
+                        "LimitExceeded",
+                        "IoError",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                },
+                "GenerationError" => HirNominalShape::Enum {
+                    variants: ["InvalidBounds", "LimitExceeded", "Exhausted"]
+                        .into_iter()
+                        .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                        .collect(),
+                },
+                _ => unreachable!("the testing nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
     }
 
     fn lower_bootstrap_encoding_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -403,9 +621,7 @@ impl<'a> TypeLowerer<'a> {
             return Ok(());
         }
         let int = self.interner.scalar(ScalarType::Int);
-        let io_error = self
-            .interner
-            .intrinsic(IntrinsicType::IoError, Vec::new())?;
+        let io_error = self.standard_io_type("IoError")?;
         let base64_alphabet = self.bootstrap_nominal_type(&module, "Base64Alphabet")?;
         let base64_padding = self.bootstrap_nominal_type(&module, "Base64Padding")?;
         let hex_case = self.bootstrap_nominal_type(&module, "HexCase")?;
@@ -544,9 +760,7 @@ impl<'a> TypeLowerer<'a> {
         let path_values = self
             .interner
             .intrinsic(IntrinsicType::Array, vec![path_segment])?;
-        let io_error = self
-            .interner
-            .intrinsic(IntrinsicType::IoError, Vec::new())?;
+        let io_error = self.standard_io_type("IoError")?;
         let tag_type = self.bootstrap_nominal_type(&module, "YamlTag")?;
         let scalar_type = self.bootstrap_nominal_type(&module, "YamlScalar")?;
         let _event_type = self.bootstrap_nominal_type(&module, "YamlEvent")?;
@@ -1289,9 +1503,7 @@ impl<'a> TypeLowerer<'a> {
         let string = self.interner.scalar(ScalarType::String);
         let optional_int = self.interner.option(int)?;
         let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
-        let io_error = self
-            .interner
-            .intrinsic(IntrinsicType::IoError, Vec::new())?;
+        let io_error = self.standard_io_type("IoError")?;
 
         for name in ["SerializationEvent", "SerializationError"] {
             let type_name = Name::new(name).expect("serialization nominal names are valid");
@@ -1356,6 +1568,25 @@ impl<'a> TypeLowerer<'a> {
             );
         }
         Ok(())
+    }
+
+    fn standard_io_type(&mut self, name: &'static str) -> Result<TypeId, HirError> {
+        let path = ModulePath::new("io")?;
+        let module = self
+            .packages
+            .module(self.packages.standard(), &path)
+            .ok_or_else(|| crate::package::PackageGraphError::UndeclaredModule {
+                package: self.packages.standard().clone(),
+                module: path,
+            })?;
+        let identity = self.packages.symbol_identity(
+            module,
+            crate::package::Namespace::Type,
+            crate::package::DeclarationPath::single(
+                Name::new(name).expect("standard I/O type names are valid"),
+            ),
+        )?;
+        Ok(self.interner.nominal(identity, Vec::new())?)
     }
 
     fn bootstrap_nominal_type(
@@ -1428,6 +1659,7 @@ impl<'a> TypeLowerer<'a> {
         // so their generic signatures must be available even in a source file
         // that does not import a hosted standard-library module.
         self.push_core_host_contracts(span)?;
+        self.push_reflection_contracts(span)?;
 
         let console = ModulePath::new("console")?;
         let io = ModulePath::new("io")?;
@@ -1481,14 +1713,11 @@ impl<'a> TypeLowerer<'a> {
         let iter_module = self.packages.module(self.packages.standard(), &iter);
         let format = ModulePath::new("format")?;
         let format_module = self.packages.module(self.packages.standard(), &format);
-        let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
-            self.resolved.references().any(|reference| {
-                matches!(
-                    reference.entity(),
-                    ResolvedEntity::Module(module) if module == bytes_module
-                )
-            })
-        });
+        // Public APIs can return Bytes without the consumer naming std.bytes
+        // (for example Generator.nextBytes). Receiver methods belong to the
+        // type, just like String/collection methods; an unrelated explicit
+        // import must not decide whether a valid returned value is usable.
+        let bytes_referenced = bytes_module.is_some();
         let process_referenced = process_module.as_ref().is_some_and(|process_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -1585,14 +1814,9 @@ impl<'a> TypeLowerer<'a> {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
         });
-        let testing_referenced = testing_module.as_ref().is_some_and(|testing_module| {
-            self.resolved.references().any(|reference| {
-                matches!(
-                    reference.entity(),
-                    ResolvedEntity::Module(module) if module == testing_module
-                )
-            })
-        });
+        // A test target also exposes the sealed Shrink prelude method without
+        // requiring a std.testing import. Production graphs omit this module.
+        let testing_referenced = testing_module.is_some();
         let json_referenced = json_module.as_ref().is_some_and(|module| {
             self.resolved.references().any(|reference| {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
@@ -1623,11 +1847,9 @@ impl<'a> TypeLowerer<'a> {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
         });
-        let path_referenced = path_module.as_ref().is_some_and(|module| {
-            self.resolved.references().any(|reference| {
-                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
-            })
-        });
+        // Paths are also returned by std.testing and std.fs. Their receiver
+        // methods must be available without an unrelated std.path reference.
+        let path_referenced = path_module.is_some();
         let fs_referenced = fs_module.as_ref().is_some_and(|module| {
             self.resolved.references().any(|reference| {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
@@ -1709,19 +1931,10 @@ impl<'a> TypeLowerer<'a> {
         let path_error = self
             .interner
             .intrinsic(IntrinsicType::PathError, Vec::new())?;
-        let fs_error = self
-            .interner
-            .intrinsic(IntrinsicType::FsError, Vec::new())?;
         let file = self.interner.intrinsic(IntrinsicType::File, Vec::new())?;
         let directory = self
             .interner
             .intrinsic(IntrinsicType::Directory, Vec::new())?;
-        let metadata = self
-            .interner
-            .intrinsic(IntrinsicType::Metadata, Vec::new())?;
-        let open_mode = self
-            .interner
-            .intrinsic(IntrinsicType::OpenMode, Vec::new())?;
         let math_error = self
             .interner
             .intrinsic(IntrinsicType::MathError, Vec::new())?;
@@ -1757,31 +1970,12 @@ impl<'a> TypeLowerer<'a> {
         let check_outcome = self.interner.result(output, check_error)?;
         let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
         let path_outcome = self.interner.result(path_type, path_error)?;
-        let fs_bytes_outcome = self.interner.result(bytes, fs_error)?;
-        let fs_unit_outcome = self.interner.result(unit, fs_error)?;
-        let fs_file_outcome = self.interner.result(file, fs_error)?;
-        let fs_directory_outcome = self.interner.result(directory, fs_error)?;
-        let fs_metadata_outcome = self.interner.result(metadata, fs_error)?;
-        let fs_file_read = self.interner.option(bytes)?;
-        let fs_file_read_outcome = self.interner.result(fs_file_read, fs_error)?;
-        let fs_file_write_outcome = self.interner.result(int, fs_error)?;
 
         let reader = self.interner.intrinsic(IntrinsicType::Reader, Vec::new())?;
         let writer = self.interner.intrinsic(IntrinsicType::Writer, Vec::new())?;
-        let io_limits = self
-            .interner
-            .intrinsic(IntrinsicType::IoLimits, Vec::new())?;
-        let io_error = self
-            .interner
-            .intrinsic(IntrinsicType::IoError, Vec::new())?;
-        let console_error = self
-            .interner
-            .intrinsic(IntrinsicType::ConsoleError, Vec::new())?;
-        let console_reader_outcome = self.interner.result(reader, console_error)?;
-        let console_writer_outcome = self.interner.result(writer, console_error)?;
-        let console_line = self.interner.option(string)?;
-        let console_line_outcome = self.interner.result(console_line, console_error)?;
-        let reader_bytes = self.interner.option(bytes)?;
+        let io_limits = self.standard_io_type("IoLimits")?;
+        let io_error = self.standard_io_type("IoError")?;
+        let reader_bytes = self.standard_io_type("ReadResult")?;
         let reader_bytes_outcome = self.interner.result(reader_bytes, io_error)?;
         let writer_count_outcome = self.interner.result(int, io_error)?;
         let writer_unit_outcome = self.interner.result(unit, io_error)?;
@@ -3182,6 +3376,29 @@ impl<'a> TypeLowerer<'a> {
         }
 
         if console_referenced {
+            let console_error = self.bootstrap_nominal_type(
+                console_module
+                    .as_ref()
+                    .expect("referenced console module exists"),
+                "ConsoleError",
+            )?;
+            let console_reader_outcome = self.interner.result(reader, console_error)?;
+            let console_writer_outcome = self.interner.result(writer, console_error)?;
+            let console_line = self.interner.option(string)?;
+            let console_line_outcome = self.interner.result(console_line, console_error)?;
+            let console_output_outcome = self.interner.result(unit, console_error)?;
+            for function in [
+                HirBootstrapHostFunction::ConsolePrint,
+                HirBootstrapHostFunction::ConsolePrintln,
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(string, false)],
+                    None,
+                    console_output_outcome,
+                )?;
+            }
             for (function, outcome) in [
                 (
                     HirBootstrapHostFunction::ConsoleStdin,
@@ -3210,7 +3427,7 @@ impl<'a> TypeLowerer<'a> {
                 HirBootstrapHostFunction::ConsoleFlush,
                 Vec::new(),
                 None,
-                unit,
+                console_output_outcome,
             )?;
         }
 
@@ -3263,7 +3480,7 @@ impl<'a> TypeLowerer<'a> {
                 span,
                 HirBootstrapHostFunction::IoReadAll,
                 vec![
-                    (reader, ParameterMode::Var, true),
+                    (reader, ParameterMode::Var, false),
                     (io_limits, ParameterMode::Value, false),
                 ],
                 None,
@@ -3282,6 +3499,10 @@ impl<'a> TypeLowerer<'a> {
         }
 
         if testing_referenced {
+            let testing_module = self
+                .packages
+                .module(self.packages.standard(), &ModulePath::new("testing")?)
+                .expect("the referenced testing module exists");
             let virtual_time = self
                 .interner
                 .intrinsic(IntrinsicType::VirtualTime, Vec::new())?;
@@ -3291,31 +3512,23 @@ impl<'a> TypeLowerer<'a> {
             let float_tolerance = self
                 .interner
                 .intrinsic(IntrinsicType::FloatTolerance, Vec::new())?;
-            let float_tolerance_error = self
-                .interner
-                .intrinsic(IntrinsicType::FloatToleranceError, Vec::new())?;
+            let float_tolerance_error =
+                self.bootstrap_nominal_type(&testing_module, "FloatToleranceError")?;
             let float_tolerance_result = self
                 .interner
                 .result(float_tolerance, float_tolerance_error)?;
-            let text_diff = self
-                .interner
-                .intrinsic(IntrinsicType::TextDiff, Vec::new())?;
+            let text_diff = self.bootstrap_nominal_type(&testing_module, "TextDiff")?;
             let temp_directory = self
                 .interner
                 .intrinsic(IntrinsicType::TempDirectory, Vec::new())?;
-            let temp_error = self
-                .interner
-                .intrinsic(IntrinsicType::TempError, Vec::new())?;
+            let temp_error = self.bootstrap_nominal_type(&testing_module, "TempError")?;
             let temp_result = self.interner.result(temp_directory, temp_error)?;
             let generator = self
                 .interner
                 .intrinsic(IntrinsicType::Generator, Vec::new())?;
-            let generation_id = self
-                .interner
-                .intrinsic(IntrinsicType::GenerationId, Vec::new())?;
-            let generation_error = self
-                .interner
-                .intrinsic(IntrinsicType::GenerationError, Vec::new())?;
+            let generation_id = self.bootstrap_nominal_type(&testing_module, "GenerationId")?;
+            let generation_error =
+                self.bootstrap_nominal_type(&testing_module, "GenerationError")?;
             let uint64 = self.interner.scalar(ScalarType::UInt64);
             let generation_uint_result = self.interner.result(uint64, generation_error)?;
             let generation_bool_result = self.interner.result(bool_type, generation_error)?;
@@ -3389,7 +3602,7 @@ impl<'a> TypeLowerer<'a> {
                 vec![(testing_result, ParameterMode::Value, false)],
                 testing_value,
                 2,
-                Vec::new(),
+                vec![(1, vec![self.prelude_trait_bound("Display")])],
             )?;
             self.push_bootstrap_generic_host_callable(
                 span,
@@ -3397,7 +3610,7 @@ impl<'a> TypeLowerer<'a> {
                 vec![(testing_result, ParameterMode::Value, false)],
                 testing_error,
                 2,
-                vec![(1, vec![self.prelude_trait_bound("Display")])],
+                vec![(0, vec![self.prelude_trait_bound("Display")])],
             )?;
             self.push_bootstrap_host_callable(
                 span,
@@ -3529,6 +3742,17 @@ impl<'a> TypeLowerer<'a> {
                     ],
                 )],
             )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingShrinkCandidates,
+                vec![
+                    (testing_value, ParameterMode::Ref, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                shrink_result,
+                1,
+                vec![(0, vec![self.prelude_trait_bound("Shrink")])],
+            )?;
             self.push_bootstrap_host_callable_with_modes(
                 span,
                 HirBootstrapHostFunction::TestingTextDiffRender,
@@ -3635,19 +3859,29 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 unit,
             )?;
-            let async_leaf =
-                self.interner
-                    .function(FunctionType::new(true, false, Vec::new(), None, unit))?;
+            let test_error = self.interner.generic_parameter(0)?;
+            let test_outcome = self.interner.result(unit, test_error)?;
+            let async_leaf = self.interner.function(FunctionType::new(
+                true,
+                false,
+                Vec::new(),
+                None,
+                test_outcome,
+            ))?;
             for function in [
                 HirBootstrapHostFunction::TestingRunLeaf,
                 HirBootstrapHostFunction::TestingRunSuite,
             ] {
-                self.push_bootstrap_host_callable(
+                self.push_bootstrap_generic_host_callable(
                     span,
                     function,
-                    vec![(string, false), (async_leaf, false)],
-                    None,
+                    vec![
+                        (string, ParameterMode::Value, false),
+                        (async_leaf, ParameterMode::Value, false),
+                    ],
                     unit,
+                    1,
+                    vec![(0, vec![self.prelude_trait_bound("Discard")])],
                 )?;
             }
             self.push_bootstrap_host_callable(
@@ -5550,6 +5784,32 @@ impl<'a> TypeLowerer<'a> {
             }
         }
         if fs_referenced {
+            let metadata = self.bootstrap_nominal_type(
+                fs_module
+                    .as_ref()
+                    .expect("referenced filesystem module exists"),
+                "Metadata",
+            )?;
+            let open_mode = self.bootstrap_nominal_type(
+                fs_module
+                    .as_ref()
+                    .expect("referenced filesystem module exists"),
+                "OpenMode",
+            )?;
+            let fs_error = self.bootstrap_nominal_type(
+                fs_module
+                    .as_ref()
+                    .expect("referenced filesystem module exists"),
+                "FsError",
+            )?;
+            let fs_bytes_outcome = self.interner.result(bytes, fs_error)?;
+            let fs_unit_outcome = self.interner.result(unit, fs_error)?;
+            let fs_file_outcome = self.interner.result(file, fs_error)?;
+            let fs_directory_outcome = self.interner.result(directory, fs_error)?;
+            let fs_metadata_outcome = self.interner.result(metadata, fs_error)?;
+            let fs_file_read = self.interner.option(bytes)?;
+            let fs_file_read_outcome = self.interner.result(fs_file_read, fs_error)?;
+            let fs_file_write_outcome = self.interner.result(int, fs_error)?;
             let path_array = self
                 .interner
                 .intrinsic(IntrinsicType::Array, vec![path_type])?;
@@ -5621,16 +5881,6 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 fs_directory_list_outcome,
             )?;
-            for function in [
-                HirBootstrapHostFunction::FsOpenModeRead,
-                HirBootstrapHostFunction::FsOpenModeWrite,
-                HirBootstrapHostFunction::FsOpenModeReadWrite,
-                HirBootstrapHostFunction::FsOpenModeAppend,
-                HirBootstrapHostFunction::FsOpenModeCreate,
-                HirBootstrapHostFunction::FsOpenModeCreateNew,
-            ] {
-                self.push_bootstrap_host_callable(span, function, Vec::new(), None, open_mode)?;
-            }
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::FsCreateDirectory,
@@ -8283,6 +8533,35 @@ impl<'a> TypeLowerer<'a> {
             .filter(|child| child.kind() == SyntaxKind::TypePath)
             .map(|path| canonical_derive_path(self.sources, file, path))
             .collect::<Result<Vec<_>, _>>()?;
+        let groups = node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::GenericParams)
+            .collect::<Vec<_>>();
+        let mut environment = TypeEnvironment::default();
+        let parameters = self.extend_generics(file, &groups, &mut environment)?;
+        let bound_references = parameters
+            .into_iter()
+            .map(|parameter| parameter.bounds)
+            .collect();
+        let generic_bounds = groups
+            .iter()
+            .flat_map(|group| group.child_nodes())
+            .filter(|child| child.kind() == SyntaxKind::GenericParam)
+            .map(|parameter| {
+                parameter
+                    .child_nodes()
+                    .filter(|child| child.kind() == SyntaxKind::GenericBound)
+                    .flat_map(|bound| bound.child_nodes())
+                    .filter(|child| child.kind() == SyntaxKind::TypePath)
+                    .map(|path| canonical_derive_path(self.sources, file, path))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let trait_arguments = traits_node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::TypePath)
+            .map(|path| self.lower_generic_arguments(file, path, &environment))
+            .collect::<Result<Vec<_>, _>>()?;
         let Some(target_node) = node
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::DeriveTarget)
@@ -8303,7 +8582,10 @@ impl<'a> TypeLowerer<'a> {
         self.derive_requests.push(HirDeriveRequest {
             span: self.sources.span(file, node.range())?,
             generic_parameters,
+            generic_bounds,
+            bound_references,
             traits,
+            trait_arguments,
             target,
         });
         Ok(())
@@ -9251,51 +9533,16 @@ impl<'a> TypeLowerer<'a> {
                         .get(1)
                         .copied()
                         .unwrap_or_else(|| self.interner.error());
-                    let methods: &[(&str, HirSerializationTraitMethod)] =
-                        if name.as_str() == "Encoder" {
-                            &[
-                                ("null", HirSerializationTraitMethod::EncoderNull),
-                                ("bool", HirSerializationTraitMethod::EncoderBool),
-                                ("int", HirSerializationTraitMethod::EncoderInt),
-                                ("uint", HirSerializationTraitMethod::EncoderUInt),
-                                ("float32", HirSerializationTraitMethod::EncoderFloat32),
-                                ("float64", HirSerializationTraitMethod::EncoderFloat64),
-                                ("string", HirSerializationTraitMethod::EncoderString),
-                                ("bytes", HirSerializationTraitMethod::EncoderBytes),
-                                ("base64", HirSerializationTraitMethod::EncoderBase64),
-                                ("startArray", HirSerializationTraitMethod::EncoderStartArray),
-                                ("endArray", HirSerializationTraitMethod::EncoderEndArray),
-                                ("startMap", HirSerializationTraitMethod::EncoderStartMap),
-                                ("mapKey", HirSerializationTraitMethod::EncoderMapKey),
-                                ("endMap", HirSerializationTraitMethod::EncoderEndMap),
-                                (
-                                    "startRecord",
-                                    HirSerializationTraitMethod::EncoderStartRecord,
-                                ),
-                                ("field", HirSerializationTraitMethod::EncoderField),
-                                ("endRecord", HirSerializationTraitMethod::EncoderEndRecord),
-                                ("startEnum", HirSerializationTraitMethod::EncoderStartEnum),
-                                ("endEnum", HirSerializationTraitMethod::EncoderEndEnum),
-                            ]
-                        } else {
-                            &[
-                                ("peek", HirSerializationTraitMethod::DecoderPeek),
-                                ("next", HirSerializationTraitMethod::DecoderNext),
-                                ("base64", HirSerializationTraitMethod::DecoderBase64),
-                                ("own", HirSerializationTraitMethod::DecoderOwn),
-                                ("reject", HirSerializationTraitMethod::DecoderReject),
-                            ]
-                        };
-                    for (method_name, method) in methods {
-                        let function_type = HirPreludeTraitMethod::Serialization(*method)
+                    let methods = HirPreludeTraitMethod::for_trait(name.as_str())
+                        .expect("serialization protocols have a fixed operation set");
+                    for method in methods {
+                        let function_type = method
                             .function_type(&mut self.interner, &[codec, error, target])?
                             .expect("serialization method has a fixed signature");
                         expected.push(ExpectedTraitMethod {
-                            name: Name::new(method_name)
+                            name: Name::new(method.method_name())
                                 .expect("serialization method names are valid"),
-                            key: HirTraitMethodKey::Prelude(HirPreludeTraitMethod::Serialization(
-                                *method,
-                            )),
+                            key: HirTraitMethodKey::Prelude(*method),
                             declaration_span: None,
                             has_default: false,
                             requires_self_send: false,
@@ -9530,7 +9777,13 @@ impl<'a> TypeLowerer<'a> {
         let related = expected
             .declaration_span
             .map(|declaration| vec![("trait method declared here", declaration)]);
-        if callable.function_type != contract.function_type {
+        if callable.function_type != contract.function_type
+            && !super::can_infer_required_suspension(
+                &self.interner,
+                callable,
+                contract.function_type,
+            )
+        {
             let expected_actual = self
                 .interner
                 .canonical(contract.function_type)
@@ -10206,13 +10459,8 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance
-                        | IntrinsicType::FloatToleranceError
-                        | IntrinsicType::TextDiff
                         | IntrinsicType::TempDirectory
-                        | IntrinsicType::TempError
                         | IntrinsicType::Generator
-                        | IntrinsicType::GenerationId
-                        | IntrinsicType::GenerationError
                         | IntrinsicType::Reader
                         | IntrinsicType::Writer
                         | IntrinsicType::IoLimits
@@ -10273,6 +10521,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::ProtoUnknownPolicy
                         | IntrinsicType::ProtoReader
                         | IntrinsicType::ProtoWriter
+                        | IntrinsicType::Reflection(_)
                         | IntrinsicType::UnknownFields => values.push(true),
                     },
                 },
@@ -10598,12 +10847,15 @@ fn called_names(node: SyntaxNodeRef<'_>) -> BTreeSet<String> {
         let Some(name) = name.token().normalized_identifier() else {
             continue;
         };
-        output.insert(name.to_owned());
+        // A qualified method cannot name an unrelated free function. Receiver
+        // dispatch is resolved by the typed checker; only bare calls belong in
+        // the early source-name fixed point.
+        if index == 0 || tokens[index - 1].kind() != TokenKind::Dot {
+            output.insert(name.to_owned());
+        }
 
-        // Keep the nearest qualifier as well as the bare function name.  A
-        // call such as `values.remove()` must not be mistaken for the
-        // compiler-owned `std.fs.remove`, while `time.sleep()` remains an
-        // unambiguous source-level suspension marker.
+        // Keep the nearest qualifier for compiler-owned effect markers such
+        // as `time.sleep`, without confusing `values.remove` with `fs.remove`.
         if index >= 2
             && tokens[index - 1].kind() == TokenKind::Dot
             && tokens[index - 2].kind() == TokenKind::Identifier
@@ -10769,7 +11021,7 @@ fn intrinsic_type(name: &str) -> Option<IntrinsicType> {
     })
 }
 
-fn prelude_trait_arity(name: &str) -> Option<usize> {
+pub(crate) fn prelude_trait_arity(name: &str) -> Option<usize> {
     Some(match name {
         "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Display" | "Shrink" => 0,
         "Iterator" | "AsyncIterator" | "Call" | "CallMut" | "CallOnce" => 1,
@@ -11829,13 +12081,6 @@ mod tests {
              type Item = Int\n\
              impl Contract for Item {\n\
                  fn map[U: Discard](self, value: U): U { value }\n\
-             }\n",
-            "trait Contract {\n\
-                 fn run(self): Int suspends\n\
-             }\n\
-             type Item = Int\n\
-             impl Contract for Item {\n\
-                 fn run(self): Int { 1 }\n\
              }\n",
             "trait Contract {\n\
                  fn run(self): Int\n\

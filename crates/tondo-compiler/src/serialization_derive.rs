@@ -104,6 +104,7 @@ pub enum SerializationDeriveError {
     MissingGenericBound(String),
     InvalidMemberName(String),
     InvalidCodec(String),
+    InvalidRenderedSource(String),
     InvalidAttribute {
         name: String,
         argument: Option<String>,
@@ -160,6 +161,7 @@ impl fmt::Display for SerializationDeriveError {
             Self::InvalidCodec(codec) => {
                 write!(formatter, "serialization derive cannot use codec `{codec}`")
             }
+            Self::InvalidRenderedSource(message) => formatter.write_str(message),
             Self::InvalidAttribute { name, argument } => {
                 write!(
                     formatter,
@@ -255,14 +257,72 @@ pub fn render_serialization_body(
                 &format!("serialization.Decode[{codec}]"),
             );
     }
-    Ok(output)
+    let base = request
+        .trait_identity()
+        .split_once('[')
+        .map_or(request.trait_identity(), |(base, _)| base);
+    let alias = base
+        .rsplit_once('.')
+        .map_or("serialization", |(alias, _)| alias);
+    render_module_alias(output, alias)
+}
+
+fn render_module_alias(
+    mut source: String,
+    alias: &str,
+) -> Result<String, SerializationDeriveError> {
+    if alias == "serialization" {
+        return Ok(source);
+    }
+    use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
+    use crate::syntax::{LexMode, TokenKind, lex};
+    let error = |error: &dyn std::fmt::Display| {
+        SerializationDeriveError::InvalidRenderedSource(error.to_string())
+    };
+    let mut database = SourceDatabase::new();
+    let file = database
+        .add(SourceInput::virtual_file(
+            SourceId::new("meta:serialization").map_err(|e| error(&e))?,
+            ModulePath::new("serialization").map_err(|e| error(&e))?,
+            LogicalPath::new("serialization.to").map_err(|e| error(&e))?,
+            source.as_bytes(),
+        ))
+        .map_err(|e| error(&e))?;
+    let lexed = lex(&database, file, LexMode::Module).map_err(|e| error(&e))?;
+    let tokens = lexed
+        .tokens()
+        .iter()
+        .filter(|token| !token.kind().is_trivia())
+        .collect::<Vec<_>>();
+    let mut ranges = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if token.normalized_identifier() == Some("serialization")
+            && tokens
+                .get(index + 1)
+                .is_some_and(|next| next.kind() == TokenKind::Dot)
+            && (index == 0 || tokens[index - 1].kind() != TokenKind::Dot)
+        {
+            ranges.push(token.range());
+        }
+    }
+    // Token ranges exclude quoted wire names and member names, which are data.
+    for range in ranges.into_iter().rev() {
+        source.replace_range(range.start() as usize..range.end() as usize, alias);
+    }
+    Ok(source)
 }
 
 fn codec_for_request(
     identity: &str,
     direction: SerializationDirection,
 ) -> Result<String, SerializationDeriveError> {
-    let base = direction.trait_identity();
+    let base = identity.split_once('[').map_or(identity, |(base, _)| base);
+    if base.rsplit('.').next() != direction.trait_identity().rsplit('.').next() {
+        return Err(SerializationDeriveError::TraitMismatch {
+            expected: direction.trait_identity().into(),
+            found: identity.into(),
+        });
+    }
     if identity == base {
         return Ok("C".into());
     }
@@ -352,15 +412,18 @@ fn declaration_uses_parameter(declaration: &MetaDeclaration, parameter: &str) ->
                 .into_iter()
                 .any(|ty| uses(&ty))
         }),
-        MetaDeclarationKind::Newtype(underlying) => uses(underlying),
-        MetaDeclarationKind::Trait(_) => false,
+        MetaDeclarationKind::Newtype(underlying) => uses(underlying.source()),
+        MetaDeclarationKind::Trait(_)
+        | MetaDeclarationKind::Alias(_)
+        | MetaDeclarationKind::Function(_)
+        | MetaDeclarationKind::Constant(_) => false,
     }
 }
 
 fn variant_payload_types(variant: &MetaVariant) -> Vec<String> {
     match variant.payload() {
         MetaVariantPayload::Unit => Vec::new(),
-        MetaVariantPayload::Tuple(types) => types.clone(),
+        MetaVariantPayload::Tuple(types) => types.iter().map(|ty| ty.source().to_owned()).collect(),
         MetaVariantPayload::Record(fields) => {
             fields.iter().map(|field| field.ty().to_owned()).collect()
         }
@@ -409,7 +472,10 @@ fn render_encode_impl(
                 "serialization.Encode[C].encode[E, S](inner, var encoder)?",
             );
         }
-        MetaDeclarationKind::Trait(_) => {
+        MetaDeclarationKind::Trait(_)
+        | MetaDeclarationKind::Alias(_)
+        | MetaDeclarationKind::Function(_)
+        | MetaDeclarationKind::Constant(_) => {
             return Err(SerializationDeriveError::UnsupportedTargetKind(
                 declaration.kind().name().into(),
             ));
@@ -873,7 +939,10 @@ fn render_decode_impl(
             );
             line(output, 2, &format!("{}(value)", declaration.identity()));
         }
-        MetaDeclarationKind::Trait(_) => {
+        MetaDeclarationKind::Trait(_)
+        | MetaDeclarationKind::Alias(_)
+        | MetaDeclarationKind::Function(_)
+        | MetaDeclarationKind::Constant(_) => {
             return Err(SerializationDeriveError::UnsupportedTargetKind(
                 declaration.kind().name().into(),
             ));
@@ -1813,6 +1882,7 @@ mod tests {
 
     fn record_snapshot() -> MetaSnapshot {
         MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(
@@ -1832,6 +1902,7 @@ mod tests {
 
     fn enum_snapshot() -> MetaSnapshot {
         MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(
@@ -1876,6 +1947,7 @@ mod tests {
 
     fn generic_record_snapshot() -> MetaSnapshot {
         MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(
@@ -2145,6 +2217,7 @@ mod tests {
             .with_attributes([MetaAttribute::new("ignore", None::<String>).unwrap()])
             .unwrap();
         let snapshot = MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(
@@ -2180,6 +2253,7 @@ mod tests {
         let decoded = derive_named_codec(
             "Annotated",
             MetaSnapshot::new(
+                crate::meta::MetaEnvironment::meta(),
                 [],
                 [],
                 [MetaDeclaration::new(
@@ -2226,6 +2300,7 @@ mod tests {
         let messagepack = derive_named_codec(
             "Annotated",
             MetaSnapshot::new(
+                crate::meta::MetaEnvironment::meta(),
                 [],
                 [],
                 [MetaDeclaration::new(
@@ -2261,6 +2336,7 @@ mod tests {
         let messagepack_decode = derive_named_codec(
             "Annotated",
             MetaSnapshot::new(
+                crate::meta::MetaEnvironment::meta(),
                 [],
                 [],
                 [MetaDeclaration::new(
@@ -2307,6 +2383,7 @@ mod tests {
             .with_attributes([MetaAttribute::new("proto", Some("7")).unwrap()])
             .unwrap();
         let protobuf_snapshot = MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(
@@ -2357,6 +2434,7 @@ mod tests {
         assert!(generic_source.contains("for Boxed[T]"));
 
         let newtype_snapshot = MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(
@@ -2394,6 +2472,7 @@ mod tests {
     #[test]
     fn provider_errors_and_unsupported_shapes_are_closed() {
         let snapshot = MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(
@@ -2426,7 +2505,7 @@ mod tests {
     fn provider_rejects_missing_targets_bounds_and_member_names() {
         let missing = derive_named(
             "Missing",
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             SerializationDirection::Encode,
             &[],
             &[],
@@ -2453,6 +2532,7 @@ mod tests {
         ));
 
         let invalid_field = MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
             [],
             [],
             [MetaDeclaration::new(

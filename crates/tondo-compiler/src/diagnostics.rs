@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::source::{FileId, SourceDatabase, SourceError, SourceId, Span};
+use crate::source::{FileId, SourceDatabase, SourceError, SourceId, Span, TextRange};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticError {
@@ -83,6 +83,7 @@ impl fmt::Display for DiagnosticCode {
 pub enum Severity {
     Error,
     Warning,
+    Note,
 }
 
 impl fmt::Display for Severity {
@@ -90,6 +91,7 @@ impl fmt::Display for Severity {
         match self {
             Self::Error => formatter.write_str("error"),
             Self::Warning => formatter.write_str("warning"),
+            Self::Note => formatter.write_str("note"),
         }
     }
 }
@@ -307,6 +309,23 @@ impl DiagnosticBag {
             .map(|diagnostic| resolve_diagnostic(diagnostic, edition, sources))
             .collect::<Result<Vec<_>, _>>()?;
 
+        Ok(DiagnosticReport::from_rendered(diagnostics))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticReport {
+    diagnostics: Vec<RenderedDiagnostic>,
+}
+
+impl DiagnosticReport {
+    pub(crate) fn append(&mut self, other: Self) {
+        let mut diagnostics = std::mem::take(&mut self.diagnostics);
+        diagnostics.extend(other.diagnostics);
+        *self = Self::from_rendered(diagnostics);
+    }
+
+    fn from_rendered(diagnostics: Vec<RenderedDiagnostic>) -> Self {
         let mut by_id: BTreeMap<String, RenderedDiagnostic> = BTreeMap::new();
         for mut diagnostic in diagnostics {
             normalize_children(&mut diagnostic);
@@ -324,18 +343,82 @@ impl DiagnosticBag {
         let mut merged = by_id.into_values().collect::<Vec<_>>();
         merged.sort_by(compare_diagnostics);
 
-        Ok(DiagnosticReport {
+        Self {
             diagnostics: merged,
-        })
+        }
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiagnosticReport {
-    diagnostics: Vec<RenderedDiagnostic>,
-}
+    /// Restore locations after compiler-owned test source rewriting. A
+    /// diagnostic may anchor synthesized syntax to its declaration, but a fix
+    /// is retained only when every edited byte maps to a verbatim source copy.
+    pub(crate) fn remap_source(
+        &mut self,
+        edition: &str,
+        sources: &SourceDatabase,
+        file: FileId,
+        map_location: impl Fn(TextRange) -> Option<TextRange>,
+        map_edit: impl Fn(TextRange) -> Option<TextRange>,
+    ) -> Result<(), DiagnosticError> {
+        let original = sources.get(file)?;
+        let source_id = original.source_id().as_str();
+        let module = original.module().as_str();
+        let path = original.path().as_str();
+        let mapped_span = |range: &RenderedRange| {
+            let input = TextRange::new(range.start.byte, range.end.byte)?;
+            let range = map_location(input).ok_or(SourceError::InvalidRange(input))?;
+            sources.span(file, range)
+        };
+        for diagnostic in &mut self.diagnostics {
+            if diagnostic.source_id == source_id
+                && diagnostic.module.as_deref() == Some(module)
+                && diagnostic.file.as_deref() == Some(path)
+                && let Some(range) = &diagnostic.range
+            {
+                let location =
+                    resolve_primary(&PrimaryLocation::Source(mapped_span(range)?), sources)?;
+                diagnostic.id =
+                    diagnostic_id(edition, &location, &DiagnosticCode::new(&diagnostic.code)?);
+                diagnostic.source_id = location.source_id;
+                diagnostic.module = location.module;
+                diagnostic.file = location.file;
+                diagnostic.range = location.range;
+            }
+            for related in &mut diagnostic.related {
+                if related.source_id == source_id
+                    && related.module == module
+                    && related.file == path
+                {
+                    *related = resolve_related(
+                        Related::new(&related.message, mapped_span(&related.range)?)?,
+                        sources,
+                    )?;
+                }
+            }
+            let mut fixes = Vec::new();
+            for mut fix in std::mem::take(&mut diagnostic.fixes) {
+                let mut complete = true;
+                for edit in &mut fix.edits {
+                    if edit.source_id == source_id && edit.module == module && edit.file == path {
+                        let input = TextRange::new(edit.range.start.byte, edit.range.end.byte)?;
+                        let Some(range) = map_edit(input) else {
+                            complete = false;
+                            break;
+                        };
+                        edit.range = resolve_range(sources.span(file, range)?, sources)?;
+                        edit.module = original.module().to_string();
+                        edit.file = original.path().to_string();
+                    }
+                }
+                if complete {
+                    fixes.push(fix);
+                }
+            }
+            diagnostic.fixes = fixes;
+        }
+        *self = Self::from_rendered(std::mem::take(&mut self.diagnostics));
+        Ok(())
+    }
 
-impl DiagnosticReport {
     pub fn diagnostics(&self) -> &[RenderedDiagnostic] {
         &self.diagnostics
     }
@@ -480,6 +563,15 @@ fn resolve_diagnostic(
     let fixes = diagnostic
         .fixes
         .into_iter()
+        .filter(|fix| {
+            // A source map attributes an error, not a replacement. Generated
+            // tokens cannot authorize edits to the provider's input declaration.
+            !fix.edits.iter().any(|edit| {
+                sources
+                    .get(edit.span.file())
+                    .is_ok_and(|file| file.origin() == crate::source::SourceOrigin::GeneratedMeta)
+            })
+        })
         .map(|fix| resolve_fix(fix, sources))
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -694,6 +786,164 @@ mod tests {
                 bytes,
             ))
             .unwrap()
+    }
+
+    #[test]
+    fn generated_test_mapping_rebinds_ids_related_locations_and_only_verbatim_fixes() {
+        let mut generated = SourceDatabase::new();
+        let file = add_source(
+            &mut generated,
+            "root:example",
+            "example",
+            "tests/example.to",
+            vec![b' '; 40],
+        );
+        let span = |start, end| {
+            generated
+                .span(file, TextRange::new(start, end).unwrap())
+                .unwrap()
+        };
+        let mut bag = DiagnosticBag::new();
+        bag.push(
+            Diagnostic::new(
+                Severity::Error,
+                DiagnosticCode::new("E1102").unwrap(),
+                "wrong type",
+                PrimaryLocation::Source(span(13, 16)),
+            )
+            .unwrap()
+            .with_related(Related::new("related", span(14, 15)).unwrap())
+            .with_fix(
+                Fix::new(
+                    "copied edit",
+                    Applicability::Safe,
+                    vec![TextEdit::new(span(15, 16), "x")],
+                )
+                .unwrap(),
+            )
+            .with_fix(
+                Fix::new(
+                    "generated edit",
+                    Applicability::Safe,
+                    vec![TextEdit::new(span(0, 1), "x")],
+                )
+                .unwrap(),
+            ),
+        );
+        let mut report = bag.resolve("0.1", &generated).unwrap();
+        let old_id = report.diagnostics()[0].id().to_owned();
+        let mut original = SourceDatabase::new();
+        let original_file = add_source(
+            &mut original,
+            "root:example",
+            "example",
+            "tests/example.to",
+            "é\nbad\n".as_bytes().to_vec(),
+        );
+        let copy = |range: TextRange| {
+            (range.start() >= 10 && range.end() <= 17)
+                .then(|| TextRange::new(range.start() - 10, range.end() - 10).unwrap())
+        };
+        report
+            .remap_source(
+                "0.1",
+                &original,
+                original_file,
+                |range| copy(range).or_else(|| Some(TextRange::new(0, 7).unwrap())),
+                copy,
+            )
+            .unwrap();
+        let mut expected = DiagnosticBag::new();
+        expected.push(
+            Diagnostic::new(
+                Severity::Error,
+                DiagnosticCode::new("E1102").unwrap(),
+                "wrong type",
+                PrimaryLocation::Source(
+                    original
+                        .span(original_file, TextRange::new(3, 6).unwrap())
+                        .unwrap(),
+                ),
+            )
+            .unwrap(),
+        );
+        let expected = expected.resolve("0.1", &original).unwrap();
+        let diagnostic = &report.diagnostics()[0];
+        assert_ne!(diagnostic.id(), old_id);
+        assert_eq!(diagnostic.id(), expected.diagnostics()[0].id());
+        assert_eq!(diagnostic.range, expected.diagnostics()[0].range);
+        assert_eq!(diagnostic.related[0].range.start.byte, 4);
+        assert_eq!(diagnostic.related[0].range.start.line, Some(1));
+        assert_eq!(diagnostic.fixes.len(), 1);
+        assert_eq!(diagnostic.fixes[0].title, "copied edit");
+        assert_eq!(diagnostic.fixes[0].edits[0].range.start.byte, 5);
+    }
+
+    #[test]
+    fn generated_test_mapping_preserves_other_files_in_the_same_package() {
+        let mut sources = SourceDatabase::new();
+        let first = add_source(
+            &mut sources,
+            "root:example",
+            "example",
+            "tests/first.to",
+            vec![b' '; 40],
+        );
+        let second = add_source(
+            &mut sources,
+            "root:example",
+            "example",
+            "tests/second.to",
+            vec![b' '; 40],
+        );
+        let span = |file| sources.span(file, TextRange::new(13, 16).unwrap()).unwrap();
+        let mut bag = DiagnosticBag::new();
+        for (file, other) in [(first, second), (second, first)] {
+            bag.push(
+                Diagnostic::new(
+                    Severity::Error,
+                    DiagnosticCode::new("E1102").unwrap(),
+                    "wrong type",
+                    PrimaryLocation::Source(span(file)),
+                )
+                .unwrap()
+                .with_related(Related::new("related", span(other)).unwrap())
+                .with_fix(
+                    Fix::new(
+                        "both files",
+                        Applicability::Safe,
+                        vec![
+                            TextEdit::new(span(file), "x"),
+                            TextEdit::new(span(other), "y"),
+                        ],
+                    )
+                    .unwrap(),
+                ),
+            );
+        }
+        let mut report = bag.resolve("0.1", &sources).unwrap();
+        let second_before = report.diagnostics()[1].clone();
+        let first_related = report.diagnostics()[0].related.clone();
+        let copy = |range: TextRange| TextRange::new(range.start() - 10, range.end() - 10).ok();
+        report
+            .remap_source("0.1", &sources, first, copy, copy)
+            .unwrap();
+        assert_eq!(report.diagnostics().len(), 2);
+        let first_after = &report.diagnostics()[0];
+        let second_after = &report.diagnostics()[1];
+        assert_eq!(first_after.range.as_ref().unwrap().start.byte, 3);
+        assert_eq!(first_after.related, first_related);
+        assert_eq!(second_after.id, second_before.id);
+        assert_eq!(second_after.file, second_before.file);
+        assert_eq!(second_after.range, second_before.range);
+        assert_eq!(second_after.related[0].range.start.byte, 3);
+        for diagnostic in report.diagnostics() {
+            assert_eq!(diagnostic.fixes.len(), 1);
+            for edit in &diagnostic.fixes[0].edits {
+                let expected = if edit.file == "tests/first.to" { 3 } else { 13 };
+                assert_eq!(edit.range.start.byte, expected);
+            }
+        }
     }
 
     #[test]

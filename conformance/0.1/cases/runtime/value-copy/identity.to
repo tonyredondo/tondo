@@ -35,5 +35,5 @@ fn main() {
     assert(copiedContainer[0] == first)
     assert(copiedContainer[1] == other)
 
-    console.print("identity\n")
+    _ = console.print("identity\n")
 }

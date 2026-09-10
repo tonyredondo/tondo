@@ -50,7 +50,8 @@ jq -e '
   and $root.promotion.status == "pending"
   and $root.summary.verified_rows == 0
   and $root.summary.partial_rows + $root.summary.pending_rows == $root.summary.rows
-  and any($root.owners[]; .id == "std.reflect" and .status == "partial")
+  and any($root.owners[]; .id == "std.reflect" and .status == "pending"
+    and (.evidence.cases | index("reflect-public")) != null)
   and any($root.owners[]; .id == "std.async" and .status == "pending" and (.rows | length) == 12)
   and all(["std.serialization", "std.json", "std.messagepack", "std.protobuf"][];
     . as $owner_id

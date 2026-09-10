@@ -80,7 +80,9 @@ jq -e \
         and (($row.stage_refs | keys_unsorted) | sort) == (stage_ids | sort)
         and all(stage_ids[]; . as $id | ($row.stage_refs[$id] | type == "string" and length > 0))
         and (if $row.kind == "signature" then
-              ($row.signature | startswith("pub "))
+              (any($api[0].rows[];
+                ("signature:" + .id) == $row.id and .signature == $row.signature
+                and (.declaring_trait // null) == ($row.declaring_trait // null)))
               and ($row.symbol | startswith("std."))
               and ($row.source.audit | startswith("testing/stdlib-public-api.json#rows/"))
             elif $row.kind == "requirement" then

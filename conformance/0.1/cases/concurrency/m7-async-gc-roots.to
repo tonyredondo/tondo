@@ -34,5 +34,5 @@ fn main() {
     }
 
     assert(holdSuspendedValue() == "retained")
-    console.print("async-gc-roots-ok\n")
+    _ = console.print("async-gc-roots-ok\n")
 }

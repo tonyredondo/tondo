@@ -209,7 +209,15 @@ impl NameResolver<'_> {
                 .filter(|child| child.kind() == SyntaxKind::Parameter)
                 .filter_map(parameter_name_token)
                 .collect::<Vec<_>>();
-            self.declare_tokens(parameter_tokens, Namespace::Value, LocalKind::Parameter)?;
+            let kind = if node
+                .child_nodes()
+                .any(|child| child.kind() == SyntaxKind::Block)
+            {
+                LocalKind::Parameter
+            } else {
+                LocalKind::SignatureParameter
+            };
+            self.declare_tokens(parameter_tokens, Namespace::Value, kind)?;
         } else {
             self.push_scope();
         }

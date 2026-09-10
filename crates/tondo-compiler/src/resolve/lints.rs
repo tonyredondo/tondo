@@ -88,7 +88,7 @@ fn lint_unused_locals(
         let (code, noun) = match local.kind() {
             LocalKind::Parameter | LocalKind::ClosureParameter => ("W1003", "parameter"),
             LocalKind::Binding | LocalKind::Pattern | LocalKind::ForPattern => ("W1002", "binding"),
-            LocalKind::GenericParameter => continue,
+            LocalKind::GenericParameter | LocalKind::SignatureParameter => continue,
         };
         push(
             diagnostics,

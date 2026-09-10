@@ -29,5 +29,5 @@ fn main(): !(env.EnvError | bytes.BytesError) {
         none => ()
         some(_) => assert(false)
     }
-    console.print("env-ok\n")
+    _ = console.print("env-ok\n")
 }

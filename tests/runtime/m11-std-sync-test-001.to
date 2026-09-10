@@ -26,5 +26,5 @@ fn main(): !sync.SyncError {
         some(value) => assert(value.value == 41)
         none => assert(false)
     }
-    console.println("sync-test-ok")
+    _ = console.println("sync-test-ok")
 }

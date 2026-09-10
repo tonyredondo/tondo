@@ -86,5 +86,5 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendE
     let _ = actor_mailbox()?
     let _ = blocking_bridge()?
     let _ = cancel_and_drain()?
-    console.println("executor-doc-ok")
+    _ = console.println("executor-doc-ok")
 }

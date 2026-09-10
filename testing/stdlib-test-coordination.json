@@ -85,6 +85,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-async-check.sh",
           "scripts/stdlib-async-test.sh",
@@ -148,6 +149,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-bytes-check.sh",
           "scripts/stdlib-bytes-test.sh",
@@ -335,6 +337,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-collections-test.sh",
@@ -372,49 +375,49 @@
       "contract": "testing/stdlib-hosted.json",
       "public_api": [
         {
-          "id": "std.console:10",
-          "symbol": "std.console.stdin",
-          "signature": "pub fn stdin(): std.io.Reader ! ConsoleError",
-          "implementation_status": "verified",
-          "missing": []
-        },
-        {
-          "id": "std.console:11",
-          "symbol": "std.console.stdout",
-          "signature": "pub fn stdout(): std.io.Writer ! ConsoleError",
-          "implementation_status": "verified",
-          "missing": []
-        },
-        {
           "id": "std.console:12",
-          "symbol": "std.console.stderr",
-          "signature": "pub fn stderr(): std.io.Writer ! ConsoleError",
+          "symbol": "std.console.stdin",
+          "signature": "pub fn stdin(): Input ! ConsoleError",
           "implementation_status": "verified",
           "missing": []
         },
         {
           "id": "std.console:13",
-          "symbol": "std.console.readLine",
-          "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError suspends",
+          "symbol": "std.console.stdout",
+          "signature": "pub fn stdout(): Output ! ConsoleError",
           "implementation_status": "verified",
           "missing": []
         },
         {
           "id": "std.console:14",
+          "symbol": "std.console.stderr",
+          "signature": "pub fn stderr(): Output ! ConsoleError",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.console:15",
+          "symbol": "std.console.readLine",
+          "signature": "pub fn readLine(input: var Input): String? ! ConsoleError suspends",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.console:16",
           "symbol": "std.console.print",
           "signature": "pub fn print(value: String): Unit ! ConsoleError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.console:15",
+          "id": "std.console:17",
           "symbol": "std.console.println",
           "signature": "pub fn println(value: String): Unit ! ConsoleError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.console:16",
+          "id": "std.console:18",
           "symbol": "std.console.flush",
           "signature": "pub fn flush(): Unit ! ConsoleError suspends",
           "implementation_status": "verified",
@@ -448,6 +451,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-hosted-check.sh",
           "scripts/stdlib-console-test.sh",
@@ -460,7 +464,10 @@
           "crates/tondo-compiler/src/process_host.rs",
           "crates/tondo-compiler/src/driver.rs",
           "tests/runtime/m11-std-console-001.to",
-          "scripts/stdlib-console-test.sh"
+          "scripts/stdlib-console-test.sh",
+          "crates/tondo-cli/tests/cli.rs#console_public_errors_and_results_execute",
+          "crates/tondo-compiler/src/process_host.rs#console_line_waits_for_complete_vm_result_admission",
+          "crates/tondo-compiler/src/process_host.rs#console_cancellation_retains_its_nominal_error_at_the_exact_budget"
         ]
       },
       "fuzz": {
@@ -576,6 +583,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-core-test.sh",
@@ -688,6 +696,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-env-check.sh",
           "scripts/stdlib-env-test.sh",
@@ -724,35 +733,35 @@
       "contract": "testing/stdlib-core.json",
       "public_api": [
         {
-          "id": "std.format:256",
+          "id": "std.format:261",
           "symbol": "std.format.Builder.new",
           "signature": "pub fn Builder.new(): Builder",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.format:257",
+          "id": "std.format:262",
           "symbol": "std.format.Builder.append",
           "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.format:258",
+          "id": "std.format:263",
           "symbol": "std.format.Builder.finish",
           "signature": "pub fn Builder.finish(var self): String ! FormatError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.format:259",
+          "id": "std.format:264",
           "symbol": "std.format.format",
           "signature": "pub fn format[T: Display](value: T): String ! FormatError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.format:260",
+          "id": "std.format:265",
           "symbol": "std.format.join",
           "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
           "implementation_status": "verified",
@@ -786,6 +795,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-format-test.sh",
@@ -829,98 +839,98 @@
       "contract": "testing/stdlib-hosted.json",
       "public_api": [
         {
-          "id": "std.fs:85",
+          "id": "std.fs:107",
           "symbol": "std.fs.open",
           "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:86",
+          "id": "std.fs:108",
           "symbol": "std.fs.openDirectory",
           "signature": "pub fn openDirectory(path: Path): Directory ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:87",
+          "id": "std.fs:109",
           "symbol": "std.fs.readAll",
           "signature": "pub fn readAll(path: Path): Bytes ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:88",
+          "id": "std.fs:110",
           "symbol": "std.fs.writeAll",
           "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:89",
+          "id": "std.fs:111",
           "symbol": "std.fs.createDirectory",
           "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:90",
+          "id": "std.fs:112",
           "symbol": "std.fs.remove",
           "signature": "pub fn remove(path: Path): Unit ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:91",
+          "id": "std.fs:113",
           "symbol": "std.fs.metadata",
           "signature": "pub fn metadata(path: Path): Metadata ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:92",
+          "id": "std.fs:114",
           "symbol": "std.fs.list",
           "signature": "pub fn list(path: Path): Array[Path] ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:93",
+          "id": "std.fs:115",
           "symbol": "std.fs.rename",
           "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:94",
+          "id": "std.fs:116",
           "symbol": "std.fs.atomicWrite",
           "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:95",
+          "id": "std.fs:117",
           "symbol": "std.fs.File.read",
           "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:96",
+          "id": "std.fs:118",
           "symbol": "std.fs.File.write",
           "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:97",
+          "id": "std.fs:119",
           "symbol": "std.fs.File.flush",
           "signature": "pub fn File.flush(var self): Unit ! FsError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.fs:98",
+          "id": "std.fs:120",
           "symbol": "std.fs.Directory.list",
           "signature": "pub fn Directory.list(var self): Array[Path] ! FsError suspends",
           "implementation_status": "verified",
@@ -953,7 +963,8 @@
         ]
       },
       "test": {
-        "status": "verified",
+        "status": "partial",
+        "reason": "Enums, File I/O, path mutations, ordinary Metadata snapshots, Directory storage and bounded readAll/listing admission have executable regressions included in joint workspace validation. Complete owner promotion and public-row conformance evidence remain pending.",
         "commands": [
           "scripts/stdlib-hosted-check.sh",
           "scripts/stdlib-fs-test.sh",
@@ -964,9 +975,18 @@
         ],
         "refs": [
           "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/process_host.rs#filesystem_open_admits_the_result_before_creating_or_truncating",
+          "crates/tondo-compiler/src/process_host.rs#filesystem_open_releases_path_storage_and_preserves_error_results",
+          "crates/tondo-compiler/src/process_host.rs#filesystem_mutations_wait_for_complete_vm_result_admission",
+          "crates/tondo-compiler/src/process_host.rs#filesystem_atomic_write_preserves_unowned_temporaries_and_cleans_its_own",
+          "crates/tondo-compiler/src/process_host.rs#filesystem_metadata_admission_releases_scratch_without_allocating_handles",
+          "crates/tondo-compiler/src/process_host.rs#filesystem_metadata_nominal_results_survive_phase_admission_and_cleanup",
+          "crates/tondo-cli/tests/cli.rs#filesystem_metadata_exposes_public_snapshot_values",
+          "crates/tondo-cli/tests/cli.rs#filesystem_metadata_observes_symlinks_and_other_entries_without_following_them",
           "crates/tondo-compiler/src/driver.rs",
           "tests/runtime/m11-std-fs-001.to",
-          "scripts/stdlib-fs-test.sh"
+          "scripts/stdlib-fs-test.sh",
+          "crates/tondo-cli/tests/cli.rs"
         ]
       },
       "fuzz": {
@@ -993,30 +1013,51 @@
       "contract": "testing/stdlib-core.json",
       "public_api": [
         {
-          "id": "std.io:286",
+          "id": "std.io:285",
+          "symbol": "std.io.Reader.read",
+          "signature": "fn read(var self, max: Int): ReadResult ! IoError suspends",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.io:288",
+          "symbol": "std.io.Writer.write",
+          "signature": "fn write(var self, data: Bytes): Int ! IoError suspends",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.io:289",
+          "symbol": "std.io.Writer.flush",
+          "signature": "fn flush(var self): Unit ! IoError suspends",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.io:291",
           "symbol": "std.io.defaultLimits",
           "signature": "pub fn defaultLimits(): IoLimits",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.io:287",
+          "id": "std.io:292",
           "symbol": "std.io.limits",
           "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.io:288",
+          "id": "std.io:293",
           "symbol": "std.io.readAll",
-          "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends",
+          "signature": "pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.io:289",
+          "id": "std.io:294",
           "symbol": "std.io.writeAll",
-          "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends",
+          "signature": "pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends",
           "implementation_status": "verified",
           "missing": []
         }
@@ -1047,6 +1088,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-io-test.sh",
@@ -1058,7 +1100,10 @@
           "crates/tondo-stdlib/src/io.rs",
           "crates/tondo-compiler/src/process_host.rs",
           "tests/runtime/m11-std-io-001.to",
-          "scripts/stdlib-io-test.sh"
+          "scripts/stdlib-io-test.sh",
+          "crates/tondo-compiler/src/bootstrap/io.to",
+          "crates/tondo-compiler/src/bootstrap/console_io.to",
+          "crates/tondo-cli/tests/cli.rs"
         ]
       },
       "fuzz": {
@@ -1084,6 +1129,13 @@
       "leaf": "STD-A-ITER-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
       "public_api": [
+        {
+          "id": "std.iter:162",
+          "symbol": "std.iter.Iterator.next",
+          "signature": "fn next(mut self): T?",
+          "implementation_status": "verified",
+          "missing": []
+        },
         {
           "id": "std.iter:164",
           "symbol": "std.iter.Iterator.map",
@@ -1140,6 +1192,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-iter-test.sh",
@@ -1366,6 +1419,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-json-check.sh",
           "scripts/stdlib-json-test.sh",
@@ -1404,70 +1458,70 @@
       "contract": "testing/stdlib-core.json",
       "public_api": [
         {
-          "id": "std.math:235",
+          "id": "std.math:240",
           "symbol": "std.math.floor",
           "signature": "pub fn floor(value: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:236",
+          "id": "std.math:241",
           "symbol": "std.math.ceil",
           "signature": "pub fn ceil(value: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:237",
+          "id": "std.math:242",
           "symbol": "std.math.round",
           "signature": "pub fn round(value: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:238",
+          "id": "std.math:243",
           "symbol": "std.math.roundTiesAway",
           "signature": "pub fn roundTiesAway(value: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:239",
+          "id": "std.math:244",
           "symbol": "std.math.truncate",
           "signature": "pub fn truncate(value: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:240",
+          "id": "std.math:245",
           "symbol": "std.math.sqrt",
           "signature": "pub fn sqrt(value: Float): Float ! MathError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:241",
+          "id": "std.math:246",
           "symbol": "std.math.fma",
           "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:242",
+          "id": "std.math:247",
           "symbol": "std.math.abs",
           "signature": "pub fn abs(value: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:243",
+          "id": "std.math:248",
           "symbol": "std.math.min",
           "signature": "pub fn min(a: Float, b: Float): Float",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.math:244",
+          "id": "std.math:249",
           "symbol": "std.math.max",
           "signature": "pub fn max(a: Float, b: Float): Float",
           "implementation_status": "verified",
@@ -1500,6 +1554,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-math-test.sh",
@@ -1701,6 +1756,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-messagepack-check.sh",
           "scripts/stdlib-messagepack-test.sh",
@@ -1737,7 +1793,183 @@
       "id": "std.meta",
       "leaf": "STD-A-META-EVIDENCE-001",
       "contract": "testing/stdlib-meta.json",
-      "public_api": [],
+      "public_api": [
+        {
+          "id": "std.meta:15",
+          "symbol": "std.meta.TypeRef.identity",
+          "signature": "pub fn TypeRef.identity(self): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:16",
+          "symbol": "std.meta.GenerateRequest.snapshot",
+          "signature": "pub fn GenerateRequest.snapshot(self): Snapshot",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:17",
+          "symbol": "std.meta.GenerateRequest.inputs",
+          "signature": "pub fn GenerateRequest.inputs(self): Array[Input]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:18",
+          "symbol": "std.meta.GenerateRequest.outputs",
+          "signature": "pub fn GenerateRequest.outputs(self): Array[OutputSpec]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:19",
+          "symbol": "std.meta.GenerateRequest.limits",
+          "signature": "pub fn GenerateRequest.limits(self): Limits",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:20",
+          "symbol": "std.meta.GenerateRequest.input",
+          "signature": "pub fn GenerateRequest.input(self, name: String): Input ! Error",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:21",
+          "symbol": "std.meta.DeriveRequest.snapshot",
+          "signature": "pub fn DeriveRequest.snapshot(self): Snapshot",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:22",
+          "symbol": "std.meta.DeriveRequest.target",
+          "signature": "pub fn DeriveRequest.target(self): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:23",
+          "symbol": "std.meta.DeriveRequest.module",
+          "signature": "pub fn DeriveRequest.module(self): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:24",
+          "symbol": "std.meta.DeriveRequest.traitIdentity",
+          "signature": "pub fn DeriveRequest.traitIdentity(self): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:25",
+          "symbol": "std.meta.DeriveRequest.bounds",
+          "signature": "pub fn DeriveRequest.bounds(self): Array[String]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:26",
+          "symbol": "std.meta.DeriveRequest.span",
+          "signature": "pub fn DeriveRequest.span(self): Span",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:27",
+          "symbol": "std.meta.DeriveRequest.limits",
+          "signature": "pub fn DeriveRequest.limits(self): Limits",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:28",
+          "symbol": "std.meta.GenerateRequest.sourceBuilder",
+          "signature": "pub fn GenerateRequest.sourceBuilder(self): SourceBuilder",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:29",
+          "symbol": "std.meta.DeriveRequest.sourceBuilder",
+          "signature": "pub fn DeriveRequest.sourceBuilder(self): SourceBuilder",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:30",
+          "symbol": "std.meta.SourceBuilder.outputs",
+          "signature": "pub fn SourceBuilder.outputs(self): Array[OutputSpec]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:31",
+          "symbol": "std.meta.SourceBuilder.renderType",
+          "signature": "pub fn SourceBuilder.renderType(mut self, path: String, ty: TypeRef): String ! Error",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:32",
+          "symbol": "std.meta.SourceBuilder.add",
+          "signature": "pub fn SourceBuilder.add(mut self, path: String, source: String): Unit ! Error",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:33",
+          "symbol": "std.meta.SourceBuilder.finish",
+          "signature": "pub fn SourceBuilder.finish(self): GenerateResponse ! Error",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:34",
+          "symbol": "std.meta.SourceBuilder.finishDerive",
+          "signature": "pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:35",
+          "symbol": "std.meta.stringLiteral",
+          "signature": "pub fn stringLiteral(value: String): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:36",
+          "symbol": "std.meta.indentation",
+          "signature": "pub fn indentation(level: UInt32): String ! Error",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:37",
+          "symbol": "std.meta.api",
+          "signature": "pub fn api(): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:38",
+          "symbol": "std.meta.target",
+          "signature": "pub fn target(): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.meta:39",
+          "symbol": "std.meta.profile",
+          "signature": "pub fn profile(): String",
+          "implementation_status": "verified",
+          "missing": []
+        }
+      ],
       "requirements": [
         "requirement:std.meta:canonical-rendering",
         "requirement:std.meta:compile-time-budget",
@@ -1762,8 +1994,10 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-meta-check.sh",
+          "scripts/stdlib-meta-test.sh",
           "scripts/stdlib-owner-evidence-check.sh",
           "cargo test -p tondo-compiler --locked --lib meta::tests",
           "cargo test -p tondo-compiler --locked --lib std_meta::tests",
@@ -1773,7 +2007,10 @@
         "refs": [
           "crates/tondo-compiler/src/meta.rs",
           "crates/tondo-compiler/src/std_meta.rs",
-          "crates/tondo-compiler/tests/std_meta_conformance.rs"
+          "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "crates/tondo-compiler/src/meta_frontend.rs",
+          "crates/tondo-compiler/src/project.rs",
+          "crates/tondo-cli/tests/cli.rs"
         ]
       },
       "fuzz": {
@@ -1800,70 +2037,70 @@
       "contract": "testing/stdlib-hosted.json",
       "public_api": [
         {
-          "id": "std.path:47",
+          "id": "std.path:68",
           "symbol": "std.path.Path.fromString",
           "signature": "pub fn Path.fromString(value: String): Path ! PathError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:48",
+          "id": "std.path:69",
           "symbol": "std.path.Path.fromBytes",
           "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:49",
+          "id": "std.path:70",
           "symbol": "std.path.Path.join",
           "signature": "pub fn Path.join(self, component: String): Path ! PathError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:50",
+          "id": "std.path:71",
           "symbol": "std.path.Path.parent",
           "signature": "pub fn Path.parent(self): Path?",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:51",
+          "id": "std.path:72",
           "symbol": "std.path.Path.fileName",
           "signature": "pub fn Path.fileName(self): String?",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:52",
+          "id": "std.path:73",
           "symbol": "std.path.Path.extension",
           "signature": "pub fn Path.extension(self): String?",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:53",
+          "id": "std.path:74",
           "symbol": "std.path.Path.kind",
           "signature": "pub fn Path.kind(self): Bool",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:54",
+          "id": "std.path:75",
           "symbol": "std.path.Path.isEmpty",
           "signature": "pub fn Path.isEmpty(self): Bool",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:55",
+          "id": "std.path:76",
           "symbol": "std.path.Path.toString",
           "signature": "pub fn Path.toString(self): String ! PathError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.path:56",
+          "id": "std.path:77",
           "symbol": "std.path.Path.toBytes",
           "signature": "pub fn Path.toBytes(self): Bytes",
           "implementation_status": "verified",
@@ -1898,6 +2135,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-hosted-check.sh",
           "scripts/stdlib-path-test.sh",
@@ -1935,119 +2173,119 @@
       "contract": "testing/stdlib-hosted.json",
       "public_api": [
         {
-          "id": "std.process:148",
+          "id": "std.process:209",
           "symbol": "std.process.command",
           "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:149",
+          "id": "std.process:210",
           "symbol": "std.process.shell",
           "signature": "pub fn shell(command: String): Command ! ProcessError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:150",
+          "id": "std.process:211",
           "symbol": "std.process.pipe",
           "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:151",
+          "id": "std.process:212",
           "symbol": "std.process.Command.mergeStderr",
           "signature": "pub fn Command.mergeStderr(self): Command",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:152",
+          "id": "std.process:213",
           "symbol": "std.process.Pipeline.mergeStderr",
           "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:153",
+          "id": "std.process:214",
           "symbol": "std.process.Command.run",
           "signature": "pub fn Command.run(self): ExitStatus ! ProcessError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:154",
+          "id": "std.process:215",
           "symbol": "std.process.Command.output",
           "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:155",
+          "id": "std.process:216",
           "symbol": "std.process.Command.check",
           "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:156",
+          "id": "std.process:217",
           "symbol": "std.process.Command.start",
           "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:157",
+          "id": "std.process:218",
           "symbol": "std.process.ProcessHandle.wait",
           "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:158",
+          "id": "std.process:219",
           "symbol": "std.process.ProcessHandle.cancel",
           "signature": "pub fn ProcessHandle.cancel(var self): Unit suspends",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:159",
+          "id": "std.process:220",
           "symbol": "std.process.ProcessOutput.stdout",
           "signature": "pub fn ProcessOutput.stdout(self): Bytes",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:160",
+          "id": "std.process:221",
           "symbol": "std.process.ProcessOutput.stderr",
           "signature": "pub fn ProcessOutput.stderr(self): Bytes",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:161",
+          "id": "std.process:222",
           "symbol": "std.process.ProcessOutput.combined",
           "signature": "pub fn ProcessOutput.combined(self): Bytes",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:162",
+          "id": "std.process:223",
           "symbol": "std.process.ProcessOutput.statuses",
           "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:163",
+          "id": "std.process:224",
           "symbol": "std.process.ExitStatus.code",
           "signature": "pub fn ExitStatus.code(self): Int?",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.process:164",
+          "id": "std.process:225",
           "symbol": "std.process.ExitStatus.success",
           "signature": "pub fn ExitStatus.success(self): Bool",
           "implementation_status": "verified",
@@ -2082,6 +2320,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-hosted-check.sh",
           "scripts/stdlib-process-test.sh",
@@ -2265,6 +2504,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-protobuf-check.sh",
           "scripts/stdlib-protobuf-test.sh",
@@ -2303,17 +2543,193 @@
       "contract": "testing/stdlib-reflect.json",
       "public_api": [
         {
-          "id": "std.reflect:32",
+          "id": "std.reflect:45",
           "symbol": "std.reflect.typeInfo",
           "signature": "pub fn typeInfo[T](): TypeInfo",
-          "implementation_status": "gap",
-          "missing": [
-            "exact-signature-shape",
-            "invalid-build-only-case",
-            "lowering-symbol",
-            "public-case-call",
-            "vm-symbol"
-          ]
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:46",
+          "symbol": "std.reflect.TypeInfo.id",
+          "signature": "pub fn TypeInfo.id(self): TypeId",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:47",
+          "symbol": "std.reflect.TypeInfo.qualifiedName",
+          "signature": "pub fn TypeInfo.qualifiedName(self): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:48",
+          "symbol": "std.reflect.TypeInfo.kind",
+          "signature": "pub fn TypeInfo.kind(self): TypeKind",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:49",
+          "symbol": "std.reflect.TypeInfo.genericArguments",
+          "signature": "pub fn TypeInfo.genericArguments(self): Array[TypeInfo]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:50",
+          "symbol": "std.reflect.TypeInfo.capabilities",
+          "signature": "pub fn TypeInfo.capabilities(self): Set[TypeCapability]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:51",
+          "symbol": "std.reflect.TypeInfo.fields",
+          "signature": "pub fn TypeInfo.fields(self): Array[FieldInfo]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:52",
+          "symbol": "std.reflect.TypeInfo.variants",
+          "signature": "pub fn TypeInfo.variants(self): Array[VariantInfo]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:53",
+          "symbol": "std.reflect.TypeInfo.tupleElements",
+          "signature": "pub fn TypeInfo.tupleElements(self): Array[TypeInfo]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:54",
+          "symbol": "std.reflect.TypeInfo.function",
+          "signature": "pub fn TypeInfo.function(self): FunctionInfo?",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:55",
+          "symbol": "std.reflect.FieldInfo.name",
+          "signature": "pub fn FieldInfo.name(self): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:56",
+          "symbol": "std.reflect.FieldInfo.typeInfo",
+          "signature": "pub fn FieldInfo.typeInfo(self): TypeInfo",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:57",
+          "symbol": "std.reflect.FieldInfo.ordinal",
+          "signature": "pub fn FieldInfo.ordinal(self): Int",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:58",
+          "symbol": "std.reflect.FieldInfo.docs",
+          "signature": "pub fn FieldInfo.docs(self): String?",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:59",
+          "symbol": "std.reflect.VariantInfo.name",
+          "signature": "pub fn VariantInfo.name(self): String",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:60",
+          "symbol": "std.reflect.VariantInfo.ordinal",
+          "signature": "pub fn VariantInfo.ordinal(self): Int",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:61",
+          "symbol": "std.reflect.VariantInfo.payloadKind",
+          "signature": "pub fn VariantInfo.payloadKind(self): VariantPayloadKind",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:62",
+          "symbol": "std.reflect.VariantInfo.tupleElements",
+          "signature": "pub fn VariantInfo.tupleElements(self): Array[TypeInfo]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:63",
+          "symbol": "std.reflect.VariantInfo.fields",
+          "signature": "pub fn VariantInfo.fields(self): Array[FieldInfo]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:64",
+          "symbol": "std.reflect.ParameterInfo.position",
+          "signature": "pub fn ParameterInfo.position(self): Int",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:65",
+          "symbol": "std.reflect.ParameterInfo.typeInfo",
+          "signature": "pub fn ParameterInfo.typeInfo(self): TypeInfo",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:66",
+          "symbol": "std.reflect.ParameterInfo.mode",
+          "signature": "pub fn ParameterInfo.mode(self): ParameterMode",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:67",
+          "symbol": "std.reflect.FunctionInfo.parameters",
+          "signature": "pub fn FunctionInfo.parameters(self): Array[ParameterInfo]",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:68",
+          "symbol": "std.reflect.FunctionInfo.outcome",
+          "signature": "pub fn FunctionInfo.outcome(self): TypeInfo",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:69",
+          "symbol": "std.reflect.FunctionInfo.variadic",
+          "signature": "pub fn FunctionInfo.variadic(self): Bool",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:70",
+          "symbol": "std.reflect.FunctionInfo.suspends",
+          "signature": "pub fn FunctionInfo.suspends(self): Bool",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.reflect:71",
+          "symbol": "std.reflect.FunctionInfo.isUnsafe",
+          "signature": "pub fn FunctionInfo.isUnsafe(self): Bool",
+          "implementation_status": "verified",
+          "missing": []
         }
       ],
       "requirements": [
@@ -2338,13 +2754,17 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-reflect-check.sh",
           "scripts/stdlib-reflect-test.sh",
           "cargo test -p tondo-compiler --locked --lib reflect::tests"
         ],
         "refs": [
-          "crates/tondo-compiler/src/reflect.rs"
+          "crates/tondo-compiler/src/reflect.rs",
+          "crates/tondo-compiler/src/driver.rs",
+          "tests/runtime/m11-std-reflect-public-001.to",
+          "scripts/stdlib-reflect-test.sh"
         ]
       },
       "fuzz": {
@@ -2369,7 +2789,190 @@
       "id": "std.serialization",
       "leaf": "STD-A-SER-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "public_api": [],
+      "public_api": [
+        {
+          "id": "std.serialization:61",
+          "symbol": "std.serialization.Encoder.null",
+          "signature": "fn null(var self): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:62",
+          "symbol": "std.serialization.Encoder.bool",
+          "signature": "fn bool(var self, value: Bool): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:63",
+          "symbol": "std.serialization.Encoder.int",
+          "signature": "fn int(var self, value: Int64): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:64",
+          "symbol": "std.serialization.Encoder.uint",
+          "signature": "fn uint(var self, value: UInt64): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:65",
+          "symbol": "std.serialization.Encoder.float32",
+          "signature": "fn float32(var self, value: Float32): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:66",
+          "symbol": "std.serialization.Encoder.float64",
+          "signature": "fn float64(var self, value: Float64): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:67",
+          "symbol": "std.serialization.Encoder.string",
+          "signature": "fn string(var self, value: String): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:68",
+          "symbol": "std.serialization.Encoder.bytes",
+          "signature": "fn bytes(var self, value: Bytes): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:69",
+          "symbol": "std.serialization.Encoder.base64",
+          "signature": "fn base64(var self, value: Bytes): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:71",
+          "symbol": "std.serialization.Encoder.startArray",
+          "signature": "fn startArray(var self, length: Int?): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:72",
+          "symbol": "std.serialization.Encoder.endArray",
+          "signature": "fn endArray(var self): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:74",
+          "symbol": "std.serialization.Encoder.startMap",
+          "signature": "fn startMap(var self, length: Int?): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:75",
+          "symbol": "std.serialization.Encoder.mapKey",
+          "signature": "fn mapKey(var self): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:76",
+          "symbol": "std.serialization.Encoder.endMap",
+          "signature": "fn endMap(var self): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:78",
+          "symbol": "std.serialization.Encoder.startRecord",
+          "signature": "fn startRecord(var self, name: String, fields: Int?): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:79",
+          "symbol": "std.serialization.Encoder.field",
+          "signature": "fn field(var self, name: String): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:80",
+          "symbol": "std.serialization.Encoder.endRecord",
+          "signature": "fn endRecord(var self): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:82",
+          "symbol": "std.serialization.Encoder.startEnum",
+          "signature": "fn startEnum(var self, name: String, variant: String): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:83",
+          "symbol": "std.serialization.Encoder.endEnum",
+          "signature": "fn endEnum(var self): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:87",
+          "symbol": "std.serialization.Decoder.peek",
+          "signature": "fn peek(var self): SerializationEvent? ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:88",
+          "symbol": "std.serialization.Decoder.next",
+          "signature": "fn next(var self): SerializationEvent ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:89",
+          "symbol": "std.serialization.Decoder.base64",
+          "signature": "fn base64(var self): Bytes ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:90",
+          "symbol": "std.serialization.Decoder.own",
+          "signature": "fn own(var self, event: SerializationEvent): SerializationEvent ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:91",
+          "symbol": "std.serialization.Decoder.reject",
+          "signature": "fn reject(var self, error: SerializationError): E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:95",
+          "symbol": "std.serialization.Encode.encode",
+          "signature": "fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.serialization:99",
+          "symbol": "std.serialization.Decode.decode",
+          "signature": "fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E",
+          "implementation_status": "verified",
+          "missing": []
+        }
+      ],
       "requirements": [
         "requirement:std.serialization:async-cancellation",
         "requirement:std.serialization:composition",
@@ -2395,6 +2998,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-serialization-check.sh",
@@ -2434,140 +3038,147 @@
       "contract": "testing/stdlib-testing.json",
       "public_api": [
         {
-          "id": "std.testing:148",
+          "id": "std.testing:203",
           "symbol": "std.testing.FloatTolerance.from",
           "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:149",
+          "id": "std.testing:204",
           "symbol": "std.testing.assertFloatNear",
           "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:150",
+          "id": "std.testing:205",
           "symbol": "std.testing.assertFloat32Near",
           "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:187",
+          "id": "std.testing:254",
           "symbol": "std.testing.assertSome",
           "signature": "pub fn assertSome[T](value: T?): T",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:188",
+          "id": "std.testing:255",
           "symbol": "std.testing.assertNone",
           "signature": "pub fn assertNone[T](value: T?): Unit",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:189",
+          "id": "std.testing:256",
           "symbol": "std.testing.assertOk",
           "signature": "pub fn assertOk[T, E: Display](value: T ! E): T",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:190",
+          "id": "std.testing:257",
           "symbol": "std.testing.assertErr",
           "signature": "pub fn assertErr[T: Display, E](value: T ! E): E",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:238",
+          "id": "std.testing:305",
           "symbol": "std.testing.tempDirectory",
           "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:239",
+          "id": "std.testing:306",
           "symbol": "std.testing.TempDirectory.path",
           "signature": "pub fn TempDirectory.path(ref self): Path",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:240",
+          "id": "std.testing:307",
           "symbol": "std.testing.TempDirectory.cleanup",
           "signature": "pub fn TempDirectory.cleanup(self)",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:282",
+          "id": "std.testing:402",
           "symbol": "std.testing.Generator.new",
           "signature": "pub fn Generator.new(seed: UInt64): Generator",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:283",
+          "id": "std.testing:403",
           "symbol": "std.testing.Generator.forCase",
           "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:284",
+          "id": "std.testing:404",
           "symbol": "std.testing.Generator.id",
           "signature": "pub fn Generator.id(ref self): GenerationId",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:285",
+          "id": "std.testing:405",
           "symbol": "std.testing.Generator.drawCount",
           "signature": "pub fn Generator.drawCount(ref self): UInt64",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:286",
+          "id": "std.testing:406",
           "symbol": "std.testing.Generator.nextUInt",
           "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:287",
+          "id": "std.testing:407",
           "symbol": "std.testing.Generator.nextBool",
           "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:288",
+          "id": "std.testing:408",
           "symbol": "std.testing.Generator.nextInt",
           "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:289",
+          "id": "std.testing:409",
           "symbol": "std.testing.Generator.nextBytes",
           "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:290",
+          "id": "std.testing:410",
           "symbol": "std.testing.Generator.nextText",
           "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:296",
+          "id": "std.testing:413",
+          "symbol": "std.testing.Shrink.candidates",
+          "signature": "fn candidates(self, limit: Int): Array[Self] ! GenerationError",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.testing:416",
           "symbol": "std.testing.shrink",
           "signature": "pub fn shrink[T: Shrink + Equatable](value: ref T): Array[T] ! GenerationError",
           "implementation_status": "verified",
@@ -2636,6 +3247,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-testing-check.sh",
           "scripts/stdlib-testing-test.sh",
@@ -2809,6 +3421,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-core-check.sh",
           "scripts/stdlib-text-test.sh",
@@ -2926,6 +3539,7 @@
       },
       "test": {
         "status": "verified",
+        "reason": null,
         "commands": [
           "scripts/stdlib-time-check.sh",
           "scripts/stdlib-time-test.sh",
@@ -2959,7 +3573,7 @@
   ],
   "summary": {
     "owners": 22,
-    "public_signatures": 216,
+    "public_signatures": 298,
     "owner_requirements": 171,
     "model_laws": 66,
     "fuzz_verified": 0,

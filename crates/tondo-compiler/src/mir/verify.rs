@@ -1203,8 +1203,40 @@ impl Verifier<'_> {
         self.verify_select_flow(function, &context)?;
         self.verify_task_scope_flow(function, &context)?;
         self.verify_suspension_liveness(function, &context)?;
+        self.verify_runtime_unwind_entry(function, &context)?;
         if let MirFunctionId::Closure(closure) = function.id {
             self.verify_closure_protocols(function, closure, &context)?;
+        }
+        Ok(())
+    }
+
+    fn verify_runtime_unwind_entry(
+        &self,
+        function: &MirFunction,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let drains = function
+            .blocks
+            .iter()
+            .filter(|block| matches!(block.terminator.kind, MirTerminatorKind::DrainUnwind { .. }))
+            .count();
+        let owns_cleanup = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .any(|statement| {
+                matches!(
+                    statement.kind,
+                    MirStatementKind::RegisterDefer { .. }
+                        | MirStatementKind::RegisterFallback { .. }
+                        | MirStatementKind::EnterTaskScope { .. }
+                )
+            });
+        if drains > 1 || (owns_cleanup && drains == 0) {
+            return Err(MirInvariantError::new(
+                context,
+                "runtime cleanup requires one shared unwind drain",
+            ));
         }
         Ok(())
     }
@@ -3900,122 +3932,15 @@ impl Verifier<'_> {
         arguments: &[TypeId],
         context: &str,
     ) -> Result<bool, MirInvariantError> {
-        let mut pending = vec![(template, actual)];
-        while let Some((template, actual)) = pending.pop() {
-            if template == actual {
-                continue;
-            }
-            let template_kind = self.kind(template, context)?;
-            if let TypeKind::GenericParameter(position) = template_kind {
-                if arguments.get(*position as usize) != Some(&actual) {
-                    return Ok(false);
+        self.hir
+            .interner()
+            .matches_substitution(template, actual, arguments)
+            .map_err(|error| match error {
+                crate::types::TypeError::ResourceLimit { .. } => {
+                    MirInvariantError::resource_limit(context, error.to_string())
                 }
-                continue;
-            }
-            let actual_kind = self.kind(actual, context)?;
-            match (template_kind, actual_kind) {
-                (TypeKind::Scalar(left), TypeKind::Scalar(right)) if left == right => {}
-                (
-                    TypeKind::Nominal {
-                        identity: left_identity,
-                        arguments: left,
-                    },
-                    TypeKind::Nominal {
-                        identity: right_identity,
-                        arguments: right,
-                    },
-                ) if left_identity == right_identity && left.len() == right.len() => {
-                    pending.extend(left.iter().copied().zip(right.iter().copied()));
-                }
-                (TypeKind::Tuple(left), TypeKind::Tuple(right))
-                | (TypeKind::Union(left), TypeKind::Union(right))
-                    if left.len() == right.len() =>
-                {
-                    pending.extend(left.iter().copied().zip(right.iter().copied()));
-                }
-                (TypeKind::Option(left), TypeKind::Option(right)) => {
-                    pending.push((*left, *right));
-                }
-                (
-                    TypeKind::Result {
-                        success: left_success,
-                        error: left_error,
-                    },
-                    TypeKind::Result {
-                        success: right_success,
-                        error: right_error,
-                    },
-                ) => {
-                    pending.push((*left_success, *right_success));
-                    pending.push((*left_error, *right_error));
-                }
-                (
-                    TypeKind::Intrinsic {
-                        constructor: left_constructor,
-                        arguments: left,
-                    },
-                    TypeKind::Intrinsic {
-                        constructor: right_constructor,
-                        arguments: right,
-                    },
-                ) if left_constructor == right_constructor && left.len() == right.len() => {
-                    pending.extend(left.iter().copied().zip(right.iter().copied()));
-                }
-                (TypeKind::Function(left), TypeKind::Function(right))
-                    if left.is_async() == right.is_async()
-                        && left.is_unsafe() == right.is_unsafe()
-                        && left.parameters().len() == right.parameters().len()
-                        && left.variadic().is_some() == right.variadic().is_some() =>
-                {
-                    for (left, right) in left.parameters().iter().zip(right.parameters()) {
-                        if left.mode() != right.mode() {
-                            return Ok(false);
-                        }
-                        pending.push((left.ty(), right.ty()));
-                    }
-                    if let (Some(left), Some(right)) = (left.variadic(), right.variadic()) {
-                        pending.push((left, right));
-                    }
-                    pending.push((left.outcome(), right.outcome()));
-                }
-                (
-                    TypeKind::OpaqueResult {
-                        identity: left_identity,
-                        arguments: left,
-                    },
-                    TypeKind::OpaqueResult {
-                        identity: right_identity,
-                        arguments: right,
-                    },
-                ) if left_identity == right_identity && left.len() == right.len() => {
-                    pending.extend(left.iter().copied().zip(right.iter().copied()));
-                }
-                (
-                    TypeKind::Generated {
-                        identity: left_identity,
-                        arguments: left,
-                    },
-                    TypeKind::Generated {
-                        identity: right_identity,
-                        arguments: right,
-                    },
-                ) if left_identity == right_identity && left.len() == right.len() => {
-                    pending.extend(left.iter().copied().zip(right.iter().copied()));
-                }
-                (
-                    TypeKind::Cursor {
-                        mode: left_mode,
-                        collection: left,
-                    },
-                    TypeKind::Cursor {
-                        mode: right_mode,
-                        collection: right,
-                    },
-                ) if left_mode == right_mode => pending.push((*left, *right)),
-                _ => return Ok(false),
-            }
-        }
-        Ok(true)
+                _ => MirInvariantError::new(context, error.to_string()),
+            })
     }
 
     fn callable_erasure_matches(
@@ -5979,7 +5904,13 @@ impl Verifier<'_> {
             }
         }
         for (index, block) in function.blocks.iter().enumerate() {
-            if reachable[index] || MirBlockId(index as u32) == function.unwind {
+            // External cancellation can enter the already shape-checked
+            // structural drain even when ordinary execution never exits a loop.
+            // This empty block reads no locals and has only the panic-resume edge.
+            if reachable[index]
+                || MirBlockId(index as u32) == function.unwind
+                || matches!(block.terminator.kind, MirTerminatorKind::DrainUnwind { .. })
+            {
                 continue;
             }
             if !block.statements.is_empty()
@@ -10084,14 +10015,21 @@ mod tests {
             parsed.diagnostics()
         );
         let packages = PackageGraph::loose(&sources, file).unwrap();
-        let (resolved, diagnostics) = resolve(&packages, &sources, [(file, &parsed)], 100)
-            .unwrap()
-            .into_parts();
+        let parsed_files =
+            crate::driver::bootstrap_parsed_for_test(&packages, &mut sources, file, parsed);
+        let (resolved, diagnostics) = resolve(
+            &packages,
+            &sources,
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
+            100,
+        )
+        .unwrap()
+        .into_parts();
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
         let (hir, diagnostics) = lower_types(
             &packages,
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 100_000,
@@ -10104,7 +10042,7 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
         let (hir, diagnostics, complete) = check_expressions(
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             hir,
             ExpressionCheckLimits {
@@ -10150,6 +10088,64 @@ mod tests {
         verify_mir(&resolved, &hir, &mir).unwrap();
         mutate(&resolved, &hir, &mut mir);
         verify_mir(&resolved, &hir, &mir).unwrap_err()
+    }
+
+    #[test]
+    fn runtime_unwind_entry_is_closed_even_without_an_ordinary_exit() {
+        const SOURCE: &str = "fn cleanup() {}\nfn spin(): Never {\n defer cleanup()\n for {}\n}\n";
+        let (resolved, hir, mir) = checked_mir(SOURCE);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let id = MirFunctionId::Callable(callable_named(&resolved, "spin"));
+        let drain = mir.functions[&id]
+            .blocks
+            .iter()
+            .position(|block| {
+                matches!(block.terminator.kind, MirTerminatorKind::DrainUnwind { .. })
+            })
+            .unwrap();
+        for mutation in [
+            "missing",
+            "duplicate",
+            "normal",
+            "target",
+            "instructions",
+            "arbitrary",
+        ] {
+            let (resolved, hir, mut invalid) = checked_mir(SOURCE);
+            let function = invalid.functions.get_mut(&id).unwrap();
+            match mutation {
+                "missing" => {
+                    function.blocks[drain].terminator.kind = MirTerminatorKind::Unreachable
+                }
+                "duplicate" => function.blocks.push(function.blocks[drain].clone()),
+                "normal" => function.blocks[drain].kind = MirBlockKind::Normal,
+                "target" => {
+                    function.blocks[drain].terminator.kind = MirTerminatorKind::DrainUnwind {
+                        target: function.entry,
+                    }
+                }
+                "instructions" => {
+                    let statement =
+                        function.blocks[function.entry.index() as usize].statements[0].clone();
+                    function.blocks[drain].statements.push(statement);
+                }
+                "arbitrary" => {
+                    function.blocks[drain].terminator.kind = MirTerminatorKind::Goto {
+                        target: function.unwind,
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let error = verify_mir(&resolved, &hir, &invalid).unwrap_err();
+            if mutation == "arbitrary" {
+                assert!(
+                    error
+                        .message()
+                        .contains("unreachable but contains executable MIR"),
+                    "{error}"
+                );
+            }
+        }
     }
 
     const SELECT_MIR_SOURCE: &str = "fn ready(): Int selectable { 1 }\n\
@@ -13439,12 +13435,13 @@ mod tests {
 
     #[test]
     fn operation_corruption_matrix_rejects_every_closed_operation_contract() {
-        const SOURCE: &str = "import std.console\n\
+        const SOURCE: &str = "import std.console\nimport std.process\n\
              fn identity(value: Int): Int { value }\n\
              fn operations(\n\
                  value: Int,\n\
                  text: String,\n\
                  values: Array[Int],\n\
+                 left: process.Command, right: process.Command,\n\
              ) {\n\
                  let negated = -value\n\
                  let sum = value + 1\n\
@@ -13455,7 +13452,8 @@ mod tests {
                  let sliced = values[value:]\n\
                  let called = identity(value)\n\
                  assert(value == called, text)\n\
-                 console.print(text)\n\
+                 _ = console.print(text)\n\
+                 _ = left | right\n\
                  _ = negated\n\
                  _ = sum\n\
                  _ = concatenated\n\
@@ -13873,13 +13871,12 @@ mod tests {
 
     #[test]
     fn testing_host_operation_contracts_accept_every_typed_shape() {
-        const SOURCE: &str = "import std.console\n\
-             import std.bytes\n\
+        const SOURCE: &str = "import std.bytes\n\
              fn operations(\n\
                  text: String,\n\
                  tags: Map[String, String],\n\
                  payload: bytes.Bytes,\n\
-             ) { console.print(text) }\n";
+             ) { assert(true, text) }\n";
         for function in [
             MirBootstrapHostFunction::TestingLog,
             MirBootstrapHostFunction::TestingFailNow,
@@ -13931,7 +13928,7 @@ mod tests {
                 _ => unreachable!(),
             };
             let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
-                matches!(kind, MirOperationKind::BootstrapHostCall { .. })
+                matches!(kind, MirOperationKind::Assert { .. })
             });
             operation.ty = outcome;
             operation.kind = MirOperationKind::BootstrapHostCall {
@@ -13997,15 +13994,14 @@ mod tests {
 
     #[test]
     fn testing_suite_boundary_contracts_reject_every_invalid_shape() {
-        const SOURCE: &str = "import std.console\n\
-             fn operations(\n\
+        const SOURCE: &str = "fn operations(\n\
                  text: String,\n\
                  body: fn() suspends,\n\
                  syncBody: fn(),\n\
                  argumentBody: fn(Int) suspends,\n\
                  valueBody: fn(): Int suspends,\n\
                  number: Int,\n\
-             ) { console.print(text) }\n";
+             ) { assert(true, text) }\n";
         let cases = [
             (
                 MirBootstrapHostFunction::TestingRunLeaf,
@@ -14098,7 +14094,7 @@ mod tests {
                 })
                 .collect();
             let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
-                matches!(kind, MirOperationKind::BootstrapHostCall { .. })
+                matches!(kind, MirOperationKind::Assert { .. })
             });
             operation.ty = hir.interner().scalar(outcome);
             operation.kind = MirOperationKind::BootstrapHostCall {

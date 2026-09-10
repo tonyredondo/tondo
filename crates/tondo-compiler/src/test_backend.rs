@@ -31,8 +31,30 @@ pub fn execute_compiled(
     participation: TestParticipation,
     diagnostics: Option<tondo_vm::runtime::DiagnosticConfig>,
 ) -> Result<tondo_vm::runtime::VmExecution, tondo_vm::runtime::VmError> {
-    let mut host =
-        crate::process_host::BootstrapHost::with_max_bytes(Vec::new(), limits.max_heap_bytes);
+    execute_compiled_with_environment(
+        program,
+        entry,
+        limits,
+        participation,
+        diagnostics,
+        BTreeMap::new(),
+    )
+}
+
+/// Execute with the worker's explicitly materialized environment. No ambient
+/// environment or process arguments are consulted by this hosted route.
+pub fn execute_compiled_with_environment(
+    program: &tondo_vm::bytecode::BytecodeProgram,
+    entry: tondo_vm::bytecode::BytecodeFunctionId,
+    limits: tondo_vm::runtime::VmLimits,
+    participation: TestParticipation,
+    diagnostics: Option<tondo_vm::runtime::DiagnosticConfig>,
+    environment: BTreeMap<Vec<u8>, Vec<u8>>,
+) -> Result<tondo_vm::runtime::VmExecution, tondo_vm::runtime::VmError> {
+    let mut host = crate::process_host::BootstrapHost::with_test_environment(
+        environment,
+        limits.max_heap_bytes,
+    );
     host.install_testing_participation(participation);
     tondo_vm::runtime::execute_with_limits_and_copy_strategy_and_diagnostics(
         program,
@@ -57,6 +79,8 @@ pub struct TestNodeExecution {
     pub report: EnvelopeReport,
     pub phase: ExecutionPhase,
     pub panic: Option<VmPanic>,
+    pub error_type: Option<String>,
+    pub error_span: Option<tondo_vm::bytecode::BytecodeSpan>,
     pub snapshot_updates: Vec<(String, String)>,
     pub timed_out: bool,
 }
@@ -79,6 +103,7 @@ pub struct TestParticipation {
 #[derive(Debug)]
 struct TestParticipationInner {
     interrupted: Arc<AtomicBool>,
+    temporary_root: Option<std::path::PathBuf>,
     phases: Option<Arc<dyn TestPhaseObserver>>,
     selected: Option<std::collections::BTreeSet<String>>,
     limits: EnvelopeLimits,
@@ -88,6 +113,19 @@ struct TestParticipationInner {
 }
 
 impl TestParticipation {
+    /// Supply the coordinator-owned root through explicit worker transport.
+    /// The coordinator retains ownership and verifies cleanup after reaping.
+    pub fn with_temporary_root(mut self, root: std::path::PathBuf) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("install temporary root before sharing a participation")
+            .temporary_root = Some(root);
+        self
+    }
+
+    pub(crate) fn temporary_root(&self) -> Option<&std::path::Path> {
+        self.inner.temporary_root.as_deref()
+    }
+
     /// Restricts an immutable compiled participation to a retry unit. The
     /// entire target was checked before this runtime selection is installed.
     pub fn with_selection(mut self, selected: std::collections::BTreeSet<String>) -> Self {
@@ -156,6 +194,7 @@ impl TestParticipation {
         Self {
             inner: Arc::new(TestParticipationInner {
                 interrupted: Arc::new(AtomicBool::new(false)),
+                temporary_root: None,
                 phases: None,
                 selected: None,
                 limits,
@@ -209,6 +248,7 @@ impl TestParticipation {
         kind: TestExecutionKind,
         envelope: EnvelopeHandle,
         panic: Option<VmPanic>,
+        error: Option<(String, tondo_vm::bytecode::BytecodeSpan)>,
     ) -> Result<(), String> {
         let phase = envelope.phase().map_err(|error| error.to_string())?;
         envelope.close().map_err(|error| error.to_string())?;
@@ -231,6 +271,8 @@ impl TestParticipation {
                 report,
                 phase,
                 panic,
+                error_type: error.as_ref().map(|(name, _)| name.clone()),
+                error_span: error.map(|(_, span)| span),
                 snapshot_updates,
                 timed_out,
             });
@@ -449,6 +491,148 @@ pub fn lower_participation<'a>(
     package_name: &str,
     selectors: impl IntoIterator<Item = &'a str>,
 ) -> Result<Vec<u8>, TestBackendError> {
+    lower_participation_mapped(sources, file, cst, source_class, package_name, selectors)
+        .map(|lowered| lowered.bytes)
+}
+
+/// Copies user fragments verbatim and records their original byte ranges.
+/// Synthetic runner scaffolding is never presented as a user source location.
+pub(crate) struct LoweredParticipation {
+    pub bytes: Vec<u8>,
+    pub testing_calls: Vec<crate::source::TextRange>,
+    copies: Vec<(crate::source::TextRange, crate::source::TextRange)>,
+    anchors: Vec<SourceAnchor>,
+    active_anchor: Option<usize>,
+}
+
+struct SourceAnchor {
+    start: usize,
+    end: usize,
+    original: crate::source::TextRange,
+    parent: Option<usize>,
+}
+
+impl LoweredParticipation {
+    fn runner_call(&mut self, name: &[u8]) -> Result<(), TestBackendError> {
+        self.bytes.extend_from_slice(b"__tondoTesting.");
+        let start = u32::try_from(self.bytes.len()).map_err(|_| {
+            TestBackendError::InvalidBody("generated source exceeds the byte range limit".into())
+        })?;
+        self.bytes.extend_from_slice(name);
+        let end = u32::try_from(self.bytes.len()).map_err(|_| {
+            TestBackendError::InvalidBody("generated source exceeds the byte range limit".into())
+        })?;
+        self.testing_calls
+            .push(crate::source::TextRange::new(start, end)?);
+        self.bytes.push(b'(');
+        Ok(())
+    }
+
+    fn begin_anchor(&mut self, original: crate::source::TextRange) -> usize {
+        let index = self.anchors.len();
+        self.anchors.push(SourceAnchor {
+            start: self.bytes.len(),
+            end: self.bytes.len(),
+            original,
+            parent: self.active_anchor,
+        });
+        self.active_anchor = Some(index);
+        index
+    }
+
+    fn end_anchor(&mut self, index: usize) {
+        self.anchors[index].end = self.bytes.len();
+        self.active_anchor = self.anchors[index].parent;
+    }
+
+    fn copy(
+        &mut self,
+        source: &[u8],
+        range: crate::source::TextRange,
+    ) -> Result<(), TestBackendError> {
+        let start = self.bytes.len();
+        self.bytes.extend_from_slice(slice(source, range)?);
+        let start = u32::try_from(start).map_err(|_| {
+            TestBackendError::InvalidBody("generated source exceeds the byte range limit".into())
+        })?;
+        let end = u32::try_from(self.bytes.len()).map_err(|_| {
+            TestBackendError::InvalidBody("generated source exceeds the byte range limit".into())
+        })?;
+        self.copies
+            .push((crate::source::TextRange::new(start, end)?, range));
+        Ok(())
+    }
+
+    pub(crate) fn original_span(
+        &self,
+        mut span: tondo_vm::bytecode::BytecodeSpan,
+        generated: &[u8],
+    ) -> Option<tondo_vm::bytecode::BytecodeSpan> {
+        // CST statement spans include trailing trivia. A generated separator
+        // can follow the copied body's final newline, so remove whitespace
+        // before deciding which original fragment owns the terminal.
+        generated.get(span.start as usize..span.end as usize)?;
+        while span.start < span.end && generated[span.start as usize].is_ascii_whitespace() {
+            span.start += 1;
+        }
+        while span.end > span.start && generated[span.end as usize - 1].is_ascii_whitespace() {
+            span.end -= 1;
+        }
+        if let Some(index) = self
+            .copies
+            .partition_point(|(range, _)| range.start() <= span.start)
+            .checked_sub(1)
+        {
+            let (generated, original) = self.copies[index];
+            if span.end <= generated.end() {
+                span.start = original.start() + (span.start - generated.start());
+                span.end = original.start() + (span.end - generated.start());
+                return Some(span);
+            }
+        }
+        let mut candidate = self
+            .anchors
+            .partition_point(|anchor| anchor.start <= span.start as usize)
+            .checked_sub(1);
+        while let Some(index) = candidate {
+            let anchor = &self.anchors[index];
+            if span.end as usize <= anchor.end {
+                span.start = anchor.original.start();
+                span.end = anchor.original.end();
+                return Some(span);
+            }
+            candidate = anchor.parent;
+        }
+        None
+    }
+
+    pub(crate) fn copied_range(
+        &self,
+        range: crate::source::TextRange,
+    ) -> Option<crate::source::TextRange> {
+        let index = self
+            .copies
+            .partition_point(|(copy, _)| copy.start() <= range.start())
+            .checked_sub(1)?;
+        let (generated, original) = self.copies[index];
+        (range.end() <= generated.end()).then(|| {
+            crate::source::TextRange::new(
+                original.start() + (range.start() - generated.start()),
+                original.start() + (range.end() - generated.start()),
+            )
+            .expect("a copied range preserves ordered endpoints")
+        })
+    }
+}
+
+pub(crate) fn lower_participation_mapped<'a>(
+    sources: &SourceDatabase,
+    file: FileId,
+    cst: &Cst,
+    source_class: TestSourceClass,
+    package_name: &str,
+    selectors: impl IntoIterator<Item = &'a str>,
+) -> Result<LoweredParticipation, TestBackendError> {
     let entries = discover(sources, file, cst, source_class, package_name)?;
     let selected = selectors
         .into_iter()
@@ -466,8 +650,17 @@ pub fn lower_participation<'a>(
 
     let source = sources.get(file)?;
     let root = cst.root_node();
-    let mut output = Vec::with_capacity(source.bytes().len() + 128);
-    output.extend_from_slice(b"import std.testing as __tondoTesting\n");
+    let mut output = LoweredParticipation {
+        bytes: Vec::with_capacity(source.bytes().len() + 128),
+        testing_calls: Vec::new(),
+        copies: Vec::new(),
+        anchors: Vec::new(),
+        active_anchor: None,
+    };
+    let module_anchor = output.begin_anchor(crate::source::TextRange::new(0, source.length())?);
+    output
+        .bytes
+        .extend_from_slice(b"import std.testing as __tondoTesting\n");
     let mut saw_main = false;
     for node in root.child_nodes() {
         match node.kind() {
@@ -481,16 +674,16 @@ pub fn lower_participation<'a>(
                 {
                     saw_main = true;
                 }
-                append_node(&mut output, source.bytes(), node.range());
+                output.copy(source.bytes(), node.range())?;
             }
-            _ => append_node(&mut output, source.bytes(), node.range()),
+            _ => output.copy(source.bytes(), node.range())?,
         }
-        output.extend_from_slice(b"\n");
+        output.bytes.extend_from_slice(b"\n");
     }
     if saw_main {
         return Err(TestBackendError::ProductionMain);
     }
-    output.extend_from_slice(b"fn __tondoTestEntry() {\n");
+    output.bytes.extend_from_slice(b"fn __tondoTestEntry() {\n");
     let root = SourceFile::root(cst)
         .ok_or_else(|| TestBackendError::InvalidBody("missing module root".into()))?;
     let mut parents = Vec::new();
@@ -504,13 +697,14 @@ pub fn lower_participation<'a>(
         &mut parents,
         &selected,
     )?;
-    output.extend_from_slice(b"\n}\n");
+    output.bytes.extend_from_slice(b"\n}\n");
+    output.end_anchor(module_anchor);
     Ok(output)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn emit_participation<'a>(
-    output: &mut Vec<u8>,
+    output: &mut LoweredParticipation,
     source: &[u8],
     declarations: impl Iterator<Item = Declaration<'a>>,
     package_name: &str,
@@ -546,11 +740,13 @@ fn emit_participation<'a>(
                 let body = test
                     .body()
                     .ok_or_else(|| TestBackendError::InvalidBody("test has no body".into()))?;
-                output.extend_from_slice(b"__tondoTesting.__runLeaf(");
-                append_string_literal(output, &id);
-                output.extend_from_slice(b", () {\n");
-                output.extend_from_slice(&block_contents(source, body.syntax().range())?);
-                output.extend_from_slice(b"\n})\n");
+                let anchor = output.begin_anchor(test.syntax().range());
+                output.runner_call(b"__runLeaf")?;
+                append_string_literal(&mut output.bytes, &id);
+                output.bytes.extend_from_slice(b", () {\n");
+                output.copy(source, block_contents_range(body.syntax())?)?;
+                output.bytes.extend_from_slice(b"\n})\n");
+                output.end_anchor(anchor);
             }
             Declaration::Suite(suite) => {
                 let name = suite
@@ -566,12 +762,13 @@ fn emit_participation<'a>(
                     let body = suite
                         .body()
                         .ok_or_else(|| TestBackendError::InvalidBody("suite has no body".into()))?;
-                    output.extend_from_slice(b"__tondoTesting.__runSuite(");
-                    append_string_literal(output, prefix.trim_end_matches("::"));
-                    output.extend_from_slice(b", () {\n");
+                    let anchor = output.begin_anchor(suite.syntax().range());
+                    output.runner_call(b"__runSuite")?;
+                    append_string_literal(&mut output.bytes, prefix.trim_end_matches("::"));
+                    output.bytes.extend_from_slice(b", () {\n");
                     for statement in body.setup() {
-                        output.extend_from_slice(slice(source, statement.syntax().range())?);
-                        output.extend_from_slice(b"\n");
+                        output.copy(source, statement.syntax().range())?;
+                        output.bytes.extend_from_slice(b"\n");
                     }
                     emit_participation(
                         output,
@@ -583,7 +780,9 @@ fn emit_participation<'a>(
                         parents,
                         selected,
                     )?;
-                    output.extend_from_slice(b"__tondoTesting.__beginSuiteCleanup()\n})\n");
+                    output.runner_call(b"__beginSuiteCleanup")?;
+                    output.bytes.extend_from_slice(b")\n})\n");
+                    output.end_anchor(anchor);
                 }
                 parents.pop();
             }
@@ -698,7 +897,7 @@ fn visit_declarations<'a>(
                     logical_path: logical_path.to_owned(),
                     id,
                     name: name.to_owned(),
-                    body: block_contents(source, body.syntax().range())?,
+                    body: slice(source, block_contents_range(body.syntax())?)?.to_vec(),
                     setup: setup.clone(),
                     suites: parents.clone(),
                 });
@@ -766,25 +965,21 @@ fn slice(source: &[u8], range: crate::source::TextRange) -> Result<&[u8], TestBa
         .ok_or_else(|| TestBackendError::InvalidBody(format!("range {range} is outside source")))
 }
 
-fn block_contents(
-    source: &[u8],
-    range: crate::source::TextRange,
-) -> Result<Vec<u8>, TestBackendError> {
-    let bytes = slice(source, range)?;
-    let open = bytes
-        .iter()
-        .position(|byte| *byte == b'{')
+fn block_contents_range(
+    body: crate::syntax::SyntaxNodeRef<'_>,
+) -> Result<crate::source::TextRange, TestBackendError> {
+    let open = body
+        .child_tokens()
+        .find(|token| token.kind() == crate::syntax::TokenKind::LBrace)
         .ok_or_else(|| TestBackendError::InvalidBody("test body has no opening brace".into()))?;
-    let close = bytes
-        .iter()
-        .rposition(|byte| *byte == b'}')
+    let close = body
+        .child_tokens()
+        .find(|token| token.kind() == crate::syntax::TokenKind::RBrace)
         .ok_or_else(|| TestBackendError::InvalidBody("test body has no closing brace".into()))?;
-    if close <= open {
-        return Err(TestBackendError::InvalidBody(
-            "test body braces are inverted".into(),
-        ));
-    }
-    Ok(bytes[open + 1..close].to_vec())
+    Ok(crate::source::TextRange::new(
+        open.range().end(),
+        close.range().start(),
+    )?)
 }
 
 #[cfg(test)]
@@ -816,6 +1011,45 @@ mod tests {
         let parsed = parse(&sources, file, lexed, ParseMode::Module, Default::default()).unwrap();
         let source_class = TestSourceClass::UnitTest;
         (sources, file, parsed, source_class)
+    }
+
+    #[test]
+    fn participation_maps_terminals_across_generated_whitespace() {
+        let original = b"test direct {\n    fail Fault.Broken\n}\n";
+        let (sources, file, tree, class) = parsed(original);
+        let entries = discover(&sources, file, tree.cst(), class, "main").unwrap();
+        let lowered = lower_participation_mapped(
+            &sources,
+            file,
+            tree.cst(),
+            class,
+            "main",
+            [entries[0].id()],
+        )
+        .unwrap();
+        let (_, _, generated, _) = parsed(&lowered.bytes);
+        let terminal = generated
+            .cst()
+            .nodes()
+            .iter()
+            .find(|node| node.kind() == SyntaxKind::FailStmt)
+            .unwrap()
+            .range();
+        let span = tondo_vm::bytecode::BytecodeSpan {
+            file: file.index(),
+            start: terminal.start(),
+            end: terminal.end(),
+        };
+        let mapped = lowered.original_span(span, &lowered.bytes).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&original[mapped.start as usize..mapped.end as usize])
+                .unwrap()
+                .trim(),
+            "fail Fault.Broken",
+            "generated {:?}: {:?}",
+            span,
+            std::str::from_utf8(&lowered.bytes[span.start as usize..span.end as usize])
+        );
     }
 
     #[test]

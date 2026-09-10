@@ -80,6 +80,29 @@ ni incluyen sus bytes completos en JSON/JUnit. El orden del mensaje es siempre
 `expected` antes de `actual`; el contenido mostrado se trunca conforme al
 resource profile del intento.
 
+The hosted VM binds each concrete assertion callable to its statically selected
+`Display` implementation, including generic wrappers and function values. A
+successful assertion never calls `Display`. A failed `assertEqual` displays
+`expected` before `actual`; `assertNotEqual` displays the equal value once.
+`assertOk` displays only `E` and `assertErr` only `T`, so the other payload needs
+no `Display` bound. Successful unwrapping moves the consumed Result payload and
+does not require `Copy`. Failure preserves the owned payload's structural
+cleanup. A panic, skip, or resource limit from `Display` keeps its original test
+outcome and cleanup semantics.
+
+The diagnostic retains at most 1024 bytes per displayed value, ending on a
+UTF-8 boundary, followed by `...<truncated>` when necessary. Intrinsic scalar
+and Array display streams directly into this prefix; the iterative Array walk
+admits 64 logical bytes per pending cursor. A user implementation executes
+normally under the phase limits and its returned String is then copied into the
+bounded prefix. Each prefix buffer and the complete assertion message are
+admitted to the calling phase before construction. A rejected admission
+publishes a resource failure instead of a partial assertion diagnostic. The
+profile binds `static-display-utf8-prefix-1024-frame-64/1`; complete diagnostic
+transport lifetime remains part of the open T0 accounting work. Bytecode
+verification rejects missing or mismatched Display metadata and nonlocal,
+asynchronous, or incorrectly typed dispatch targets.
+
 `assertTextEqual` usa exactamente igualdad bytewise de `String` y, si falla,
 añade el `TextDiff` acotado al mensaje de `P0007`. No llama a `snapshot`, no
 abre el snapshot store y no transforma la comprobación en una actualización.
@@ -132,6 +155,38 @@ y nunca reserva el resto para intentar completar la salida. Dos entradas
 iguales siempre producen `equal: true` y un array de hunks vacío. Los helpers no
 dependen del locale ni de una implementación de regex.
 
+The hosted kernel uses the linear-space, bidirectional Myers algorithm described
+in [Myers, section 4b](https://neil.fraser.name/writing/diff/myers.pdf). Two reusable
+frontiers and an explicit partition stack replace the former quadratic LCS
+table. Frontier ties retain the earlier first matching expected/actual offsets;
+equal-distance crossings use those offsets before their middle-snake coordinates.
+Within a replacement, complete `Delete` hunks precede complete `Insert` hunks.
+The independent bounded edit-distance oracle checks minimality and exact replay;
+separate golden cases fix repeated-line ties, CR/LF bytes and unterminated text.
+
+An allocation-free `TextDiffPlan` lets the hosted runner admit workspace and
+result storage before computation. Output limits are checked on complete borrowed
+hunk ranges before copying their text; rendering is never used to measure an
+intermediate result. As in the existing empty truncated representation, internal
+output limits smaller than the header plus truncation marker retain that fixed
+envelope. The public default is one MiB, including the envelope.
+
+The hosted compiler exposes `TextDiff` and `TextDiffHunk` as ordinary nominal
+declarations. Fields, exhaustive hunk matches, record construction and persistent
+record updates use the same rules as user declarations. Both `diff.render()` and
+`testing.TextDiff.render(diff)` borrow the receiver. A same-named user record
+does not acquire this method. The adapter moves computed hunk strings into the
+record; it does not publish an opaque diff handle.
+
+The shared borrowed `TextDiffRenderPlan` also bounds caller-constructed records
+to 4096 hunks and one MiB of rendered output. It preserves complete hunk prefixes
+and adds the truncation marker when required without changing the source record's
+`truncated` field. The other fields remain ordinary caller-supplied metadata;
+rendering observes `hunks` and `truncated`. Admission measures exact UTF-8 output
+before allocating its string and never constructs an intermediate owned diff.
+These public API and construction checks do not close the remaining detached
+transport lifetime or the complete T0 resource boundary.
+
 ## Floats y tolerancia
 
 La tolerancia se construye una vez y queda validada antes de usarla:
@@ -174,6 +229,18 @@ capabilities. Una tolerancia inválida falla al construirla mediante
 `FloatToleranceError`; no llega a una assertion ni se convierte en `P0007`.
 Una assertion que no alcanza la tolerancia usa `P0007` con expected, actual y
 los dos límites, todos acotados por el perfil.
+
+The hosted compiler exposes all three `FloatToleranceError` variants as the
+ordinary public enum. The bridge maps the kernel's typed cause directly to
+`Negative`, `NonFinite` or `Overflow`; it does not infer a cause from diagnostic
+text. Enum construction and exhaustive matching use the normal language rules.
+An error result admits 83 logical bytes before construction and allocates no
+host registry entry. Its complete detached-transport lifetime is subject to
+the open T0 resource work. The standard enum implements `Display` with the
+qualified form `FloatToleranceError.Negative` (and the corresponding variant
+name for the other causes). Qualified calls, calls through a visible `Display`
+constraint and string interpolation use that implementation. A same-named user
+enum receives no implicit implementation.
 
 No existe un epsilon global, una tolerancia dependiente de la máquina, una
 comparación ULP escondida ni una aceptación automática de `NaN`.
@@ -266,6 +333,53 @@ bytes. Los paths que el test copie fuera del root, o los bytes que publique con
 No existe `tempFile` duplicado: un archivo temporal es un path dentro de
 `TempDirectory` y usa el owner canónico `std.fs`.
 
+### Hosted temporary-root implementation boundary
+
+`TempError` is the public nominal enum, with ordinary construction and exhaustive
+matching. The hosted bridge preserves `InvalidPrefix`, `Unavailable`,
+`PermissionDenied`, `LimitExceeded` and `IoError` as distinct typed causes. A
+missing or invalid explicit root is `Unavailable`; a provider permission failure
+is `PermissionDenied`. Bounded tree admission carries a typed limit cause through
+I/O, so diagnostic wording cannot change the selected variant. The standard
+enum's `Display` implementation produces `TempError.<Variant>`.
+
+An error result admits 73 logical bytes before construction and uses no host
+registry entry. Complete detached-transport lifetime accounting remains open
+in T0; this construction guard alone does not close that resource contract.
+
+The public CLI coordinator now owns a distinct physical root for each worker
+invocation, including retries and repetitions. It passes that root separately
+from the hashed input artifact and removes it after reaping the worker. Failed
+root cleanup prevents complete JSON, JUnit, snapshot and artifact publication;
+prior complete outputs remain intact. An embedded compiler caller must supply
+its own root explicitly. Neither route consults ambient temporary-directory
+variables. References to `tempDirectory` and `cleanup` require `filesystem`,
+including function values and deferred calls.
+
+The hosted root bounds are 1,048,576 entries (including its root), 64 MiB of
+regular-file lengths and 64 descendant levels. Traversal rejects observed
+symlinks and special files, validates the complete tree before deletion, and
+rechecks each deletion step. Ordinary `std.fs` mutations under the supplied
+root preflight their predicted growth; atomic replacement admits the staging
+file while the old destination still exists. Directory moves check the depth
+and size of the resulting subtree.
+
+There is also a 64 MiB budget for admitted write and import bytes over the
+worker's lifetime. It counts requested bytes before host I/O, including partial
+or failed I/O. Overwrites and removal do not replenish it. A file opened under
+the root keeps this budget across rename and unlink. These are logical provider
+limits, not RSS or an OS sandbox for arbitrary external processes or general
+filesystem paths outside the supplied root. The model identifier is included
+in the effective resource-profile hash; physical names are excluded.
+
+`TempDirectory` retains a 32-byte logical descriptor and its native path bytes.
+The constructor admits the descriptor, path, result and name scratch before
+creation. `path` admits a separate copy in its caller's phase; `cleanup` releases
+the original owner's charge. Open file descriptors also participate in phase
+collection; nominal temporary errors are ordinary VM values. Full T0 promotion
+still needs the remaining host-owner, detached-transport and traversal-scratch
+accounting, and the whole-tree gate evidence.
+
 ## Datos generados, replay y shrinking
 
 La generación de datos es una utilidad explícita para un test ordinario; no
@@ -277,6 +391,12 @@ pub type Generator
 pub type GenerationId = {
     seed: UInt64
     caseIndex: UInt64
+}
+
+pub enum GenerationError {
+    InvalidBounds
+    LimitExceeded
+    Exhausted
 }
 
 pub fn Generator.new(seed: UInt64): Generator
@@ -301,6 +421,25 @@ par de valores y la misma secuencia de draws reconstruyen el mismo input. El
 índice es cero-based. `Generator.new(seed)` crea el stream del caso `0`; usar
 `forCase` evita depender de cuántos casos anteriores se hayan generado.
 
+The hosted compiler exposes `GenerationId` as the ordinary public record above.
+Both fields retain their full `UInt64` range. Field access, construction, copying
+and record updates use the ordinary nominal rules; an identity is not a host
+registry token. `Generator.id` admits 108 logical bytes before constructing its
+detached record (three value descriptors and its type name), without advancing
+the stream or allocating a registry entry. The VM materializes that record in
+its owning phase. Complete detached-transport lifetime accounting remains part
+of the open T0 resource work; this construction check does not close that gate.
+
+`GenerationError` is also an ordinary public enum. `InvalidBounds` denotes an
+inverted integer range or a negative buffer bound; `LimitExceeded` denotes a
+payload or candidate limit; `Exhausted` denotes the fixed generator draw budget.
+The bridge transports the typed kernel cause without parsing diagnostic text.
+It admits 79 logical bytes before constructing an error result and allocates no
+error registry entry. Its `Display` implementation produces
+`GenerationError.<Variant>`. Rejected requests preserve the complete generator
+state and draw count. The non-Result constructors accept only `UInt64`; malformed
+raw host arguments are host contract errors and never invent a Result return.
+
 El algoritmo `xorshift64-7-9-8-v1` está cerrado para 0.1. Inicializa el estado
 con `seed XOR 0x9e3779b97f4a7c15`, deriva un caso con suma modular de
 `caseIndex * 0x9e3779b97f4a7c15` y aplica, en cada draw, `<<7`, `>>9` y `<<8`
@@ -320,6 +459,15 @@ un límite fallido no produce un valor parcial. El generador no consulta reloj,
 entropy, environment, filesystem, proceso, red ni threads y no debe utilizarse
 para secretos, tokens o claves.
 
+The executable kernel commits a sampled integer or generated buffer only after
+the complete operation succeeds. Exhaustion during a multi-draw sample leaves
+the generator state and draw count unchanged. `planned_buffer_capacity` selects
+the same bytes/text capacity without changing the stream or allocating output,
+so the hosted test phase can admit it first. Descriptor and buffer accounting
+is specified in `test-limits.md`. A returned `Bytes` supports its receiver
+methods even when the source only imports `std.testing`; an explicit `std.bytes`
+reference is not required to inspect the generated value.
+
 `Shrink` es un protocolo estático para proponer candidatos, no un executor de
 tests. En Tondo 0.1 es un protocolo de prelude sellado por el compilador: no se
 puede declarar `impl Shrink` en código de usuario y una implementación manual
@@ -331,6 +479,24 @@ candidatos en orden de menor complejidad. `shrink` aplica un límite finito y
 devuelve `GenerationError` de forma atómica cuando el tipo o el límite no son
 válidos; no ejecuta una predicate, no captura pánicos y no convierte fallos en
 excepciones recuperables.
+
+`Shrink.candidates(value, limit)` and calls through a visible `Shrink`
+constraint execute the same hosted scalar kernel as `testing.shrink`. The method
+accepts an explicit candidate count from zero through 4096. Negative counts
+return `GenerationError.InvalidBounds`; larger counts return `LimitExceeded`.
+Zero still validates the closed input shape and returns an empty array. The
+receiver is observed through an immutable loan. The qualified prelude spelling
+needs no module import inside a test target; production use is rejected with
+`E2003`. The method does not introduce an open trait method lookup.
+
+The hosted implementation validates the complete closed shape and its maximum
+depth before cloning candidates. Every string prefix, array prefix and nested
+replacement is admitted before copying. Nested temporary candidates retain
+their own charge until discarded or moved into an admitted parent. Duplicate
+array replacements are compared by borrowing their components before copying;
+UTF-8 string prefixes are visited once per character boundary. Successful
+candidate order remains equal to the independent kernel. A phase-memory limit
+is runner control and cannot be caught as `GenerationError`.
 
 El runner de tooling conecta este helper mediante
 [`test-generation.md`](./test-generation.md): materializa una campaña con
@@ -350,8 +516,8 @@ un hunk, valor, descriptor o estado de generador parcial.
 Los formatos de diagnóstico son `tondo-test-assertion-0.1/1`,
 `tondo-test-text-diff-0.1/1` y `tondo-test-generation-0.1/1`. Son valores que el
 caller puede materializar o adjuntar; ninguno es un snapshot store, acepta
-`--update-snapshots` o cambia `tondo-test-report-0.1/7` y
-`tondo-junit-report-0.1/4`. El formato de assertion solo identifica el payload
+`--update-snapshots` o cambia `tondo-test-report-0.1/8` y
+`tondo-junit-report-0.1/5`. El formato de assertion solo identifica el payload
 acotado de expected/actual en un fallo `P0007`; no crea un archivo adicional.
 Temp directories no tienen formato de persistencia: solo dejan el path
 operativo fuera del reporte.

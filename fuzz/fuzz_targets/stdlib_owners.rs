@@ -115,7 +115,7 @@ fn route_std_format(input: &[u8]) {
 fn route_std_fs() {
     source_probe(
         "std.fs",
-        "import std.path\nimport std.fs\nfn main(): !(path.PathError | fs.FsError) {\n    let file_path = path.fromString(\"Cargo.toml\")?\n    let contents = fs.readAll(file_path)?\n    _ = contents\n}\n",
+        "import std.path\nimport std.fs\nfn main(): !(path.PathError | fs.FsError) {\n    let file_path = path.Path.fromString(\"Cargo.toml\")?\n    let contents = fs.readAll(file_path)?\n    _ = contents\n}\n",
     );
 }
 

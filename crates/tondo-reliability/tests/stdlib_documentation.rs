@@ -193,8 +193,8 @@ fn public_api_status_preserves_audited_gaps() {
         }
     }
 
-    assert_eq!(docs["summary"]["api_complete"], 18);
-    assert_eq!(docs["summary"]["api_partial"], 4);
+    assert_eq!(docs["summary"]["api_complete"], 21);
+    assert_eq!(docs["summary"]["api_partial"], 1);
     assert_eq!(docs["summary"]["api_not_applicable"], 0);
 
     for codec in ["std.json", "std.messagepack", "std.protobuf"] {

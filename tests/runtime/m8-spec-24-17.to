@@ -9,4 +9,4 @@ let pipeline = (
 )
 
 let output = pipeline.check()?
-console.print(String(output.stdout)?)
+_ = console.print(String(output.stdout)?)

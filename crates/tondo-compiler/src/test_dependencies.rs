@@ -8,12 +8,181 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
 use crate::artifact::{sha256, validate_sha256};
 use crate::package::{PackageAlias, PackageId};
 use crate::project::{BOOTSTRAP_STANDARD_PACKAGE, ProjectPlan};
 use crate::test_plan::{TestProjectPlan, TestSourceClass};
 
 pub const TEST_DEPENDENCY_GRAPH_FORMAT: &str = "tondo-test-dependency-graph-draft/1";
+
+/// Closed source and interface inputs for the test-only lockfile section.
+/// Admission uses the same source hashes, package fingerprints and interface
+/// compatibility checks as an ordinary dependency build. No input is opened.
+#[derive(Debug)]
+pub struct TestDependencySources {
+    graph: TestDependencyGraph,
+    project: Option<ProjectPlan>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestLockWire {
+    packages: Vec<TestPackageWire>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestPackageWire {
+    id: String,
+    local_name: String,
+    edition: String,
+    content_hash: String,
+    #[serde(default)]
+    dependencies: Vec<crate::project::DependencyWire>,
+    sources: Vec<crate::project::LockedSourceWire>,
+    interface: TestInterfaceWire,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestInterfaceWire {
+    path: String,
+    sha256: String,
+}
+
+impl TestDependencySources {
+    /// Without a sidecar, use each locked package's local name as its explicit
+    /// test alias. An advanced plan can choose different aliases, but must
+    /// still match the same closed package/interface set.
+    pub fn default_test_plan(
+        plan: TestProjectPlan,
+        bytes: Option<&[u8]>,
+    ) -> Result<TestProjectPlan, String> {
+        let Some(bytes) = bytes else {
+            return Ok(plan);
+        };
+        let lock: TestLockWire = serde_json::from_slice(bytes)
+            .map_err(|error| format!("invalid test dependency lock: {error}"))?;
+        plan.with_dev_dependencies(lock.packages.into_iter().map(|package| {
+            (
+                package.local_name,
+                package.id,
+                package.interface.path,
+                package.interface.sha256,
+            )
+        }))
+        .map_err(|error| error.to_string())
+    }
+
+    pub fn parse(
+        production: &ProjectPlan,
+        plan: &TestProjectPlan,
+        bytes: Option<&[u8]>,
+    ) -> Result<Self, String> {
+        let mut wire = match bytes {
+            Some(bytes) => serde_json::from_slice::<TestLockWire>(bytes)
+                .map_err(|error| format!("invalid test dependency lock: {error}"))?,
+            None => TestLockWire {
+                packages: Vec::new(),
+            },
+        };
+        wire.packages.sort_by(|left, right| left.id.cmp(&right.id));
+        let records =
+            wire.packages
+                .iter()
+                .map(|package| {
+                    TestDependencyRecord::new(
+                        package.id.clone(),
+                        package.interface.path.clone(),
+                        package.interface.sha256.clone(),
+                        package.dependencies.iter().map(|dependency| {
+                            (dependency.alias.clone(), dependency.package.clone())
+                        }),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+        let graph = TestDependencyGraph::from_plan(production, plan, records)
+            .map_err(|error| error.to_string())?;
+        let Some(root) = wire.packages.first() else {
+            return Ok(Self {
+                graph,
+                project: None,
+            });
+        };
+        let source = root
+            .sources
+            .first()
+            .ok_or_else(|| format!("test dependency `{}` has no locked source", root.id))?;
+        let packages = wire.packages.iter().map(|package| {
+            let mut sets = BTreeMap::<&str, Vec<serde_json::Value>>::new();
+            for source in &package.sources {
+                sets.entry(&source.source_set).or_default().push(json!({
+                    "physical_path": source.physical_path,
+                    "logical_path": source.logical_path,
+                    "module": source.module,
+                }));
+            }
+            json!({
+                "id": package.id, "local_name": package.local_name,
+                "edition": package.edition, "dependencies": package.dependencies,
+                "source_sets": sets.into_iter().map(|(id, sources)| json!({"id": id, "sources": sources})).collect::<Vec<_>>()
+            })
+        }).collect::<Vec<_>>();
+        let manifest = serde_json::to_vec(&json!({
+            "format": crate::project::MANIFEST_FORMAT,
+            "target": {
+                "name": production.target_name(), "profile": production.profile().as_str(),
+                "capability_registry": crate::artifact::CAPABILITY_REGISTRY,
+                "capabilities": production.capabilities().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "features": production.features().iter().map(ToString::to_string).collect::<Vec<_>>()
+            },
+            "root": {"package": root.id, "source": source.physical_path, "form": "module"},
+            "standard": BOOTSTRAP_STANDARD_PACKAGE, "packages": packages,
+            "generator_inputs": [], "privileged_units": []
+        })).map_err(|error| error.to_string())?;
+        let locked = wire
+            .packages
+            .iter()
+            .map(|package| {
+                json!({
+                    "id": package.id, "content_hash": package.content_hash,
+                    "dependencies": package.dependencies, "sources": package.sources,
+                    "interface": package.interface
+                })
+            })
+            .collect::<Vec<_>>();
+        let lock = serde_json::to_vec(&json!({
+            "format": crate::project::LOCKFILE_FORMAT, "manifest_hash": sha256(&manifest),
+            "standard": {"package_id": BOOTSTRAP_STANDARD_PACKAGE,
+                "content_hash": crate::project::bootstrap_standard_hash()},
+            "packages": locked, "generator_inputs": [], "privileged_units": []
+        }))
+        .map_err(|error| error.to_string())?;
+        let project = ProjectPlan::parse_dependency_sources(&manifest, &lock)
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            graph,
+            project: Some(project),
+        })
+    }
+
+    pub fn required_inputs(
+        &self,
+    ) -> impl Iterator<Item = crate::project::RequiredProjectInput> + '_ {
+        self.project.iter().flat_map(ProjectPlan::required_inputs)
+    }
+
+    pub(crate) fn project(&self) -> Option<&ProjectPlan> {
+        self.project.as_ref()
+    }
+    pub(crate) fn graph(&self) -> &TestDependencyGraph {
+        &self.graph
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestDependencyRecord {
@@ -121,6 +290,12 @@ pub struct TestDependencyGraph {
 }
 
 impl TestDependencyGraph {
+    pub(crate) fn aliases(&self) -> impl Iterator<Item = (&str, &PackageId)> {
+        self.aliases
+            .iter()
+            .map(|(alias, package)| (alias.as_str(), package))
+    }
+
     /// Build from the test plan while keeping production package IDs outside
     /// this graph. The supplied records represent the verified test-interface
     /// entries from the lockfile; no bytes are opened here.
@@ -390,9 +565,7 @@ fn build_for(
 
     for (package, record) in &record_map {
         for dependency in record.dependencies.values() {
-            if dependency.as_str() != BOOTSTRAP_STANDARD_PACKAGE
-                && !record_map.contains_key(dependency.as_str())
-            {
+            if !record_map.contains_key(dependency.as_str()) {
                 if production.contains(dependency.as_str()) {
                     return Err(DependencyGraphError::ProductionOverlap {
                         package: dependency.to_string(),
@@ -440,9 +613,6 @@ fn has_cycle(records: &BTreeMap<String, TestDependencyRecord>) -> bool {
         }
         if let Some(record) = records.get(package) {
             for dependency in record.dependencies.values() {
-                if dependency.as_str() == BOOTSTRAP_STANDARD_PACKAGE {
-                    continue;
-                }
                 if visit(dependency.as_str(), records, visiting, complete) {
                     return true;
                 }
@@ -681,8 +851,8 @@ mod tests {
     }
 
     #[test]
-    fn transitive_edges_are_closed_to_dev_nodes_or_standard() {
-        let accepted = build_for(
+    fn transitive_edges_require_records_and_cannot_name_the_implicit_standard() {
+        let standard = build_for(
             &[expected(
                 "testing",
                 "registry:test@1#abc",
@@ -697,8 +867,11 @@ mod tests {
                 [("stdlib", BOOTSTRAP_STANDARD_PACKAGE)],
             )],
         )
-        .unwrap();
-        assert_eq!(accepted.packages().count(), 1);
+        .unwrap_err();
+        assert!(
+            matches!(standard, DependencyGraphError::UnknownDependency { dependency, .. }
+            if dependency == BOOTSTRAP_STANDARD_PACKAGE)
+        );
         let error = build_for(
             &[expected(
                 "testing",

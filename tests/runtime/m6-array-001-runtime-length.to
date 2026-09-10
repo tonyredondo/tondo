@@ -45,5 +45,5 @@ fn observe(): (Int, Int, Int, Int, Int, Int, Int, Int, Int) {
 
 fn main() {
     assert(observe() == (0, 1, 2, 3, 4, 5, 0, 5, 5))
-    console.print("array-runtime-length\n")
+    _ = console.print("array-runtime-length\n")
 }

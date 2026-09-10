@@ -2,7 +2,7 @@
 //!
 //! The ordinary resolver/type checker owns expressions, ownership and
 //! capability proofs.  This module consumes those proofs and closes the small
-//! test-only boundary: hidden entries are `async? fn(): Unit ! E`, suite setup
+//! test-only boundary: hidden entries infer `fn(): Unit ! E` and suspension, suite setup
 //! cannot return, and the sealed `std.testing` operations have exact operand
 //! shapes.  No runtime context is created here.
 
@@ -55,7 +55,8 @@ impl NormalResult {
 pub enum ReturnShape {
     None,
     Bare,
-    Value,
+    Unit,
+    NonUnit,
 }
 
 /// A nominal error participating in the closed inferred union `E`.
@@ -475,7 +476,7 @@ impl TestBodyInput {
     }
 }
 
-/// A checked hidden entry ready for HIR/lowering.
+/// A checked model of supplied facts; executable lowering uses ordinary HIR.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestBodyContract {
     node: String,
@@ -539,7 +540,6 @@ pub enum CheckError {
     },
     TestReturnValue,
     SuiteReturn,
-    DuplicateError(String),
     NonDiscardError(String),
     OrdinaryViolation(OrdinaryViolation),
     InvalidOperand {
@@ -562,10 +562,9 @@ impl CheckError {
         match self {
             Self::EmptyNode => "E2000",
             Self::ProductionTesting { .. } => "E2003",
-            Self::InvalidNormalResult { .. } => "E1201",
-            Self::TestReturnValue => "E1204",
+            Self::InvalidNormalResult { .. } | Self::TestReturnValue => "E1102",
             Self::SuiteReturn => "E1205",
-            Self::DuplicateError(_) | Self::NonDiscardError(_) => "E1206",
+            Self::NonDiscardError(_) => "E1105",
             Self::OrdinaryViolation(violation) => violation.code(),
             Self::InvalidOperand { .. } => "E1210",
             Self::InvalidName { .. } => "P2006",
@@ -588,9 +587,8 @@ impl fmt::Display for CheckError {
             Self::InvalidNormalResult { kind, actual } => {
                 write!(formatter, "{kind} entry must return Unit or Never, got {actual:?}")
             }
-            Self::TestReturnValue => formatter.write_str("a test entry cannot return a value"),
+            Self::TestReturnValue => formatter.write_str("a test entry cannot return a non-Unit value"),
             Self::SuiteReturn => formatter.write_str("suite setup cannot use return"),
-            Self::DuplicateError(name) => write!(formatter, "inferred error `{name}` is duplicated"),
             Self::NonDiscardError(name) => {
                 write!(formatter, "inferred error `{name}` does not satisfy Discard")
             }
@@ -648,8 +646,8 @@ pub fn check(input: TestBodyInput) -> Result<TestBodyContract, CheckError> {
         (TestEntryKind::SuiteSetup, ReturnShape::None)
         | (TestEntryKind::Test, ReturnShape::None) => {}
         (TestEntryKind::SuiteSetup, _) => return Err(CheckError::SuiteReturn),
-        (TestEntryKind::Test, ReturnShape::Value) => return Err(CheckError::TestReturnValue),
-        (TestEntryKind::Test, ReturnShape::Bare) => {}
+        (TestEntryKind::Test, ReturnShape::NonUnit) => return Err(CheckError::TestReturnValue),
+        (TestEntryKind::Test, ReturnShape::Bare | ReturnShape::Unit) => {}
     }
     let errors = normalize_errors(&input.errors)?;
     if let Some(violation) = input.facts.violations().next().copied() {
@@ -683,15 +681,12 @@ pub fn check(input: TestBodyInput) -> Result<TestBodyContract, CheckError> {
 fn normalize_errors(errors: &[ErrorMember]) -> Result<Vec<ErrorMember>, CheckError> {
     let mut output = errors.to_vec();
     output.sort();
-    let mut seen = BTreeSet::new();
     for error in &output {
-        if !seen.insert(error.name.clone()) {
-            return Err(CheckError::DuplicateError(error.name.clone()));
-        }
         if !error.discard {
             return Err(CheckError::NonDiscardError(error.name.clone()));
         }
     }
+    output.dedup();
     Ok(output)
 }
 
@@ -872,10 +867,15 @@ mod tests {
             Err(CheckError::SuiteReturn)
         ));
         assert!(matches!(
-            check(test("test").with_return(ReturnShape::Value)),
+            check(test("test").with_return(ReturnShape::NonUnit)),
             Err(CheckError::TestReturnValue)
         ));
         assert!(check(test("test").with_return(ReturnShape::Bare)).is_ok());
+        assert!(check(test("test").with_return(ReturnShape::Unit)).is_ok());
+        assert!(matches!(
+            check(setup("suite").with_return(ReturnShape::Unit)),
+            Err(CheckError::SuiteReturn)
+        ));
         assert!(check(setup("suite")).is_ok());
     }
 
@@ -906,12 +906,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["AError", "ZError"]
         );
+        let repeated = check(
+            test("duplicate")
+                .with_errors([ErrorMember::new("E", true), ErrorMember::new("E", true)]),
+        )
+        .unwrap();
+        assert_eq!(repeated.errors(), &[ErrorMember::new("E", true)]);
         assert!(matches!(
             check(
-                test("duplicate")
-                    .with_errors([ErrorMember::new("E", true), ErrorMember::new("E", true),])
+                test("conflicting proof")
+                    .with_errors([ErrorMember::new("E", true), ErrorMember::new("E", false),])
             ),
-            Err(CheckError::DuplicateError(_))
+            Err(CheckError::NonDiscardError(_))
         ));
         assert!(matches!(
             check(test("affine").with_errors([ErrorMember::new("Affine", false)])),
@@ -1071,7 +1077,6 @@ mod tests {
             },
             CheckError::TestReturnValue,
             CheckError::SuiteReturn,
-            CheckError::DuplicateError("E".into()),
             CheckError::NonDiscardError("E".into()),
             CheckError::InvalidOperand {
                 operation: "log",

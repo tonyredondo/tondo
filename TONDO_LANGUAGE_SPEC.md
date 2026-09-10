@@ -105,7 +105,7 @@ fn greet(name: String): String ! AppError {
 
 fn main(): !AppError {
     let message = greet("Ada")?
-    console.print(message)
+    _ = console.print(message)
 }
 ~~~
 
@@ -1451,7 +1451,7 @@ Una función sin anotación de retorno devuelve `Unit`:
 
 ~~~tondo
 fn log(message: String) {
-    console.print(message)
+    _ = console.print(message)
 }
 ~~~
 
@@ -2818,7 +2818,7 @@ La forma canónica itera entradas:
 
 ~~~tondo
 for (key, value) in ages {
-    console.print("{key}: {value}")
+    _ = console.print("{key}: {value}")
 }
 ~~~
 
@@ -3272,7 +3272,7 @@ aparece en firma y llamada:
 
 ~~~tondo
 fn inspect(resource: ref Resource) {
-    console.print(resource.status())
+    _ = console.print(resource.status())
 }
 
 inspect(ref resource)
@@ -3285,7 +3285,7 @@ Un único parámetro final puede ser variádico y homogéneo:
 ~~~tondo
 fn log(prefix: String, parts: ...String) {
     for part in parts {
-        console.print("{prefix}{part}")
+        _ = console.print("{prefix}{part}")
     }
 }
 
@@ -4823,7 +4823,7 @@ También acepta bloque:
 
 ~~~tondo
 defer {
-    console.print("leaving scope")
+    _ = console.print("leaving scope")
 }
 ~~~
 
@@ -7083,7 +7083,7 @@ Programa infallible:
 
 ~~~tondo
 fn main() {
-    console.print("Hola")
+    _ = console.print("Hola")
 }
 ~~~
 
@@ -7174,7 +7174,7 @@ let pipeline = (
 )
 
 let output = pipeline.output()?
-console.print(String(output.stdout)?)
+_ = console.print(String(output.stdout)?)
 ~~~
 
 En un script raíz:
@@ -8136,7 +8136,7 @@ oculten un diagnóstico independiente.
 |---|---|---|
 | `W1001` | `unused-import` | Import sin referencias. |
 | `W1002` | `unused-binding` | Binding local no leído ni consumido. |
-| `W1003` | `unused-parameter` | Parámetro nombrado sin uso; `_` lo desactiva. |
+| `W1003` | `unused-parameter` | Named parameter unused in an implementation body; `_` suppresses it. Bodyless signatures are exempt. |
 | `W1004` | `naming-convention` | Nombre no sigue la convención de 5.4. |
 | `W1005` | `confusable-identifier` | Skeleton Unicode confundible en el mismo scope. |
 | `W1006` | `unreachable-code` | Statement o expresión posterior no es alcanzable. |
@@ -8444,7 +8444,7 @@ con condiciones cerradas:
 
 - Import no utilizado (`W1001`).
 - Binding local no utilizado (`W1002`).
-- Parámetro no utilizado que no se haya escrito como descarte `_` (`W1003`).
+- Unused parameter in an implementation body, unless written as `_` (`W1003`); bodyless signatures are exempt.
 - Nombre que no sigue la convención canónica (`W1004`).
 - Identificadores visualmente confundibles según 5.4 (`W1005`).
 - Código estructuralmente inalcanzable tras una expresión `Never` o una
@@ -9182,6 +9182,12 @@ marcador solo puede inferir `suspends`; uno escrito o esperado como `selectable`
 debe superar la misma comprobación atómica `E1614` que una función nombrada.
 `fn` no introduce cierres.
 
+In an `if`, `for` or `match` header, the final brace block belongs to the control
+construct. A parenthesized operand before that block remains a group or tuple;
+an expression body needs a continuation before the control block. Nested
+arguments, elements and grouped expressions retain their own brace context, so
+closures and record literals can be passed directly to a header's function call.
+
 ### 23.19 Jerarquía de expresiones
 
 ~~~ebnf
@@ -9732,7 +9738,7 @@ fn main(): !StatisticsError {
     let interior = samples[1:-1]
     let centered = center(interior)?
 
-    console.print("{centered}")
+    _ = console.print("{centered}")
 }
 ~~~
 
@@ -9771,7 +9777,7 @@ fn countWords(words: Array[String]): Map[String, Int] {
 
 fn printCounts(counts: Map[String, Int]) {
     for (word, count) in counts {
-        console.print("{word}: {count}")
+        _ = console.print("{word}: {count}")
     }
 }
 ~~~
@@ -9946,7 +9952,7 @@ fn loadPage(userId: UserId): Page ! ApiError {
 
 fn main(): !ApiError {
     let page = loadPage(UserId(42))?
-    console.print("{page}")
+    _ = console.print("{page}")
 }
 ~~~
 
@@ -10002,7 +10008,7 @@ let pipeline = (
 )
 
 let output = pipeline.check()?
-console.print(String(output.stdout)?)
+_ = console.print(String(output.stdout)?)
 ~~~
 
 La llamada a `check()` espera implícitamente y hace suspendible por inferencia al
@@ -10493,6 +10499,10 @@ Por cada trait solicitado, el provider puede emitir únicamente:
 - un único `impl` de ese trait para el target autorizado, con los métodos y
   operaciones asociadas exigidos por el contrato del trait.
 
+Imports required by `SourceBuilder.renderType` may precede that impl. They
+must name types admitted by the request snapshot; duplicate or unrelated
+imports are rejected. They do not authorize additional declarations.
+
 No puede emitir helpers, tipos, globals, otra declaración `derive`, otra
 solicitud de generación ni un `impl` para un target o trait distinto. Puede
 utilizar paths completamente calificados dentro del body. La expansión completa
@@ -10577,6 +10587,13 @@ generada y se validan durante el typecheck completo posterior.
 
 ### 27.6 Modelo semántico meta
 
+Structural origins use `std.meta.Origin.Source(Span)` for authored declarations
+and `Origin.Builtin(String)` for stable compiler-defined identities. The latter
+has no source range and cannot authorize a diagnostic or source mapping.
+Trait operations include method-local generic parameters, whether a default
+implementation exists, and the `Self: Send` requirement; executable bodies
+remain excluded.
+
 El modelo se identifica como `tondo-meta-model-0.1/1`. Cada request recibe solo
 la clausura de sus roots, no un inventario implícito del programa. Es un árbol
 de datos inmutable, sin métodos que modifiquen el compilador, y contiene:
@@ -10610,6 +10627,14 @@ agregado de bytes y devuelve una respuesta ordenada únicamente cuando todos los
 outputs están presentes. El builder posee los bytes y no publica respuestas
 parciales. Errores de límites, paths, duplicados, módulos, UTF-8 o outputs
 faltantes son variantes cerradas y deterministas.
+
+Canonical type references are opaque `std.meta.TypeRef` values with an
+`identity(): String` query. Transparent aliases preserve identity; nominal
+newtypes do not. `SourceBuilder.renderType(mut self, path: String, ty: TypeRef)`
+returns `String ! Error` and resolves names for that declared output module.
+It stages deterministic imports that `add` includes in the aggregate byte
+budget. The immutable request supplies all rendering data; rendering never
+queries ambient compiler state or expands the model's visibility grant.
 
 ### 27.7 Perfil hermético `meta`
 
@@ -10859,8 +10884,8 @@ de recursos, tiempo monotónico virtual, captura de output, snapshots y
 artefactos content-addressed.
 
 Una ejecución alimenta la salida humana y, sin volver a ejecutar tests, los
-formatos `tondo-test-report-0.1/7`, `tondo-test-list-0.1/6` y
-`tondo-junit-report-0.1/4`. Artefactos y snapshots usan respectivamente
+formatos `tondo-test-report-0.1/8`, `tondo-test-list-0.1/6` y
+`tondo-junit-report-0.1/5`. Artefactos y snapshots usan respectivamente
 `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`. El número tras `/`
 versiona el schema, no la edición del lenguaje.
 
@@ -11058,7 +11083,7 @@ import std.process
 
 let pipeline = process.command("producer") | process.command("consumer")
 let output = pipeline.output()?
-console.print(String(output.stdout)?)
+_ = console.print(String(output.stdout)?)
 ~~~
 
 Las sentencias top-level existen solo en el archivo raíz de un script y forman un `main` implícito.

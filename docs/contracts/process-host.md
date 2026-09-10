@@ -157,12 +157,17 @@ idempotent cleanup path:
 5. publish at most one terminal result.
 
 On Unix each pipeline stage is placed in a fresh operating-system process
-group, so cleanup also terminates descendants created by an explicit shell
-stage before reaping the group leader.
+group. The current termination path only signals that group while its leader
+is still observed as live. A shell that starts a child with redirected streams
+and exits can leave that descendant running after an ordinary VM execution.
+The Linux test CLI separately requires coordinator-owned cgroup-v2 containment
+for process-capable targets, including forced worker termination; see
+`test-interrupt.md`. This test-only provider does not complete the ordinary
+process host's scope guarantee, which remains open under `PROC-008`.
 
 Dropping a live `ProcessHandle` is rejected statically by terminal ownership.
-The host cleanup record remains a defensive runtime boundary and guarantees
-that an aborted VM run cannot leave children or zombies behind.
+The host cleanup record handles direct children during cooperative VM unwind;
+it does not establish the still-pending complete process lifecycle guarantee.
 
 ## CLI arguments
 

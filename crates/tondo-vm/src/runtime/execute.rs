@@ -1,14 +1,17 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+#[cfg(test)]
+use crate::bytecode::normalize_array_slice_indices;
 use crate::bytecode::{
-    ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeAwaitable,
-    BytecodeBinaryOperator, BytecodeBlockId, BytecodeBootstrapHostFunction, BytecodeCallArgument,
-    BytecodeCallArgumentTarget, BytecodeCallable, BytecodeCallableId, BytecodeCoercion,
-    BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
+    ArraySliceError, ArraySliceIndices, BytecodeAggregateKind, BytecodeArraySequenceKind,
+    BytecodeAwaitable, BytecodeBinaryOperator, BytecodeBlockId, BytecodeBootstrapHostFunction,
+    BytecodeCallArgument, BytecodeCallArgumentTarget, BytecodeCallable, BytecodeCallableId,
+    BytecodeCoercion, BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
     BytecodeConstantVariantValue, BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId,
     BytecodeIndexAccess, BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType,
     BytecodeLoanId, BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion,
@@ -19,7 +22,7 @@ use crate::bytecode::{
     BytecodeSlotId, BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind,
     BytecodeTraceDescriptor, BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind,
     BytecodeVariantPayload, BytecodeVerificationLimits, derive_trace_metadata,
-    normalize_array_index, normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
+    normalize_array_index, normalize_array_slice, verify_bytecode_with_trace_metadata,
 };
 use crate::literal;
 
@@ -31,15 +34,31 @@ use super::diagnostics::{
     DiagnosticSynchronization, DiagnosticTaskState, DiagnosticThreadState,
 };
 use super::heap::{Heap, HeapHandle, HeapObject, IteratorAdapter};
+#[cfg(test)]
+use super::value::snapshot_value;
 use super::value::{
-    AggregatePayload, RuntimeJoin, RuntimeLoan, TRANSFERRED_JOIN_SCOPE, Value, snapshot_value,
+    AggregatePayload, RuntimeJoin, RuntimeLoan, SnapshotArguments, TRANSFERRED_JOIN_SCOPE, Value,
+    snapshot_arguments, snapshot_detached_arguments,
 };
 use super::{
     DiagnosticTrace, PanicCode, RuntimeHostValueKind, RuntimeValue, ValueCopyStrategy, VmError,
-    VmLimits, VmPanic, VmStackFrame, VmStatistics,
+    VmHostCompletion, VmHostReturn, VmHostRoots, VmLimits, VmMemoryBudget, VmMemoryCharge, VmPanic,
+    VmStackFrame, VmStatistics,
 };
 
 type HeapMapEntry = (Option<Value>, Option<Value>);
+
+#[path = "reflection.rs"]
+mod reflection;
+
+#[path = "testing_assertions.rs"]
+mod testing_assertions;
+
+#[path = "host_import.rs"]
+pub(super) mod host_import;
+
+#[path = "worker_import.rs"]
+pub(super) mod worker_import;
 
 /// Host boundary for callables that deliberately have no bytecode body.
 ///
@@ -48,6 +67,121 @@ type HeapMapEntry = (Option<Value>, Option<Value>);
 /// keep a managed object alive accidentally.
 pub trait VmHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError>;
+
+    /// A stable borrowed result shape for operations whose result is known
+    /// before dispatch. No state may change while constructing this preview.
+    fn preview_return<'a>(
+        &'a self,
+        _name: &str,
+        _arguments: &'a [RuntimeValue],
+    ) -> Result<Option<super::VmHostReturnPreview<'a>>, VmError> {
+        Ok(None)
+    }
+
+    /// A result that is ready to commit during the immediately following poll.
+    /// The host must not change this result while preparing its preview. Calls
+    /// that can also complete through another operation need admission there.
+    fn preview_polled_return(
+        &self,
+        _call: u64,
+    ) -> Result<Option<super::VmHostReturnPreview<'_>>, VmError> {
+        Ok(None)
+    }
+
+    /// Retire a previewed call whose VM result cannot be admitted. Unlike a
+    /// cancellation request, this must finish synchronously without committing
+    /// the operation or allocating a replacement response.
+    fn discard_previewed_return(&mut self, _call: u64) -> Result<(), VmError> {
+        Err(VmError::invariant("host cannot discard a previewed call"))
+    }
+
+    /// Hosts that construct or mutate variable payloads reserve their reply
+    /// from borrowed state before committing. Simple reference hosts retain
+    /// post-construction transport admission through the default hook.
+    fn invoke_with_return_budget(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        _response: &mut super::VmHostReturnBudget<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        self.invoke(name, arguments)
+    }
+
+    /// Move admitted arguments across a worker bridge without cloning their
+    /// payloads. The reservation must outlive the values throughout dispatch.
+    /// The response belongs to the receiving budget, which can differ from
+    /// the account that owns an earlier argument snapshot.
+    fn invoke_owned(
+        &mut self,
+        name: &str,
+        arguments: Vec<RuntimeValue>,
+        memory: Option<VmMemoryCharge>,
+        budget: Option<&VmMemoryBudget>,
+    ) -> Result<VmHostReturn, VmError> {
+        let mut response = super::VmHostReturnBudget::new(budget);
+        let result = self
+            .invoke_with_return_budget(name, &arguments, &mut response)
+            .and_then(|value| response.finish(value));
+        drop(arguments);
+        drop(memory);
+        result
+    }
+
+    /// A synchronous operation can complete both its caller and pending peers.
+    /// The host admits their typed results together before publishing effects.
+    fn invoke_owned_with_import_admission(
+        &mut self,
+        name: &str,
+        arguments: Vec<RuntimeValue>,
+        memory: Option<VmMemoryCharge>,
+        budget: Option<&VmMemoryBudget>,
+        _admission: &mut super::VmHostImportAdmission<'_>,
+    ) -> Result<VmHostReturn, VmError> {
+        self.invoke_owned(name, arguments, memory, budget)
+    }
+
+    /// An immediately completing asynchronous operation must admit its typed
+    /// result before consuming input or publishing other observable effects.
+    fn start_async_with_import_admission(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        _admission: &mut super::VmHostImportAdmission<'_>,
+    ) -> Result<u64, VmError> {
+        self.start_async(name, arguments)
+    }
+
+    /// Selects the allocation account of the current test task. Hosted values
+    /// retain the account that admitted them when another task becomes active.
+    fn set_test_memory_budget(&mut self, _budget: Option<VmMemoryBudget>) {}
+
+    /// Test hosts may reclaim registry payloads from the complete typed root
+    /// graph. Ordinary hosts do not pay for this additional tracing pass.
+    fn tracks_host_roots(&self) -> bool {
+        false
+    }
+
+    fn collect_host_values(&mut self, _roots: &VmHostRoots) -> Result<(), VmError> {
+        Ok(())
+    }
+
+    /// A worker can publish its roots here and let the parent collect while
+    /// servicing the following call, avoiding an extra bridge round trip.
+    fn prepare_host_call(&mut self, roots: &VmHostRoots) -> Result<(), VmError> {
+        self.collect_host_values(roots)
+    }
+
+    /// Retires unreachable host state after an engine or failed test phase drains.
+    /// A worker publishes its detached return roots through the ordinary bridge;
+    /// an owning host may release abandoned resources without user callbacks.
+    fn retire_host_values(&mut self, roots: &VmHostRoots) -> Result<(), VmError> {
+        self.prepare_host_call(roots)
+    }
+
+    /// Identifies a compiler-owned test entry with independent user phases.
+    fn has_test_participation(&self) -> bool {
+        false
+    }
 
     /// Takes a runner deadline request for one active test boundary. This is
     /// distinct from a language panic and from cancelling the whole invocation.
@@ -72,8 +206,16 @@ pub trait VmHost {
         &mut self,
         calls: &[u64],
         _allow_interruption: bool,
-    ) -> Result<Option<(u64, RuntimeValue)>, VmError> {
-        self.wait_async(calls).map(Some)
+    ) -> Result<Option<VmHostCompletion>, VmError> {
+        self.wait_async(calls).map(|(call, value)| {
+            Some(VmHostCompletion {
+                call,
+                result: Ok(VmHostReturn {
+                    value,
+                    memory: None,
+                }),
+            })
+        })
     }
 
     /// Announces the logical execution unit that is about to call the host.
@@ -92,6 +234,37 @@ pub trait VmHost {
     /// Returns a completed async result without blocking.
     fn poll_async(&mut self, _call: u64) -> Result<Option<RuntimeValue>, VmError> {
         Ok(None)
+    }
+
+    /// Move any provider admission with the completed value. Reference hosts
+    /// without a retained reservation are admitted by the receiving VM before
+    /// entering its ready queue; production hosts can preserve earlier admission.
+    fn poll_async_owned(&mut self, call: u64) -> Result<Option<VmHostReturn>, VmError> {
+        self.poll_async(call).map(|value| {
+            value.map(|value| VmHostReturn {
+                value,
+                memory: None,
+            })
+        })
+    }
+
+    /// Hosts with atomic multi-call completions use this scoped planner at the
+    /// actual commit point, after selecting the participating waiters.
+    fn poll_async_with_import_admission(
+        &mut self,
+        call: u64,
+        _admission: &mut super::VmHostImportAdmission<'_>,
+    ) -> Result<Option<VmHostReturn>, VmError> {
+        self.poll_async_owned(call)
+    }
+
+    fn wait_async_with_import_admission(
+        &mut self,
+        calls: &[u64],
+        allow_interruption: bool,
+        _admission: &mut super::VmHostImportAdmission<'_>,
+    ) -> Result<Option<VmHostCompletion>, VmError> {
+        self.wait_async_interruptible(calls, allow_interruption)
     }
 
     /// Waits until one of the supplied host calls completes.
@@ -150,6 +323,16 @@ pub trait VmHost {
         None
     }
 
+    /// Records a runner resource terminal before bounded runtime cleanup.
+    /// Returning false leaves the ordinary VM error with the caller.
+    fn record_test_resource_limit(
+        &mut self,
+        _id: &str,
+        _resource: &'static str,
+    ) -> Result<bool, VmError> {
+        Ok(false)
+    }
+
     /// Completes the active compiler-owned test node after all language
     /// cleanup has run.
     fn finish_test_node(
@@ -178,7 +361,12 @@ pub enum VmTestNodeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmTestNodeOutcome {
     TimedOut,
+    ResourceLimited,
     Passed,
+    FailedError {
+        error_type: String,
+        span: BytecodeSpan,
+    },
     Panicked(VmPanic),
     Interrupted,
 }
@@ -206,6 +394,14 @@ pub struct VmExecution {
     pub statistics: VmStatistics,
     /// Present only when the opt-in runtime collector was requested.
     pub diagnostics: Option<DiagnosticTrace>,
+}
+
+/// A worker completion retains its detached return until the parent consumes
+/// it. External embedding receives the existing public execution report.
+#[derive(Debug)]
+struct CompletedExecution {
+    execution: VmExecution,
+    return_memory: Option<VmMemoryCharge>,
 }
 
 pub fn execute(
@@ -242,6 +438,60 @@ pub fn execute_with_arguments(
         ValueCopyStrategy::default(),
         None,
     )
+}
+
+/// Invoke a toolchain provider with one owned, typed request and a rejecting
+/// host. The complete detached request and its typed heap representation share
+/// the invocation's memory budget. This is separate from the scalar-only
+/// differential entry point and does not expose a Tondo host capability.
+pub fn execute_with_owned_request(
+    program: &BytecodeProgram,
+    entry: BytecodeFunctionId,
+    request: RuntimeValue,
+    limits: VmLimits,
+) -> Result<VmExecution, VmError> {
+    limits.validate()?;
+    let trace = verify_bytecode_with_trace_metadata(
+        program,
+        BytecodeVerificationLimits {
+            max_dataflow_steps: limits.max_verification_steps,
+        },
+    )?;
+    validate_entry_contract(program, entry)?;
+    let function = program
+        .function(entry)
+        .ok_or_else(|| VmError::InvalidEntry("request entry is missing".into()))?;
+    let callable = program
+        .callable(function.callable)
+        .ok_or_else(|| VmError::InvalidEntry("request callable is missing".into()))?;
+    let [parameter] = callable.parameters.as_slice() else {
+        return Err(VmError::InvalidEntry(
+            "request entry must take exactly one value parameter".into(),
+        ));
+    };
+    if parameter.receiver
+        || parameter.mode != crate::bytecode::BytecodeParameterMode::Value
+        || parameter.variadic_element.is_some()
+    {
+        return Err(VmError::InvalidEntry(
+            "request entry must take an ordinary value parameter".into(),
+        ));
+    }
+    let budget = VmMemoryBudget::new(limits.max_heap_bytes);
+    let returned = VmHostReturn::admit(request, Some(&budget))?;
+    let mut host = RejectingHost;
+    let mut engine = Engine::new(
+        program,
+        &mut host,
+        limits,
+        ValueCopyStrategy::default(),
+        trace,
+    );
+    engine.entry_test_memory = Some(budget.clone());
+    engine.restore_test_heap_budget();
+    let request = engine.materialize_host_return(parameter.ty, returned)?;
+    let completed = engine.run(entry, vec![request])?;
+    Ok(completed.execution)
 }
 
 pub fn execute_with_limits(
@@ -330,7 +580,7 @@ fn execute_with_initial_values(
     copy_strategy: ValueCopyStrategy,
     diagnostics: Option<DiagnosticConfig>,
 ) -> Result<VmExecution, VmError> {
-    validate_limits(limits)?;
+    limits.validate()?;
     let diagnostics = diagnostics.map(DiagnosticSession::new).transpose()?;
     let trace = verify_bytecode_with_trace_metadata(
         program,
@@ -339,12 +589,13 @@ fn execute_with_initial_values(
         },
     )?;
     validate_entry_contract(program, entry)?;
-    if diagnostics.is_none() {
+    let completed = if diagnostics.is_none() {
         Engine::new(program, host, limits, copy_strategy, trace).run(entry, arguments)
     } else {
         Engine::new_with_diagnostics(program, host, limits, copy_strategy, trace, diagnostics)
             .run(entry, arguments)
-    }
+    }?;
+    Ok(completed.execution)
 }
 
 fn initial_value(value: RuntimeValue) -> Result<Value, VmError> {
@@ -355,9 +606,9 @@ fn initial_value(value: RuntimeValue) -> Result<Value, VmError> {
         RuntimeValue::Float(value) => Ok(Value::Float(value)),
         RuntimeValue::Byte(value) => Ok(Value::Byte(value)),
         RuntimeValue::Char(value) => Ok(Value::Char(value)),
-        other => Err(VmError::InvalidEntry(format!(
-            "initial argument is not a detached scalar: {other:?}"
-        ))),
+        _ => Err(VmError::InvalidEntry(
+            "initial argument is not a detached scalar".into(),
+        )),
     }
 }
 
@@ -387,25 +638,6 @@ fn validate_entry_contract(
     Ok(())
 }
 
-fn validate_limits(limits: VmLimits) -> Result<(), VmError> {
-    for (name, value) in [
-        ("max_verification_steps", limits.max_verification_steps),
-        ("max_steps", limits.max_steps),
-        ("max_stack_depth", u64::from(limits.max_stack_depth)),
-        ("max_heap_objects", u64::from(limits.max_heap_objects)),
-        ("max_heap_bytes", limits.max_heap_bytes),
-        (
-            "initial_gc_threshold",
-            u64::from(limits.initial_gc_threshold),
-        ),
-    ] {
-        if value == 0 {
-            return Err(VmError::InvalidLimits(name));
-        }
-    }
-    Ok(())
-}
-
 fn run_blocking_job(
     program: &BytecodeProgram,
     trace: &BytecodeTraceMetadata,
@@ -415,13 +647,17 @@ fn run_blocking_job(
     host: &mut BlockingWorkerHost,
 ) -> BlockingCompletion {
     let mut engine = Engine::new(program, host, limits, copy_strategy, trace.clone());
+    engine.inherited_test_work = job.test_work;
+    engine.restore_test_heap_budget();
     let arguments = match engine.materialize_blocking_arguments(job.function, job.arguments) {
         Ok(arguments) => arguments,
         Err(error) => return BlockingCompletion::Failed(error),
     };
     match engine.run(job.function, arguments) {
-        Ok(execution) => match execution.outcome {
-            VmOutcome::Returned(value) => BlockingCompletion::Returned(value),
+        Ok(completed) => match completed.execution.outcome {
+            VmOutcome::Returned(value) => {
+                BlockingCompletion::Returned(value, completed.return_memory)
+            }
             VmOutcome::Panicked(panic) => BlockingCompletion::Panicked(panic),
             VmOutcome::Interrupted => BlockingCompletion::Cancelled,
         },
@@ -458,9 +694,46 @@ struct OnceContinuation {
 struct TestBoundary {
     kind: VmTestNodeKind,
     id: String,
+    budget: usize,
+    parent_budget: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
+struct TestInstructionBudget {
+    id: String,
+    owner: usize,
+    work: Arc<TestWorkBudget>,
+    containment_steps: u64,
+    exhausted: bool,
+}
+
+#[derive(Debug)]
+struct TestWorkBudget {
+    steps: AtomicU64,
+    stopped: AtomicBool,
+    memory: VmMemoryBudget,
+}
+
+impl TestWorkBudget {
+    fn step(&self, limit: u64) -> Result<(), VmError> {
+        if self.stopped.load(AtomicOrdering::Acquire)
+            || self
+                .steps
+                .fetch_update(AtomicOrdering::AcqRel, AtomicOrdering::Acquire, |steps| {
+                    steps.checked_add(1).filter(|next| *next <= limit)
+                })
+                .is_err()
+        {
+            return Err(VmError::ResourceLimit {
+                resource: "instruction steps",
+                limit,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
 struct RuntimeReservation {
     mode: BytecodeParameterMode,
     path: ResolvedPlacePath,
@@ -533,6 +806,7 @@ impl DeferredOperation {
 
 #[derive(Debug)]
 struct RuntimeDefer {
+    memory: Option<VmMemoryCharge>,
     scope: BytecodeScopeId,
     span: BytecodeSpan,
     operation: DeferredOperation,
@@ -548,8 +822,9 @@ impl RuntimeDefer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct RuntimeFallback {
+    _memory: Option<VmMemoryCharge>,
     scope: BytecodeScopeId,
     owner: BytecodePlace,
 }
@@ -606,6 +881,7 @@ impl RuntimeCleanup {
 
 #[derive(Debug)]
 struct Frame {
+    memory: Option<VmMemoryCharge>,
     function: BytecodeFunctionId,
     block: BytecodeBlockId,
     instruction: usize,
@@ -619,6 +895,7 @@ struct Frame {
 
 #[derive(Debug)]
 struct RuntimeSelectRegion {
+    _memory: Option<VmMemoryCharge>,
     capacity: u32,
     registered: u32,
     arms: Vec<RuntimeSelectArm>,
@@ -692,6 +969,8 @@ enum RuntimeUnwind {
 
 #[derive(Debug)]
 enum TaskWait {
+    /// A detached worker failure is delivered only after its owning task resumes.
+    Failed(VmError),
     Join {
         child: usize,
         owner: BytecodePlace,
@@ -705,7 +984,7 @@ enum TaskWait {
         destination: BytecodePlace,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
-        completion: Option<RuntimeValue>,
+        completion: Option<VmHostReturn>,
     },
     /// A host operation started by an inferred suspendible defer. Cleanup must be allowed to
     /// finish even when the surrounding task is already unwinding, so it has
@@ -714,7 +993,7 @@ enum TaskWait {
         call: u64,
         outcome: BytecodeTypeId,
         target: BytecodeBlockId,
-        completion: Option<RuntimeValue>,
+        completion: Option<VmHostReturn>,
     },
     HostTask {
         call: u64,
@@ -813,7 +1092,8 @@ enum TaskWait {
     PoolLifecycle {
         pool: u64,
         cancel: bool,
-        destination: BytecodePlace,
+        /// None resumes a compiler-owned defer drain, shielded from repeated cancellation.
+        destination: Option<BytecodePlace>,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
     },
@@ -821,6 +1101,44 @@ enum TaskWait {
         unwind: BytecodeBlockId,
     },
     Scope,
+}
+
+impl TaskWait {
+    fn value_roots(&self, values: &mut Vec<Value>) {
+        match self {
+            Self::BlockingSubmit { arguments, .. }
+            | Self::PoolSubmit { arguments, .. }
+            | Self::PoolJob { arguments, .. } => values.extend(arguments.iter().cloned()),
+            Self::ActorSend { message, .. } => values.push(message.clone()),
+            Self::Once {
+                completion: Some(OnceResolution::Ready(value) | OnceResolution::Error(value)),
+                ..
+            }
+            | Self::OnceTask {
+                completion: Some(OnceResolution::Ready(value) | OnceResolution::Error(value)),
+                ..
+            } => values.push(value.clone()),
+            _ => {}
+        }
+    }
+
+    fn host_roots(&self, hosts: &mut VmHostRoots) {
+        match self {
+            Self::HostCall {
+                completion: Some(value),
+                ..
+            }
+            | Self::DeferredHostCall {
+                completion: Some(value),
+                ..
+            } => value.value.trace_host_roots(hosts),
+            Self::BlockingCall {
+                completion: Some(BlockingCompletion::Returned(value, _)),
+                ..
+            } => value.trace_host_roots(hosts),
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -883,33 +1201,65 @@ enum RuntimePoolLifecycle {
     Cancelled,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct BlockingArgument {
     ty: BytecodeTypeId,
     value: RuntimeValue,
 }
 
 #[derive(Debug)]
+struct BlockingArguments {
+    values: Vec<BlockingArgument>,
+    memory: Option<VmMemoryCharge>,
+}
+
+impl std::ops::Deref for BlockingArguments {
+    type Target = [BlockingArgument];
+
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+
+#[derive(Debug)]
 struct BlockingJob {
     id: u64,
     function: BytecodeFunctionId,
-    arguments: Vec<BlockingArgument>,
+    arguments: BlockingArguments,
+    test_work: Option<Arc<TestWorkBudget>>,
 }
 
 #[derive(Debug)]
 enum BlockingCompletion {
-    Returned(RuntimeValue),
+    Returned(RuntimeValue, Option<VmMemoryCharge>),
     Panicked(VmPanic),
     Failed(VmError),
     Cancelled,
 }
 
 #[derive(Debug)]
+enum BlockingHostOperation {
+    Call {
+        name: String,
+        arguments: Vec<RuntimeValue>,
+        memory: Option<VmMemoryCharge>,
+        admission: Option<worker_import::PausedHostImport>,
+    },
+    Collect,
+}
+
+#[derive(Debug)]
 struct BlockingHostRequest {
+    memory: Option<VmMemoryBudget>,
     worker: usize,
-    name: String,
-    arguments: Vec<RuntimeValue>,
-    reply: mpsc::Sender<Result<RuntimeValue, VmError>>,
+    operation: BlockingHostOperation,
+    reply: mpsc::Sender<BlockingHostResponse>,
+}
+
+#[derive(Debug)]
+struct BlockingHostResponse {
+    result: Result<VmHostReturn, VmError>,
+    test_control: Option<String>,
 }
 
 #[derive(Debug)]
@@ -922,6 +1272,7 @@ struct BlockingBridgeState {
     active: usize,
     host_requests_pending: usize,
     completions: BTreeMap<u64, BlockingCompletion>,
+    worker_roots: BTreeMap<usize, VmHostRoots>,
 }
 
 const BLOCKING_CALL_TAG: u64 = 1 << 63;
@@ -968,6 +1319,7 @@ impl BlockingExecutionBridge {
                 active: 0,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -1013,10 +1365,27 @@ impl BlockingExecutionBridge {
         Ok(bridge)
     }
 
+    #[cfg(test)]
     fn submit(
         &self,
         function: BytecodeFunctionId,
         arguments: Vec<BlockingArgument>,
+    ) -> Result<BlockingAdmission, VmError> {
+        self.submit_with_test_work(
+            function,
+            BlockingArguments {
+                values: arguments,
+                memory: None,
+            },
+            None,
+        )
+    }
+
+    fn submit_with_test_work(
+        &self,
+        function: BytecodeFunctionId,
+        arguments: BlockingArguments,
+        test_work: Option<Arc<TestWorkBudget>>,
     ) -> Result<BlockingAdmission, VmError> {
         let (lock, wake) = &*self.state;
         let mut state = lock
@@ -1054,6 +1423,7 @@ impl BlockingExecutionBridge {
             id,
             function,
             arguments,
+            test_work,
         });
         wake.notify_one();
         Ok(BlockingAdmission::Accepted(id))
@@ -1065,6 +1435,39 @@ impl BlockingExecutionBridge {
             .lock()
             .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
         Ok(state.completions.remove(&id))
+    }
+
+    fn trace_host_roots(&self, roots: &mut VmHostRoots) -> Result<(), VmError> {
+        let state = self
+            .state
+            .0
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        for job in &state.queue {
+            for argument in job.arguments.iter() {
+                argument.value.trace_host_roots(roots);
+            }
+        }
+        for worker in state.worker_roots.values() {
+            roots.extend(worker);
+        }
+        for completion in state.completions.values() {
+            if let BlockingCompletion::Returned(value, _) = completion {
+                value.trace_host_roots(roots);
+            }
+        }
+        Ok(())
+    }
+
+    fn retain_host_response(&self, worker: usize, value: &RuntimeValue) -> Result<(), VmError> {
+        let mut state = self
+            .state
+            .0
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        // The response may be in transit while another worker requests GC.
+        value.trace_host_roots(state.worker_roots.entry(worker).or_default());
+        Ok(())
     }
 
     fn can_admit(&self) -> Result<bool, VmError> {
@@ -1211,14 +1614,108 @@ enum BlockingAdmission {
 }
 
 struct BlockingWorkerHost {
+    memory: Option<VmMemoryBudget>,
     worker: usize,
     sender: mpsc::Sender<BlockingHostRequest>,
     state: Arc<(Mutex<BlockingBridgeState>, Condvar)>,
     wake: Arc<Condvar>,
+    test_control: Option<String>,
 }
 
 impl VmHost for BlockingWorkerHost {
+    fn set_test_memory_budget(&mut self, budget: Option<VmMemoryBudget>) {
+        self.memory = budget;
+    }
+
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+        let arguments = snapshot_detached_arguments(arguments, self.memory.as_ref())?;
+        let budget = self.memory.clone();
+        self.invoke_owned(name, arguments.values, arguments.memory, budget.as_ref())
+            .map(|returned| returned.value)
+    }
+
+    fn invoke_owned(
+        &mut self,
+        name: &str,
+        arguments: Vec<RuntimeValue>,
+        memory: Option<VmMemoryCharge>,
+        budget: Option<&VmMemoryBudget>,
+    ) -> Result<VmHostReturn, VmError> {
+        self.request(
+            BlockingHostOperation::Call {
+                name: name.to_owned(),
+                arguments,
+                memory,
+                admission: None,
+            },
+            budget.cloned(),
+        )
+    }
+
+    fn invoke_owned_with_import_admission(
+        &mut self,
+        name: &str,
+        arguments: Vec<RuntimeValue>,
+        memory: Option<VmMemoryCharge>,
+        budget: Option<&VmMemoryBudget>,
+        admission: &mut super::VmHostImportAdmission<'_>,
+    ) -> Result<VmHostReturn, VmError> {
+        let paused = admission.pause_current()?;
+        let guard = paused.as_ref().map(worker_import::PausedHostImport::guard);
+        let returned = self.request(
+            BlockingHostOperation::Call {
+                name: name.to_owned(),
+                arguments,
+                memory,
+                admission: paused,
+            },
+            budget.cloned(),
+        )?;
+        if let Some(guard) = guard {
+            let prepared = guard.take_prepared()?;
+            admission.commit(&mut [prepared])?;
+        }
+        Ok(returned)
+    }
+
+    fn tracks_host_roots(&self) -> bool {
+        self.memory.is_some()
+    }
+
+    fn prepare_host_call(&mut self, roots: &VmHostRoots) -> Result<(), VmError> {
+        let mut state = self
+            .state
+            .0
+            .lock()
+            .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
+        state.worker_roots.insert(self.worker, roots.clone());
+        Ok(())
+    }
+
+    fn collect_host_values(&mut self, roots: &VmHostRoots) -> Result<(), VmError> {
+        self.prepare_host_call(roots)?;
+        self.request(BlockingHostOperation::Collect, self.memory.clone())
+            .map(|_| ())
+    }
+
+    fn take_test_control(&mut self) -> Option<String> {
+        self.test_control.take()
+    }
+}
+
+impl BlockingWorkerHost {
+    fn request(
+        &mut self,
+        operation: BlockingHostOperation,
+        memory: Option<VmMemoryBudget>,
+    ) -> Result<VmHostReturn, VmError> {
+        let import_control = match &operation {
+            BlockingHostOperation::Call {
+                admission: Some(admission),
+                ..
+            } => Some(admission.control.clone()),
+            _ => None,
+        };
         let (reply, response) = mpsc::channel();
         let (lock, _) = &*self.state;
         let mut state = lock
@@ -1226,9 +1723,9 @@ impl VmHost for BlockingWorkerHost {
             .map_err(|_| VmError::invariant("blocking bridge state lock was poisoned"))?;
         self.sender
             .send(BlockingHostRequest {
+                memory,
                 worker: self.worker,
-                name: name.to_owned(),
-                arguments: arguments.to_vec(),
+                operation,
                 reply,
             })
             .map_err(|_| VmError::Host("blocking host adapter is closed".into()))?;
@@ -1237,7 +1734,10 @@ impl VmHost for BlockingWorkerHost {
         self.wake.notify_all();
         loop {
             match response.recv_timeout(Duration::from_millis(10)) {
-                Ok(result) => return result,
+                Ok(response) => {
+                    self.test_control = response.test_control;
+                    return response.result;
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     let lifecycle = self
                         .state
@@ -1248,7 +1748,10 @@ impl VmHost for BlockingWorkerHost {
                     if matches!(
                         lifecycle,
                         RuntimePoolLifecycle::Cancelling | RuntimePoolLifecycle::Cancelled
-                    ) {
+                    ) && import_control
+                        .as_ref()
+                        .map_or(Ok(true), worker_import::WorkerImportControl::try_cancel)?
+                    {
                         return Err(VmError::Host("blocking host call was cancelled".into()));
                     }
                 }
@@ -1285,6 +1788,11 @@ fn blocking_worker_loop(
             loop {
                 if let Some(job) = state.queue.pop_front() {
                     state.active = state.active.saturating_add(1);
+                    let mut roots = VmHostRoots::new();
+                    for argument in job.arguments.iter() {
+                        argument.value.trace_host_roots(&mut roots);
+                    }
+                    state.worker_roots.insert(worker, roots);
                     break job;
                 }
                 if matches!(
@@ -1305,10 +1813,12 @@ fn blocking_worker_loop(
             }
         };
         let mut host = BlockingWorkerHost {
+            memory: None,
             worker,
             sender: host_sender.clone(),
             state: Arc::clone(&state),
             wake: Arc::clone(&host_wake),
+            test_control: None,
         };
         let job_id = job.id;
         let completion = run_blocking_job(&program, &trace, limits, copy_strategy, job, &mut host);
@@ -1318,6 +1828,7 @@ fn blocking_worker_loop(
         };
         state.active = state.active.saturating_sub(1);
         state.completions.insert(job_id, completion);
+        state.worker_roots.remove(&worker);
         if state.active == 0 && state.queue.is_empty() {
             state.lifecycle = match state.lifecycle {
                 RuntimePoolLifecycle::ShuttingDown => RuntimePoolLifecycle::Closed,
@@ -1386,9 +1897,11 @@ enum TaskStatus {
 
 #[derive(Debug)]
 struct TaskRecord {
+    memory: Option<VmMemoryCharge>,
     frames: Vec<Frame>,
     pending_unwind: Option<RuntimeUnwind>,
     async_collect: Option<AsyncCollectTask>,
+    prepared_host_import: Option<host_import::PreparedHostImport>,
     status: TaskStatus,
     resume: Option<TaskWait>,
     queued: bool,
@@ -1400,12 +1913,182 @@ struct TaskRecord {
     discard_completion: bool,
 }
 
+struct PendingHostImportPlanner<'a> {
+    program: &'a BytecodeProgram,
+    heap: &'a mut Heap,
+    limits: &'a VmLimits,
+    nominal_names: &'a [String],
+    statistics: &'a mut VmStatistics,
+    roots: &'a [Value],
+    tasks: &'a mut [TaskRecord],
+    task_budgets: &'a BTreeMap<usize, usize>,
+    phases: &'a [TestInstructionBudget],
+    fallback: Option<VmMemoryBudget>,
+    current: Option<(usize, BytecodeTypeId)>,
+}
+
+impl PendingHostImportPlanner<'_> {
+    fn recipient(&self, call: u64) -> Result<(usize, BytecodeTypeId), VmError> {
+        self.tasks
+            .iter()
+            .enumerate()
+            .find_map(|(task, record)| match record.status {
+                TaskStatus::Waiting(
+                    TaskWait::HostCall {
+                        call: pending,
+                        outcome,
+                        completion: None,
+                        ..
+                    }
+                    | TaskWait::DeferredHostCall {
+                        call: pending,
+                        outcome,
+                        completion: None,
+                        ..
+                    }
+                    | TaskWait::HostTask {
+                        call: pending,
+                        outcome,
+                    },
+                ) if pending == call => Some((task, outcome)),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                VmError::Host(format!("host import targets unknown pending call #{call}"))
+            })
+    }
+
+    fn budget(&self, task: usize) -> Option<VmMemoryBudget> {
+        self.task_budgets
+            .get(&task)
+            .map(|budget| self.phases[*budget].work.memory.clone())
+            .or_else(|| self.fallback.clone())
+    }
+    fn prepare_recipient(
+        &mut self,
+        recipient: host_import::ImportRecipient,
+        outcome: BytecodeTypeId,
+        preview: super::VmHostReturnPreview<'_>,
+    ) -> Result<Option<host_import::PreparedHostImport>, VmError> {
+        let task = recipient.task();
+        let Some(budget) = self.budget(task) else {
+            return Ok(None);
+        };
+        let record = self
+            .tasks
+            .get(task)
+            .ok_or_else(|| VmError::invariant("host import has no receiving task"))?;
+        if record.prepared_host_import.is_some() {
+            return Err(VmError::invariant(
+                "host call already has a prepared import",
+            ));
+        }
+        let cost = host_import::HostImportTypes {
+            program: self.program,
+            heap: self.heap,
+            limits: self.limits,
+            nominal_names: self.nominal_names,
+        }
+        .host_import_preview_cost(outcome, preview, Some(&budget))?;
+        let mut prepared = host_import::reserve_prepared_import(
+            self.heap,
+            self.statistics,
+            self.roots,
+            outcome,
+            cost,
+            budget,
+        )?;
+        prepared.recipient = Some(recipient);
+        Ok(Some(prepared))
+    }
+}
+
+impl host_import::HostImportPlanner for PendingHostImportPlanner<'_> {
+    fn pause_current(&mut self) -> Result<Option<worker_import::PausedHostImport>, VmError> {
+        worker_import::pause_current(self)
+    }
+    fn prepare(
+        &mut self,
+        call: u64,
+        preview: super::VmHostReturnPreview<'_>,
+    ) -> Result<Option<host_import::PreparedHostImport>, VmError> {
+        let (task, outcome) = self.recipient(call)?;
+        self.prepare_recipient(
+            host_import::ImportRecipient::Pending { task, call },
+            outcome,
+            preview,
+        )
+    }
+
+    fn prepare_current(
+        &mut self,
+        preview: super::VmHostReturnPreview<'_>,
+    ) -> Result<Option<host_import::PreparedHostImport>, VmError> {
+        let (task, outcome) = self
+            .current
+            .ok_or_else(|| VmError::invariant("host import has no synchronous caller"))?;
+        self.prepare_recipient(
+            host_import::ImportRecipient::Current { task },
+            outcome,
+            preview,
+        )
+    }
+
+    fn commit(
+        &mut self,
+        prepared: &mut [Option<host_import::PreparedHostImport>],
+    ) -> Result<(), VmError> {
+        for (index, entry) in prepared.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue;
+            };
+            let recipient = entry
+                .recipient
+                .ok_or_else(|| VmError::invariant("host import has no recipient"))?;
+            let task = recipient.task();
+            let actual = match recipient {
+                host_import::ImportRecipient::Pending { call, .. } => self.recipient(call)?,
+                host_import::ImportRecipient::Current { .. } => self
+                    .current
+                    .ok_or_else(|| VmError::invariant("host import lost its synchronous caller"))?,
+            };
+            if actual != (task, entry.ty)
+                || self.tasks[task].prepared_host_import.is_some()
+                || prepared[..index].iter().flatten().any(|previous| {
+                    previous
+                        .recipient
+                        .is_some_and(|recipient| recipient.task() == task)
+                })
+                || self
+                    .budget(task)
+                    .is_none_or(|budget| !budget.same_account(entry.heap.budget()))
+                || !self.heap.owns_import_reservation(&entry.objects)
+            {
+                return Err(VmError::invariant(
+                    "host import recipient changed before commit",
+                ));
+            }
+        }
+        for entry in prepared.iter_mut().filter_map(Option::take) {
+            let mut entry = entry;
+            let task = entry
+                .recipient
+                .take()
+                .expect("the complete batch was validated")
+                .task();
+            self.tasks[task].prepared_host_import = Some(entry);
+        }
+        Ok(())
+    }
+}
+
 /// State owned by a spawned `AsyncIterator.collect` operation.  The iterator
 /// implementation still runs as ordinary bytecode frames; this small owner
 /// only keeps the cursor and bounded result buffer alive between `next()`
 /// suspensions.
 #[derive(Debug)]
 struct AsyncCollectTask {
+    memory: Option<VmMemoryCharge>,
     cursor: Value,
     next: Value,
     remaining: i128,
@@ -1432,6 +2115,15 @@ struct Engine<'program, 'host> {
     frames: Vec<Frame>,
     frame_traces: Vec<crate::bytecode::BytecodeFrameTraceDescriptor>,
     temporary_roots: Vec<Value>,
+    temporary_host_roots: Vec<(RuntimeHostValueKind, u64)>,
+    // Detached input storage remains owned while importing a batch. String
+    // payload charges move to heap slots together with their existing buffer.
+    import_memory: Option<VmMemoryCharge>,
+    // A complete typed reply reserves heap growth before constructing children.
+    // Its String payload charge is transferred here from detached transport.
+    import_heap_memory: Option<VmMemoryCharge>,
+    import_frames: Vec<host_import::ImportFrame>,
+    import_objects: Option<super::heap::ImportObjectReservation>,
     pending_unwind: Option<RuntimeUnwind>,
     // Set only when a synchronous host result becomes the next panic operation.
     // begin_panic consumes it before any cleanup or scheduling can intervene.
@@ -1439,10 +2131,18 @@ struct Engine<'program, 'host> {
     interruption_observed: bool,
     interrupt_unwind_pending: BTreeSet<usize>,
     timed_out_test_boundaries: BTreeSet<String>,
+    test_instruction_budgets: Vec<TestInstructionBudget>,
+    task_test_budgets: BTreeMap<usize, usize>,
+    entry_steps: u64,
+    entry_step_limit: u64,
+    inherited_test_work: Option<Arc<TestWorkBudget>>,
+    entry_test_memory: Option<VmMemoryBudget>,
     tasks: Vec<TaskRecord>,
     runnable: VecDeque<usize>,
     current_task: usize,
     task_scopes: Vec<Option<RuntimeTaskScope>>,
+    task_scope_memory: Vec<VmMemoryCharge>,
+    scheduler_handle_memory: BTreeMap<(RuntimeHostValueKind, u64), VmMemoryCharge>,
     oneshots: BTreeMap<u64, OneShotState>,
     next_oneshot_id: u64,
     groups: BTreeMap<u64, RuntimeGroupState>,
@@ -1492,25 +2192,49 @@ impl<'program, 'host> Engine<'program, 'host> {
         trace: BytecodeTraceMetadata,
         diagnostics: Option<DiagnosticSession>,
     ) -> Self {
+        let entry_step_limit = if host.has_test_participation() {
+            super::TEST_ENTRY_INSTRUCTIONS
+        } else {
+            limits.max_steps
+        };
+        let entry_test_memory = host
+            .has_test_participation()
+            .then(|| VmMemoryBudget::new(limits.max_heap_bytes));
+        let mut heap = Heap::new(limits, trace.types);
+        heap.set_budget(entry_test_memory.clone());
+        host.set_test_memory_budget(entry_test_memory.clone());
         Self {
             program,
             host,
             limits,
             copy_strategy,
             diagnostics,
-            heap: Heap::new(limits, trace.types),
+            heap,
             frames: Vec::new(),
             frame_traces: trace.frames,
             temporary_roots: Vec::new(),
+            temporary_host_roots: Vec::new(),
+            import_memory: None,
+            import_heap_memory: None,
+            import_frames: Vec::new(),
+            import_objects: None,
             pending_unwind: None,
             pending_test_control: false,
             interruption_observed: false,
             interrupt_unwind_pending: BTreeSet::new(),
             timed_out_test_boundaries: BTreeSet::new(),
+            test_instruction_budgets: Vec::new(),
+            task_test_budgets: BTreeMap::new(),
+            entry_steps: 0,
+            entry_step_limit,
+            inherited_test_work: None,
+            entry_test_memory,
             tasks: Vec::new(),
             runnable: VecDeque::new(),
             current_task: 0,
             task_scopes: Vec::new(),
+            task_scope_memory: Vec::new(),
+            scheduler_handle_memory: BTreeMap::new(),
             oneshots: BTreeMap::new(),
             next_oneshot_id: 1,
             groups: BTreeMap::new(),
@@ -1583,6 +2307,9 @@ impl<'program, 'host> Engine<'program, 'host> {
         scope: Option<usize>,
         state: DiagnosticTaskState,
     ) -> Result<(), VmError> {
+        if let Some(budget) = self.task_test_budgets.get(&self.current_task).copied() {
+            self.task_test_budgets.insert(task, budget);
+        }
         let parent = scope.and_then(|scope| {
             self.task_scopes
                 .get(scope)
@@ -1816,7 +2543,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         result
     }
 
-    fn start_host_async(
+    fn dispatch_host_async(
         &mut self,
         name: &str,
         arguments: &[RuntimeValue],
@@ -1834,11 +2561,48 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(call)
     }
 
+    fn start_host_async_prepared(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        frame: usize,
+        outcome: BytecodeTypeId,
+    ) -> Result<(u64, Option<host_import::PreparedHostImport>), VmError> {
+        if self.tasks[self.current_task].prepared_host_import.is_some() {
+            return Err(VmError::invariant(
+                "a task dispatched before consuming its host reply admission",
+            ));
+        }
+        self.prepare_host_collection(arguments)?;
+        let prepared = self.prepare_host_return_import(name, arguments, outcome)?;
+        if self.current_test_memory().is_none() {
+            let call = self.dispatch_host_async(name, arguments, Some(frame))?;
+            return Ok((call, prepared));
+        }
+        self.tasks[self.current_task].prepared_host_import = prepared;
+        self.host
+            .set_execution_unit(Self::task_id(self.current_task));
+        let result = self.with_host_import_admission_for(Some(outcome), |host, admission| {
+            host.start_async_with_import_admission(name, arguments, admission)
+        });
+        // Restore ownership on success and failure, including failure after a
+        // provider admitted its result but before it could retain the call.
+        let prepared = self.tasks[self.current_task].prepared_host_import.take();
+        let call = result?;
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::HostStart,
+            None,
+            Some(frame),
+        )?;
+        Ok((call, prepared))
+    }
+
     fn snapshot_blocking_arguments(
-        &self,
+        &mut self,
         function: BytecodeFunctionId,
         arguments: &[Value],
-    ) -> Result<Vec<BlockingArgument>, VmError> {
+    ) -> Result<BlockingArguments, VmError> {
         let function_info = self
             .program
             .function(function)
@@ -1848,21 +2612,69 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "blocking job argument count does not match its implementation",
             ));
         }
-        function_info
+        for slot in &function_info.parameters {
+            if function_info.slot(*slot).is_none() {
+                return Err(VmError::invariant("blocking job parameter slot is invalid"));
+            }
+        }
+        let SnapshotArguments { values, memory } = self.snapshot_arguments(arguments)?;
+        let function_info = self
+            .program
+            .function(function)
+            .expect("validated immutable function");
+        let values = function_info
             .parameters
             .iter()
-            .copied()
-            .zip(arguments)
+            .zip(values)
             .map(|(slot, value)| {
                 let ty = function_info
-                    .slot(slot)
-                    .ok_or_else(|| VmError::invariant("blocking job parameter slot is invalid"))?
+                    .slot(*slot)
+                    .expect("validated immutable slot")
                     .ty;
-                let value =
-                    snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)?;
-                Ok(BlockingArgument { ty, value })
+                BlockingArgument { ty, value }
             })
-            .collect()
+            .collect();
+        Ok(BlockingArguments { values, memory })
+    }
+
+    fn snapshot_arguments(&mut self, values: &[Value]) -> Result<SnapshotArguments, VmError> {
+        let budget = self.current_test_memory();
+        self.snapshot_arguments_with_budget(values, budget.as_ref())
+    }
+
+    fn snapshot_arguments_with_budget(
+        &mut self,
+        values: &[Value],
+        budget: Option<&VmMemoryBudget>,
+    ) -> Result<SnapshotArguments, VmError> {
+        let result = snapshot_arguments(
+            values,
+            &self.heap,
+            &self.callable_names,
+            &self.nominal_names,
+            budget,
+        );
+        if !matches!(
+            result,
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                ..
+            })
+        ) {
+            return result;
+        }
+        // A failed admission has released its partial reservation. Collect
+        // once while rooting every source argument, then retry the same batch.
+        let roots = self.roots(values)?;
+        self.collect_host_memory(&roots, None)?;
+        self.heap.collect(&roots, &mut self.statistics)?;
+        snapshot_arguments(
+            values,
+            &self.heap,
+            &self.callable_names,
+            &self.nominal_names,
+            budget,
+        )
     }
 
     fn admit_blocking_job(
@@ -1876,7 +2688,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                 VmError::invariant("blocking submission references an unknown pool")
             })?;
         let arguments = self.snapshot_blocking_arguments(function, &arguments)?;
-        let admission = bridge.submit(function, arguments)?;
+        let test_work = self
+            .task_test_budgets
+            .get(&self.current_task)
+            .map(|budget| Arc::clone(&self.test_instruction_budgets[*budget].work))
+            .or_else(|| self.inherited_test_work.clone());
+        let admission = bridge.submit_with_test_work(function, arguments, test_work)?;
         let BlockingAdmission::Accepted(job) = admission else {
             return Ok(admission);
         };
@@ -1911,11 +2728,63 @@ impl<'program, 'host> Engine<'program, 'host> {
         let mut serviced = 0;
         for bridge in bridges {
             while let Some(request) = bridge.try_host_request()? {
+                let result = match &request.operation {
+                    BlockingHostOperation::Call { arguments, .. } => {
+                        self.prepare_host_collection(arguments)
+                    }
+                    BlockingHostOperation::Collect => self.prepare_host_collection(&[]),
+                };
                 self.host.set_execution_unit(
                     BLOCKING_WORKER_UNIT_TAG.saturating_add(request.worker as u64),
                 );
-                let result = self.host.invoke(&request.name, &request.arguments);
-                let _ = request.reply.send(result);
+                self.host.set_test_memory_budget(request.memory.clone());
+                let result = result.and_then(|()| match request.operation {
+                    BlockingHostOperation::Call {
+                        name,
+                        arguments,
+                        memory,
+                        admission,
+                    } => {
+                        if let Some(admission) = admission {
+                            self.with_host_import_admission_context(
+                                None,
+                                Some(admission),
+                                |host, admission| {
+                                    // Existing borrowed previews cover operations that
+                                    // commit through the ordinary owned host entrypoint.
+                                    if let Some(preview) = host.preview_return(&name, &arguments)? {
+                                        let prepared = admission.prepare_current(preview)?;
+                                        admission.commit(&mut [prepared])?;
+                                    }
+                                    host.invoke_owned_with_import_admission(
+                                        &name,
+                                        arguments,
+                                        memory,
+                                        request.memory.as_ref(),
+                                        admission,
+                                    )
+                                },
+                            )
+                        } else {
+                            self.host.invoke_owned(
+                                &name,
+                                arguments,
+                                memory,
+                                request.memory.as_ref(),
+                            )
+                        }
+                    }
+                    BlockingHostOperation::Collect => VmHostReturn::admit(RuntimeValue::Unit, None),
+                });
+                self.host.set_test_memory_budget(self.current_test_memory());
+                if let Ok(value) = &result {
+                    bridge.retain_host_response(request.worker, &value.value)?;
+                }
+                let test_control = self.host.take_test_control();
+                let _ = request.reply.send(BlockingHostResponse {
+                    result,
+                    test_control,
+                });
                 bridge.finish_host_request()?;
                 serviced += 1;
             }
@@ -1930,18 +2799,113 @@ impl<'program, 'host> Engine<'program, 'host> {
     fn invoke_host(
         &mut self,
         name: &str,
-        arguments: &[RuntimeValue],
-    ) -> Result<RuntimeValue, VmError> {
+        arguments: Vec<RuntimeValue>,
+    ) -> Result<VmHostReturn, VmError> {
+        let arguments =
+            SnapshotArguments::admit_owned(arguments, self.current_test_memory().as_ref())?;
+        self.invoke_host_arguments(name, arguments)
+    }
+
+    fn invoke_host_arguments(
+        &mut self,
+        name: &str,
+        arguments: SnapshotArguments,
+    ) -> Result<VmHostReturn, VmError> {
+        self.prepare_host_collection(&arguments)?;
+        self.dispatch_host_arguments(name, arguments)
+    }
+
+    fn dispatch_host_arguments(
+        &mut self,
+        name: &str,
+        arguments: SnapshotArguments,
+    ) -> Result<VmHostReturn, VmError> {
         self.host
             .set_execution_unit(Self::task_id(self.current_task));
-        self.host.invoke(name, arguments)
+        let budget = self.current_test_memory();
+        self.host
+            .invoke_owned(name, arguments.values, arguments.memory, budget.as_ref())
+    }
+
+    fn dispatch_host_arguments_with_import_admission(
+        &mut self,
+        name: &str,
+        arguments: SnapshotArguments,
+        outcome: BytecodeTypeId,
+        prepared: Option<host_import::PreparedHostImport>,
+    ) -> Result<(VmHostReturn, Option<host_import::PreparedHostImport>), VmError> {
+        if self.current_test_memory().is_none() {
+            // Ordinary execution has no phase account or joint import pool.
+            return self
+                .dispatch_host_arguments(name, arguments)
+                .map(|returned| (returned, prepared));
+        }
+        let task = self.tasks.get_mut(self.current_task).ok_or_else(|| {
+            VmError::invariant("an admitted synchronous call has no executing task")
+        })?;
+        if task.prepared_host_import.is_some() {
+            return Err(VmError::invariant(
+                "a synchronous caller retained an earlier host import",
+            ));
+        }
+        task.prepared_host_import = prepared;
+        self.host
+            .set_execution_unit(Self::task_id(self.current_task));
+        let budget = self.current_test_memory();
+        let result = self.with_host_import_admission_for(Some(outcome), |host, admission| {
+            host.invoke_owned_with_import_admission(
+                name,
+                arguments.values,
+                arguments.memory,
+                budget.as_ref(),
+                admission,
+            )
+        });
+        // A provider can publish this pool jointly with pending peers. Always
+        // take it back, including when later host storage admission fails.
+        let prepared = self.tasks[self.current_task].prepared_host_import.take();
+        result.map(|returned| (returned, prepared))
+    }
+
+    fn prepare_host_collection(&mut self, arguments: &[RuntimeValue]) -> Result<(), VmError> {
+        if self.host.tracks_host_roots() {
+            let roots = self.roots(&[])?;
+            let mut hosts = self.host_roots(&roots, None)?;
+            for argument in arguments {
+                argument.trace_host_roots(&mut hosts);
+            }
+            self.heap.collect(&roots, &mut self.statistics)?;
+            self.host.prepare_host_call(&hosts)?;
+        }
+        Ok(())
+    }
+
+    fn host_roots(
+        &self,
+        roots: &[Value],
+        pending: Option<(BytecodeTypeId, &HeapObject)>,
+    ) -> Result<VmHostRoots, VmError> {
+        let mut hosts = self.temporary_host_roots.iter().copied().collect();
+        self.heap.trace_host_roots(roots, pending, &mut hosts)?;
+        for task in &self.tasks {
+            if let TaskStatus::Waiting(wait) = &task.status {
+                wait.host_roots(&mut hosts);
+            }
+            if let Some(wait) = &task.resume {
+                wait.host_roots(&mut hosts);
+            }
+        }
+        for bridge in self.blocking_bridges.values() {
+            bridge.trace_host_roots(&mut hosts)?;
+        }
+        Ok(hosts)
     }
 
     fn run(
         mut self,
         entry: BytecodeFunctionId,
         arguments: Vec<Value>,
-    ) -> Result<VmExecution, VmError> {
+    ) -> Result<CompletedExecution, VmError> {
         let entry_function = self
             .program
             .function(entry)
@@ -1953,9 +2917,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                 arguments.len()
             )));
         }
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Running,
             resume: None,
@@ -1966,7 +2932,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: true,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.host
             .set_execution_unit(Self::task_id(self.current_task));
         self.record_thread(DiagnosticThreadState::Started)?;
@@ -1975,65 +2941,178 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.push_frame(entry, arguments, None)?;
 
         loop {
-            self.observe_interruption()?;
-            if !self.resume_current_task()? {
-                if let Some(execution) = self.schedule_next()? {
-                    return Ok(execution);
+            match self.run_turn() {
+                Ok(Some(execution)) => return Ok(execution),
+                Ok(None) => {}
+                Err(VmError::CallbackInterrupted) => {
+                    if !self.interrupt_unwind_pending.contains(&self.current_task) {
+                        return Err(VmError::invariant(
+                            "callback yielded without pending cancellation",
+                        ));
+                    }
+                    // The evaluator has restored its caller continuations.
+                    // The next turn enters the ordinary cancellation drain.
                 }
-                continue;
-            }
-            if !self.task_is_running_cleanup(self.current_task)
-                && self.interrupt_unwind_pending.remove(&self.current_task)
-                && self.pending_unwind.is_none()
-                && let Some(frame) = self.frames.len().checked_sub(1)
-            {
-                let function =
-                    &self.program.functions[self.frames[frame].function.index() as usize];
-                // The function's terminal unwind resumes propagation. External
-                // requests first enter its dynamic cleanup drain, just like a
-                // checked operation's unwind edge at this point in execution.
-                let unwind = function.blocks.iter().position(|block| matches!(block.terminator.kind, BytecodeTerminatorKind::DrainUnwind { target } if target == function.unwind))
-                    .map_or(function.unwind, |index| BytecodeBlockId::new(index as u32));
-                self.begin_cancel(frame, unwind)?;
-            }
-            if self.frames.is_empty() && self.tasks[self.current_task].async_collect.is_some() {
-                self.step_budget()?;
-                self.start_async_collect()?;
-                if let Some(execution) = self.schedule_next()? {
-                    return Ok(execution);
-                }
-                continue;
-            }
-            self.step_budget()?;
-            let frame_index = self
-                .frames
-                .len()
-                .checked_sub(1)
-                .ok_or_else(|| VmError::invariant("execution lost its root frame"))?;
-            let (function_id, block_id, instruction_index) = {
-                let frame = &self.frames[frame_index];
-                (frame.function, frame.block, frame.instruction)
-            };
-            let function = self
-                .program
-                .function(function_id)
-                .ok_or_else(|| VmError::invariant("frame has an invalid function"))?;
-            let block = function
-                .block(block_id)
-                .ok_or_else(|| VmError::invariant("frame has an invalid block"))?;
-            if let Some(instruction) = block.instructions.get(instruction_index).cloned() {
-                self.frames[frame_index].instruction += 1;
-                self.execute_instruction(frame_index, &instruction)?;
-            } else {
-                let terminator = block.terminator.clone();
-                if let Some(completion) = self.execute_terminator(frame_index, &terminator)? {
-                    self.complete_current_task(completion)?;
-                }
-            }
-            if let Some(execution) = self.schedule_next()? {
-                return Ok(execution);
+                Err(error) if self.handle_test_resource_limit(&error)? => {}
+                Err(error) => return Err(error),
             }
         }
+    }
+
+    fn run_turn(&mut self) -> Result<Option<CompletedExecution>, VmError> {
+        if matches!(
+            self.tasks[self.current_task].status,
+            TaskStatus::Complete(_) | TaskStatus::Consumed
+        ) {
+            return self.schedule_next();
+        }
+        self.observe_interruption()?;
+        if !self.resume_current_task()? {
+            return self.schedule_next();
+        }
+        if !self.task_is_running_cleanup(self.current_task)
+            && self.interrupt_unwind_pending.remove(&self.current_task)
+            && self.pending_unwind.is_none()
+            && let Some(frame) = self.frames.len().checked_sub(1)
+        {
+            // The function's terminal unwind resumes propagation. External
+            // requests first enter its dynamic cleanup drain, just like a
+            // checked operation's unwind edge at this point in execution.
+            let unwind = self.frame_unwind_entry(frame)?;
+            self.begin_cancel(frame, unwind)?;
+        }
+        if self.frames.is_empty() && self.tasks[self.current_task].async_collect.is_some() {
+            self.step_budget()?;
+            self.start_async_collect()?;
+            return self.schedule_next();
+        }
+        self.step_budget()?;
+        let frame_index = self
+            .frames
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| VmError::invariant("execution lost its root frame"))?;
+        let (function_id, block_id, instruction_index) = {
+            let frame = &self.frames[frame_index];
+            (frame.function, frame.block, frame.instruction)
+        };
+        let function = self
+            .program
+            .function(function_id)
+            .ok_or_else(|| VmError::invariant("frame has an invalid function"))?;
+        let block = function
+            .block(block_id)
+            .ok_or_else(|| VmError::invariant("frame has an invalid block"))?;
+        if let Some(instruction) = block.instructions.get(instruction_index) {
+            // Verification requires a guarded move's ownership transitions
+            // immediately after its Store. Charge the complete sequence before
+            // moving and finish its transitions before yielding or cancelling.
+            let mut end = instruction_index + 1;
+            if matches!(instruction.kind, BytecodeInstructionKind::Store { .. }) {
+                while block.instructions.get(end).is_some_and(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        BytecodeInstructionKind::RetargetCleanup { .. }
+                            | BytecodeInstructionKind::DisarmCleanup(_)
+                    )
+                }) {
+                    end += 1;
+                }
+            }
+            for _ in instruction_index + 1..end {
+                self.step_budget()?;
+            }
+            for index in instruction_index..end {
+                let instruction = self.program.functions[function_id.index() as usize].blocks
+                    [block_id.index() as usize]
+                    .instructions[index]
+                    .clone();
+                self.frames[frame_index].instruction += 1;
+                self.execute_instruction(frame_index, &instruction)?;
+            }
+        } else {
+            let terminator = block.terminator.clone();
+            if let Some(completion) = self.execute_terminator(frame_index, &terminator)? {
+                self.complete_current_task(completion)?;
+            }
+        }
+        self.schedule_next()
+    }
+
+    fn handle_test_resource_limit(&mut self, error: &VmError) -> Result<bool, VmError> {
+        let resource = match error {
+            VmError::ResourceLimit { resource, .. } => *resource,
+            VmError::OutOfMemory { .. } => "memory",
+            _ => return Ok(false),
+        };
+        let Some(&budget) = self.task_test_budgets.get(&self.current_task) else {
+            return Ok(false);
+        };
+        let state = &self.test_instruction_budgets[budget];
+        if state.exhausted
+            || (self.frames.is_empty() && !self.tasks[self.current_task].frames.is_empty())
+        {
+            return Ok(false);
+        }
+        if !self.host.record_test_resource_limit(&state.id, resource)? {
+            return Ok(false);
+        }
+        self.tasks[self.current_task].prepared_host_import = None;
+        // User bytecode has exhausted its phase. Only structural unwind may
+        // continue, with its own finite containment allowance. Explicit
+        // user defers are not guaranteed after a runner resource terminal.
+        let owner = state.owner;
+        self.test_instruction_budgets[budget].exhausted = true;
+        self.test_instruction_budgets[budget]
+            .work
+            .stopped
+            .store(true, AtomicOrdering::Release);
+        self.test_instruction_budgets[budget].containment_steps = 0;
+        let tasks = self
+            .task_test_budgets
+            .iter()
+            .filter_map(|(&task, &assigned)| {
+                (assigned == budget && task != self.current_task).then_some(task)
+            })
+            .collect::<Vec<_>>();
+        for task in tasks {
+            self.interrupt_unwind_pending.insert(task);
+            self.request_cancel(task)?;
+        }
+        if owner != self.current_task {
+            self.interrupt_unwind_pending.insert(owner);
+            self.request_cancel(owner)?;
+        }
+        let Some(frame) = self.frames.len().checked_sub(1) else {
+            // A hosted task has no bytecode frame. Its owner performs the
+            // structural unwind; the failed detached call is already reaped.
+            self.complete_current_task(TaskCompletion::Cancelled)?;
+            return Ok(true);
+        };
+        let unwind = self.frame_unwind_entry(frame)?;
+        self.begin_cancel(frame, unwind)?;
+        Ok(true)
+    }
+
+    fn frame_unwind_entry(&self, frame: usize) -> Result<BytecodeBlockId, VmError> {
+        let function = self
+            .program
+            .function(self.frames[frame].function)
+            .ok_or_else(|| VmError::invariant("unwind frame has no function"))?;
+        Ok(function
+            .blocks
+            .iter()
+            .position(|block| {
+                matches!(block.terminator.kind,
+            BytecodeTerminatorKind::DrainUnwind { target } if target == function.unwind)
+            })
+            .map_or(function.unwind, |index| BytecodeBlockId::new(index as u32)))
+    }
+
+    fn test_budget_exhausted(&self) -> bool {
+        self.task_test_budgets
+            .get(&self.current_task)
+            .is_some_and(|budget| self.test_instruction_budgets[*budget].exhausted)
     }
 
     fn observe_interruption(&mut self) -> Result<(), VmError> {
@@ -2086,6 +3165,14 @@ impl<'program, 'host> Engine<'program, 'host> {
             return Ok(true);
         };
         match wait {
+            TaskWait::Failed(error) => {
+                if error.is_resource_limit() && self.test_budget_exhausted() {
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    Ok(false)
+                } else {
+                    Err(error)
+                }
+            }
             TaskWait::Scope => Ok(true),
             TaskWait::HostTask { .. } => Err(VmError::invariant(
                 "a host-only child task entered the runnable queue",
@@ -2587,11 +3674,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     )?;
                     return Ok(false);
                 }
-                let parent_frames = std::mem::take(&mut self.frames);
-                let pushed = self.push_frame(function, arguments, None);
-                let job_frames = std::mem::take(&mut self.frames);
-                self.frames = parent_frames;
-                pushed?;
+                let job_frames = self.prepare_task_frames(function, arguments, None)?;
                 self.pools
                     .get_mut(&pool)
                     .ok_or_else(|| VmError::invariant("executor job references an unknown pool"))?
@@ -2696,8 +3779,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                     self.frames.len().checked_sub(1).ok_or_else(|| {
                         VmError::invariant("a resumed pool lifecycle has no frame")
                     })?;
-                if self.tasks[self.current_task].cancel_requested
-                    || self.current_scope_has_unobserved_panic(frame)?
+                if destination.is_some()
+                    && (self.tasks[self.current_task].cancel_requested
+                        || self.current_scope_has_unobserved_panic(frame)?)
                 {
                     self.begin_cancel(frame, unwind)?;
                     return Ok(true);
@@ -2712,7 +3796,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                     terminal,
                     RuntimePoolLifecycle::Closed | RuntimePoolLifecycle::Cancelled
                 ) {
-                    self.write_place(frame, &destination, Value::Unit)?;
+                    if let Some(destination) = destination {
+                        self.write_place(frame, &destination, Value::Unit)?;
+                    }
                     self.jump(frame, target);
                     Ok(true)
                 } else {
@@ -2794,11 +3880,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                 if self.tasks[self.current_task].cancel_requested
                     || self.current_scope_has_unobserved_panic(frame)?
                 {
-                    self.cleanup_host_value(&completion)?;
+                    self.tasks[self.current_task].prepared_host_import = None;
+                    self.cleanup_host_value(&completion.value)?;
                     self.begin_cancel(frame, unwind)?;
                     return Ok(true);
                 }
-                let value = self.materialize_host_value(outcome, completion)?;
+                let value = self.materialize_host_return(outcome, completion)?;
                 self.write_place(frame, &destination, value)?;
                 self.jump(frame, target);
                 Ok(true)
@@ -2817,7 +3904,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         "deferred host call #{call} resumed before completion"
                     )));
                 };
-                let value = self.materialize_host_value(outcome, completion)?;
+                let value = self.materialize_host_return(outcome, completion)?;
                 if value != Value::Unit {
                     return Err(VmError::invariant(
                         "deferred async host call returned a non-Unit value",
@@ -3008,7 +4095,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             )));
         };
         match completion {
-            BlockingCompletion::Returned(value) => {
+            BlockingCompletion::Returned(value, memory) => {
                 if self.tasks[self.current_task].cancel_requested
                     || self.current_scope_has_unobserved_panic(frame)?
                 {
@@ -3016,7 +4103,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     self.begin_cancel(frame, unwind)?;
                     return Ok(true);
                 }
-                let value = self.materialize_host_value(outcome, value)?;
+                let value = self.materialize_host_value_with_charge(outcome, value, memory)?;
                 self.write_place(frame, &destination, value)?;
                 self.jump(frame, target);
                 Ok(true)
@@ -3035,7 +4122,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 self.begin_cancel(frame, unwind)?;
                 Ok(true)
             }
-            BlockingCompletion::Failed(error) => Err(error),
+            BlockingCompletion::Failed(error) => {
+                if error.is_resource_limit() && self.test_budget_exhausted() {
+                    self.begin_cancel(frame, unwind)?;
+                    Ok(true)
+                } else {
+                    Err(error)
+                }
+            }
         }
     }
 
@@ -3113,11 +4207,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             return Ok(false);
         }
 
-        let parent_frames = std::mem::take(&mut self.frames);
-        let pushed = self.push_frame(function, arguments, None);
-        let handler_frames = std::mem::take(&mut self.frames);
-        self.frames = parent_frames;
-        pushed?;
+        let handler_frames = self.prepare_task_frames(function, arguments, None)?;
         let actor_state = match self.actors.get_mut(&actor) {
             Some(state) => state,
             None => {
@@ -3152,7 +4242,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(true)
     }
 
-    fn schedule_next(&mut self) -> Result<Option<VmExecution>, VmError> {
+    fn schedule_next(&mut self) -> Result<Option<CompletedExecution>, VmError> {
         if matches!(
             self.tasks.get(self.current_task).map(|task| &task.status),
             Some(TaskStatus::Running)
@@ -3187,6 +4277,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .set_execution_unit(Self::task_id(self.current_task));
                 self.frames = std::mem::take(&mut task.frames);
                 self.pending_unwind = task.pending_unwind.take();
+                self.restore_test_heap_budget();
                 let parent = self.diagnostic_parent(next);
                 self.record_task(next, parent, DiagnosticTaskState::Running)?;
                 self.record_scheduler(next, DiagnosticSchedulerOperation::Switch)?;
@@ -3224,9 +4315,15 @@ impl<'program, 'host> Engine<'program, 'host> {
                 })?;
                 record.bridge.wait()?;
             } else {
-                let Some((call, value)) = self
-                    .host
-                    .wait_async_interruptible(&host_calls, !self.interruption_observed)?
+                let allow_interruption = !self.interruption_observed;
+                let Some(VmHostCompletion { call, result }) =
+                    self.with_host_import_admission(|host, admission| {
+                        host.wait_async_with_import_admission(
+                            &host_calls,
+                            allow_interruption,
+                            admission,
+                        )
+                    })?
                 else {
                     continue;
                 };
@@ -3235,7 +4332,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         "host completed unknown async call #{call}"
                     )));
                 }
-                self.complete_host_call(call, value)?;
+                self.complete_host_outcome(call, result)?;
             }
             self.service_blocking_host_requests()?;
             self.poll_host_calls()?;
@@ -3308,8 +4405,40 @@ impl<'program, 'host> Engine<'program, 'host> {
                 continue;
             }
             let wakes_select = self.host_call_wakes_select(call);
-            if let Some(value) = self.host.poll_async(call)? {
-                self.complete_host_call(call, value)?;
+            let task = self.host_call_task(call)?;
+            if self.tasks[task].prepared_host_import.is_none() {
+                let outcome = match self.tasks[task].status {
+                    TaskStatus::Waiting(
+                        TaskWait::HostCall { outcome, .. }
+                        | TaskWait::DeferredHostCall { outcome, .. }
+                        | TaskWait::HostTask { outcome, .. },
+                    ) => outcome,
+                    _ => unreachable!("host_call_task validated its waiter"),
+                };
+                match self.with_task_context(task, |engine| {
+                    engine.prepare_polled_host_return_import(call, outcome)
+                }) {
+                    Ok(prepared) => self.tasks[task].prepared_host_import = prepared,
+                    Err(error) if error.is_resource_limit() => {
+                        self.host.discard_previewed_return(call)?;
+                        self.complete_host_outcome(call, Err(error))?;
+                        if wakes_select {
+                            break;
+                        }
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            let completion = match self.with_host_import_admission(|host, admission| {
+                host.poll_async_with_import_admission(call, admission)
+            }) {
+                Ok(Some(value)) => Some(Ok(value)),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            };
+            if let Some(result) = completion {
+                self.complete_host_outcome(call, result)?;
                 if wakes_select {
                     // A channel send/receive is committed by completing its
                     // host task. Stop this poll round after waking a select
@@ -3320,6 +4449,78 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
         }
         Ok(())
+    }
+
+    fn with_host_import_admission<T>(
+        &mut self,
+        operation: impl FnOnce(
+            &mut dyn VmHost,
+            &mut super::VmHostImportAdmission<'_>,
+        ) -> Result<T, VmError>,
+    ) -> Result<T, VmError> {
+        self.with_host_import_admission_for(None, operation)
+    }
+
+    fn with_host_import_admission_for<T>(
+        &mut self,
+        outcome: Option<BytecodeTypeId>,
+        operation: impl FnOnce(
+            &mut dyn VmHost,
+            &mut super::VmHostImportAdmission<'_>,
+        ) -> Result<T, VmError>,
+    ) -> Result<T, VmError> {
+        self.with_host_import_admission_context(outcome, None, operation)
+    }
+
+    fn with_host_import_admission_context<T>(
+        &mut self,
+        outcome: Option<BytecodeTypeId>,
+        worker: Option<worker_import::PausedHostImport>,
+        operation: impl FnOnce(
+            &mut dyn VmHost,
+            &mut super::VmHostImportAdmission<'_>,
+        ) -> Result<T, VmError>,
+    ) -> Result<T, VmError> {
+        if worker.is_none()
+            && self.entry_test_memory.is_none()
+            && self.inherited_test_work.is_none()
+            && self.test_instruction_budgets.is_empty()
+        {
+            return operation(self.host, &mut super::VmHostImportAdmission::disabled());
+        }
+        let roots = self.roots(&[])?;
+        let mut planner = PendingHostImportPlanner {
+            program: self.program,
+            heap: &mut self.heap,
+            limits: &self.limits,
+            nominal_names: &self.nominal_names,
+            statistics: &mut self.statistics,
+            roots: &roots,
+            tasks: &mut self.tasks,
+            task_budgets: &self.task_test_budgets,
+            phases: &self.test_instruction_budgets,
+            fallback: self
+                .inherited_test_work
+                .as_ref()
+                .map(|work| work.memory.clone())
+                .or_else(|| self.entry_test_memory.clone()),
+            current: outcome.map(|outcome| (self.current_task, outcome)),
+        };
+        if let Some(current) = worker {
+            let mut worker = worker_import::WorkerHostImportPlanner {
+                pending: planner,
+                current,
+            };
+            operation(
+                self.host,
+                &mut super::VmHostImportAdmission::new(&mut worker),
+            )
+        } else {
+            operation(
+                self.host,
+                &mut super::VmHostImportAdmission::new(&mut planner),
+            )
+        }
     }
 
     fn complete_blocking_call(
@@ -3362,12 +4563,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     BlockingCompletion::Cancelled
                     | BlockingCompletion::Panicked(_)
-                    | BlockingCompletion::Returned(_)
+                    | BlockingCompletion::Returned(..)
                     | BlockingCompletion::Failed(_) => TaskCompletion::Cancelled,
                 };
                 self.complete_task(task, completion)?;
             }
-            BlockingCompletion::Returned(value)
+            BlockingCompletion::Returned(value, memory)
                 if matches!(
                     self.tasks[task].status,
                     TaskStatus::Waiting(TaskWait::HostTask { .. })
@@ -3381,11 +4582,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                         TaskStatus::Waiting(TaskWait::HostTask { outcome, .. }) => outcome,
                         _ => unreachable!("blocking host task status was checked"),
                     };
-                    let value = self.materialize_host_value(outcome, value)?;
-                    self.complete_task(task, TaskCompletion::Returned(value))?;
+                    self.complete_host_task_value(task, outcome, value, memory)?;
                 }
             }
-            BlockingCompletion::Failed(error) => return Err(error),
+            BlockingCompletion::Failed(error)
+                if matches!(
+                    self.tasks[task].status,
+                    TaskStatus::Waiting(TaskWait::HostTask { .. })
+                ) =>
+            {
+                self.tasks[task].status = TaskStatus::Waiting(TaskWait::Failed(error));
+                self.wake_task(task)?;
+            }
             completion => {
                 let TaskStatus::Waiting(TaskWait::BlockingCall {
                     completion: slot, ..
@@ -3403,9 +4611,8 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(())
     }
 
-    fn complete_host_call(&mut self, call: u64, value: RuntimeValue) -> Result<(), VmError> {
-        let task = self
-            .tasks
+    fn host_call_task(&self, call: u64) -> Result<usize, VmError> {
+        self.tasks
             .iter()
             .position(|task| {
                 matches!(
@@ -3424,7 +4631,31 @@ impl<'program, 'host> Engine<'program, 'host> {
                         if *pending == call
                 )
             })
-            .ok_or_else(|| VmError::Host(format!("host completed unknown async call #{call}")))?;
+            .ok_or_else(|| VmError::Host(format!("host completed unknown async call #{call}")))
+    }
+
+    fn complete_host_outcome(
+        &mut self,
+        call: u64,
+        result: Result<VmHostReturn, VmError>,
+    ) -> Result<(), VmError> {
+        if result.is_err() {
+            let task = self.host_call_task(call)?;
+            self.tasks[task].prepared_host_import = None;
+        }
+        match result {
+            Ok(value) => self.complete_host_call(call, value),
+            Err(error) if error.is_resource_limit() => {
+                let task = self.host_call_task(call)?;
+                self.tasks[task].status = TaskStatus::Waiting(TaskWait::Failed(error));
+                self.wake_task(task)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn complete_host_call(&mut self, call: u64, value: VmHostReturn) -> Result<(), VmError> {
+        let task = self.host_call_task(call)?;
 
         let host_task = match &self.tasks[task].status {
             TaskStatus::Waiting(TaskWait::HostTask { outcome, .. }) => Some(*outcome),
@@ -3438,22 +4669,78 @@ impl<'program, 'host> Engine<'program, 'host> {
         };
         if let Some(outcome) = host_task {
             if self.tasks[task].cancel_requested {
-                self.cleanup_host_value(&value)?;
+                self.tasks[task].prepared_host_import = None;
+                self.cleanup_host_value(&value.value)?;
                 self.complete_task(task, TaskCompletion::Cancelled)
             } else {
-                let value = self.materialize_host_value(outcome, value)?;
-                self.complete_task(task, TaskCompletion::Returned(value))
+                match self.admit_host_completion(task, value)? {
+                    Some(returned) => self.complete_host_task_value(
+                        task,
+                        outcome,
+                        returned.value,
+                        returned.memory,
+                    ),
+                    None => Ok(()),
+                }
             }
         } else {
+            let Some(returned) = self.admit_host_completion(task, value)? else {
+                return Ok(());
+            };
             self.record_sync(task, DiagnosticSynchronization::HostComplete, None, None)?;
             match &mut self.tasks[task].status {
                 TaskStatus::Waiting(TaskWait::HostCall { completion, .. })
                 | TaskStatus::Waiting(TaskWait::DeferredHostCall { completion, .. }) => {
-                    *completion = Some(value);
+                    *completion = Some(returned);
                 }
                 _ => unreachable!("host call shape was checked"),
             }
             self.wake_task(task)
+        }
+    }
+
+    fn admit_host_completion(
+        &mut self,
+        task: usize,
+        value: VmHostReturn,
+    ) -> Result<Option<VmHostReturn>, VmError> {
+        if value.memory.is_some() {
+            return Ok(Some(value));
+        }
+        let result = self.with_task_context(task, |engine| {
+            VmHostReturn::admit(value.value, engine.current_test_memory().as_ref())
+        });
+        if result.is_err() {
+            self.tasks[task].prepared_host_import = None;
+        }
+        match result {
+            Ok(returned) => Ok(Some(returned)),
+            Err(error) if error.is_resource_limit() => {
+                self.tasks[task].status = TaskStatus::Waiting(TaskWait::Failed(error));
+                self.wake_task(task)?;
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn complete_host_task_value(
+        &mut self,
+        task: usize,
+        outcome: BytecodeTypeId,
+        value: RuntimeValue,
+        memory: Option<VmMemoryCharge>,
+    ) -> Result<(), VmError> {
+        let materialized = self.with_task_context(task, |engine| {
+            engine.materialize_host_return(outcome, VmHostReturn { value, memory })
+        });
+        match materialized {
+            Ok(value) => self.complete_task(task, TaskCompletion::Returned(value)),
+            Err(error) if error.is_resource_limit() => {
+                self.tasks[task].status = TaskStatus::Waiting(TaskWait::Failed(error));
+                self.wake_task(task)
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -3552,6 +4839,9 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn complete_task(&mut self, task: usize, completion: TaskCompletion) -> Result<(), VmError> {
+        if let Some(record) = self.tasks.get_mut(task) {
+            record.prepared_host_import = None;
+        }
         if let Some(handler) = self.actor_handler_tasks.remove(&task) {
             let state = self.actor_handler_states.remove(&task);
             self.finish_executor_job(task)?;
@@ -3682,7 +4972,20 @@ impl<'program, 'host> Engine<'program, 'host> {
         }) || matches!(
             record.status,
             TaskStatus::Waiting(TaskWait::DeferredHostCall { .. })
-        ) || matches!(record.resume, Some(TaskWait::DeferredHostCall { .. }))
+                | TaskStatus::Waiting(TaskWait::PoolLifecycle {
+                    destination: None,
+                    ..
+                })
+        ) || matches!(
+            record.resume,
+            Some(
+                TaskWait::DeferredHostCall { .. }
+                    | TaskWait::PoolLifecycle {
+                        destination: None,
+                        ..
+                    }
+            )
+        )
     }
 
     fn request_cancel(&mut self, task: usize) -> Result<(), VmError> {
@@ -3779,7 +5082,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(())
     }
 
-    fn finish_root_task(&mut self) -> Result<VmExecution, VmError> {
+    fn finish_root_task(&mut self) -> Result<CompletedExecution, VmError> {
         if !self.groups.is_empty() {
             return Err(VmError::invariant(
                 "the root task completed while Groups remained live",
@@ -3798,13 +5101,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         let completion = self
             .take_task_completion(0)?
             .ok_or_else(|| VmError::invariant("the root task has no completion"))?;
+        let mut return_memory = None;
         let outcome = match completion {
-            TaskCompletion::Returned(value) => VmOutcome::Returned(snapshot_value(
-                &value,
-                &self.heap,
-                &self.callable_names,
-                &self.nominal_names,
-            )?),
+            TaskCompletion::Returned(value) => {
+                let SnapshotArguments { mut values, memory } =
+                    self.snapshot_arguments(std::slice::from_ref(&value))?;
+                return_memory = memory;
+                VmOutcome::Returned(values.pop().expect("one admitted return value"))
+            }
             TaskCompletion::Panicked(panic) => VmOutcome::Panicked(panic),
             TaskCompletion::Cancelled => {
                 if !self.interruption_observed {
@@ -3819,14 +5123,80 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::Begin)?;
         self.record_roots(&roots)?;
         self.heap.collect(&[], &mut self.statistics)?;
+        if self.host.tracks_host_roots() {
+            // The detached result is now the only live graph of this engine.
+            // A worker publishes these roots for its parent without requiring
+            // another budgeted bridge request during terminal cleanup.
+            let mut returned = VmHostRoots::new();
+            if let VmOutcome::Returned(value) = &outcome {
+                value.trace_host_roots(&mut returned);
+            }
+            self.host.retire_host_values(&returned)?;
+        }
         self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::End)?;
         self.record_thread(DiagnosticThreadState::Stopped)?;
         let diagnostics = self.diagnostics.take().map(DiagnosticSession::finish);
-        Ok(VmExecution {
-            outcome,
-            statistics: self.statistics,
-            diagnostics,
+        Ok(CompletedExecution {
+            execution: VmExecution {
+                outcome,
+                statistics: self.statistics,
+                diagnostics,
+            },
+            return_memory,
         })
+    }
+
+    fn reserve_scheduler_memory(
+        &mut self,
+        bytes: u64,
+        extra: &[Value],
+    ) -> Result<Option<VmMemoryCharge>, VmError> {
+        let Some(budget) = self.current_test_memory() else {
+            return Ok(None);
+        };
+        if !budget.can_reserve(bytes) {
+            let roots = self.roots(extra)?;
+            self.collect_host_memory(&roots, None)?;
+            self.heap.collect(&roots, &mut self.statistics)?;
+        }
+        budget.reserve(bytes).map(Some)
+    }
+
+    fn publish_task(&mut self, mut task: TaskRecord) -> Result<(), VmError> {
+        if let Some(scope) = task.parent_scope
+            && self
+                .task_scopes
+                .get(scope)
+                .and_then(Option::as_ref)
+                .is_none()
+        {
+            return Err(VmError::invariant("task admission targets a missing scope"));
+        }
+        let mut roots = Vec::new();
+        if let TaskStatus::Waiting(wait) = &task.status {
+            wait.value_roots(&mut roots);
+        }
+        if let Some(wait) = &task.resume {
+            wait.value_roots(&mut roots);
+        }
+        if let Some(collect) = &task.async_collect {
+            roots.push(collect.cursor.clone());
+            roots.push(collect.next.clone());
+            roots.extend(collect.values.iter().cloned());
+        }
+        let bytes = super::TEST_TASK_BYTES
+            .saturating_add((roots.len() as u64).saturating_mul(super::TEST_SCHEDULER_VALUE_BYTES));
+        if let TaskStatus::Complete(Some(TaskCompletion::Returned(value))) = &task.status {
+            roots.push(value.clone());
+        }
+        self.append_frame_roots(&task.frames, &mut roots)?;
+        if task.memory.is_none() {
+            task.memory = self.reserve_scheduler_memory(bytes, &roots)?;
+        }
+        // Task slots and their completion identity remain in the execution's
+        // table after consumption. Keep their charge until that storage drops.
+        self.tasks.push(task);
+        Ok(())
     }
 
     fn spawn_task(
@@ -3844,16 +5214,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         arguments: Vec<Value>,
         scope: Option<usize>,
     ) -> Result<usize, VmError> {
-        let parent_frames = std::mem::take(&mut self.frames);
-        let pushed = self.push_frame(function, arguments, None);
-        let child_frames = std::mem::take(&mut self.frames);
-        self.frames = parent_frames;
-        pushed?;
+        let child_frames = self.prepare_task_frames(function, arguments, None)?;
 
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: child_frames,
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Runnable,
             resume: None,
@@ -3864,7 +5232,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         if let Some(scope) = scope {
             self.task_scopes
                 .get_mut(scope)
@@ -3887,13 +5255,12 @@ impl<'program, 'host> Engine<'program, 'host> {
         arguments: Vec<Value>,
         scope: usize,
     ) -> Result<usize, VmError> {
-        let parent_frames = std::mem::take(&mut self.frames);
         let unwind = self
             .program
             .function(function)
             .ok_or_else(|| VmError::invariant("Once initializer target is invalid"))?
             .unwind;
-        let pushed = self.push_frame(
+        let child_frames = self.prepare_task_frames(
             function,
             arguments,
             Some(CallContinuation {
@@ -3913,15 +5280,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                     initializer_outcome,
                 }),
             }),
-        );
-        let child_frames = std::mem::take(&mut self.frames);
-        self.frames = parent_frames;
-        pushed?;
+        )?;
 
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: child_frames,
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Runnable,
             resume: None,
@@ -3932,7 +5298,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.task_scopes
             .get_mut(scope)
             .and_then(Option::as_mut)
@@ -3959,9 +5325,11 @@ impl<'program, 'host> Engine<'program, 'host> {
             ));
         }
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::OnceTask {
                 id,
@@ -3976,7 +5344,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.task_scopes
             .get_mut(scope)
             .and_then(Option::as_mut)
@@ -4010,11 +5378,18 @@ impl<'program, 'host> Engine<'program, 'host> {
         let Value::Integer(remaining) = limit else {
             return Err(VmError::invariant("AsyncIterator.collect limit is not Int"));
         };
+        let memory = self
+            .current_test_memory()
+            .map(|budget| budget.reserve(0))
+            .transpose()?;
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: Some(AsyncCollectTask {
+                memory,
                 cursor,
                 next,
                 remaining,
@@ -4031,7 +5406,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         if let Some(scope) = scope {
             let scope_state = match self.task_scopes.get_mut(scope) {
                 Some(Some(scope_state)) => scope_state,
@@ -4175,6 +5550,12 @@ impl<'program, 'host> Engine<'program, 'host> {
             None => true,
         };
         if too_many {
+            if self.current_test_memory().is_some() {
+                return Err(VmError::ResourceLimit {
+                    resource: "heap objects",
+                    limit: self.limits.max_heap_objects.into(),
+                });
+            }
             let outcome = match self.tasks.get(self.current_task) {
                 Some(task) => match task.async_collect.as_ref() {
                     Some(collect) => collect.outcome,
@@ -4186,14 +5567,37 @@ impl<'program, 'host> Engine<'program, 'host> {
             let result = self.collection_error_result(outcome)?;
             return self.complete_current_task(TaskCompletion::Returned(result));
         }
+        if let Some(budget) = self.tasks[self.current_task]
+            .async_collect
+            .as_ref()
+            .and_then(|collect| collect.memory.as_ref())
+            .map(|memory| memory.budget().clone())
+            && !budget.can_reserve(super::TEST_SCHEDULER_VALUE_BYTES)
+        {
+            let roots = self.roots(std::slice::from_ref(&item))?;
+            self.collect_host_memory(&roots, None)?;
+            self.heap.collect(&roots, &mut self.statistics)?;
+        }
         let can_reserve = {
             let collect = match self.tasks[self.current_task].async_collect.as_mut() {
                 Some(collect) => collect,
                 None => return Err(VmError::invariant("collect task lost its state")),
             };
+            if let Some(memory) = &mut collect.memory {
+                memory.resize(
+                    (collect.values.len() as u64 + 1)
+                        .saturating_mul(super::TEST_SCHEDULER_VALUE_BYTES),
+                )?;
+            }
             collect.values.try_reserve(1).is_ok()
         };
         if !can_reserve {
+            if self.current_test_memory().is_some() {
+                return Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: self.limits.max_heap_bytes,
+                });
+            }
             let outcome = match self.tasks.get(self.current_task) {
                 Some(task) => match task.async_collect.as_ref() {
                     Some(collect) => collect.outcome,
@@ -4238,10 +5642,13 @@ impl<'program, 'host> Engine<'program, 'host> {
         for value in collect.values {
             array_values.push(Some(value));
         }
+        // The temporary vector has been consumed. Its owned element storage
+        // transfers to the separately admitted result array below.
+        drop(collect.memory);
         let array = match self.allocate(collect.array, HeapObject::Array(array_values.into()), &[])
         {
             Ok(array) => array,
-            Err(error) if error.is_resource_limit() => {
+            Err(error) if error.is_resource_limit() && self.current_test_memory().is_none() => {
                 self.temporary_roots.truncate(marker);
                 let result = self.collection_error_result(outcome)?;
                 return self.complete_current_task(TaskCompletion::Returned(result));
@@ -4254,7 +5661,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         let result =
             match self.allocate(outcome, HeapObject::ResultOk(Some(array.clone())), &[array]) {
                 Ok(result) => result,
-                Err(error) if error.is_resource_limit() => {
+                Err(error) if error.is_resource_limit() && self.current_test_memory().is_none() => {
                     self.temporary_roots.truncate(marker);
                     let result = self.collection_error_result(outcome)?;
                     return self.complete_current_task(TaskCompletion::Returned(result));
@@ -4268,6 +5675,38 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.complete_current_task(TaskCompletion::Returned(result))
     }
 
+    fn reserve_host_task_memory(
+        &mut self,
+        arguments: &[RuntimeValue],
+    ) -> Result<Option<VmMemoryCharge>, VmError> {
+        let marker = self.temporary_host_roots.len();
+        let mut hosts = VmHostRoots::new();
+        for argument in arguments {
+            argument.trace_host_roots(&mut hosts);
+        }
+        self.temporary_host_roots.extend(hosts);
+        let memory = self.reserve_scheduler_memory(super::TEST_TASK_BYTES, &[]);
+        self.temporary_host_roots.truncate(marker);
+        memory
+    }
+
+    fn start_host_task(
+        &mut self,
+        name: &str,
+        arguments: SnapshotArguments,
+        outcome: BytecodeTypeId,
+        frame: usize,
+        scope: Option<usize>,
+    ) -> Result<usize, VmError> {
+        let memory = self.reserve_host_task_memory(&arguments)?;
+        let (call, prepared) = self.start_host_async_prepared(name, &arguments, frame, outcome)?;
+        drop(arguments);
+        let task = self.spawn_host_task_admitted(call, outcome, scope, memory)?;
+        self.tasks[task].prepared_host_import = prepared;
+        Ok(task)
+    }
+
+    #[cfg(test)]
     fn spawn_host_task(
         &mut self,
         call: u64,
@@ -4277,16 +5716,30 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.spawn_host_task_with_scope(call, outcome, Some(scope))
     }
 
+    #[cfg(test)]
     fn spawn_host_task_with_scope(
         &mut self,
         call: u64,
         outcome: BytecodeTypeId,
         scope: Option<usize>,
     ) -> Result<usize, VmError> {
+        let memory = self.reserve_scheduler_memory(super::TEST_TASK_BYTES, &[])?;
+        self.spawn_host_task_admitted(call, outcome, scope, memory)
+    }
+
+    fn spawn_host_task_admitted(
+        &mut self,
+        call: u64,
+        outcome: BytecodeTypeId,
+        scope: Option<usize>,
+        memory: Option<VmMemoryCharge>,
+    ) -> Result<usize, VmError> {
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::HostTask { call, outcome }),
             resume: None,
@@ -4297,7 +5750,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         if let Some(scope) = scope {
             self.task_scopes
                 .get_mut(scope)
@@ -4319,9 +5772,11 @@ impl<'program, 'host> Engine<'program, 'host> {
         scope: usize,
     ) -> Result<usize, VmError> {
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::BlockingSubmit {
                 pool,
@@ -4340,7 +5795,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.task_scopes
             .get_mut(scope)
             .and_then(Option::as_mut)
@@ -4359,9 +5814,11 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn spawn_completed_task(&mut self, value: Value, scope: usize) -> Result<usize, VmError> {
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Complete(Some(TaskCompletion::Returned(value))),
             resume: None,
@@ -4372,7 +5829,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.task_scopes
             .get_mut(scope)
             .and_then(Option::as_mut)
@@ -4389,9 +5846,11 @@ impl<'program, 'host> Engine<'program, 'host> {
     /// so the commit path has one uniform winner/loser protocol.
     fn spawn_select_value_task(&mut self, value: Value) -> Result<usize, VmError> {
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Complete(Some(TaskCompletion::Returned(value))),
             resume: None,
@@ -4402,7 +5861,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: true,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.assign_completion_order(task)?;
         self.record_new_task(task, None, DiagnosticTaskState::Complete)?;
         Ok(task)
@@ -4413,9 +5872,11 @@ impl<'program, 'host> Engine<'program, 'host> {
     /// only tracks mailbox readiness and therefore never owns user payload.
     fn spawn_actor_select_send_task(&mut self, actor: u64) -> Result<usize, VmError> {
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::ActorSelectSend { actor }),
             resume: None,
@@ -4426,7 +5887,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: true,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.record_new_task(task, None, DiagnosticTaskState::Waiting)?;
         Ok(task)
     }
@@ -4462,14 +5923,11 @@ impl<'program, 'host> Engine<'program, 'host> {
             None => {}
         }
         let task = self.tasks.len();
-        self.oneshots
-            .get_mut(&id)
-            .expect("one-shot state was checked above")
-            .waiter_tasks
-            .push(task);
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::OneShotTask { id, outcome }),
             resume: None,
@@ -4480,7 +5938,12 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
+        self.oneshots
+            .get_mut(&id)
+            .expect("one-shot state was checked above")
+            .waiter_tasks
+            .push(task);
         if let Some(scope) = scope {
             self.task_scopes
                 .get_mut(scope)
@@ -4505,9 +5968,11 @@ impl<'program, 'host> Engine<'program, 'host> {
             return Err(VmError::invariant("Group task references an unknown group"));
         }
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::GroupTask {
                 id,
@@ -4523,7 +5988,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         if let Some(scope) = scope {
             self.task_scopes
                 .get_mut(scope)
@@ -4539,9 +6004,11 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn spawn_cancelled_task_with_scope(&mut self, scope: Option<usize>) -> Result<usize, VmError> {
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Complete(Some(TaskCompletion::Cancelled)),
             resume: None,
@@ -4552,7 +6019,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.assign_completion_order(task)?;
         if let Some(scope) = scope {
             self.task_scopes
@@ -4877,6 +6344,21 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
 
             self.teardown_scope_join_fallbacks(frame, id)?;
+            if self.pending_unwind.is_some() {
+                // Cancellation can arrive after spawning but before the
+                // compiler registers the returned Join's fallback. The scope
+                // still owns that child: after reaping every child and recording
+                // its panic, consume completions without an installed guard too.
+                // A Group or another consumer may already own the completion
+                // even though its task remains in this scope's cancellation set.
+                for child in &children {
+                    let task = &mut self.tasks[*child];
+                    if task.parent_scope == Some(id) && !task.join_consumed {
+                        task.join_consumed = true;
+                        self.discard_task_completion(*child)?;
+                    }
+                }
+            }
             self.frames[frame].task_scopes.pop();
             self.task_scopes
                 .get_mut(id)
@@ -4890,27 +6372,25 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn teardown_scope_join_fallbacks(&mut self, frame: usize, scope: usize) -> Result<(), VmError> {
         loop {
-            let candidates = self.frames[frame]
-                .cleanups
-                .iter()
-                .enumerate()
-                .filter_map(|(index, cleanup)| match cleanup {
-                    RuntimeCleanup::Fallback(fallback) => Some((index, fallback.clone())),
-                    RuntimeCleanup::Explicit(_) => None,
-                })
-                .collect::<Vec<_>>();
             let mut selected = None;
-            for (index, fallback) in candidates.into_iter().rev() {
-                let value = self.read_place(frame, &fallback.owner)?;
+            for index in (0..self.frames[frame].cleanups.len()).rev() {
+                let RuntimeCleanup::Fallback(fallback) = &self.frames[frame].cleanups[index] else {
+                    continue;
+                };
+                let owner = fallback.owner.clone();
+                let value = self.read_place(frame, &owner)?;
                 if self.value_contains_scope_join(&value, scope, &mut Default::default())? {
-                    selected = Some((index, fallback));
+                    selected = Some(index);
                     break;
                 }
             }
-            let Some((index, fallback)) = selected else {
+            let Some(index) = selected else {
                 return Ok(());
             };
-            self.frames[frame].cleanups.remove(index);
+            let RuntimeCleanup::Fallback(fallback) = self.frames[frame].cleanups.remove(index)
+            else {
+                return Err(VmError::invariant("selected scope fallback changed kind"));
+            };
             self.execute_terminal_fallback(frame, fallback)?;
         }
     }
@@ -5030,14 +6510,157 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn step_budget(&mut self) -> Result<(), VmError> {
-        if self.statistics.steps >= self.limits.max_steps {
-            return Err(VmError::ResourceLimit {
-                resource: "instruction steps",
-                limit: self.limits.max_steps,
-            });
+        let ordinary = match self.task_test_budgets.get(&self.current_task) {
+            Some(budget) => {
+                let budget = &mut self.test_instruction_budgets[*budget];
+                if budget.exhausted {
+                    Some((
+                        &mut budget.containment_steps,
+                        super::TEST_CONTAINMENT_INSTRUCTIONS,
+                    ))
+                } else {
+                    budget.work.step(self.limits.max_steps)?;
+                    None
+                }
+            }
+            None if self.inherited_test_work.is_some() => {
+                self.inherited_test_work
+                    .as_ref()
+                    .unwrap()
+                    .step(self.limits.max_steps)?;
+                None
+            }
+            None => Some((&mut self.entry_steps, self.entry_step_limit)),
+        };
+        if let Some((steps, limit)) = ordinary {
+            if *steps >= limit {
+                return Err(VmError::ResourceLimit {
+                    resource: "instruction steps",
+                    limit,
+                });
+            }
+            *steps += 1;
         }
-        self.statistics.steps += 1;
+        self.statistics.steps = self.statistics.steps.saturating_add(1);
         Ok(())
+    }
+
+    fn begin_test_boundary(
+        &mut self,
+        kind: VmTestNodeKind,
+        id: String,
+    ) -> Result<TestBoundary, VmError> {
+        self.host.begin_test_node(kind, &id)?;
+        let budget = self.test_instruction_budgets.len();
+        self.test_instruction_budgets.push(TestInstructionBudget {
+            id: id.clone(),
+            owner: self.current_task,
+            work: Arc::new(TestWorkBudget {
+                steps: AtomicU64::new(0),
+                stopped: AtomicBool::new(false),
+                memory: VmMemoryBudget::new(self.limits.max_heap_bytes),
+            }),
+            containment_steps: 0,
+            exhausted: false,
+        });
+        let parent_budget = self.task_test_budgets.insert(self.current_task, budget);
+        self.restore_test_heap_budget();
+        Ok(TestBoundary {
+            kind,
+            id,
+            budget,
+            parent_budget,
+        })
+    }
+
+    fn finish_test_boundary(
+        &mut self,
+        boundary: &TestBoundary,
+        outcome: VmTestNodeOutcome,
+    ) -> Result<(), VmError> {
+        if self.task_test_budgets.get(&self.current_task) != Some(&boundary.budget) {
+            return Err(VmError::invariant(
+                "test instruction budget nesting changed",
+            ));
+        }
+        if self.test_instruction_budgets[boundary.budget].exhausted && self.host.tracks_host_roots()
+        {
+            // The failed phase has drained and its frame was popped. Preserve
+            // ancestor and sibling roots while retiring abandoned host state
+            // before another test can call the host or trigger collection.
+            let roots = self.roots(&[])?;
+            let hosts = self.host_roots(&roots, None)?;
+            self.host.retire_host_values(&hosts)?;
+        }
+        self.host
+            .finish_test_node(boundary.kind, &boundary.id, outcome)?;
+        if let Some(parent) = boundary.parent_budget {
+            self.task_test_budgets.insert(self.current_task, parent);
+        } else {
+            self.task_test_budgets.remove(&self.current_task);
+        }
+        self.restore_test_heap_budget();
+        Ok(())
+    }
+
+    fn current_test_memory(&self) -> Option<VmMemoryBudget> {
+        self.task_test_budgets
+            .get(&self.current_task)
+            .map(|budget| self.test_instruction_budgets[*budget].work.memory.clone())
+            .or_else(|| {
+                self.inherited_test_work
+                    .as_ref()
+                    .map(|work| work.memory.clone())
+            })
+            .or_else(|| self.entry_test_memory.clone())
+    }
+
+    fn restore_test_heap_budget(&mut self) {
+        let memory = self.current_test_memory();
+        self.heap.set_budget(memory.clone());
+        self.host.set_test_memory_budget(memory);
+    }
+
+    fn begin_test_cleanup(&mut self) -> Result<(), VmError> {
+        self.host.begin_test_suite_cleanup()?;
+        let budget = self
+            .task_test_budgets
+            .get(&self.current_task)
+            .ok_or_else(|| VmError::invariant("suite cleanup has no instruction budget"))?;
+        if !self.test_instruction_budgets[*budget].exhausted {
+            self.test_instruction_budgets[*budget]
+                .work
+                .steps
+                .store(0, AtomicOrdering::Release);
+        }
+        Ok(())
+    }
+
+    /// Preparing a child can collect memory. Keep the suspended caller in the
+    /// task table so its roots remain visible, including on failed admission.
+    fn prepare_task_frames(
+        &mut self,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        continuation: Option<CallContinuation>,
+    ) -> Result<Vec<Frame>, VmError> {
+        let parent_loaded = !self.frames.is_empty();
+        if parent_loaded {
+            let task = self
+                .tasks
+                .get_mut(self.current_task)
+                .ok_or_else(|| VmError::invariant("a loaded parent frame has no task record"))?;
+            if !task.frames.is_empty() {
+                return Err(VmError::invariant("parent frames are loaded twice"));
+            }
+            task.frames = std::mem::take(&mut self.frames);
+        }
+        let result = self.push_frame(function, arguments, continuation);
+        let prepared = std::mem::take(&mut self.frames);
+        if parent_loaded {
+            self.frames = std::mem::take(&mut self.tasks[self.current_task].frames);
+        }
+        result.map(|()| prepared)
     }
 
     fn push_frame(
@@ -5046,7 +6669,19 @@ impl<'program, 'host> Engine<'program, 'host> {
         arguments: Vec<Value>,
         continuation: Option<CallContinuation>,
     ) -> Result<(), VmError> {
-        if self.frames.len() >= self.limits.max_stack_depth as usize {
+        let budget = self.current_test_memory();
+        let depth = budget.as_ref().map_or(self.frames.len(), |budget| {
+            self.frames
+                .iter()
+                .filter(|frame| {
+                    frame
+                        .memory
+                        .as_ref()
+                        .is_some_and(|charge| charge.budget().same_account(budget))
+                })
+                .count()
+        });
+        if depth >= self.limits.max_stack_depth as usize {
             return Err(VmError::ResourceLimit {
                 resource: "stack depth",
                 limit: u64::from(self.limits.max_stack_depth),
@@ -5061,6 +6696,32 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "verified call supplied the wrong frame argument count",
             ));
         }
+        // Fixed logical frame storage is reserved before constructing slots or
+        // loans. The charge travels with parked frames and releases on return
+        // or unwind. It is separate from the heap payload statistics.
+        let memory = if let Some(budget) = budget {
+            let bytes = super::TEST_FRAME_BASE_BYTES
+                .checked_add(
+                    (function.slots.len() as u64).saturating_mul(super::TEST_FRAME_SLOT_BYTES),
+                )
+                .and_then(|bytes| {
+                    bytes.checked_add(
+                        (function.loans.len() as u64).saturating_mul(super::TEST_FRAME_LOAN_BYTES),
+                    )
+                })
+                .ok_or(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: self.limits.max_heap_bytes,
+                })?;
+            if !budget.can_reserve(bytes) {
+                let roots = self.roots(&arguments)?;
+                self.collect_host_memory(&roots, None)?;
+                self.heap.collect(&roots, &mut self.statistics)?;
+            }
+            Some(budget.reserve(bytes)?)
+        } else {
+            None
+        };
         let explicitly_managed = function
             .blocks
             .iter()
@@ -5111,11 +6772,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                 VmError::invariant("function frame does not match its verified trace descriptor")
             })?;
         self.frames.push(Frame {
+            memory,
             function: function_id,
             block: function.entry,
             instruction: 0,
             slots,
-            loans: vec![None; function.loans.len()],
+            loans: (0..function.loans.len()).map(|_| None).collect(),
             cleanups: Vec::new(),
             task_scopes: Vec::new(),
             continuation,
@@ -5173,6 +6835,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                         .unwind;
                     self.begin_cancel(frame, unwind)?;
                 } else {
+                    let memory =
+                        self.reserve_scheduler_memory(super::TEST_TASK_SCOPE_BYTES, &[])?;
                     let id = self.task_scopes.len();
                     self.task_scopes.push(Some(RuntimeTaskScope {
                         source: *scope,
@@ -5180,6 +6844,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                         children: Vec::new(),
                         closed: false,
                     }));
+                    if let Some(memory) = memory {
+                        self.task_scope_memory.push(memory);
+                    }
                     self.frames[frame].task_scopes.push(id);
                 }
             }
@@ -5227,7 +6894,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                 if self.frames[frame].select.is_some() {
                     return Err(VmError::invariant("a select region is already open"));
                 }
+                let memory = self.reserve_scheduler_memory(
+                    super::TEST_SELECT_BASE_BYTES
+                        + u64::from(*capacity) * super::TEST_SELECT_ARM_BYTES,
+                    &[],
+                )?;
                 self.frames[frame].select = Some(RuntimeSelectRegion {
+                    _memory: memory,
                     capacity: *capacity,
                     registered: 0,
                     arms: Vec::with_capacity(*capacity as usize),
@@ -5319,8 +6992,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         outcome,
                     } => {
                         let scope = self.select_task_scope(frame)?;
-                        let call = self.start_host_async(&name, &arguments, Some(frame))?;
-                        self.spawn_host_task_with_scope(call, outcome, scope)?
+                        self.start_host_task(&name, arguments, outcome, frame, scope)?
                     }
                     OperationResult::AsyncIteratorCollect {
                         cursor,
@@ -5491,6 +7163,29 @@ impl<'program, 'host> Engine<'program, 'host> {
         action: &BytecodeOperation,
         guard: Option<&BytecodePlace>,
     ) -> Result<RuntimeDefer, VmError> {
+        let (values, text_bytes) = match &action.kind {
+            BytecodeOperationKind::Call { arguments, .. } => (arguments.len() + 1, 0),
+            BytecodeOperationKind::Assert {
+                condition_repr,
+                message_parts,
+                ..
+            } => (message_parts.len() + 1, condition_repr.len()),
+            BytecodeOperationKind::BootstrapHostCall { arguments, .. } => (arguments.len(), 0),
+            _ => {
+                return Err(VmError::invariant(
+                    "defer action is not a verified Unit invocation",
+                ));
+            }
+        };
+        let bytes = super::TEST_CLEANUP_BASE_BYTES
+            .saturating_add((values as u64).saturating_mul(super::TEST_SCHEDULER_VALUE_BYTES))
+            .saturating_add(text_bytes as u64)
+            .saturating_add(
+                guard
+                    .map_or(0, |guard| guard.projections.len().max(1) as u64)
+                    .saturating_mul(super::TEST_SCHEDULER_VALUE_BYTES),
+            );
+        let memory = self.reserve_scheduler_memory(bytes, &[])?;
         let mut guard_uses = 0_usize;
         let operation = match &action.kind {
             BytecodeOperationKind::Call {
@@ -5578,6 +7273,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             ));
         }
         Ok(RuntimeDefer {
+            memory,
             scope,
             span,
             operation,
@@ -5626,6 +7322,11 @@ impl<'program, 'host> Engine<'program, 'host> {
         match matches.as_slice() {
             [] => Ok(()),
             [index] => {
+                if to.projections.len() > from.projections.len().max(1) {
+                    return Err(VmError::invariant(
+                        "cleanup retarget exceeds its admitted projection capacity",
+                    ));
+                }
                 *self.frames[frame].cleanups[*index]
                     .guard_mut()
                     .expect("matched cleanup entries have a guard") = to.clone();
@@ -5687,12 +7388,20 @@ impl<'program, 'host> Engine<'program, 'host> {
         if already_guarded {
             return Ok(());
         }
+        let memory = self.reserve_scheduler_memory(
+            super::TEST_CLEANUP_BASE_BYTES.saturating_add(
+                (owner.projections.len().max(1) as u64)
+                    .saturating_mul(super::TEST_SCHEDULER_VALUE_BYTES),
+            ),
+            &[],
+        )?;
         for index in contained.into_iter().rev() {
             self.frames[frame].cleanups.remove(index);
         }
         self.frames[frame]
             .cleanups
             .push(RuntimeCleanup::Fallback(RuntimeFallback {
+                _memory: memory,
                 scope,
                 owner: owner.clone(),
             }));
@@ -5745,10 +7454,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         fallback: RuntimeFallback,
     ) -> Result<(), VmError> {
         let owner = self.take_place(frame, &fallback.owner)?;
+        self.execute_terminal_value(fallback.owner.ty, owner)
+    }
+
+    fn execute_terminal_value(&mut self, ty: BytecodeTypeId, owner: Value) -> Result<(), VmError> {
         self.retain_temporary(&owner);
         let mut pending = vec![(
             RuntimeType {
-                ty: fallback.owner.ty,
+                ty,
                 substitutions: Vec::new(),
             },
             owner,
@@ -5959,7 +7672,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                         }
                         self.replace_fallback_object(handle, object)?;
                     }
-                    BytecodeIntrinsicType::Ref
+                    BytecodeIntrinsicType::Reflection(_)
+                    | BytecodeIntrinsicType::Ref
                     | BytecodeIntrinsicType::Pointer
                     | BytecodeIntrinsicType::Group
                     | BytecodeIntrinsicType::Waiter
@@ -5983,13 +7697,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::FsError
                     | BytecodeIntrinsicType::MathError
                     | BytecodeIntrinsicType::FloatTolerance
-                    | BytecodeIntrinsicType::FloatToleranceError
-                    | BytecodeIntrinsicType::TextDiff
                     | BytecodeIntrinsicType::TempDirectory
-                    | BytecodeIntrinsicType::TempError
                     | BytecodeIntrinsicType::Generator
-                    | BytecodeIntrinsicType::GenerationId
-                    | BytecodeIntrinsicType::GenerationError
                     | BytecodeIntrinsicType::Reader
                     | BytecodeIntrinsicType::Writer
                     | BytecodeIntrinsicType::IoLimits
@@ -7041,7 +8750,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 arguments,
                                 outcome,
                             } => {
-                                let call = self.start_host_async(&name, &arguments, Some(frame))?;
+                                let (call, prepared) = self
+                                    .start_host_async_prepared(&name, &arguments, frame, outcome)?;
+                                self.tasks[self.current_task].prepared_host_import = prepared;
+                                drop(arguments);
                                 self.park_current(
                                     TaskWait::HostCall {
                                         call,
@@ -7213,29 +8925,16 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 }
                             }
                             OperationResult::PoolLifecycle { pool, cancel } => {
-                                if self.begin_executor_pool_lifecycle(pool, cancel)? {
-                                    self.write_place(frame, destination, Value::Unit)?;
-                                    self.jump(frame, *target);
-                                } else {
-                                    let state = self.pools.get_mut(&pool).ok_or_else(|| {
-                                        VmError::invariant(
-                                            "pool lifecycle references an unknown pool",
-                                        )
-                                    })?;
-                                    if !state.lifecycle_waiters.contains(&self.current_task) {
-                                        state.lifecycle_waiters.push(self.current_task);
-                                    }
-                                    self.park_current(
-                                        TaskWait::PoolLifecycle {
-                                            pool,
-                                            cancel,
-                                            destination: destination.clone(),
-                                            target: *target,
-                                            unwind: *unwind,
-                                        },
-                                        &[],
-                                    )?;
-                                }
+                                self.start_pool_lifecycle(
+                                    frame,
+                                    TaskWait::PoolLifecycle {
+                                        pool,
+                                        cancel,
+                                        destination: Some(destination.clone()),
+                                        target: *target,
+                                        unwind: *unwind,
+                                    },
+                                )?;
                             }
                             OperationResult::ActorSend {
                                 actor,
@@ -7478,8 +9177,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                         outcome,
                     } => {
                         let scope = self.active_task_scope(frame, *scope)?;
-                        let call = self.start_host_async(&name, &arguments, Some(frame))?;
-                        let child = self.spawn_host_task(call, outcome, scope)?;
+                        let child =
+                            self.start_host_task(&name, arguments, outcome, frame, Some(scope))?;
                         self.write_place(
                             frame,
                             destination,
@@ -7494,17 +9193,28 @@ impl<'program, 'host> Engine<'program, 'host> {
                         outcome,
                     } => {
                         let scope = self.active_task_scope(frame, *scope)?;
+                        let memory =
+                            self.reserve_scheduler_memory(super::TEST_TASK_BYTES, &arguments)?;
                         let child =
                             match self.admit_blocking_job(pool, function, arguments.clone())? {
                                 BlockingAdmission::Accepted(call) => {
-                                    let child = self.spawn_host_task(call, outcome, scope)?;
+                                    let child = self.spawn_host_task_admitted(
+                                        call,
+                                        outcome,
+                                        Some(scope),
+                                        memory,
+                                    )?;
                                     self.executor_job_tasks.insert(child);
                                     child
                                 }
-                                BlockingAdmission::Pending => self.spawn_blocking_submit_task(
-                                    pool, function, arguments, outcome, scope,
-                                )?,
+                                BlockingAdmission::Pending => {
+                                    drop(memory);
+                                    self.spawn_blocking_submit_task(
+                                        pool, function, arguments, outcome, scope,
+                                    )?
+                                }
                                 BlockingAdmission::Closed | BlockingAdmission::Cancelled => {
+                                    drop(memory);
                                     self.spawn_cancelled_task_with_scope(Some(scope))?
                                 }
                             };
@@ -7718,6 +9428,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                 };
                 match cleanup {
                     RuntimeCleanup::Explicit(deferred) => {
+                        if self.test_budget_exhausted() {
+                            self.jump(frame, continuation);
+                            return Ok(None);
+                        }
                         let span = deferred.span;
                         let async_cleanup = deferred.async_cleanup;
                         match self.evaluate_deferred_operation(frame, deferred)? {
@@ -7757,7 +9471,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         "a synchronous defer attempted an async host call",
                                     ));
                                 }
-                                let call = self.start_host_async(&name, &arguments, Some(frame))?;
+                                let (call, prepared) = self
+                                    .start_host_async_prepared(&name, &arguments, frame, outcome)?;
+                                self.tasks[self.current_task].prepared_host_import = prepared;
+                                drop(arguments);
                                 self.park_current(
                                     TaskWait::DeferredHostCall {
                                         call,
@@ -7799,9 +9516,20 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     "AsyncIterator.collect cannot be deferred",
                                 ));
                             }
+                            OperationResult::PoolLifecycle { pool, cancel } => {
+                                self.start_pool_lifecycle(
+                                    frame,
+                                    TaskWait::PoolLifecycle {
+                                        pool,
+                                        cancel,
+                                        destination: None,
+                                        target: continuation,
+                                        unwind: continuation,
+                                    },
+                                )?;
+                            }
                             OperationResult::PoolSubmit { .. }
                             | OperationResult::BlockingRun { .. }
-                            | OperationResult::PoolLifecycle { .. }
                             | OperationResult::ActorSend { .. }
                             | OperationResult::ActorStop { .. } => {
                                 return Err(VmError::invariant(
@@ -7849,6 +9577,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                     let state = self.read_slot(frame, state_slot)?.clone();
                     self.actor_handler_states.insert(self.current_task, state);
                 }
+                let outcome_type = function
+                    .slot(function.return_slot)
+                    .ok_or_else(|| VmError::invariant("return slot is missing"))?
+                    .ty;
+                let return_span = self.resolve_span(frame, terminator.span)?;
                 let mut value = self.take_slot(frame, function.return_slot)?;
                 let finished = self
                     .frames
@@ -7877,23 +9610,22 @@ impl<'program, 'host> Engine<'program, 'host> {
                         VmError::invariant("callee returned without its caller frame")
                     })?;
                     if let Some(boundary) = &continuation.test_boundary {
-                        if value != Value::Unit {
-                            return Err(VmError::invariant(
-                                "internal test boundary returned a non-Unit value",
-                            ));
-                        }
+                        let outcome =
+                            self.test_boundary_outcome(&value, outcome_type, return_span)?;
+                        // The runner consumes the hidden entry's error channel;
+                        // its enclosing suite continues with a Unit-valued call.
+                        value = Value::Unit;
                         let timed_out = self.timed_out_test_boundaries.remove(&boundary.id);
                         if timed_out {
                             self.interrupt_unwind_pending.remove(&self.current_task);
                             self.tasks[self.current_task].cancel_requested = false;
                         }
-                        self.host.finish_test_node(
-                            boundary.kind,
-                            &boundary.id,
+                        self.finish_test_boundary(
+                            boundary,
                             if timed_out {
                                 VmTestNodeOutcome::TimedOut
                             } else {
-                                VmTestNodeOutcome::Passed
+                                outcome
                             },
                         )?;
                     }
@@ -7963,7 +9695,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     let caller = self.frames.len().checked_sub(1).ok_or_else(|| {
                         VmError::invariant("panicking callee has no caller frame")
                     })?;
-                    self.frames[caller].loans.fill(None);
+                    self.frames[caller].loans.fill_with(|| None);
                     if let Some(controller) = &continuation.virtual_time {
                         self.host.finish_virtual_time(controller)?;
                     }
@@ -7978,9 +9710,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     self.interrupt_unwind_pending.remove(&self.current_task);
                                     self.tasks[self.current_task].cancel_requested = false;
                                 }
-                                self.host.finish_test_node(
-                                    boundary.kind,
-                                    &boundary.id,
+                                self.finish_test_boundary(
+                                    boundary,
                                     VmTestNodeOutcome::Panicked(panic),
                                 )?;
                                 if self.interruption_observed {
@@ -7998,13 +9729,17 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 return Ok(None);
                             }
                             RuntimeUnwind::Cancelled => {
-                                if !self.interruption_observed
-                                    && self.timed_out_test_boundaries.remove(&boundary.id)
-                                {
-                                    self.host.finish_test_node(
-                                        boundary.kind,
-                                        &boundary.id,
-                                        VmTestNodeOutcome::TimedOut,
+                                let timed_out = self.timed_out_test_boundaries.remove(&boundary.id);
+                                let resource_limited =
+                                    self.test_instruction_budgets[boundary.budget].exhausted;
+                                if !self.interruption_observed && (timed_out || resource_limited) {
+                                    self.finish_test_boundary(
+                                        boundary,
+                                        if resource_limited {
+                                            VmTestNodeOutcome::ResourceLimited
+                                        } else {
+                                            VmTestNodeOutcome::TimedOut
+                                        },
                                     )?;
                                     self.interrupt_unwind_pending.remove(&self.current_task);
                                     self.tasks[self.current_task].cancel_requested = false;
@@ -8021,9 +9756,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     );
                                     return Ok(None);
                                 }
-                                self.host.finish_test_node(
-                                    boundary.kind,
-                                    &boundary.id,
+                                self.finish_test_boundary(
+                                    boundary,
                                     VmTestNodeOutcome::Interrupted,
                                 )?;
                                 self.pending_unwind = Some(RuntimeUnwind::Cancelled);
@@ -8064,6 +9798,10 @@ impl<'program, 'host> Engine<'program, 'host> {
             else {
                 unreachable!("normal defer drains select explicit entries");
             };
+            if self.test_budget_exhausted() {
+                self.jump(frame, continuation);
+                return Ok(());
+            }
             let span = deferred.span;
             let async_cleanup = deferred.async_cleanup;
             match self.evaluate_deferred_operation(frame, deferred)? {
@@ -8103,7 +9841,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                             "a synchronous defer attempted an async host call",
                         ));
                     }
-                    let call = self.start_host_async(&name, &arguments, Some(frame))?;
+                    let (call, prepared) =
+                        self.start_host_async_prepared(&name, &arguments, frame, outcome)?;
+                    self.tasks[self.current_task].prepared_host_import = prepared;
+                    drop(arguments);
                     self.park_current(
                         TaskWait::DeferredHostCall {
                             call,
@@ -8164,9 +9905,20 @@ impl<'program, 'host> Engine<'program, 'host> {
                         "AsyncIterator.collect cannot be deferred",
                     ));
                 }
+                OperationResult::PoolLifecycle { pool, cancel } => {
+                    self.start_pool_lifecycle(
+                        frame,
+                        TaskWait::PoolLifecycle {
+                            pool,
+                            cancel,
+                            destination: None,
+                            target: continuation,
+                            unwind: continuation,
+                        },
+                    )?;
+                }
                 OperationResult::PoolSubmit { .. }
                 | OperationResult::BlockingRun { .. }
-                | OperationResult::PoolLifecycle { .. }
                 | OperationResult::ActorSend { .. }
                 | OperationResult::ActorStop { .. } => {
                     return Err(VmError::invariant("executor operation cannot be deferred"));
@@ -8176,6 +9928,37 @@ impl<'program, 'host> Engine<'program, 'host> {
             self.jump(frame, unwind);
         } else {
             self.jump(frame, target);
+        }
+        Ok(())
+    }
+
+    fn start_pool_lifecycle(&mut self, frame: usize, wait: TaskWait) -> Result<(), VmError> {
+        let TaskWait::PoolLifecycle {
+            pool,
+            cancel,
+            ref destination,
+            target,
+            ..
+        } = wait
+        else {
+            return Err(VmError::invariant(
+                "pool lifecycle received another wait kind",
+            ));
+        };
+        if self.begin_executor_pool_lifecycle(pool, cancel)? {
+            if let Some(destination) = destination {
+                self.write_place(frame, destination, Value::Unit)?;
+            }
+            self.jump(frame, target);
+        } else {
+            let state = self
+                .pools
+                .get_mut(&pool)
+                .ok_or_else(|| VmError::invariant("pool lifecycle references an unknown pool"))?;
+            if !state.lifecycle_waiters.contains(&self.current_task) {
+                state.lifecycle_waiters.push(self.current_task);
+            }
+            self.park_current(wait, &[])?;
         }
         Ok(())
     }
@@ -8231,7 +10014,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         } else {
             self.pending_unwind = Some(RuntimeUnwind::Panic(panic));
         }
-        self.frames[frame].loans.fill(None);
+        self.frames[frame].loans.fill_with(|| None);
         self.jump(frame, unwind);
         Ok(())
     }
@@ -8248,7 +10031,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         } else {
             self.pending_unwind = Some(RuntimeUnwind::Panic(panic));
         }
-        self.frames[frame].loans.fill(None);
+        self.frames[frame].loans.fill_with(|| None);
         self.jump(frame, unwind);
         Ok(())
     }
@@ -8259,7 +10042,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         if self.pending_unwind.is_none() {
             self.pending_unwind = Some(RuntimeUnwind::Cancelled);
         }
-        self.frames[frame].loans.fill(None);
+        self.frames[frame].loans.fill_with(|| None);
         self.jump(frame, unwind);
         Ok(())
     }
@@ -8307,7 +10090,17 @@ impl<'program, 'host> Engine<'program, 'host> {
             Some(SlotState::Value(value)) => Ok(value),
             Some(SlotState::Dead) => Err(VmError::invariant("read from a dead frame slot")),
             Some(SlotState::Uninitialized) => {
-                Err(VmError::invariant("read from an uninitialized frame slot"))
+                let active = &self.frames[frame];
+                let function = &self.program.functions[active.function.index() as usize];
+                let callable = &self.program.callables[function.callable.index() as usize];
+                Err(VmError::invariant(format!(
+                    "read from an uninitialized frame slot {} in function {} ({}) block {} instruction {}",
+                    slot.index(),
+                    active.function.index(),
+                    callable.name,
+                    active.block.index(),
+                    active.instruction,
+                )))
             }
             None => Err(VmError::invariant("read from an invalid frame slot")),
         }
@@ -8414,11 +10207,14 @@ impl<'program, 'host> Engine<'program, 'host> {
     fn roots(&self, extra: &[Value]) -> Result<Vec<Value>, VmError> {
         let mut roots = extra.to_vec();
         roots.extend(self.temporary_roots.iter().cloned());
+        for frame in &self.import_frames {
+            frame.trace_values(&mut roots);
+        }
         self.append_frame_roots(&self.frames, &mut roots)?;
-        for (task_id, task) in self.tasks.iter().enumerate() {
-            if task_id != self.current_task {
-                self.append_frame_roots(&task.frames, &mut roots)?;
-            }
+        for task in &self.tasks {
+            // Loaded frames leave their task record empty. A temporarily
+            // parked current task still owns roots during child admission.
+            self.append_frame_roots(&task.frames, &mut roots)?;
             if let Some(collect) = &task.async_collect {
                 roots.push(collect.cursor.clone());
                 roots.push(collect.next.clone());
@@ -8426,6 +10222,9 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
             if let TaskStatus::Complete(Some(TaskCompletion::Returned(value))) = &task.status {
                 roots.push(value.clone());
+            }
+            if let TaskStatus::Waiting(wait) = &task.status {
+                wait.value_roots(&mut roots);
             }
         }
         for state in self.oneshots.values() {
@@ -8487,12 +10286,39 @@ impl<'program, 'host> Engine<'program, 'host> {
         object: HeapObject,
         extra: &[Value],
     ) -> Result<Value, VmError> {
+        self.allocate_with_charge(descriptor, object, extra, None)
+    }
+
+    fn allocate_with_charge(
+        &mut self,
+        descriptor: BytecodeTypeId,
+        object: HeapObject,
+        extra: &[Value],
+        charge: Option<VmMemoryCharge>,
+    ) -> Result<Value, VmError> {
         let roots = self.roots(extra)?;
         let bytes = object.estimated_bytes();
-        let value = self
-            .heap
-            .allocate(descriptor, object, &roots, &mut self.statistics)
-            .map(Value::Heap)?;
+        let admitted = charge.as_ref().map_or(0, VmMemoryCharge::bytes);
+        let budget = charge
+            .as_ref()
+            .map(|charge| charge.budget().clone())
+            .or_else(|| self.current_test_memory());
+        if budget.is_some_and(|budget| !budget.can_reserve(bytes.saturating_sub(admitted))) {
+            self.collect_host_memory(&roots, Some((descriptor, &object)))?;
+        }
+        let value = match charge {
+            Some(charge) => self.heap.allocate_with_charge(
+                descriptor,
+                object,
+                &roots,
+                &mut self.statistics,
+                Some(charge),
+            ),
+            None => self
+                .heap
+                .allocate(descriptor, object, &roots, &mut self.statistics),
+        }
+        .map(Value::Heap)?;
         if let Value::Heap(handle) = &value {
             self.record_heap(*handle, DiagnosticHeapOperation::Allocate, bytes)?;
         }
@@ -8517,16 +10343,43 @@ impl<'program, 'host> Engine<'program, 'host> {
     ) -> Result<(), VmError> {
         let roots = self.roots(extra)?;
         let bytes = object.estimated_bytes();
+        if self
+            .current_test_memory()
+            .is_some_and(|budget| !budget.can_reserve(bytes))
+        {
+            let descriptor = self.heap.descriptor(handle)?;
+            let mut protected = roots.clone();
+            protected.push(Value::Heap(handle));
+            self.collect_host_memory(&protected, Some((descriptor, &object)))?;
+        }
         self.heap
             .replace(handle, object, &roots, &mut self.statistics)?;
         self.record_heap(handle, DiagnosticHeapOperation::Replace, bytes)
     }
 
+    fn collect_host_memory(
+        &mut self,
+        roots: &[Value],
+        pending: Option<(BytecodeTypeId, &HeapObject)>,
+    ) -> Result<(), VmError> {
+        if self.host.tracks_host_roots() {
+            let hosts = self.host_roots(roots, pending)?;
+            self.host.collect_host_values(&hosts)?;
+        }
+        Ok(())
+    }
+
     // Value evaluation, places, operators, iterators, and calls continue below.
 }
 
-fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostValueKind> {
+fn runtime_host_kind(
+    constructor: BytecodeIntrinsicType,
+    reflection_tag: [u8; 32],
+) -> Option<RuntimeHostValueKind> {
     Some(match constructor {
+        BytecodeIntrinsicType::Reflection(kind) => {
+            RuntimeHostValueKind::Reflection(kind, reflection_tag)
+        }
         BytecodeIntrinsicType::Command => RuntimeHostValueKind::Command,
         BytecodeIntrinsicType::Pipeline => RuntimeHostValueKind::Pipeline,
         BytecodeIntrinsicType::Bytes => RuntimeHostValueKind::Bytes,
@@ -8545,13 +10398,8 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::FsError => RuntimeHostValueKind::FsError,
         BytecodeIntrinsicType::MathError => RuntimeHostValueKind::MathError,
         BytecodeIntrinsicType::FloatTolerance => RuntimeHostValueKind::FloatTolerance,
-        BytecodeIntrinsicType::FloatToleranceError => RuntimeHostValueKind::FloatToleranceError,
-        BytecodeIntrinsicType::TextDiff => RuntimeHostValueKind::TextDiff,
         BytecodeIntrinsicType::TempDirectory => RuntimeHostValueKind::TempDirectory,
-        BytecodeIntrinsicType::TempError => RuntimeHostValueKind::TempError,
         BytecodeIntrinsicType::Generator => RuntimeHostValueKind::Generator,
-        BytecodeIntrinsicType::GenerationId => RuntimeHostValueKind::GenerationId,
-        BytecodeIntrinsicType::GenerationError => RuntimeHostValueKind::GenerationError,
         BytecodeIntrinsicType::Reader => RuntimeHostValueKind::Reader,
         BytecodeIntrinsicType::Writer => RuntimeHostValueKind::Writer,
         BytecodeIntrinsicType::IoLimits => RuntimeHostValueKind::IoLimits,
@@ -8746,7 +10594,7 @@ enum OperationResult {
     },
     HostAsync {
         name: String,
-        arguments: Vec<RuntimeValue>,
+        arguments: SnapshotArguments,
         outcome: BytecodeTypeId,
     },
     OnceInit {
@@ -8817,6 +10665,7 @@ enum IteratorStep {
     Position(usize),
 }
 
+#[derive(Debug)]
 enum PlaceFailure {
     Panic(PanicCode, String),
     Vm(VmError),
@@ -9105,6 +10954,14 @@ impl Engine<'_, '_> {
         let Value::Heap(handle) = value else {
             return Ok(value.clone());
         };
+        // These values preserve heap identity. Inspect them before cloning an
+        // owned object, which would copy and immediately discard String bytes.
+        if matches!(
+            self.heap.get(*handle)?,
+            HeapObject::String(_) | HeapObject::Ref(_)
+        ) {
+            return Ok(value.clone());
+        }
         let object = self.heap.get(*handle)?.clone();
         match object {
             HeapObject::String(_) | HeapObject::Ref(_) => Ok(value.clone()),
@@ -9554,15 +11411,12 @@ impl Engine<'_, '_> {
                     if let Some((_, host_name, descending)) =
                         self.sync_cursor_host_descriptor(collection)
                     {
-                        let snapshot = snapshot_value(
-                            &value,
-                            &self.heap,
-                            &self.callable_names,
-                            &self.nominal_names,
+                        let snapshots = self.snapshot_arguments(std::slice::from_ref(&value))?;
+                        let returned = self.invoke_host_arguments(
+                            &format!("{host_name}.__iterStart"),
+                            snapshots,
                         )?;
-                        let returned =
-                            self.invoke_host(&format!("{host_name}.__iterStart"), &[snapshot])?;
-                        let RuntimeValue::Tuple(values) = returned else {
+                        let RuntimeValue::Tuple(values) = returned.value else {
                             return Err(VmError::Host(
                                 "std.sync cursor start returned a non-tuple value".into(),
                             ));
@@ -9906,6 +11760,24 @@ impl Engine<'_, '_> {
                 (Value::Byte(left), Value::Byte(right)) if left == right => {}
                 (Value::Char(left), Value::Char(right)) if left == right => {}
                 (
+                    Value::Host(RuntimeValue::Host {
+                        kind:
+                            RuntimeHostValueKind::Reflection(
+                                crate::reflection::ReflectionDescriptorKind::TypeId,
+                                left_tag,
+                            ),
+                        id: left,
+                    }),
+                    Value::Host(RuntimeValue::Host {
+                        kind:
+                            RuntimeHostValueKind::Reflection(
+                                crate::reflection::ReflectionDescriptorKind::TypeId,
+                                right_tag,
+                            ),
+                        id: right,
+                    }),
+                ) if left == right && left_tag == right_tag => {}
+                (
                     Value::Function {
                         callable: left,
                         arguments: left_arguments,
@@ -9916,7 +11788,9 @@ impl Engine<'_, '_> {
                     },
                 ) if left == right && left_arguments == right_arguments => {}
                 (Value::Heap(left), Value::Heap(right)) => {
-                    if left == right {
+                    // Only Ref has identity equality. A value container can
+                    // contain NaN even when both operands share its storage.
+                    if left == right && matches!(self.heap.get(left)?, HeapObject::Ref(_)) {
                         continue;
                     }
                     if !visited.insert((left, right)) {
@@ -10137,19 +12011,28 @@ impl Engine<'_, '_> {
             )));
         }
         let active = self.current_task;
-        self.tasks[active].frames = std::mem::take(&mut self.frames);
-        self.tasks[active].pending_unwind = self.pending_unwind.take();
+        // Completion polling may run after the scheduler has already stored
+        // this task's frames. An empty active stack must not erase that state.
+        let active_loaded = !self.frames.is_empty();
+        if active_loaded {
+            self.tasks[active].frames = std::mem::take(&mut self.frames);
+            self.tasks[active].pending_unwind = self.pending_unwind.take();
+        }
         self.frames = std::mem::take(&mut self.tasks[task].frames);
         self.pending_unwind = self.tasks[task].pending_unwind.take();
         self.current_task = task;
+        self.restore_test_heap_budget();
 
         let result = operation(self);
 
         self.tasks[task].frames = std::mem::take(&mut self.frames);
         self.tasks[task].pending_unwind = self.pending_unwind.take();
         self.current_task = active;
-        self.frames = std::mem::take(&mut self.tasks[active].frames);
-        self.pending_unwind = self.tasks[active].pending_unwind.take();
+        self.restore_test_heap_budget();
+        if active_loaded {
+            self.frames = std::mem::take(&mut self.tasks[active].frames);
+            self.pending_unwind = self.tasks[active].pending_unwind.take();
+        }
         result
     }
 
@@ -10522,9 +12405,9 @@ impl Engine<'_, '_> {
             }
             (BytecodeProjectionKind::Slice { start, end, step }, HeapObject::Array(values)) => {
                 let indices = self
-                    .slice_indices_from_slots(frame, *start, *end, *step, values.len())
+                    .slice_plan_from_slots(frame, *start, *end, *step, values.len())
                     .map_err(|_| VmError::invariant("unvalidated slice reached a projection"))?;
-                self.copy_array_snapshot(projection.ty, &values, &indices)
+                self.copy_array_snapshot(projection.ty, &values, indices)
             }
             _ => Err(VmError::invariant(
                 "verified projection does not match its runtime object",
@@ -10752,7 +12635,7 @@ impl Engine<'_, '_> {
             }
             (BytecodeProjectionKind::Slice { start, end, step }, HeapObject::Array(values)) => {
                 let indices = self
-                    .slice_indices_from_slots(frame, *start, *end, *step, values.len())
+                    .slice_plan_from_slots(frame, *start, *end, *step, values.len())
                     .map_err(|_| VmError::invariant("unvalidated slice write"))?;
                 let Value::Heap(source) = value.clone() else {
                     return Err(VmError::invariant("slice assignment source is not Array"));
@@ -10765,7 +12648,7 @@ impl Engine<'_, '_> {
                         "slice shape mismatch escaped checked assignment validation",
                     ));
                 }
-                for (index, replacement) in indices.into_iter().zip(replacements) {
+                for (index, replacement) in indices.zip(replacements) {
                     values[index] = replacement;
                 }
             }
@@ -10791,6 +12674,10 @@ impl Engine<'_, '_> {
                 "place validation inputs are not aligned",
             )));
         }
+        let _paths_memory = self.reserve_scheduler_memory(
+            (places.len() as u64).saturating_mul(super::TEST_PLACE_PATH_BYTES),
+            &[],
+        )?;
         let mut paths = Vec::with_capacity(places.len());
         for ((place, replacement), against) in places.iter().zip(replacements).zip(against) {
             let path = self.validate_place(frame, place, for_write)?;
@@ -10975,9 +12862,17 @@ impl Engine<'_, '_> {
         } else {
             ResolvedPlacePath {
                 root: (self.current_task, frame, place.slot.index()),
-                components: Vec::with_capacity(place.projections.len()),
+                components: Vec::new(),
+                memory: self.reserve_scheduler_memory(super::TEST_PLACE_PATH_BYTES, &[])?,
             }
         };
+        self.reserve_place_storage(
+            &mut path.memory,
+            place.projections.len(),
+            super::TEST_PLACE_COMPONENT_BYTES,
+            &[],
+        )?;
+        path.components.reserve_exact(place.projections.len());
         if place.projections.is_empty() {
             if !for_write && root_loan.is_none() {
                 self.read_slot(frame, place.slot)?;
@@ -10991,8 +12886,13 @@ impl Engine<'_, '_> {
         };
         for (index, projection) in place.projections.iter().enumerate() {
             let allow_missing_map_entry = for_write && index + 1 == place.projections.len();
-            let component =
-                self.resolve_place_component(frame, &value, projection, allow_missing_map_entry)?;
+            let component = self.resolve_place_component(
+                frame,
+                &value,
+                projection,
+                allow_missing_map_entry,
+                &mut path.memory,
+            )?;
             path.components.push(component);
             if index + 1 < place.projections.len() {
                 value = self
@@ -11004,11 +12904,12 @@ impl Engine<'_, '_> {
     }
 
     fn resolve_place_component(
-        &self,
+        &mut self,
         frame: usize,
         parent: &Value,
         projection: &BytecodeProjection,
         allow_missing_map_entry: bool,
+        memory: &mut Option<VmMemoryCharge>,
     ) -> Result<PlaceComponent, PlaceFailure> {
         let Value::Heap(handle) = parent else {
             return Err(PlaceFailure::Vm(VmError::invariant(
@@ -11061,6 +12962,12 @@ impl Engine<'_, '_> {
                         "invalid array rest projection",
                     )));
                 }
+                self.reserve_place_storage(
+                    memory,
+                    end - *start as usize,
+                    super::TEST_PLACE_INDEX_BYTES,
+                    std::slice::from_ref(parent),
+                )?;
                 PlaceComponent::Slice((*start as usize..end).collect())
             }
             (
@@ -11098,13 +13005,9 @@ impl Engine<'_, '_> {
                         })?
                         .0,
                     "borrowed map iterator key",
-                )?;
-                PlaceComponent::MapKey(snapshot_value(
-                    key,
-                    &self.heap,
-                    &self.callable_names,
-                    &self.nominal_names,
-                )?)
+                )?
+                .clone();
+                PlaceComponent::MapKey(self.admit_place_key(&key, memory)?)
             }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
@@ -11132,18 +13035,19 @@ impl Engine<'_, '_> {
                         "map entry is absent".into(),
                     ));
                 }
-                PlaceComponent::MapKey(snapshot_value(
-                    &key,
-                    &self.heap,
-                    &self.callable_names,
-                    &self.nominal_names,
-                )?)
+                PlaceComponent::MapKey(self.admit_place_key(&key, memory)?)
             }
             (BytecodeProjectionKind::Slice { start, end, step }, HeapObject::Array(values)) => {
-                PlaceComponent::Slice(
-                    self.slice_indices_from_slots(frame, *start, *end, *step, values.len())
-                        .map_err(|failure| PlaceFailure::Panic(failure.0, failure.1))?,
-                )
+                let indices = self
+                    .slice_plan_from_slots(frame, *start, *end, *step, values.len())
+                    .map_err(|failure| PlaceFailure::Panic(failure.0, failure.1))?;
+                self.reserve_place_storage(
+                    memory,
+                    indices.len(),
+                    super::TEST_PLACE_INDEX_BYTES,
+                    std::slice::from_ref(parent),
+                )?;
+                PlaceComponent::Slice(indices.collect())
             }
             _ => {
                 return Err(PlaceFailure::Vm(VmError::invariant(
@@ -11151,6 +13055,49 @@ impl Engine<'_, '_> {
                 )));
             }
         })
+    }
+
+    fn reserve_place_storage(
+        &mut self,
+        memory: &mut Option<VmMemoryCharge>,
+        count: usize,
+        unit: u64,
+        roots: &[Value],
+    ) -> Result<(), VmError> {
+        let Some(memory) = memory else { return Ok(()) };
+        let budget = memory.budget().clone();
+        let added = u64::try_from(count)
+            .ok()
+            .and_then(|count| count.checked_mul(unit));
+        let total = added
+            .and_then(|added| memory.bytes().checked_add(added))
+            .ok_or(VmError::ResourceLimit {
+                resource: "memory",
+                limit: budget.limit(),
+            })?;
+        if !budget.can_reserve(total - memory.bytes()) {
+            let roots = self.roots(roots)?;
+            self.collect_host_memory(&roots, None)?;
+            self.heap.collect(&roots, &mut self.statistics)?;
+        }
+        memory.resize(total)
+    }
+
+    fn admit_place_key(
+        &mut self,
+        value: &Value,
+        memory: &mut Option<VmMemoryCharge>,
+    ) -> Result<RuntimeValue, VmError> {
+        let budget = memory.as_ref().map(|memory| memory.budget().clone());
+        let mut snapshot =
+            self.snapshot_arguments_with_budget(std::slice::from_ref(value), budget.as_ref())?;
+        if let (Some(source), Some(destination)) = (&mut snapshot.memory, memory) {
+            source.transfer_to(destination, source.bytes())?;
+        }
+        snapshot
+            .values
+            .pop()
+            .ok_or_else(|| VmError::invariant("place key snapshot is empty"))
     }
 
     fn integer_slot(
@@ -11177,6 +13124,7 @@ impl Engine<'_, '_> {
         Ok(None)
     }
 
+    #[cfg(test)]
     fn slice_indices_from_slots(
         &self,
         frame: usize,
@@ -11185,12 +13133,25 @@ impl Engine<'_, '_> {
         step: Option<crate::bytecode::BytecodeSlotId>,
         length: usize,
     ) -> Result<Vec<usize>, (PanicCode, String)> {
+        self.slice_plan_from_slots(frame, start, end, step, length)
+            .map(Iterator::collect)
+    }
+
+    fn slice_plan_from_slots(
+        &self,
+        frame: usize,
+        start: Option<crate::bytecode::BytecodeSlotId>,
+        end: Option<crate::bytecode::BytecodeSlotId>,
+        step: Option<crate::bytecode::BytecodeSlotId>,
+        length: usize,
+    ) -> Result<ArraySliceIndices, (PanicCode, String)> {
         let bound = |slot: Option<crate::bytecode::BytecodeSlotId>| {
             slot.map(|slot| self.integer_slot(frame, slot))
                 .transpose()
                 .map_err(|error| (PanicCode::Bounds, error.to_string()))
         };
-        slice_indices(bound(start)?, bound(end)?, bound(step)?, length)
+        normalize_array_slice(bound(start)?, bound(end)?, bound(step)?, length)
+            .map_err(slice_failure)
     }
 }
 
@@ -11203,6 +13164,7 @@ impl Engine<'_, '_> {
         let RuntimeDefer {
             operation,
             mut guard,
+            memory: _memory,
             ..
         } = deferred;
         match operation {
@@ -11245,13 +13207,8 @@ impl Engine<'_, '_> {
                 for argument in arguments {
                     values.push(self.take_deferred_value(frame, argument, &mut guard)?);
                 }
-                let snapshots = values
-                    .iter()
-                    .map(|value| {
-                        snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let returned = self.invoke_host(function.name(), &snapshots)?;
+                let snapshots = self.snapshot_arguments(&values)?;
+                let returned = self.invoke_host_arguments(function.name(), snapshots)?;
                 if let Some(message) = self.host.take_test_control() {
                     self.pending_test_control = true;
                     return Ok(OperationResult::Panic(PanicCode::ExplicitPanic, message));
@@ -11261,7 +13218,7 @@ impl Engine<'_, '_> {
                     BytecodeBootstrapHostFunction::TestingFailNow
                         | BytecodeBootstrapHostFunction::TestingSkip
                 ) {
-                    let RuntimeValue::Unit = returned else {
+                    let RuntimeValue::Unit = returned.value else {
                         return Err(VmError::Host(format!(
                             "{} returned a non-Unit terminal acknowledgement",
                             function.name()
@@ -11272,7 +13229,7 @@ impl Engine<'_, '_> {
                         format!("{} terminated the test", function.name()),
                     ));
                 }
-                match (function, returned) {
+                match (function, returned.value) {
                     (
                         BytecodeBootstrapHostFunction::ConsolePrint
                         | BytecodeBootstrapHostFunction::ConsolePrintln
@@ -11650,27 +13607,22 @@ impl Engine<'_, '_> {
                             "test boundary body is not a source closure",
                         ));
                     };
-                    self.host.begin_test_node(kind, &id)?;
+                    let boundary = self.begin_test_boundary(kind, id)?;
                     return Ok(OperationResult::TestBoundaryCall {
                         function,
                         arguments,
-                        boundary: TestBoundary { kind, id },
+                        boundary,
                     });
                 }
                 if matches!(
                     function,
                     BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup
                 ) {
-                    self.host.begin_test_suite_cleanup()?;
+                    self.begin_test_cleanup()?;
                     return Ok(OperationResult::Value(Value::Unit));
                 }
-                let snapshots = values
-                    .iter()
-                    .map(|value| {
-                        snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let returned = self.invoke_host(function.name(), &snapshots)?;
+                let snapshots = self.snapshot_arguments(&values)?;
+                let returned = self.invoke_host_arguments(function.name(), snapshots)?;
                 if let Some(message) = self.host.take_test_control() {
                     self.pending_test_control = true;
                     return Ok(OperationResult::Panic(PanicCode::ExplicitPanic, message));
@@ -11680,7 +13632,7 @@ impl Engine<'_, '_> {
                     BytecodeBootstrapHostFunction::TestingFailNow
                         | BytecodeBootstrapHostFunction::TestingSkip
                 ) {
-                    let RuntimeValue::Unit = returned else {
+                    let RuntimeValue::Unit = returned.value else {
                         return Err(VmError::Host(format!(
                             "{} returned a non-Unit terminal acknowledgement",
                             function.name()
@@ -11691,7 +13643,7 @@ impl Engine<'_, '_> {
                         format!("{} terminated the test", function.name()),
                     ));
                 }
-                match (*function, returned) {
+                match (*function, returned.value) {
                     (
                         BytecodeBootstrapHostFunction::ConsolePrint
                         | BytecodeBootstrapHostFunction::ConsolePrintln,
@@ -11703,8 +13655,12 @@ impl Engine<'_, '_> {
                     (BytecodeBootstrapHostFunction::ConsolePrintln, _) => Err(VmError::Host(
                         "std.console.println returned a non-Unit value".into(),
                     )),
-                    (_, returned) => Ok(OperationResult::Value(
-                        self.materialize_host_value(operation.ty, returned)?,
+                    (_, value) => Ok(OperationResult::Value(
+                        self.materialize_host_value_with_charge(
+                            operation.ty,
+                            value,
+                            returned.memory,
+                        )?,
                     )),
                 }
             }
@@ -11793,8 +13749,8 @@ impl Engine<'_, '_> {
         result_ty: BytecodeTypeId,
         texts: impl IntoIterator<Item = String>,
     ) -> Result<Value, VmError> {
-        let builder = self.invoke_host("std.format.Builder.new", &[])?;
-        if !matches!(builder, RuntimeValue::Host { .. }) {
+        let builder = self.invoke_host("std.format.Builder.new", Vec::new())?;
+        if !matches!(builder.value, RuntimeValue::Host { .. }) {
             return Err(VmError::Host(
                 "std.format.Builder.new returned a non-builder value".into(),
             ));
@@ -11802,12 +13758,16 @@ impl Engine<'_, '_> {
         for text in texts {
             let appended = self.invoke_host(
                 "std.format.Builder.append",
-                &[builder.clone(), RuntimeValue::String(text)],
+                vec![builder.value.clone(), RuntimeValue::String(text)],
             )?;
-            match appended {
+            match appended.value {
                 RuntimeValue::ResultOk(value) if matches!(*value, RuntimeValue::Unit) => {}
                 RuntimeValue::ResultErr(error) => {
-                    return self.materialize_host_value(result_ty, RuntimeValue::ResultErr(error));
+                    return self.materialize_host_value_with_charge(
+                        result_ty,
+                        RuntimeValue::ResultErr(error),
+                        appended.memory,
+                    );
                 }
                 _ => {
                     return Err(VmError::Host(
@@ -11816,8 +13776,8 @@ impl Engine<'_, '_> {
                 }
             }
         }
-        let finished = self.invoke_host("std.format.Builder.finish", &[builder])?;
-        self.materialize_host_value(result_ty, finished)
+        let finished = self.invoke_host("std.format.Builder.finish", vec![builder.value])?;
+        self.materialize_host_return(result_ty, finished)
     }
 
     fn intrinsic_display(
@@ -11883,30 +13843,54 @@ impl Engine<'_, '_> {
             Some(BytecodeTypeKind::Scalar(BytecodeScalarType::String)) => {
                 Ok(self.string_value(&value)?.to_owned())
             }
-            Some(BytecodeTypeKind::Scalar(scalar)) => match (*scalar, value) {
-                (BytecodeScalarType::Unit, Value::Unit) => Ok("()".to_owned()),
-                (BytecodeScalarType::Bool, Value::Bool(value)) => Ok(value.to_string()),
-                (
-                    BytecodeScalarType::Int
-                    | BytecodeScalarType::Int8
-                    | BytecodeScalarType::Int16
-                    | BytecodeScalarType::Int32
-                    | BytecodeScalarType::UInt8
-                    | BytecodeScalarType::UInt16
-                    | BytecodeScalarType::UInt32
-                    | BytecodeScalarType::UInt64,
-                    Value::Integer(value),
-                ) => Ok(value.to_string()),
-                (BytecodeScalarType::Float, Value::Float(value)) => Ok(value.to_string()),
-                (BytecodeScalarType::Float32, Value::Float(value)) => {
-                    Ok((value as f32).to_string())
-                }
-                (BytecodeScalarType::Byte, Value::Byte(value)) => Ok(value.to_string()),
-                (BytecodeScalarType::Char, Value::Char(value)) => Ok(value.to_string()),
-                _ => Err(VmError::invariant(
-                    "intrinsic Display value does not match its scalar type",
-                )),
-            },
+            Some(BytecodeTypeKind::Scalar(scalar)) => {
+                let mut text = String::new();
+                write_scalar_display(*scalar, &value, &mut text)?
+                    .map_err(|_| VmError::invariant("String rejected scalar Display text"))?;
+                Ok(text)
+            }
+            Some(BytecodeTypeKind::Nominal {
+                nominal: Some(nominal),
+                arguments,
+                ..
+            }) if arguments.is_empty() => {
+                let schema = self
+                    .program
+                    .nominals
+                    .get(nominal.index() as usize)
+                    .ok_or_else(|| VmError::invariant("Display nominal metadata is missing"))?;
+                let names = schema.intrinsic_display_variants().ok_or_else(|| {
+                    VmError::invariant("Display nominal has no intrinsic implementation")
+                })?;
+                let Value::Heap(handle) = value else {
+                    return Err(VmError::invariant("Display enum value is not on the heap"));
+                };
+                let HeapObject::Variant {
+                    variant,
+                    payload: AggregatePayload::Unit,
+                } = self.heap.get(handle)?
+                else {
+                    return Err(VmError::invariant(
+                        "Display enum value has an invalid payload",
+                    ));
+                };
+                let BytecodeNominalShape::Enum { variants } = &schema.shape else {
+                    return Err(VmError::invariant(
+                        "Display nominal metadata is not an enum",
+                    ));
+                };
+                let index = variants
+                    .iter()
+                    .position(|candidate| candidate.member == *variant)
+                    .ok_or_else(|| VmError::invariant("Display enum member is unknown"))?;
+                let name = names[index];
+                let length = schema.name.len() + 1 + name.len();
+                let _memory = self
+                    .current_test_memory()
+                    .map(|budget| budget.reserve(super::TEST_DETACHED_VALUE_BYTES + length as u64))
+                    .transpose()?;
+                Ok(format!("{}.{name}", schema.name))
+            }
             Some(BytecodeTypeKind::Intrinsic {
                 constructor: BytecodeIntrinsicType::Array,
                 arguments,
@@ -12566,7 +14550,6 @@ impl Engine<'_, '_> {
         let Value::Heap(handle) = base else {
             return Err(VmError::invariant("slice base is not managed"));
         };
-        let object = self.heap.get(handle)?.clone();
         let integer = |value: Option<Value>, label: &str| -> Result<Option<i128>, VmError> {
             value
                 .map(|value| match value {
@@ -12578,25 +14561,43 @@ impl Engine<'_, '_> {
         let start = integer(start, "start")?;
         let end = integer(end, "end")?;
         let step = integer(step, "step")?;
-        match object {
+        match self.heap.get(handle)? {
             HeapObject::Array(values) => {
-                let indices = match slice_indices(start, end, step, values.len()) {
+                let indices = match normalize_array_slice(start, end, step, values.len()) {
                     Ok(indices) => indices,
-                    Err(panic) => return Ok(Err(panic)),
+                    Err(error) => return Ok(Err(slice_failure(error))),
                 };
-                Ok(Ok(self.copy_array_snapshot(result_ty, &values, &indices)?))
+                let values = values.clone();
+                Ok(Ok(self.copy_array_snapshot(result_ty, &values, indices)?))
             }
             HeapObject::String(text) => {
-                let characters = text.chars().collect::<Vec<_>>();
-                let indices = match slice_indices(start, end, step, characters.len()) {
+                let scalars = text.chars().count();
+                let indices = match normalize_array_slice(start, end, step, scalars) {
                     Ok(indices) => indices,
-                    Err(panic) => return Ok(Err(panic)),
+                    Err(error) => return Ok(Err(slice_failure(error))),
                 };
-                let output = indices.into_iter().map(|index| characters[index]).collect();
-                Ok(Ok(self.allocate(
+                let bytes = selected_string_chars(text, scalars, indices.clone()).try_fold(
+                    0usize,
+                    |bytes, character| {
+                        bytes
+                            .checked_add(character?.len_utf8())
+                            .ok_or(VmError::ResourceLimit {
+                                resource: "memory",
+                                limit: self.limits.max_heap_bytes,
+                            })
+                    },
+                )?;
+                let memory = self.reserve_heap_buffer(bytes, 1, std::slice::from_ref(&base))?;
+                let mut output = String::with_capacity(bytes);
+                for character in selected_string_chars(self.string_value(&base)?, scalars, indices)
+                {
+                    output.push(character?);
+                }
+                Ok(Ok(self.allocate_with_charge(
                     result_ty,
                     HeapObject::String(output),
                     &[],
+                    memory,
                 )?))
             }
             _ => Err(VmError::invariant("slice base is not Array or String")),
@@ -12607,12 +14608,14 @@ impl Engine<'_, '_> {
         &mut self,
         result_ty: BytecodeTypeId,
         values: &[Option<Value>],
-        indices: &[usize],
+        indices: impl ExactSizeIterator<Item = usize>,
     ) -> Result<Value, VmError> {
         let marker = self.temporary_roots.len();
         let result = (|| {
+            let memory =
+                self.reserve_heap_buffer(indices.len(), std::mem::size_of::<Option<Value>>(), &[])?;
             let mut output = Vec::with_capacity(indices.len());
-            for &index in indices {
+            for index in indices {
                 let source = values
                     .get(index)
                     .ok_or_else(|| VmError::invariant("normalized slice index is out of bounds"))?;
@@ -12620,10 +14623,29 @@ impl Engine<'_, '_> {
                 self.retain_temporary(&value);
                 output.push(Some(value));
             }
-            self.allocate(result_ty, HeapObject::Array(output.into()), &[])
+            self.allocate_with_charge(result_ty, HeapObject::Array(output.into()), &[], memory)
         })();
         self.temporary_roots.truncate(marker);
         result
+    }
+
+    /// Admit the final buffer before construction, then transfer the same
+    /// reservation to the heap object. This uses the heap's capacity units.
+    fn reserve_heap_buffer(
+        &mut self,
+        length: usize,
+        element_bytes: usize,
+        roots: &[Value],
+    ) -> Result<Option<VmMemoryCharge>, VmError> {
+        let bytes = length
+            .checked_mul(element_bytes)
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<HeapObject>()))
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(VmError::ResourceLimit {
+                resource: "memory",
+                limit: self.limits.max_heap_bytes,
+            })?;
+        self.reserve_scheduler_memory(bytes, roots)
     }
 
     fn executor_handle(
@@ -12795,16 +14817,16 @@ impl Engine<'_, '_> {
         self.oneshot_result(result_ty, Err(error))
     }
 
-    fn next_executor_id(&mut self) -> Result<u64, VmError> {
+    fn next_executor_id(&self) -> Result<(u64, u64), VmError> {
         let id = self.next_executor_id;
-        self.next_executor_id =
-            self.next_executor_id
-                .checked_add(1)
-                .ok_or(VmError::ResourceLimit {
-                    resource: "executor handles",
-                    limit: u64::MAX,
-                })?;
-        Ok(id)
+        let next = self
+            .next_executor_id
+            .checked_add(1)
+            .ok_or(VmError::ResourceLimit {
+                resource: "executor handles",
+                limit: u64::MAX,
+            })?;
+        Ok((id, next))
     }
 
     fn executor_pool_constructor(
@@ -12849,17 +14871,35 @@ impl Engine<'_, '_> {
                 self.executor_error_result(metadata.outcome, 2)?,
             ));
         }
-        let id = self.next_executor_id()?;
-        if blocking {
+        let memory = self.reserve_scheduler_memory(
+            super::TEST_SCHEDULER_HANDLE_BYTES
+                + workers as u64 * super::TEST_EXECUTOR_WORKER_BYTES
+                + capacity as u64 * super::TEST_SCHEDULER_VALUE_BYTES,
+            values,
+        )?;
+        let (id, next) = self.next_executor_id()?;
+        let kind = if blocking {
+            RuntimeHostValueKind::ExecutorBlockingPool
+        } else {
+            RuntimeHostValueKind::ExecutorPool
+        };
+        let handle = Value::Host(RuntimeValue::Host { kind, id });
+        let result = self.executor_result_ok(metadata.outcome, handle)?;
+        let bridge = if blocking {
             let trace = derive_trace_metadata(self.program)?;
-            let bridge = BlockingExecutionBridge::new(
+            Some(BlockingExecutionBridge::new(
                 self.program,
                 &trace,
                 self.limits,
                 self.copy_strategy,
                 workers,
                 capacity,
-            )?;
+            )?)
+        } else {
+            None
+        };
+        self.next_executor_id = next;
+        if let Some(bridge) = bridge {
             self.blocking_bridges.insert(id, bridge);
         }
         self.pools.insert(
@@ -12875,14 +14915,9 @@ impl Engine<'_, '_> {
                 lifecycle: RuntimePoolLifecycle::Open,
             },
         );
-        let handle = Value::Host(RuntimeValue::Host {
-            kind: if blocking {
-                RuntimeHostValueKind::ExecutorBlockingPool
-            } else {
-                RuntimeHostValueKind::ExecutorPool
-            },
-            id,
-        });
+        if let Some(memory) = memory {
+            self.scheduler_handle_memory.insert((kind, id), memory);
+        }
         self.record_resource(
             &RuntimeValue::Host {
                 kind: if blocking {
@@ -12894,9 +14929,7 @@ impl Engine<'_, '_> {
             },
             DiagnosticResourceState::Acquired,
         )?;
-        Ok(OperationResult::Value(
-            self.executor_result_ok(metadata.outcome, handle)?,
-        ))
+        Ok(OperationResult::Value(result))
     }
 
     fn current_executor_scope(&self, frame: usize) -> Result<usize, VmError> {
@@ -12950,9 +14983,11 @@ impl Engine<'_, '_> {
         scope: usize,
     ) -> Result<usize, VmError> {
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::PoolJob {
                 pool,
@@ -12967,7 +15002,7 @@ impl Engine<'_, '_> {
             join_consumed: false,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.task_scopes
             .get_mut(scope)
             .and_then(Option::as_mut)
@@ -13281,9 +15316,11 @@ impl Engine<'_, '_> {
         }
         let state_slot = self.actor_handler_slot(actor)?;
         let task = self.tasks.len();
-        self.tasks.push(TaskRecord {
+        self.publish_task(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Waiting(TaskWait::ActorMessage { actor }),
             resume: None,
@@ -13294,7 +15331,7 @@ impl Engine<'_, '_> {
             join_consumed: true,
             panic_observed: false,
             discard_completion: false,
-        });
+        })?;
         self.actor_handler_tasks
             .insert(task, ActorHandlerTask { actor, state_slot });
         self.actors
@@ -13758,7 +15795,24 @@ impl Engine<'_, '_> {
                     )));
                 }
                 let (step, step_arguments) = self.executor_callable(step)?;
-                let id = self.next_executor_id()?;
+                let memory = self.reserve_scheduler_memory(
+                    super::TEST_SCHEDULER_HANDLE_BYTES
+                        + (capacity as u64 + step_arguments.len() as u64 + 1)
+                            * super::TEST_SCHEDULER_VALUE_BYTES,
+                    &values,
+                )?;
+                let (id, next) = self.next_executor_id()?;
+                let handle = Value::Host(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ExecutorActor,
+                    id,
+                });
+                let result = self.with_temporary_roots(|engine| {
+                    for value in &values {
+                        engine.retain_temporary(value);
+                    }
+                    engine.executor_result_ok(metadata.outcome, handle)
+                })?;
+                self.next_executor_id = next;
                 self.actors.insert(
                     id,
                     RuntimeActorState {
@@ -13775,13 +15829,11 @@ impl Engine<'_, '_> {
                         send_waiters: VecDeque::new(),
                     },
                 );
-                let handle = Value::Host(RuntimeValue::Host {
-                    kind: RuntimeHostValueKind::ExecutorActor,
-                    id,
-                });
-                return Ok(Some(OperationResult::Value(
-                    self.executor_result_ok(metadata.outcome, handle)?,
-                )));
+                if let Some(memory) = memory {
+                    self.scheduler_handle_memory
+                        .insert((RuntimeHostValueKind::ExecutorActor, id), memory);
+                }
+                return Ok(Some(OperationResult::Value(result)));
             }
             "std.executor.Actor.ref" => {
                 let [actor_value] = values.as_slice() else {
@@ -14209,8 +16261,9 @@ impl Engine<'_, '_> {
                         controller,
                     });
                 }
+                let host_name = metadata.name.split('[').next().unwrap_or(&metadata.name);
                 if matches!(
-                    metadata.name.as_str(),
+                    host_name,
                     "std.testing.__runLeaf" | "std.testing.__runSuite"
                 ) {
                     let [id, body] = values.as_slice() else {
@@ -14222,7 +16275,7 @@ impl Engine<'_, '_> {
                     if !self.host.selects_test_node(&id) {
                         return Ok(OperationResult::Value(Value::Unit));
                     }
-                    let kind = if metadata.name == "std.testing.__runLeaf" {
+                    let kind = if host_name == "std.testing.__runLeaf" {
                         VmTestNodeKind::Leaf
                     } else {
                         VmTestNodeKind::Suite
@@ -14237,11 +16290,11 @@ impl Engine<'_, '_> {
                             "test boundary body is not a source closure",
                         ));
                     };
-                    self.host.begin_test_node(kind, &id)?;
+                    let boundary = self.begin_test_boundary(kind, id)?;
                     return Ok(OperationResult::TestBoundaryCall {
                         function,
                         arguments,
-                        boundary: TestBoundary { kind, id },
+                        boundary,
                     });
                 }
                 if metadata.name == "std.testing.__beginSuiteCleanup" {
@@ -14250,7 +16303,7 @@ impl Engine<'_, '_> {
                             "suite cleanup boundary received arguments",
                         ));
                     }
-                    self.host.begin_test_suite_cleanup()?;
+                    self.begin_test_cleanup()?;
                     return Ok(OperationResult::Value(Value::Unit));
                 }
                 let values = values
@@ -14262,6 +16315,14 @@ impl Engine<'_, '_> {
                         value => Ok(value),
                     })
                     .collect::<Result<Vec<_>, VmError>>()?;
+                if let Some(result) =
+                    self.prepare_reflection_call(callable, metadata.outcome, &values)?
+                {
+                    return Ok(result);
+                }
+                if metadata.assertion_display.is_some() {
+                    return self.prepare_testing_assertion(&metadata, &values);
+                }
                 if metadata.name.starts_with("std.async.oneshot") {
                     if !values.is_empty() {
                         return Err(VmError::invariant(
@@ -14296,12 +16357,28 @@ impl Engine<'_, '_> {
                 {
                     return Ok(result);
                 }
-                let snapshots = values
-                    .iter()
-                    .map(|value| {
-                        snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                if matches!(
+                    metadata.name.as_str(),
+                    "std.text.String.length" | "std.text.String.byteLength"
+                ) {
+                    let [value] = values.as_slice() else {
+                        return Err(VmError::invariant(
+                            "String measurement has an invalid argument list",
+                        ));
+                    };
+                    // Measuring managed text needs no detached payload or host
+                    // access. Keep scalar count distinct from UTF-8 byte count.
+                    let text = self.string_value(value)?;
+                    let length = if metadata.name == "std.text.String.length" {
+                        text.chars().count()
+                    } else {
+                        text.len()
+                    };
+                    let length = i64::try_from(length)
+                        .map_err(|_| VmError::invariant("String length exceeds Int"))?;
+                    return Ok(OperationResult::Value(Value::Integer(i128::from(length))));
+                }
+                let snapshots = self.snapshot_arguments(&values)?;
                 let function_type = self
                     .program
                     .ty(metadata.function_type)
@@ -14318,7 +16395,18 @@ impl Engine<'_, '_> {
                         outcome: metadata.outcome,
                     })
                 } else {
-                    let returned = self.invoke_host(&metadata.name, &snapshots)?;
+                    self.prepare_host_collection(&snapshots)?;
+                    let prepared = self.prepare_host_return_import(
+                        &metadata.name,
+                        &snapshots,
+                        metadata.outcome,
+                    )?;
+                    let (returned, prepared) = self.dispatch_host_arguments_with_import_admission(
+                        &metadata.name,
+                        snapshots,
+                        metadata.outcome,
+                        prepared,
+                    )?;
                     if let Some(message) = self.host.take_test_control() {
                         self.pending_test_control = true;
                         return Ok(OperationResult::Panic(PanicCode::ExplicitPanic, message));
@@ -14327,7 +16415,7 @@ impl Engine<'_, '_> {
                         metadata.name.as_str(),
                         "std.testing.failNow" | "std.testing.skip"
                     ) {
-                        let RuntimeValue::Unit = returned else {
+                        let RuntimeValue::Unit = returned.value else {
                             return Err(VmError::Host(format!(
                                 "{} returned a non-Unit terminal acknowledgement",
                                 metadata.name
@@ -14339,7 +16427,12 @@ impl Engine<'_, '_> {
                         ));
                     }
                     Ok(OperationResult::Value(
-                        self.materialize_host_value(metadata.outcome, returned)?,
+                        self.materialize_host_value_with_admission(
+                            metadata.outcome,
+                            returned.value,
+                            returned.memory,
+                            prepared,
+                        )?,
                     ))
                 }
             }
@@ -14349,15 +16442,15 @@ impl Engine<'_, '_> {
     }
 
     fn new_oneshot(&mut self, result_ty: BytecodeTypeId) -> Result<OperationResult, VmError> {
+        let memory = self.reserve_scheduler_memory(super::TEST_SCHEDULER_HANDLE_BYTES, &[])?;
         let id = self.next_oneshot_id;
-        self.next_oneshot_id =
-            self.next_oneshot_id
-                .checked_add(1)
-                .ok_or(VmError::ResourceLimit {
-                    resource: "one-shot handles",
-                    limit: u64::MAX,
-                })?;
-        self.oneshots.insert(id, OneShotState::default());
+        let next = self
+            .next_oneshot_id
+            .checked_add(1)
+            .ok_or(VmError::ResourceLimit {
+                resource: "one-shot handles",
+                limit: u64::MAX,
+            })?;
         let waiter = Value::Host(RuntimeValue::Host {
             kind: RuntimeHostValueKind::Waiter,
             id,
@@ -14366,11 +16459,18 @@ impl Engine<'_, '_> {
             kind: RuntimeHostValueKind::Completer,
             id,
         });
-        Ok(OperationResult::Value(self.allocate(
+        let pair = self.allocate(
             result_ty,
             HeapObject::Tuple(vec![Some(waiter.clone()), Some(completer.clone())]),
             &[waiter, completer],
-        )?))
+        )?;
+        self.next_oneshot_id = next;
+        self.oneshots.insert(id, OneShotState::default());
+        if let Some(memory) = memory {
+            self.scheduler_handle_memory
+                .insert((RuntimeHostValueKind::Waiter, id), memory);
+        }
+        Ok(OperationResult::Value(pair))
     }
 
     fn result_parts(
@@ -14581,9 +16681,15 @@ impl Engine<'_, '_> {
             if !values.is_empty() {
                 return Err(VmError::invariant("Once constructor received arguments"));
             }
-            let token = Value::Host(self.invoke_host("std.sync.once", &[])?);
+            let memory = self.reserve_scheduler_memory(super::TEST_SCHEDULER_HANDLE_BYTES, &[])?;
+            let returned = self.invoke_host("std.sync.once", Vec::new())?;
+            let token = Value::Host(returned.value);
             let id = once_handle(&token)?;
             self.onces.insert(id, RuntimeOnceState::Uninitialized);
+            if let Some(memory) = memory {
+                self.scheduler_handle_memory
+                    .insert((RuntimeHostValueKind::Once, id), memory);
+            }
             return Ok(Some(OperationResult::Value(token)));
         }
         if !matches!(
@@ -14640,23 +16746,11 @@ impl Engine<'_, '_> {
                         // The public result carries SyncError when that is the
                         // declared Once error type.  The host remains the
                         // single source of the nominal error value.
-                        let snapshots = [
-                            snapshot_value(
-                                token,
-                                &self.heap,
-                                &self.callable_names,
-                                &self.nominal_names,
-                            )?,
-                            snapshot_value(
-                                &initializer,
-                                &self.heap,
-                                &self.callable_names,
-                                &self.nominal_names,
-                            )?,
-                        ];
-                        let returned = self.invoke_host("std.sync.Once.getOrInit", &snapshots)?;
+                        let snapshots = self.snapshot_arguments(&[token.clone(), initializer])?;
+                        let returned =
+                            self.invoke_host_arguments("std.sync.Once.getOrInit", snapshots)?;
                         Ok(Some(OperationResult::Value(
-                            self.materialize_host_value(metadata.outcome, returned)?,
+                            self.materialize_host_return(metadata.outcome, returned)?,
                         )))
                     }
                     RuntimeOnceState::Initializing { .. } => Ok(Some(OperationResult::OnceWait {
@@ -14858,6 +16952,7 @@ impl Engine<'_, '_> {
     }
 
     fn new_group(&mut self, _group_ty: BytecodeTypeId) -> Result<OperationResult, VmError> {
+        let memory = self.reserve_scheduler_memory(super::TEST_SCHEDULER_HANDLE_BYTES, &[])?;
         let id = self.next_group_id;
         self.next_group_id = self
             .next_group_id
@@ -14867,6 +16962,10 @@ impl Engine<'_, '_> {
                 limit: u64::MAX,
             })?;
         self.groups.insert(id, RuntimeGroupState::default());
+        if let Some(memory) = memory {
+            self.scheduler_handle_memory
+                .insert((RuntimeHostValueKind::Group, id), memory);
+        }
         self.statistics.group_state_allocations =
             self.statistics.group_state_allocations.saturating_add(1);
         self.observe_group_state(0, 0, 0);
@@ -14928,7 +17027,6 @@ impl Engine<'_, '_> {
                 .ok_or_else(|| VmError::invariant("Group disappeared during add"))?
                 .children
                 .len();
-            self.tasks[join.task].join_consumed = true;
             self.append_group_child(
                 id,
                 RuntimeGroupChild {
@@ -14938,6 +17036,7 @@ impl Engine<'_, '_> {
                     error,
                 },
             )?;
+            self.tasks[join.task].join_consumed = true;
             return Ok(Some(OperationResult::Value(Value::Unit)));
         }
 
@@ -15026,6 +17125,19 @@ impl Engine<'_, '_> {
     }
 
     fn append_group_child(&mut self, id: u64, child: RuntimeGroupChild) -> Result<(), VmError> {
+        if let Some(memory) = self
+            .scheduler_handle_memory
+            .get_mut(&(RuntimeHostValueKind::Group, id))
+        {
+            let state = self
+                .groups
+                .get(&id)
+                .ok_or_else(|| VmError::invariant("Group disappeared during add"))?;
+            let bytes = super::TEST_SCHEDULER_HANDLE_BYTES.saturating_add(
+                (state.children.len() as u64 + 1).saturating_mul(super::TEST_SCHEDULER_VALUE_BYTES),
+            );
+            memory.resize(bytes)?;
+        }
         let (before, after, children_len, waiters_capacity) = {
             let state = self
                 .groups
@@ -15106,13 +17218,16 @@ impl Engine<'_, '_> {
     fn remove_group(&mut self, id: u64) -> Result<(), VmError> {
         let state = self
             .groups
-            .remove(&id)
+            .get(&id)
             .ok_or_else(|| VmError::invariant("Group handle references an unknown group"))?;
         if !state.waiters.is_empty() {
             return Err(VmError::invariant(
                 "Group was removed with waiting consumers",
             ));
         }
+        self.groups.remove(&id);
+        self.scheduler_handle_memory
+            .remove(&(RuntimeHostValueKind::Group, id));
         Ok(())
     }
 
@@ -15442,6 +17557,17 @@ impl Engine<'_, '_> {
                     .position(|child| child.task == winner.task)
                     .ok_or_else(|| VmError::invariant("Group winner disappeared"))?;
                 state.children.remove(position);
+                if let Some(memory) = self
+                    .scheduler_handle_memory
+                    .get_mut(&(RuntimeHostValueKind::Group, id))
+                {
+                    memory.resize(
+                        super::TEST_SCHEDULER_HANDLE_BYTES.saturating_add(
+                            (state.children.len() as u64)
+                                .saturating_mul(super::TEST_SCHEDULER_VALUE_BYTES),
+                        ),
+                    )?;
+                }
             }
             let completion = self
                 .take_task_completion(winner.task)?
@@ -16221,7 +18347,7 @@ impl Engine<'_, '_> {
     fn materialize_blocking_arguments(
         &mut self,
         function: BytecodeFunctionId,
-        arguments: Vec<BlockingArgument>,
+        arguments: BlockingArguments,
     ) -> Result<Vec<Value>, VmError> {
         let function_info = self
             .program
@@ -16231,17 +18357,45 @@ impl Engine<'_, '_> {
             return Err(VmError::InvalidEntry(format!(
                 "blocking job requires {} arguments, got {}",
                 function_info.parameters.len(),
-                arguments.len()
+                arguments.len(),
             )));
         }
-        function_info
-            .parameters
-            .iter()
-            .copied()
-            .zip(arguments)
-            .map(|(slot, argument)| {
+        let host_marker = self.temporary_host_roots.len();
+        if self.host.tracks_host_roots() {
+            let mut roots = VmHostRoots::new();
+            for argument in arguments.iter() {
+                argument.value.trace_host_roots(&mut roots);
+            }
+            self.temporary_host_roots.extend(roots);
+        }
+        let BlockingArguments { values, memory } = arguments;
+        let previous_import = std::mem::replace(&mut self.import_memory, memory);
+        let previous_heap = self.import_heap_memory.take();
+        let previous_frames = std::mem::take(&mut self.import_frames);
+        let mut workspace_memory = None;
+        let result = self.with_temporary_roots(|engine| {
+            let budget = engine
+                .import_memory
+                .as_ref()
+                .map(|memory| memory.budget().clone());
+            let limit = budget
+                .as_ref()
+                .map_or(engine.limits.max_heap_bytes, VmMemoryBudget::limit);
+            let overflow = || VmError::ResourceLimit {
+                resource: "memory",
+                limit,
+            };
+            let mut total = host_import::ImportCost {
+                objects: 0,
+                bounded: false,
+                heap_bytes: 0,
+                string_bytes: 0,
+                frames: 0,
+            };
+            // Validate and admit every argument before constructing the first.
+            for (slot, argument) in function_info.parameters.iter().zip(&values) {
                 let expected = function_info
-                    .slot(slot)
+                    .slot(*slot)
                     .ok_or_else(|| VmError::invariant("blocking job parameter slot is invalid"))?
                     .ty;
                 if expected != argument.ty {
@@ -16249,78 +18403,182 @@ impl Engine<'_, '_> {
                         "blocking job argument type changed across the host bridge",
                     ));
                 }
-                self.materialize_blocking_value(expected, argument.value)
-            })
-            .collect()
+                let cost = engine.host_import_cost_for(
+                    expected,
+                    &argument.value,
+                    budget.as_ref(),
+                    host_import::ImportRoute::BlockingArgument,
+                )?;
+                total.objects = total
+                    .objects
+                    .checked_add(cost.objects)
+                    .ok_or_else(overflow)?;
+                total.heap_bytes = total
+                    .heap_bytes
+                    .checked_add(cost.heap_bytes)
+                    .ok_or_else(overflow)?;
+                total.string_bytes = total
+                    .string_bytes
+                    .checked_add(cost.string_bytes)
+                    .ok_or_else(overflow)?;
+                total.frames = total.frames.max(cost.frames);
+            }
+            workspace_memory = engine.prepare_host_import(total, budget)?;
+            let mut materialized = Vec::with_capacity(values.len());
+            for argument in values {
+                let value = engine.materialize_host_iterative(argument.ty, argument.value)?;
+                engine.retain_temporary(&value);
+                materialized.push(value);
+            }
+            Ok(materialized)
+        });
+        drop(std::mem::replace(&mut self.import_frames, previous_frames));
+        drop(workspace_memory);
+        self.temporary_host_roots.truncate(host_marker);
+        self.import_heap_memory = previous_heap;
+        self.import_memory = previous_import;
+        result
     }
 
-    fn materialize_blocking_value(
+    fn materialize_host_return(
+        &mut self,
+        ty: BytecodeTypeId,
+        returned: VmHostReturn,
+    ) -> Result<Value, VmError> {
+        let prepared = self
+            .tasks
+            .get_mut(self.current_task)
+            .and_then(|task| task.prepared_host_import.take());
+        self.materialize_host_value_with_admission(ty, returned.value, returned.memory, prepared)
+    }
+
+    fn materialize_host_value_with_charge(
         &mut self,
         ty: BytecodeTypeId,
         value: RuntimeValue,
+        memory: Option<VmMemoryCharge>,
     ) -> Result<Value, VmError> {
-        match value {
-            RuntimeValue::Closure { callable, captures } => {
-                let callable = BytecodeCallableId::new(callable);
-                let metadata = self.program.callable(callable).ok_or_else(|| {
-                    VmError::Host("blocking closure references an unknown callable".into())
-                })?;
-                let closure = metadata.closure.as_ref().ok_or_else(|| {
-                    VmError::Host("blocking closure references a non-closure callable".into())
-                })?;
-                if closure.environment != ty || closure.captures.len() != captures.len() {
-                    return Err(VmError::Host(
-                        "blocking closure environment does not match its verified type".into(),
-                    ));
-                }
-                let mut values = Vec::with_capacity(captures.len());
-                for (capture_ty, capture) in closure.captures.iter().copied().zip(captures) {
-                    let value = self.materialize_blocking_value(capture_ty, capture)?;
-                    self.retain_temporary(&value);
-                    values.push(Some(value));
-                }
-                self.allocate(
-                    ty,
-                    HeapObject::Closure {
-                        callable,
-                        captures: values,
-                    },
-                    &[],
-                )
-            }
-            RuntimeValue::Function {
-                name,
-                type_arguments,
-            } => {
-                let callable = self
-                    .program
-                    .callables
-                    .iter()
-                    .enumerate()
-                    .find(|(_, callable)| callable.name == name)
-                    .map(|(index, _)| BytecodeCallableId::new(index as u32))
-                    .ok_or_else(|| {
-                        VmError::Host("blocking function references an unknown callable".into())
-                    })?;
-                let metadata = self.program.callable(callable).ok_or_else(|| {
-                    VmError::invariant("blocking function callable metadata disappeared")
-                })?;
-                if metadata.closure.is_some() || metadata.implementation.is_none() {
-                    return Err(VmError::Host(
-                        "blocking function is not a bytecode callable".into(),
-                    ));
-                }
-                let arguments = type_arguments
-                    .into_iter()
-                    .map(BytecodeTypeId::new)
-                    .collect();
-                Ok(Value::Function {
-                    callable,
-                    arguments,
-                })
-            }
-            value => self.materialize_host_value(ty, value),
+        self.materialize_host_value_with_admission(ty, value, memory, None)
+    }
+
+    fn materialize_host_value_with_admission(
+        &mut self,
+        ty: BytecodeTypeId,
+        value: RuntimeValue,
+        memory: Option<VmMemoryCharge>,
+        prepared: Option<host_import::PreparedHostImport>,
+    ) -> Result<Value, VmError> {
+        let previous_import = std::mem::replace(&mut self.import_memory, memory);
+        let previous_heap = self.import_heap_memory.take();
+        let previous_objects = self.import_objects.take();
+        let previous_frames = std::mem::take(&mut self.import_frames);
+        let mut workspace_memory = None;
+        let marker = self.temporary_host_roots.len();
+        if self.host.tracks_host_roots() {
+            let mut roots = VmHostRoots::new();
+            value.trace_host_roots(&mut roots);
+            self.temporary_host_roots.extend(roots);
         }
+        let result = (|| {
+            if let Some(mut prepared) = prepared {
+                let actual = self.validate_prepared_host_import(ty, &value, &prepared)?;
+                let transport = self.import_memory.as_mut().ok_or_else(|| {
+                    VmError::Host("prepared host reply has no transport admission".into())
+                })?;
+                transport.transfer_to(&mut prepared.heap, actual.string_bytes)?;
+                self.import_frames = Vec::with_capacity(prepared.cost.frames);
+                self.import_heap_memory = Some(prepared.heap);
+                self.import_objects = Some(prepared.objects);
+                workspace_memory = Some(prepared.workspace);
+            } else {
+                let budget = self
+                    .import_memory
+                    .as_ref()
+                    .map(|memory| memory.budget().clone());
+                let cost = self.host_import_cost(ty, &value, budget.as_ref())?;
+                workspace_memory = self.prepare_host_import(cost, budget)?;
+            }
+            self.materialize_host_iterative(ty, value)
+        })();
+        drop(std::mem::replace(&mut self.import_frames, previous_frames));
+        drop(workspace_memory);
+        self.temporary_host_roots.truncate(marker);
+        self.import_objects = previous_objects;
+        self.import_heap_memory = previous_heap;
+        self.import_memory = previous_import;
+        result
+    }
+
+    fn prepare_host_import(
+        &mut self,
+        cost: host_import::ImportCost,
+        budget: Option<VmMemoryBudget>,
+    ) -> Result<Option<VmMemoryCharge>, VmError> {
+        let mut workspace_memory = None;
+        let workspace = (cost.frames as u64)
+            .checked_mul(super::TEST_HOST_IMPORT_FRAME_BYTES)
+            .ok_or_else(|| VmError::invariant("import workspace exceeds its bounded depth"))?;
+        let additional_heap = if budget.is_some() {
+            cost.heap_bytes
+                .checked_sub(cost.string_bytes)
+                .ok_or_else(|| {
+                    VmError::invariant("import String payload exceeds planned heap storage")
+                })?
+        } else {
+            cost.heap_bytes
+        };
+        let additional = if let Some(budget) = &budget {
+            additional_heap
+                .checked_add(workspace)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: budget.limit(),
+                })?
+        } else {
+            additional_heap
+        };
+        let roots = self.roots(&[])?;
+        if budget
+            .as_ref()
+            .is_some_and(|budget| !budget.can_reserve(additional))
+        {
+            self.collect_host_memory(&roots, None)?;
+        }
+        self.heap.preflight_import(
+            cost.objects,
+            additional,
+            budget.clone(),
+            &roots,
+            &mut self.statistics,
+        )?;
+        if let Some(budget) = budget {
+            let mut heap = budget.reserve(additional)?;
+            workspace_memory = Some(heap.split_off(workspace)?);
+            self.import_memory
+                .as_mut()
+                .expect("the import account was selected above")
+                .transfer_to(&mut heap, cost.string_bytes)?;
+            self.import_heap_memory = Some(heap);
+        }
+        self.import_frames = Vec::with_capacity(cost.frames);
+        Ok(workspace_memory)
+    }
+
+    fn allocate_host_import(
+        &mut self,
+        descriptor: BytecodeTypeId,
+        object: HeapObject,
+        roots: &[Value],
+    ) -> Result<Value, VmError> {
+        if let Some(objects) = &mut self.import_objects {
+            self.heap.consume_import_object(objects)?;
+        }
+        let charge = if let Some(memory) = &mut self.import_heap_memory {
+            Some(memory.split_off(object.estimated_bytes())?)
+        } else {
+            None
+        };
+        self.allocate_with_charge(descriptor, object, roots, charge)
     }
 
     fn materialize_host_value(
@@ -16332,7 +18590,15 @@ impl Engine<'_, '_> {
             RuntimeValue::Host { kind, id } => Some((*kind, *id)),
             _ => None,
         };
-        let materialized = self.materialize_host_value_as(ty, ty, value)?;
+        let marker = self.temporary_host_roots.len();
+        if self.host.tracks_host_roots() {
+            let mut roots = VmHostRoots::new();
+            value.trace_host_roots(&mut roots);
+            self.temporary_host_roots.extend(roots);
+        }
+        let result = self.materialize_host_value_as(ty, ty, value);
+        self.temporary_host_roots.truncate(marker);
+        let materialized = result?;
         if let Some((kind, id)) = resource {
             self.record_resource(
                 &RuntimeValue::Host { kind, id },
@@ -16387,13 +18653,13 @@ impl Engine<'_, '_> {
                 Ok(Value::Char(value))
             }
             (BytecodeTypeKind::Scalar(BytecodeScalarType::String), RuntimeValue::String(value)) => {
-                self.allocate(descriptor, HeapObject::String(value), &[])
+                self.allocate_host_import(descriptor, HeapObject::String(value), &[])
             }
             (BytecodeTypeKind::Tuple(fields), RuntimeValue::Tuple(values))
                 if fields.len() == values.len() =>
             {
                 let values = self.materialize_host_values(&fields, values)?;
-                self.allocate(
+                self.allocate_host_import(
                     descriptor,
                     HeapObject::Tuple(values.into_iter().map(Some).collect()),
                     &[],
@@ -16462,7 +18728,11 @@ impl Engine<'_, '_> {
                         engine.retain_temporary(&value);
                         materialized.push(Some(value));
                     }
-                    engine.allocate(descriptor, HeapObject::Array(materialized.into()), &[])
+                    engine.allocate_host_import(
+                        descriptor,
+                        HeapObject::Array(materialized.into()),
+                        &[],
+                    )
                 })
             }
             (
@@ -16484,7 +18754,11 @@ impl Engine<'_, '_> {
                         engine.retain_temporary(&value);
                         materialized.push((Some(key), Some(value)));
                     }
-                    engine.allocate(descriptor, HeapObject::Map(materialized.into()), &[])
+                    engine.allocate_host_import(
+                        descriptor,
+                        HeapObject::Map(materialized.into()),
+                        &[],
+                    )
                 })
             }
             (
@@ -16504,7 +18778,11 @@ impl Engine<'_, '_> {
                         engine.retain_temporary(&value);
                         materialized.push(Some(value));
                     }
-                    engine.allocate(descriptor, HeapObject::Set(materialized.into()), &[])
+                    engine.allocate_host_import(
+                        descriptor,
+                        HeapObject::Set(materialized.into()),
+                        &[],
+                    )
                 })
             }
             (
@@ -16521,10 +18799,11 @@ impl Engine<'_, '_> {
                     .map(|value| self.materialize_host_value(*target, *value))
                     .transpose()?;
                 let roots = value.iter().cloned().collect::<Vec<_>>();
-                self.allocate(descriptor, HeapObject::Ref(value), &roots)
+                self.allocate_host_import(descriptor, HeapObject::Ref(value), &roots)
             }
             (BytecodeTypeKind::Intrinsic { constructor, .. }, RuntimeValue::Host { kind, id })
-                if runtime_host_kind(constructor) == Some(kind) =>
+                if runtime_host_kind(constructor, self.program.reflection.artifact_tag)
+                    == Some(kind) =>
             {
                 Ok(Value::Host(RuntimeValue::Host { kind, id }))
             }
@@ -16538,11 +18817,11 @@ impl Engine<'_, '_> {
                 Ok(Value::Integer(value))
             }
             (BytecodeTypeKind::Option(_), RuntimeValue::OptionNone) => {
-                self.allocate(descriptor, HeapObject::OptionNone, &[])
+                self.allocate_host_import(descriptor, HeapObject::OptionNone, &[])
             }
             (BytecodeTypeKind::Option(item), RuntimeValue::OptionSome(value)) => {
                 let value = self.materialize_host_value(item, *value)?;
-                self.allocate(
+                self.allocate_host_import(
                     descriptor,
                     HeapObject::OptionSome(Some(value.clone())),
                     &[value],
@@ -16550,7 +18829,7 @@ impl Engine<'_, '_> {
             }
             (BytecodeTypeKind::Result { success, .. }, RuntimeValue::ResultOk(value)) => {
                 let value = self.materialize_host_value(success, *value)?;
-                self.allocate(
+                self.allocate_host_import(
                     descriptor,
                     HeapObject::ResultOk(Some(value.clone())),
                     &[value],
@@ -16558,7 +18837,7 @@ impl Engine<'_, '_> {
             }
             (BytecodeTypeKind::Result { error, .. }, RuntimeValue::ResultErr(value)) => {
                 let value = self.materialize_host_value(error, *value)?;
-                self.allocate(
+                self.allocate_host_import(
                     descriptor,
                     HeapObject::ResultErr(Some(value.clone())),
                     &[value],
@@ -16574,7 +18853,7 @@ impl Engine<'_, '_> {
                         )
                     })?;
                 let value = self.materialize_host_value(member, *value)?;
-                self.allocate(
+                self.allocate_host_import(
                     descriptor,
                     HeapObject::Union {
                         member,
@@ -16595,7 +18874,7 @@ impl Engine<'_, '_> {
                     .find(|member| {
                         self.program.ty(*member).and_then(|ty| match ty.kind {
                             BytecodeTypeKind::Intrinsic { constructor, .. } => {
-                                runtime_host_kind(constructor)
+                                runtime_host_kind(constructor, self.program.reflection.artifact_tag)
                             }
                             _ => None,
                         }) == Some(host_kind)
@@ -16609,7 +18888,7 @@ impl Engine<'_, '_> {
                     kind: host_kind,
                     id,
                 });
-                self.allocate(
+                self.allocate_host_import(
                     descriptor,
                     HeapObject::Union {
                         member,
@@ -16652,7 +18931,7 @@ impl Engine<'_, '_> {
             ));
         }
         let value = self.materialize_host_value(value_type, value)?;
-        self.allocate(
+        self.allocate_host_import(
             descriptor,
             HeapObject::Newtype {
                 nominal,
@@ -16691,7 +18970,7 @@ impl Engine<'_, '_> {
             .iter()
             .filter_map(|(_, value)| value.clone())
             .collect::<Vec<_>>();
-        self.allocate(descriptor, HeapObject::Record { nominal, fields }, &roots)
+        self.allocate_host_import(descriptor, HeapObject::Record { nominal, fields }, &roots)
     }
 
     fn materialize_host_variant(
@@ -16706,7 +18985,6 @@ impl Engine<'_, '_> {
         let trace = self.heap.type_descriptor(descriptor)?.clone();
         let BytecodeTraceDescriptor::Variant {
             nominal: Some(traced_nominal),
-            arguments,
             variants,
             ..
         } = trace
@@ -16727,18 +19005,14 @@ impl Engine<'_, '_> {
             BytecodeVariantPayload::Unit if values.is_empty() => AggregatePayload::Unit,
             BytecodeVariantPayload::Tuple(types) if types.len() == values.len() => {
                 AggregatePayload::Tuple(
-                    self.materialize_host_values_with_nominal_arguments(types, values, &arguments)?
+                    self.materialize_host_values(types, values)?
                         .into_iter()
                         .map(Some)
                         .collect(),
                 )
             }
             BytecodeVariantPayload::Record(fields) if fields.len() == values.len() => {
-                AggregatePayload::Record(
-                    self.materialize_host_record_values_with_nominal_arguments(
-                        fields, values, &arguments,
-                    )?,
-                )
+                AggregatePayload::Record(self.materialize_host_record_values(fields, values)?)
             }
             _ => {
                 return Err(VmError::Host(
@@ -16748,7 +19022,7 @@ impl Engine<'_, '_> {
         };
         let mut roots = Vec::new();
         payload.trace_values(&mut roots);
-        self.allocate(
+        self.allocate_host_import(
             descriptor,
             HeapObject::Variant {
                 variant: schema.member,
@@ -16758,41 +19032,13 @@ impl Engine<'_, '_> {
         )
     }
 
-    fn materialize_host_record_values(
-        &mut self,
-        schema: &[crate::bytecode::BytecodeField],
-        values: Vec<RuntimeValue>,
-    ) -> Result<Vec<(u32, Option<Value>)>, VmError> {
-        if schema.len() != values.len() {
-            return Err(VmError::Host(
-                "bootstrap host record values do not match its verified descriptor".into(),
-            ));
-        }
-        self.with_temporary_roots(|engine| {
-            let mut materialized = Vec::with_capacity(schema.len());
-            for (field, value) in schema.iter().zip(values) {
-                let value = engine.materialize_host_value(field.ty, value)?;
-                engine.retain_temporary(&value);
-                materialized.push((field.member, Some(value)));
-            }
-            Ok(materialized)
-        })
-    }
-
     fn validate_host_nominal_name(
         &self,
         nominal: crate::bytecode::BytecodeNominalId,
         name: &str,
     ) -> Result<(), VmError> {
-        let expected = self.nominal_names.get(nominal.index() as usize);
-        if expected.is_some_and(|expected| expected == name) {
-            Ok(())
-        } else {
-            Err(VmError::Host(format!(
-                "bootstrap host value names nominal `{name}`, expected `{}`",
-                expected.map_or("<missing>", String::as_str)
-            )))
-        }
+        self.host_import_types()
+            .validate_host_nominal_name(nominal, name)
     }
 
     fn materialize_host_values(
@@ -16816,34 +19062,10 @@ impl Engine<'_, '_> {
         })
     }
 
-    fn materialize_host_values_with_nominal_arguments(
-        &mut self,
-        types: &[BytecodeTypeId],
-        values: Vec<RuntimeValue>,
-        arguments: &[BytecodeTypeId],
-    ) -> Result<Vec<Value>, VmError> {
-        if types.len() != values.len() {
-            return Err(VmError::Host(
-                "bootstrap host result has the wrong aggregate arity".into(),
-            ));
-        }
-        self.with_temporary_roots(|engine| {
-            let mut materialized = Vec::with_capacity(values.len());
-            for (ty, value) in types.iter().copied().zip(values) {
-                let ty = engine.specialize_nominal_argument(ty, arguments)?;
-                let value = engine.materialize_host_value(ty, value)?;
-                engine.retain_temporary(&value);
-                materialized.push(value);
-            }
-            Ok(materialized)
-        })
-    }
-
-    fn materialize_host_record_values_with_nominal_arguments(
+    fn materialize_host_record_values(
         &mut self,
         schema: &[crate::bytecode::BytecodeField],
         values: Vec<RuntimeValue>,
-        arguments: &[BytecodeTypeId],
     ) -> Result<Vec<(u32, Option<Value>)>, VmError> {
         if schema.len() != values.len() {
             return Err(VmError::Host(
@@ -16853,32 +19075,12 @@ impl Engine<'_, '_> {
         self.with_temporary_roots(|engine| {
             let mut materialized = Vec::with_capacity(schema.len());
             for (field, value) in schema.iter().zip(values) {
-                let ty = engine.specialize_nominal_argument(field.ty, arguments)?;
-                let value = engine.materialize_host_value(ty, value)?;
+                let value = engine.materialize_host_value(field.ty, value)?;
                 engine.retain_temporary(&value);
                 materialized.push((field.member, Some(value)));
             }
             Ok(materialized)
         })
-    }
-
-    fn specialize_nominal_argument(
-        &self,
-        ty: BytecodeTypeId,
-        arguments: &[BytecodeTypeId],
-    ) -> Result<BytecodeTypeId, VmError> {
-        let kind = &self
-            .program
-            .ty(ty)
-            .ok_or_else(|| VmError::invariant("nominal payload type is missing"))?
-            .kind;
-        let BytecodeTypeKind::GenericParameter(position) = kind else {
-            return Ok(ty);
-        };
-        arguments
-            .get(*position as usize)
-            .copied()
-            .ok_or_else(|| VmError::invariant("nominal payload generic argument is missing"))
     }
 
     fn value_tag(&self, value: &Value) -> Result<BytecodeTag, VmError> {
@@ -16931,22 +19133,14 @@ impl Engine<'_, '_> {
         last: u64,
         host_name: &str,
     ) -> Result<(Option<Value>, Option<u64>), VmError> {
-        let source_snapshot = snapshot_value(
-            source,
-            &self.heap,
-            &self.callable_names,
-            &self.nominal_names,
-        )?;
-        let returned = self.invoke_host(
-            &format!("{host_name}.__iterNext"),
-            &[
-                source_snapshot,
-                RuntimeValue::Integer(i128::from(cutoff)),
-                RuntimeValue::Integer(i128::from(last)),
-            ],
-        )?;
-        let RuntimeValue::OptionSome(payload) = returned else {
-            if matches!(returned, RuntimeValue::OptionNone) {
+        let snapshots = self.snapshot_arguments(&[
+            source.clone(),
+            Value::Integer(i128::from(cutoff)),
+            Value::Integer(i128::from(last)),
+        ])?;
+        let returned = self.invoke_host_arguments(&format!("{host_name}.__iterNext"), snapshots)?;
+        let RuntimeValue::OptionSome(payload) = returned.value else {
+            if matches!(returned.value, RuntimeValue::OptionNone) {
                 return Ok((None, None));
             }
             return Err(VmError::Host(
@@ -16958,14 +19152,17 @@ impl Engine<'_, '_> {
                 "std.sync cursor next returned a malformed payload".into(),
             ));
         };
-        let [RuntimeValue::Integer(generation), item] = values.as_slice() else {
+        let mut values = values.into_iter();
+        let (Some(RuntimeValue::Integer(generation)), Some(item), None) =
+            (values.next(), values.next(), values.next())
+        else {
             return Err(VmError::Host(
                 "std.sync cursor next returned the wrong payload arity".into(),
             ));
         };
-        let generation = u64::try_from(*generation)
+        let generation = u64::try_from(generation)
             .map_err(|_| VmError::Host("std.sync cursor generation is outside UInt64".into()))?;
-        let value = self.materialize_host_value(item_ty, item.clone())?;
+        let value = self.materialize_host_value_with_charge(item_ty, item, returned.memory)?;
         Ok((Some(value), Some(generation)))
     }
 
@@ -17402,9 +19599,9 @@ impl Engine<'_, '_> {
         }
     }
 
-    /// Run a synchronous callback to completion while the iterator terminator
-    /// remains on the caller's frame.  This keeps callback invocation lazy
-    /// without introducing a second public async protocol.
+    /// Run a synchronous callback while the calling operation remains on its
+    /// frame. Resource errors and host cancellation return to the scheduler
+    /// with the complete VM continuation chain retained for structural cleanup.
     fn invoke_sync_value(
         &mut self,
         callee: Value,
@@ -17450,51 +19647,83 @@ impl Engine<'_, '_> {
         };
         let base_depth = self.frames.len();
         self.push_frame(function, arguments, None)?;
-        loop {
-            self.step_budget()?;
-            let frame = self
-                .frames
-                .len()
-                .checked_sub(1)
-                .ok_or_else(|| VmError::invariant("iterator callback lost its frame"))?;
-            let (function_id, block_id, instruction_index) = {
-                let frame = &self.frames[frame];
-                (frame.function, frame.block, frame.instruction)
-            };
-            let function = self
-                .program
-                .function(function_id)
-                .ok_or_else(|| VmError::invariant("iterator callback frame is invalid"))?;
-            let block = function
-                .block(block_id)
-                .ok_or_else(|| VmError::invariant("iterator callback block is invalid"))?;
-            if let Some(instruction) = block.instructions.get(instruction_index).cloned() {
-                self.frames[frame].instruction += 1;
-                self.execute_instruction(frame, &instruction)?;
-            } else {
-                let terminator = block.terminator.clone();
-                if let Some(completion) = self.execute_terminator(frame, &terminator)? {
-                    if self.frames.len() != base_depth {
-                        return Err(VmError::invariant(
-                            "iterator callback completed with an unexpected frame depth",
-                        ));
-                    }
-                    return Ok(match completion {
-                        TaskCompletion::Returned(value) => Ok(value),
-                        TaskCompletion::Panicked(panic) => {
-                            let language_panic = panic.language_panic();
-                            self.pending_test_control = language_panic.is_none();
-                            let primary = language_panic.unwrap_or(&panic);
-                            Err((primary.code, primary.message.clone()))
+        let result = (|| {
+            loop {
+                self.observe_interruption()?;
+                if !self.task_is_running_cleanup(self.current_task)
+                    && self.interrupt_unwind_pending.contains(&self.current_task)
+                    && self.pending_unwind.is_none()
+                {
+                    return Err(VmError::CallbackInterrupted);
+                }
+                self.step_budget()?;
+                let frame = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| VmError::invariant("iterator callback lost its frame"))?;
+                let (function_id, block_id, instruction_index) = {
+                    let frame = &self.frames[frame];
+                    (frame.function, frame.block, frame.instruction)
+                };
+                let function = self
+                    .program
+                    .function(function_id)
+                    .ok_or_else(|| VmError::invariant("iterator callback frame is invalid"))?;
+                let block = function
+                    .block(block_id)
+                    .ok_or_else(|| VmError::invariant("iterator callback block is invalid"))?;
+                if let Some(instruction) = block.instructions.get(instruction_index).cloned() {
+                    self.frames[frame].instruction += 1;
+                    self.execute_instruction(frame, &instruction)?;
+                } else {
+                    let terminator = block.terminator.clone();
+                    if let Some(completion) = self.execute_terminator(frame, &terminator)? {
+                        if self.frames.len() != base_depth {
+                            return Err(VmError::invariant(
+                                "iterator callback completed with an unexpected frame depth",
+                            ));
                         }
-                        TaskCompletion::Cancelled => Err((
-                            PanicCode::ExplicitPanic,
-                            "iterator callback was cancelled".into(),
-                        )),
-                    });
+                        return Ok(match completion {
+                            TaskCompletion::Returned(value) => Ok(value),
+                            TaskCompletion::Panicked(panic) => {
+                                let language_panic = panic.language_panic();
+                                self.pending_test_control = language_panic.is_none();
+                                let primary = language_panic.unwrap_or(&panic);
+                                Err((primary.code, primary.message.clone()))
+                            }
+                            TaskCompletion::Cancelled => Err((
+                                PanicCode::ExplicitPanic,
+                                "iterator callback was cancelled".into(),
+                            )),
+                        });
+                    }
                 }
             }
+        })();
+        if result.is_err() && base_depth != 0 && self.frames.len() > base_depth {
+            // Rust is leaving this synchronous evaluator, but the VM still
+            // owns the interrupted callback frames. Link their root back to
+            // the caller's structural unwind so a phase resource limit cannot
+            // mistake the callback for the root task and lose sibling reports.
+            let caller = base_depth - 1;
+            let unwind = self.frame_unwind_entry(caller)?;
+            let caller_frame = &self.frames[caller];
+            let caller_function = self
+                .program
+                .function(caller_frame.function)
+                .ok_or_else(|| VmError::invariant("callback caller has no function"))?;
+            self.frames[base_depth].continuation = Some(CallContinuation {
+                destination: None,
+                target: None,
+                unwind,
+                call_span: caller_function.source,
+                test_boundary: None,
+                virtual_time: None,
+                once: None,
+            });
         }
+        result
     }
 
     fn borrowed_iterator_has_item(&self, source: &Value, next: usize) -> Result<bool, VmError> {
@@ -17684,6 +19913,56 @@ impl Engine<'_, '_> {
             .ty(ty)
             .map_or("<invalid-type>", |ty| ty.name.as_str())
     }
+
+    fn test_boundary_outcome(
+        &self,
+        value: &Value,
+        ty: BytecodeTypeId,
+        span: BytecodeSpan,
+    ) -> Result<VmTestNodeOutcome, VmError> {
+        if value == &Value::Unit {
+            return Ok(VmTestNodeOutcome::Passed);
+        }
+        let (_, error_type) = self.result_parts(ty)?;
+        let Value::Heap(handle) = value else {
+            return Err(VmError::invariant("test entry returned a non-Result value"));
+        };
+        match self.heap.get(*handle)? {
+            HeapObject::ResultOk(Some(Value::Unit)) => Ok(VmTestNodeOutcome::Passed),
+            HeapObject::ResultErr(Some(error)) => {
+                let error_type = match self.program.ty(error_type).map(|ty| &ty.kind) {
+                    Some(BytecodeTypeKind::Union(members)) => {
+                        let Value::Heap(handle) = error else {
+                            return Err(VmError::invariant("test error union is not boxed"));
+                        };
+                        let HeapObject::Union {
+                            member,
+                            value: Some(_),
+                        } = self.heap.get(*handle)?
+                        else {
+                            return Err(VmError::invariant("test error union has no payload"));
+                        };
+                        if !members.contains(member) {
+                            return Err(VmError::invariant(
+                                "test error has an invalid union member",
+                            ));
+                        }
+                        *member
+                    }
+                    _ => error_type,
+                };
+                // Report type identity only. Error values may contain private
+                // data and are never implicitly formatted into tooling output.
+                Ok(VmTestNodeOutcome::FailedError {
+                    error_type: self.type_name(error_type).to_owned(),
+                    span,
+                })
+            }
+            _ => Err(VmError::invariant(
+                "test entry returned an invalid Unit result",
+            )),
+        }
+    }
 }
 
 fn clone_present(value: &Option<Value>, label: &str) -> Result<Value, VmError> {
@@ -17698,10 +19977,13 @@ fn next_unicode_scalar(value: u32) -> Option<u32> {
     (next <= 0x10ffff).then_some(next)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 struct ResolvedPlacePath {
     root: (usize, usize, u32),
     components: Vec<PlaceComponent>,
+    // Components drop first. The reservation also owns detached map keys and
+    // slice indices throughout a live loan or multi-place validation.
+    memory: Option<VmMemoryCharge>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17750,12 +20032,19 @@ fn diagnostic_path_hash(components: &[PlaceComponent]) -> u64 {
             }
             PlaceComponent::MapKey(key) => {
                 feed(&mut hash, 4);
-                // RuntimeValue deliberately does not implement Hash because
-                // it contains f64. Debug formatting is deterministic and is
-                // hashed only; it is never emitted as trace payload.
-                for byte in format!("{key:?}").bytes() {
-                    feed(&mut hash, byte);
+                // Preserve the diagnostic identity without allocating a second
+                // text copy of a potentially large detached key.
+                struct HashWriter<'a>(&'a mut u64);
+                impl std::fmt::Write for HashWriter<'_> {
+                    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+                        for byte in text.bytes() {
+                            feed(self.0, byte);
+                        }
+                        Ok(())
+                    }
                 }
+                std::fmt::write(&mut HashWriter(&mut hash), format_args!("{key:?}"))
+                    .expect("the diagnostic hash writer accepts every string");
                 feed(&mut hash, 0);
             }
             PlaceComponent::Slice(indices) => {
@@ -17857,19 +20146,82 @@ fn paths_overlap(left: &ResolvedPlacePath, right: &ResolvedPlacePath) -> bool {
     true
 }
 
+fn write_scalar_display(
+    scalar: BytecodeScalarType,
+    value: &Value,
+    output: &mut dyn std::fmt::Write,
+) -> Result<std::fmt::Result, VmError> {
+    Ok(match (scalar, value) {
+        (BytecodeScalarType::Unit, Value::Unit) => output.write_str("()"),
+        (BytecodeScalarType::Bool, Value::Bool(value)) => write!(output, "{value}"),
+        (
+            BytecodeScalarType::Int
+            | BytecodeScalarType::Int8
+            | BytecodeScalarType::Int16
+            | BytecodeScalarType::Int32
+            | BytecodeScalarType::UInt8
+            | BytecodeScalarType::UInt16
+            | BytecodeScalarType::UInt32
+            | BytecodeScalarType::UInt64,
+            Value::Integer(value),
+        ) => write!(output, "{value}"),
+        (BytecodeScalarType::Float, Value::Float(value)) => write!(output, "{value}"),
+        (BytecodeScalarType::Float32, Value::Float(value)) => write!(output, "{}", *value as f32),
+        (BytecodeScalarType::Byte, Value::Byte(value)) => write!(output, "{value}"),
+        (BytecodeScalarType::Char, Value::Char(value)) => write!(output, "{value}"),
+        _ => {
+            return Err(VmError::invariant(
+                "intrinsic Display value does not match its scalar type",
+            ));
+        }
+    })
+}
+
+/// Select scalars in one direction without copying the source, allocating a
+/// character/index table, or repeatedly scanning the same UTF-8 prefix.
+fn selected_string_chars(
+    text: &str,
+    scalars: usize,
+    indices: ArraySliceIndices,
+) -> impl ExactSizeIterator<Item = Result<char, VmError>> + '_ {
+    let reversed = indices.is_reversed();
+    let mut position = if reversed { scalars } else { 0 };
+    let mut characters = text.chars();
+    indices.map(move |index| {
+        let skipped = if reversed {
+            position.checked_sub(index + 1)
+        } else {
+            index.checked_sub(position)
+        }
+        .ok_or_else(|| VmError::invariant("normalized String slice changed direction"))?;
+        let character = if reversed {
+            characters.nth_back(skipped)
+        } else {
+            characters.nth(skipped)
+        };
+        position = if reversed { index } else { index + 1 };
+        character.ok_or_else(|| VmError::invariant("normalized String slice is out of bounds"))
+    })
+}
+
+#[cfg(test)]
 fn slice_indices(
     start: Option<i128>,
     end: Option<i128>,
     step: Option<i128>,
     length: usize,
 ) -> Result<Vec<usize>, (PanicCode, String)> {
-    normalize_array_slice_indices(start, end, step, length).map_err(|error| match error {
+    normalize_array_slice_indices(start, end, step, length).map_err(slice_failure)
+}
+
+fn slice_failure(error: ArraySliceError) -> (PanicCode, String) {
+    match error {
         ArraySliceError::ZeroStep => (PanicCode::ZeroSliceStep, "slice step cannot be zero".into()),
         ArraySliceError::LengthNotRepresentable => (
             PanicCode::Bounds,
             "sequence length is not representable as Int".into(),
         ),
-    })
+    }
 }
 
 fn clone_index(values: &[Option<Value>], index: u32, label: &str) -> Result<Value, VmError> {
@@ -18294,24 +20646,25 @@ mod tests {
 
     use super::{
         AggregatePayload, BLOCKING_CALL_TAG, BlockingAdmission, BlockingBridgeState,
-        BlockingCallRecord, BlockingCompletion, BlockingExecutionBridge, BlockingHostRequest,
-        BlockingJob, BlockingWorkerHost, CallContinuation, DeferredOperation, DeferredValue,
-        DiagnosticConfig, DiagnosticEvent, DiagnosticMemoryAccess, DiagnosticSource,
-        DiagnosticThreadState, Engine, Frame, GroupPoll, HeapHandle, HeapObject, IteratorAdapter,
-        OnceContinuation, OnceResolution, OneShotCompletion, OneShotState, OperationResult,
-        PanicCode, PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath,
-        RuntimeActorState, RuntimeActorTermination, RuntimeCleanup, RuntimeDefer, RuntimeFallback,
-        RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState, RuntimeHostValueKind,
-        RuntimeJoin, RuntimeLoan, RuntimeOnceState, RuntimePoolLifecycle, RuntimePoolState,
-        RuntimeSelectArm, RuntimeSelectRegion, RuntimeSelectReservation, RuntimeTaskScope,
-        RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion, TaskRecord,
-        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome,
-        VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field,
-        clone_index, clone_present, collection_length_fits_int, convert_numeric, execute,
-        execute_with_diagnostics, group_handle, initial_value, integer_bounds, integer_shape,
-        next_unicode_scalar, once_handle, operand_materialized_slot, operation_access_place,
-        paths_overlap, present, queue_object_equality, queue_payload_equality, runtime_host_kind,
-        set_field, set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
+        BlockingCallRecord, BlockingCompletion, BlockingExecutionBridge, BlockingHostOperation,
+        BlockingHostRequest, BlockingHostResponse, BlockingJob, BlockingWorkerHost,
+        CallContinuation, DeferredOperation, DeferredValue, DiagnosticConfig, DiagnosticEvent,
+        DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, GroupPoll,
+        Heap, HeapHandle, HeapObject, IteratorAdapter, OnceContinuation, OnceResolution,
+        OneShotCompletion, OneShotState, OperationResult, PanicCode, PlaceComponent, PlaceFailure,
+        RejectingHost, ResolvedPlacePath, RuntimeActorState, RuntimeActorTermination,
+        RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation,
+        RuntimeGroupState, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeOnceState,
+        RuntimePoolLifecycle, RuntimePoolState, RuntimeSelectArm, RuntimeSelectRegion,
+        RuntimeSelectReservation, RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue,
+        SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy,
+        VmError, VmHost, VmHostReturn, VmLimits, VmMemoryBudget, VmOutcome, VmPanic, VmStackFrame,
+        VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
+        collection_length_fits_int, convert_numeric, execute, execute_with_diagnostics,
+        group_handle, initial_value, integer_bounds, integer_shape, next_unicode_scalar,
+        once_handle, operand_materialized_slot, operation_access_place, paths_overlap, present,
+        queue_object_equality, queue_payload_equality, runtime_host_kind, set_field, set_index,
+        slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     #[path = "executor_performance.rs"]
@@ -18321,6 +20674,7 @@ mod tests {
         let string = BytecodeTypeId::new(0);
         let strings = BytecodeTypeId::new(1);
         BytecodeProgram {
+            reflection: Default::default(),
             types: vec![
                 BytecodeType {
                     name: "String".into(),
@@ -18374,6 +20728,69 @@ mod tests {
             callables: Vec::new(),
             constants: Vec::new(),
             functions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn reflection_reply_admission_precedes_allocation_and_releases_its_owner() {
+        use crate::reflection::*;
+        let mut program = root_pressure_program();
+        program.reflection = ReflectionTable {
+            artifact_tag: [1; 32],
+            calls: vec![ReflectionCall {
+                callable: BytecodeCallableId::new(0),
+                operation: ReflectionOperation::QualifiedName,
+                root: None,
+            }],
+            types: vec![ReflectionTypeRecord {
+                source_type: BytecodeTypeId::new(5),
+                qualified_name: "a".repeat(1024),
+                kind: ReflectTypeKind::Primitive(ReflectPrimitiveKind::Int),
+                generic_arguments: vec![],
+                capabilities: vec![],
+                fields: vec![],
+                variants: vec![],
+                tuple_elements: vec![],
+                function: None,
+            }],
+            ..Default::default()
+        };
+        let info = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Reflection(ReflectionDescriptorKind::TypeInfo, [1; 32]),
+            id: 0,
+        });
+        let reply_bytes = 1024 + super::super::TEST_DETACHED_VALUE_BYTES;
+        for (limit, succeeds) in [(reply_bytes - 1, false), (8192, true)] {
+            let owner = VmMemoryBudget::new(limit);
+            let mut host = RejectingHost;
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                VmLimits::default(),
+                ValueCopyStrategy::default(),
+                derive_trace_metadata(&program).unwrap(),
+            );
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let result = engine.prepare_reflection_call(
+                BytecodeCallableId::new(0),
+                BytecodeTypeId::new(0),
+                std::slice::from_ref(&info),
+            );
+            if succeeds {
+                let Some(OperationResult::Value(value)) = result.unwrap() else {
+                    panic!("query must return a value");
+                };
+                assert_eq!(engine.string_value(&value).unwrap().len(), 1024);
+                assert_eq!(engine.statistics.allocations, 1);
+                assert!(owner.live_bytes() >= 1024);
+            } else {
+                assert!(matches!(result, Err(error) if error.is_resource_limit()));
+                assert_eq!(engine.statistics.allocations, 0);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
         }
     }
 
@@ -18686,6 +21103,7 @@ mod tests {
             },
         ]);
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -18716,6 +21134,7 @@ mod tests {
             slots: vec![ty],
         });
         engine.frames.push(Frame {
+            memory: None,
             function,
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -18727,6 +21146,7 @@ mod tests {
             select: None,
         });
         RuntimeFallback {
+            _memory: None,
             scope: BytecodeScopeId::new(0),
             owner: BytecodePlace {
                 slot: BytecodeSlotId::new(0),
@@ -19015,6 +21435,7 @@ mod tests {
         });
         let initializer_callable = BytecodeCallableId::new(program.callables.len() as u32);
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "once_initializer".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -19090,6 +21511,7 @@ mod tests {
             });
         }
         BytecodeCallable {
+            assertion_display: None,
             name: name.into(),
             generic_arity: 0,
             parameters,
@@ -19112,6 +21534,160 @@ mod tests {
             ValueCopyStrategy::default(),
             trace,
         )
+    }
+
+    #[test]
+    fn frame_memory_and_depth_follow_their_phase_and_rollback_failed_admission() {
+        let (program, _) = once_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        engine.limits.max_stack_depth = 1;
+        let bytes = crate::runtime::TEST_FRAME_BASE_BYTES + crate::runtime::TEST_FRAME_SLOT_BYTES;
+        let parent = super::VmMemoryBudget::new(bytes);
+        let child = super::VmMemoryBudget::new(bytes);
+        engine.entry_test_memory = Some(parent.clone());
+        engine
+            .push_frame(BytecodeFunctionId::new(0), Vec::new(), None)
+            .unwrap();
+        assert_eq!(parent.live_bytes(), bytes);
+        assert!(matches!(
+            engine.push_frame(BytecodeFunctionId::new(0), Vec::new(), None),
+            Err(VmError::ResourceLimit {
+                resource: "stack depth",
+                limit: 1
+            })
+        ));
+        engine.entry_test_memory = Some(child.clone());
+        engine
+            .push_frame(BytecodeFunctionId::new(0), Vec::new(), None)
+            .unwrap();
+        assert_eq!(engine.frames.len(), 2);
+        assert_eq!(child.live_bytes(), bytes);
+        engine.frames.pop();
+        assert_eq!(child.live_bytes(), 0);
+        assert_eq!(parent.live_bytes(), bytes);
+        engine.entry_test_memory = Some(parent.clone());
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        assert!(matches!(
+            engine.prepare_task_frames(BytecodeFunctionId::new(0), Vec::new(), None),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                ..
+            })
+        ));
+        assert_eq!(engine.frames.len(), 1);
+        assert!(engine.tasks[0].frames.is_empty());
+        assert_eq!(parent.live_bytes(), bytes);
+        assert!(
+            engine
+                .prepare_task_frames(BytecodeFunctionId::new(u32::MAX), Vec::new(), None)
+                .is_err()
+        );
+        assert_eq!(engine.frames.len(), 1);
+        assert!(engine.tasks[0].frames.is_empty());
+        drop(engine);
+        assert_eq!(parent.live_bytes(), 0);
+    }
+
+    #[test]
+    fn scheduler_task_admission_preserves_owner_and_rejects_before_host_work() {
+        let (program, types) = once_program();
+        let mut host = OnceHost::default();
+        let mut engine = once_engine(&program, &mut host);
+        let too_small = super::VmMemoryBudget::new(crate::runtime::TEST_TASK_BYTES - 1);
+        engine.entry_test_memory = Some(too_small.clone());
+        let arguments = engine.snapshot_arguments(&[]).unwrap();
+        assert!(matches!(
+            engine.start_host_task("unavailable", arguments, types.int, 0, None),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                ..
+            })
+        ));
+        assert_eq!(too_small.live_bytes(), 0);
+        assert!(engine.tasks.is_empty());
+        assert!(engine.runnable.is_empty());
+
+        let parent = super::VmMemoryBudget::new(crate::runtime::TEST_TASK_BYTES);
+        let child = super::VmMemoryBudget::new(crate::runtime::TEST_TASK_BYTES);
+        engine.entry_test_memory = Some(parent.clone());
+        let first = engine.spawn_select_value_task(Value::Integer(7)).unwrap();
+        assert_eq!(parent.live_bytes(), crate::runtime::TEST_TASK_BYTES);
+        assert!(engine.spawn_select_value_task(Value::Integer(8)).is_err());
+        assert_eq!(engine.tasks.len(), 1);
+        assert!(matches!(
+            engine.take_task_completion(first).unwrap(),
+            Some(TaskCompletion::Returned(Value::Integer(7)))
+        ));
+        // The consumed slot still exists, so its metadata remains charged.
+        assert_eq!(parent.live_bytes(), crate::runtime::TEST_TASK_BYTES);
+        engine.entry_test_memory = Some(child.clone());
+        assert!(
+            engine
+                .spawn_completed_task(Value::Unit, usize::MAX)
+                .is_err()
+        );
+        assert_eq!(child.live_bytes(), 0);
+        engine.spawn_select_value_task(Value::Integer(9)).unwrap();
+        assert_eq!(engine.tasks.len(), 2);
+        assert_eq!(child.live_bytes(), crate::runtime::TEST_TASK_BYTES);
+        drop(engine);
+        assert_eq!(parent.live_bytes(), 0);
+        assert_eq!(child.live_bytes(), 0);
+        assert!(host.calls.is_empty());
+    }
+
+    #[test]
+    fn scheduler_handle_admission_and_group_growth_are_atomic_and_owner_bound() {
+        let (program, types) = group_program();
+        let mut host = RejectingHost;
+        let mut engine = once_engine(&program, &mut host);
+        let base = crate::runtime::TEST_SCHEDULER_HANDLE_BYTES;
+        let parent = super::VmMemoryBudget::new(base + crate::runtime::TEST_SCHEDULER_VALUE_BYTES);
+        let child = super::VmMemoryBudget::new(base);
+        engine.entry_test_memory = Some(parent.clone());
+        engine.restore_test_heap_budget();
+        let original_oneshot = engine.next_oneshot_id;
+        assert!(engine.new_oneshot(BytecodeTypeId::new(u32::MAX)).is_err());
+        assert!(engine.oneshots.is_empty());
+        assert!(engine.scheduler_handle_memory.is_empty());
+        assert_eq!(engine.next_oneshot_id, original_oneshot);
+        assert_eq!(parent.live_bytes(), 0);
+
+        let id = engine.next_group_id;
+        engine.new_group(types.group).unwrap();
+        let entry = RuntimeGroupChild {
+            task: 0,
+            index: 0,
+            success: types.int,
+            error: types.string,
+        };
+        engine.append_group_child(id, entry).unwrap();
+        assert!(engine.append_group_child(id, entry).is_err());
+        assert_eq!(engine.groups[&id].children, [entry]);
+        let next = engine.next_group_id;
+        assert!(engine.new_group(types.group).is_err());
+        assert_eq!(engine.next_group_id, next);
+
+        engine.entry_test_memory = Some(child.clone());
+        engine.restore_test_heap_budget();
+        engine.new_group(types.group).unwrap();
+        assert_eq!(child.live_bytes(), base);
+        assert!(engine.append_group_child(id, entry).is_err());
+        engine.groups.get_mut(&id).unwrap().waiters.push(0);
+        assert!(engine.remove_group(id).is_err());
+        assert!(engine.groups.contains_key(&id));
+        assert!(
+            engine
+                .scheduler_handle_memory
+                .contains_key(&(RuntimeHostValueKind::Group, id))
+        );
+        engine.groups.get_mut(&id).unwrap().waiters.clear();
+        engine.remove_group(id).unwrap();
+        assert_eq!(parent.live_bytes(), 0);
+        assert_eq!(child.live_bytes(), base);
+        drop(engine);
+        assert_eq!(child.live_bytes(), 0);
     }
 
     #[test]
@@ -19602,6 +22178,7 @@ mod tests {
         let driver_callable = BytecodeCallableId::new(program.callables.len() as u32);
         let driver_function = BytecodeFunctionId::new(program.functions.len() as u32);
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "once_driver".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -19688,6 +22265,7 @@ mod tests {
             source_loan: None,
         };
         let frame_for = |token: Value, initializer: Value| Frame {
+            memory: None,
             function: driver_function,
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -19970,6 +22548,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = once_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20005,6 +22584,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = once_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20051,6 +22631,7 @@ mod tests {
             let mut host = RejectingHost;
             let mut engine = once_engine(&program, &mut host);
             engine.frames.push(Frame {
+                memory: None,
                 function: BytecodeFunctionId::new(0),
                 block: BytecodeBlockId::new(0),
                 instruction: 0,
@@ -20087,6 +22668,7 @@ mod tests {
             .onces
             .insert(1, RuntimeOnceState::Ready(Value::Integer(31)));
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20121,6 +22703,7 @@ mod tests {
             .onces
             .insert(1, RuntimeOnceState::Initializing { owner: 1 });
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20152,6 +22735,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = once_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20181,6 +22765,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = once_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20212,6 +22797,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = once_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20404,6 +22990,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = once_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20458,6 +23045,7 @@ mod tests {
             let mut host = RejectingHost;
             let mut engine = once_engine(&program, &mut host);
             engine.frames.push(Frame {
+                memory: None,
                 function: BytecodeFunctionId::new(0),
                 block: BytecodeBlockId::new(0),
                 instruction: 0,
@@ -20493,6 +23081,7 @@ mod tests {
             let mut host = RejectingHost;
             let mut engine = once_engine(&program, &mut host);
             engine.frames.push(Frame {
+                memory: None,
                 function: BytecodeFunctionId::new(0),
                 block: BytecodeBlockId::new(0),
                 instruction: 0,
@@ -20549,6 +23138,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = once_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -20732,8 +23322,10 @@ mod tests {
 
     fn scheduler_task(status: TaskStatus) -> TaskRecord {
         TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status,
             resume: None,
@@ -21065,6 +23657,7 @@ mod tests {
             .functions
             .push(function(BytecodeCallableId::new(0), int));
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "executor_job".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -21077,6 +23670,7 @@ mod tests {
             .functions
             .push(function(BytecodeCallableId::new(1), job_result));
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "executor_host_job".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -21094,6 +23688,7 @@ mod tests {
             source_loan: None,
         };
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "blocking_executor_job".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -21155,6 +23750,7 @@ mod tests {
         let message_place = place(1, int);
         let return_place = place(2, handler_result);
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "actor_step".into(),
             generic_arity: 0,
             parameters: vec![
@@ -21306,6 +23902,49 @@ mod tests {
     }
 
     #[test]
+    fn blocking_return_stays_charged_after_worker_exit_until_consumed() {
+        let (program, _) = executor_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let bridge = BlockingExecutionBridge::new(
+            &program,
+            &trace,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            1,
+            1,
+        )
+        .unwrap();
+        let owner = super::VmMemoryBudget::new(65536);
+        let work = Arc::new(super::TestWorkBudget {
+            steps: super::AtomicU64::new(0),
+            stopped: super::AtomicBool::new(false),
+            memory: owner.clone(),
+        });
+        let BlockingAdmission::Accepted(job) = bridge
+            .submit_with_test_work(
+                BytecodeFunctionId::new(2),
+                super::BlockingArguments {
+                    values: Vec::new(),
+                    memory: None,
+                },
+                Some(work),
+            )
+            .unwrap()
+        else {
+            panic!("expected admitted job");
+        };
+        let completion = wait_for_blocking_completion(&bridge, job);
+        assert_eq!(
+            owner.live_bytes(),
+            2 * super::super::TEST_DETACHED_VALUE_BYTES
+        );
+        drop(completion);
+        assert_eq!(owner.live_bytes(), 0);
+        assert!(bridge.poll(job).unwrap().is_none());
+        bridge.shutdown().unwrap();
+    }
+
+    #[test]
     fn blocking_bridge_runs_verified_job_on_a_host_worker() {
         let (program, types) = executor_program();
         let trace =
@@ -21326,18 +23965,16 @@ mod tests {
             super::BlockingAdmission::Accepted(job) => job,
             admission => panic!("expected immediate blocking admission, got {admission:?}"),
         };
-        bridge
-            .wait()
-            .expect("worker completion should wake the bridge");
-        let completion = bridge
-            .poll(job)
-            .expect("blocking poll should lock the bridge")
-            .expect("accepted job should produce one completion");
+        let completion = wait_for_blocking_completion(&bridge, job);
         assert!(matches!(
             completion,
-            BlockingCompletion::Returned(RuntimeValue::ResultOk(value))
+            BlockingCompletion::Returned(RuntimeValue::ResultOk(value), _)
                 if *value == RuntimeValue::Integer(42)
         ));
+        assert!(
+            bridge.poll(job).unwrap().is_none(),
+            "completion is consumed exactly once"
+        );
         bridge
             .shutdown()
             .expect("blocking shutdown should be graceful");
@@ -21348,6 +23985,30 @@ mod tests {
             RuntimePoolLifecycle::Closed
         );
         let _ = types;
+    }
+
+    fn wait_for_blocking_completion(
+        bridge: &BlockingExecutionBridge,
+        job: u64,
+    ) -> BlockingCompletion {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(completion) = bridge
+                .poll(job)
+                .expect("blocking poll should lock the bridge")
+            {
+                return completion;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "accepted job did not complete within five seconds"
+            );
+            // wait() is an interruptible scheduler tick. A timeout or wakeup
+            // does not establish that this particular job has completed.
+            bridge
+                .wait()
+                .expect("worker progress should wake the bridge");
+        }
     }
 
     #[test]
@@ -21362,6 +24023,7 @@ mod tests {
                 active: 1,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -21375,14 +24037,27 @@ mod tests {
         };
         let worker_state = Arc::clone(&state);
         let worker_wake = Arc::clone(&host_wake);
+        let text = "worker-owned".repeat(256);
+        let pointer = text.as_ptr() as usize;
+        let bytes = super::super::TEST_DETACHED_VALUE_BYTES + text.len() as u64;
+        let owner = super::VmMemoryBudget::new(bytes);
+        let charge = owner.reserve(bytes).unwrap();
+        let worker_owner = owner.clone();
         let worker = thread::spawn(move || {
             let mut host = BlockingWorkerHost {
+                memory: Some(worker_owner),
                 worker: 0,
                 sender,
                 state: worker_state,
                 wake: worker_wake,
+                test_control: None,
             };
-            host.invoke("blocking.test", &[])
+            host.invoke_owned(
+                "blocking.test",
+                vec![RuntimeValue::String(text)],
+                Some(charge),
+                None,
+            )
         });
         let deadline = Instant::now() + Duration::from_secs(1);
         let mut guard = state
@@ -21415,18 +24090,102 @@ mod tests {
             .try_host_request()
             .expect("host request queue should be readable")
             .expect("worker request should be present");
-        assert_eq!(request.name, "blocking.test");
+        let BlockingHostOperation::Call {
+            name,
+            arguments,
+            memory,
+            ..
+        } = request.operation
+        else {
+            panic!("expected owned call");
+        };
+        assert_eq!(name, "blocking.test");
+        let [RuntimeValue::String(text)] = arguments.as_slice() else {
+            panic!("missing moved payload");
+        };
+        assert_eq!(text.as_ptr() as usize, pointer);
+        assert_eq!(owner.live_bytes(), bytes);
+        drop(arguments);
+        drop(memory);
+        assert_eq!(owner.live_bytes(), 0);
         request
             .reply
-            .send(Ok(RuntimeValue::Integer(9)))
+            .send(BlockingHostResponse {
+                result: super::VmHostReturn::admit(RuntimeValue::Integer(9), Some(&owner)),
+                test_control: None,
+            })
             .expect("worker reply receiver should still be alive");
         bridge
             .finish_host_request()
             .expect("host request counter should drain");
-        assert_eq!(
-            worker.join().expect("worker should return").unwrap(),
-            RuntimeValue::Integer(9)
-        );
+        let returned = worker.join().expect("worker should return").unwrap();
+        assert_eq!(returned.value, RuntimeValue::Integer(9));
+        assert_eq!(owner.live_bytes(), 32);
+        drop(returned);
+        assert_eq!(owner.live_bytes(), 0);
+    }
+
+    #[test]
+    fn blocking_queue_releases_owned_arguments_after_rejection_and_cancellation() {
+        let owner = super::VmMemoryBudget::new(1024);
+        let (_, receiver) = mpsc::channel();
+        let bridge = BlockingExecutionBridge {
+            state: Arc::new((
+                Mutex::new(BlockingBridgeState {
+                    lifecycle: RuntimePoolLifecycle::Open,
+                    workers: 1,
+                    capacity: 1,
+                    next_job: 1,
+                    queue: VecDeque::new(),
+                    active: 0,
+                    host_requests_pending: 0,
+                    completions: BTreeMap::new(),
+                    worker_roots: BTreeMap::new(),
+                }),
+                Condvar::new(),
+            )),
+            host_wake: Arc::new(Condvar::new()),
+            host_requests: Mutex::new(receiver),
+            workers: Mutex::new(Vec::new()),
+        };
+        let arguments = || super::BlockingArguments {
+            values: vec![super::BlockingArgument {
+                ty: BytecodeTypeId::new(0),
+                value: RuntimeValue::Integer(7),
+            }],
+            memory: Some(
+                owner
+                    .reserve(super::super::TEST_DETACHED_VALUE_BYTES)
+                    .unwrap(),
+            ),
+        };
+        let BlockingAdmission::Accepted(job) = bridge
+            .submit_with_test_work(BytecodeFunctionId::new(0), arguments(), None)
+            .unwrap()
+        else {
+            panic!("expected admitted job");
+        };
+        assert_eq!(owner.live_bytes(), super::super::TEST_DETACHED_VALUE_BYTES);
+        assert!(matches!(
+            bridge
+                .submit_with_test_work(BytecodeFunctionId::new(0), arguments(), None)
+                .unwrap(),
+            BlockingAdmission::Pending
+        ));
+        assert_eq!(owner.live_bytes(), super::super::TEST_DETACHED_VALUE_BYTES);
+        bridge.cancel().unwrap();
+        assert_eq!(owner.live_bytes(), 0);
+        assert!(matches!(
+            bridge.poll(job).unwrap(),
+            Some(BlockingCompletion::Cancelled)
+        ));
+        assert!(matches!(
+            bridge
+                .submit_with_test_work(BytecodeFunctionId::new(0), arguments(), None)
+                .unwrap(),
+            BlockingAdmission::Cancelled
+        ));
+        assert_eq!(owner.live_bytes(), 0);
     }
 
     #[test]
@@ -21444,6 +24203,7 @@ mod tests {
                 active: 1,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -21508,6 +24268,7 @@ mod tests {
                 active: 1,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -21581,6 +24342,7 @@ mod tests {
                 active: 0,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -21614,6 +24376,7 @@ mod tests {
                 active: 0,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -21655,12 +24418,11 @@ mod tests {
             BlockingAdmission::Accepted(id) => id,
             admission => panic!("expected an accepted invalid job, got {admission:?}"),
         };
-        bridge.wait().unwrap();
-        let completion = bridge.poll(job).unwrap();
+        let completion = wait_for_blocking_completion(&bridge, job);
         assert!(
             matches!(
                 &completion,
-                Some(BlockingCompletion::Failed(VmError::InvalidEntry(message)))
+                BlockingCompletion::Failed(VmError::InvalidEntry(message))
                     if message.contains("blocking job function is invalid")
             ),
             "unexpected worker completion: {completion:?}"
@@ -21678,6 +24440,7 @@ mod tests {
                 active: 0,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -21748,7 +24511,7 @@ mod tests {
         }
         assert!(completions.values().all(|completion| matches!(
             completion,
-            BlockingCompletion::Returned(RuntimeValue::ResultOk(value))
+            BlockingCompletion::Returned(RuntimeValue::ResultOk(value), _)
                 if **value == RuntimeValue::Integer(42)
         )));
         bridge
@@ -21769,6 +24532,7 @@ mod tests {
                 active: 0,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -21808,10 +24572,12 @@ mod tests {
 
         let (sender, _receiver) = mpsc::channel();
         let mut host = BlockingWorkerHost {
+            memory: None,
             worker: 0,
             sender,
             state,
             wake: Arc::clone(&bridge.host_wake),
+            test_control: None,
         };
         assert_state_poisoned(host.invoke("poisoned", &[]).map(|_| ()));
 
@@ -21839,15 +24605,18 @@ mod tests {
                 active: 0,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
         let (_sender, receiver) = mpsc::channel();
         let mut closed_host = BlockingWorkerHost {
+            memory: None,
             worker: 0,
             sender: _sender,
             state: Arc::clone(&state),
             wake: Arc::new(Condvar::new()),
+            test_control: None,
         };
         drop(receiver);
         assert!(matches!(
@@ -21860,10 +24629,12 @@ mod tests {
         let cancellation_wake = Arc::new(Condvar::new());
         let cancellation_thread = thread::spawn(move || {
             let mut host = BlockingWorkerHost {
+                memory: None,
                 worker: 1,
                 sender,
                 state: cancellation_state,
                 wake: cancellation_wake,
+                test_control: None,
             };
             host.invoke("cancelled", &[])
         });
@@ -21876,10 +24647,12 @@ mod tests {
         let disconnected_state = Arc::clone(&state);
         let disconnected_thread = thread::spawn(move || {
             let mut host = BlockingWorkerHost {
+                memory: None,
                 worker: 2,
                 sender,
                 state: disconnected_state,
                 wake: Arc::new(Condvar::new()),
+                test_control: None,
             };
             host.invoke("disconnected", &[])
         });
@@ -21889,6 +24662,145 @@ mod tests {
             disconnected_thread.join().unwrap(),
             Err(VmError::Host(message)) if message.contains("did not receive a response")
         ));
+    }
+
+    #[test]
+    fn blocking_worker_import_request_preserves_commit_cancellation_and_reply_lifecycle() {
+        use super::super::VmHostReturnPreview;
+
+        for case in [
+            "success",
+            "cancel-before",
+            "cancel-after",
+            "disconnect-before",
+            "disconnect-after",
+            "host-error",
+        ] {
+            let (program, array) = prepared_import_program();
+            let owner = VmMemoryBudget::new(65536);
+            let state = Arc::new((
+                Mutex::new(BlockingBridgeState {
+                    lifecycle: RuntimePoolLifecycle::Open,
+                    workers: 1,
+                    capacity: 1,
+                    next_job: 1,
+                    queue: VecDeque::new(),
+                    active: 1,
+                    host_requests_pending: 0,
+                    completions: BTreeMap::new(),
+                    worker_roots: BTreeMap::new(),
+                }),
+                Condvar::new(),
+            ));
+            let (sender, requests) = mpsc::channel();
+            let child_owner = owner.clone();
+            let child_state = state.clone();
+            let child_program = program.clone();
+            let worker = thread::spawn(move || {
+                let mut host = BlockingWorkerHost {
+                    memory: None,
+                    worker: 0,
+                    sender,
+                    state: child_state,
+                    wake: Arc::new(Condvar::new()),
+                    test_control: None,
+                };
+                let mut engine = executor_engine_with_scope(&child_program, &mut host);
+                engine.entry_test_memory = Some(child_owner.clone());
+                engine.restore_test_heap_budget();
+                let result = engine
+                    .with_host_import_admission_for(Some(array), |host, admission| {
+                        host.invoke_owned_with_import_admission(
+                            "prepared.worker",
+                            vec![],
+                            None,
+                            Some(&child_owner),
+                            admission,
+                        )
+                    })
+                    .and_then(|returned| engine.materialize_host_return(array, returned));
+                let result =
+                    result.map(|value| snapshot_value(&value, &engine.heap, &[], &[]).unwrap());
+                drop(engine);
+                result
+            });
+            let request = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+            let BlockingHostOperation::Call {
+                admission: Some(paused),
+                ..
+            } = request.operation
+            else {
+                panic!("worker did not export its own result capacity");
+            };
+            let control = paused.control.clone();
+            let value = PreparedReplyHost::new().value.unwrap();
+            let mut parent_host = RejectingHost;
+            let mut parent = executor_engine_with_scope(&program, &mut parent_host);
+            if case == "cancel-before" {
+                state.0.lock().unwrap().lifecycle = RuntimePoolLifecycle::Cancelling;
+                assert!(
+                    matches!(worker.join().unwrap(), Err(VmError::Host(message)) if message.contains("cancelled"))
+                );
+                assert!(
+                    parent
+                        .with_host_import_admission_context(None, Some(paused), |_, admission| {
+                            admission.prepare_current(VmHostReturnPreview::Value(&value))
+                        })
+                        .is_err()
+                );
+            } else if case == "disconnect-before" {
+                drop(request.reply);
+                assert!(worker.join().unwrap().is_err());
+                assert!(
+                    parent
+                        .with_host_import_admission_context(None, Some(paused), |_, admission| {
+                            admission.prepare_current(VmHostReturnPreview::Value(&value))
+                        })
+                        .is_err()
+                );
+            } else {
+                let returned = parent
+                    .with_host_import_admission_context(None, Some(paused), |_, admission| {
+                        let prepared =
+                            admission.prepare_current(VmHostReturnPreview::Value(&value))?;
+                        let returned = VmHostReturn::admit(value.clone(), Some(&owner))?;
+                        admission.commit(&mut [prepared])?;
+                        Ok(returned)
+                    })
+                    .unwrap();
+                if case == "cancel-after" {
+                    state.0.lock().unwrap().lifecycle = RuntimePoolLifecycle::Cancelling;
+                    assert!(!control.try_cancel().unwrap());
+                }
+                if case == "disconnect-after" {
+                    drop(request.reply);
+                    drop(returned);
+                } else {
+                    let result = if case == "host-error" {
+                        drop(returned);
+                        Err(VmError::Host("prepared host operation failed".into()))
+                    } else {
+                        Ok(returned)
+                    };
+                    request
+                        .reply
+                        .send(BlockingHostResponse {
+                            result,
+                            test_control: None,
+                        })
+                        .unwrap();
+                }
+                let result = worker.join().unwrap();
+                if matches!(case, "success" | "cancel-after") {
+                    assert_eq!(result.unwrap(), value);
+                } else {
+                    assert!(result.is_err());
+                }
+            }
+            drop(control);
+            drop(parent);
+            assert_eq!(owner.live_bytes(), 0, "{case}");
+        }
     }
 
     #[test]
@@ -21905,6 +24817,7 @@ mod tests {
                     active,
                     host_requests_pending: 0,
                     completions: BTreeMap::new(),
+                    worker_roots: BTreeMap::new(),
                 }),
                 Condvar::new(),
             ));
@@ -21987,9 +24900,10 @@ mod tests {
         engine
             .complete_blocking_call(
                 call,
-                BlockingCompletion::Returned(RuntimeValue::ResultOk(Box::new(
-                    RuntimeValue::Integer(42),
-                ))),
+                BlockingCompletion::Returned(
+                    RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(42))),
+                    None,
+                ),
             )
             .unwrap();
         assert!(matches!(
@@ -22169,9 +25083,10 @@ mod tests {
                     place.clone(),
                     BytecodeBlockId::new(0),
                     BytecodeBlockId::new(0),
-                    Some(BlockingCompletion::Returned(RuntimeValue::ResultOk(
-                        Box::new(RuntimeValue::Integer(42),)
-                    ))),
+                    Some(BlockingCompletion::Returned(
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(42),)),
+                        None
+                    )),
                 )
                 .unwrap()
         );
@@ -22233,6 +25148,362 @@ mod tests {
     }
 
     #[test]
+    fn blocking_import_moves_string_storage_without_charging_a_second_payload() {
+        let (mut program, types) = executor_program();
+        program.functions[2].parameters = vec![BytecodeSlotId::new(1)];
+        program.functions[2].slots.push(BytecodeSlot {
+            ty: types.string,
+            span: crate::bytecode::BytecodeSpanId::new(0),
+            kind: BytecodeSlotKind::Parameter { index: 0 },
+        });
+        for (short, valid_type) in [(false, true), (true, true), (false, false)] {
+            let text = "é🦀".repeat(512);
+            let pointer = text.as_ptr() as usize;
+            let detached_bytes = super::super::TEST_DETACHED_VALUE_BYTES + text.len() as u64;
+            let heap_bytes = HeapObject::String(text.clone()).estimated_bytes();
+            let owner = super::VmMemoryBudget::new(
+                heap_bytes + super::super::TEST_DETACHED_VALUE_BYTES - u64::from(short),
+            );
+            let arguments = super::BlockingArguments {
+                values: vec![super::BlockingArgument {
+                    ty: if valid_type { types.string } else { types.int },
+                    value: RuntimeValue::String(text),
+                }],
+                memory: Some(owner.reserve(detached_bytes).unwrap()),
+            };
+            let mut host = RejectingHost;
+            let mut engine = executor_engine(&program, &mut host);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let result =
+                engine.materialize_blocking_arguments(BytecodeFunctionId::new(2), arguments);
+            if !valid_type {
+                assert!(
+                    matches!(result, Err(VmError::Invariant(message)) if message.contains("type changed"))
+                );
+                assert_eq!(owner.live_bytes(), 0);
+            } else if short {
+                assert!(result.unwrap_err().is_resource_limit());
+                assert_eq!(owner.live_bytes(), 0);
+            } else {
+                let values = result.unwrap();
+                let HeapObject::String(text) =
+                    engine.heap.get(values[0].heap_handle().unwrap()).unwrap()
+                else {
+                    panic!("expected imported String");
+                };
+                assert_eq!(text.as_ptr() as usize, pointer);
+                assert_eq!(owner.live_bytes(), heap_bytes);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn blocking_import_admits_the_entire_batch_before_allocating_any_argument() {
+        let (mut program, types) = executor_program();
+        for index in 0..2 {
+            let slot = BytecodeSlotId::new(program.functions[2].slots.len() as u32);
+            program.functions[2].parameters.push(slot);
+            program.functions[2].slots.push(BytecodeSlot {
+                ty: types.string,
+                span: crate::bytecode::BytecodeSpanId::new(0),
+                kind: BytecodeSlotKind::Parameter { index },
+            });
+        }
+        let heap_bytes = 2 * HeapObject::String("x".repeat(1024)).estimated_bytes();
+        let peak = heap_bytes + 2 * super::super::TEST_DETACHED_VALUE_BYTES;
+        for (shortage, invalid_type, invalid_value, object_limit) in [
+            (0, false, false, 64),
+            (1, false, false, 64),
+            (0, true, false, 64),
+            (0, false, true, 64),
+            (0, false, false, 1),
+        ] {
+            let owner = super::VmMemoryBudget::new(peak - shortage);
+            let values = vec![
+                super::BlockingArgument {
+                    ty: types.string,
+                    value: RuntimeValue::String("x".repeat(1024)),
+                },
+                super::BlockingArgument {
+                    ty: if invalid_type {
+                        types.int
+                    } else {
+                        types.string
+                    },
+                    value: if invalid_value {
+                        RuntimeValue::Integer(7)
+                    } else {
+                        RuntimeValue::String("x".repeat(1024))
+                    },
+                },
+            ];
+            let detached = values
+                .iter()
+                .map(|argument| argument.value.retained_bytes().unwrap())
+                .sum();
+            let arguments = super::BlockingArguments {
+                values,
+                memory: Some(owner.reserve(detached).unwrap()),
+            };
+            let mut host = RejectingHost;
+            let mut engine = executor_engine(&program, &mut host);
+            engine.limits.max_heap_objects = object_limit;
+            engine.heap = super::Heap::new(
+                engine.limits,
+                derive_trace_metadata(&program).unwrap().types,
+            );
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let result =
+                engine.materialize_blocking_arguments(BytecodeFunctionId::new(2), arguments);
+            if shortage == 0 && !invalid_type && !invalid_value && object_limit == 64 {
+                assert_eq!(result.unwrap().len(), 2);
+                assert_eq!(engine.statistics.allocations, 2);
+                assert_eq!(owner.live_bytes(), heap_bytes);
+            } else {
+                assert!(result.is_err());
+                assert_eq!(
+                    engine.statistics.allocations, 0,
+                    "rejection must precede the first argument"
+                );
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn blocking_import_builds_deep_closures_iteratively_and_roots_their_captures() {
+        let (mut program, types) = executor_program();
+        let template = program
+            .callables
+            .iter()
+            .find(|callable| callable.closure.is_some())
+            .unwrap()
+            .clone();
+        let mut ty = types.string;
+        let mut value = RuntimeValue::String("captured text".repeat(32));
+        for depth in 1..=super::super::TEST_SNAPSHOT_MAX_DEPTH + 1 {
+            let environment = BytecodeTypeId::new(program.types.len() as u32);
+            let identity = format!("test::import_closure{depth}");
+            program.types.push(BytecodeType {
+                name: identity.clone(),
+                kind: BytecodeTypeKind::Generated {
+                    identity: identity.clone(),
+                    arguments: vec![],
+                },
+            });
+            let callable = program.callables.len() as u32;
+            let mut metadata = template.clone();
+            metadata.name = identity;
+            let closure = metadata.closure.as_mut().unwrap();
+            closure.environment = environment;
+            closure.captures = vec![ty];
+            program.callables.push(metadata);
+            ty = environment;
+            value = RuntimeValue::Closure {
+                callable,
+                captures: vec![value],
+            };
+            if depth < super::super::TEST_SNAPSHOT_MAX_DEPTH {
+                continue;
+            }
+            let function = &mut program.functions[2];
+            let slot = BytecodeSlotId::new(function.slots.len() as u32);
+            function.parameters = vec![slot];
+            function.slots.push(BytecodeSlot {
+                ty,
+                span: crate::bytecode::BytecodeSpanId::new(0),
+                kind: BytecodeSlotKind::Parameter { index: 0 },
+            });
+            let owner = super::VmMemoryBudget::new(1_048_576);
+            let mut host = RejectingHost;
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                VmLimits {
+                    max_heap_objects: 512,
+                    max_heap_bytes: 1_048_576,
+                    initial_gc_threshold: 1,
+                    ..VmLimits::default()
+                },
+                ValueCopyStrategy::default(),
+                derive_trace_metadata(&program).unwrap(),
+            );
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let arguments = super::BlockingArguments {
+                values: vec![super::BlockingArgument {
+                    ty,
+                    value: value.clone(),
+                }],
+                memory: Some(owner.reserve(value.retained_bytes().unwrap()).unwrap()),
+            };
+            let result =
+                engine.materialize_blocking_arguments(BytecodeFunctionId::new(2), arguments);
+            if depth == super::super::TEST_SNAPSHOT_MAX_DEPTH {
+                let values = result.unwrap();
+                engine
+                    .heap
+                    .collect(&values, &mut engine.statistics)
+                    .unwrap();
+                let mut cursor = &values[0];
+                for _ in 0..depth {
+                    let HeapObject::Closure { captures, .. } =
+                        engine.heap.get(cursor.heap_handle().unwrap()).unwrap()
+                    else {
+                        panic!("a captured closure was lost");
+                    };
+                    cursor = captures[0].as_ref().unwrap();
+                }
+                assert!(
+                    matches!(engine.heap.get(cursor.heap_handle().unwrap()).unwrap(),
+                    HeapObject::String(text) if text == &"captured text".repeat(32))
+                );
+                assert_eq!(engine.statistics.allocations, depth as u64 + 1);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "host import depth",
+                        ..
+                    })
+                ));
+                assert_eq!(engine.statistics.allocations, 0);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn blocking_import_validates_callable_captures_without_enabling_host_reply_callables() {
+        let (mut program, _) = executor_program();
+        let function = &program.callables[program.functions[2].callable.index() as usize];
+        let function_type = function.function_type;
+        let function_value = RuntimeValue::Function {
+            name: function.name.clone(),
+            type_arguments: vec![],
+        };
+        let (closure_index, callable) = program
+            .callables
+            .iter()
+            .enumerate()
+            .find(|(_, callable)| callable.closure.is_some())
+            .unwrap();
+        let closure_type = callable.closure.as_ref().unwrap().environment;
+        let closure_value = RuntimeValue::Closure {
+            callable: closure_index as u32,
+            captures: vec![
+                RuntimeValue::String("first".into()),
+                RuntimeValue::Array(vec![RuntimeValue::String("second".into())]),
+            ],
+        };
+        let cases = [
+            (function_type, function_value, true),
+            (closure_type, closure_value, true),
+            (
+                function_type,
+                RuntimeValue::Function {
+                    name: "missing".into(),
+                    type_arguments: vec![],
+                },
+                false,
+            ),
+            (
+                function_type,
+                RuntimeValue::Function {
+                    name: callable.name.clone(),
+                    type_arguments: vec![],
+                },
+                false,
+            ),
+            (
+                closure_type,
+                RuntimeValue::Closure {
+                    callable: u32::MAX,
+                    captures: vec![],
+                },
+                false,
+            ),
+            (
+                closure_type,
+                RuntimeValue::Closure {
+                    callable: closure_index as u32,
+                    captures: vec![],
+                },
+                false,
+            ),
+            (
+                closure_type,
+                RuntimeValue::Closure {
+                    callable: closure_index as u32,
+                    captures: vec![
+                        RuntimeValue::String("first".into()),
+                        RuntimeValue::Integer(7),
+                    ],
+                },
+                false,
+            ),
+        ];
+        for (ty, value, valid) in cases {
+            let function = &mut program.functions[2];
+            let slot = BytecodeSlotId::new(function.slots.len() as u32);
+            function.parameters = vec![slot];
+            function.slots.push(BytecodeSlot {
+                ty,
+                span: crate::bytecode::BytecodeSpanId::new(0),
+                kind: BytecodeSlotKind::Parameter { index: 0 },
+            });
+            let owner = super::VmMemoryBudget::new(65_536);
+            let mut host = RejectingHost;
+            let mut engine = executor_engine(&program, &mut host);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let reply = super::VmHostReturn::admit(value.clone(), Some(&owner)).unwrap();
+            assert!(matches!(
+                engine.materialize_host_return(ty, reply),
+                Err(VmError::Host(_))
+            ));
+            assert_eq!(engine.statistics.allocations, 0);
+            assert_eq!(owner.live_bytes(), 0);
+            let arguments = super::BlockingArguments {
+                values: vec![super::BlockingArgument {
+                    ty,
+                    value: value.clone(),
+                }],
+                memory: Some(owner.reserve(value.retained_bytes().unwrap()).unwrap()),
+            };
+            let result =
+                engine.materialize_blocking_arguments(BytecodeFunctionId::new(2), arguments);
+            if valid {
+                let values = result.unwrap();
+                assert_eq!(
+                    snapshot_value(
+                        &values[0],
+                        &engine.heap,
+                        &engine.callable_names,
+                        &engine.nominal_names
+                    )
+                    .unwrap(),
+                    value
+                );
+            } else {
+                assert!(matches!(result, Err(VmError::Host(_))));
+                assert_eq!(engine.statistics.allocations, 0);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
     fn blocking_executor_snapshot_service_and_completion_edges_are_explicitly_executable() {
         let (program, types) = executor_program();
         let bridge_for = |lifecycle, workers, capacity, active| {
@@ -22246,6 +25517,7 @@ mod tests {
                     active,
                     host_requests_pending: 0,
                     completions: BTreeMap::new(),
+                    worker_roots: BTreeMap::new(),
                 }),
                 Condvar::new(),
             ));
@@ -22282,7 +25554,7 @@ mod tests {
             kind: BytecodeSlotKind::Parameter { index: 0 },
         });
         let mut host = RejectingHost;
-        let engine = executor_engine(&argument_program, &mut host);
+        let mut engine = executor_engine(&argument_program, &mut host);
         assert!(matches!(
             engine.snapshot_blocking_arguments(BytecodeFunctionId::new(999), &[]),
             Err(VmError::Invariant(message)) if message.contains("function is invalid")
@@ -22293,7 +25565,7 @@ mod tests {
         ));
         argument_program.functions[2].parameters = vec![BytecodeSlotId::new(99)];
         let mut host = RejectingHost;
-        let invalid_slot_engine = executor_engine(&argument_program, &mut host);
+        let mut invalid_slot_engine = executor_engine(&argument_program, &mut host);
         assert!(matches!(
             invalid_slot_engine
                 .snapshot_blocking_arguments(BytecodeFunctionId::new(2), &[Value::Integer(7)]),
@@ -22325,6 +25597,7 @@ mod tests {
                 active: 0,
                 host_requests_pending: 1,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -22339,15 +25612,20 @@ mod tests {
         let (reply, response) = mpsc::channel();
         sender
             .send(BlockingHostRequest {
+                memory: None,
                 worker: 3,
-                name: "missing.host".into(),
-                arguments: Vec::new(),
+                operation: BlockingHostOperation::Call {
+                    name: "missing.host".into(),
+                    arguments: Vec::new(),
+                    memory: None,
+                    admission: None,
+                },
                 reply,
             })
             .unwrap();
         assert_eq!(engine.service_blocking_host_requests().unwrap(), 1);
         assert!(matches!(
-            response.recv().unwrap(),
+            response.recv().unwrap().result,
             Err(VmError::UnsupportedHostCall(name)) if name == "missing.host"
         ));
         assert_eq!(state.0.lock().unwrap().host_requests_pending, 0);
@@ -22413,9 +25691,10 @@ mod tests {
         engine
             .complete_blocking_call(
                 call,
-                BlockingCompletion::Returned(RuntimeValue::ResultOk(Box::new(
-                    RuntimeValue::Integer(42),
-                ))),
+                BlockingCompletion::Returned(
+                    RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(42))),
+                    None,
+                ),
             )
             .unwrap();
         assert!(matches!(
@@ -22448,9 +25727,10 @@ mod tests {
         engine
             .complete_blocking_call(
                 call,
-                BlockingCompletion::Returned(RuntimeValue::ResultOk(Box::new(
-                    RuntimeValue::Integer(42),
-                ))),
+                BlockingCompletion::Returned(
+                    RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(42))),
+                    None,
+                ),
             )
             .unwrap();
         assert!(matches!(engine.tasks[0].status, TaskStatus::Runnable));
@@ -22510,12 +25790,26 @@ mod tests {
             call,
             outcome: types.job_result,
         });
-        assert!(matches!(
-            engine.complete_blocking_call(
+        engine
+            .complete_blocking_call(
                 call,
                 BlockingCompletion::Failed(VmError::Host("blocking failure".into())),
-            ),
+            )
+            .unwrap();
+        assert!(!engine.blocking_calls.contains_key(&call));
+        assert!(matches!(engine.tasks[0].status, TaskStatus::Runnable));
+        assert!(matches!(
+            engine.tasks[0].resume,
+            Some(TaskWait::Failed(VmError::Host(ref message))) if message == "blocking failure"
+        ));
+        assert!(matches!(
+            engine.resume_current_task(),
             Err(VmError::Host(message)) if message == "blocking failure"
+        ));
+        assert!(engine.tasks[0].resume.is_none());
+        assert!(matches!(
+            engine.complete_blocking_call(call, BlockingCompletion::Cancelled),
+            Err(VmError::Host(message)) if message.contains("completed twice")
         ));
 
         let mut host = RejectingHost;
@@ -22537,6 +25831,7 @@ mod tests {
         let (mut program, types) = executor_program();
         let method_callable = BytecodeCallableId::new(program.callables.len() as u32);
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "std.executor.BlockingPool.run[Int, Never]".into(),
             generic_arity: 0,
             parameters: vec![
@@ -22613,6 +25908,7 @@ mod tests {
                 active: 1,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -22676,6 +25972,7 @@ mod tests {
                 active: 0,
                 host_requests_pending: 0,
                 completions: BTreeMap::new(),
+                worker_roots: BTreeMap::new(),
             }),
             Condvar::new(),
         ));
@@ -22718,6 +26015,7 @@ mod tests {
         function_type: BytecodeTypeId,
     ) -> BytecodeCallable {
         BytecodeCallable {
+            assertion_display: None,
             name: name.into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -22793,6 +26091,7 @@ mod tests {
         let mut engine = executor_engine(program, host);
         engine.tasks.push(scheduler_task(TaskStatus::Running));
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(1),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -22814,6 +26113,7 @@ mod tests {
 
     fn select_test_frame(region: RuntimeSelectRegion) -> Frame {
         Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -22887,6 +26187,7 @@ mod tests {
             engine.tasks.push(task);
         }
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -23553,6 +26854,7 @@ mod tests {
             TaskCompletion::Returned(Value::Integer(2)),
         ))));
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 2,
             registered: 2,
             arms: vec![
@@ -23604,6 +26906,7 @@ mod tests {
         ))));
         engine.select_rotation = 1;
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 2,
             registered: 2,
             arms: vec![
@@ -23647,6 +26950,7 @@ mod tests {
         engine.tasks.push(scheduler_task(TaskStatus::Running));
         engine.tasks.push(scheduler_task(TaskStatus::Runnable));
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
@@ -23677,6 +26981,7 @@ mod tests {
         engine.tasks.push(scheduler_task(TaskStatus::Running));
         engine.tasks.push(scheduler_task(TaskStatus::Runnable));
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
@@ -23709,6 +27014,7 @@ mod tests {
         else_engine
             .frames
             .push(select_test_frame(RuntimeSelectRegion {
+                _memory: None,
                 capacity: 1,
                 registered: 1,
                 arms: vec![RuntimeSelectArm {
@@ -23748,6 +27054,7 @@ mod tests {
         cancelled_engine
             .frames
             .push(select_test_frame(RuntimeSelectRegion {
+                _memory: None,
                 capacity: 1,
                 registered: 1,
                 arms: vec![RuntimeSelectArm {
@@ -23782,6 +27089,7 @@ mod tests {
         winner_engine
             .frames
             .push(select_test_frame(RuntimeSelectRegion {
+                _memory: None,
                 capacity: 1,
                 registered: 1,
                 arms: vec![RuntimeSelectArm {
@@ -23818,6 +27126,7 @@ mod tests {
             .tasks
             .push(scheduler_task(TaskStatus::Running));
         let mut detached_frame = select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 1,
             registered: 0,
             arms: Vec::new(),
@@ -23943,6 +27252,7 @@ mod tests {
             },
         );
         let mut frame = select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
@@ -23964,6 +27274,7 @@ mod tests {
         frame
             .cleanups
             .push(RuntimeCleanup::Fallback(RuntimeFallback {
+                _memory: None,
                 scope: BytecodeScopeId::new(0),
                 owner: message_place.clone(),
             }));
@@ -23999,6 +27310,7 @@ mod tests {
     fn selectable_actor_send_roots_and_probe_creation_are_explicit() {
         let (program, types) = executor_program();
         let region = RuntimeSelectRegion {
+            _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
@@ -24087,6 +27399,7 @@ mod tests {
             },
         );
         let mut frame = select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
@@ -24225,6 +27538,7 @@ mod tests {
         engine.tasks[1].join_consumed = false;
         engine.frames.push({
             let mut frame = select_test_frame(RuntimeSelectRegion {
+                _memory: None,
                 capacity: 2,
                 registered: 0,
                 arms: Vec::new(),
@@ -24317,6 +27631,7 @@ mod tests {
             closed: false,
         }));
         let mut frame = select_test_frame(RuntimeSelectRegion {
+            _memory: None,
             capacity: 1,
             registered: 0,
             arms: Vec::new(),
@@ -24495,6 +27810,7 @@ mod tests {
         );
 
         let waiter = |name: &str, parameters: Vec<BytecodeParameter>| BytecodeCallable {
+            assertion_display: None,
             name: name.into(),
             generic_arity: 0,
             parameters,
@@ -24679,6 +27995,7 @@ mod tests {
             }),
         });
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "main".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -24790,7 +28107,7 @@ mod tests {
                 },
             ),
         ] {
-            let error = super::validate_limits(limits).unwrap_err();
+            let error = limits.validate().unwrap_err();
             assert!(matches!(error, VmError::InvalidLimits(candidate) if candidate == name));
         }
     }
@@ -24830,6 +28147,7 @@ mod tests {
 
         let scope = BytecodeScopeId::new(3);
         let mut explicit = RuntimeCleanup::Explicit(RuntimeDefer {
+            memory: None,
             scope,
             span: BytecodeSpan {
                 file: 0,
@@ -24846,6 +28164,7 @@ mod tests {
         explicit.roots(&mut roots);
 
         let mut fallback = RuntimeCleanup::Fallback(RuntimeFallback {
+            _memory: None,
             scope,
             owner: place,
         });
@@ -25258,6 +28577,11 @@ mod tests {
             Err(VmError::UnsupportedHostCall(name)) if name == "work"
         ));
         assert_eq!(host.poll_async(7).unwrap(), None);
+        assert!(host.preview_polled_return(7).unwrap().is_none());
+        assert!(matches!(
+            host.discard_previewed_return(7),
+            Err(VmError::Invariant(_))
+        ));
         assert!(matches!(host.wait_async(&[]), Err(VmError::Invariant(_))));
         assert!(matches!(
             host.wait_async(&[7]),
@@ -25369,7 +28693,7 @@ mod tests {
                 RuntimeHostValueKind::EnvError,
             ),
         ] {
-            assert_eq!(runtime_host_kind(constructor), Some(expected));
+            assert_eq!(runtime_host_kind(constructor, [0; 32]), Some(expected));
         }
         for constructor in [
             BytecodeIntrinsicType::Array,
@@ -25382,7 +28706,7 @@ mod tests {
             BytecodeIntrinsicType::Duration,
             BytecodeIntrinsicType::NumericConversionError,
         ] {
-            assert_eq!(runtime_host_kind(constructor), None);
+            assert_eq!(runtime_host_kind(constructor, [0; 32]), None);
         }
 
         assert_eq!(next_unicode_scalar(0x41), Some(0x42));
@@ -25609,6 +28933,7 @@ mod tests {
         };
         program.callables.extend([
             BytecodeCallable {
+                assertion_display: None,
                 name: "std.testing.withVirtualTime".into(),
                 generic_arity: 0,
                 parameters: vec![parameter],
@@ -25618,6 +28943,7 @@ mod tests {
                 closure: None,
             },
             BytecodeCallable {
+                assertion_display: None,
                 name: "host.body".into(),
                 generic_arity: 0,
                 parameters: vec![BytecodeParameter {
@@ -26429,7 +29755,11 @@ mod tests {
         };
         assert_eq!(operation_access_place(&unrelated).unwrap(), None);
 
-        let path = |root, components| ResolvedPlacePath { root, components };
+        let path = |root, components| ResolvedPlacePath {
+            root,
+            components,
+            memory: None,
+        };
         let root = (0, 1, 2);
         assert!(paths_overlap(
             &path(root, Vec::new()),
@@ -26768,6 +30098,161 @@ mod tests {
         assert!(engine.runnable.is_empty());
         assert!(engine.resume_current_task().unwrap());
         assert!(engine.tasks[0].resume.is_none());
+    }
+
+    #[test]
+    fn async_host_response_transport_retains_ready_values_and_delivers_budget_failures() {
+        let (program, types) = executor_program();
+        for deferred in [false, true] {
+            for short in [false, true] {
+                let mut host = RejectingHost;
+                let mut engine = executor_engine(&program, &mut host);
+                let owner = super::VmMemoryBudget::new(32 + 1024 - u64::from(short));
+                let parent = super::VmMemoryBudget::new(1);
+                engine.entry_test_memory = Some(parent.clone());
+                engine
+                    .test_instruction_budgets
+                    .push(super::TestInstructionBudget {
+                        id: "receiving-test".into(),
+                        owner: 1,
+                        work: Arc::new(super::TestWorkBudget {
+                            steps: super::AtomicU64::new(0),
+                            stopped: super::AtomicBool::new(false),
+                            memory: owner.clone(),
+                        }),
+                        containment_steps: 0,
+                        exhausted: false,
+                    });
+                engine.task_test_budgets.insert(1, 0);
+                engine
+                    .tasks
+                    .push(scheduler_task(TaskStatus::Waiting(TaskWait::Scope)));
+                engine.restore_test_heap_budget();
+                engine
+                    .tasks
+                    .push(scheduler_task(TaskStatus::Waiting(if deferred {
+                        TaskWait::DeferredHostCall {
+                            call: 77,
+                            outcome: types.string,
+                            target: BytecodeBlockId::new(0),
+                            completion: None,
+                        }
+                    } else {
+                        TaskWait::HostCall {
+                            call: 77,
+                            outcome: types.string,
+                            destination: BytecodePlace {
+                                slot: BytecodeSlotId::new(0),
+                                ty: types.string,
+                                projections: Vec::new(),
+                                source_loan: None,
+                            },
+                            target: BytecodeBlockId::new(0),
+                            unwind: BytecodeBlockId::new(0),
+                            completion: None,
+                        }
+                    })));
+                engine
+                    .complete_host_outcome(
+                        77,
+                        Ok(super::VmHostReturn {
+                            value: RuntimeValue::String("x".repeat(1024)),
+                            memory: None,
+                        }),
+                    )
+                    .unwrap();
+                if short {
+                    assert!(matches!(
+                        engine.tasks[1].resume,
+                        Some(TaskWait::Failed(VmError::ResourceLimit {
+                            resource: "memory",
+                            ..
+                        }))
+                    ));
+                    assert_eq!(owner.live_bytes(), 0);
+                } else {
+                    assert_eq!(owner.live_bytes(), 1056);
+                    assert!(matches!(
+                        engine.tasks[1].resume,
+                        Some(
+                            TaskWait::HostCall {
+                                completion: Some(_),
+                                ..
+                            } | TaskWait::DeferredHostCall {
+                                completion: Some(_),
+                                ..
+                            }
+                        )
+                    ));
+                }
+                assert!(matches!(engine.tasks[1].status, TaskStatus::Runnable));
+                engine.tasks[1].resume.take();
+                assert_eq!(owner.live_bytes(), 0);
+                assert_eq!(parent.live_bytes(), 0);
+                engine.tasks[1].status = TaskStatus::Waiting(TaskWait::DeferredHostCall {
+                    call: 78,
+                    outcome: types.unit,
+                    target: BytecodeBlockId::new(0),
+                    completion: None,
+                });
+                let token = (crate::runtime::RuntimeHostValueKind::Bytes, 123);
+                engine
+                    .complete_host_outcome(
+                        78,
+                        Ok(super::VmHostReturn {
+                            value: RuntimeValue::Host {
+                                kind: token.0,
+                                id: token.1,
+                            },
+                            memory: None,
+                        }),
+                    )
+                    .unwrap();
+                assert_eq!(owner.live_bytes(), 32);
+                assert!(engine.host_roots(&[], None).unwrap().contains(&token));
+                engine.tasks[1].resume.take();
+                assert_eq!(owner.live_bytes(), 0);
+                assert!(!engine.host_roots(&[], None).unwrap().contains(&token));
+            }
+        }
+    }
+
+    #[test]
+    fn prepaid_async_completion_enters_the_ready_queue_without_a_second_reservation() {
+        let (program, types) = executor_program();
+        let owner = super::VmMemoryBudget::new(1056);
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.entry_test_memory = Some(owner.clone());
+        engine.restore_test_heap_budget();
+        engine.tasks.push(scheduler_task(TaskStatus::Waiting(
+            TaskWait::DeferredHostCall {
+                call: 99,
+                outcome: types.string,
+                target: BytecodeBlockId::new(0),
+                completion: None,
+            },
+        )));
+        let text = "x".repeat(1024);
+        let pointer = text.as_ptr() as usize;
+        let returned =
+            super::VmHostReturn::admit(RuntimeValue::String(text), Some(&owner)).unwrap();
+        assert_eq!(owner.live_bytes(), owner.limit());
+        engine.complete_host_outcome(99, Ok(returned)).unwrap();
+        assert_eq!(owner.live_bytes(), owner.limit());
+        let Some(TaskWait::DeferredHostCall {
+            completion: Some(returned),
+            ..
+        }) = engine.tasks[0].resume.take()
+        else {
+            panic!("missing ready response")
+        };
+        let RuntimeValue::String(text) = &returned.value else {
+            panic!("missing String")
+        };
+        assert_eq!(text.as_ptr() as usize, pointer);
+        drop(returned);
+        assert_eq!(owner.live_bytes(), 0);
     }
 
     #[test]
@@ -28218,6 +31703,2616 @@ mod tests {
     }
 
     #[test]
+    fn slice_buffers_use_exact_admission_and_preserve_unicode_direction() {
+        for (start, end, step, expected) in [
+            (None, None, None, "aé🙂b"),
+            (None, None, Some(-1), "b🙂éa"),
+            (None, None, Some(2), "a🙂"),
+            (Some(-1), None, Some(-2), "bé"),
+            (None, Some(-1), Some(-1), ""),
+            (None, None, Some(i128::MIN), "b"),
+        ] {
+            for shortage in [1, 0] {
+                let program = root_pressure_program();
+                let trace = derive_trace_metadata(&program).unwrap();
+                let mut host = RejectingHost;
+                let mut engine = Engine::new(
+                    &program,
+                    &mut host,
+                    pressure_limits(),
+                    ValueCopyStrategy::default(),
+                    trace,
+                );
+                let source = engine
+                    .allocate(
+                        BytecodeTypeId::new(0),
+                        HeapObject::String("aé🙂b".into()),
+                        &[],
+                    )
+                    .unwrap();
+                engine.retain_temporary(&source);
+                let bytes = std::mem::size_of::<HeapObject>() as u64 + expected.len() as u64;
+                let owner = super::VmMemoryBudget::new(bytes - shortage);
+                engine.entry_test_memory = Some(owner.clone());
+                engine.restore_test_heap_budget();
+                let before = engine.statistics.allocations;
+                let result = engine.slice_value(
+                    BytecodeTypeId::new(0),
+                    source.clone(),
+                    start.map(Value::Integer),
+                    end.map(Value::Integer),
+                    step.map(Value::Integer),
+                );
+                if shortage == 0 {
+                    let value = result.unwrap().unwrap();
+                    assert_eq!(engine.string_value(&value).unwrap(), expected);
+                    assert_eq!(owner.live_bytes(), bytes);
+                    assert_eq!(engine.statistics.allocations, before + 1);
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(VmError::ResourceLimit {
+                            resource: "memory",
+                            ..
+                        })
+                    ));
+                    assert_eq!(owner.live_bytes(), 0);
+                    assert_eq!(engine.statistics.allocations, before);
+                }
+                assert_eq!(engine.string_value(&source).unwrap(), "aé🙂b");
+                drop(engine);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn array_slice_buffers_move_their_reservation_and_reject_before_copying() {
+        for shortage in [1, 0] {
+            let program = root_pressure_program();
+            let trace = derive_trace_metadata(&program).unwrap();
+            let mut host = RejectingHost;
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                pressure_limits(),
+                ValueCopyStrategy::default(),
+                trace,
+            );
+            let source = engine
+                .allocate(
+                    BytecodeTypeId::new(6),
+                    HeapObject::Array((0..8).map(|index| Some(Value::Integer(index))).collect()),
+                    &[],
+                )
+                .unwrap();
+            engine.retain_temporary(&source);
+            let bytes = (std::mem::size_of::<HeapObject>()
+                + 4 * std::mem::size_of::<Option<Value>>()) as u64;
+            let owner = super::VmMemoryBudget::new(bytes - shortage);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let before = engine.statistics.allocations;
+            let result = engine.slice_value(
+                BytecodeTypeId::new(6),
+                source.clone(),
+                None,
+                None,
+                Some(Value::Integer(-2)),
+            );
+            if shortage == 0 {
+                let value = result.unwrap().unwrap();
+                assert_eq!(
+                    snapshot_value(&value, &engine.heap, &[], &[]).unwrap(),
+                    RuntimeValue::Array(
+                        [7, 5, 3, 1]
+                            .into_iter()
+                            .map(RuntimeValue::Integer)
+                            .collect()
+                    )
+                );
+                assert_eq!(owner.live_bytes(), bytes);
+                assert_eq!(engine.statistics.allocations, before + 1);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        ..
+                    })
+                ));
+                assert_eq!(owner.live_bytes(), 0);
+                assert_eq!(engine.statistics.allocations, before);
+            }
+            assert_eq!(engine.length(&source).unwrap(), 8);
+            let rejected = engine.slice_value(
+                BytecodeTypeId::new(6),
+                source,
+                None,
+                None,
+                Some(Value::Integer(0)),
+            );
+            assert!(matches!(rejected, Ok(Err((PanicCode::ZeroSliceStep, _)))));
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn resolved_place_payloads_are_admitted_and_retain_their_original_account() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let key = engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("x".repeat(1024)),
+                &[],
+            )
+            .unwrap();
+        let array = engine
+            .allocate(
+                BytecodeTypeId::new(6),
+                HeapObject::Array(vec![Some(Value::Integer(1)); 8].into()),
+                std::slice::from_ref(&key),
+            )
+            .unwrap();
+        engine.retain_temporary(&key);
+        engine.retain_temporary(&array);
+        let caller = super::VmMemoryBudget::new(1);
+        engine.entry_test_memory = Some(caller.clone());
+        let metadata =
+            super::super::TEST_PLACE_PATH_BYTES + super::super::TEST_PLACE_COMPONENT_BYTES;
+        let payload = super::super::TEST_DETACHED_VALUE_BYTES + 1024;
+        let workspace =
+            super::super::TEST_DETACHED_VALUE_BYTES + super::super::TEST_SNAPSHOT_FRAME_BYTES;
+        for shortage in [1, 0] {
+            let owner = super::VmMemoryBudget::new(metadata + payload + workspace - shortage);
+            let mut path = ResolvedPlacePath {
+                root: (0, 0, 0),
+                components: Vec::new(),
+                memory: Some(owner.reserve(metadata).unwrap()),
+            };
+            let result = engine.admit_place_key(&key, &mut path.memory);
+            if shortage != 0 {
+                assert!(matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        ..
+                    })
+                ));
+                assert_eq!(owner.live_bytes(), metadata);
+            } else {
+                let value = result.unwrap();
+                assert_eq!(value, RuntimeValue::String("x".repeat(1024)));
+                path.components.push(PlaceComponent::MapKey(value));
+                assert_eq!(owner.live_bytes(), metadata + payload);
+                // A loan owns its resolved path after admission finishes.
+                let loan = super::RuntimeReservation {
+                    mode: BytecodeParameterMode::Ref,
+                    path,
+                };
+                assert_eq!(owner.live_bytes(), metadata + payload);
+                drop(loan);
+                assert_eq!(owner.live_bytes(), 0);
+                assert_eq!(caller.live_bytes(), 0);
+                continue;
+            }
+            drop(path);
+            assert_eq!(owner.live_bytes(), 0);
+            assert_eq!(caller.live_bytes(), 0);
+        }
+        for shortage in [1, 0] {
+            let indices = 8 * super::super::TEST_PLACE_INDEX_BYTES;
+            let owner = super::VmMemoryBudget::new(metadata + indices - shortage);
+            let mut memory = Some(owner.reserve(metadata).unwrap());
+            let result = engine.resolve_place_component(
+                0,
+                &array,
+                &crate::bytecode::BytecodeProjection {
+                    ty: BytecodeTypeId::new(6),
+                    kind: crate::bytecode::BytecodeProjectionKind::Slice {
+                        start: None,
+                        end: None,
+                        step: None,
+                    },
+                },
+                false,
+                &mut memory,
+            );
+            if shortage != 0 {
+                assert!(matches!(
+                    result,
+                    Err(PlaceFailure::Vm(VmError::ResourceLimit {
+                        resource: "memory",
+                        ..
+                    }))
+                ));
+                assert_eq!(owner.live_bytes(), metadata);
+            } else {
+                assert_eq!(result.unwrap(), PlaceComponent::Slice((0..8).collect()));
+                assert_eq!(owner.live_bytes(), metadata + indices);
+            }
+            drop(memory);
+            assert_eq!(owner.live_bytes(), 0);
+            assert_eq!(caller.live_bytes(), 0);
+        }
+        assert_eq!(engine.string_value(&key).unwrap().len(), 1024);
+    }
+
+    #[test]
+    fn detached_argument_admission_collects_garbage_and_keeps_the_source_owner() {
+        struct AdmissionHost {
+            owner: super::VmMemoryBudget,
+            expected_live: u64,
+            fail: bool,
+            calls: usize,
+        }
+        impl VmHost for AdmissionHost {
+            fn invoke(
+                &mut self,
+                _: &str,
+                arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                assert_eq!(self.owner.live_bytes(), self.expected_live);
+                assert_eq!(arguments.len(), 2);
+                assert!(arguments.iter().all(
+                    |value| matches!(value, RuntimeValue::String(text) if text.len() == 1024)
+                ));
+                self.calls += 1;
+                if self.fail {
+                    Err(VmError::Host("admitted call failed".into()))
+                } else {
+                    Ok(RuntimeValue::Unit)
+                }
+            }
+        }
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        for fail in [false, true] {
+            let object = HeapObject::String("x".repeat(1024));
+            let source_bytes = object.estimated_bytes();
+            let detached_bytes = 2 * (super::super::TEST_DETACHED_VALUE_BYTES + 1024);
+            let workspace = 2 * super::super::TEST_DETACHED_VALUE_BYTES
+                + super::super::TEST_SNAPSHOT_FRAME_BYTES;
+            let owner = super::VmMemoryBudget::new(source_bytes + detached_bytes + workspace);
+            let next_owner = super::VmMemoryBudget::new(32);
+            let mut host = AdmissionHost {
+                owner: owner.clone(),
+                expected_live: source_bytes + detached_bytes,
+                fail,
+                calls: 0,
+            };
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                VmLimits {
+                    initial_gc_threshold: 100_000,
+                    ..pressure_limits()
+                },
+                ValueCopyStrategy::default(),
+                trace.clone(),
+            );
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let source = engine
+                .allocate(BytecodeTypeId::new(0), object, &[])
+                .unwrap();
+            let garbage = engine
+                .allocate(
+                    BytecodeTypeId::new(0),
+                    HeapObject::String("y".repeat(1024)),
+                    std::slice::from_ref(&source),
+                )
+                .unwrap();
+            assert_eq!(owner.live_bytes(), source_bytes * 2);
+            let arguments = engine
+                .snapshot_arguments(&[source.clone(), source.clone()])
+                .unwrap();
+            assert!(engine.heap.get(garbage.heap_handle().unwrap()).is_err());
+            assert!(engine.heap.get(source.heap_handle().unwrap()).is_ok());
+            assert_eq!(owner.live_bytes(), source_bytes + detached_bytes);
+            engine.entry_test_memory = Some(next_owner.clone());
+            engine.restore_test_heap_budget();
+            let result = engine.invoke_host_arguments("admission.probe", arguments);
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(owner.live_bytes(), source_bytes);
+            assert_eq!(next_owner.live_bytes(), if fail { 0 } else { 32 });
+            drop(result);
+            assert_eq!(next_owner.live_bytes(), 0);
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+            assert_eq!(host.calls, 1);
+        }
+    }
+
+    #[test]
+    fn host_return_transport_retains_the_receiving_account_until_consumption() {
+        struct ReturningHost;
+        impl VmHost for ReturningHost {
+            fn invoke(&mut self, _: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+                Ok(RuntimeValue::String("returned".repeat(128)))
+            }
+        }
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = ReturningHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let sender = super::VmMemoryBudget::new(4096);
+        let receiver = super::VmMemoryBudget::new(4096);
+        engine.entry_test_memory = Some(sender.clone());
+        engine.restore_test_heap_budget();
+        let arguments = engine.snapshot_arguments(&[]).unwrap();
+        engine.entry_test_memory = Some(receiver.clone());
+        engine.restore_test_heap_budget();
+        let returned = engine
+            .invoke_host_arguments("return.probe", arguments)
+            .unwrap();
+        assert_eq!(sender.live_bytes(), 0);
+        assert_eq!(receiver.live_bytes(), 32 + 1024);
+        drop(returned);
+        assert_eq!(receiver.live_bytes(), 0);
+        let rejected = super::VmMemoryBudget::new(32 + 1024 - 1);
+        engine.entry_test_memory = Some(rejected.clone());
+        engine.restore_test_heap_budget();
+        let arguments = engine.snapshot_arguments(&[]).unwrap();
+        let result = engine.invoke_host_arguments("return.probe", arguments);
+        assert!(result.unwrap_err().is_resource_limit());
+        assert_eq!(rejected.live_bytes(), 0);
+        assert_eq!(sender.live_bytes(), 0);
+        assert_eq!(receiver.live_bytes(), 0);
+    }
+
+    #[test]
+    fn synchronous_host_import_moves_admitted_storage_and_releases_failed_results() {
+        struct ReturningHost(Option<String>);
+        impl VmHost for ReturningHost {
+            fn invoke(&mut self, _: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+                Ok(RuntimeValue::String(self.0.take().unwrap()))
+            }
+        }
+        let (program, types) = executor_program();
+        for (short, valid_type) in [(false, true), (true, true), (false, false)] {
+            let text = "é🦀".repeat(512);
+            let pointer = text.as_ptr() as usize;
+            let detached_bytes = super::super::TEST_DETACHED_VALUE_BYTES + text.len() as u64;
+            let heap_bytes = HeapObject::String(text.clone()).estimated_bytes();
+            let owner = super::VmMemoryBudget::new(
+                heap_bytes + super::super::TEST_DETACHED_VALUE_BYTES - u64::from(short),
+            );
+            let mut host = ReturningHost(Some(text));
+            let mut engine = executor_engine(&program, &mut host);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let returned = engine.invoke_host("return.import", Vec::new()).unwrap();
+            assert_eq!(owner.live_bytes(), detached_bytes);
+            let result = engine.materialize_host_return(
+                if valid_type { types.string } else { types.int },
+                returned,
+            );
+            if !valid_type {
+                assert!(matches!(result, Err(VmError::Host(_))));
+                assert_eq!(owner.live_bytes(), 0);
+            } else if short {
+                assert!(result.unwrap_err().is_resource_limit());
+                assert_eq!(owner.live_bytes(), 0);
+            } else {
+                let value = result.unwrap();
+                let HeapObject::String(text) =
+                    engine.heap.get(value.heap_handle().unwrap()).unwrap()
+                else {
+                    panic!("expected imported String");
+                };
+                assert_eq!(text.as_ptr() as usize, pointer);
+                assert_eq!(owner.live_bytes(), heap_bytes);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    struct PreparedReplyHost {
+        value: Option<RuntimeValue>,
+        budget: Option<VmMemoryBudget>,
+        ready: Option<VmHostReturn>,
+        committed: bool,
+        reject_storage: bool,
+    }
+
+    impl PreparedReplyHost {
+        fn new() -> Self {
+            Self {
+                value: Some(RuntimeValue::Array(vec![
+                    RuntimeValue::String("é🦀".repeat(256)),
+                    RuntimeValue::String("returned".repeat(256)),
+                ])),
+                budget: None,
+                ready: None,
+                committed: false,
+                reject_storage: false,
+            }
+        }
+    }
+
+    impl VmHost for PreparedReplyHost {
+        fn invoke(&mut self, name: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+            Err(VmError::UnsupportedHostCall(name.into()))
+        }
+
+        fn preview_return<'a>(
+            &'a self,
+            _: &str,
+            _: &'a [RuntimeValue],
+        ) -> Result<Option<super::super::VmHostReturnPreview<'a>>, VmError> {
+            Ok(self
+                .value
+                .as_ref()
+                .map(super::super::VmHostReturnPreview::Value))
+        }
+
+        fn set_test_memory_budget(&mut self, budget: Option<VmMemoryBudget>) {
+            self.budget = budget;
+        }
+
+        fn start_async(&mut self, _: &str, _: &[RuntimeValue]) -> Result<u64, VmError> {
+            let mut response = super::super::VmHostReturnBudget::new(self.budget.as_ref());
+            response.reserve(0, [self.value.as_ref().unwrap()])?;
+            if self.reject_storage {
+                return Err(VmError::ResourceLimit {
+                    resource: "host storage",
+                    limit: 0,
+                });
+            }
+            self.ready = Some(response.finish(self.value.take().unwrap())?);
+            self.committed = true;
+            Ok(1)
+        }
+
+        fn poll_async_owned(&mut self, _: u64) -> Result<Option<VmHostReturn>, VmError> {
+            Ok(self.ready.take())
+        }
+    }
+
+    fn prepared_import_program() -> (BytecodeProgram, BytecodeTypeId) {
+        let (mut program, types) = executor_program();
+        let array = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Array[String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: vec![types.string],
+            },
+        });
+        (program, array)
+    }
+
+    #[test]
+    fn prepared_import_admits_joint_peak_before_dispatch_and_preserves_its_account() {
+        let (program, array) = prepared_import_program();
+        for (short, reject_storage) in [(false, false), (true, false), (false, true)] {
+            let mut host = PreparedReplyHost::new();
+            host.reject_storage = reject_storage;
+            let preview = host.value.as_ref().unwrap();
+            let transport_bytes = preview.measure_retained_bytes(None).unwrap();
+            let mut engine = executor_engine_with_scope(&program, &mut host);
+            let cost = engine
+                .host_import_cost(
+                    array,
+                    match engine.host.preview_return("probe", &[]).unwrap().unwrap() {
+                        super::super::VmHostReturnPreview::Value(value) => value,
+                        _ => unreachable!(),
+                    },
+                    None,
+                )
+                .unwrap();
+            let additional = cost.heap_bytes - cost.string_bytes
+                + cost.frames as u64 * super::super::TEST_HOST_IMPORT_FRAME_BYTES
+                + super::super::TEST_HOST_IMPORT_ADMISSION_BYTES;
+            let owner = VmMemoryBudget::new(additional + transport_bytes - u64::from(short));
+            let other = VmMemoryBudget::new(1);
+            engine.heap = Heap::new(
+                VmLimits {
+                    max_heap_objects: cost.objects,
+                    ..pressure_limits()
+                },
+                derive_trace_metadata(&program).unwrap().types,
+            );
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let started = engine.start_host_async_prepared("probe", &[], 0, array);
+            if short || reject_storage {
+                assert!(started.unwrap_err().is_resource_limit());
+                assert_eq!(owner.live_bytes(), 0);
+                assert_eq!(engine.statistics.allocations, 0);
+            } else {
+                let (call, prepared) = started.unwrap();
+                engine.tasks[0].prepared_host_import = prepared;
+                assert_eq!(owner.live_bytes(), additional + transport_bytes);
+                assert!(
+                    engine
+                        .start_host_async_prepared("probe", &[], 0, array)
+                        .is_err()
+                );
+                // A competing task cannot consume held object slots, even if
+                // it has a separate byte account.
+                engine.entry_test_memory = Some(other.clone());
+                engine.restore_test_heap_budget();
+                let roots = engine.roots(&[]).unwrap();
+                assert!(engine.heap.preflight_import(
+                    1, 0, Some(other.clone()), &roots, &mut engine.statistics,
+                ).unwrap_err().is_resource_limit());
+                let returned = engine.host.poll_async_owned(call).unwrap().unwrap();
+                let result = engine.materialize_host_return(array, returned).unwrap();
+                assert!(
+                    matches!(engine.heap.get(result.heap_handle().unwrap()).unwrap(),
+                    HeapObject::Array(values) if values.len() == 2)
+                );
+                assert!(engine.tasks[0].prepared_host_import.is_none());
+                assert_eq!(engine.statistics.allocations, u64::from(cost.objects));
+                assert_eq!(owner.live_bytes(), cost.heap_bytes);
+                assert_eq!(other.live_bytes(), 0);
+            }
+            drop(engine);
+            assert_eq!(host.committed, !short && !reject_storage);
+            assert_eq!(owner.live_bytes(), 0);
+            assert_eq!(other.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn joint_host_import_admission_reserves_both_accounts_before_publication() {
+        let (program, array) = prepared_import_program();
+        for case in [
+            "separate",
+            "shared",
+            "short-vm",
+            "short-transport",
+            "short-shared",
+        ] {
+            let first = PreparedReplyHost::new().value.unwrap();
+            let second = first.clone();
+            let transport = first.retained_bytes().unwrap();
+            let mut host = RejectingHost;
+            let cost = executor_engine(&program, &mut host)
+                .host_import_cost(array, &first, None)
+                .unwrap();
+            assert_eq!(cost.objects, 3);
+            let additional = cost.heap_bytes - cost.string_bytes
+                + cost.frames as u64 * super::super::TEST_HOST_IMPORT_FRAME_BYTES
+                + super::super::TEST_HOST_IMPORT_ADMISSION_BYTES;
+            let peak = additional + transport;
+            let shared = matches!(case, "shared" | "short-shared");
+            let first_owner = VmMemoryBudget::new(if shared {
+                2 * peak - u64::from(case == "short-shared")
+            } else {
+                peak
+            });
+            let second_owner = if shared {
+                first_owner.clone()
+            } else {
+                VmMemoryBudget::new(match case {
+                    "short-vm" => additional - 1,
+                    "short-transport" => peak - 1,
+                    _ => peak,
+                })
+            };
+            let mut engine = pending_import_engine(
+                &program,
+                &mut host,
+                array,
+                [first_owner.clone(), second_owner.clone()],
+            );
+            let result = engine.with_host_import_admission(|_, admission| {
+                let first_import =
+                    admission.prepare(77, super::super::VmHostReturnPreview::Value(&first))?;
+                let mut first_response = super::super::VmHostReturnBudget::new(Some(&first_owner));
+                first_response.reserve(0, [&first])?;
+                let second_import =
+                    admission.prepare(78, super::super::VmHostReturnPreview::Value(&second))?;
+                let mut second_response =
+                    super::super::VmHostReturnBudget::new(Some(&second_owner));
+                second_response.reserve(0, [&second])?;
+                admission.commit(&mut [first_import, second_import])?;
+                Ok((
+                    first_response.finish(first)?,
+                    second_response.finish(second)?,
+                ))
+            });
+            assert_eq!(
+                engine.statistics.allocations, 0,
+                "{case}: admission constructed heap values"
+            );
+            if case.starts_with("short") {
+                assert!(result.unwrap_err().is_resource_limit());
+                assert!(
+                    engine
+                        .tasks
+                        .iter()
+                        .all(|task| task.prepared_host_import.is_none())
+                );
+                assert_eq!(first_owner.live_bytes(), 0);
+                assert_eq!(second_owner.live_bytes(), 0);
+                engine
+                    .heap
+                    .reserve_import_objects(
+                        pressure_limits().max_heap_objects,
+                        &[],
+                        &mut engine.statistics,
+                    )
+                    .unwrap();
+            } else {
+                assert_eq!(
+                    first_owner.live_bytes(),
+                    if shared { 2 * peak } else { peak }
+                );
+                assert_eq!(
+                    second_owner.live_bytes(),
+                    if shared { 2 * peak } else { peak }
+                );
+                let (first, second) = result.unwrap();
+                engine.complete_host_call(77, first).unwrap();
+                engine.complete_host_call(78, second).unwrap();
+                assert_eq!(engine.statistics.allocations, 6);
+                assert_eq!(
+                    first_owner.live_bytes(),
+                    if shared {
+                        2 * cost.heap_bytes
+                    } else {
+                        cost.heap_bytes
+                    }
+                );
+                assert_eq!(
+                    second_owner.live_bytes(),
+                    if shared {
+                        2 * cost.heap_bytes
+                    } else {
+                        cost.heap_bytes
+                    }
+                );
+                assert!(
+                    engine
+                        .tasks
+                        .iter()
+                        .all(|task| task.prepared_host_import.is_none())
+                );
+            }
+            assert_eq!(engine.entry_test_memory.as_ref().unwrap().live_bytes(), 0);
+            drop(engine);
+            assert_eq!(first_owner.live_bytes(), 0);
+            assert_eq!(second_owner.live_bytes(), 0);
+        }
+    }
+
+    fn pending_import_engine<'program, 'host>(
+        program: &'program BytecodeProgram,
+        host: &'host mut dyn VmHost,
+        outcome: BytecodeTypeId,
+        owners: [VmMemoryBudget; 2],
+    ) -> Engine<'program, 'host> {
+        let mut engine = executor_engine_with_scope(program, host);
+        engine.entry_test_memory = Some(VmMemoryBudget::new(0));
+        for (index, memory) in owners.into_iter().enumerate() {
+            let task = engine.tasks.len();
+            engine
+                .test_instruction_budgets
+                .push(super::TestInstructionBudget {
+                    id: format!("peer-{task}"),
+                    owner: task,
+                    work: Arc::new(super::TestWorkBudget {
+                        steps: super::AtomicU64::new(0),
+                        stopped: super::AtomicBool::new(false),
+                        memory,
+                    }),
+                    containment_steps: 0,
+                    exhausted: false,
+                });
+            engine.task_test_budgets.insert(task, index);
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::HostTask {
+                    call: 77 + index as u64,
+                    outcome,
+                })));
+        }
+        engine.restore_test_heap_budget();
+        engine
+    }
+
+    #[test]
+    fn paused_worker_and_parent_peer_admit_their_own_heaps_and_accounts() {
+        use super::super::VmHostReturnPreview;
+
+        let (program, array) = prepared_import_program();
+        for case in [
+            "separate",
+            "shared",
+            "short-worker",
+            "short-peer",
+            "short-shared",
+            "short-worker-objects",
+            "short-peer-objects",
+        ] {
+            let value = PreparedReplyHost::new().value.unwrap();
+            let transport = value.retained_bytes().unwrap();
+            let mut worker_host = RejectingHost;
+            let mut worker = executor_engine_with_scope(&program, &mut worker_host);
+            let cost = worker.host_import_cost(array, &value, None).unwrap();
+            let peak = transport + cost.prepared_bytes(u64::MAX).unwrap().0;
+            let shared = matches!(case, "shared" | "short-shared");
+            let worker_owner = VmMemoryBudget::new(if shared {
+                2 * peak + super::worker_import::CONTEXT_BYTES - u64::from(case == "short-shared")
+            } else {
+                peak + super::worker_import::CONTEXT_BYTES - u64::from(case == "short-worker")
+            });
+            let peer_owner = if shared {
+                worker_owner.clone()
+            } else {
+                VmMemoryBudget::new(peak - u64::from(case == "short-peer"))
+            };
+            worker.entry_test_memory = Some(worker_owner.clone());
+            worker.restore_test_heap_budget();
+            let mut parent_host = RejectingHost;
+            let mut parent = pending_import_engine(
+                &program,
+                &mut parent_host,
+                array,
+                [peer_owner.clone(), VmMemoryBudget::new(0)],
+            );
+            if case == "short-worker-objects" {
+                worker.heap = Heap::new(
+                    VmLimits {
+                        max_heap_objects: cost.objects - 1,
+                        ..pressure_limits()
+                    },
+                    derive_trace_metadata(&program).unwrap().types,
+                );
+                worker.restore_test_heap_budget();
+            }
+            if case == "short-peer-objects" {
+                parent.heap = Heap::new(
+                    VmLimits {
+                        max_heap_objects: cost.objects - 1,
+                        ..pressure_limits()
+                    },
+                    derive_trace_metadata(&program).unwrap().types,
+                );
+                parent.restore_test_heap_budget();
+            }
+            let result = worker.with_host_import_admission_for(Some(array), |_, admission| {
+                let paused = admission.pause_current()?.unwrap();
+                let guard = paused.guard();
+                let returned =
+                    parent.with_host_import_admission_context(None, Some(paused), |_, joint| {
+                        let peer_import = joint.prepare(77, VmHostReturnPreview::Value(&value))?;
+                        let peer_return = VmHostReturn::admit(value.clone(), Some(&peer_owner))?;
+                        let worker_import =
+                            joint.prepare_current(VmHostReturnPreview::Value(&value))?;
+                        let worker_return = VmHostReturn::admit(value, Some(&worker_owner))?;
+                        joint.commit(&mut [peer_import, worker_import])?;
+                        Ok((peer_return, worker_return))
+                    })?;
+                admission.commit(&mut [guard.take_prepared()?])?;
+                Ok(returned)
+            });
+            assert_eq!(parent.statistics.allocations, 0);
+            assert_eq!(worker.statistics.allocations, 0);
+            if case.starts_with("short") {
+                assert!(result.unwrap_err().is_resource_limit(), "{case}");
+                assert_eq!(worker_owner.live_bytes(), 0);
+                assert_eq!(peer_owner.live_bytes(), 0);
+                assert!(
+                    parent
+                        .tasks
+                        .iter()
+                        .all(|task| task.prepared_host_import.is_none())
+                );
+                assert!(worker.tasks[0].prepared_host_import.is_none());
+            } else {
+                let (peer_return, worker_return) = result.unwrap();
+                worker
+                    .materialize_host_return(array, worker_return)
+                    .unwrap();
+                parent.complete_host_call(77, peer_return).unwrap();
+                assert_eq!(worker.statistics.allocations, u64::from(cost.objects));
+                assert_eq!(parent.statistics.allocations, u64::from(cost.objects));
+                assert_eq!(
+                    worker_owner.live_bytes(),
+                    if shared {
+                        2 * cost.heap_bytes
+                    } else {
+                        cost.heap_bytes
+                    }
+                );
+                assert_eq!(
+                    peer_owner.live_bytes(),
+                    if shared {
+                        2 * cost.heap_bytes
+                    } else {
+                        cost.heap_bytes
+                    }
+                );
+            }
+            drop(worker);
+            drop(parent);
+            assert_eq!(worker_owner.live_bytes(), 0);
+            assert_eq!(peer_owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn paused_worker_batches_serialize_cancellation_and_reject_changed_recipients() {
+        use super::super::VmHostReturnPreview;
+
+        let (program, array) = prepared_import_program();
+        for case in [
+            "cancel-before",
+            "cancel-after",
+            "duplicate",
+            "bad-peer",
+            "bad-worker",
+            "host-failure",
+        ] {
+            let value = PreparedReplyHost::new().value.unwrap();
+            let worker_owner = VmMemoryBudget::new(65536);
+            let peer_owner = VmMemoryBudget::new(65536);
+            let mut worker_host = RejectingHost;
+            let mut worker = executor_engine_with_scope(&program, &mut worker_host);
+            worker.entry_test_memory = Some(worker_owner.clone());
+            worker.restore_test_heap_budget();
+            let mut parent_host = RejectingHost;
+            let mut parent = pending_import_engine(
+                &program,
+                &mut parent_host,
+                array,
+                [peer_owner.clone(), VmMemoryBudget::new(0)],
+            );
+            let result = worker.with_host_import_admission_for(Some(array), |_, admission| {
+                let paused = admission.pause_current()?.unwrap();
+                let guard = paused.guard();
+                let control = paused.control.clone();
+                let returned =
+                    parent.with_host_import_admission_context(None, Some(paused), |_, joint| {
+                        let mut peer = joint.prepare(77, VmHostReturnPreview::Value(&value))?;
+                        let mut current =
+                            joint.prepare_current(VmHostReturnPreview::Value(&value))?;
+                        let extra = if case == "duplicate" {
+                            joint.prepare_current(VmHostReturnPreview::Value(&value))?
+                        } else {
+                            None
+                        };
+                        if case == "bad-peer" {
+                            peer.as_mut().unwrap().recipient = None;
+                        }
+                        if case == "bad-worker" {
+                            current.as_mut().unwrap().recipient = None;
+                        }
+                        if case == "cancel-before" {
+                            assert!(control.try_cancel()?);
+                        }
+                        let mut batch = [peer, current, extra];
+                        let committed = joint.commit(&mut batch);
+                        if matches!(case, "cancel-after" | "host-failure") {
+                            committed?;
+                            assert!(batch.iter().all(Option::is_none));
+                            assert!(!control.try_cancel()?);
+                            // The completed peer has its own pool even when the
+                            // worker's host operation later returns an error.
+                            Ok(())
+                        } else {
+                            assert!(committed.is_err());
+                            assert!(batch[0].is_some() && batch[1].is_some());
+                            Err(committed.unwrap_err())
+                        }
+                    });
+                returned?;
+                if case == "host-failure" {
+                    return Err(VmError::Host(
+                        "host operation failed after admission".into(),
+                    ));
+                }
+                admission.commit(&mut [guard.take_prepared()?])?;
+                Ok(())
+            });
+            assert_eq!(result.is_ok(), case == "cancel-after", "{case}");
+            assert_eq!(
+                worker.tasks[0].prepared_host_import.is_some(),
+                case == "cancel-after"
+            );
+            assert_eq!(
+                parent.tasks[1].prepared_host_import.is_some(),
+                matches!(case, "cancel-after" | "host-failure")
+            );
+            if !matches!(case, "cancel-after" | "host-failure") {
+                assert_eq!(worker_owner.live_bytes(), 0);
+                assert_eq!(peer_owner.live_bytes(), 0);
+            }
+            if case == "host-failure" {
+                assert_eq!(worker_owner.live_bytes(), 0);
+            }
+            drop(worker);
+            drop(parent);
+            assert_eq!(worker_owner.live_bytes(), 0);
+            assert_eq!(peer_owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn active_and_pending_imports_keep_their_accounts_and_release_failed_batches() {
+        let (program, array) = prepared_import_program();
+        for case in [
+            "separate",
+            "shared",
+            "short-caller",
+            "short-peer",
+            "short-shared",
+        ] {
+            let value = PreparedReplyHost::new().value.unwrap();
+            let transport = value.retained_bytes().unwrap();
+            let mut host = RejectingHost;
+            let cost = executor_engine(&program, &mut host)
+                .host_import_cost(array, &value, None)
+                .unwrap();
+            let additional = cost.heap_bytes - cost.string_bytes
+                + cost.frames as u64 * super::super::TEST_HOST_IMPORT_FRAME_BYTES
+                + super::super::TEST_HOST_IMPORT_ADMISSION_BYTES;
+            let peak = additional + transport;
+            let shared = matches!(case, "shared" | "short-shared");
+            let caller = VmMemoryBudget::new(if shared {
+                2 * peak - u64::from(case == "short-shared")
+            } else if case == "short-caller" {
+                peak - 1
+            } else {
+                peak
+            });
+            let peer = if shared {
+                caller.clone()
+            } else {
+                VmMemoryBudget::new(peak - u64::from(case == "short-peer"))
+            };
+            let unused = VmMemoryBudget::new(0);
+            let mut engine =
+                pending_import_engine(&program, &mut host, array, [peer.clone(), unused.clone()]);
+            engine.entry_test_memory = Some(caller.clone());
+            engine.restore_test_heap_budget();
+            let result = engine.with_host_import_admission_for(Some(array), |_, admission| {
+                let peer_import =
+                    admission.prepare(77, super::super::VmHostReturnPreview::Value(&value))?;
+                let peer_return = VmHostReturn::admit(value.clone(), Some(&peer))?;
+                let caller_import =
+                    admission.prepare_current(super::super::VmHostReturnPreview::Value(&value))?;
+                let caller_return = VmHostReturn::admit(value, Some(&caller))?;
+                admission.commit(&mut [peer_import, caller_import])?;
+                Ok((peer_return, caller_return))
+            });
+            assert_eq!(engine.statistics.allocations, 0);
+            if case.starts_with("short") {
+                assert!(result.unwrap_err().is_resource_limit(), "{case}");
+                assert_eq!(caller.live_bytes(), 0);
+                assert_eq!(peer.live_bytes(), 0);
+                assert!(
+                    engine
+                        .tasks
+                        .iter()
+                        .all(|task| task.prepared_host_import.is_none())
+                );
+                engine
+                    .heap
+                    .reserve_import_objects(
+                        pressure_limits().max_heap_objects,
+                        &[],
+                        &mut engine.statistics,
+                    )
+                    .unwrap();
+            } else {
+                let (peer_return, caller_return) = result.unwrap();
+                assert_eq!(caller.live_bytes(), if shared { 2 * peak } else { peak });
+                assert_eq!(peer.live_bytes(), if shared { 2 * peak } else { peak });
+                let retained = engine
+                    .materialize_host_return(array, caller_return)
+                    .unwrap();
+                engine.temporary_roots.push(retained);
+                engine.complete_host_call(77, peer_return).unwrap();
+                assert_eq!(engine.statistics.allocations, 2 * u64::from(cost.objects));
+                assert_eq!(
+                    caller.live_bytes(),
+                    if shared {
+                        2 * cost.heap_bytes
+                    } else {
+                        cost.heap_bytes
+                    }
+                );
+                assert_eq!(
+                    peer.live_bytes(),
+                    if shared {
+                        2 * cost.heap_bytes
+                    } else {
+                        cost.heap_bytes
+                    }
+                );
+                assert!(
+                    engine
+                        .tasks
+                        .iter()
+                        .all(|task| task.prepared_host_import.is_none())
+                );
+            }
+            assert_eq!(unused.live_bytes(), 0);
+            drop(engine);
+            assert_eq!(caller.live_bytes(), 0);
+            assert_eq!(peer.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn synchronous_dispatch_releases_a_published_pool_when_the_host_fails() {
+        struct FailingHost;
+        impl VmHost for FailingHost {
+            fn invoke(&mut self, name: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+
+            fn invoke_owned_with_import_admission(
+                &mut self,
+                _: &str,
+                _: Vec<RuntimeValue>,
+                _: Option<super::super::VmMemoryCharge>,
+                _: Option<&VmMemoryBudget>,
+                admission: &mut super::super::VmHostImportAdmission<'_>,
+            ) -> Result<VmHostReturn, VmError> {
+                let value = PreparedReplyHost::new().value.unwrap();
+                let prepared =
+                    admission.prepare_current(super::super::VmHostReturnPreview::Value(&value))?;
+                admission.commit(&mut [prepared])?;
+                Err(VmError::ResourceLimit {
+                    resource: "host storage",
+                    limit: 0,
+                })
+            }
+        }
+
+        let (program, array) = prepared_import_program();
+        let mut host = FailingHost;
+        let mut engine = executor_engine_with_scope(&program, &mut host);
+        let owner = VmMemoryBudget::new(65536);
+        engine.entry_test_memory = Some(owner.clone());
+        engine.restore_test_heap_budget();
+        let arguments = engine.snapshot_arguments(&[]).unwrap();
+        let error = engine
+            .dispatch_host_arguments_with_import_admission("probe", arguments, array, None)
+            .unwrap_err();
+        assert!(error.is_resource_limit());
+        assert!(engine.tasks[0].prepared_host_import.is_none());
+        assert_eq!(owner.live_bytes(), 0);
+        assert_eq!(engine.statistics.allocations, 0);
+        engine
+            .heap
+            .reserve_import_objects(
+                pressure_limits().max_heap_objects,
+                &[],
+                &mut engine.statistics,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn joint_host_import_batches_reject_invalid_recipients_without_partial_publication() {
+        let (program, array) = prepared_import_program();
+        for fault in [
+            "unknown-call",
+            "duplicate",
+            "missing-recipient",
+            "current-without-caller",
+            "foreign-account",
+            "foreign-heap",
+            "disabled",
+        ] {
+            let mut host = RejectingHost;
+            let first = VmMemoryBudget::new(65536);
+            let second = VmMemoryBudget::new(65536);
+            let mut engine =
+                pending_import_engine(&program, &mut host, array, [first.clone(), second.clone()]);
+            let value = PreparedReplyHost::new().value.unwrap();
+            assert!(
+                engine
+                    .with_host_import_admission(|_, admission| admission
+                        .prepare(99, super::super::VmHostReturnPreview::Value(&value)))
+                    .is_err()
+            );
+            assert_eq!(first.live_bytes(), 0);
+            let mut batch = engine
+                .with_host_import_admission(|_, admission| {
+                    Ok([
+                        admission.prepare(77, super::super::VmHostReturnPreview::Value(&value))?,
+                        admission.prepare(78, super::super::VmHostReturnPreview::Value(&value))?,
+                    ])
+                })
+                .unwrap();
+            let mut foreign = Heap::new(
+                pressure_limits(),
+                derive_trace_metadata(&program).unwrap().types,
+            );
+            match fault {
+                "unknown-call" => {
+                    batch[1].as_mut().unwrap().recipient =
+                        Some(super::host_import::ImportRecipient::Pending { task: 2, call: 99 })
+                }
+                "duplicate" => {
+                    batch[1].as_mut().unwrap().recipient = batch[0].as_ref().unwrap().recipient
+                }
+                "missing-recipient" => batch[1].as_mut().unwrap().recipient = None,
+                "current-without-caller" => {
+                    batch[1].as_mut().unwrap().recipient =
+                        Some(super::host_import::ImportRecipient::Current { task: 2 })
+                }
+                "foreign-account" => {
+                    engine.test_instruction_budgets[1].work = Arc::new(super::TestWorkBudget {
+                        steps: super::AtomicU64::new(0),
+                        stopped: super::AtomicBool::new(false),
+                        memory: VmMemoryBudget::new(65536),
+                    })
+                }
+                "foreign-heap" => {
+                    let entry = batch[1].as_mut().unwrap();
+                    entry.objects = foreign
+                        .reserve_import_objects(entry.cost.objects, &[], &mut engine.statistics)
+                        .unwrap();
+                }
+                "disabled" => (),
+                _ => unreachable!(),
+            }
+            let result = if fault == "disabled" {
+                super::super::VmHostImportAdmission::disabled().commit(&mut batch)
+            } else {
+                engine.with_host_import_admission(|_, admission| admission.commit(&mut batch))
+            };
+            assert!(result.is_err(), "{fault}");
+            assert!(
+                batch.iter().all(Option::is_some),
+                "{fault}: failed commit consumed a token"
+            );
+            assert!(
+                engine
+                    .tasks
+                    .iter()
+                    .all(|task| task.prepared_host_import.is_none()),
+                "{fault}: partial publication"
+            );
+            assert_eq!(engine.statistics.allocations, 0);
+            drop(batch);
+            assert_eq!(first.live_bytes(), 0);
+            assert_eq!(second.live_bytes(), 0);
+            engine
+                .heap
+                .reserve_import_objects(
+                    pressure_limits().max_heap_objects,
+                    &[],
+                    &mut engine.statistics,
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn joint_host_import_completion_releases_only_the_terminated_peer() {
+        let (program, array) = prepared_import_program();
+        for terminal in ["cancelled", "failed"] {
+            let mut host = RejectingHost;
+            let first = VmMemoryBudget::new(65536);
+            let second = VmMemoryBudget::new(65536);
+            let mut engine =
+                pending_import_engine(&program, &mut host, array, [first.clone(), second.clone()]);
+            let value = PreparedReplyHost::new().value.unwrap();
+            let cost = engine.host_import_cost(array, &value, None).unwrap();
+            engine
+                .with_host_import_admission(|_, admission| {
+                    let mut batch = [
+                        admission.prepare(77, super::super::VmHostReturnPreview::Value(&value))?,
+                        admission.prepare(78, super::super::VmHostReturnPreview::Value(&value))?,
+                    ];
+                    admission.commit(&mut batch)
+                })
+                .unwrap();
+            let retained_peer = second.live_bytes();
+            assert!(retained_peer > 0);
+            if terminal == "cancelled" {
+                let returned = VmHostReturn::admit(value.clone(), Some(&first)).unwrap();
+                engine.tasks[1].cancel_requested = true;
+                engine.complete_host_call(77, returned).unwrap();
+            } else {
+                engine
+                    .complete_host_outcome(
+                        77,
+                        Err(VmError::ResourceLimit {
+                            resource: "host storage",
+                            limit: 0,
+                        }),
+                    )
+                    .unwrap();
+            }
+            assert_eq!(first.live_bytes(), 0, "{terminal}");
+            assert_eq!(second.live_bytes(), retained_peer, "{terminal}");
+            assert!(engine.tasks[1].prepared_host_import.is_none());
+            assert!(engine.tasks[2].prepared_host_import.is_some());
+            assert_eq!(engine.statistics.allocations, 0);
+            let returned = VmHostReturn::admit(value, Some(&second)).unwrap();
+            engine.complete_host_call(78, returned).unwrap();
+            assert_eq!(second.live_bytes(), cost.heap_bytes);
+            assert_eq!(engine.statistics.allocations, u64::from(cost.objects));
+            assert_eq!(engine.entry_test_memory.as_ref().unwrap().live_bytes(), 0);
+            drop(engine);
+            assert_eq!(first.live_bytes(), 0);
+            assert_eq!(second.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn polled_reply_admission_uses_the_waiter_account_and_preserves_rejected_state() {
+        use super::{AtomicBool, AtomicU64, TestInstructionBudget, TestWorkBudget};
+
+        struct PolledHost {
+            value: Option<RuntimeValue>,
+            owner: VmMemoryBudget,
+            ready: bool,
+            committed: bool,
+            discarded: bool,
+            reject_storage: bool,
+        }
+        impl VmHost for PolledHost {
+            fn invoke(&mut self, name: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+            fn preview_polled_return(
+                &self,
+                call: u64,
+            ) -> Result<Option<super::super::VmHostReturnPreview<'_>>, VmError> {
+                assert_eq!(call, 77);
+                Ok(self.ready.then(|| {
+                    super::super::VmHostReturnPreview::Value(self.value.as_ref().unwrap())
+                }))
+            }
+            fn discard_previewed_return(&mut self, call: u64) -> Result<(), VmError> {
+                assert_eq!(call, 77);
+                assert!(self.ready && !self.committed && !self.discarded);
+                self.discarded = true;
+                self.ready = false;
+                Ok(())
+            }
+            fn poll_async_owned(&mut self, call: u64) -> Result<Option<VmHostReturn>, VmError> {
+                assert_eq!(call, 77);
+                assert!(!self.discarded, "a rejected preview must never be polled");
+                if !self.ready {
+                    return Ok(None);
+                }
+                let mut response = super::super::VmHostReturnBudget::new(Some(&self.owner));
+                response.reserve(0, [self.value.as_ref().unwrap()])?;
+                if self.reject_storage {
+                    return Err(VmError::ResourceLimit {
+                        resource: "host storage",
+                        limit: 0,
+                    });
+                }
+                let returned = response.finish(self.value.take().unwrap())?;
+                self.committed = true;
+                self.ready = false;
+                Ok(Some(returned))
+            }
+        }
+
+        let (program, array) = prepared_import_program();
+        for route in ["call", "defer", "spawn"] {
+            for terminal in [
+                "returned",
+                "short",
+                "transport-short",
+                "host-error",
+                "not-ready",
+                "cancelled",
+            ] {
+                if terminal == "cancelled" && route != "spawn" {
+                    continue;
+                }
+                let value = PreparedReplyHost::new().value.unwrap();
+                let transport = value.retained_bytes().unwrap();
+                let mut rejecting = RejectingHost;
+                let cost = executor_engine(&program, &mut rejecting)
+                    .host_import_cost(array, &value, None)
+                    .unwrap();
+                let additional = cost.heap_bytes - cost.string_bytes
+                    + cost.frames as u64 * super::super::TEST_HOST_IMPORT_FRAME_BYTES
+                    + super::super::TEST_HOST_IMPORT_ADMISSION_BYTES;
+                let limit = match terminal {
+                    "short" => additional - 1,
+                    "transport-short" => additional + transport - 1,
+                    _ => additional + transport,
+                };
+                let owner = VmMemoryBudget::new(limit);
+                let other = VmMemoryBudget::new(0);
+                let mut host = PolledHost {
+                    value: Some(value),
+                    owner: owner.clone(),
+                    ready: terminal != "not-ready",
+                    committed: false,
+                    discarded: false,
+                    reject_storage: terminal == "host-error",
+                };
+                let mut engine = executor_engine_with_scope(&program, &mut host);
+                engine.entry_test_memory = Some(other.clone());
+                engine.test_instruction_budgets.push(TestInstructionBudget {
+                    id: "receiving-test".into(),
+                    owner: 1,
+                    work: Arc::new(TestWorkBudget {
+                        steps: AtomicU64::new(0),
+                        stopped: AtomicBool::new(false),
+                        memory: owner.clone(),
+                    }),
+                    containment_steps: 0,
+                    exhausted: false,
+                });
+                engine.task_test_budgets.insert(1, 0);
+                engine.restore_test_heap_budget();
+                let wait = match route {
+                    "spawn" => TaskWait::HostTask {
+                        call: 77,
+                        outcome: array,
+                    },
+                    "defer" => TaskWait::DeferredHostCall {
+                        call: 77,
+                        outcome: array,
+                        target: BytecodeBlockId::new(0),
+                        completion: None,
+                    },
+                    _ => TaskWait::HostCall {
+                        call: 77,
+                        outcome: array,
+                        destination: BytecodePlace {
+                            slot: BytecodeSlotId::new(0),
+                            ty: array,
+                            projections: Vec::new(),
+                            source_loan: None,
+                        },
+                        target: BytecodeBlockId::new(0),
+                        unwind: BytecodeBlockId::new(0),
+                        completion: None,
+                    },
+                };
+                engine.tasks.push(scheduler_task(TaskStatus::Waiting(wait)));
+                engine.tasks[1].cancel_requested = terminal == "cancelled";
+                engine.poll_host_calls().unwrap();
+                assert_eq!(engine.current_task, 0);
+                assert_eq!(
+                    engine.frames.len(),
+                    1,
+                    "polling must preserve the caller frame"
+                );
+                assert_eq!(other.live_bytes(), 0, "{route}/{terminal}");
+                if terminal == "returned" {
+                    if route != "spawn" {
+                        let returned = match engine.tasks[1].resume.take().unwrap() {
+                            TaskWait::HostCall {
+                                completion: Some(value),
+                                ..
+                            }
+                            | TaskWait::DeferredHostCall {
+                                completion: Some(value),
+                                ..
+                            } => value,
+                            _ => panic!("missing admitted completion"),
+                        };
+                        engine
+                            .with_task_context(1, |engine| {
+                                engine.materialize_host_return(array, returned)
+                            })
+                            .unwrap();
+                    }
+                    assert_eq!(owner.live_bytes(), cost.heap_bytes, "{route}/{terminal}");
+                    assert_eq!(engine.statistics.allocations, u64::from(cost.objects));
+                } else {
+                    assert_eq!(owner.live_bytes(), 0, "{route}/{terminal}");
+                    assert_eq!(engine.statistics.allocations, 0);
+                    if matches!(terminal, "short" | "transport-short" | "host-error") {
+                        assert!(matches!(engine.tasks[1].resume, Some(TaskWait::Failed(_))));
+                    }
+                }
+                assert!(engine.tasks[1].prepared_host_import.is_none());
+                drop(engine);
+                assert_eq!(owner.live_bytes(), 0);
+                assert_eq!(host.discarded, terminal == "short");
+                assert_eq!(host.committed, matches!(terminal, "returned" | "cancelled"));
+                assert_eq!(host.value.is_some(), !host.committed);
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_host_import_preserves_types_storage_limits_and_exact_payload_charges() {
+        use super::host_import;
+        use crate::runtime::VmHostReturnPreview;
+        let (program, array) = prepared_import_program();
+        let long = RuntimeValue::Array(vec![RuntimeValue::String("x".repeat(512))]);
+        let wide = RuntimeValue::Array(vec![RuntimeValue::String(String::new()); 4]);
+        let previews = [
+            VmHostReturnPreview::Value(&long),
+            VmHostReturnPreview::Value(&wide),
+        ];
+        for (value, succeeds) in [
+            (long.clone(), true),
+            (wide.clone(), true),
+            (RuntimeValue::Array(Vec::new()), true),
+            (
+                RuntimeValue::Array(vec![RuntimeValue::String("ok".into()); 2]),
+                true,
+            ),
+            (
+                RuntimeValue::Array(vec![RuntimeValue::String("x".repeat(513))]),
+                false,
+            ),
+            (
+                RuntimeValue::Array(vec![RuntimeValue::String(String::new()); 5]),
+                false,
+            ),
+            (RuntimeValue::Array(vec![RuntimeValue::Integer(1)]), false),
+        ] {
+            let mut host = PreparedReplyHost::new();
+            let mut engine = executor_engine(&program, &mut host);
+            let owner = VmMemoryBudget::new(65536);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let cost = engine
+                .host_import_preview_cost(
+                    array,
+                    VmHostReturnPreview::StorageBound(&previews),
+                    Some(&owner),
+                )
+                .unwrap();
+            assert!(cost.bounded);
+            let expected = engine.host_import_cost(array, &value, None);
+            let roots = engine.roots(&[]).unwrap();
+            let prepared = host_import::reserve_prepared_import(
+                &mut engine.heap,
+                &mut engine.statistics,
+                &roots,
+                array,
+                cost,
+                owner.clone(),
+            )
+            .unwrap();
+            let returned = VmHostReturn::admit(value, Some(&owner)).unwrap();
+            let result = engine.materialize_host_value_with_admission(
+                array,
+                returned.value,
+                returned.memory,
+                Some(prepared),
+            );
+            assert_eq!(result.is_ok(), succeeds, "{result:?}");
+            if succeeds {
+                let expected = expected.unwrap();
+                assert_eq!(owner.live_bytes(), expected.heap_bytes);
+                assert_eq!(engine.statistics.allocations, u64::from(expected.objects));
+            } else {
+                assert_eq!(owner.live_bytes(), 0);
+                assert_eq!(engine.statistics.allocations, 0);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        let mut host = PreparedReplyHost::new();
+        let engine = executor_engine(&program, &mut host);
+        let too_many = [VmHostReturnPreview::Value(&long); 17];
+        let nested = [VmHostReturnPreview::StorageBound(&previews)];
+        for invalid in [&[][..], too_many.as_slice(), nested.as_slice()] {
+            assert!(
+                engine
+                    .host_import_preview_cost(
+                        array,
+                        VmHostReturnPreview::StorageBound(invalid),
+                        None,
+                    )
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_import_rejects_changed_replies_without_partial_heap_or_retained_slots() {
+        let (program, array) = prepared_import_program();
+        for fault in [
+            "type",
+            "child",
+            "size",
+            "depth",
+            "missing-account",
+            "foreign-account",
+        ] {
+            let mut host = PreparedReplyHost::new();
+            let mut engine = executor_engine(&program, &mut host);
+            let owner = VmMemoryBudget::new(65536);
+            let other = VmMemoryBudget::new(65536);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let mut prepared = engine
+                .prepare_host_return_import("probe", &[], array)
+                .unwrap()
+                .unwrap();
+            let (_, types) = executor_program();
+            let ty = if fault == "type" { types.string } else { array };
+            let value = match fault {
+                "child" => RuntimeValue::Array(vec![RuntimeValue::Integer(3)]),
+                "size" => RuntimeValue::Array(Vec::new()),
+                "depth" => {
+                    prepared.cost.frames = 0;
+                    RuntimeValue::Array(vec![RuntimeValue::String("nested".into())])
+                }
+                _ => PreparedReplyHost::new().value.unwrap(),
+            };
+            let returned = VmHostReturn::admit(
+                value,
+                match fault {
+                    "missing-account" => None,
+                    "foreign-account" => Some(&other),
+                    _ => Some(&owner),
+                },
+            )
+            .unwrap();
+            let error = engine
+                .materialize_host_value_with_admission(
+                    ty,
+                    returned.value,
+                    returned.memory,
+                    Some(prepared),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    VmError::Host(_)
+                        | VmError::Invariant(_)
+                        | VmError::ResourceLimit {
+                            resource: "host import depth",
+                            ..
+                        }
+                ),
+                "{fault}: {error}"
+            );
+            assert_eq!(engine.statistics.allocations, 0, "{fault}");
+            assert_eq!(owner.live_bytes(), 0, "{fault}");
+            assert_eq!(other.live_bytes(), 0, "{fault}");
+            assert!(engine.import_objects.is_none());
+            assert!(engine.import_heap_memory.is_none());
+            assert!(engine.import_frames.is_empty());
+            // Released claims must leave the whole object limit available.
+            engine
+                .heap
+                .reserve_import_objects(
+                    pressure_limits().max_heap_objects,
+                    &[],
+                    &mut engine.statistics,
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn prepared_spawned_reply_releases_admission_on_completion_cancellation_and_failure() {
+        let (program, array) = prepared_import_program();
+        for terminal in ["returned", "cancelled", "failed"] {
+            let mut host = PreparedReplyHost::new();
+            let mut engine = executor_engine_with_scope(&program, &mut host);
+            let owner = VmMemoryBudget::new(65536);
+            let other = VmMemoryBudget::new(65536);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let arguments = engine.snapshot_arguments(&[]).unwrap();
+            let task = engine
+                .start_host_task("probe", arguments, array, 0, None)
+                .unwrap();
+            let cost = engine.tasks[task]
+                .prepared_host_import
+                .as_ref()
+                .unwrap()
+                .cost;
+            let scheduler_bytes = engine.tasks[task].memory.as_ref().unwrap().bytes();
+            let returned = engine.host.poll_async_owned(1).unwrap().unwrap();
+            engine.entry_test_memory = Some(other.clone());
+            engine.restore_test_heap_budget();
+            if terminal == "failed" {
+                drop(returned);
+                engine
+                    .complete_host_outcome(
+                        1,
+                        Err(VmError::ResourceLimit {
+                            resource: "host storage",
+                            limit: 0,
+                        }),
+                    )
+                    .unwrap();
+            } else {
+                engine.tasks[task].cancel_requested = terminal == "cancelled";
+                engine.complete_host_call(1, returned).unwrap();
+            }
+            assert!(engine.tasks[task].prepared_host_import.is_none());
+            assert_eq!(
+                owner.live_bytes(),
+                scheduler_bytes
+                    + if terminal == "returned" {
+                        cost.heap_bytes
+                    } else {
+                        0
+                    },
+                "{terminal}"
+            );
+            assert_eq!(other.live_bytes(), 0, "{terminal}");
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0, "{terminal}");
+        }
+    }
+
+    #[test]
+    fn host_import_rejects_whole_aggregates_before_allocating_children() {
+        let (mut program, types) = executor_program();
+        let array = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Array[String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: vec![types.string],
+            },
+        });
+        let string_bytes = HeapObject::String("x".repeat(1024)).estimated_bytes();
+        let array_bytes = HeapObject::Array(vec![None; 2].into()).estimated_bytes();
+        let heap_bytes = 2 * string_bytes + array_bytes;
+        // Imported strings move their admitted payload. Detached descriptors
+        // remain live through conversion under the existing transport model.
+        let peak = heap_bytes
+            + 3 * super::super::TEST_DETACHED_VALUE_BYTES
+            + super::super::TEST_HOST_IMPORT_FRAME_BYTES;
+        for shortage in [0, 1] {
+            let owner = super::VmMemoryBudget::new(peak - shortage);
+            let mut host = RejectingHost;
+            let mut engine = executor_engine(&program, &mut host);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let returned = super::VmHostReturn::admit(
+                RuntimeValue::Array(vec![RuntimeValue::String("x".repeat(1024)); 2]),
+                Some(&owner),
+            )
+            .unwrap();
+            let result = engine.materialize_host_return(array, returned);
+            if shortage == 0 {
+                let value = result.unwrap();
+                assert_eq!(owner.live_bytes(), heap_bytes);
+                let HeapObject::Array(values) =
+                    engine.heap.get(value.heap_handle().unwrap()).unwrap()
+                else {
+                    panic!("expected imported array")
+                };
+                assert_eq!(values.len(), 2);
+                assert_eq!(engine.statistics.allocations, 3);
+            } else {
+                assert!(result.unwrap_err().is_resource_limit());
+                assert_eq!(
+                    engine.statistics.allocations, 0,
+                    "whole response admission must precede child construction"
+                );
+                assert_eq!(
+                    owner.live_bytes(),
+                    0,
+                    "rejection retains no partial imported graph"
+                );
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn split_array_previews_preserve_order_capacity_and_complete_import_admission() {
+        use super::super::{VmHostReturnBudget, VmHostReturnPreview};
+
+        let (program, array) = prepared_import_program();
+        for shape in ["empty", "first", "second", "wrapped"] {
+            for short in [false, true] {
+                let mut queue = std::collections::VecDeque::with_capacity(4);
+                if shape != "empty" {
+                    for text in ["first", "second", "é", "🦀"] {
+                        let mut retained = String::with_capacity(128);
+                        retained.push_str(text);
+                        queue.push_back(RuntimeValue::String(retained));
+                    }
+                }
+                if shape == "wrapped" {
+                    for _ in 0..2 {
+                        let value = queue.pop_front().unwrap();
+                        queue.push_back(value);
+                    }
+                }
+                let expected = queue.iter().cloned().collect::<Vec<_>>();
+                let (first, second) = queue.as_slices();
+                if shape == "wrapped" {
+                    assert!(!first.is_empty() && !second.is_empty());
+                } else {
+                    assert!(second.is_empty());
+                }
+                let preview = if shape == "second" {
+                    VmHostReturnPreview::ArrayParts {
+                        first: &[],
+                        second: first,
+                    }
+                } else {
+                    VmHostReturnPreview::ArrayParts { first, second }
+                };
+                let mut host = RejectingHost;
+                let mut engine = executor_engine_with_scope(&program, &mut host);
+                let cost = engine
+                    .host_import_preview_cost(array, preview, None)
+                    .unwrap();
+                let transport = 32
+                    + queue
+                        .iter()
+                        .map(|value| value.retained_bytes().unwrap())
+                        .sum::<u64>();
+                let peak = transport + cost.heap_bytes - cost.string_bytes
+                    + cost.frames as u64 * super::super::TEST_HOST_IMPORT_FRAME_BYTES
+                    + super::super::TEST_HOST_IMPORT_ADMISSION_BYTES;
+                let owner = VmMemoryBudget::new(peak - u64::from(short));
+                engine.entry_test_memory = Some(owner.clone());
+                engine.restore_test_heap_budget();
+                let result = engine.with_host_import_admission_for(Some(array), |_, admission| {
+                    let prepared = admission.prepare_current(preview)?;
+                    let mut response = VmHostReturnBudget::new(Some(&owner));
+                    response.reserve(32, queue.iter())?;
+                    admission.commit(&mut [prepared])?;
+                    Ok(response)
+                });
+                assert_eq!(engine.statistics.allocations, 0);
+                if short {
+                    assert!(
+                        result.as_ref().is_err_and(VmError::is_resource_limit),
+                        "{shape}"
+                    );
+                    assert_eq!(queue.iter().cloned().collect::<Vec<_>>(), expected);
+                    assert!(engine.tasks[0].prepared_host_import.is_none());
+                    assert_eq!(owner.live_bytes(), 0);
+                } else {
+                    // Move the original strings, retaining their spare capacity.
+                    // Cloning here would change the graph after its preview.
+                    let value = RuntimeValue::Array(queue.into_iter().collect());
+                    assert_eq!(engine.host_import_cost(array, &value, None).unwrap(), cost);
+                    let returned = result.unwrap().finish(value).unwrap();
+                    let imported = engine.materialize_host_return(array, returned).unwrap();
+                    assert_eq!(
+                        snapshot_value(&imported, &engine.heap, &[], &[]).unwrap(),
+                        RuntimeValue::Array(expected)
+                    );
+                    assert_eq!(owner.live_bytes(), cost.heap_bytes);
+                    assert_eq!(engine.statistics.allocations, u64::from(cost.objects));
+                }
+                drop(engine);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        let mut host = RejectingHost;
+        let engine = executor_engine(&program, &mut host);
+        let owner = VmMemoryBudget::new(4096);
+        let first = [RuntimeValue::String("valid".into())];
+        let second = [RuntimeValue::Integer(7)];
+        for ty in [array, BytecodeTypeId::new(0)] {
+            assert!(matches!(
+                engine.host_import_preview_cost(
+                    ty,
+                    VmHostReturnPreview::ArrayParts {
+                        first: &first,
+                        second: &second
+                    },
+                    Some(&owner)
+                ),
+                Err(VmError::Host(_))
+            ));
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        let short = VmMemoryBudget::new(super::super::TEST_DETACHED_WALK_FRAME_BYTES - 1);
+        assert!(
+            engine
+                .host_import_preview_cost(
+                    array,
+                    VmHostReturnPreview::ArrayParts {
+                        first: &first,
+                        second: &[]
+                    },
+                    Some(&short)
+                )
+                .unwrap_err()
+                .is_resource_limit()
+        );
+        assert_eq!(short.live_bytes(), 0);
+    }
+
+    #[test]
+    fn typed_host_import_admission_matches_actual_heap_shapes_and_rejects_invalid_children() {
+        let (mut program, types) = executor_program();
+        {
+            let mut host = RejectingHost;
+            let engine = executor_engine(&program, &mut host);
+            for preview in [
+                super::super::VmHostReturnPreview::Variant(0, &RuntimeValue::Integer(3)),
+                super::super::VmHostReturnPreview::OptionSome(&RuntimeValue::Integer(3)),
+                super::super::VmHostReturnPreview::ResultOk(&RuntimeValue::Integer(3)),
+                super::super::VmHostReturnPreview::ResultOkOption(Some(&RuntimeValue::Integer(3))),
+                super::super::VmHostReturnPreview::ResultOkOption(None),
+                super::super::VmHostReturnPreview::ResultOkVariant(0, &RuntimeValue::Integer(3)),
+                super::super::VmHostReturnPreview::ResultOkVariantOption(0, None),
+            ] {
+                assert!(
+                    matches!(
+                        engine.host_import_preview_cost(types.int, preview, None),
+                        Err(VmError::Host(_))
+                    ),
+                    "a scalar cannot admit a wrapped preview"
+                );
+            }
+        }
+        program.types.push(BytecodeType {
+            name: "Ref[String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Ref,
+                arguments: vec![types.string],
+            },
+        });
+        let process = BytecodeTypeId::new(
+            program
+                .types
+                .iter()
+                .position(|ty| ty.name == "ProcessHandle")
+                .unwrap() as u32,
+        );
+        program.types.push(BytecodeType {
+            name: "ProcessHandle | String".into(),
+            kind: BytecodeTypeKind::Union(vec![process, types.string]),
+        });
+        let optional = BytecodeTypeId::new(
+            program
+                .types
+                .iter()
+                .position(|ty| ty.name == "String?")
+                .unwrap() as u32,
+        );
+        program.types.push(BytecodeType {
+            name: "String? ! String".into(),
+            kind: BytecodeTypeKind::Result {
+                success: optional,
+                error: types.string,
+            },
+        });
+        let event = BytecodeTypeId::new(
+            program
+                .types
+                .iter()
+                .position(|ty| ty.name == "Event")
+                .unwrap() as u32,
+        );
+        let event_result = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Event ! String".into(),
+            kind: BytecodeTypeKind::Result {
+                success: event,
+                error: types.string,
+            },
+        });
+        {
+            let mut host = RejectingHost;
+            let engine = executor_engine(&program, &mut host);
+            let text = RuntimeValue::String("observed".into());
+            for ordinal in [0, 2, 3, u32::MAX] {
+                assert!(matches!(
+                    engine.host_import_preview_cost(
+                        event,
+                        super::super::VmHostReturnPreview::Variant(ordinal, &text),
+                        None,
+                    ),
+                    Err(VmError::Host(_))
+                ));
+            }
+            for preview in [
+                super::super::VmHostReturnPreview::ResultOkVariant(0, &text),
+                super::super::VmHostReturnPreview::ResultOkVariant(2, &text),
+                super::super::VmHostReturnPreview::ResultOkVariant(3, &text),
+                super::super::VmHostReturnPreview::ResultOkVariant(u32::MAX, &text),
+                super::super::VmHostReturnPreview::ResultOkVariant(1, &RuntimeValue::Integer(3)),
+                super::super::VmHostReturnPreview::ResultOkVariantOption(1, Some(&text)),
+                super::super::VmHostReturnPreview::ResultOkVariantOption(1, None),
+            ] {
+                assert!(
+                    matches!(
+                        engine.host_import_preview_cost(event_result, preview, None),
+                        Err(VmError::Host(_))
+                    ),
+                    "invalid ordinal, non-tuple variant or incompatible payload must reject before dispatch"
+                );
+            }
+        }
+        let text = || RuntimeValue::String("x".repeat(128));
+        let array = || RuntimeValue::Array(vec![text(), text()]);
+        let cases = vec![
+            ("Int", RuntimeValue::Integer(7)),
+            ("String", text()),
+            ("Array[String]", array()),
+            ("Array[String]", RuntimeValue::Array(vec![])),
+            (
+                "Map[String, Array[String]]",
+                RuntimeValue::Map(vec![(text(), array())]),
+            ),
+            (
+                "(Array[String], Array[String])",
+                RuntimeValue::Tuple(vec![array(), array()]),
+            ),
+            ("Set[String]", RuntimeValue::Set(vec![text()])),
+            ("String?", RuntimeValue::OptionNone),
+            ("String?", RuntimeValue::OptionSome(Box::new(text()))),
+            (
+                "Event ! String",
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 1,
+                    values: vec![text()],
+                })),
+            ),
+            (
+                "Event ! String",
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 2,
+                    values: vec![array()],
+                })),
+            ),
+            (
+                "String? ! String",
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone)),
+            ),
+            (
+                "String? ! String",
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(Box::new(text())))),
+            ),
+            (
+                "String ! Array[String]",
+                RuntimeValue::ResultOk(Box::new(text())),
+            ),
+            (
+                "String ! Array[String]",
+                RuntimeValue::ResultErr(Box::new(array())),
+            ),
+            (
+                "String | Array[String]",
+                RuntimeValue::Union {
+                    member: types.string.index(),
+                    value: Box::new(text()),
+                },
+            ),
+            ("Ref[String]", RuntimeValue::Ref(None)),
+            ("Ref[String]", RuntimeValue::Ref(Some(Box::new(text())))),
+            (
+                "TextBox",
+                RuntimeValue::Newtype {
+                    name: "TextBox".into(),
+                    value: Box::new(text()),
+                },
+            ),
+            (
+                "Message",
+                RuntimeValue::Record {
+                    name: "Message".into(),
+                    values: vec![text(), array()],
+                },
+            ),
+            (
+                "Event",
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 0,
+                    values: vec![],
+                },
+            ),
+            (
+                "Event",
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 1,
+                    values: vec![text()],
+                },
+            ),
+            (
+                "Event",
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 2,
+                    values: vec![array()],
+                },
+            ),
+            (
+                "ProcessHandle",
+                RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProcessHandle,
+                    id: 1,
+                },
+            ),
+            (
+                "ProcessHandle | String",
+                RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProcessHandle,
+                    id: 1,
+                },
+            ),
+            (
+                "executor.Pool",
+                RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ExecutorPool,
+                    id: 1,
+                },
+            ),
+        ];
+        for (name, value) in cases {
+            let ty = BytecodeTypeId::new(
+                program.types.iter().position(|ty| ty.name == name).unwrap() as u32,
+            );
+            let mut reference_host = RejectingHost;
+            let mut reference = executor_engine(&program, &mut reference_host);
+            let cost = reference.host_import_cost(ty, &value, None).unwrap();
+            let preview = match &value {
+                RuntimeValue::ResultOk(value) => match value.as_ref() {
+                    RuntimeValue::Variant {
+                        variant, values, ..
+                    } if *variant == 1 && values.len() == 1 => {
+                        // Event's second payload-bearing variant has named fields;
+                        // keep it on the complete-value preview below.
+                        super::super::VmHostReturnPreview::ResultOkVariant(*variant, &values[0])
+                    }
+                    RuntimeValue::OptionSome(value) => {
+                        super::super::VmHostReturnPreview::ResultOkOption(Some(value))
+                    }
+                    RuntimeValue::OptionNone => {
+                        super::super::VmHostReturnPreview::ResultOkOption(None)
+                    }
+                    _ => super::super::VmHostReturnPreview::ResultOk(value),
+                },
+                RuntimeValue::OptionSome(value) => {
+                    super::super::VmHostReturnPreview::OptionSome(value)
+                }
+                RuntimeValue::Variant {
+                    variant: 1, values, ..
+                } if values.len() == 1 => super::super::VmHostReturnPreview::Variant(1, &values[0]),
+                _ => super::super::VmHostReturnPreview::Value(&value),
+            };
+            assert_eq!(
+                reference
+                    .host_import_preview_cost(ty, preview, None)
+                    .unwrap(),
+                cost,
+                "{name}"
+            );
+            let raw = reference.materialize_host_value(ty, value.clone()).unwrap();
+            assert_eq!(
+                reference.statistics.peak_live_bytes, cost.heap_bytes,
+                "{name}"
+            );
+            assert_eq!(
+                reference.statistics.allocations,
+                u64::from(cost.objects),
+                "{name}"
+            );
+            let expected = snapshot_value(&raw, &reference.heap, &[], &[]).unwrap();
+            let peak = value.retained_bytes().unwrap() + cost.heap_bytes - cost.string_bytes
+                + cost.frames as u64 * super::super::TEST_HOST_IMPORT_FRAME_BYTES;
+            for shortage in [0, 1] {
+                let owner = super::VmMemoryBudget::new(peak - shortage);
+                let mut host = RejectingHost;
+                let mut engine = executor_engine(&program, &mut host);
+                engine.entry_test_memory = Some(owner.clone());
+                engine.restore_test_heap_budget();
+                let result = super::VmHostReturn::admit(value.clone(), Some(&owner))
+                    .and_then(|returned| engine.materialize_host_return(ty, returned));
+                if shortage == 1 {
+                    assert!(result.unwrap_err().is_resource_limit(), "{name}");
+                    assert_eq!(engine.statistics.allocations, 0, "{name}");
+                    assert_eq!(owner.live_bytes(), 0, "{name}");
+                } else {
+                    let result = result.unwrap();
+                    assert_eq!(
+                        snapshot_value(&result, &engine.heap, &[], &[]).unwrap(),
+                        expected,
+                        "{name}"
+                    );
+                    assert_eq!(owner.live_bytes(), cost.heap_bytes, "{name}");
+                }
+                drop(engine);
+                assert_eq!(owner.live_bytes(), 0, "{name}");
+            }
+        }
+        let ty = BytecodeTypeId::new(
+            program
+                .types
+                .iter()
+                .position(|ty| ty.name == "Array[String]")
+                .unwrap() as u32,
+        );
+        let owner = super::VmMemoryBudget::new(4096);
+        let mut host = RejectingHost;
+        let mut engine = executor_engine(&program, &mut host);
+        engine.entry_test_memory = Some(owner.clone());
+        engine.restore_test_heap_budget();
+        let returned = super::VmHostReturn::admit(
+            RuntimeValue::Array(vec![text(), RuntimeValue::Integer(7)]),
+            Some(&owner),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine.materialize_host_return(ty, returned),
+            Err(VmError::Host(_))
+        ));
+        assert_eq!(engine.statistics.allocations, 0);
+        assert_eq!(owner.live_bytes(), 0);
+    }
+
+    #[test]
+    fn host_import_specializes_nominal_payloads_and_preserves_opaque_descriptors() {
+        let (mut program, types) = executor_program();
+        let first = BytecodeTypeId::new(
+            program.types.iter().position(|ty| ty.name == "$0").unwrap() as u32,
+        );
+        let second = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "$1".into(),
+            kind: BytecodeTypeKind::GenericParameter(1),
+        });
+        let strings = BytecodeTypeId::new(
+            program
+                .types
+                .iter()
+                .position(|ty| ty.name == "Array[String]")
+                .unwrap() as u32,
+        );
+        let text = || RuntimeValue::String("payload".repeat(32));
+        let array = || RuntimeValue::Array(vec![text(), text()]);
+        let fields = vec![
+            BytecodeField {
+                member: 9,
+                ty: second,
+            },
+            BytecodeField {
+                member: 3,
+                ty: first,
+            },
+        ];
+        let mut cases = vec![
+            (types.string, text()),
+            (types.int, RuntimeValue::Integer(7)),
+        ];
+        for (name, shape, values) in [
+            (
+                "ImportBox",
+                BytecodeNominalShape::Newtype { underlying: second },
+                vec![RuntimeValue::Newtype {
+                    name: "ImportBox".into(),
+                    value: Box::new(array()),
+                }],
+            ),
+            (
+                "ImportPair",
+                BytecodeNominalShape::Record {
+                    fields: fields.clone(),
+                },
+                vec![RuntimeValue::Record {
+                    name: "ImportPair".into(),
+                    values: vec![array(), text()],
+                }],
+            ),
+            (
+                "ImportEvent",
+                BytecodeNominalShape::Enum {
+                    variants: vec![
+                        BytecodeVariant {
+                            member: 7,
+                            payload: BytecodeVariantPayload::Unit,
+                        },
+                        BytecodeVariant {
+                            member: 13,
+                            payload: BytecodeVariantPayload::Tuple(vec![second, first]),
+                        },
+                        BytecodeVariant {
+                            member: 2,
+                            payload: BytecodeVariantPayload::Record(fields),
+                        },
+                    ],
+                },
+                vec![
+                    RuntimeValue::Variant {
+                        name: "ImportEvent".into(),
+                        variant: 0,
+                        values: vec![],
+                    },
+                    RuntimeValue::Variant {
+                        name: "ImportEvent".into(),
+                        variant: 1,
+                        values: vec![array(), text()],
+                    },
+                    RuntimeValue::Variant {
+                        name: "ImportEvent".into(),
+                        variant: 2,
+                        values: vec![array(), text()],
+                    },
+                ],
+            ),
+        ] {
+            let nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+            let identity = format!("test::{name}");
+            program.nominals.push(BytecodeNominal {
+                name: name.into(),
+                identity: identity.clone(),
+                generic_arity: 2,
+                shape,
+            });
+            let ty = BytecodeTypeId::new(program.types.len() as u32);
+            program.types.push(BytecodeType {
+                name: format!("{name}[String, Array[String]]"),
+                kind: BytecodeTypeKind::Nominal {
+                    nominal: Some(nominal),
+                    identity,
+                    arguments: vec![types.string, strings],
+                },
+            });
+            cases.extend(values.into_iter().map(|value| (ty, value)));
+        }
+        for (ty, value) in cases {
+            let mut descriptor = ty;
+            for opaque_depth in 0..=2 {
+                if opaque_depth != 0 {
+                    let witness = descriptor;
+                    descriptor = BytecodeTypeId::new(program.types.len() as u32);
+                    program.types.push(BytecodeType {
+                        name: format!("OpaqueImport{}", descriptor.index()),
+                        kind: BytecodeTypeKind::OpaqueResult {
+                            identity: format!("test::opaque_import{}", descriptor.index()),
+                            arguments: vec![],
+                            witness,
+                            capabilities: BytecodeCapabilitySet::default(),
+                        },
+                    });
+                }
+                let mut host = RejectingHost;
+                let mut probe = executor_engine(&program, &mut host);
+                let cost = probe.host_import_cost(descriptor, &value, None).unwrap();
+                let reference = probe
+                    .materialize_host_value(descriptor, value.clone())
+                    .unwrap();
+                assert_eq!(
+                    snapshot_value(
+                        &reference,
+                        &probe.heap,
+                        &probe.callable_names,
+                        &probe.nominal_names
+                    )
+                    .unwrap(),
+                    value
+                );
+                assert_eq!(probe.statistics.peak_live_bytes, cost.heap_bytes);
+                let peak = value.retained_bytes().unwrap() + cost.heap_bytes - cost.string_bytes
+                    + cost.frames as u64 * super::super::TEST_HOST_IMPORT_FRAME_BYTES;
+                drop(probe);
+                for shortage in [0, 1] {
+                    let owner = super::VmMemoryBudget::new(peak - shortage);
+                    let mut host = RejectingHost;
+                    let mut engine = executor_engine(&program, &mut host);
+                    engine.entry_test_memory = Some(owner.clone());
+                    engine.restore_test_heap_budget();
+                    let result = super::VmHostReturn::admit(value.clone(), Some(&owner))
+                        .and_then(|returned| engine.materialize_host_return(descriptor, returned));
+                    if shortage == 0 {
+                        let actual = result.unwrap();
+                        assert_eq!(
+                            snapshot_value(
+                                &actual,
+                                &engine.heap,
+                                &engine.callable_names,
+                                &engine.nominal_names
+                            )
+                            .unwrap(),
+                            value
+                        );
+                        if let Some(handle) = actual.heap_handle() {
+                            assert_eq!(engine.heap.descriptor(handle).unwrap(), descriptor);
+                        }
+                        assert_eq!(engine.statistics.allocations, u64::from(cost.objects));
+                        assert_eq!(owner.live_bytes(), cost.heap_bytes);
+                    } else {
+                        assert!(result.unwrap_err().is_resource_limit());
+                        assert_eq!(engine.statistics.allocations, 0);
+                        assert_eq!(owner.live_bytes(), 0);
+                    }
+                    drop(engine);
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+                let invalid = match value.clone() {
+                    RuntimeValue::Integer(_) => text(),
+                    RuntimeValue::String(_) => RuntimeValue::Integer(7),
+                    RuntimeValue::Newtype { name, .. } => RuntimeValue::Newtype {
+                        name,
+                        value: Box::new(RuntimeValue::Array(vec![
+                            text(),
+                            RuntimeValue::Integer(7),
+                        ])),
+                    },
+                    RuntimeValue::Record { name, .. } => RuntimeValue::Record {
+                        name,
+                        values: vec![array(), RuntimeValue::Integer(7)],
+                    },
+                    RuntimeValue::Variant { name, variant, .. } => RuntimeValue::Variant {
+                        name,
+                        variant,
+                        values: if variant == 0 {
+                            vec![RuntimeValue::Integer(7)]
+                        } else {
+                            vec![array(), RuntimeValue::Integer(7)]
+                        },
+                    },
+                    _ => unreachable!("this fixture covers scalar and nominal payloads"),
+                };
+                let owner = super::VmMemoryBudget::new(65_536);
+                let mut host = RejectingHost;
+                let mut engine = executor_engine(&program, &mut host);
+                engine.entry_test_memory = Some(owner.clone());
+                engine.restore_test_heap_budget();
+                let returned = super::VmHostReturn::admit(invalid, Some(&owner)).unwrap();
+                assert!(matches!(
+                    engine.materialize_host_return(descriptor, returned),
+                    Err(VmError::Host(_))
+                ));
+                assert_eq!(engine.statistics.allocations, 0);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn host_import_preflight_bounds_workspace_depth_and_object_capacity() {
+        let (mut program, types) = executor_program();
+        let array = BytecodeTypeId::new(
+            program
+                .types
+                .iter()
+                .position(|ty| ty.name == "Array[Int]")
+                .unwrap() as u32,
+        );
+        let wide = RuntimeValue::Array(vec![RuntimeValue::Integer(7); 10_000]);
+        let mut host = RejectingHost;
+        let engine = executor_engine(&program, &mut host);
+        for limit in [63, 64] {
+            let owner = super::VmMemoryBudget::new(limit);
+            let result = engine.host_import_cost(array, &wide, Some(&owner));
+            if limit == 63 {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap().objects, 1);
+            }
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        drop(engine);
+        let mut ty = types.int;
+        let mut value = RuntimeValue::Integer(7);
+        for depth in 1..=super::super::TEST_SNAPSHOT_MAX_DEPTH + 1 {
+            let next = BytecodeTypeId::new(program.types.len() as u32);
+            program.types.push(BytecodeType {
+                name: format!("NestedOption{depth}"),
+                kind: BytecodeTypeKind::Option(ty),
+            });
+            ty = next;
+            value = RuntimeValue::OptionSome(Box::new(value));
+            if depth < super::super::TEST_SNAPSHOT_MAX_DEPTH {
+                continue;
+            }
+            let owner = super::VmMemoryBudget::new(1_048_576);
+            let mut host = RejectingHost;
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                VmLimits {
+                    max_heap_objects: 512,
+                    max_heap_bytes: 1_048_576,
+                    initial_gc_threshold: 512,
+                    ..VmLimits::default()
+                },
+                ValueCopyStrategy::default(),
+                derive_trace_metadata(&program).unwrap(),
+            );
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let returned = super::VmHostReturn::admit(value.clone(), Some(&owner)).unwrap();
+            let result = engine.materialize_host_return(ty, returned);
+            if depth == super::super::TEST_SNAPSHOT_MAX_DEPTH {
+                assert!(result.is_ok());
+                assert_eq!(engine.statistics.allocations, depth as u64);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "host import depth",
+                        ..
+                    })
+                ));
+                assert_eq!(engine.statistics.allocations, 0);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            drop(engine);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        let strings = BytecodeTypeId::new(
+            program
+                .types
+                .iter()
+                .position(|ty| ty.name == "Array[String]")
+                .unwrap() as u32,
+        );
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 2,
+                initial_gc_threshold: 2,
+                ..VmLimits::default()
+            },
+            ValueCopyStrategy::default(),
+            derive_trace_metadata(&program).unwrap(),
+        );
+        let owner = super::VmMemoryBudget::new(8192);
+        engine.entry_test_memory = Some(owner.clone());
+        engine.restore_test_heap_budget();
+        let returned = super::VmHostReturn::admit(
+            RuntimeValue::Array(vec![RuntimeValue::String("x".repeat(128)); 2]),
+            Some(&owner),
+        )
+        .unwrap();
+        assert!(
+            engine
+                .materialize_host_return(strings, returned)
+                .unwrap_err()
+                .is_resource_limit()
+        );
+        assert_eq!(engine.statistics.allocations, 0);
+        assert_eq!(owner.live_bytes(), 0);
+    }
+
+    #[test]
+    fn internal_host_dispatch_moves_owned_arguments_without_copying_the_payload() {
+        struct PointerHost {
+            pointer: usize,
+            owner: super::VmMemoryBudget,
+            calls: usize,
+        }
+        impl VmHost for PointerHost {
+            fn invoke(
+                &mut self,
+                _: &str,
+                arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                let [RuntimeValue::String(text)] = arguments else {
+                    panic!("missing argument")
+                };
+                assert_eq!(text.as_ptr() as usize, self.pointer);
+                assert_eq!(self.owner.live_bytes(), 1056);
+                self.calls += 1;
+                Ok(RuntimeValue::Unit)
+            }
+        }
+        let (program, _) = executor_program();
+        for limit in [1055, 1088] {
+            let text = "x".repeat(1024);
+            let owner = super::VmMemoryBudget::new(limit);
+            let mut host = PointerHost {
+                pointer: text.as_ptr() as usize,
+                owner: owner.clone(),
+                calls: 0,
+            };
+            let mut engine = executor_engine(&program, &mut host);
+            engine.entry_test_memory = Some(owner.clone());
+            engine.restore_test_heap_budget();
+            let result = engine.invoke_host("owned.probe", vec![RuntimeValue::String(text)]);
+            if limit == 1055 {
+                assert!(result.unwrap_err().is_resource_limit());
+                assert_eq!(owner.live_bytes(), 0);
+            } else {
+                let returned = result.unwrap();
+                assert_eq!(returned.value, RuntimeValue::Unit);
+                assert_eq!(owner.live_bytes(), 32);
+                drop(returned);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            drop(engine);
+            assert_eq!(host.calls, usize::from(limit != 1055));
+        }
+    }
+
+    #[test]
+    fn final_host_collection_preserves_only_the_detached_return() {
+        use crate::runtime::VmHostRoots;
+
+        struct RootHost {
+            live: VmHostRoots,
+            collections: usize,
+        }
+        impl VmHost for RootHost {
+            fn invoke(&mut self, _: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+                Err(VmError::Host("unexpected dispatch".into()))
+            }
+            fn tracks_host_roots(&self) -> bool {
+                true
+            }
+            fn collect_host_values(&mut self, roots: &VmHostRoots) -> Result<(), VmError> {
+                self.live.retain(|root| roots.contains(root));
+                self.collections += 1;
+                Ok(())
+            }
+        }
+        let (program, _) = executor_program();
+        let retained = (RuntimeHostValueKind::Bytes, 7);
+        for returns_handle in [false, true] {
+            let mut host = RootHost {
+                live: [retained, (RuntimeHostValueKind::Reader, 9)]
+                    .into_iter()
+                    .collect(),
+                collections: 0,
+            };
+            let value = if returns_handle {
+                Value::Host(RuntimeValue::Host {
+                    kind: retained.0,
+                    id: retained.1,
+                })
+            } else {
+                Value::Unit
+            };
+            let mut engine = executor_engine(&program, &mut host);
+            engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+                TaskCompletion::Returned(value),
+            ))));
+            let result = engine.finish_root_task().unwrap();
+            if returns_handle {
+                assert_eq!(
+                    result.execution.outcome,
+                    VmOutcome::Returned(RuntimeValue::Host {
+                        kind: retained.0,
+                        id: retained.1
+                    })
+                );
+            } else {
+                assert_eq!(
+                    result.execution.outcome,
+                    VmOutcome::Returned(RuntimeValue::Unit)
+                );
+            }
+            drop(engine);
+            assert_eq!(host.collections, 1);
+            assert_eq!(
+                host.live,
+                if returns_handle {
+                    [retained].into_iter().collect()
+                } else {
+                    VmHostRoots::new()
+                }
+            );
+        }
+    }
+
+    #[test]
     fn detached_host_snapshots_do_not_become_vm_roots() {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
@@ -28781,6 +34876,7 @@ mod tests {
             source_loan: None,
         };
         let program = BytecodeProgram {
+            reflection: Default::default(),
             types: vec![
                 BytecodeType {
                     name: "String".into(),
@@ -28800,6 +34896,7 @@ mod tests {
             ],
             nominals: Vec::new(),
             callables: vec![BytecodeCallable {
+                assertion_display: None,
                 name: "main".into(),
                 generic_arity: 0,
                 parameters: Vec::new(),
@@ -29091,9 +35188,11 @@ mod tests {
             )
             .unwrap();
         engine.cleanup_host_value(&host_value).unwrap();
-        assert_eq!(engine.start_host_async("read", &[], None).unwrap(), 41);
+        engine.prepare_host_collection(&[]).unwrap();
+        assert_eq!(engine.dispatch_host_async("read", &[], None).unwrap(), 41);
 
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -29118,6 +35217,7 @@ mod tests {
 
         engine.tasks.push(scheduler_task(TaskStatus::Running));
         engine.tasks[1].frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -29443,6 +35543,7 @@ mod tests {
             receiver: true,
         };
         let callable = |name: &str, outcome: BytecodeTypeId, parameters| BytecodeCallable {
+            assertion_display: None,
             name: name.into(),
             generic_arity: 0,
             parameters,
@@ -29702,6 +35803,7 @@ mod tests {
             closed: false,
         }));
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -29713,8 +35815,10 @@ mod tests {
             select: None,
         });
         engine.tasks.push(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Running,
             resume: None,
@@ -29755,8 +35859,10 @@ mod tests {
         }));
         engine.frames.last_mut().unwrap().task_scopes.push(1);
         engine.tasks.push(TaskRecord {
+            memory: None,
             frames: Vec::new(),
             pending_unwind: None,
+            prepared_host_import: None,
             async_collect: None,
             status: TaskStatus::Running,
             resume: None,
@@ -30227,6 +36333,52 @@ mod tests {
             engine.tasks[cancelled_task].status,
             TaskStatus::Complete(Some(TaskCompletion::Cancelled))
         ));
+    }
+
+    #[test]
+    fn executor_memory_rejects_result_storage_before_publishing_a_pool_or_worker() {
+        for blocking in [false, true] {
+            let (program, types) = executor_program();
+            let mut host = RejectingHost;
+            let mut engine = executor_engine(&program, &mut host);
+            let bytes = crate::runtime::TEST_SCHEDULER_HANDLE_BYTES
+                + crate::runtime::TEST_EXECUTOR_WORKER_BYTES
+                + crate::runtime::TEST_SCHEDULER_VALUE_BYTES;
+            let budget = super::VmMemoryBudget::new(bytes);
+            engine.entry_test_memory = Some(budget.clone());
+            engine.restore_test_heap_budget();
+            let outcome = if blocking {
+                types.blocking_result
+            } else {
+                types.pool_result
+            };
+            let constructor = executor_metadata("std.executor.pool", outcome, types.function_type);
+            let before = engine.next_executor_id;
+            assert!(
+                matches!(engine.executor_pool_constructor(&constructor, &[Value::Integer(1), Value::Integer(1)], blocking), Err(error) if error.is_resource_limit())
+            );
+            assert_eq!(engine.next_executor_id, before);
+            assert!(engine.pools.is_empty());
+            assert!(engine.blocking_bridges.is_empty());
+            assert!(engine.scheduler_handle_memory.is_empty());
+            assert_eq!(budget.live_bytes(), 0);
+
+            let admitted = super::VmMemoryBudget::new(bytes + 1024);
+            engine.entry_test_memory = Some(admitted.clone());
+            engine.restore_test_heap_budget();
+            engine
+                .executor_pool_constructor(
+                    &constructor,
+                    &[Value::Integer(1), Value::Integer(1)],
+                    blocking,
+                )
+                .unwrap();
+            assert_eq!(engine.pools.len(), 1);
+            assert_eq!(engine.blocking_bridges.len(), usize::from(blocking));
+            assert!(admitted.live_bytes() > bytes);
+            drop(engine);
+            assert_eq!(admitted.live_bytes(), 0);
+        }
     }
 
     #[test]
@@ -30905,6 +37057,7 @@ mod tests {
             vec![0, 1]
         );
         let deferred = RuntimeDefer {
+            memory: None,
             scope: BytecodeScopeId::new(0),
             span: BytecodeSpan {
                 file: 0,
@@ -30984,7 +37137,11 @@ mod tests {
         );
         assert!(
             engine
-                .copy_array_snapshot(BytecodeTypeId::new(6), &[Some(Value::Integer(1))], &[0])
+                .copy_array_snapshot(
+                    BytecodeTypeId::new(6),
+                    &[Some(Value::Integer(1))],
+                    [0].into_iter()
+                )
                 .is_ok()
         );
         assert!(engine.actor_handler_error_type(999).is_err());
@@ -30999,7 +37156,7 @@ mod tests {
         assert!(engine.prepare_iterator_call(&metadata, &[]).is_err());
         assert_eq!(
             engine
-                .materialize_blocking_value(types.int, RuntimeValue::Integer(5))
+                .materialize_host_value_with_charge(types.int, RuntimeValue::Integer(5), None)
                 .unwrap(),
             Value::Integer(5)
         );
@@ -31036,7 +37193,7 @@ mod tests {
             PlaceComponent::MapKey(RuntimeValue::String("key".into())),
             PlaceComponent::Slice(vec![0, 2]),
         ]);
-        assert_ne!(hash, 0);
+        assert_eq!(hash, 0x1f1f_940f_4771_8332);
         assert!(super::place_contains(&place(types.int), &place(types.int)));
 
         assert!(engine.resume_actor_message(999).is_err());
@@ -31065,6 +37222,7 @@ mod tests {
                         kind: crate::bytecode::BytecodeProjectionKind::TupleField(0),
                     },
                     false,
+                    &mut None,
                 )
                 .is_err()
         );
@@ -31136,6 +37294,7 @@ mod tests {
         let mut host = RejectingHost;
         let mut engine = executor_engine(&program, &mut host);
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(1),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -31837,12 +37996,12 @@ mod tests {
             TaskWait::PoolLifecycle {
                 pool: 1,
                 cancel: false,
-                destination: BytecodePlace {
+                destination: Some(BytecodePlace {
                     slot: BytecodeSlotId::new(0),
                     ty: types.int,
                     projections: Vec::new(),
                     source_loan: None,
-                },
+                }),
                 target: BytecodeBlockId::new(0),
                 unwind: BytecodeBlockId::new(0),
             },
@@ -31898,6 +38057,7 @@ mod tests {
 
         engine.pools.insert(4, open_executor_pool(1, 1));
         engine.frames.push(Frame {
+            memory: None,
             function: BytecodeFunctionId::new(1),
             block: BytecodeBlockId::new(0),
             instruction: 0,
@@ -32353,6 +38513,7 @@ mod tests {
             source_loan: None,
         };
         let frame = || Frame {
+            memory: None,
             function: BytecodeFunctionId::new(0),
             block: BytecodeBlockId::new(0),
             instruction: 0,

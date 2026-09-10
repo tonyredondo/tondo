@@ -116,6 +116,23 @@ Los valores se observan en orden FIFO de commit. La concurrencia puede decidir
 qué operación se lineariza primero, pero una vez comprometido el orden no se
 reordena por task, prioridad ni orden de finalización de un scheduler.
 
+Hosted rendezvous commits only when the buffer is empty. An already registered
+receiver consumes buffered values before a newer send, including when the VM
+polls the sender first or the sender uses a direct `send`/`trySend` call.
+
+During test participation, pending rendezvous admits both typed VM results and
+detached transport before committing either endpoint. Failed admission leaves
+the peer uncommitted and releases tentative reservations. Pending buffered sends
+admit their typed acknowledgement before enqueueing, and buffered reception
+admits its typed result before removal. Synchronous trySend/tryReceive jointly
+admit their caller and pending peer, and buffered trySend admits its typed
+acknowledgement before growth. Constructors and forks reserve their typed
+results before publishing identities; receiver close admits its complete array
+before changing the endpoint count or draining the queue. These verified routes
+also reserve results in an accounted blocking worker's own heap, with
+cancellation ordered against publication. Their exact scope is recorded in
+[test limits](test-limits.md); they do not establish complete T0 accounting.
+
 ## Ownership y commit
 
 Un envío mueve `value` únicamente en su punto de linearización (invariante

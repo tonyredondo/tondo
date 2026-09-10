@@ -7,9 +7,9 @@ fn hidden(value: Int): impl Discard {
 fn cleanup[T: Discard](values: Array[T]) {
     for value in values {
         _ = value
-        console.print("x")
+        _ = console.print("x")
     }
-    console.print("\n")
+    _ = console.print("\n")
 }
 
 fn arrayCase() {
@@ -25,9 +25,9 @@ fn arrayCase() {
 fn cleanupMap[T: Discard](values: Map[String, T]) {
     for entry in values {
         _ = entry
-        console.print("m")
+        _ = console.print("m")
     }
-    console.print("\n")
+    _ = console.print("\n")
 }
 
 fn mapCase() {

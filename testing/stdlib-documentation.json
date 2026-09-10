@@ -309,6 +309,8 @@
           "status": "verified",
           "reason": null,
           "refs": [
+            "crates/tondo-cli/tests/cli.rs#console_public_errors_and_results_execute",
+            "crates/tondo-compiler/src/bootstrap/console_io.to",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
@@ -319,6 +321,8 @@
           "status": "verified",
           "reason": null,
           "refs": [
+            "crates/tondo-cli/tests/cli.rs",
+            "crates/tondo-compiler/src/bootstrap/console_io.to",
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "docs/contracts/stdlib-hosted.md"
@@ -328,22 +332,22 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.console:10",
-            "std.console:11",
             "std.console:12",
             "std.console:13",
             "std.console:14",
             "std.console:15",
-            "std.console:16"
+            "std.console:16",
+            "std.console:17",
+            "std.console:18"
           ],
           "verified_signatures": [
-            "std.console:10",
-            "std.console:11",
             "std.console:12",
             "std.console:13",
             "std.console:14",
             "std.console:15",
-            "std.console:16"
+            "std.console:16",
+            "std.console:17",
+            "std.console:18"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -588,18 +592,18 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.format:256",
-            "std.format:257",
-            "std.format:258",
-            "std.format:259",
-            "std.format:260"
+            "std.format:261",
+            "std.format:262",
+            "std.format:263",
+            "std.format:264",
+            "std.format:265"
           ],
           "verified_signatures": [
-            "std.format:256",
-            "std.format:257",
-            "std.format:258",
-            "std.format:259",
-            "std.format:260"
+            "std.format:261",
+            "std.format:262",
+            "std.format:263",
+            "std.format:264",
+            "std.format:265"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -644,19 +648,21 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Enums, File I/O, path mutations, ordinary Metadata snapshots, Directory storage and bounded readAll/listing admission have executable regressions included in joint workspace validation. Complete owner promotion and public-row conformance evidence remain pending.",
           "refs": [
+            "crates/tondo-compiler/src/bootstrap/fs_io.to",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-stdlib/src/fs.rs",
             "crates/tondo-vm/src/bytecode.rs",
             "crates/tondo-vm/src/bytecode/verify.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ]
         },
         "bridge": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Enums, File I/O, path mutations, ordinary Metadata snapshots, Directory storage and bounded readAll/listing admission have executable regressions included in joint workspace validation. Complete owner promotion and public-row conformance evidence remain pending.",
           "refs": [
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/process_host.rs",
@@ -667,36 +673,36 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.fs:85",
-            "std.fs:86",
-            "std.fs:87",
-            "std.fs:88",
-            "std.fs:89",
-            "std.fs:90",
-            "std.fs:91",
-            "std.fs:92",
-            "std.fs:93",
-            "std.fs:94",
-            "std.fs:95",
-            "std.fs:96",
-            "std.fs:97",
-            "std.fs:98"
+            "std.fs:107",
+            "std.fs:108",
+            "std.fs:109",
+            "std.fs:110",
+            "std.fs:111",
+            "std.fs:112",
+            "std.fs:113",
+            "std.fs:114",
+            "std.fs:115",
+            "std.fs:116",
+            "std.fs:117",
+            "std.fs:118",
+            "std.fs:119",
+            "std.fs:120"
           ],
           "verified_signatures": [
-            "std.fs:85",
-            "std.fs:86",
-            "std.fs:87",
-            "std.fs:88",
-            "std.fs:89",
-            "std.fs:90",
-            "std.fs:91",
-            "std.fs:92",
-            "std.fs:93",
-            "std.fs:94",
-            "std.fs:95",
-            "std.fs:96",
-            "std.fs:97",
-            "std.fs:98"
+            "std.fs:107",
+            "std.fs:108",
+            "std.fs:109",
+            "std.fs:110",
+            "std.fs:111",
+            "std.fs:112",
+            "std.fs:113",
+            "std.fs:114",
+            "std.fs:115",
+            "std.fs:116",
+            "std.fs:117",
+            "std.fs:118",
+            "std.fs:119",
+            "std.fs:120"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -744,6 +750,9 @@
           "status": "verified",
           "reason": null,
           "refs": [
+            "crates/tondo-cli/tests/cli.rs",
+            "crates/tondo-compiler/src/bootstrap/console_io.to",
+            "crates/tondo-compiler/src/bootstrap/io.to",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/verify.rs",
@@ -766,16 +775,22 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.io:286",
-            "std.io:287",
+            "std.io:285",
             "std.io:288",
-            "std.io:289"
+            "std.io:289",
+            "std.io:291",
+            "std.io:292",
+            "std.io:293",
+            "std.io:294"
           ],
           "verified_signatures": [
-            "std.io:286",
-            "std.io:287",
+            "std.io:285",
             "std.io:288",
-            "std.io:289"
+            "std.io:289",
+            "std.io:291",
+            "std.io:292",
+            "std.io:293",
+            "std.io:294"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -819,9 +834,10 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "verified",
-          "reason": null,
+          "status": "partial",
+          "reason": "Own adapters chain and collect, but do not implement the public Iterator bound or direct next; STD-ITER-PROTOCOL-001 retains the reproduced integration gap.; std.iter is an intrinsic portable owner; its compiler/VM iterator adapters have no separate capability provider or ambient host dependency",
           "refs": [
+            "TONDO_IMPLEMENTATION_TRACKER.md#STD-ITER-PROTOCOL-001",
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
@@ -842,12 +858,14 @@
           "status": "complete",
           "reason": null,
           "signatures": [
+            "std.iter:162",
             "std.iter:164",
             "std.iter:165",
             "std.iter:166",
             "std.iter:167"
           ],
           "verified_signatures": [
+            "std.iter:162",
             "std.iter:164",
             "std.iter:165",
             "std.iter:166",
@@ -1042,28 +1060,28 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.math:235",
-            "std.math:236",
-            "std.math:237",
-            "std.math:238",
-            "std.math:239",
             "std.math:240",
             "std.math:241",
             "std.math:242",
             "std.math:243",
-            "std.math:244"
+            "std.math:244",
+            "std.math:245",
+            "std.math:246",
+            "std.math:247",
+            "std.math:248",
+            "std.math:249"
           ],
           "verified_signatures": [
-            "std.math:235",
-            "std.math:236",
-            "std.math:237",
-            "std.math:238",
-            "std.math:239",
             "std.math:240",
             "std.math:241",
             "std.math:242",
             "std.math:243",
-            "std.math:244"
+            "std.math:244",
+            "std.math:245",
+            "std.math:246",
+            "std.math:247",
+            "std.math:248",
+            "std.math:249"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1232,12 +1250,20 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "partial",
-          "reason": "Public owner signatures or implementation routes remain unverified",
+          "status": "verified",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/meta.rs",
+            "crates/tondo-compiler/src/meta_compile.rs",
+            "crates/tondo-compiler/src/meta_frontend.rs",
+            "crates/tondo-compiler/src/meta_generation.rs",
+            "crates/tondo-compiler/src/meta_snapshot.rs",
+            "crates/tondo-compiler/src/meta_source_api.rs",
+            "crates/tondo-compiler/src/meta_type.rs",
             "crates/tondo-compiler/src/meta_vm.rs",
-            "crates/tondo-compiler/src/std_meta.rs"
+            "crates/tondo-compiler/src/project_meta.rs",
+            "crates/tondo-compiler/src/std_meta.rs",
+            "stdlib/meta/src/meta.to"
           ]
         },
         "bridge": {
@@ -1249,17 +1275,69 @@
           ]
         },
         "public_api": {
-          "status": "partial",
-          "reason": "no public signatures are indexed for this owner; its callable surface remains unaudited",
-          "signatures": [],
-          "verified_signatures": [],
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.meta:15",
+            "std.meta:16",
+            "std.meta:17",
+            "std.meta:18",
+            "std.meta:19",
+            "std.meta:20",
+            "std.meta:21",
+            "std.meta:22",
+            "std.meta:23",
+            "std.meta:24",
+            "std.meta:25",
+            "std.meta:26",
+            "std.meta:27",
+            "std.meta:28",
+            "std.meta:29",
+            "std.meta:30",
+            "std.meta:31",
+            "std.meta:32",
+            "std.meta:33",
+            "std.meta:34",
+            "std.meta:35",
+            "std.meta:36",
+            "std.meta:37",
+            "std.meta:38",
+            "std.meta:39"
+          ],
+          "verified_signatures": [
+            "std.meta:15",
+            "std.meta:16",
+            "std.meta:17",
+            "std.meta:18",
+            "std.meta:19",
+            "std.meta:20",
+            "std.meta:21",
+            "std.meta:22",
+            "std.meta:23",
+            "std.meta:24",
+            "std.meta:25",
+            "std.meta:26",
+            "std.meta:27",
+            "std.meta:28",
+            "std.meta:29",
+            "std.meta:30",
+            "std.meta:31",
+            "std.meta:32",
+            "std.meta:33",
+            "std.meta:34",
+            "std.meta:35",
+            "std.meta:36",
+            "std.meta:37",
+            "std.meta:38",
+            "std.meta:39"
+          ],
           "refs": [
             "testing/stdlib-public-api.json"
           ]
         }
       },
       "runtime_applicable": false,
-      "runtime_reason": "current examples exercise compiler components; public provider integration is pending",
+      "runtime_reason": "build-only owner; ordinary Tondo companion execution uses the closed meta VM",
       "examples": [
         {
           "id": "meta-conformance",
@@ -1271,10 +1349,11 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "Public owner signatures or implementation routes remain unverified",
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
           "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.meta",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json"
@@ -1318,28 +1397,28 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.path:47",
-            "std.path:48",
-            "std.path:49",
-            "std.path:50",
-            "std.path:51",
-            "std.path:52",
-            "std.path:53",
-            "std.path:54",
-            "std.path:55",
-            "std.path:56"
+            "std.path:68",
+            "std.path:69",
+            "std.path:70",
+            "std.path:71",
+            "std.path:72",
+            "std.path:73",
+            "std.path:74",
+            "std.path:75",
+            "std.path:76",
+            "std.path:77"
           ],
           "verified_signatures": [
-            "std.path:47",
-            "std.path:48",
-            "std.path:49",
-            "std.path:50",
-            "std.path:51",
-            "std.path:52",
-            "std.path:53",
-            "std.path:54",
-            "std.path:55",
-            "std.path:56"
+            "std.path:68",
+            "std.path:69",
+            "std.path:70",
+            "std.path:71",
+            "std.path:72",
+            "std.path:73",
+            "std.path:74",
+            "std.path:75",
+            "std.path:76",
+            "std.path:77"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1409,42 +1488,42 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.process:148",
-            "std.process:149",
-            "std.process:150",
-            "std.process:151",
-            "std.process:152",
-            "std.process:153",
-            "std.process:154",
-            "std.process:155",
-            "std.process:156",
-            "std.process:157",
-            "std.process:158",
-            "std.process:159",
-            "std.process:160",
-            "std.process:161",
-            "std.process:162",
-            "std.process:163",
-            "std.process:164"
+            "std.process:209",
+            "std.process:210",
+            "std.process:211",
+            "std.process:212",
+            "std.process:213",
+            "std.process:214",
+            "std.process:215",
+            "std.process:216",
+            "std.process:217",
+            "std.process:218",
+            "std.process:219",
+            "std.process:220",
+            "std.process:221",
+            "std.process:222",
+            "std.process:223",
+            "std.process:224",
+            "std.process:225"
           ],
           "verified_signatures": [
-            "std.process:148",
-            "std.process:149",
-            "std.process:150",
-            "std.process:151",
-            "std.process:152",
-            "std.process:153",
-            "std.process:154",
-            "std.process:155",
-            "std.process:156",
-            "std.process:157",
-            "std.process:158",
-            "std.process:159",
-            "std.process:160",
-            "std.process:161",
-            "std.process:162",
-            "std.process:163",
-            "std.process:164"
+            "std.process:209",
+            "std.process:210",
+            "std.process:211",
+            "std.process:212",
+            "std.process:213",
+            "std.process:214",
+            "std.process:215",
+            "std.process:216",
+            "std.process:217",
+            "std.process:218",
+            "std.process:219",
+            "std.process:220",
+            "std.process:221",
+            "std.process:222",
+            "std.process:223",
+            "std.process:224",
+            "std.process:225"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1605,52 +1684,119 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "partial",
-          "reason": "Public owner signatures or implementation routes remain unverified",
+          "status": "verified",
+          "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/reflect.rs"
+            "crates/tondo-compiler/src/bytecode/reflection.rs",
+            "crates/tondo-compiler/src/hir/reflection.rs",
+            "crates/tondo-compiler/src/reflect.rs",
+            "crates/tondo-vm/src/runtime/reflection.rs"
           ]
         },
         "bridge": {
           "status": "not-applicable",
-          "reason": "std.reflect is metadata-only and has no runtime host adapter or ambient provider",
+          "reason": "std.reflect descriptors execute directly in the hosted VM and require no external host adapter or ambient provider",
           "refs": [
             "docs/contracts/std-reflect.md",
             "testing/stdlib-reflect.json"
           ]
         },
         "public_api": {
-          "status": "partial",
-          "reason": "public API audit retains gaps for this owner",
+          "status": "complete",
+          "reason": null,
           "signatures": [
-            "std.reflect:32"
+            "std.reflect:45",
+            "std.reflect:46",
+            "std.reflect:47",
+            "std.reflect:48",
+            "std.reflect:49",
+            "std.reflect:50",
+            "std.reflect:51",
+            "std.reflect:52",
+            "std.reflect:53",
+            "std.reflect:54",
+            "std.reflect:55",
+            "std.reflect:56",
+            "std.reflect:57",
+            "std.reflect:58",
+            "std.reflect:59",
+            "std.reflect:60",
+            "std.reflect:61",
+            "std.reflect:62",
+            "std.reflect:63",
+            "std.reflect:64",
+            "std.reflect:65",
+            "std.reflect:66",
+            "std.reflect:67",
+            "std.reflect:68",
+            "std.reflect:69",
+            "std.reflect:70",
+            "std.reflect:71"
           ],
-          "verified_signatures": [],
+          "verified_signatures": [
+            "std.reflect:45",
+            "std.reflect:46",
+            "std.reflect:47",
+            "std.reflect:48",
+            "std.reflect:49",
+            "std.reflect:50",
+            "std.reflect:51",
+            "std.reflect:52",
+            "std.reflect:53",
+            "std.reflect:54",
+            "std.reflect:55",
+            "std.reflect:56",
+            "std.reflect:57",
+            "std.reflect:58",
+            "std.reflect:59",
+            "std.reflect:60",
+            "std.reflect:61",
+            "std.reflect:62",
+            "std.reflect:63",
+            "std.reflect:64",
+            "std.reflect:65",
+            "std.reflect:66",
+            "std.reflect:67",
+            "std.reflect:68",
+            "std.reflect:69",
+            "std.reflect:70",
+            "std.reflect:71"
+          ],
           "refs": [
             "testing/stdlib-public-api.json"
           ]
         }
       },
-      "runtime_applicable": false,
-      "runtime_reason": "current examples exercise the Rust metadata catalog; public Tondo runtime reflection is pending",
+      "runtime_applicable": true,
+      "runtime_reason": null,
       "examples": [
         {
           "id": "reflect-metadata",
           "kind": "compiler",
           "source": "crates/tondo-compiler/src/reflect.rs",
-          "command": "scripts/stdlib-reflect-test.sh",
+          "command": "cargo test -p tondo-compiler --locked --lib reflect::tests",
           "status": "verified",
           "verification": "compiler-test"
+        },
+        {
+          "id": "reflect-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-reflect-public-001.to",
+          "command": "scripts/stdlib-reflect-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "Public owner signatures or implementation routes remain unverified",
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
           "crates/tondo-compiler/src/reflect.rs",
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.reflect",
           "testing/stdlib-matrix.json",
-          "testing/stdlib-public-api.json"
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-reflect-public-001.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1669,8 +1815,8 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "partial",
-          "reason": "Public owner signatures or implementation routes remain unverified",
+          "status": "verified",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
@@ -1689,10 +1835,64 @@
           ]
         },
         "public_api": {
-          "status": "partial",
-          "reason": "no public signatures are indexed for this owner; its callable surface remains unaudited",
-          "signatures": [],
-          "verified_signatures": [],
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.serialization:61",
+            "std.serialization:62",
+            "std.serialization:63",
+            "std.serialization:64",
+            "std.serialization:65",
+            "std.serialization:66",
+            "std.serialization:67",
+            "std.serialization:68",
+            "std.serialization:69",
+            "std.serialization:71",
+            "std.serialization:72",
+            "std.serialization:74",
+            "std.serialization:75",
+            "std.serialization:76",
+            "std.serialization:78",
+            "std.serialization:79",
+            "std.serialization:80",
+            "std.serialization:82",
+            "std.serialization:83",
+            "std.serialization:87",
+            "std.serialization:88",
+            "std.serialization:89",
+            "std.serialization:90",
+            "std.serialization:91",
+            "std.serialization:95",
+            "std.serialization:99"
+          ],
+          "verified_signatures": [
+            "std.serialization:61",
+            "std.serialization:62",
+            "std.serialization:63",
+            "std.serialization:64",
+            "std.serialization:65",
+            "std.serialization:66",
+            "std.serialization:67",
+            "std.serialization:68",
+            "std.serialization:69",
+            "std.serialization:71",
+            "std.serialization:72",
+            "std.serialization:74",
+            "std.serialization:75",
+            "std.serialization:76",
+            "std.serialization:78",
+            "std.serialization:79",
+            "std.serialization:80",
+            "std.serialization:82",
+            "std.serialization:83",
+            "std.serialization:87",
+            "std.serialization:88",
+            "std.serialization:89",
+            "std.serialization:90",
+            "std.serialization:91",
+            "std.serialization:95",
+            "std.serialization:99"
+          ],
           "refs": [
             "testing/stdlib-public-api.json"
           ]
@@ -1716,17 +1916,27 @@
           "command": "scripts/stdlib-codec-conformance.sh",
           "status": "verified",
           "verification": "external-harness"
+        },
+        {
+          "id": "serialization-public-protocols",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-serialization-public-001.to",
+          "command": "scripts/stdlib-serialization-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "Public owner signatures or implementation routes remain unverified",
+        "status": "pending",
+        "reason": "The conformance registry declares cases; current execution has not been promoted",
         "refs": [
           "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json",
           "testing/stdlib-conformance.json#owners/std.serialization",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
-          "tests/runtime/m11-std-codecs-001.to"
+          "tests/runtime/m11-std-codecs-001.to",
+          "tests/runtime/m11-std-serialization-public-001.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1769,26 +1979,27 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.testing:148",
-            "std.testing:149",
-            "std.testing:150",
-            "std.testing:187",
-            "std.testing:188",
-            "std.testing:189",
-            "std.testing:190",
-            "std.testing:238",
-            "std.testing:239",
-            "std.testing:240",
-            "std.testing:282",
-            "std.testing:283",
-            "std.testing:284",
-            "std.testing:285",
-            "std.testing:286",
-            "std.testing:287",
-            "std.testing:288",
-            "std.testing:289",
-            "std.testing:290",
-            "std.testing:296",
+            "std.testing:203",
+            "std.testing:204",
+            "std.testing:205",
+            "std.testing:254",
+            "std.testing:255",
+            "std.testing:256",
+            "std.testing:257",
+            "std.testing:305",
+            "std.testing:306",
+            "std.testing:307",
+            "std.testing:402",
+            "std.testing:403",
+            "std.testing:404",
+            "std.testing:405",
+            "std.testing:406",
+            "std.testing:407",
+            "std.testing:408",
+            "std.testing:409",
+            "std.testing:410",
+            "std.testing:413",
+            "std.testing:416",
             "std.testing:69",
             "std.testing:70",
             "std.testing:71",
@@ -1796,26 +2007,27 @@
             "std.testing:73"
           ],
           "verified_signatures": [
-            "std.testing:148",
-            "std.testing:149",
-            "std.testing:150",
-            "std.testing:187",
-            "std.testing:188",
-            "std.testing:189",
-            "std.testing:190",
-            "std.testing:238",
-            "std.testing:239",
-            "std.testing:240",
-            "std.testing:282",
-            "std.testing:283",
-            "std.testing:284",
-            "std.testing:285",
-            "std.testing:286",
-            "std.testing:287",
-            "std.testing:288",
-            "std.testing:289",
-            "std.testing:290",
-            "std.testing:296",
+            "std.testing:203",
+            "std.testing:204",
+            "std.testing:205",
+            "std.testing:254",
+            "std.testing:255",
+            "std.testing:256",
+            "std.testing:257",
+            "std.testing:305",
+            "std.testing:306",
+            "std.testing:307",
+            "std.testing:402",
+            "std.testing:403",
+            "std.testing:404",
+            "std.testing:405",
+            "std.testing:406",
+            "std.testing:407",
+            "std.testing:408",
+            "std.testing:409",
+            "std.testing:410",
+            "std.testing:413",
+            "std.testing:416",
             "std.testing:69",
             "std.testing:70",
             "std.testing:71",
@@ -2042,12 +2254,12 @@
   ],
   "summary": {
     "owners": 22,
-    "examples": 32,
-    "runtime_examples": 26,
+    "examples": 34,
+    "runtime_examples": 28,
     "external_examples": 4,
     "compiler_examples": 2,
-    "api_complete": 18,
-    "api_partial": 4,
+    "api_complete": 21,
+    "api_partial": 1,
     "api_not_applicable": 0
   },
   "promotion": {

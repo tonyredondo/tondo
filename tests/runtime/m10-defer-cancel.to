@@ -3,7 +3,7 @@ import std.console
 fn tick() suspends {}
 
 fn cleanup() suspends {
-    console.print("cleanup\n")
+    _ = console.print("cleanup\n")
 }
 
 fn child() {
@@ -18,5 +18,5 @@ fn main() {
         let pending = spawn child()
         return
     }
-    console.print("parent\n")
+    _ = console.print("parent\n")
 }

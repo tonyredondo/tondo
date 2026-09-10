@@ -74,5 +74,5 @@ fn main() {
     replaceGroups(mut borrowedGroups)
     assert(borrowedGroups == [[5, 6], [5, 6]])
 
-    console.print("exclusive-iteration\n")
+    _ = console.print("exclusive-iteration\n")
 }

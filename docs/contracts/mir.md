@@ -159,6 +159,17 @@ only on the successful edge. OWN-004 therefore still needs no recovery
 instruction: the RHS completes before a direct `var` write creates the new root
 definition, while an unwind edge observes no such write.
 
+Managed `Copy + Discard` locals and temporaries allocated in a lexical block
+receive explicit `StorageLive` at its entry and `StorageDead` on its normal
+exits. Entry storage follows the mandatory terminal-parameter fallback prefix
+and dominates alternative bindings. Exit storage follows defer and task
+drains; loop transfers end every abandoned block before the backedge or exit.
+The loan pass processes these events before MIR verification. Parameters,
+the return place and affine cleanup keep their existing storage protocol.
+This is lexical lifetime, not last-use collection: values allocated outside
+the body block, such as iterator state and pattern bindings, remain in the
+enclosing scope.
+
 Every HIR `match` records one `Copy`, `Observe`, or `Consume` mode and the HIR
 verifier rederives it. Tests, tags, shape checks, and guards borrow from one
 stable place or compiler-owned temporary. Copy bindings needed by a guard are
@@ -518,6 +529,14 @@ are removed without execution only at a normal return, after TERM-002 has
 already proved the visible consumption or handoff; an explicit registration
 may never be abandoned there. Every checked-operation panic edge targets one
 shared `DrainUnwind` block, which then reaches `ResumePanic`. The ledger is
+also drained when the runtime interrupts execution between instructions. A
+function that registers explicit cleanup, structural fallback, or a task scope
+must retain exactly one such drain even if its ordinary control flow cannot
+return. This empty cleanup block and the distinguished panic-resume block are
+runtime entries; other unreachable blocks cannot contain executable MIR. The
+drain contains no statements, reads no locals, and targets only the function's
+distinguished panic-resume block, so it does not introduce an unchecked normal
+dataflow path. The ledger is
 independent of loan state: reservations are released before a normal drain or
 invalidated when the frame begins unwinding.
 

@@ -13,10 +13,11 @@ use crate::meta::{
     META_MODEL, MetaContractError, MetaInput, MetaLimits, MetaModelError, MetaOutputSpec,
     MetaRequest, MetaResponse, MetaRoot, MetaSnapshot,
 };
-use crate::meta_vm::{MetaVmArtifact, MetaVmError, MetaVmLimits};
+use crate::meta_vm::{MetaEntryKind, MetaVmArtifact, MetaVmError, MetaVmLimits};
 use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
 use crate::syntax::{
-    LexLimits, LexMode, ParseLimits, ParseMode, format_parsed, lex_with_limits, parse,
+    LexLimits, LexMode, MappedFormattedSource, ParseLimits, ParseMode, format_parsed_with_mappings,
+    lex_with_limits, parse,
 };
 use crate::toolchain::{LockedGenerator, LockedNamedInput};
 
@@ -95,11 +96,17 @@ impl GeneratorProviderRegistry {
         provider: Arc<dyn GeneratorProviderCompiler>,
     ) -> Result<(), GeneratorExecutionError> {
         let key = ProviderKey::for_generator(generator)?;
-        if self.providers.insert(key.clone(), provider).is_some() {
-            return Err(GeneratorExecutionError::DuplicateProvider(format!(
-                "{}::{}@{}",
-                key.package, key.entry, key.hash
-            )));
+        match self.providers.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(provider);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                let key = entry.key();
+                return Err(GeneratorExecutionError::DuplicateProvider(format!(
+                    "{}::{}@{}",
+                    key.package, key.entry, key.hash
+                )));
+            }
         }
         Ok(())
     }
@@ -119,6 +126,7 @@ impl GeneratorProviderRegistry {
 pub struct GeneratorResult {
     generator_id: String,
     provider_hash: String,
+    request: MetaRequest,
     response: MetaResponse,
 }
 
@@ -133,6 +141,10 @@ impl GeneratorResult {
 
     pub fn response(&self) -> &MetaResponse {
         &self.response
+    }
+
+    pub fn request(&self) -> &MetaRequest {
+        &self.request
     }
 }
 
@@ -203,7 +215,8 @@ pub fn execute_generator_plan(
             .iter()
             .map(|root| MetaRoot::new(root.package.clone(), root.module.clone()))
             .collect::<Result<Vec<_>, _>>()?;
-        let expected_roots = MetaSnapshot::new(expected_roots, [], [])?;
+        let expected_roots =
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), expected_roots, [], [])?;
         if snapshot.roots() != expected_roots.roots() {
             return Err(GeneratorExecutionError::SnapshotRoots(generator.id.clone()));
         }
@@ -249,28 +262,44 @@ pub fn execute_generator_plan(
                 generator: generator.id.clone(),
                 message,
             })?;
+        let entry_kind = artifact.entry_kind();
         let execution = artifact
             .load(MetaVmLimits::for_request(limits))
-            .and_then(|program| program.run_with_output_meter(measure_generator_output))
+            .and_then(|program| match entry_kind {
+                Some(MetaEntryKind::Generate) => program.run_with_request(
+                    crate::std_meta::source_api::generate_request(&request),
+                    |outcome| {
+                        crate::std_meta::source_api::measure_generate_output(outcome, &request)
+                    },
+                ),
+                Some(MetaEntryKind::Derive) => Err(MetaVmError::StructuredOutput(
+                    "derive entry cannot serve a generator".into(),
+                )),
+                None => program.run_with_output_meter(measure_generator_output),
+            })
             .map_err(|source| GeneratorExecutionError::ProviderVm {
                 generator: generator.id.clone(),
                 source,
             })?;
-        let VmOutcome::Returned(RuntimeValue::String(encoded)) = execution.outcome else {
+        let response = if entry_kind == Some(MetaEntryKind::Generate) {
+            crate::std_meta::source_api::generate_response(&execution.outcome, &request)
+        } else if let VmOutcome::Returned(RuntimeValue::String(encoded)) = execution.outcome {
+            MetaResponse::decode(encoded.as_bytes())
+                .map_err(|error| MetaVmError::StructuredOutput(error.to_string()))
+        } else {
             return Err(GeneratorExecutionError::InvalidProviderResult(
                 generator.id.clone(),
             ));
-        };
-        let response = MetaResponse::decode(encoded.as_bytes()).map_err(|error| {
-            GeneratorExecutionError::ProviderVm {
-                generator: generator.id.clone(),
-                source: MetaVmError::StructuredOutput(error.to_string()),
-            }
+        }
+        .map_err(|source| GeneratorExecutionError::ProviderVm {
+            generator: generator.id.clone(),
+            source,
         })?;
-        let response = validate_and_format_response(request, response)?;
+        let response = validate_and_format_response(&request, response)?;
         results.push(GeneratorResult {
             generator_id: generator.id.clone(),
             provider_hash: generator.provider_hash.clone(),
+            request,
             response,
         });
     }
@@ -373,26 +402,28 @@ fn validate_generator(
 }
 
 fn validate_and_format_response(
-    request: MetaRequest,
+    request: &MetaRequest,
     response: MetaResponse,
 ) -> Result<MetaResponse, GeneratorExecutionError> {
-    let mut builder = request.into_source_builder();
+    let mut builder = request.clone().into_source_builder();
     for source in response.outputs() {
-        let bytes = format_generated_module(source.bytes())?;
-        if !source.mappings().is_empty() && bytes != source.bytes() {
-            return Err(GeneratorExecutionError::InvalidGeneratedSource);
-        }
+        let formatted = format_generated_module(source.bytes())?;
+        let mappings =
+            crate::meta_source_maps::compose(source.bytes(), &formatted, source.mappings())
+                .map_err(|_| GeneratorExecutionError::InvalidGeneratedSource)?;
         builder.add_mapped_source(
             source.path(),
             source.module(),
-            bytes,
-            source.mappings().iter().copied(),
+            formatted.source().bytes(),
+            mappings,
         )?;
     }
-    Ok(builder.finish()?)
+    Ok(builder
+        .finish()?
+        .with_diagnostics(response.diagnostics().to_vec())?)
 }
 
-fn format_generated_module(bytes: &[u8]) -> Result<Vec<u8>, GeneratorExecutionError> {
+fn format_generated_module(bytes: &[u8]) -> Result<MappedFormattedSource, GeneratorExecutionError> {
     let mut sources = SourceDatabase::new();
     let file = sources
         .add(SourceInput::virtual_file(
@@ -418,8 +449,15 @@ fn format_generated_module(bytes: &[u8]) -> Result<Vec<u8>, GeneratorExecutionEr
     if !parsed.diagnostics().is_empty() {
         return Err(GeneratorExecutionError::InvalidGeneratedSource);
     }
-    format_parsed(&sources, file, &parsed)
-        .map(|source| source.into_bytes())
+    if parsed
+        .cst()
+        .root_node()
+        .child_nodes()
+        .any(|node| node.kind() == crate::syntax::SyntaxKind::DeriveDecl)
+    {
+        return Err(GeneratorExecutionError::InvalidGeneratedSource);
+    }
+    format_parsed_with_mappings(&sources, file, &parsed)
         .map_err(|_| GeneratorExecutionError::InvalidGeneratedSource)
 }
 
@@ -427,13 +465,9 @@ fn measure_generator_output(outcome: &VmOutcome) -> Result<u64, MetaVmError> {
     let VmOutcome::Returned(RuntimeValue::String(encoded)) = outcome else {
         return Ok(0);
     };
-    let response = MetaResponse::decode(encoded.as_bytes())
+    MetaResponse::decode(encoded.as_bytes())
         .map_err(|error| MetaVmError::StructuredOutput(error.to_string()))?;
-    response.outputs().iter().try_fold(0_u64, |total, source| {
-        total
-            .checked_add(source.bytes().len() as u64)
-            .ok_or(MetaVmError::OutputSizeOverflow)
-    })
+    u64::try_from(encoded.len()).map_err(|_| MetaVmError::OutputSizeOverflow)
 }
 
 fn required(field: &str, value: &str) -> Result<(), GeneratorExecutionError> {
@@ -648,7 +682,8 @@ mod tests {
             _request: GeneratorProviderRequest<'_>,
         ) -> Result<MetaVmArtifact, String> {
             let limits = MetaLimits::new(u64::MAX, u64::MAX, u64::MAX).unwrap();
-            let snapshot = MetaSnapshot::new([], [], []).unwrap();
+            let snapshot =
+                MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap();
             let output = MetaOutputSpec::new(self.path, "schema").unwrap();
             let mut builder = MetaRequest::new(snapshot, [], [output], limits)
                 .unwrap()
@@ -708,6 +743,7 @@ mod tests {
         BTreeMap::from([(
             "generate-schema".into(),
             MetaSnapshot::new(
+                crate::meta::MetaEnvironment::meta(),
                 [MetaRoot::new("workspace:app@1", "schema").unwrap()],
                 [],
                 [],
@@ -734,6 +770,10 @@ mod tests {
         let (locked, values) = inputs();
         let mut registry = GeneratorProviderRegistry::default();
         registry.insert_for(&generator, Arc::new(Good)).unwrap();
+        assert!(matches!(
+            registry.insert_for(&generator, Arc::new(Failure)),
+            Err(GeneratorExecutionError::DuplicateProvider(_))
+        ));
         let execution = execute_generator_plan(
             std::slice::from_ref(&generator),
             &locked,
@@ -753,6 +793,19 @@ mod tests {
     }
 
     #[test]
+    fn meta_internal_generator_budget_counts_the_complete_response() {
+        let mut generator = generator();
+        generator.limits.output_bytes = b"fn generated():String{\"ok\"}\n".len() as u64;
+        let mut registry = GeneratorProviderRegistry::default();
+        registry.insert_for(&generator, Arc::new(Good)).unwrap();
+        let (locked, values) = inputs();
+        assert!(
+            matches!(execute_generator_plan(&[generator],&locked,&values,&snapshots(),&registry),
+            Err(GeneratorExecutionError::ProviderVm { source:MetaVmError::OutputLimit {actual,limit},..}) if actual>limit)
+        );
+    }
+
+    #[test]
     fn ambient_input_and_snapshot_drift_are_rejected_before_execution() {
         let generator = generator();
         let (locked, mut values) = inputs();
@@ -769,8 +822,10 @@ mod tests {
         ));
 
         let (_, values) = inputs();
-        let wrong =
-            BTreeMap::from([(generator.id.clone(), MetaSnapshot::new([], [], []).unwrap())]);
+        let wrong = BTreeMap::from([(
+            generator.id.clone(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
+        )]);
         assert!(matches!(
             execute_generator_plan(
                 &[generator],
@@ -942,14 +997,18 @@ mod tests {
             })),
             Err(GeneratorExecutionError::InvalidGeneratedSource)
         ));
-        assert!(matches!(
-            run(Arc::new(ArbitraryResponse {
-                path: "generated/schema.to",
-                source: b"fn mapped():String{\"ok\"}\n".to_vec(),
-                mapped: true,
-            })),
-            Err(GeneratorExecutionError::InvalidGeneratedSource)
-        ));
+        let mapped = run(Arc::new(ArbitraryResponse {
+            path: "generated/schema.to",
+            source: b"fn mapped():String{\"ok\"}\n".to_vec(),
+            mapped: true,
+        }))
+        .unwrap();
+        let source = &mapped.results()[0].response().outputs()[0];
+        assert_eq!(source.bytes(), b"fn mapped(): String {\n    \"ok\"\n}\n");
+        assert_eq!(
+            source.mappings(),
+            &[MetaSourceMapEntry::new(0, 1, MetaSpan::new(0, 0, 1).unwrap()).unwrap()]
+        );
         assert!(matches!(
             run(Arc::new(ArbitraryResponse {
                 path: "generated/schema.to",

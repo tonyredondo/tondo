@@ -87,6 +87,111 @@ fn inline_fixture_observes_structured_driver_output() {
 }
 
 #[test]
+fn public_host_import_specializes_nested_generic_record_fields() {
+    let source = b"import std.sync as concurrent\n\
+        type Envelope[T] = { values: Array[T] }\n\
+        fn main() {\n\
+            let value: Envelope[String] = Envelope { values: [\"payload\"] }\n\
+            let shared: concurrent.Array[Envelope[String]] = concurrent.Array[value]\n\
+            match shared.get(0) {\n\
+                some(item) => assert(item.values.get(0) == some(\"payload\"))\n\
+                none => assert(false)\n\
+            }\n\
+        }\n";
+    let output = execute(inline_module_request(
+        Operation::Run,
+        "generic-host-record.to",
+        source,
+    ))
+    .expect("the verified generic record must cross the host boundary");
+    assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+}
+
+#[test]
+fn public_host_import_retains_types_of_inactive_generic_variant_payloads() {
+    let source = b"import std.sync as concurrent\n\
+        type Payload = { number: Int }\n\
+        enum Choice[T] { Empty, Items(Array[T]) }\n\
+        fn main() {\n\
+            let value: Choice[Payload] = Choice.Empty\n\
+            let shared: concurrent.Array[Choice[Payload]] = concurrent.Array[value]\n\
+            match shared.get(0) {\n\
+                some(_) => ()\n\
+                none => assert(false)\n\
+            }\n\
+        }\n";
+    let output = execute(inline_module_request(
+        Operation::Run,
+        "generic-host-variant.to",
+        source,
+    ))
+    .expect("all declared payloads need concrete trace descriptors");
+    assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+}
+
+#[test]
+fn public_generic_union_payloads_require_nominal_discriminators() {
+    for arguments in [
+        "String, Int",
+        "Int, String",
+        "Int, Int",
+        "Never, Int",
+        "Int | String, Bool",
+    ] {
+        let source = format!(
+            "import std.sync as concurrent\n\
+            type Choice[A, B] = {{ value: A | B }}\n\
+            fn main() {{\n\
+                let value: Choice[{arguments}] = Choice {{ value: 42 }}\n\
+                let shared: concurrent.Array[Choice[{arguments}]] = concurrent.Array[value]\n\
+                match shared.get(0) {{\n some(_) => ()\n none => assert(false)\n }}\n\
+            }}\n"
+        );
+        let output = execute(inline_module_request(
+            Operation::Check,
+            "generic-host-union.to",
+            source.as_bytes(),
+        ))
+        .unwrap();
+        assert_eq!(output.exit_code(), 1);
+        assert!(output.diagnostics().human().contains("E1115"));
+    }
+}
+
+#[test]
+fn public_host_import_normalizes_disjoint_nominal_union_payloads() {
+    let mut failures = Vec::new();
+    for (first, second, value) in [("String", "Int", "\"payload\""), ("Int", "String", "42")] {
+        let source = format!(
+            "import std.sync as concurrent\n\
+            type Cell[A, B] = {{ value: A }}\n\
+            type Choice[A, B] = {{ value: Cell[A, Int] | Cell[B, Bool] }}\n\
+            fn main() {{\n\
+                let value: Choice[{first}, {second}] = Choice {{ value: Cell[{first}, Int] {{ value: {value} }} }}\n\
+                let shared: concurrent.Array[Choice[{first}, {second}]] = concurrent.Array[value]\n\
+                match shared.get(0) {{\n some(_) => ()\n none => assert(false)\n }}\n\
+            }}\n"
+        );
+        match execute(inline_module_request(
+            Operation::Run,
+            "generic-host-nominal-union.to",
+            source.as_bytes(),
+        )) {
+            Ok(output) if output.exit_code() == 0 => {}
+            Ok(output) => failures.push(format!(
+                "{first},{second}: {}",
+                output.diagnostics().human()
+            )),
+            Err(error) => failures.push(format!("{first},{second}: {error}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "disjoint nominal union failures: {failures:?}"
+    );
+}
+
+#[test]
 fn public_driver_executes_a_fallible_virtual_time_callback() {
     let base = inline_module_request(
         Operation::Test,

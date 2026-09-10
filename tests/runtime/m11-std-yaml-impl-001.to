@@ -17,5 +17,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.Ya
     assert(String(typed_encoded)? == "- 1\n- 2\n")
     let all = yaml.parseAll(bytes.Bytes("---\none\n---\ntwo\n")?, options)?
     assert(all.length() == 2)
-    console.println("yaml-ok")
+    _ = console.println("yaml-ok")
 }

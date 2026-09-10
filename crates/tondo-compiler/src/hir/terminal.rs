@@ -128,13 +128,8 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::FsError
         | IntrinsicType::MathError
         | IntrinsicType::FloatTolerance
-        | IntrinsicType::FloatToleranceError
-        | IntrinsicType::TextDiff
         | IntrinsicType::TempDirectory
-        | IntrinsicType::TempError
         | IntrinsicType::Generator
-        | IntrinsicType::GenerationId
-        | IntrinsicType::GenerationError
         | IntrinsicType::Reader
         | IntrinsicType::Writer
         | IntrinsicType::IoLimits
@@ -193,6 +188,7 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::ProtoUnknownPolicy
         | IntrinsicType::ProtoReader
         | IntrinsicType::ProtoWriter
+        | IntrinsicType::Reflection(_)
         | IntrinsicType::UnknownFields => None,
     }
 }
@@ -513,7 +509,8 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set | IntrinsicType::Range => {
             dependent(arguments)
         }
-        IntrinsicType::Ref
+        IntrinsicType::Reflection(_)
+        | IntrinsicType::Ref
         | IntrinsicType::Pointer
         | IntrinsicType::Group
         | IntrinsicType::Mutex
@@ -548,13 +545,8 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::FsError
         | IntrinsicType::MathError
         | IntrinsicType::FloatTolerance
-        | IntrinsicType::FloatToleranceError
-        | IntrinsicType::TextDiff
         | IntrinsicType::TempDirectory
-        | IntrinsicType::TempError
         | IntrinsicType::Generator
-        | IntrinsicType::GenerationId
-        | IntrinsicType::GenerationError
         | IntrinsicType::Reader
         | IntrinsicType::Writer
         | IntrinsicType::IoLimits

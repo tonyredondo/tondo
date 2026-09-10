@@ -12,7 +12,7 @@ fn base64_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | 
     assert(String(decoded)? == "fo")
     let url = encoding.Base64Options.urlSafeUnpadded(limits).encode(source)?
     assert(String(url)? == "Zm8")
-    console.println("base64-interoperability:Zm8=:Zm8:fo")
+    _ = console.println("base64-interoperability:Zm8=:Zm8:fo")
 }
 
 fn hex_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
@@ -24,7 +24,7 @@ fn hex_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | enc
     assert(String(upper)? == "666F")
     let decoded = encoding.HexOptions.anyCase(limits).decode(upper)?
     assert(String(decoded)? == "fo")
-    console.println("hex-policy:666f:666F:fo")
+    _ = console.println("hex-policy:666f:666F:fo")
 }
 
 fn streaming_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
@@ -50,7 +50,7 @@ fn streaming_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError
     assert(String(hex_output)? == "666F")
     let hex_tail = hex_encoder.finish()?
     assert(hex_tail.length() == 0)
-    console.println("streaming-invariance:Zm8:666F")
+    _ = console.println("streaming-invariance:Zm8:666F")
 }
 
 fn strict_error_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
@@ -69,7 +69,7 @@ fn strict_error_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleEr
             _ => assert(false)
         }
     }
-    console.println("strict-errors:4:0:4:2")
+    _ = console.println("strict-errors:4:0:4:2")
 }
 
 fn limits_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
@@ -104,11 +104,11 @@ fn limits_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | 
     let zero = encoding.EncodingLimits.create(0, 0)?
     let empty = encoding.Base64Options.standard(zero).encode(bytes.empty()?)?
     assert(empty.length() == 0)
-    console.println("limits-and-lifecycle:5:7:empty")
+    _ = console.println("limits-and-lifecycle:5:7:empty")
 }
 
 fn route_boundary() {
-    console.println("route-boundary:scalar:simd-not-claimed")
+    _ = console.println("route-boundary:scalar:simd-not-claimed")
 }
 
 fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encoding.EncodingError) {
@@ -118,5 +118,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encodin
     strict_error_case()?
     limits_case()?
     route_boundary()
-    console.println("encoding-conformance-ok")
+    _ = console.println("encoding-conformance-ok")
 }

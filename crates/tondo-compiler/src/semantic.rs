@@ -102,6 +102,8 @@ pub struct SemanticModel {
     sources: SourceDatabase,
     resolved: ResolvedProgram,
     hir: Option<HirProgram>,
+    meta_results: Vec<crate::meta_atomic::AcceptedMetaResult>,
+    meta_descriptors: Vec<crate::meta_query::MetaQueryDescriptor>,
 }
 
 impl SemanticModel {
@@ -115,6 +117,8 @@ impl SemanticModel {
             sources,
             resolved,
             hir: None,
+            meta_results: Vec::new(),
+            meta_descriptors: Vec::new(),
         }
     }
 
@@ -129,7 +133,38 @@ impl SemanticModel {
             sources,
             resolved,
             hir: Some(hir),
+            meta_results: Vec::new(),
+            meta_descriptors: Vec::new(),
         }
+    }
+
+    /// Accepted expansions, final formatted source, identities and source maps.
+    /// Only an explicitly authorized derive target can retain private facts.
+    pub fn meta_expansions(
+        &self,
+    ) -> Result<crate::meta_query::MetaQueryDocument, crate::meta_query::MetaQueryError> {
+        crate::meta_query::MetaQueryDocument::build(
+            &self.meta_results,
+            self.meta_descriptors.clone(),
+        )
+    }
+
+    pub(crate) fn set_meta_expansions(
+        &mut self,
+        results: Vec<crate::meta_atomic::AcceptedMetaResult>,
+        descriptors: Vec<crate::meta_query::MetaQueryDescriptor>,
+    ) -> Result<(), crate::meta_query::MetaQueryError> {
+        crate::meta_query::MetaQueryDocument::build(&results, descriptors.clone())?;
+        self.meta_results = results;
+        self.meta_descriptors = descriptors;
+        Ok(())
+    }
+
+    pub(crate) fn meta_results(&self) -> &[crate::meta_atomic::AcceptedMetaResult] {
+        &self.meta_results
+    }
+    pub(crate) fn meta_descriptors(&self) -> &[crate::meta_query::MetaQueryDescriptor] {
+        &self.meta_descriptors
     }
 
     pub fn sources(&self) -> &SourceDatabase {

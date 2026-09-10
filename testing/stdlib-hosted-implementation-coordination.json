@@ -2,7 +2,7 @@
   "format": "tondo-stdlib-hosted-implementation-coordination/1",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "closed-coordination",
+  "status": "open-gaps",
   "sources": {
     "owner_contract": "testing/stdlib-hosted.json",
     "implementation": "testing/stdlib-implementation.json",
@@ -45,7 +45,9 @@
         "refs": [
           "crates/tondo-compiler/src/process_host.rs",
           "crates/tondo-compiler/src/driver.rs",
-          "docs/contracts/stdlib-hosted.md"
+          "docs/contracts/stdlib-hosted.md",
+          "crates/tondo-compiler/src/bootstrap/console_io.to",
+          "crates/tondo-cli/tests/cli.rs"
         ]
       },
       "public_api": {
@@ -57,43 +59,43 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.console:10",
-            "symbol": "std.console.stdin",
-            "signature": "pub fn stdin(): std.io.Reader ! ConsoleError",
-            "status": "verified"
-          },
-          {
-            "id": "std.console:11",
-            "symbol": "std.console.stdout",
-            "signature": "pub fn stdout(): std.io.Writer ! ConsoleError",
-            "status": "verified"
-          },
-          {
             "id": "std.console:12",
-            "symbol": "std.console.stderr",
-            "signature": "pub fn stderr(): std.io.Writer ! ConsoleError",
+            "symbol": "std.console.stdin",
+            "signature": "pub fn stdin(): Input ! ConsoleError",
             "status": "verified"
           },
           {
             "id": "std.console:13",
-            "symbol": "std.console.readLine",
-            "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError suspends",
+            "symbol": "std.console.stdout",
+            "signature": "pub fn stdout(): Output ! ConsoleError",
             "status": "verified"
           },
           {
             "id": "std.console:14",
+            "symbol": "std.console.stderr",
+            "signature": "pub fn stderr(): Output ! ConsoleError",
+            "status": "verified"
+          },
+          {
+            "id": "std.console:15",
+            "symbol": "std.console.readLine",
+            "signature": "pub fn readLine(input: var Input): String? ! ConsoleError suspends",
+            "status": "verified"
+          },
+          {
+            "id": "std.console:16",
             "symbol": "std.console.print",
             "signature": "pub fn print(value: String): Unit ! ConsoleError",
             "status": "verified"
           },
           {
-            "id": "std.console:15",
+            "id": "std.console:17",
             "symbol": "std.console.println",
             "signature": "pub fn println(value: String): Unit ! ConsoleError",
             "status": "verified"
           },
           {
-            "id": "std.console:16",
+            "id": "std.console:18",
             "symbol": "std.console.flush",
             "signature": "pub fn flush(): Unit ! ConsoleError suspends",
             "status": "verified"
@@ -133,61 +135,61 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.path:47",
+            "id": "std.path:68",
             "symbol": "std.path.Path.fromString",
             "signature": "pub fn Path.fromString(value: String): Path ! PathError",
             "status": "verified"
           },
           {
-            "id": "std.path:48",
+            "id": "std.path:69",
             "symbol": "std.path.Path.fromBytes",
             "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
             "status": "verified"
           },
           {
-            "id": "std.path:49",
+            "id": "std.path:70",
             "symbol": "std.path.Path.join",
             "signature": "pub fn Path.join(self, component: String): Path ! PathError",
             "status": "verified"
           },
           {
-            "id": "std.path:50",
+            "id": "std.path:71",
             "symbol": "std.path.Path.parent",
             "signature": "pub fn Path.parent(self): Path?",
             "status": "verified"
           },
           {
-            "id": "std.path:51",
+            "id": "std.path:72",
             "symbol": "std.path.Path.fileName",
             "signature": "pub fn Path.fileName(self): String?",
             "status": "verified"
           },
           {
-            "id": "std.path:52",
+            "id": "std.path:73",
             "symbol": "std.path.Path.extension",
             "signature": "pub fn Path.extension(self): String?",
             "status": "verified"
           },
           {
-            "id": "std.path:53",
+            "id": "std.path:74",
             "symbol": "std.path.Path.kind",
             "signature": "pub fn Path.kind(self): Bool",
             "status": "verified"
           },
           {
-            "id": "std.path:54",
+            "id": "std.path:75",
             "symbol": "std.path.Path.isEmpty",
             "signature": "pub fn Path.isEmpty(self): Bool",
             "status": "verified"
           },
           {
-            "id": "std.path:55",
+            "id": "std.path:76",
             "symbol": "std.path.Path.toString",
             "signature": "pub fn Path.toString(self): String ! PathError",
             "status": "verified"
           },
           {
-            "id": "std.path:56",
+            "id": "std.path:77",
             "symbol": "std.path.Path.toBytes",
             "signature": "pub fn Path.toBytes(self): Bytes",
             "status": "verified"
@@ -221,11 +223,11 @@
         "crates/tondo-compiler/src/process_host.rs"
       ],
       "proof": "async-open-directory-file-reader-writer-metadata-typed-errors-atomic-write-ordering-and-affine-cleanup",
-      "implementation_status": "verified",
-      "matrix_impl_host": "verified",
+      "implementation_status": "open-gaps",
+      "matrix_impl_host": "partial",
       "host": {
-        "status": "verified",
-        "reason": null,
+        "status": "partial",
+        "reason": "Enums, File I/O, path mutations, ordinary Metadata snapshots, Directory storage and bounded readAll/listing admission have executable regressions included in joint workspace validation. Complete owner promotion and public-row conformance evidence remain pending.",
         "refs": [
           "crates/tondo-compiler/src/process_host.rs",
           "crates/tondo-compiler/src/driver.rs",
@@ -241,85 +243,85 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.fs:85",
+            "id": "std.fs:107",
             "symbol": "std.fs.open",
             "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:86",
+            "id": "std.fs:108",
             "symbol": "std.fs.openDirectory",
             "signature": "pub fn openDirectory(path: Path): Directory ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:87",
+            "id": "std.fs:109",
             "symbol": "std.fs.readAll",
             "signature": "pub fn readAll(path: Path): Bytes ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:88",
+            "id": "std.fs:110",
             "symbol": "std.fs.writeAll",
             "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:89",
+            "id": "std.fs:111",
             "symbol": "std.fs.createDirectory",
             "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:90",
+            "id": "std.fs:112",
             "symbol": "std.fs.remove",
             "signature": "pub fn remove(path: Path): Unit ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:91",
+            "id": "std.fs:113",
             "symbol": "std.fs.metadata",
             "signature": "pub fn metadata(path: Path): Metadata ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:92",
+            "id": "std.fs:114",
             "symbol": "std.fs.list",
             "signature": "pub fn list(path: Path): Array[Path] ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:93",
+            "id": "std.fs:115",
             "symbol": "std.fs.rename",
             "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:94",
+            "id": "std.fs:116",
             "symbol": "std.fs.atomicWrite",
             "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:95",
+            "id": "std.fs:117",
             "symbol": "std.fs.File.read",
             "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:96",
+            "id": "std.fs:118",
             "symbol": "std.fs.File.write",
             "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:97",
+            "id": "std.fs:119",
             "symbol": "std.fs.File.flush",
             "signature": "pub fn File.flush(var self): Unit ! FsError suspends",
             "status": "verified"
           },
           {
-            "id": "std.fs:98",
+            "id": "std.fs:120",
             "symbol": "std.fs.Directory.list",
             "signature": "pub fn Directory.list(var self): Array[Path] ! FsError suspends",
             "status": "verified"
@@ -372,103 +374,103 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.process:148",
+            "id": "std.process:209",
             "symbol": "std.process.command",
             "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
             "status": "verified"
           },
           {
-            "id": "std.process:149",
+            "id": "std.process:210",
             "symbol": "std.process.shell",
             "signature": "pub fn shell(command: String): Command ! ProcessError",
             "status": "verified"
           },
           {
-            "id": "std.process:150",
+            "id": "std.process:211",
             "symbol": "std.process.pipe",
             "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
             "status": "verified"
           },
           {
-            "id": "std.process:151",
+            "id": "std.process:212",
             "symbol": "std.process.Command.mergeStderr",
             "signature": "pub fn Command.mergeStderr(self): Command",
             "status": "verified"
           },
           {
-            "id": "std.process:152",
+            "id": "std.process:213",
             "symbol": "std.process.Pipeline.mergeStderr",
             "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
             "status": "verified"
           },
           {
-            "id": "std.process:153",
+            "id": "std.process:214",
             "symbol": "std.process.Command.run",
             "signature": "pub fn Command.run(self): ExitStatus ! ProcessError suspends",
             "status": "verified"
           },
           {
-            "id": "std.process:154",
+            "id": "std.process:215",
             "symbol": "std.process.Command.output",
             "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError suspends",
             "status": "verified"
           },
           {
-            "id": "std.process:155",
+            "id": "std.process:216",
             "symbol": "std.process.Command.check",
             "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends",
             "status": "verified"
           },
           {
-            "id": "std.process:156",
+            "id": "std.process:217",
             "symbol": "std.process.Command.start",
             "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError suspends",
             "status": "verified"
           },
           {
-            "id": "std.process:157",
+            "id": "std.process:218",
             "symbol": "std.process.ProcessHandle.wait",
             "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError suspends",
             "status": "verified"
           },
           {
-            "id": "std.process:158",
+            "id": "std.process:219",
             "symbol": "std.process.ProcessHandle.cancel",
             "signature": "pub fn ProcessHandle.cancel(var self): Unit suspends",
             "status": "verified"
           },
           {
-            "id": "std.process:159",
+            "id": "std.process:220",
             "symbol": "std.process.ProcessOutput.stdout",
             "signature": "pub fn ProcessOutput.stdout(self): Bytes",
             "status": "verified"
           },
           {
-            "id": "std.process:160",
+            "id": "std.process:221",
             "symbol": "std.process.ProcessOutput.stderr",
             "signature": "pub fn ProcessOutput.stderr(self): Bytes",
             "status": "verified"
           },
           {
-            "id": "std.process:161",
+            "id": "std.process:222",
             "symbol": "std.process.ProcessOutput.combined",
             "signature": "pub fn ProcessOutput.combined(self): Bytes",
             "status": "verified"
           },
           {
-            "id": "std.process:162",
+            "id": "std.process:223",
             "symbol": "std.process.ProcessOutput.statuses",
             "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
             "status": "verified"
           },
           {
-            "id": "std.process:163",
+            "id": "std.process:224",
             "symbol": "std.process.ExitStatus.code",
             "signature": "pub fn ExitStatus.code(self): Int?",
             "status": "verified"
           },
           {
-            "id": "std.process:164",
+            "id": "std.process:225",
             "symbol": "std.process.ExitStatus.success",
             "signature": "pub fn ExitStatus.success(self): Bool",
             "status": "verified"
@@ -484,12 +486,12 @@
     "owners_with_public_gaps": 0,
     "capability_gated_owners": 3,
     "pure_owners": 1,
-    "host_verified_owners": 3,
+    "host_verified_owners": 2,
     "host_not_applicable_owners": 1
   },
   "global_public_api": {
-    "status": "open-gaps",
-    "gaps": 4,
+    "status": "verified",
+    "gaps": 0,
     "reason": "The current global public API audit is retained independently of this component coordinator",
     "next_coordination": "STD-PUBLIC-API-AUDIT-001"
   },

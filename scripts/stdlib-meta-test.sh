@@ -28,4 +28,6 @@ jq '.owners[0].cells.TEST.refs[0] = "missing/std-meta-test-reference"' \
     testing/stdlib-owner-evidence.json > "$tmp_dir/missing-reference.json"
 expect_failure missing-reference env TONDO_STDLIB_OWNER_EVIDENCE="$tmp_dir/missing-reference.json" scripts/stdlib-owner-evidence-check.sh
 
-echo "std.meta owner tests: OK"
+cargo test -p tondo-compiler --locked --test std_meta_conformance
+
+echo "std.meta owner tests: OK (ordinary Tondo companion and component contracts)"

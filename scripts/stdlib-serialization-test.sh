@@ -113,11 +113,12 @@ done
 
 jq -e '
   any(.owners[]; .id == "std.serialization"
-    and .runtime.kind == "not-applicable"
-    and (.runtime.paths | length) == 0)
+    and .runtime.kind == "vm-inline"
+    and .case.kind == "runtime")
 ' testing/stdlib-public-api-config.json >/dev/null
 jq -e '
-  ([.rows[] | select(.owner == "std.serialization")] | length) == 0
+  ([.rows[] | select(.owner == "std.serialization")] | length) == 26
+  and all(.rows[] | select(.owner == "std.serialization"); has("declaring_trait"))
 ' testing/stdlib-public-api.json >/dev/null
 
 grep -Fq 'stdlib_codecs' fuzz/Cargo.toml
@@ -131,5 +132,9 @@ jq -e '
   .owners == ["std.core","std.text","std.collections","std.iter","std.math","std.format","std.io","std.serialization"]
   and (.test_matrix | length) == 7
 ' testing/stdlib-core.json >/dev/null
+
+actual="$tmp_dir/serialization-public.stdout"
+cargo run -p tondo-cli --locked -- run tests/runtime/m11-std-serialization-public-001.to > "$actual"
+cmp tests/runtime/m11-std-serialization-public-001.stdout "$actual"
 
 echo "std.serialization owner tests: OK"

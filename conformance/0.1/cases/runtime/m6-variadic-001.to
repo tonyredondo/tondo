@@ -90,7 +90,7 @@ fn main() {
 
     assert(runAll(make(20), make(22)) == 42)
 
-    console.print("variadic-001\n")
+    _ = console.print("variadic-001\n")
 }
 
 fn collectAndSum(values: ...Int): Int {

@@ -111,22 +111,22 @@
     "fixtures": [
       {
         "path": "tests/runtime/m11-std-core-002.to",
-        "sha256": "e15e13d91f22516f3a5fa986e34fd25f96b4da3ad5579204769f740def51de7f",
+        "sha256": "da717bd7dafb4800c5eefc75040b1fa770914c0524d6eca3e4407f81555eea0e",
         "required_features": ["invoke", "return", "host-call"]
       },
       {
         "path": "tests/runtime/m11-std-collections-001.to",
-        "sha256": "8807694cb2bf67ee1dd2796ce9cf85eee6ac351e64db4d37692321894a3b961f",
+        "sha256": "14289c8832ee1525f99ef437c08ad3b736b57b368c37a1d02c0bcda6d260ba8f",
         "required_features": ["invoke", "iterator-next", "validate-places"]
       },
       {
         "path": "tests/runtime/m7-async-structured.to",
-        "sha256": "e65d5ff52c1975d3072235035ded41ca4887d941af6b8ef8579cdbc006fd5e61",
+        "sha256": "6a7b420a41aa7e4b956bc67e6915856f5d266d1c4fcc096bfa0b6d4c9cacbb2a",
         "required_features": ["await", "spawn", "task-scope", "fallback"]
       },
       {
         "path": "tests/runtime/m10-std-bytes-001.to",
-        "sha256": "9b6544f8db5adee3113df2fc51d5412d1834ba974a94118b2b4e89687d93dc31",
+        "sha256": "2421be26716e7221b8ae451990cb4534e3de46b392fafc739a9af9486858e6a0",
         "required_features": ["invoke", "return", "host-call"]
       }
     ]

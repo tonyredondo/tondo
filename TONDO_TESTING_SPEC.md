@@ -3,8 +3,8 @@
 - **Estado:** borrador normativo en desarrollo; implementación funcional y gate T0 vivo disponibles.
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **Formatos de tooling:** `tondo-test-report-0.1/7`,
-  `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
+- **Formatos de tooling:** `tondo-test-report-0.1/8`,
+  `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/5`,
   `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
@@ -657,11 +657,13 @@ el conjunto. Los comandos de producción excluyen en ambos layouts `*_test.to`
 y `tests/`; solo esta entrada de discovery los añade. Se ignoran symlinks,
 directorios ocultos, `target/` y `vendor/`. El nombre de paquete, target,
 perfil, capabilities y features salen de `tondo.toml` o de defaults cerrados.
-Con dependencias externas, `tondo.lock.toml` es obligatorio; sin dependencias
-el lockfile se materializa en memoria. El lock persistente siempre describe el
-grafo de producción: `tondo test` lo valida primero y deriva en memoria el lock
-del overlay de tests, sin editarlo ni exigir un segundo archivo. No existe una
-ruta alternativa basada en un manifiesto JSON.
+External dependencies require `tondo.lock.toml`; without dependencies the lock
+is materialized in memory. Its production records describe only the production
+graph. `tondo test` validates that graph first and derives the test overlay lock
+in memory. An optional `test.packages` section closes test-only source and
+interface inputs separately, as specified by the toolchain. A project without
+production sources can use a lock containing only that section. None of these
+paths edits the lock or introduces a JSON project manifest.
 
 Cuando el manifiesto no declara source sets de test explícitos, el comando
 oficial aplica estas convenciones ASCII, case-sensitive:
@@ -1142,7 +1144,7 @@ del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
 aislamiento se clasifica como fallo de infraestructura. El runner puede detener
 el bosque restante porque ya no puede garantizar resultados fiables. En ese
 caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
-`tondo-test-report-0.1/7` válido clasifica cada hoja seleccionada.
+`tondo-test-report-0.1/8` válido clasifica cada hoja seleccionada.
 
 ### 7.6 Errores recuperables
 
@@ -1243,6 +1245,23 @@ punto cooperativo de cancelación. No puede dejar un proceso o thread de usuario
 ejecutándose después de reportar el terminal. Se mide con un reloj monotónico
 real exterior al envelope y nunca se sustituye ni avanza mediante
 `withVirtualTime`.
+
+A test target that declares `process` requires an OS containment provider able
+to terminate the worker and all its descendant processes, including descendants
+whose original parent exited or which started another session. The runner must
+establish this provider before dispatching any participation; missing or
+unusable isolation rejects execution with exit `3` and publishes no test report
+or store update. Compilation and `--list` need no execution provider. Selection
+does not remove this requirement from a process-capable target.
+
+The coordinator owns each fresh containment group and must close it before waiting
+for inherited pipes and before publishing any terminal observation. This applies
+to successful and failed tests, timeout, retry, repeat and forced interruption.
+Provider cleanup uses a finite real monotonic deadline. A cleanup failure is an
+infrastructure failure, preserves prior outputs and retains affected temporary
+paths instead of traversing them while a descendant may still be active.
+The provider model and cleanup limit enter the resource profile; delegated
+physical paths, group names and OS process identifiers never enter its identity.
 
 Los presupuestos estructurales y de runtime siempre permanecen finitos. Una
 implementación aislada puede representar un timeout wall-clock desactivado con
@@ -1851,10 +1870,24 @@ mensajes mejores, pero no alterar el terminal.
 
 ### 9.3 Logs y captura de output
 
-Los logs, stdout y stderr de cada entrada de suite o test se capturan por
-separado. Cada llamada a `testing.log(message)` añade el `String` exacto como un
-elemento nuevo; no añade prefijo, nivel, timestamp ni salto de línea implícito.
-Los streams continúan siendo UTF-8. El modo humano:
+Logs, stdout and stderr are captured separately for every suite or test
+attempt. Each `testing.log(message)` adds the exact `String` as a new record,
+without an implicit prefix, level, timestamp or newline.
+
+Stdout and stderr preserve arbitrary bytes, including all `Writer` and codec
+writer routes. Each stream is represented by the closed object
+`{"encoding":"utf8","data":"..."}` for valid UTF-8, or
+`{"encoding":"base64","data":"..."}` otherwise. Empty output always uses
+`{"encoding":"utf8","data":""}`. Encoding is selected over the complete
+attempt stream after concatenation, so a UTF-8 scalar may span writes or suite
+setup and teardown. Base64 uses the standard alphabet, required padding, no
+whitespace and zero unused bits; UTF-8 data encoded as Base64 is noncanonical
+and rejected. Unknown fields, encodings and malformed payloads are rejected.
+No replacement characters or implicit transcoding are introduced. Output
+quotas count original bytes before encoding; each write admits its complete
+delta before publishing any byte. A runner quota cannot be recovered as an
+I/O or codec error. Human output labels binary payloads with `[base64]` and
+prints their encoded data. El modo humano:
 
 - Muestra siempre la identidad y el estado.
 - Muestra owners y los tags por intento no vacíos de nodos fallidos, skipped o
@@ -2050,7 +2083,7 @@ explícitamente por el test deja de estar protegido por el runner.
 ### 9.8 Modelo interno y protocolo coordinator/worker
 
 El runner mantiene una única representación validada
-`tondo-test-report-0.1/7`: un bosque de descriptors de suite y test, cada uno
+`tondo-test-report-0.1/8`: un bosque de descriptors de suite y test, cada uno
 con su lista ordenada de `attempts`, estado agregado y `decisive_attempt`, más
 el `execution_plan`, la policy y el `summary` derivado. Los reporters humano,
 JSON y JUnit consumen este árbol; no pueden volver a inferir estados,
@@ -2222,13 +2255,13 @@ Reglas:
   proyección JUnit no roja cuando los demás resultados lo permiten.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.1/7`, o una lista `tondo-test-list-0.1/6` con `--list`.
+  `tondo-test-report-0.1/8`, o una lista `tondo-test-list-0.1/6` con `--list`.
 - `--report` es repetible y escribe el resultado de la misma ejecución sin
   volver a compilar ni ejecutar. Se divide por el primer `=`; format y path
   vacíos son inválidos.
 - `--report json=<path>` escribe exactamente los mismos bytes que el JSON
   correspondiente de `--test-format json`.
-- `--report junit=<path>` escribe `tondo-junit-report-0.1/4` según 15.5.
+- `--report junit=<path>` escribe `tondo-junit-report-0.1/5` según 15.5.
 - Dos reportes no pueden resolver al mismo output ni sobrescribir un input,
   source, manifest, lockfile, snapshot store, artifact store u otro producto
   declarado. Cada archivo se publica atómicamente después de completar su
@@ -2776,6 +2809,14 @@ semántica de `test`.
 
 ### 13.1 Identidad de quality evidence
 
+The repository's current acceptance floor is 80% for global line, function
+and region coverage. Historical measurements and their provenance remain
+unchanged. Each risk dimension uses the lower of 80% and its historical
+threshold, so previously lower dimensions do not acquire an unrelated increase.
+An explicit floor cannot be combined with a relative-drop allowance. Mutation
+requirements remain separate. Implementation batches use focused behavioral
+checks, followed by one consolidated coverage campaign for the completed batch.
+
 Coverage y mutation son artefactos de tooling, no una propiedad que pueda
 inferirse únicamente de un porcentaje. Cada ejecución que vaya a entrar en un
 baseline o en el ratchet debe publicar, junto al report raw, un binding JSON
@@ -2783,9 +2824,9 @@ baseline o en el ratchet debe publicar, junto al report raw, un binding JSON
 
 - `report_sha256`, hash de los bytes exactos del report;
 - `before` y `after`, snapshots iguales de `tondo-quality-provenance/1`;
-- el digest del árbol de inputs canónicos (fuentes de `crates`, `tests`,
-  `fuzz`, `scripts`, workflows, `conformance/draft`, `.cargo`, `Cargo.toml` y
-  `Cargo.lock`);
+- the canonical input-tree digest, including `crates`, `tests`, `acceptance`,
+  `stdlib`, `fuzz`, `scripts`, workflows, `conformance/draft`, `.cargo`,
+  `Cargo.toml` and `Cargo.lock`;
 - flags de compilación relevantes y las versiones completas de `rustc` y
   `cargo`.
 
@@ -2904,7 +2945,7 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.1/7",
+  "format": "tondo-test-report-0.1/8",
   "edition": "0.1",
   "target": {
     "name": "tondo-vm-hosted",
@@ -2998,8 +3039,8 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
           "snapshots": [],
           "virtual_time": [],
           "logs": [],
-          "stdout": "",
-          "stderr": ""
+          "stdout": {"encoding": "utf8", "data": ""},
+          "stderr": {"encoding": "utf8", "data": ""}
         }
       ]
     }
@@ -3039,8 +3080,8 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
           "snapshots": [],
           "virtual_time": [],
           "logs": [],
-          "stdout": "",
-          "stderr": ""
+          "stdout": {"encoding": "utf8", "data": ""},
+          "stderr": {"encoding": "utf8", "data": ""}
         }
       ]
     }
@@ -3283,7 +3324,8 @@ explícita no aumenta `automatic_advances`. Un dominio interior rechazado por
 - Keys conocidas se serializan en el orden mostrado por el schema del
   toolchain.
 - Cada `logs` conserva el orden observado dentro de su único envelope.
-- Cada `stdout` y `stderr` contiene texto UTF-8 exacto.
+- Each `stdout` and `stderr` is an exact `{encoding, data}` stream as defined
+  in 9.3; fields appear in that order, including for empty output.
 - `summary.selected = execution_plan.length = tests.length`.
 - `summary.selected` es la suma exacta de `passed`, `flaky_passed`, `skipped`,
   `blocked_setup`, `blocked_skip` y los cinco contadores de fallo agregado de
@@ -3483,7 +3525,7 @@ hash de árbol previo definido en 15.7, no el hash aislado de un solo package.
 
 ### 15.5 Perfil JUnit XML
 
-`--report junit=<path>` genera `tondo-junit-report-0.1/4` como XML 1.0 UTF-8. Es
+`--report junit=<path>` genera `tondo-junit-report-0.1/5` como XML 1.0 UTF-8. Es
 un artefacto operacional para CI, no la fuente normativa ni reproducible del
 resultado: incluye duración wall-clock. El reporte JSON `/7` continúa siendo la
 forma canónica y sin pérdida.
@@ -3579,6 +3621,8 @@ tondo.name
 tondo.status
 tondo.decisive_attempt
 tondo.attempts
+tondo.stdout.encoding
+tondo.stderr.encoding
 tondo.artifacts
 tondo.snapshots
 tondo.virtual_time
@@ -3592,9 +3636,9 @@ Arrays, objetos y `null` se codifican como JSON compacto canónico dentro de
 contenido después del escaping XML ordinario. Las properties aparecen en el
 orden listado, sin nombres duplicados; una property no aplicable se omite y una
 aplicable cuyo valor es nulo se conserva como `null`. Los valores de ejecución
-son los mismos del JSON `/7`;
-`tondo.format` vale `tondo-junit-report-0.1/4` y `tondo.json_format` conserva
-`tondo-test-report-0.1/7`. Las properties forman la representación completa de
+son los mismos del JSON `/8`;
+`tondo.format` vale `tondo-junit-report-0.1/5` y `tondo.json_format` conserva
+`tondo-test-report-0.1/8`. Las properties forman la representación completa de
 los campos normativos; los elementos JUnit convencionales proyectan además el
 subconjunto que los consumidores suelen mostrar.
 
@@ -3619,8 +3663,16 @@ conservan en todos los casos los intentos y referencias exactos.
 
 Todo scalar no representable por XML 1.0 que aparezca en un atributo o elemento
 JUnit convencional se muestra mediante el escape ASCII visible `\u{HEX}`; su
-property estructurada conserva el valor exacto como JSON. `system-out` y
-`system-err` proyectan únicamente los streams del intento decisivo. Todos los
+property estructurada conserva el valor exacto como JSON.
+`system-out` and `system-err` contain the decisive attempt's UTF-8 text when
+every scalar is legal XML 1.0 and the stream contains no CR. Otherwise their
+entire content is padded standard Base64 of the original bytes; the ordered
+`tondo.stdout.encoding` and `tondo.stderr.encoding` properties identify this
+projection as `utf8` or `base64`, including `utf8` for an empty stream. This
+also prevents XML newline normalization from changing CR bytes. JSON inside
+XML properties and failure bodies escapes U+FFFE/U+FFFF with JSON `\uXXXX`
+escapes before XML escaping, preserving parseable JSON and exact stream bytes.
+Todos los
 streams, tags, artifacts, snapshots, logs, failures y skips, incluidos los de
 intentos anteriores, permanecen en `tondo.attempts` y en el reporte JSON
 canónico.
@@ -3835,11 +3887,11 @@ versionada. El grupo cubre como mínimo:
 29. Captura separada de logs/stdout/stderr para suites y tests.
 30. Parsing y combinaciones de CLI, formatos stdout, reportes repetibles,
     colisiones de paths, publicación atómica por archivo y exits `3`/`4`.
-31. Bytes `tondo-test-json-v1`, reportes `tondo-test-report-0.1/7` y
+31. Bytes `tondo-test-json-v1`, reportes `tondo-test-report-0.1/8` y
     `tondo-test-list-0.1/6`, ownership, inputs, shard, order, tags, artifacts,
     snapshots, iteraciones, intentos, retry/repeat, `execution_plan`, invariantes
     de summary, skips, bloqueos y rechazo de schema inválido.
-32. Perfil `tondo-junit-report-0.1/4`, mapeo de estados, lifecycle sintético,
+32. Perfil `tondo-junit-report-0.1/5`, mapeo de estados, lifecycle sintético,
     properties, streams, duración operacional, conteos y equivalencia con la
     misma ejecución JSON.
 33. Targets y capabilities distintos.

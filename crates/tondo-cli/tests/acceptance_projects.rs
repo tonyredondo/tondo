@@ -314,7 +314,7 @@ fn suite_setup_failure_blocks_only_its_subtree_and_reports_the_suite() {
     fs::create_dir_all(root.join("tests")).unwrap();
     fs::write(
         root.join("tondo.toml"),
-        b"[package]\nname = \"suite_failure\"\nedition = \"0.1\"\n",
+        b"[package]\nname = \"suite_failure\"\nedition = \"0.1\"\n[target]\ncapabilities = []\n",
     )
     .unwrap();
     fs::write(
@@ -560,7 +560,6 @@ fn acceptance_project_dogfoods_repeat_with_fresh_attempts() {
     fs::remove_dir_all(project).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn acceptance_project_dogfoods_an_isolated_deterministic_retry() {
     let project = temporary_root("retry");

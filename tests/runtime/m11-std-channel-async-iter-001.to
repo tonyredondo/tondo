@@ -82,5 +82,5 @@ fn main(): !channel.ChannelError {
     zero_sender.close()
     collect_zero(zero_receiver)
 
-    console.println("channel-async-iter-ok")
+    _ = console.println("channel-async-iter-ok")
 }

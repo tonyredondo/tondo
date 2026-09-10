@@ -58,8 +58,13 @@ mod tests {
 
     #[test]
     fn canonical_records_reject_schema_revisions_and_byte_mutations() {
-        let snapshot =
-            MetaSnapshot::new([MetaRoot::new("workspace:app@1", "app").unwrap()], [], []).unwrap();
+        let snapshot = MetaSnapshot::new(
+            crate::meta::MetaEnvironment::meta(),
+            [MetaRoot::new("workspace:app@1", "app").unwrap()],
+            [],
+            [],
+        )
+        .unwrap();
         let canonical = snapshot.canonical_bytes().unwrap();
         assert!(probe_meta_protocols(&canonical).snapshot_accepted);
 
@@ -84,11 +89,11 @@ mod tests {
     fn request_api_revision_and_cycles_fail_before_execution() {
         let duplicate = MetaRoot::new("workspace:app@1", "app").unwrap();
         assert!(matches!(
-            MetaSnapshot::new([duplicate.clone(), duplicate], [], []),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [duplicate.clone(), duplicate], [], []),
             Err(MetaModelError::Duplicate { kind, .. }) if kind == "root"
         ));
 
-        let snapshot = MetaSnapshot::new([], [], []).unwrap();
+        let snapshot = MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap();
         let request = MetaRequest::new(
             snapshot,
             [MetaInput::new("schema", b"v1").unwrap()],
@@ -108,7 +113,7 @@ mod tests {
 
     #[test]
     fn hostile_outputs_maps_utf8_collisions_and_limits_are_atomic() {
-        let snapshot = MetaSnapshot::new([], [], []).unwrap();
+        let snapshot = MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap();
         let output = MetaOutputSpec::new("generated/schema.to", "schema").unwrap();
         let request =
             MetaRequest::new(snapshot, [], [output], MetaLimits::new(10, 10, 8).unwrap()).unwrap();

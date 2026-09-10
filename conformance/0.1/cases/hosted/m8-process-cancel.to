@@ -10,5 +10,5 @@ fn cancelProcess(): !process.ProcessError {
 
 fn main(): !process.ProcessError {
     cancelProcess()?
-    console.print("process-cancelled\n")
+    _ = console.print("process-cancelled\n")
 }

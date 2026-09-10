@@ -218,5 +218,5 @@ fn main() {
     next_select_rolls_back()
     next_select_drains_cancelled_arm()
     cancel_drains_pending()
-    console.print("group-ok\n")
+    _ = console.print("group-ok\n")
 }

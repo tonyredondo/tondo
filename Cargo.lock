@@ -430,6 +430,7 @@ name = "tondo-cli"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "nix",
  "serde",
  "serde_json",
  "toml",

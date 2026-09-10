@@ -7,6 +7,9 @@ use crate::literal;
 
 use super::*;
 
+#[path = "reflection.rs"]
+mod reflection;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BytecodeVerificationLimits {
     pub max_dataflow_steps: u64,
@@ -121,6 +124,36 @@ pub fn derive_copy_capabilities(
     types
         .iter()
         .map(|ty| analysis.status(program, *ty, ClosedCapability::Copy))
+        .collect()
+}
+
+/// Returns all proven descriptive capabilities for concrete metadata roots.
+/// The same analysis admits collection keys and value transfer in bytecode.
+pub fn derive_reflection_capabilities(
+    program: &BytecodeProgram,
+    types: &[BytecodeTypeId],
+) -> Result<Vec<Vec<crate::reflection::ReflectCapability>>, BytecodeVerificationError> {
+    use crate::reflection::ReflectCapability as R;
+    let analysis = CapabilityAnalysis::new(program)?;
+    let capabilities = [
+        (ClosedCapability::Copy, R::Copy),
+        (ClosedCapability::Discard, R::Discard),
+        (ClosedCapability::Equatable, R::Equatable),
+        (ClosedCapability::Key, R::Key),
+        (ClosedCapability::Send, R::Send),
+        (ClosedCapability::Share, R::Share),
+    ];
+    types
+        .iter()
+        .map(|ty| {
+            let mut proven = Vec::new();
+            for (capability, reflected) in capabilities {
+                if analysis.status(program, *ty, capability)? {
+                    proven.push(reflected);
+                }
+            }
+            Ok(proven)
+        })
         .collect()
 }
 
@@ -311,6 +344,57 @@ impl<'a> TraceMetadataAnalysis<'a> {
         Ok(BytecodeTraceMetadata { types, frames })
     }
 
+    fn specialize_nominal_shape(
+        &self,
+        shape: &mut BytecodeNominalShape,
+        arguments: &[BytecodeTypeId],
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let mut resolved = BTreeMap::new();
+        let mut specialize = |ty: &mut BytecodeTypeId| {
+            *ty = self.specialize_payload_type(*ty, arguments, &mut resolved, context)?;
+            Ok::<(), BytecodeVerificationError>(())
+        };
+        match shape {
+            BytecodeNominalShape::Newtype { underlying } => specialize(underlying)?,
+            BytecodeNominalShape::Record { fields } => {
+                for field in fields {
+                    specialize(&mut field.ty)?;
+                }
+            }
+            BytecodeNominalShape::Enum { variants } => {
+                for variant in variants {
+                    match &mut variant.payload {
+                        BytecodeVariantPayload::Unit => {}
+                        BytecodeVariantPayload::Tuple(items) => {
+                            for ty in items {
+                                specialize(ty)?;
+                            }
+                        }
+                        BytecodeVariantPayload::Record(fields) => {
+                            for field in fields {
+                                specialize(&mut field.ty)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve complete payload type graphs once during bytecode admission.
+    /// Runtime import must use concrete descriptors even for nested containers.
+    fn specialize_payload_type(
+        &self,
+        root: BytecodeTypeId,
+        arguments: &[BytecodeTypeId],
+        resolved: &mut BTreeMap<BytecodeTypeId, BytecodeTypeId>,
+        context: &str,
+    ) -> Result<BytecodeTypeId, BytecodeVerificationError> {
+        specialize_type_in_catalog(self.program, root, arguments, resolved, context)
+    }
+
     fn descriptor(
         &mut self,
         id: BytecodeTypeId,
@@ -348,7 +432,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 arguments,
                 ..
             } => {
-                let metadata = self
+                let mut metadata = self
                     .program
                     .nominals
                     .get(nominal.index() as usize)
@@ -359,6 +443,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                         )
                     })?
                     .clone();
+                self.specialize_nominal_shape(&mut metadata.shape, &arguments, &context)?;
                 match metadata.shape {
                     BytecodeNominalShape::Newtype { underlying } => {
                         BytecodeTraceDescriptor::Newtype {
@@ -482,13 +567,8 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::FloatTolerance
-                | BytecodeIntrinsicType::FloatToleranceError
-                | BytecodeIntrinsicType::TextDiff
                 | BytecodeIntrinsicType::TempDirectory
-                | BytecodeIntrinsicType::TempError
                 | BytecodeIntrinsicType::Generator
-                | BytecodeIntrinsicType::GenerationId
-                | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::Reader
                 | BytecodeIntrinsicType::Writer
                 | BytecodeIntrinsicType::IoLimits
@@ -548,6 +628,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::ProtoUnknownPolicy
                 | BytecodeIntrinsicType::ProtoReader
                 | BytecodeIntrinsicType::ProtoWriter
+                | BytecodeIntrinsicType::Reflection(_)
                 | BytecodeIntrinsicType::UnknownFields => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
@@ -1067,6 +1148,15 @@ fn intrinsic_capability(
     capability: ClosedCapability,
 ) -> CapabilityNode {
     match constructor {
+        BytecodeIntrinsicType::Reflection(kind) => fixed_capability(
+            matches!(
+                capability,
+                ClosedCapability::Copy
+                    | ClosedCapability::Discard
+                    | ClosedCapability::Send
+                    | ClosedCapability::Share
+            ) || kind == crate::reflection::ReflectionDescriptorKind::TypeId,
+        ),
         BytecodeIntrinsicType::Array => {
             if capability == ClosedCapability::Key {
                 fixed_capability(false)
@@ -1204,11 +1294,6 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::Utf8Error
         | BytecodeIntrinsicType::MathError
         | BytecodeIntrinsicType::FloatTolerance
-        | BytecodeIntrinsicType::FloatToleranceError
-        | BytecodeIntrinsicType::TextDiff
-        | BytecodeIntrinsicType::TempError
-        | BytecodeIntrinsicType::GenerationId
-        | BytecodeIntrinsicType::GenerationError
         | BytecodeIntrinsicType::IoError
         | BytecodeIntrinsicType::ConsoleError => fixed_capability(matches!(
             capability,
@@ -1618,7 +1703,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set
         | BytecodeIntrinsicType::Range => dependent_terminal(arguments.to_vec()),
-        BytecodeIntrinsicType::Ref
+        BytecodeIntrinsicType::Reflection(_)
+        | BytecodeIntrinsicType::Ref
         | BytecodeIntrinsicType::Pointer
         | BytecodeIntrinsicType::Group
         | BytecodeIntrinsicType::Mutex
@@ -1653,13 +1739,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::FsError
         | BytecodeIntrinsicType::MathError
         | BytecodeIntrinsicType::FloatTolerance
-        | BytecodeIntrinsicType::FloatToleranceError
-        | BytecodeIntrinsicType::TextDiff
         | BytecodeIntrinsicType::TempDirectory
-        | BytecodeIntrinsicType::TempError
         | BytecodeIntrinsicType::Generator
-        | BytecodeIntrinsicType::GenerationId
-        | BytecodeIntrinsicType::GenerationError
         | BytecodeIntrinsicType::Reader
         | BytecodeIntrinsicType::Writer
         | BytecodeIntrinsicType::IoLimits
@@ -1773,6 +1854,7 @@ impl Verifier<'_> {
         self.verify_terminal_types()?;
         self.verify_type_formations()?;
         self.verify_callables()?;
+        self.verify_reflection()?;
         self.verify_constants()?;
         self.verify_function_implementations()?;
         for (index, function) in self.program.functions.iter().enumerate() {
@@ -1885,13 +1967,8 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::FloatTolerance
-                | BytecodeIntrinsicType::FloatToleranceError
-                | BytecodeIntrinsicType::TextDiff
                 | BytecodeIntrinsicType::TempDirectory
-                | BytecodeIntrinsicType::TempError
                 | BytecodeIntrinsicType::Generator
-                | BytecodeIntrinsicType::GenerationId
-                | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::Reader
                 | BytecodeIntrinsicType::Writer
                 | BytecodeIntrinsicType::IoLimits
@@ -1952,6 +2029,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::ProtoUnknownPolicy
                 | BytecodeIntrinsicType::ProtoReader
                 | BytecodeIntrinsicType::ProtoWriter
+                | BytecodeIntrinsicType::Reflection(_)
                 | BytecodeIntrinsicType::UnknownFields => None,
             };
             if let Some((required, capability, label)) = requirement {
@@ -2313,6 +2391,30 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn is_testing_shrink_candidates_host(&self, callable: &BytecodeCallable) -> bool {
+        let name = callable
+            .name
+            .split_once('[')
+            .map_or(callable.name.as_str(), |(base, _)| base);
+        let [receiver, limit] = callable.parameters.as_slice() else {
+            return false;
+        };
+        name == "std.testing.Shrink.candidates"
+            && receiver.mode == BytecodeParameterMode::Ref
+            && receiver.receiver
+            && receiver.variadic_element.is_none()
+            && limit.mode == BytecodeParameterMode::Value
+            && !limit.receiver
+            && limit.variadic_element.is_none()
+            && matches!(
+                self.program
+                    .types
+                    .get(limit.ty.index() as usize)
+                    .map(|ty| &ty.kind),
+                Some(BytecodeTypeKind::Scalar(BytecodeScalarType::Int))
+            )
+    }
+
     fn verify_callables(&self) -> Result<(), BytecodeVerificationError> {
         let mut names = BTreeSet::new();
         let mut closure_environments = BTreeSet::new();
@@ -2325,6 +2427,7 @@ impl Verifier<'_> {
                 ));
             }
             self.ty(callable.outcome, &context)?;
+            self.verify_assertion_display(callable, &context)?;
             let BytecodeTypeKind::Function(function) =
                 &self.ty(callable.function_type, &context)?.kind
             else {
@@ -2455,6 +2558,7 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.channel.Receiver.")
                 && !callable.name.starts_with("std.executor.")
                 && !callable.name.starts_with("std.testing.shrink")
+                && !self.is_testing_shrink_candidates_host(callable)
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -3031,6 +3135,17 @@ impl Verifier<'_> {
         reveal_opaque: bool,
         context: &str,
     ) -> Result<bool, BytecodeVerificationError> {
+        let template = if arguments.is_empty() {
+            template
+        } else {
+            specialize_type_in_catalog(
+                self.program,
+                template,
+                arguments,
+                &mut BTreeMap::new(),
+                context,
+            )?
+        };
         let mut pending = vec![(template, actual)];
         let mut visited = BTreeSet::new();
         while let Some((template, actual)) = pending.pop() {
@@ -3041,16 +3156,8 @@ impl Verifier<'_> {
                 return Ok(false);
             }
             let template_kind = &self.ty(template, context)?.kind;
-            if let BytecodeTypeKind::GenericParameter(position) = template_kind {
-                let Some(substituted) = arguments.get(*position as usize).copied() else {
-                    return Ok(false);
-                };
-                if reveal_opaque {
-                    pending.push((substituted, actual));
-                } else if substituted != actual {
-                    return Ok(false);
-                }
-                continue;
+            if matches!(template_kind, BytecodeTypeKind::GenericParameter(_)) {
+                return Ok(false);
             }
             let actual_kind = &self.ty(actual, context)?.kind;
             if reveal_opaque {
@@ -3385,6 +3492,43 @@ impl Verifier<'_> {
         self.verify_select_flow(function, &context)?;
         self.verify_task_scope_flow(function, &context)?;
         self.verify_suspension_liveness(function, &context)?;
+        self.verify_runtime_unwind_entry(function, &context)?;
+        Ok(())
+    }
+
+    fn verify_runtime_unwind_entry(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let drains = function
+            .blocks
+            .iter()
+            .filter(|block| {
+                matches!(
+                    block.terminator.kind,
+                    BytecodeTerminatorKind::DrainUnwind { .. }
+                )
+            })
+            .count();
+        let owns_cleanup = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    BytecodeInstructionKind::RegisterDefer { .. }
+                        | BytecodeInstructionKind::RegisterFallback { .. }
+                        | BytecodeInstructionKind::EnterTaskScope { .. }
+                )
+            });
+        if drains > 1 || (owns_cleanup && drains == 0) {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "runtime cleanup requires one shared unwind drain",
+            ));
+        }
         Ok(())
     }
 
@@ -6445,6 +6589,101 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn verify_assertion_display(
+        &self,
+        callable: &BytecodeCallable,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let name = callable.name.split('[').next().unwrap_or(&callable.name);
+        let expected = match (name, callable.parameters.as_slice()) {
+            ("std.testing.assertEqual" | "std.testing.assertNotEqual", [left, right])
+                if left.mode == BytecodeParameterMode::Ref
+                    && right.mode == BytecodeParameterMode::Ref
+                    && left.ty == right.ty
+                    && self.is_scalar(callable.outcome, BytecodeScalarType::Unit)
+                    && self.capability(left.ty, ClosedCapability::Equatable, context)? =>
+            {
+                Some(left.ty)
+            }
+            ("std.testing.assertOk" | "std.testing.assertErr", [value])
+                if value.mode == BytecodeParameterMode::Value =>
+            {
+                match &self.ty(value.ty, context)?.kind {
+                    BytecodeTypeKind::Result { success, error }
+                        if name == "std.testing.assertOk" && callable.outcome == *success =>
+                    {
+                        Some(*error)
+                    }
+                    BytecodeTypeKind::Result { success, error }
+                        if name == "std.testing.assertErr" && callable.outcome == *error =>
+                    {
+                        Some(*success)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let helper = matches!(
+            name,
+            "std.testing.assertEqual"
+                | "std.testing.assertNotEqual"
+                | "std.testing.assertOk"
+                | "std.testing.assertErr"
+        );
+        if !helper && callable.assertion_display.is_none() {
+            return Ok(());
+        }
+        let invalid = || {
+            BytecodeVerificationError::new(
+                context,
+                "testing assertion Display metadata is inconsistent",
+            )
+        };
+        let Some(display) = callable.assertion_display else {
+            return Err(invalid());
+        };
+        if expected != Some(display.value_type)
+            || callable.implementation.is_some()
+            || callable.closure.is_some()
+            || callable.generic_arity != 0
+            || callable
+                .parameters
+                .iter()
+                .any(|parameter| parameter.receiver || parameter.variadic_element.is_some())
+        {
+            return Err(invalid());
+        }
+        if let Some(id) = display.callable {
+            let target = self.program.callable(id).ok_or_else(invalid)?;
+            let [receiver] = target.parameters.as_slice() else {
+                return Err(invalid());
+            };
+            let BytecodeTypeKind::Function(signature) =
+                &self.ty(target.function_type, context)?.kind
+            else {
+                return Err(invalid());
+            };
+            if target.implementation.is_none()
+                || target.closure.is_some()
+                || target.generic_arity != 0
+                || receiver.mode != BytecodeParameterMode::Ref
+                || !receiver.receiver
+                || receiver.variadic_element.is_some()
+                || receiver.ty != display.value_type
+                || !self.is_scalar(target.outcome, BytecodeScalarType::String)
+                || signature.is_async
+                || signature.is_selectable
+                || signature.is_unsafe
+            {
+                return Err(invalid());
+            }
+        } else if !self.is_intrinsic_display_type(display.value_type) {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
     fn is_intrinsic_display_type(&self, ty: BytecodeTypeId) -> bool {
         let mut pending = vec![ty];
         let mut visited = BTreeSet::new();
@@ -6459,6 +6698,16 @@ impl Verifier<'_> {
                     arguments,
                 }) if arguments.len() == 1 => pending.push(arguments[0]),
                 Some(BytecodeTypeKind::OpaqueResult { witness, .. }) => pending.push(*witness),
+                Some(BytecodeTypeKind::Nominal {
+                    nominal: Some(nominal),
+                    arguments,
+                    ..
+                }) if arguments.is_empty()
+                    && self
+                        .program
+                        .nominals
+                        .get(nominal.index() as usize)
+                        .is_some_and(|nominal| nominal.intrinsic_display_variants().is_some()) => {}
                 _ => return false,
             }
         }
@@ -7082,7 +7331,15 @@ impl Verifier<'_> {
             }
         }
         for (index, block) in function.blocks.iter().enumerate() {
-            if reachable[index] || BytecodeBlockId::new(index as u32) == function.unwind {
+            // The verified empty structural drain is also a runtime entry for
+            // external cancellation, including interruption of a pure loop.
+            if reachable[index]
+                || BytecodeBlockId::new(index as u32) == function.unwind
+                || matches!(
+                    block.terminator.kind,
+                    BytecodeTerminatorKind::DrainUnwind { .. }
+                )
+            {
                 continue;
             }
             if !block.instructions.is_empty()
@@ -9550,6 +9807,160 @@ fn scalar_kind(ty: &BytecodeType) -> Option<BytecodeScalarType> {
         BytecodeTypeKind::Scalar(scalar) => Some(scalar),
         _ => None,
     }
+}
+
+/// Resolve and normalize a type using the program's closed structural catalog.
+fn specialize_type_in_catalog(
+    program: &BytecodeProgram,
+    root: BytecodeTypeId,
+    arguments: &[BytecodeTypeId],
+    resolved: &mut BTreeMap<BytecodeTypeId, BytecodeTypeId>,
+    context: &str,
+) -> Result<BytecodeTypeId, BytecodeVerificationError> {
+    let mut pending = vec![(root, false)];
+    let mut visiting = BTreeSet::new();
+    while let Some((ty, expanded)) = pending.pop() {
+        if resolved.contains_key(&ty) {
+            continue;
+        }
+        let original = program.types.get(ty.index() as usize).ok_or_else(|| {
+            BytecodeVerificationError::new(context, "nominal payload type is missing")
+        })?;
+        if let BytecodeTypeKind::GenericParameter(position) = original.kind {
+            let argument = arguments.get(position as usize).copied().ok_or_else(|| {
+                BytecodeVerificationError::new(context, "nominal payload argument is missing")
+            })?;
+            // Substitution is simultaneous: an argument that is itself a
+            // template parameter must not be substituted a second time.
+            resolved.insert(ty, argument);
+            continue;
+        }
+        if !expanded {
+            if !visiting.insert(ty) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "nominal payload type graph contains a cycle",
+                ));
+            }
+            pending.push((ty, true));
+            let mut children = bytecode_type_children(&original.kind);
+            if let BytecodeTypeKind::OpaqueResult { witness, .. } = original.kind {
+                children.push(witness);
+            }
+            pending.extend(children.into_iter().rev().map(|child| (child, false)));
+            continue;
+        }
+        visiting.remove(&ty);
+        let mut kind = original.kind.clone();
+        let replace = |child: &mut BytecodeTypeId| {
+            *child = resolved[child];
+        };
+        match &mut kind {
+            BytecodeTypeKind::Nominal { arguments, .. }
+            | BytecodeTypeKind::Tuple(arguments)
+            | BytecodeTypeKind::Union(arguments)
+            | BytecodeTypeKind::Intrinsic { arguments, .. }
+            | BytecodeTypeKind::Generated { arguments, .. } => {
+                for child in arguments {
+                    replace(child);
+                }
+            }
+            BytecodeTypeKind::OpaqueResult {
+                arguments, witness, ..
+            } => {
+                for child in arguments {
+                    replace(child);
+                }
+                replace(witness);
+            }
+            BytecodeTypeKind::Function(function) => {
+                for parameter in &mut function.parameters {
+                    replace(&mut parameter.ty);
+                }
+                if let Some(variadic) = &mut function.variadic {
+                    replace(variadic);
+                }
+                replace(&mut function.outcome);
+            }
+            BytecodeTypeKind::Option(child) => replace(child),
+            BytecodeTypeKind::Result { success, error } => {
+                replace(success);
+                replace(error);
+            }
+            BytecodeTypeKind::Cursor { collection, .. } => replace(collection),
+            BytecodeTypeKind::Scalar(_) => {}
+            BytecodeTypeKind::GenericParameter(_) => {
+                unreachable!("parameters resolve before their children")
+            }
+        }
+        if let BytecodeTypeKind::Union(members) = &mut kind {
+            let mut flattened = BTreeMap::new();
+            let mut pending = members
+                .iter()
+                .rev()
+                .map(|member| (*member, false))
+                .collect::<Vec<_>>();
+            let mut active = BTreeSet::new();
+            let mut complete = BTreeSet::new();
+            while let Some((member, expanded)) = pending.pop() {
+                if expanded {
+                    active.remove(&member);
+                    complete.insert(member);
+                    continue;
+                }
+                if complete.contains(&member) {
+                    continue;
+                }
+                let value = program.ty(member).ok_or_else(|| {
+                    BytecodeVerificationError::new(context, "union payload member is missing")
+                })?;
+                match &value.kind {
+                    BytecodeTypeKind::Union(children) => {
+                        if !active.insert(member) {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "union payload type graph contains a cycle",
+                            ));
+                        }
+                        pending.push((member, true));
+                        pending.extend(children.iter().rev().map(|child| (*child, false)));
+                    }
+                    BytecodeTypeKind::Scalar(BytecodeScalarType::Never) => {
+                        complete.insert(member);
+                    }
+                    _ => {
+                        flattened.insert(value.name.as_str(), member);
+                        complete.insert(member);
+                    }
+                }
+            }
+            *members = flattened.into_values().collect();
+            if members.len() == 1 {
+                resolved.insert(ty, members[0]);
+                continue;
+            }
+            if members.is_empty() {
+                kind = BytecodeTypeKind::Scalar(BytecodeScalarType::Never);
+            }
+        }
+        let concrete = if kind == original.kind {
+            ty
+        } else {
+            let index = program
+                .types
+                .iter()
+                .position(|candidate| candidate.kind == kind)
+                .ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        context,
+                        "type catalog omits a specialized nominal payload",
+                    )
+                })?;
+            BytecodeTypeId::new(index as u32)
+        };
+        resolved.insert(ty, concrete);
+    }
+    Ok(resolved[&root])
 }
 
 fn bytecode_type_children(kind: &BytecodeTypeKind) -> Vec<BytecodeTypeId> {
@@ -12455,6 +12866,7 @@ mod tests {
         let option = BytecodeTypeId::new(6);
         let array = BytecodeTypeId::new(7);
         BytecodeProgram {
+            reflection: Default::default(),
             types: vec![
                 BytecodeType {
                     name: "Int".into(),
@@ -12572,6 +12984,7 @@ mod tests {
 
     fn catalog_program() -> (BytecodeProgram, CatalogIds) {
         let mut program = BytecodeProgram {
+            reflection: Default::default(),
             types: Vec::new(),
             nominals: Vec::new(),
             callables: Vec::new(),
@@ -12812,6 +13225,7 @@ mod tests {
             },
         );
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "consume".into(),
             generic_arity: 0,
             parameters: vec![BytecodeParameter {
@@ -12949,6 +13363,7 @@ mod tests {
     fn place_projection_matrix_covers_every_closed_projection_shape() {
         let (mut program, ids) = catalog_program();
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -13191,6 +13606,7 @@ mod tests {
             },
         });
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -13442,6 +13858,7 @@ mod tests {
     fn rvalue_matrix_covers_every_closed_value_constructor_and_observation() {
         let (mut program, ids) = catalog_program();
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -13924,6 +14341,7 @@ mod tests {
             }),
         );
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "ready".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -15442,6 +15860,7 @@ mod tests {
     #[test]
     fn closed_capability_matrix_covers_every_bytecode_type_family() {
         let mut program = BytecodeProgram {
+            reflection: Default::default(),
             types: Vec::new(),
             nominals: Vec::new(),
             callables: Vec::new(),
@@ -15560,6 +15979,7 @@ mod tests {
             },
         );
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -15714,6 +16134,10 @@ mod tests {
 
         for (constructor, ty) in intrinsics {
             let expected = match constructor {
+                BytecodeIntrinsicType::Reflection(
+                    crate::reflection::ReflectionDescriptorKind::TypeId,
+                ) => all,
+                BytecodeIntrinsicType::Reflection(_) => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::Array
                 | BytecodeIntrinsicType::Map
                 | BytecodeIntrinsicType::Set => structural_without_key,
@@ -15776,11 +16200,6 @@ mod tests {
                 | BytecodeIntrinsicType::VirtualTime => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::ProcessHandle => [false, false, false, false, true, false],
                 BytecodeIntrinsicType::FloatTolerance
-                | BytecodeIntrinsicType::FloatToleranceError
-                | BytecodeIntrinsicType::TextDiff
-                | BytecodeIntrinsicType::TempError
-                | BytecodeIntrinsicType::GenerationId
-                | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::IoError
                 | BytecodeIntrinsicType::ConsoleError
                 | BytecodeIntrinsicType::CollectionError
@@ -15918,6 +16337,7 @@ mod tests {
             },
         );
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "terminal-closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -16210,6 +16630,7 @@ mod tests {
             },
         });
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -16411,6 +16832,7 @@ mod tests {
             },
         ]);
         program.callables.push(BytecodeCallable {
+            assertion_display: None,
             name: "closure".into(),
             generic_arity: 0,
             parameters: Vec::new(),
@@ -16577,6 +16999,333 @@ mod tests {
     }
 
     #[test]
+    fn trace_payload_substitution_preserves_complete_shapes_and_simultaneous_arguments() {
+        fn push(program: &mut BytecodeProgram, kind: BytecodeTypeKind) -> BytecodeTypeId {
+            let id = BytecodeTypeId::new(program.types.len() as u32);
+            program.types.push(BytecodeType {
+                name: format!("fixture#{}", id.index()),
+                kind,
+            });
+            id
+        }
+        let mut program = BytecodeProgram {
+            reflection: Default::default(),
+            types: vec![],
+            nominals: vec![],
+            callables: vec![],
+            constants: vec![],
+            functions: vec![],
+        };
+        let text = push(
+            &mut program,
+            BytecodeTypeKind::Scalar(BytecodeScalarType::String),
+        );
+        let int = push(
+            &mut program,
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Int),
+        );
+        let first = push(&mut program, BytecodeTypeKind::GenericParameter(0));
+        let second = push(&mut program, BytecodeTypeKind::GenericParameter(1));
+        let array_kind = |element| BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Array,
+            arguments: vec![element],
+        };
+        let array_template = push(&mut program, array_kind(first));
+        let array_text = push(&mut program, array_kind(text));
+        let array_second = push(&mut program, array_kind(second));
+        let function = |parameter, outcome| {
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                parameters: vec![BytecodeFunctionParameter {
+                    mode: BytecodeParameterMode::Ref,
+                    ty: parameter,
+                }],
+                variadic: Some(parameter),
+                outcome,
+                is_async: true,
+                is_selectable: true,
+                is_unsafe: false,
+            })
+        };
+        let mut cases = vec![
+            (first, text),
+            (second, int),
+            (array_template, array_text),
+            (int, int),
+        ];
+        for (template, concrete) in [
+            (
+                BytecodeTypeKind::Tuple(vec![first, second, first]),
+                BytecodeTypeKind::Tuple(vec![text, int, text]),
+            ),
+            (
+                BytecodeTypeKind::Union(vec![first, second]),
+                BytecodeTypeKind::Union(vec![text, int]),
+            ),
+            (
+                BytecodeTypeKind::Option(array_template),
+                BytecodeTypeKind::Option(array_text),
+            ),
+            (
+                BytecodeTypeKind::Result {
+                    success: first,
+                    error: array_template,
+                },
+                BytecodeTypeKind::Result {
+                    success: text,
+                    error: array_text,
+                },
+            ),
+            (function(first, array_template), function(text, array_text)),
+            (
+                BytecodeTypeKind::Cursor {
+                    mode: BytecodeCursorMode::Ref,
+                    collection: array_template,
+                },
+                BytecodeTypeKind::Cursor {
+                    mode: BytecodeCursorMode::Ref,
+                    collection: array_text,
+                },
+            ),
+            (
+                BytecodeTypeKind::Nominal {
+                    nominal: None,
+                    identity: "Payload".into(),
+                    arguments: vec![first],
+                },
+                BytecodeTypeKind::Nominal {
+                    nominal: None,
+                    identity: "Payload".into(),
+                    arguments: vec![text],
+                },
+            ),
+            (
+                BytecodeTypeKind::Generated {
+                    identity: "Generated".into(),
+                    arguments: vec![first],
+                },
+                BytecodeTypeKind::Generated {
+                    identity: "Generated".into(),
+                    arguments: vec![text],
+                },
+            ),
+            (
+                BytecodeTypeKind::OpaqueResult {
+                    identity: "Opaque".into(),
+                    arguments: vec![first],
+                    witness: array_template,
+                    capabilities: BytecodeCapabilitySet::default(),
+                },
+                BytecodeTypeKind::OpaqueResult {
+                    identity: "Opaque".into(),
+                    arguments: vec![text],
+                    witness: array_text,
+                    capabilities: BytecodeCapabilitySet::default(),
+                },
+            ),
+        ] {
+            let template = push(&mut program, template);
+            let concrete = push(&mut program, concrete);
+            cases.push((template, concrete));
+        }
+        let analysis = TraceMetadataAnalysis::new(&program).unwrap();
+        for (template, concrete) in cases {
+            for mut shape in [
+                BytecodeNominalShape::Newtype {
+                    underlying: template,
+                },
+                BytecodeNominalShape::Record {
+                    fields: vec![BytecodeField {
+                        member: 9,
+                        ty: template,
+                    }],
+                },
+                BytecodeNominalShape::Enum {
+                    variants: vec![
+                        BytecodeVariant {
+                            member: 7,
+                            payload: BytecodeVariantPayload::Unit,
+                        },
+                        BytecodeVariant {
+                            member: 3,
+                            payload: BytecodeVariantPayload::Tuple(vec![template]),
+                        },
+                        BytecodeVariant {
+                            member: 2,
+                            payload: BytecodeVariantPayload::Record(vec![BytecodeField {
+                                member: 6,
+                                ty: template,
+                            }]),
+                        },
+                    ],
+                },
+            ] {
+                analysis
+                    .specialize_nominal_shape(&mut shape, &[text, int], "payload")
+                    .unwrap();
+                match shape {
+                    BytecodeNominalShape::Newtype { underlying } => {
+                        assert_eq!(underlying, concrete)
+                    }
+                    BytecodeNominalShape::Record { fields } => assert_eq!(
+                        fields,
+                        [BytecodeField {
+                            member: 9,
+                            ty: concrete
+                        }]
+                    ),
+                    BytecodeNominalShape::Enum { variants } => assert_eq!(
+                        variants,
+                        [
+                            BytecodeVariant {
+                                member: 7,
+                                payload: BytecodeVariantPayload::Unit
+                            },
+                            BytecodeVariant {
+                                member: 3,
+                                payload: BytecodeVariantPayload::Tuple(vec![concrete])
+                            },
+                            BytecodeVariant {
+                                member: 2,
+                                payload: BytecodeVariantPayload::Record(vec![BytecodeField {
+                                    member: 6,
+                                    ty: concrete
+                                }])
+                            },
+                        ]
+                    ),
+                }
+            }
+        }
+        assert_eq!(
+            analysis
+                .specialize_payload_type(
+                    array_template,
+                    &[second, first],
+                    &mut BTreeMap::new(),
+                    "permutation"
+                )
+                .unwrap(),
+            array_second
+        );
+        assert!(
+            analysis
+                .specialize_payload_type(first, &[], &mut BTreeMap::new(), "missing")
+                .unwrap_err()
+                .message()
+                .contains("argument is missing")
+        );
+        assert!(
+            analysis
+                .specialize_payload_type(
+                    BytecodeTypeId::new(u32::MAX),
+                    &[],
+                    &mut BTreeMap::new(),
+                    "unknown"
+                )
+                .unwrap_err()
+                .message()
+                .contains("type is missing")
+        );
+        let missing = push(
+            &mut program,
+            BytecodeTypeKind::Tuple(vec![array_template, first]),
+        );
+        let cycle = BytecodeTypeId::new(program.types.len() as u32);
+        push(&mut program, BytecodeTypeKind::Option(cycle));
+        let analysis = TraceMetadataAnalysis::new(&program).unwrap();
+        assert!(
+            analysis
+                .specialize_payload_type(missing, &[text, int], &mut BTreeMap::new(), "missing")
+                .unwrap_err()
+                .message()
+                .contains("omits a specialized nominal payload")
+        );
+        assert!(
+            analysis
+                .specialize_payload_type(cycle, &[], &mut BTreeMap::new(), "cycle")
+                .unwrap_err()
+                .message()
+                .contains("contains a cycle")
+        );
+    }
+
+    #[test]
+    fn payload_substitution_normalizes_union_arguments_and_rejects_invalid_graphs() {
+        let mut program = BytecodeProgram {
+            reflection: Default::default(),
+            types: vec![],
+            nominals: vec![],
+            callables: vec![],
+            constants: vec![],
+            functions: vec![],
+        };
+        let mut push = |name: &str, kind| {
+            let id = BytecodeTypeId::new(program.types.len() as u32);
+            program.types.push(BytecodeType {
+                name: name.into(),
+                kind,
+            });
+            id
+        };
+        let first = push("$0", BytecodeTypeKind::GenericParameter(0));
+        let second = push("$1", BytecodeTypeKind::GenericParameter(1));
+        let text = push(
+            "String",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::String),
+        );
+        let int = push("Int", BytecodeTypeKind::Scalar(BytecodeScalarType::Int));
+        let never = push("Never", BytecodeTypeKind::Scalar(BytecodeScalarType::Never));
+        let template = push("$0 | $1", BytecodeTypeKind::Union(vec![first, second]));
+        let concrete = push("Int | String", BytecodeTypeKind::Union(vec![int, text]));
+        for (arguments, expected) in [
+            ([text, int], concrete),
+            ([int, text], concrete),
+            ([text, text], text),
+            ([never, text], text),
+            ([never, never], never),
+            ([concrete, text], concrete),
+            ([concrete, concrete], concrete),
+        ] {
+            assert_eq!(
+                specialize_type_in_catalog(
+                    &program,
+                    template,
+                    &arguments,
+                    &mut BTreeMap::new(),
+                    "union"
+                )
+                .unwrap(),
+                expected
+            );
+        }
+        let cycle = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "cycle".into(),
+            kind: BytecodeTypeKind::Union(vec![cycle, int]),
+        });
+        for (argument, expected) in [
+            (cycle, "union payload type graph contains a cycle"),
+            (
+                BytecodeTypeId::new(u32::MAX),
+                "union payload member is missing",
+            ),
+        ] {
+            assert_eq!(
+                specialize_type_in_catalog(
+                    &program,
+                    template,
+                    &[argument, int],
+                    &mut BTreeMap::new(),
+                    "union"
+                )
+                .unwrap_err()
+                .message(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn trace_metadata_rejects_malformed_catalogs_without_panicking() {
         let mut wrong_arity = terminal_program(false);
         let BytecodeTypeKind::Intrinsic { arguments, .. } = &mut wrong_arity.types[7].kind else {
@@ -16639,6 +17388,7 @@ mod tests {
     fn trace_descriptor_defensive_branches_are_exercised() {
         fn descriptor_error(kind: BytecodeTypeKind) -> BytecodeVerificationError {
             let program = BytecodeProgram {
+                reflection: Default::default(),
                 types: vec![BytecodeType {
                     name: "fixture".into(),
                     kind,
@@ -16726,6 +17476,7 @@ mod tests {
         );
 
         let program = BytecodeProgram {
+            reflection: Default::default(),
             types: vec![BytecodeType {
                 name: "Int".into(),
                 kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Int),

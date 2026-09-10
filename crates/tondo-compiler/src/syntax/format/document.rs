@@ -1,9 +1,23 @@
+use crate::source::TextRange;
 use std::borrow::Cow;
+
+/// One emitted token, including whether its UTF-8 bytes were preserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatTokenMapping {
+    pub original: TextRange,
+    pub formatted: std::ops::Range<usize>,
+    pub verbatim: bool,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) enum Doc<'a> {
     Nil,
     Text(Cow<'a, str>),
+    SourceText {
+        text: Cow<'a, str>,
+        original: TextRange,
+        verbatim: bool,
+    },
     HardLine,
     SoftLine,
     SoftZero,
@@ -60,15 +74,24 @@ enum Mode {
 }
 
 pub(crate) fn render(document: &Doc<'_>, width: usize, indent_width: usize) -> String {
+    render_with_mappings(document, width, indent_width).0
+}
+
+pub(crate) fn render_with_mappings(
+    document: &Doc<'_>,
+    width: usize,
+    indent_width: usize,
+) -> (String, Vec<FormatTokenMapping>) {
     let mut renderer = Renderer {
         output: String::new(),
         width,
         indent_width,
         column: 0,
         line_start: true,
+        mappings: Vec::new(),
     };
     renderer.document(document, Mode::Broken, 0);
-    renderer.output
+    (renderer.output, renderer.mappings)
 }
 
 struct Renderer {
@@ -77,6 +100,7 @@ struct Renderer {
     indent_width: usize,
     column: usize,
     line_start: bool,
+    mappings: Vec<FormatTokenMapping>,
 }
 
 impl Renderer {
@@ -84,6 +108,19 @@ impl Renderer {
         match document {
             Doc::Nil => {}
             Doc::Text(text) => self.text(text, indentation),
+            Doc::SourceText {
+                text,
+                original,
+                verbatim,
+            } => {
+                self.text(text, indentation);
+                let end = self.output.len();
+                self.mappings.push(FormatTokenMapping {
+                    original: *original,
+                    formatted: end - text.len()..end,
+                    verbatim: *verbatim,
+                });
+            }
             Doc::HardLine => self.hardline(),
             Doc::SoftLine => match mode {
                 Mode::Flat => self.text(" ", indentation),
@@ -148,7 +185,7 @@ impl Renderer {
         while let Some(document) = stack.pop() {
             match document {
                 Doc::Nil | Doc::SoftZero => {}
-                Doc::Text(text) => {
+                Doc::Text(text) | Doc::SourceText { text, .. } => {
                     if text.contains('\n') {
                         return false;
                     }

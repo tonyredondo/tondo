@@ -20,5 +20,5 @@ fn main(): !(process.ProcessError | env.EnvError) {
     let arguments = env.snapshot()?.arguments()
     let handle = process.shell(argument(arguments[0])).start()?
     defer cleanup(handle)
-    console.print("body\n")
+    _ = console.print("body\n")
 }

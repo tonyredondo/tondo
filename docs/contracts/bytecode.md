@@ -70,6 +70,19 @@ therefore substitute generic arguments from metadata; an instruction cannot
 declare a forged field result type and make it valid merely by being
 self-consistent.
 
+The compiler closes the type catalog over instantiated nominal payloads,
+including inactive enum variants, under the same finite type-table budget.
+Derived trace descriptors resolve the complete payload graph with simultaneous
+generic substitution before execution. Nested containers, function signatures
+and opaque witnesses retain their concrete child types. Substitution restores
+canonical union member order, flattening, deduplication and `Never` elimination;
+MIR compares permitted generic union members independently of template order.
+This does not relax the language rule against bare generic union alternatives.
+Unknown arguments,
+missing concrete payload types and cyclic type graphs reject during metadata
+admission. Runtime host import consumes these resolved descriptors directly;
+it does not reinterpret parameters or search for types while importing values.
+
 An executable opaque type entry records its declaration identity, concrete
 family arguments, and concrete witness type. The witness is verifier metadata
 for checking representation seals; it is not a runtime witness table, value
@@ -185,9 +198,13 @@ remain in the function's source file and use semi-open byte ranges. The
 function source span is retained separately for symbolication and diagnostics.
 
 Slots are explicit roots. There is no operand stack whose types or liveness
-must be reconstructed at an instruction offset. `StorageLive` and
-`StorageDead` reserve the later ownership/cleanup boundary; parameters and the
-return place have function-wide storage.
+must be reconstructed at an instruction offset. The compiler emits
+`StorageLive` and `StorageDead` for managed `Copy + Discard` locals and
+temporaries in lexical blocks. Scope exits release those roots after defer
+and task drains, including `break` and `continue`. Parameters and the return
+place have function-wide storage; affine values retain their existing move
+and cleanup protocol. This boundary is lexical rather than a last-use
+optimization.
 
 ## Trace descriptors
 
@@ -462,6 +479,15 @@ code. Every potentially panicking edge in one function targets the same empty
 `DrainUnwind` cleanup block, whose only successor is the distinguished
 `ResumePanic` block.
 
+The same drain is a runtime entry for cancellation or phase exhaustion between
+instructions. Functions that register cleanup or task scopes retain exactly one
+drain, including infinite loops with no ordinary unwind edge. Verification
+requires an empty cleanup block targeting only the function's panic-resume
+block; it rejects missing or duplicate drains, ordinary instructions in the
+drain, and arbitrary unreachable executable blocks. A synchronous callback
+interrupted by a resource error retains its caller continuation until this
+structural unwind reaches the enclosing test boundary.
+
 `RegisterFallback` arms one closed structural action for a concrete `Present`
 owner. Monomorphization removes registrations whose generic MIR owner closes as
 `Absent` and rejects `Potential` executable state. Entry parameters and closure
@@ -691,7 +717,8 @@ Before execution, the verifier proves:
   potentially overlapping write invalidates that refinement; and
 - every `assert` retains a nonempty condition representation for its default
   runtime message; and
-- unreachable retained blocks contain no executable bytecode.
+- unreachable retained blocks contain no executable bytecode, except for the
+  closed runtime drain and distinguished panic-resume entries above.
 
 Initialization, move-path availability, and lifetime share one forward dataflow
 analysis; discriminant refinement remains separate. Both have an explicit

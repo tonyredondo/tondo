@@ -1,7 +1,7 @@
 import std.console
 
 fn replacement(): Int {
-    console.print("rhs\n")
+    _ = console.print("rhs\n")
     99
 }
 

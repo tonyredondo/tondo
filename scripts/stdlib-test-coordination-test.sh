@@ -39,6 +39,16 @@ jq '.owners[0].fuzz.reason = null' testing/stdlib-test-coordination.json \
 expect_failure missing-fuzz-reason env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/missing-fuzz-reason.json" \
     scripts/stdlib-test-coordination-check.sh
 
+jq '(.owners[] | select(.id == "std.fs").test.reason) = null' testing/stdlib-test-coordination.json \
+    > "$tmp_dir/missing-test-reason.json"
+expect_failure missing-test-reason env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/missing-test-reason.json" \
+    scripts/stdlib-test-coordination-check.sh
+
+jq '(.owners[] | select(.id == "std.fs").test) |= (.status = "verified" | .reason = null)' testing/stdlib-test-coordination.json \
+    > "$tmp_dir/false-test-promotion.json"
+expect_failure false-test-promotion env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/false-test-promotion.json" \
+    scripts/stdlib-test-coordination-check.sh
+
 jq '.status = "closed-coordination" | .owners[].fuzz.status = "verified"' testing/stdlib-test-coordination.json \
     > "$tmp_dir/false-promotion.json"
 expect_failure false-promotion env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/false-promotion.json" \
@@ -61,7 +71,7 @@ done
 jq -e '
   .summary == {
     owners: 22,
-    public_signatures: 216,
+    public_signatures: 298,
     owner_requirements: 171,
     model_laws: 66,
     fuzz_verified: 0,

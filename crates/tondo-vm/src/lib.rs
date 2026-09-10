@@ -1,6 +1,7 @@
 #![doc = "Verified bytecode runtime for the Tondo language."]
 
 pub mod bytecode;
+pub mod reflection;
 pub mod runtime;
 
 mod literal;

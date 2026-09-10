@@ -12,8 +12,9 @@ edition              = 0.1
 capabilities         = [console, process, clock, environment]
 ~~~
 
-`console` exposes the provisional `std.console.print(String): Unit` shim in
-`bootstrap-host.md`. `process` exposes the closed surface in
+`console` exposes the fallible console surface, including
+`std.console.print(String): Unit ! ConsoleError`, in `bootstrap-host.md` and
+`stdlib-hosted.md`. `process` exposes the closed surface in
 `process-host.md`. `clock` exposes the monotonic `std.time` surface in
 `stdlib-time.md`. `environment` exposes the sealed read-only `std.env` snapshot
 in `stdlib-env.md`. Filesystem, network, FFI, and other hosted capabilities

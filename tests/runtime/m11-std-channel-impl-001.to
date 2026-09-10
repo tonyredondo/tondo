@@ -82,5 +82,5 @@ fn main(): !channel.ChannelError {
         some(value) => assert(value == 6)
         none => assert(false)
     }
-    console.println("channel-ok")
+    _ = console.println("channel-ok")
 }

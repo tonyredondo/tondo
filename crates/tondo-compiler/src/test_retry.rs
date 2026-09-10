@@ -948,7 +948,9 @@ mod tests {
             let call = flaky_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if call == 0 {
                 Err(crate::test_runtime::RunError::Error {
-                    code: "E".into(),
+                    code: Some("E".into()),
+                    error_type: "model.TestError".into(),
+                    source: None,
                     message: "flaky".into(),
                 })
             } else {
@@ -984,7 +986,9 @@ mod tests {
         let report = allow
             .run(vec![LeafProgram::new("fail", |_| {
                 Err(crate::test_runtime::RunError::Error {
-                    code: "E".into(),
+                    code: Some("E".into()),
+                    error_type: "model.TestError".into(),
+                    source: None,
                     message: "no".into(),
                 })
             })])

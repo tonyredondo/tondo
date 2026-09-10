@@ -1,0 +1,195 @@
+import std.bytes
+import std.serialization
+
+enum CodecError { Exhausted }
+type Sink = { calls: Int }
+type Input = { reads: Int, data: bytes.Bytes }
+type Payload = { number: Int }
+
+impl serialization.Encoder[String, CodecError] for Sink {
+    fn null(var self): Unit ! CodecError {
+        self.calls += 1
+        ok(())
+    }
+    fn bool(var self, value: Bool): Unit ! CodecError {
+        assert(value)
+        self.calls += 1
+        ok(())
+    }
+    fn int(var self, value: Int64): Unit ! CodecError {
+        assert(value == 41)
+        self.calls += 1
+        ok(())
+    }
+    fn uint(var self, value: UInt64): Unit ! CodecError {
+        assert(value == 18446744073709551615u64)
+        self.calls += 1
+        ok(())
+    }
+    fn float32(var self, value: Float32): Unit ! CodecError {
+        assert(value == 1.25f32)
+        self.calls += 1
+        ok(())
+    }
+    fn float64(var self, value: Float64): Unit ! CodecError {
+        assert(value == -2.5)
+        self.calls += 1
+        ok(())
+    }
+    fn string(var self, value: String): Unit ! CodecError {
+        assert(value == "café")
+        self.calls += 1
+        ok(())
+    }
+    fn bytes(var self, value: bytes.Bytes): Unit ! CodecError {
+        assert(value.length() == 3)
+        self.calls += 1
+        ok(())
+    }
+    fn base64(var self, value: bytes.Bytes): Unit ! CodecError {
+        assert(value.length() == 3)
+        self.calls += 1
+        ok(())
+    }
+    fn startArray(var self, length: Int?): Unit ! CodecError {
+        assert(length == some(0))
+        self.calls += 1
+        ok(())
+    }
+    fn endArray(var self): Unit ! CodecError {
+        self.calls += 1
+        ok(())
+    }
+    fn startMap(var self, length: Int?): Unit ! CodecError {
+        assert(length == none)
+        self.calls += 1
+        ok(())
+    }
+    fn mapKey(var self): Unit ! CodecError {
+        self.calls += 1
+        ok(())
+    }
+    fn endMap(var self): Unit ! CodecError {
+        self.calls += 1
+        ok(())
+    }
+    fn startRecord(var self, name: String, fields: Int?): Unit ! CodecError {
+        assert(name == "Record")
+        assert(fields == some(1))
+        self.calls += 1
+        ok(())
+    }
+    fn field(var self, name: String): Unit ! CodecError {
+        assert(name == "field")
+        self.calls += 1
+        ok(())
+    }
+    fn endRecord(var self): Unit ! CodecError {
+        self.calls += 1
+        ok(())
+    }
+    fn startEnum(var self, name: String, variant: String): Unit ! CodecError {
+        assert(name == "Choice")
+        assert(variant == "Empty")
+        self.calls += 1
+        ok(())
+    }
+    fn endEnum(var self): Unit ! CodecError {
+        self.calls += 1
+        ok(())
+    }
+}
+
+impl serialization.Decoder[String, CodecError] for Input {
+    fn peek(var self): serialization.SerializationEvent? ! CodecError {
+        if self.reads == 0 {
+            return ok(some(serialization.SerializationEvent.Int(41)))
+        }
+        ok(none)
+    }
+    fn next(var self): serialization.SerializationEvent ! CodecError {
+        if self.reads != 0 {
+            return err(CodecError.Exhausted)
+        }
+        self.reads += 1
+        ok(serialization.SerializationEvent.Int(41))
+    }
+    fn base64(var self): bytes.Bytes ! CodecError { ok(self.data) }
+    fn own(var self, event: serialization.SerializationEvent): serialization.SerializationEvent ! CodecError { ok(event) }
+    fn reject(var self, error: serialization.SerializationError): CodecError { CodecError.Exhausted }
+}
+
+impl serialization.Encode[String] for Payload {
+    fn encode[E, S: serialization.Encoder[String, E]](value: Payload, encoder: var S): Unit ! E {
+        encoder.int(value.number)
+    }
+}
+impl serialization.Decode[String] for Payload {
+    fn decode[E, D: serialization.Decoder[String, E]](decoder: var D): Payload ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(number) => ok(Payload { number: number })
+            _ => err(decoder.reject(serialization.SerializationError.TypeMismatch))
+        }
+    }
+}
+
+fn write[S: serialization.Encoder[String, CodecError]](sink: var S, data: bytes.Bytes): Unit ! CodecError {
+    sink.null()?
+    sink.bool(true)?
+    sink.int(41)?
+    sink.uint(18446744073709551615u64)?
+    sink.float32(1.25f32)?
+    sink.float64(-2.5)?
+    sink.string("café")?
+    sink.bytes(data)?
+    sink.base64(data)?
+    sink.startArray(some(0))?
+    sink.endArray()?
+    sink.startMap(none)?
+    sink.mapKey()?
+    sink.endMap()?
+    sink.startRecord("Record", some(1))?
+    sink.field("field")?
+    sink.endRecord()?
+    sink.startEnum("Choice", "Empty")?
+    sink.endEnum()?
+    serialization.Encode[String].encode[CodecError, S](Payload { number: 41 }, var sink)?
+    ok(())
+}
+
+fn read[D: serialization.Decoder[String, CodecError]](input: var D): Unit ! CodecError {
+    for _ in 0..2 {
+        match input.peek()? {
+            some(serialization.SerializationEvent.Int(number)) => assert(number == 41)
+            _ => panic("expected non-consuming lookahead")
+        }
+    }
+    let value: Payload = serialization.Decode[String].decode[CodecError, D](var input)?
+    assert(value.number == 41)
+    match input.peek()? {
+        none => ()
+        _ => panic("expected end of input")
+    }
+    let event = input.own(serialization.SerializationEvent.Bool(true))?
+    match event {
+        serialization.SerializationEvent.Bool(flag) => assert(flag)
+        _ => panic("owned event changed")
+    }
+    assert(input.base64()?.length() == 3)
+    assert(input.reject(serialization.SerializationError.TypeMismatch) == CodecError.Exhausted)
+    match input.next() {
+        err(error) => assert(error == CodecError.Exhausted)
+        _ => panic("expected terminal error")
+    }
+    ok(())
+}
+
+fn main(): !(CodecError | bytes.BytesError) {
+    let data = bytes.fromArray([Byte(1u8), Byte(2u8), Byte(3u8)])?
+    var sink = Sink { calls: 0 }
+    write(var sink, data)?
+    assert(sink.calls == 20)
+    var input = Input { reads: 0, data: data }
+    read(var input)?
+    assert(input.reads == 1)
+}

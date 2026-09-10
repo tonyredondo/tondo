@@ -35,7 +35,7 @@ jq -e '
   and (.owners | type == "array" and length == 22)
   and ([.owners[].id] | unique | length) == 22
   and (.summary.owners == 22)
-  and (.summary.public_signatures == 216)
+  and (.summary.public_signatures == 298)
   and (.summary.owner_requirements == 171)
   and (.summary.model_laws == 66)
   and (.summary.fuzz_verified == 0)
@@ -51,7 +51,9 @@ jq -e '
     and (.model.status == "verified")
     and (.model.laws | type == "array" and length >= 3 and all(.[]; type == "string" and length > 0))
     and (.model.refs | type == "array" and length > 0)
-    and (.test.status == "verified")
+    and (.test.status | IN("verified", "partial"))
+    and (if .test.status == "verified" then .test.reason == null
+         else (.test.reason | type == "string" and length > 0) end)
     and (.test.commands | type == "array" and length > 0)
     and (.test.refs | type == "array" and length > 0)
     and (.fuzz.status == "partial")
@@ -59,7 +61,7 @@ jq -e '
     and (.fuzz.refs | type == "array" and length > 0)
     and (.fuzz.reason | type == "string" and length > 0)
   )
-  and ([.owners[].public_api[].id] | unique | length) == 216
+  and ([.owners[].public_api[].id] | unique | length) == 298
   and ([.owners[].public_api[].id] | unique | sort) == ([.owners[].public_api[].id] | sort)
 ' "$coordination" >/dev/null || {
     echo "stdlib test coordination: invalid registry" >&2
@@ -79,6 +81,11 @@ jq -n -e --slurpfile coordination "$coordination" --slurpfile evidence "$evidenc
     | ($owner.public_api | map(.id) | sort) == ([ $api.rows[] | select(.owner == $owner_id) | .id ] | sort)
     and all($owner.public_api[]; . as $surface | any($api.rows[]; .id == $surface.id and .status == $surface.implementation_status and .missing == $surface.missing))
     and ($owner.requirements | sort) == ([ $matrix.rows[] | select(.owner == $owner_id and .kind == "requirement") | .id ] | sort)
+    and (first($evidence.owners[] | select(.id == $owner_id)) as $origin
+      | $owner.test == {
+          status: $origin.cells.TEST.status, reason: $origin.cells.TEST.reason,
+          commands: $origin.commands, refs: $origin.cells.TEST.refs
+        })
     and (first($evidence.owners[] | select(.id == $owner_id)).cells.FUZZ as $fuzz
       | $owner.fuzz.status == $fuzz.status and $owner.fuzz.reason == $fuzz.reason
       and $owner.fuzz.evidence_kind == $fuzz.evidence_kind
@@ -107,4 +114,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].test.commands[]' "$coordination")
 
-echo "stdlib test coordination: OK (22 owners; 216 signatures; 171 requirements; 66 declared model laws; 9 bounded fuzz components; promotion open)"
+echo "stdlib test coordination: OK (22 owners; 298 signatures; 171 requirements; 66 declared model laws; 9 bounded fuzz components; promotion open)"

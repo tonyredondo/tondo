@@ -133,7 +133,7 @@ impl MetaInvocation {
                 "invocation has no outputs".into(),
             ));
         }
-        let invocation = Self {
+        let mut invocation = Self {
             compiler: context.compiler.into(),
             meta_vm: META_VM_ID.into(),
             edition: context.edition.into(),
@@ -157,11 +157,36 @@ impl MetaInvocation {
             limits: request.limits(),
         };
         invocation.validate_id()?;
+        if invocation.kind == MetaProducerKind::Derive {
+            if invocation.outputs.len() != 1 {
+                return Err(MetaAtomicError::InvalidIdentity(
+                    "derive requires exactly one output".into(),
+                ));
+            }
+            let hash = invocation.identity_hash()?;
+            invocation.id = hash.replacen("sha256:", "derive:", 1);
+            invocation.outputs[0].path = derive_output_path(&hash);
+        }
         Ok(invocation)
     }
 
+    pub(crate) fn derive_output_path(&self) -> &str {
+        &self.outputs[0].path
+    }
+
     pub fn identity_hash(&self) -> Result<String, MetaAtomicError> {
-        canonical_hash(self)
+        // A derive's ID and reserved path are outputs of this hash. The
+        // request payload binds the target, trait, source scope and budgets;
+        // including the derived names here would create a circular identity.
+        let mut identity = serde_json::to_value(self)
+            .map_err(|error| MetaAtomicError::Serialization(error.to_string()))?;
+        if self.kind == MetaProducerKind::Derive {
+            identity["id"] = serde_json::Value::Null;
+            for output in identity["outputs"].as_array_mut().expect("output array") {
+                output["path"] = serde_json::Value::Null;
+            }
+        }
+        canonical_hash(&identity)
     }
 
     pub fn payload_hash(&self) -> &str {
@@ -206,22 +231,30 @@ impl MetaInvocation {
             return Err(MetaAtomicError::OutputManifestMismatch(self.id.clone()));
         }
         let identity_hash = self.identity_hash()?;
-        let outputs = response
+        let producer_id = match self.kind {
+            MetaProducerKind::Derive => identity_hash.replacen("sha256:", "derive:", 1),
+            MetaProducerKind::Generator => self.id.clone(),
+        };
+        let mut outputs = response
             .outputs()
             .iter()
-            .map(|source| GenerationOutput {
-                source_id: generated_source_id(&identity_hash, source.path()),
+            .enumerate()
+            .map(|(index, source)| GenerationOutput {
+                source_id: generated_source_id(self.kind.as_str(), &identity_hash, index),
                 module: source.module().into(),
                 path: source.path().into(),
                 sha256: source.hash().into(),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        outputs.sort_by(|a, b| {
+            (&a.source_id, &a.module, &a.path).cmp(&(&b.source_id, &b.module, &b.path))
+        });
         Ok(AcceptedMetaResult {
             identity_hash: identity_hash.clone(),
             response_hash: response.hash()?,
             record: GenerationRecord {
                 kind: self.kind.as_str().into(),
-                id: self.id.clone(),
+                id: producer_id,
                 provider_package: self.provider_package.clone(),
                 provider_hash: self.provider_hash.clone(),
                 entry: self.entry.clone(),
@@ -517,8 +550,24 @@ fn canonical_hash(value: &impl Serialize) -> Result<String, MetaAtomicError> {
         .map_err(|error| MetaAtomicError::Serialization(error.to_string()))
 }
 
-fn generated_source_id(identity_hash: &str, path: &str) -> String {
-    sha256(format!("{identity_hash}\0{path}").as_bytes()).replacen("sha256:", "gen:", 1)
+pub(crate) fn generated_source_id(kind: &str, identity_hash: &str, index: usize) -> String {
+    let hex = identity_hash
+        .strip_prefix("sha256:")
+        .expect("validated hash");
+    if kind == "derive" {
+        format!("derive:{hex}")
+    } else {
+        format!("gen:{hex}:{index}")
+    }
+}
+
+pub(crate) fn derive_output_path(identity_hash: &str) -> String {
+    format!(
+        "@generated/derive/{}.to",
+        identity_hash
+            .strip_prefix("sha256:")
+            .expect("validated hash")
+    )
 }
 
 fn require_text(field: &str, value: &str) -> Result<(), MetaAtomicError> {
@@ -576,7 +625,7 @@ mod tests {
 
     fn request(path: &str, module: &str) -> MetaRequest {
         MetaRequest::new(
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             [],
             [MetaOutputSpec::new(path, module).unwrap()],
             MetaLimits::new(10_000, 4096, 4096).unwrap(),
@@ -801,7 +850,7 @@ mod tests {
         assert!(MetaInvocation::new(base, provider, [], &meta_request).is_ok());
 
         let empty = MetaRequest::new(
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             [],
             [],
             MetaLimits::new(1, 1, 1).unwrap(),

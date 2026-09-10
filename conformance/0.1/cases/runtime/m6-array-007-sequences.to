@@ -34,5 +34,5 @@ fn main() {
     let empty: Array[Int] = []
     assert(empty.repeat(9223372036854775807) == [])
 
-    console.print("array-sequences\n")
+    _ = console.print("array-sequences\n")
 }

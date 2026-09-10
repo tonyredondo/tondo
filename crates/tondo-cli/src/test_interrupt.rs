@@ -121,6 +121,16 @@ pub fn isolation_lost() {
     }
 }
 
+/// An unusable isolation provider aborts the invocation even without an OS
+/// signal. Stop dispatch, cancel peer workers and prevent output publication.
+pub fn abort_isolation(message: &str) {
+    eprintln!("tondo test: {message}");
+    if let Some(state) = INTERRUPTION.get() {
+        state.isolation_lost.store(true, Ordering::Release);
+        state.requested.store(true, Ordering::Release);
+    }
+}
+
 pub fn worker_clean() {
     if let Some(state) = INTERRUPTION.get() {
         state.worker_clean.store(true, Ordering::Release);

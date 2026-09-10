@@ -193,6 +193,61 @@ impl TestInputPlan {
     /// version metadata are retained. No host API is reachable from this
     /// method.
     pub fn parse(test_plan: &TestProjectPlan, bytes: &[u8]) -> Result<Self, TestInputPlanError> {
+        let expected = sha256(
+            &test_plan
+                .canonical_bytes()
+                .map_err(|error| TestInputPlanError::Serialization(error.to_string()))?,
+        );
+        let capabilities = test_plan
+            .target()
+            .capabilities()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let references = test_plan
+            .sources()
+            .iter()
+            .map(|source| source.input())
+            .collect();
+        let parsed = Self::parse_bound(&expected, &capabilities, bytes, &references)?;
+        for source in test_plan.sources() {
+            let input = parsed
+                .inputs
+                .iter()
+                .find(|input| input.name == source.input())
+                .ok_or_else(|| TestInputPlanError::MissingInput(source.input().into()))?;
+            if input.visibility != TestInputVisibility::Public
+                || !matches!(
+                    input.profile,
+                    TestInputProfile::Build | TestInputProfile::Both
+                )
+            {
+                return Err(TestInputPlanError::InvalidField {
+                    field: "inputs.profile",
+                    message: "source inputs must be public build inputs".into(),
+                });
+            }
+        }
+        Ok(parsed)
+    }
+
+    /// Revalidate an admitted input plan at the isolated worker boundary.
+    /// The compiled transport supplies its expected identity and capabilities;
+    /// source closure was checked before compilation.
+    pub fn parse_worker(
+        expected_test_plan: &str,
+        capabilities: &BTreeSet<String>,
+        bytes: &[u8],
+    ) -> Result<Self, TestInputPlanError> {
+        Self::parse_bound(expected_test_plan, capabilities, bytes, &BTreeSet::new())
+    }
+
+    fn parse_bound(
+        expected_test_plan: &str,
+        capabilities: &BTreeSet<String>,
+        bytes: &[u8],
+        referenced_names: &BTreeSet<&str>,
+    ) -> Result<Self, TestInputPlanError> {
         let wire: TestInputPlanWire = serde_json::from_slice(bytes)
             .map_err(|error| TestInputPlanError::InvalidJson(error.to_string()))?;
         if wire.format != TEST_INPUT_PLAN_FORMAT {
@@ -201,17 +256,9 @@ impl TestInputPlan {
                 message: format!("expected `{TEST_INPUT_PLAN_FORMAT}`"),
             });
         }
-        let test_plan_bytes =
-            test_plan
-                .canonical_bytes()
-                .map_err(|error| TestInputPlanError::InvalidField {
-                    field: "test_plan_sha256",
-                    message: error.to_string(),
-                })?;
-        let expected_test_plan = sha256(&test_plan_bytes);
         if wire.test_plan_sha256 != expected_test_plan {
             return Err(TestInputPlanError::PlanMismatch {
-                expected: expected_test_plan,
+                expected: expected_test_plan.into(),
                 actual: wire.test_plan_sha256,
             });
         }
@@ -222,16 +269,7 @@ impl TestInputPlan {
             }
         })?;
 
-        let allowed_capabilities = test_plan
-            .target()
-            .capabilities()
-            .iter()
-            .collect::<BTreeSet<_>>();
-        let referenced_names = test_plan
-            .sources()
-            .iter()
-            .map(|source| source.input())
-            .collect::<BTreeSet<_>>();
+        let allowed_capabilities = capabilities;
         let mut names = BTreeSet::new();
         let mut inputs = Vec::with_capacity(wire.inputs.len());
         for input in wire.inputs {
@@ -292,6 +330,12 @@ impl TestInputPlan {
                     (Some(hash), None, None, None)
                 }
                 TestInputVisibility::Secret => {
+                    if profile != TestInputProfile::Runtime {
+                        return Err(TestInputPlanError::InvalidField {
+                            field: "inputs.profile",
+                            message: "secret inputs are runtime-only".into(),
+                        });
+                    }
                     if input.sha256.is_some() {
                         return Err(TestInputPlanError::InvalidField {
                             field: "inputs.sha256",
@@ -335,12 +379,8 @@ impl TestInputPlan {
                 capability,
             });
         }
-        if !referenced_names.is_subset(&names.iter().map(String::as_str).collect()) {
-            let missing = referenced_names
-                .into_iter()
-                .find(|name| !names.contains(*name))
-                .expect("subset failure must have a missing name");
-            return Err(TestInputPlanError::MissingInput(missing.to_owned()));
+        if let Some(missing) = referenced_names.iter().find(|name| !names.contains(**name)) {
+            return Err(TestInputPlanError::MissingInput((*missing).into()));
         }
         inputs.sort_by(|left, right| left.name.cmp(&right.name));
 
@@ -378,13 +418,56 @@ impl TestInputPlan {
             });
         }
         Ok(Self {
-            test_plan_sha256: expected_test_plan,
+            test_plan_sha256: expected_test_plan.into(),
             inputs,
             public_sha256,
             secret_profile_sha256,
             secret_count,
             reproducibility,
         })
+    }
+
+    /// Add value-free runtime declarations to captured public inputs. Names
+    /// cannot replace a captured source, snapshot or project record. The
+    /// ordinary parser validates every field, capability and digest.
+    pub fn with_runtime_inputs(
+        mut self,
+        test_plan: &TestProjectPlan,
+        bytes: &[u8],
+    ) -> Result<Self, TestInputPlanError> {
+        let declarations: Vec<TestInputWire> = serde_json::from_slice(bytes)
+            .map_err(|error| TestInputPlanError::InvalidJson(error.to_string()))?;
+        for input in declarations {
+            let profile = TestInputProfile::parse(&input.profile)?;
+            if profile != TestInputProfile::Runtime {
+                return Err(TestInputPlanError::InvalidField {
+                    field: "inputs.profile",
+                    message: "declared host inputs must have the runtime profile".into(),
+                });
+            }
+            self.inputs.push(TestInputDescriptor {
+                name: input.name,
+                source: input.source,
+                profile,
+                visibility: TestInputVisibility::parse(&input.visibility)?,
+                sha256: input.sha256,
+                provider: input.provider,
+                descriptor: input.descriptor,
+                version: input.version,
+                capability: input.capability,
+            });
+        }
+        self.inputs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        self.public_sha256 = public_digest(&self.inputs)?;
+        self.secret_profile_sha256 = secret_digest(&self.inputs)?;
+        self.secret_count = self
+            .inputs
+            .iter()
+            .filter(|input| input.visibility == TestInputVisibility::Secret)
+            .count() as u32;
+        self.reproducibility = reproducibility(&self.inputs);
+        Self::parse(test_plan, &self.canonical_bytes()?)
     }
 
     pub fn test_plan_sha256(&self) -> &str {
@@ -776,6 +859,67 @@ mod tests {
         value["secret_profile_sha256"] = Value::Null;
         value["reproducibility"] = json!("secret-dependent-unversioned");
         assert!(TestInputPlan::parse(&plan, &serde_json::to_vec(&value).unwrap()).is_err());
+    }
+
+    #[test]
+    fn runtime_declarations_preserve_public_identity_and_worker_admission() {
+        let project = test_plan_fixture();
+        let base = TestInputPlan::parse(
+            &project,
+            &serde_json::to_vec(&input_json(&project)).unwrap(),
+        )
+        .unwrap();
+        let declaration = json!({"name":"host:token", "source":"environment:TOKEN", "profile":"runtime", "visibility":"secret", "provider":"fixture", "descriptor":"TOKEN", "version":"v1", "capability":"console"});
+        let plan = base
+            .clone()
+            .with_runtime_inputs(
+                &project,
+                &serde_json::to_vec(&vec![declaration.clone()]).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(plan.public_sha256(), base.public_sha256());
+        assert_eq!(plan.secret_count(), 1);
+        let bytes = plan.canonical_bytes().unwrap();
+        let capabilities = BTreeSet::from(["console".to_owned()]);
+        assert_eq!(
+            TestInputPlan::parse_worker(plan.test_plan_sha256(), &capabilities, &bytes).unwrap(),
+            plan
+        );
+        assert!(matches!(
+            TestInputPlan::parse_worker(&sha256(b"other plan"), &capabilities, &bytes),
+            Err(TestInputPlanError::PlanMismatch { .. })
+        ));
+        assert!(
+            TestInputPlan::parse_worker(plan.test_plan_sha256(), &BTreeSet::new(), &bytes).is_err()
+        );
+        for profile in ["build", "both"] {
+            let mut record: Value = serde_json::from_slice(&bytes).unwrap();
+            record["inputs"][0]["profile"] = profile.into();
+            assert!(matches!(
+                TestInputPlan::parse_worker(
+                    plan.test_plan_sha256(),
+                    &capabilities,
+                    &serde_json::to_vec(&record).unwrap()
+                ),
+                Err(TestInputPlanError::InvalidField {
+                    field: "inputs.profile",
+                    ..
+                })
+            ));
+            let mut input = declaration.clone();
+            input["profile"] = profile.into();
+            assert!(
+                base.clone()
+                    .with_runtime_inputs(&project, &serde_json::to_vec(&vec![input]).unwrap())
+                    .is_err()
+            );
+        }
+        let mut collision = declaration;
+        collision["name"] = project.sources()[0].input().into();
+        assert!(matches!(
+            base.with_runtime_inputs(&project, &serde_json::to_vec(&vec![collision]).unwrap()),
+            Err(TestInputPlanError::Duplicate { .. })
+        ));
     }
 
     #[test]

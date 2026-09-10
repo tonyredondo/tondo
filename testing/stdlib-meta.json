@@ -15,8 +15,8 @@
     "package_id": "toolchain:std-meta:draft",
     "source": "stdlib/meta/src/meta.to",
     "descriptor": "stdlib/meta/descriptor.json",
-    "source_hash": "sha256:fabe9032853ea18c6ac0089f57e6efffa555e92507378214df4bf5c361947e4f",
-    "content_hash": "sha256:0ca6b7cd70d4aaca4f3c222f8d681620f7fa937955e4328f25c7088634bc7226"
+    "source_hash": "sha256:1a5a94378e6de25852b5316885d038f3305f764f697e8df522d8cf841580649b",
+    "content_hash": "sha256:45628c83b0e8d95afb8d07ead31b4051af944c96f0dc43aefd58af92fb39ed91"
   },
   "capabilities": {
     "required": [],

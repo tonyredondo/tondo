@@ -53,6 +53,7 @@ pub struct TestReportOutput {
 pub struct TestCliPlan {
     pub project: Option<PathBuf>,
     pub test_plan: Option<PathBuf>,
+    pub process_cgroup: Option<PathBuf>,
     pub selector: TestSelector,
     pub selector_explicit: bool,
     pub codeowners: CodeownersSelection,
@@ -92,6 +93,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
     let mut plan = TestCliPlan {
         project: None,
         test_plan: None,
+        process_cgroup: None,
         selector: TestSelector::All,
         selector_explicit: false,
         codeowners: CodeownersSelection::Auto,
@@ -156,6 +158,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--exact"
                     | "--project"
                     | "--test-plan"
+                    | "--process-cgroup"
                     | "--codeowners"
                     | "--shard"
                     | "--order"
@@ -181,6 +184,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--exact"
                     | "--project"
                     | "--test-plan"
+                    | "--process-cgroup"
                     | "--codeowners"
                     | "--shard"
                     | "--order"
@@ -230,6 +234,15 @@ fn parse_value(
     value: &str,
 ) -> Result<(), String> {
     match name {
+        "--process-cgroup" => {
+            once_value(seen, "--process-cgroup")?;
+            let path = validate_text_path(value, "`--process-cgroup`")?;
+            if !path.is_absolute() {
+                return Err("`--process-cgroup` requires an absolute delegated cgroup path".into());
+            }
+            plan.process_cgroup = Some(path);
+            Ok(())
+        }
         "--project" => {
             once_value(seen, "--project")?;
             plan.project = Some(validate_text_path(value, "`--project`")?);

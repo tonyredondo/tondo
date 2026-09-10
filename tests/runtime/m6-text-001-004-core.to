@@ -23,5 +23,5 @@ fn main() {
     assert(bytes == [Byte(0u8), Byte(255u8)])
     assert(Byte(65u8) != Byte(97u8))
 
-    console.print("text-core\n")
+    _ = console.print("text-core\n")
 }

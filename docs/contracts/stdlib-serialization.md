@@ -92,11 +92,11 @@ pub trait Decoder[C, E] {
 }
 
 pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](value: Self, var encoder: S): Unit ! E
+    fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E
 }
 
 pub trait Decode[C] {
-    fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
+    fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E
 }
 ```
 

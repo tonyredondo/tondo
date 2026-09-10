@@ -142,7 +142,7 @@
     {
       "id": "STD-A-CONF-001",
       "source": "target/reliability/evidence/stdlib-conformance.json",
-      "proof": "22 owners, 387 public matrix rows and 206 draft cases passed; public row coverage verified and promotion earned"
+      "proof": "22 owners, 469 public matrix rows and 206 draft cases passed; public row coverage verified and promotion earned"
     },
     {
       "id": "STD-A-DIST-001",
@@ -154,13 +154,13 @@
     "public_api": {
       "strict": true,
       "owners": 21,
-      "signatures": 216,
+      "signatures": 298,
       "gaps": 0
     },
     "matrix": {
       "owners": 22,
       "requirements": 171,
-      "rows": 387,
+      "rows": 469,
       "open_rows": 0,
       "status": "verified",
       "applicable_open_cells": 0
@@ -177,7 +177,7 @@
     },
     "conformance": {
       "owners": 22,
-      "rows": 387,
+      "rows": 469,
       "cases": 206,
       "passed": true
     },

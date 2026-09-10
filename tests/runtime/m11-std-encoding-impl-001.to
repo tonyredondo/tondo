@@ -27,5 +27,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | encodin
 
     var output = console.stdout()?
     standard.encodeTo(source, var output)?
-    console.println("encoding-ok")
+    _ = console.println("encoding-ok")
 }

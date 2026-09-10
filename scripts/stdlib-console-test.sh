@@ -38,10 +38,10 @@ expect_failure missing-partial-io env TONDO_STDLIB_HOSTED_CONTRACT="$tmp_dir/mis
     scripts/stdlib-hosted-check.sh
 
 for signature in \
-    'pub fn stdin(): std.io.Reader ! ConsoleError' \
-    'pub fn stdout(): std.io.Writer ! ConsoleError' \
-    'pub fn stderr(): std.io.Writer ! ConsoleError' \
-    'pub fn readLine(var input: std.io.Reader): String? ! ConsoleError' \
+    'pub fn stdin(): Input ! ConsoleError' \
+    'pub fn stdout(): Output ! ConsoleError' \
+    'pub fn stderr(): Output ! ConsoleError' \
+    'pub fn readLine(input: var Input): String? ! ConsoleError' \
     'pub fn print(value: String): Unit ! ConsoleError' \
     'pub fn println(value: String): Unit ! ConsoleError' \
     'pub fn flush(): Unit ! ConsoleError' \
@@ -52,7 +52,6 @@ done
 for symbol in \
     'IntrinsicType::Reader' \
     'IntrinsicType::Writer' \
-    'IntrinsicType::ConsoleError' \
     'HirBootstrapHostFunction::ConsoleStdin' \
     'HirBootstrapHostFunction::ConsoleStdout' \
     'HirBootstrapHostFunction::ConsoleStderr' \
@@ -67,10 +66,8 @@ done
 for symbol in \
     'BytecodeIntrinsicType::Reader' \
     'BytecodeIntrinsicType::Writer' \
-    'BytecodeIntrinsicType::ConsoleError' \
     'RuntimeHostValueKind::Reader' \
     'RuntimeHostValueKind::Writer' \
-    'RuntimeHostValueKind::ConsoleError' \
     'std.console.stdin' \
     'std.console.stdout' \
     'std.console.stderr' \
@@ -84,11 +81,18 @@ done
 
 for symbol in \
     'console_println_uses_a_stable_lf_newline' \
+    'console_line_waits_for_complete_vm_result_admission' \
+    'console_cancellation_retains_its_nominal_error_at_the_exact_budget' \
     'console_streams_preserve_partial_reads_and_separate_output_channels' \
     'console_failures_are_typed_atomic_and_redacted' \
     'io_limits_helpers_are_bounded_and_atomic_at_the_public_host_boundary'; do
     grep -Fq "$symbol" crates/tondo-compiler/src/process_host.rs
 done
+
+grep -Fq 'BootstrapNominalShape::Enum(&["Unavailable", "Closed", "Cancelled", "Io"])' \
+    crates/tondo-compiler/src/resolve.rs
+grep -Fq 'fn lower_bootstrap_console_nominal_declarations' crates/tondo-compiler/src/hir/lower.rs
+cargo test --locked -p tondo-cli --test cli console_public_errors_and_results_execute
 
 for symbol in \
     'test_operation_checks_console_stream_protocol_through_the_hir' \

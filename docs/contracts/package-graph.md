@@ -40,6 +40,24 @@ The graph separately identifies the root package and the exact standard package.
 They must be different nodes. `std` is not an ordinary alias: it always resolves
 to the selected standard node, and package manifests cannot claim that spelling.
 
+The compiler-owned hosted standard package has a build-time source identity.
+`crates/tondo-compiler/build_support/standard_identity.rs` declares the input
+closure: compiler, VM and stdlib implementation sources, their manifests, the
+workspace manifest and lockfile, the standard meta companion and the identity
+builder itself. Paths are workspace-relative with `/` separators. Sorted paths
+and exact file bytes are length-framed with unsigned 64-bit little-endian
+lengths and hashed with SHA-256 under `tondo-hosted-standard-source-bundle/1`
+followed by NUL. Directory enumeration order, checkout path, timestamps, Git
+state and runtime environment do not enter the digest. Missing inputs,
+non-regular files and duplicate logical paths fail the compiler build.
+
+This is deliberately conservative: inline implementation tests and changes
+elsewhere in those implementation crates also invalidate the standard hash.
+The lock's standard content hash must match the value embedded in the compiler;
+the former fixed bootstrap label is rejected. Target, profile and capabilities
+remain separate build inputs. This source identity establishes no native ABI
+or native AOT promotion. Project planning still performs no ambient I/O.
+
 `PackageGraph::new` rejects duplicate package IDs, duplicate source IDs, unknown
 dependency targets, alias collisions with the current package, a missing root or
 standard node, and package dependency cycles. These are malformed build inputs,

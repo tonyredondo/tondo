@@ -15,5 +15,5 @@ fn main() {
     assert(value.trim() == "Héllo, Tondo!")
     assert("AbC".toLowerAscii() == "abc")
     assert("aBc".toUpperAscii() == "ABC")
-    console.print("text-ok\n")
+    _ = console.print("text-ok\n")
 }

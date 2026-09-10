@@ -27,4 +27,11 @@ jq '.capabilities.forbidden = [.capabilities.forbidden[] | select(. != "runtime-
     testing/stdlib-reflect.json > "$tmp_dir/value-reflection.json"
 expect_failure value-reflection env TONDO_STDLIB_REFLECT_CONTRACT="$tmp_dir/value-reflection.json" scripts/stdlib-reflect-check.sh
 
-echo "std.reflect owner tests: OK"
+cargo run -p tondo-cli --locked --quiet -- run tests/runtime/m11-std-reflect-public-001.to \
+    > "$tmp_dir/public.stdout"
+cmp -s "$tmp_dir/public.stdout" tests/runtime/m11-std-reflect-public-001.stdout || {
+    echo "std.reflect owner tests: public output differs from its fixture" >&2
+    exit 1
+}
+
+echo "std.reflect owner tests: OK (ordinary Tondo descriptor queries)"

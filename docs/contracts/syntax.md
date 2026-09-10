@@ -78,11 +78,22 @@ The CST deliberately retains contextual forms:
 - `ConstructorPattern`, `QualifiedValuePattern`, and `ForHeader` retain the
   information required for semantic classification.
 
+The final brace block of an `if`, `for` or `match` header belongs to that control
+construct. Parenthesized header operands remain groups or tuples unless the
+candidate expression body has a continuation before the actual control body.
+Arguments, collection elements and grouped subexpressions have their own brace
+context, so nested closures and record literals remain valid in these headers.
+Recursive and spilled delimiter paths apply the same distinction.
+
 ## Recovery
 
 Missing required tokens become zero-width synthetic tokens. Unexpected physical
-tokens are attached beneath `Error` nodes. Delimiters and logical newlines are
-recovery boundaries and are not consumed merely to make progress.
+tokens are attached beneath `Error` nodes. Expression recovery leaves delimiters
+and logical newlines for their enclosing construct. At a statement boundary,
+an unmatched comma, right parenthesis, right bracket or arm arrow cannot close
+the body: it is consumed beneath `Error` with `E0004`. This prevents a block from
+repeatedly parsing the same token until its node budget is exhausted. Closing
+braces and later independent declarations retain their enclosing owner.
 
 After an `E0004`, further generic syntax errors on the same logical line are
 suppressed. A physical newline can also become a recovery boundary when newline

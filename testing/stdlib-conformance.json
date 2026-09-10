@@ -14,7 +14,7 @@
   "runner": {
     "lineage": "draft",
     "manifest": "conformance/0.1/manifest.json",
-    "manifest_sha256": "8dc61afdadc0cefa4b8d2296426688477245d75c48a1445ca4fccd759aac7a9b",
+    "manifest_sha256": "3a96796651be772a54058f350cff92e7608f002e6c63dae775d9cef9611da69e",
     "full_suite_case_count": 206,
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
@@ -189,13 +189,13 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.console:10",
-        "signature:std.console:11",
         "signature:std.console:12",
         "signature:std.console:13",
         "signature:std.console:14",
         "signature:std.console:15",
-        "signature:std.console:16"
+        "signature:std.console:16",
+        "signature:std.console:17",
+        "signature:std.console:18"
       ],
       "requirements": [
         "requirement:std.console:cancellation",
@@ -338,11 +338,11 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.format:256",
-        "signature:std.format:257",
-        "signature:std.format:258",
-        "signature:std.format:259",
-        "signature:std.format:260"
+        "signature:std.format:261",
+        "signature:std.format:262",
+        "signature:std.format:263",
+        "signature:std.format:264",
+        "signature:std.format:265"
       ],
       "requirements": [
         "requirement:std.format:async-cancellation",
@@ -382,20 +382,20 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.fs:85",
-        "signature:std.fs:86",
-        "signature:std.fs:87",
-        "signature:std.fs:88",
-        "signature:std.fs:89",
-        "signature:std.fs:90",
-        "signature:std.fs:91",
-        "signature:std.fs:92",
-        "signature:std.fs:93",
-        "signature:std.fs:94",
-        "signature:std.fs:95",
-        "signature:std.fs:96",
-        "signature:std.fs:97",
-        "signature:std.fs:98"
+        "signature:std.fs:107",
+        "signature:std.fs:108",
+        "signature:std.fs:109",
+        "signature:std.fs:110",
+        "signature:std.fs:111",
+        "signature:std.fs:112",
+        "signature:std.fs:113",
+        "signature:std.fs:114",
+        "signature:std.fs:115",
+        "signature:std.fs:116",
+        "signature:std.fs:117",
+        "signature:std.fs:118",
+        "signature:std.fs:119",
+        "signature:std.fs:120"
       ],
       "requirements": [
         "requirement:std.fs:cancellation",
@@ -437,10 +437,13 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.io:286",
-        "signature:std.io:287",
+        "signature:std.io:285",
         "signature:std.io:288",
-        "signature:std.io:289"
+        "signature:std.io:289",
+        "signature:std.io:291",
+        "signature:std.io:292",
+        "signature:std.io:293",
+        "signature:std.io:294"
       ],
       "requirements": [
         "requirement:std.io:async-cancellation",
@@ -452,9 +455,9 @@
         "requirement:std.io:ownership"
       ],
       "rows": {
-        "signatures": 4,
+        "signatures": 7,
         "requirements": 7,
-        "total": 11
+        "total": 14
       },
       "owner_command": "scripts/stdlib-io-test.sh",
       "cases": [
@@ -480,6 +483,7 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
+        "signature:std.iter:162",
         "signature:std.iter:164",
         "signature:std.iter:165",
         "signature:std.iter:166",
@@ -495,9 +499,9 @@
         "requirement:std.iter:ownership"
       ],
       "rows": {
-        "signatures": 4,
+        "signatures": 5,
         "requirements": 7,
-        "total": 11
+        "total": 12
       },
       "owner_command": "scripts/stdlib-iter-test.sh",
       "cases": [
@@ -595,16 +599,16 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.math:235",
-        "signature:std.math:236",
-        "signature:std.math:237",
-        "signature:std.math:238",
-        "signature:std.math:239",
         "signature:std.math:240",
         "signature:std.math:241",
         "signature:std.math:242",
         "signature:std.math:243",
-        "signature:std.math:244"
+        "signature:std.math:244",
+        "signature:std.math:245",
+        "signature:std.math:246",
+        "signature:std.math:247",
+        "signature:std.math:248",
+        "signature:std.math:249"
       ],
       "requirements": [
         "requirement:std.math:async-cancellation",
@@ -721,7 +725,33 @@
       "layer": "A0",
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
-      "public_signatures": [],
+      "public_signatures": [
+        "signature:std.meta:15",
+        "signature:std.meta:16",
+        "signature:std.meta:17",
+        "signature:std.meta:18",
+        "signature:std.meta:19",
+        "signature:std.meta:20",
+        "signature:std.meta:21",
+        "signature:std.meta:22",
+        "signature:std.meta:23",
+        "signature:std.meta:24",
+        "signature:std.meta:25",
+        "signature:std.meta:26",
+        "signature:std.meta:27",
+        "signature:std.meta:28",
+        "signature:std.meta:29",
+        "signature:std.meta:30",
+        "signature:std.meta:31",
+        "signature:std.meta:32",
+        "signature:std.meta:33",
+        "signature:std.meta:34",
+        "signature:std.meta:35",
+        "signature:std.meta:36",
+        "signature:std.meta:37",
+        "signature:std.meta:38",
+        "signature:std.meta:39"
+      ],
       "requirements": [
         "requirement:std.meta:canonical-rendering",
         "requirement:std.meta:compile-time-budget",
@@ -731,9 +761,9 @@
         "requirement:std.meta:source-builder"
       ],
       "rows": {
-        "signatures": 0,
+        "signatures": 25,
         "requirements": 6,
-        "total": 6
+        "total": 31
       },
       "owner_command": "scripts/stdlib-meta-test.sh",
       "cases": [
@@ -747,10 +777,11 @@
       ],
       "refs": [
         "crates/tondo-compiler/tests/std_meta_conformance.rs",
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.meta",
         "testing/stdlib-public-api.json"
       ],
-      "scope": "compiler-component-only"
+      "scope": "ordinary-tondo-companion-and-compiler-components"
     },
     {
       "id": "std.path",
@@ -758,16 +789,16 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.path:47",
-        "signature:std.path:48",
-        "signature:std.path:49",
-        "signature:std.path:50",
-        "signature:std.path:51",
-        "signature:std.path:52",
-        "signature:std.path:53",
-        "signature:std.path:54",
-        "signature:std.path:55",
-        "signature:std.path:56"
+        "signature:std.path:68",
+        "signature:std.path:69",
+        "signature:std.path:70",
+        "signature:std.path:71",
+        "signature:std.path:72",
+        "signature:std.path:73",
+        "signature:std.path:74",
+        "signature:std.path:75",
+        "signature:std.path:76",
+        "signature:std.path:77"
       ],
       "requirements": [
         "requirement:std.path:cancellation",
@@ -809,23 +840,23 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.process:148",
-        "signature:std.process:149",
-        "signature:std.process:150",
-        "signature:std.process:151",
-        "signature:std.process:152",
-        "signature:std.process:153",
-        "signature:std.process:154",
-        "signature:std.process:155",
-        "signature:std.process:156",
-        "signature:std.process:157",
-        "signature:std.process:158",
-        "signature:std.process:159",
-        "signature:std.process:160",
-        "signature:std.process:161",
-        "signature:std.process:162",
-        "signature:std.process:163",
-        "signature:std.process:164"
+        "signature:std.process:209",
+        "signature:std.process:210",
+        "signature:std.process:211",
+        "signature:std.process:212",
+        "signature:std.process:213",
+        "signature:std.process:214",
+        "signature:std.process:215",
+        "signature:std.process:216",
+        "signature:std.process:217",
+        "signature:std.process:218",
+        "signature:std.process:219",
+        "signature:std.process:220",
+        "signature:std.process:221",
+        "signature:std.process:222",
+        "signature:std.process:223",
+        "signature:std.process:224",
+        "signature:std.process:225"
       ],
       "requirements": [
         "requirement:std.process:cancellation",
@@ -944,7 +975,33 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.reflect:32"
+        "signature:std.reflect:45",
+        "signature:std.reflect:46",
+        "signature:std.reflect:47",
+        "signature:std.reflect:48",
+        "signature:std.reflect:49",
+        "signature:std.reflect:50",
+        "signature:std.reflect:51",
+        "signature:std.reflect:52",
+        "signature:std.reflect:53",
+        "signature:std.reflect:54",
+        "signature:std.reflect:55",
+        "signature:std.reflect:56",
+        "signature:std.reflect:57",
+        "signature:std.reflect:58",
+        "signature:std.reflect:59",
+        "signature:std.reflect:60",
+        "signature:std.reflect:61",
+        "signature:std.reflect:62",
+        "signature:std.reflect:63",
+        "signature:std.reflect:64",
+        "signature:std.reflect:65",
+        "signature:std.reflect:66",
+        "signature:std.reflect:67",
+        "signature:std.reflect:68",
+        "signature:std.reflect:69",
+        "signature:std.reflect:70",
+        "signature:std.reflect:71"
       ],
       "requirements": [
         "requirement:std.reflect:artifact-local-identity",
@@ -955,9 +1012,9 @@
         "requirement:std.reflect:root-closure"
       ],
       "rows": {
-        "signatures": 1,
+        "signatures": 27,
         "requirements": 6,
-        "total": 7
+        "total": 33
       },
       "owner_command": "scripts/stdlib-reflect-test.sh",
       "cases": [
@@ -965,23 +1022,59 @@
           "id": "reflect-metadata",
           "kind": "compiler",
           "source": "crates/tondo-compiler/src/reflect.rs",
-          "command": "scripts/stdlib-reflect-test.sh",
+          "command": "cargo test -p tondo-compiler --locked --lib reflect::tests",
           "verification": "compiler-test"
+        },
+        {
+          "id": "reflect-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-reflect-public-001.to",
+          "command": "scripts/stdlib-reflect-test.sh",
+          "verification": "fixture-sidecars"
         }
       ],
       "refs": [
         "crates/tondo-compiler/src/reflect.rs",
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.reflect",
-        "testing/stdlib-public-api.json"
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-reflect-public-001.to"
       ],
-      "scope": "metadata-model-only"
+      "scope": "public-hosted-descriptors-and-metadata-model"
     },
     {
       "id": "std.serialization",
       "layer": "A3",
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
-      "public_signatures": [],
+      "public_signatures": [
+        "signature:std.serialization:61",
+        "signature:std.serialization:62",
+        "signature:std.serialization:63",
+        "signature:std.serialization:64",
+        "signature:std.serialization:65",
+        "signature:std.serialization:66",
+        "signature:std.serialization:67",
+        "signature:std.serialization:68",
+        "signature:std.serialization:69",
+        "signature:std.serialization:71",
+        "signature:std.serialization:72",
+        "signature:std.serialization:74",
+        "signature:std.serialization:75",
+        "signature:std.serialization:76",
+        "signature:std.serialization:78",
+        "signature:std.serialization:79",
+        "signature:std.serialization:80",
+        "signature:std.serialization:82",
+        "signature:std.serialization:83",
+        "signature:std.serialization:87",
+        "signature:std.serialization:88",
+        "signature:std.serialization:89",
+        "signature:std.serialization:90",
+        "signature:std.serialization:91",
+        "signature:std.serialization:95",
+        "signature:std.serialization:99"
+      ],
       "requirements": [
         "requirement:std.serialization:async-cancellation",
         "requirement:std.serialization:composition",
@@ -992,9 +1085,9 @@
         "requirement:std.serialization:ownership"
       ],
       "rows": {
-        "signatures": 0,
+        "signatures": 26,
         "requirements": 7,
-        "total": 7
+        "total": 33
       },
       "owner_command": "scripts/stdlib-serialization-test.sh",
       "cases": [
@@ -1011,13 +1104,22 @@
           "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
           "command": "scripts/stdlib-codec-conformance.sh",
           "verification": "external-harness"
+        },
+        {
+          "id": "serialization-public-protocols",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-serialization-public-001.to",
+          "command": "scripts/stdlib-serialization-test.sh",
+          "verification": "fixture-sidecars"
         }
       ],
       "refs": [
         "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json",
         "testing/stdlib-conformance.json#owners/std.serialization",
         "testing/stdlib-public-api.json",
-        "tests/runtime/m11-std-codecs-001.to"
+        "tests/runtime/m11-std-codecs-001.to",
+        "tests/runtime/m11-std-serialization-public-001.to"
       ],
       "scope": "public-owner-and-runtime"
     },
@@ -1027,26 +1129,27 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.testing:148",
-        "signature:std.testing:149",
-        "signature:std.testing:150",
-        "signature:std.testing:187",
-        "signature:std.testing:188",
-        "signature:std.testing:189",
-        "signature:std.testing:190",
-        "signature:std.testing:238",
-        "signature:std.testing:239",
-        "signature:std.testing:240",
-        "signature:std.testing:282",
-        "signature:std.testing:283",
-        "signature:std.testing:284",
-        "signature:std.testing:285",
-        "signature:std.testing:286",
-        "signature:std.testing:287",
-        "signature:std.testing:288",
-        "signature:std.testing:289",
-        "signature:std.testing:290",
-        "signature:std.testing:296",
+        "signature:std.testing:203",
+        "signature:std.testing:204",
+        "signature:std.testing:205",
+        "signature:std.testing:254",
+        "signature:std.testing:255",
+        "signature:std.testing:256",
+        "signature:std.testing:257",
+        "signature:std.testing:305",
+        "signature:std.testing:306",
+        "signature:std.testing:307",
+        "signature:std.testing:402",
+        "signature:std.testing:403",
+        "signature:std.testing:404",
+        "signature:std.testing:405",
+        "signature:std.testing:406",
+        "signature:std.testing:407",
+        "signature:std.testing:408",
+        "signature:std.testing:409",
+        "signature:std.testing:410",
+        "signature:std.testing:413",
+        "signature:std.testing:416",
         "signature:std.testing:69",
         "signature:std.testing:70",
         "signature:std.testing:71",
@@ -1064,9 +1167,9 @@
         "requirement:std.testing:text-diff"
       ],
       "rows": {
-        "signatures": 25,
+        "signatures": 26,
         "requirements": 8,
-        "total": 33
+        "total": 34
       },
       "owner_command": "scripts/stdlib-testing-test.sh",
       "cases": [
@@ -1197,9 +1300,9 @@
   ],
   "summary": {
     "owners": 22,
-    "signatures": 216,
+    "signatures": 298,
     "requirements": 171,
-    "rows": 387,
-    "cases": 32
+    "rows": 469,
+    "cases": 34
   }
 }

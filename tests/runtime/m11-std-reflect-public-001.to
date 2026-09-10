@@ -1,0 +1,82 @@
+import std.reflect
+
+pub type Record = {
+    priv hidden: Int
+    /// Public text.
+    /// Its documentation is retained.
+    visible: String
+}
+
+pub enum Choice[T] {
+    Empty
+    Item(T)
+    Named { name: T }
+}
+
+fn checkFunction(info: reflect.FunctionInfo) {
+    assert(info.variadic())
+    assert(info.suspends())
+    assert(info.isUnsafe())
+    assert(info.outcome().qualifiedName() == "Int ! String")
+    let parameters = info.parameters()
+    assert(parameters.length() == 4)
+    assert(parameters[0].position() == 0)
+    assert(parameters[0].typeInfo().qualifiedName() == "Int")
+    assert(parameters[0].mode() == reflect.ParameterMode.Ref)
+    assert(parameters[1].mode() == reflect.ParameterMode.Mut)
+    assert(parameters[2].mode() == reflect.ParameterMode.Var)
+    assert(parameters[3].mode() == reflect.ParameterMode.Value)
+    assert(parameters[3].position() == 3)
+    assert(parameters[3].typeInfo().qualifiedName() == "Byte")
+}
+
+fn main() {
+    let integer = reflect.typeInfo[Int]()
+    assert(integer.qualifiedName() == "Int")
+    assert(integer.kind() == reflect.TypeKind.Primitive(reflect.PrimitiveKind.Int))
+    assert(integer.id() == reflect.typeInfo[Int]().id())
+    assert(integer.id() != reflect.typeInfo[String]().id())
+    let keys = [integer.id(): "integer"]
+    assert(keys[reflect.typeInfo[Int]().id()] == some("integer"))
+    assert(integer.capabilities().contains(reflect.TypeCapability.Copy))
+    assert(integer.fields().length() == 0)
+    assert(integer.variants().length() == 0)
+    assert(match integer.function() {
+        none => true
+        some(_) => false
+    })
+    let fields = reflect.typeInfo[Record]().fields()
+    assert(fields.length() == 1)
+    assert(fields[0].name() == "visible")
+    assert(fields[0].ordinal() == 1)
+    assert(fields[0].typeInfo().qualifiedName() == "String")
+    assert(fields[0].docs() == some("Public text.\nIts documentation is retained."))
+    let choice = reflect.typeInfo[Choice[String]]()
+    assert(choice.genericArguments()[0].qualifiedName() == "String")
+    let variants = choice.variants()
+    assert(variants.length() == 3)
+    assert(variants[0].name() == "Empty")
+    assert(variants[0].ordinal() == 0)
+    assert(variants[0].payloadKind() == reflect.VariantPayloadKind.Unit)
+    assert(variants[0].tupleElements().length() == 0)
+    assert(variants[0].fields().length() == 0)
+    assert(variants[1].payloadKind() == reflect.VariantPayloadKind.Tuple)
+    assert(variants[1].tupleElements()[0].qualifiedName() == "String")
+    assert(variants[2].payloadKind() == reflect.VariantPayloadKind.Record)
+    assert(variants[2].fields()[0].name() == "name")
+    assert(variants[2].fields()[0].docs() == none)
+    assert(reflect.typeInfo[(Int, Bool)]().tupleElements()[1].qualifiedName() == "Bool")
+    match reflect.typeInfo[fn(): Unit]().function() {
+        some(info) => {
+            assert(not info.variadic())
+            assert(not info.suspends())
+            assert(not info.isUnsafe())
+            assert(info.parameters().length() == 0)
+        }
+        none => panic("function metadata missing")
+    }
+    match reflect.typeInfo[unsafe fn(ref Int, mut String, var Bool, ...Byte): Int ! String suspends]().function() {
+        some(info) => checkFunction(info)
+        none => panic("function metadata missing")
+    }
+}

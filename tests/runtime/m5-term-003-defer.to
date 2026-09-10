@@ -1,7 +1,7 @@
 import std.console
 
 fn emit(value: String) {
-    console.print(value)
+    _ = console.print(value)
 }
 
 fn hidden(value: Int): impl Discard {

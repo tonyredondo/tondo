@@ -15,7 +15,7 @@ fn typed_dynamic_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleE
     assert(typed == [7, 9])
     let typed_encoded = yaml.encode[Array[Int]](typed, options)?
     assert(String(typed_encoded)? == "- 7\n- 9\n")
-    console.println("typed-dynamic:3:Tondo:7:2")
+    _ = console.println("typed-dynamic:3:Tondo:7:2")
 }
 
 fn interoperability_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
@@ -27,7 +27,7 @@ fn interoperability_case(): !(bytes.BytesError | bytes.Utf8Error | console.Conso
     assert(String(canonical)? == "a: 16\nb: !!binary Zm8=\nz: yes\n")
     let normal = yaml.encode(value, options)?
     assert(String(normal)? == "z: yes\na: 16\nb: !!binary Zm8=\n")
-    console.println("interoperability:3:16:fo:3")
+    _ = console.println("interoperability:3:16:fo:3")
 }
 
 fn streaming_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
@@ -64,7 +64,7 @@ fn streaming_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError
             _ => assert(false)
         }
     }
-    console.println("streaming:2:16:closed")
+    _ = console.println("streaming:2:16:closed")
 }
 
 fn errors_path_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
@@ -89,7 +89,7 @@ fn errors_path_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleErr
             }
         }
     }
-    console.println("errors-path:17:2:0")
+    _ = console.println("errors-path:17:2:0")
 }
 
 fn limits_lifecycle_case(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
@@ -102,11 +102,11 @@ fn limits_lifecycle_case(): !(bytes.BytesError | bytes.Utf8Error | console.Conso
             _ => assert(false)
         }
     }
-    console.println("limits-lifecycle:19:0")
+    _ = console.println("limits-lifecycle:19:0")
 }
 
 fn route_boundary() {
-    console.println("route-boundary:scalar:simd-not-claimed:native-aot-not-claimed")
+    _ = console.println("route-boundary:scalar:simd-not-claimed:native-aot-not-claimed")
 }
 
 fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.YamlError) {
@@ -116,5 +116,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | yaml.Ya
     errors_path_case()?
     limits_lifecycle_case()?
     route_boundary()
-    console.println("yaml-conformance-ok")
+    _ = console.println("yaml-conformance-ok")
 }

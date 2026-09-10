@@ -193,7 +193,8 @@
         }
       }
     ],
-    "maximum_drop_basis_points": 0
+    "maximum_drop_basis_points": 0,
+    "acceptance_floor_basis_points": 8000
   },
   "mutation": {
     "tool": "cargo-mutants 27.1.0",

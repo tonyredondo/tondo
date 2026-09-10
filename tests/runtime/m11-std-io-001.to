@@ -10,5 +10,6 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.BytesError) {
 
     var output = console.stdout()?
     io.writeAll(var output, bytes.Bytes("io-ok")?)?
-    console.println(" io-done")
+    output.flush()?
+    _ = console.println(" io-done")
 }

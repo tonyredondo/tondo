@@ -94,6 +94,8 @@ impl LocalId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LocalKind {
     GenericParameter,
+    /// A parameter declared by a callable contract with no implementation body.
+    SignatureParameter,
     Parameter,
     Binding,
     Pattern,
@@ -165,6 +167,66 @@ pub struct ResolvedReference {
     file: FileId,
     range: TextRange,
     entity: ResolvedEntity,
+}
+
+/// Leading documentation attaches only across one physical newline and
+/// declaration modifiers. Qualified function heads are part of the declaration;
+/// bodies and unrelated preceding comments are excluded.
+pub(crate) fn leading_docs(
+    sources: &SourceDatabase,
+    parsed: &Parsed,
+    span: Span,
+) -> Option<String> {
+    let tokens = parsed.cst().tokens();
+    let start = parsed
+        .cst()
+        .root_node()
+        .child_nodes()
+        .filter(|node| node.kind() == SyntaxKind::FunctionDecl)
+        .find(|node| {
+            node.child_nodes().any(|head| {
+                head.kind() == SyntaxKind::FunctionHead
+                    && head.range().start() <= span.range().start()
+                    && span.range().end() <= head.range().end()
+            })
+        })
+        .and_then(|node| {
+            node.child_tokens()
+                .find(|token| token.kind() == TokenKind::Fn)
+        })
+        .map_or(span.range().start(), |token| token.range().start());
+    let end = tokens.partition_point(|token| token.range().end() <= start);
+    let source = sources.get(span.file()).ok()?;
+    let mut lines = Vec::new();
+    let mut newlines = 0;
+    for token in tokens[..end].iter().rev() {
+        match token.kind() {
+            TokenKind::Pub
+            | TokenKind::Priv
+            | TokenKind::Whitespace
+            | TokenKind::Nl
+            | TokenKind::Const
+            | TokenKind::Type
+            | TokenKind::Alias
+            | TokenKind::Enum
+            | TokenKind::Trait
+            | TokenKind::Fn => {}
+            TokenKind::PhysicalNewline if newlines < 1 => newlines += 1,
+            TokenKind::DocComment => {
+                let bytes = &source.bytes()
+                    [token.range().start() as usize + 3..token.range().end() as usize];
+                let line = std::str::from_utf8(bytes).ok()?;
+                lines.push(line.strip_prefix(' ').unwrap_or(line).to_owned());
+                newlines = 0;
+            }
+            _ => break,
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    lines.reverse();
+    Some(lines.join("\n"))
 }
 
 impl ResolvedReference {
@@ -249,9 +311,14 @@ pub struct Member {
     span: Span,
     generic_arity: u32,
     synthetic: bool,
+    docs: Option<String>,
 }
 
 impl Member {
+    /// Canonical leading documentation retained independently of source files.
+    pub fn docs(&self) -> Option<&str> {
+        self.docs.as_deref()
+    }
     pub fn id(&self) -> MemberId {
         self.id
     }
@@ -352,12 +419,16 @@ impl ImportBinding {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FileResolution {
+    module: ModuleId,
     imports: BTreeMap<Name, ImportBinding>,
 }
 
 impl FileResolution {
+    pub fn module(&self) -> &ModuleId {
+        &self.module
+    }
     pub fn imports(&self) -> &BTreeMap<Name, ImportBinding> {
         &self.imports
     }
@@ -576,6 +647,53 @@ enum BootstrapNominalShape {
     Newtype,
     Record(&'static [&'static str]),
     Enum(&'static [&'static str]),
+}
+
+fn bootstrap_testing_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 6] {
+    [
+        (
+            "GenerationId",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["seed", "caseIndex"]),
+        ),
+        (
+            "TextDiffHunk",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Equal", "Delete", "Insert"]),
+        ),
+        (
+            "TextDiff",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&[
+                "equal",
+                "hunks",
+                "expectedBytes",
+                "actualBytes",
+                "truncated",
+            ]),
+        ),
+        (
+            "FloatToleranceError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Negative", "NonFinite", "Overflow"]),
+        ),
+        (
+            "GenerationError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["InvalidBounds", "LimitExceeded", "Exhausted"]),
+        ),
+        (
+            "TempError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "InvalidPrefix",
+                "Unavailable",
+                "PermissionDenied",
+                "LimitExceeded",
+                "IoError",
+            ]),
+        ),
+    ]
 }
 
 fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 5] {
@@ -1100,6 +1218,7 @@ fn install_bootstrap_member(
         span,
         generic_arity: 0,
         synthetic: true,
+        docs: None,
     });
     program
         .members_by_owner
@@ -1227,6 +1346,12 @@ impl Resolver<'_> {
         let Some(file) = ordered_files.first().copied() else {
             return Ok(());
         };
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "testing",
+            &bootstrap_testing_nominals(),
+        )?;
         self.install_bootstrap_module_nominals(file, program, "json", &bootstrap_json_nominals())?;
         self.install_bootstrap_module_nominals(file, program, "yaml", &bootstrap_yaml_nominals())?;
         self.install_bootstrap_module_nominals(
@@ -1263,6 +1388,58 @@ impl Resolver<'_> {
         self.install_bootstrap_module_nominals(
             file,
             program,
+            "reflect",
+            &tondo_vm::reflection::REFLECTION_ENUMS
+                .iter()
+                .map(|(name, variants)| {
+                    (
+                        *name,
+                        SymbolKind::Enum,
+                        BootstrapNominalShape::Enum(variants),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "fs",
+            &[
+                (
+                    "FsError",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::fs::ERROR_VARIANTS),
+                ),
+                (
+                    "OpenMode",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::fs::OPEN_MODE_VARIANTS),
+                ),
+                (
+                    "FileKind",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::fs::FILE_KIND_VARIANTS),
+                ),
+                (
+                    "Metadata",
+                    SymbolKind::Type,
+                    BootstrapNominalShape::Record(&["kind", "size", "readOnly"]),
+                ),
+            ],
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "console",
+            &[(
+                "ConsoleError",
+                SymbolKind::Enum,
+                BootstrapNominalShape::Enum(&["Unavailable", "Closed", "Cancelled", "Io"]),
+            )],
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
             "channel",
             &bootstrap_channel_nominals(),
         )?;
@@ -1295,7 +1472,10 @@ impl Resolver<'_> {
                     }) if reference == &module
                 )
         });
-        if !referenced {
+        // Test graphs expose the sealed Shrink prelude method without an
+        // import, including its nominal GenerationError result. Production
+        // graphs have no testing module and returned above.
+        if !referenced && module_name != "testing" {
             return Ok(());
         }
         let span = self.sources.span(file, TextRange::empty(0))?;
@@ -1398,7 +1578,10 @@ impl Resolver<'_> {
         let parsed = self.parsed[&file];
         let module = self.packages.module_for_file(self.sources, file)?;
         let root = parsed.cst().root_node();
-        let mut file_resolution = FileResolution::default();
+        let mut file_resolution = FileResolution {
+            module: module.clone(),
+            imports: BTreeMap::new(),
+        };
         let mut encountered_non_import = false;
         for child in root.child_nodes() {
             match child.kind() {

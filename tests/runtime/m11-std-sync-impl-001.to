@@ -39,5 +39,5 @@ fn main(): !sync.SyncError {
     let barrier = sync.barrier(1)?
     _ = barrier.wait()?
 
-    console.println("sync-ok")
+    _ = console.println("sync-ok")
 }

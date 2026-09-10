@@ -19,13 +19,15 @@ pub const FORMAT: &str = "tondo-quality-provenance/1";
 pub const BINDING_FORMAT: &str = "tondo-quality-report-binding/1";
 
 const ROOT_FILES: [&str; 2] = ["Cargo.lock", "Cargo.toml"];
-const INPUT_DIRECTORIES: [&str; 7] = [
+const INPUT_DIRECTORIES: [&str; 9] = [
     ".cargo",
     ".github/workflows",
+    "acceptance",
     "conformance/draft",
     "crates",
     "fuzz",
     "scripts",
+    "stdlib",
     "tests",
 ];
 // Fuzzers write crash payloads here.  They are useful diagnostics, but are
@@ -342,6 +344,49 @@ mod tests {
         fs::write(root.join("scripts/check.sh"), "#!/bin/sh\necho changed\n").unwrap();
         let changed = QualityProvenance::current(&root).unwrap();
         assert_ne!(first.tree_sha256, changed.tree_sha256);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn standard_sources_and_acceptance_projects_invalidate_reports() {
+        let root = fixture();
+        let inputs = [
+            (
+                "stdlib/meta/src/meta.to",
+                "pub fn api(): String { \"first\" }\n",
+            ),
+            (
+                "stdlib/meta/descriptor.json",
+                "{\"content_hash\":\"first\"}\n",
+            ),
+            ("acceptance/projects/example/src/main.to", "fn main() {}\n"),
+            (
+                "acceptance/projects/example/tondo.toml",
+                "[package]\nname=\"example\"\n",
+            ),
+        ];
+        for (relative, bytes) in inputs {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        let report = root.join("mutation.json");
+        let bytes = br#"{"outcome":"Caught","name":"frontier"}"#;
+        fs::write(&report, bytes).unwrap();
+        for (relative, original) in inputs {
+            let before = QualityProvenance::current(&root).unwrap();
+            let binding =
+                ReportBinding::new("mutation", bytes, before.clone(), before.clone()).unwrap();
+            binding.verify(&root, &report, "mutation").unwrap();
+            fs::write(root.join(relative), format!("{original}\n")).unwrap();
+            let after = QualityProvenance::current(&root).unwrap();
+            assert_eq!(before.input_set_sha256, after.input_set_sha256);
+            assert_ne!(before.tree_sha256, after.tree_sha256, "{relative}");
+            assert!(
+                binding.verify(&root, &report, "mutation").is_err(),
+                "{relative}"
+            );
+        }
         let _ = fs::remove_dir_all(root);
     }
 

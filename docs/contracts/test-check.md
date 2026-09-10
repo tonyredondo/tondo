@@ -1,13 +1,14 @@
 # Static test-body contract
 
-**Status:** implemented for `UTEST-CHECK-001`
+**Status:** public integration under validation; `UTEST-CHECK-001` remains open
+until the testing gate is verified.
 
-`tondo_compiler::test_check` is the small semantic adapter between ordinary
-Tondo checking and the hidden entries used by the test target. It does not
-execute a body, create an envelope, or relax language rules. The resolver and
-HIR checker remain responsible for names, types, ownership, loans, terminals,
-`Send`, `Share` and `unsafe`; this boundary consumes those facts and rejects a
-failed proof.
+`tondo_compiler::test_check` is an independent bounded model of supplied test
+body facts. Its success alone does not establish the compiler's public path.
+The executable path uses the ordinary resolver and HIR checker for names,
+types, ownership, loans, terminals, `Send`, `Share` and `unsafe`. Compiler-owned
+leaf and suite callbacks infer `Unit ! E` through the same closure inference
+used by ordinary generic functions. Their error parameter requires `Discard`.
 
 ## Hidden entry shape
 
@@ -17,16 +18,25 @@ body calls a suspendible operation, iterates an `AsyncIterator`, uses `await` or
 registers suspendible cleanup:
 
 - `Unit` and `Never` are the only admitted normal results;
-- a test may use bare `return`, but cannot return a value;
+- a test may use `return` with a compatible `Unit` outcome;
 - suite setup cannot use `return` at all (`E1205`);
-- the error union is normalized by nominal name, must be duplicate-free and
-  every member must satisfy `Discard`; and
+- repeated inferred error members collapse to one nominal union member, and
+  every member must satisfy `Discard` (`E1105`); incompatible normal or return
+  types use the ordinary `E1102` diagnostic; and
 - suspendible calls and the virtual-time operations infer suspension without an
   extra keyword or an `async test` spelling; direct calls wait implicitly.
 
-The resulting `TestBodyContract` is immutable input for lowering. It carries
-the exact operation list and the ordinary facts needed by later admission
-verifiers.
+The model's `TestBodyContract` is immutable evidence for its supplied facts;
+public lowering consumes checked HIR. A suite rejects its own `return` with
+`E1205`, while an ordinary nested closure retains its own return boundary.
+Nested test closures also keep independent inferred error unions.
+
+The hosted VM consumes each hidden entry's recoverable error after ordinary
+cleanup and records `failed-error`. The error type, terminal source location
+and prior envelope remain associated with that attempt. Failed setup blocks
+selected descendants through their suite attempt; unrelated roots continue.
+Retries use fresh participation processes and preserve every prior attempt.
+Error payloads are not implicitly serialized or reflected into reports.
 
 ## Sealed operations
 
@@ -40,8 +50,8 @@ family, while negative or overflowing virtual durations are rejected before
 runtime.
 
 `withVirtualTime` requires a suspendible `Send + CallOnce` closure accepting
-`ref VirtualTime`, returning `Unit`, and neither escaping nor sharing the
-controller. The boundary itself must be called directly rather than spawned;
+`ref VirtualTime`, returning `Unit ! E`, and neither escaping nor sharing the
+controller. The error union propagates unchanged. The boundary itself must be called directly rather than spawned;
 its result is awaited implicitly (`await` on the direct call is rejected);
 controlled tasks are spawned inside the callback's structured scope. The
 controller is therefore opaque and cannot become a Tondo value or capability.

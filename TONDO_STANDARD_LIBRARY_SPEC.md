@@ -1370,17 +1370,28 @@ trait Writer {
 }
 fn defaultLimits(): IoLimits
 fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
-fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends
-fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends
+fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends
+fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends
 type IoLimits
 ```
 
-`read` puede entregar menos bytes que los solicitados; el único EOF normal es
-`ReadResult.Eof`. `readAll` no publica un buffer parcial y comprueba el límite
-agregado antes de consumir un handle hosted. `writeAll` drena short writes,
-rechaza escritores sin progreso y hace `flush` al finalizar. Los backends que
-pueden suspender propagan cancelación como `IoError.Cancelled`; el préstamo de
-`Bytes` termina al volver de `write`.
+`read` may return fewer bytes than requested; normal EOF is exclusively
+`ReadResult.Eof`. `readAll` publishes no partial buffer on failure. The hosted
+console Input can check the aggregate limit before consuming its captured
+input; other readers, including File, may already have consumed earlier chunks.
+`writeAll` drains short writes, rejects writers that make no progress and
+flushes on completion. Suspendible backends propagate cancellation as
+`IoError.Cancelled`; the Bytes borrow ends when `write` returns.
+
+`Reader` and `Writer` are ordinary static traits, not value types or aliases
+for hosted tokens. User implementations use the same generic helpers as other
+implementations. `IoLimits` has private representation and can only be obtained
+through its validated factories. An empty `Data` or a chunk larger than the
+requested maximum is `IoError.InvalidData`; aggregate overflow is
+`IoError.ResourceLimit`. Generic readers need not support rollback: an error
+returns no partial buffer, but earlier reads can already have consumed data.
+The concrete `console.Input` adapter additionally checks the aggregate limit
+before consumption, including calls through generic wrappers or function values.
 
 Los protocolos no prometen que toda fuente pueda seek, conocer su longitud,
 repetir una lectura o conservar datos después de cancelar. Cada capacidad
@@ -1439,7 +1450,8 @@ declarar explícitamente esa capability y el compilador rechaza el módulo con
 ```tondo
 type File
 type Directory
-type Metadata
+enum FileKind { File, Directory, Symlink, Other }
+type Metadata = { kind: FileKind, size: Int, readOnly: Bool }
 enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
 fn open(path: Path, mode: OpenMode): File ! FsError suspends
 fn openDirectory(path: Path): Directory ! FsError suspends
@@ -1450,13 +1462,28 @@ fn File.flush(var self): Unit ! FsError suspends
 fn Directory.list(var self): Array[Path] ! FsError suspends
 ```
 
+`Metadata` is an ordinary value with public fields, immutable by default.
+`metadata` observes the entry itself without following symbolic links, including
+dangling links. `kind` distinguishes regular files, directories, symbolic links
+and other host entries. `size` is the nonnegative host-reported length in bytes;
+for nonregular entries its meaning is platform-dependent. A length outside `Int`
+returns `FsError.ResourceLimit`. `readOnly` is the host read-only attribute, not
+a prediction that the caller can write. The fields are a snapshot: later
+filesystem changes do not update existing values. Query again to observe them.
+Reading fields, copying or matching the value performs no host I/O.
+
 `File` y `Directory` son afines: el owner se revoca en cleanup normal y durante
 unwind. El verificador impide el uso posterior en programas seguros y el host
 rechaza cualquier token stale o forjado como una violación de la invariante de
 runtime; `FsError.Closed` queda disponible para cierres observables que no
 invaliden esa invariante. `File` conserva posición entre llamadas y no copia
-el descriptor; sus métodos ofrecen la semántica de `Reader`/`Writer`, mientras
-`std.io.readAll` y `std.io.writeAll` siguen recibiendo esos handles explícitos.
+el descriptor. `File` implements the ordinary `io.Reader` and `io.Writer`
+traits, so `io.readAll` and `io.writeAll` accept `var File` through normal
+generic dispatch. The adapters preserve closed, cancellation and resource-limit
+errors; other `FsError` variants become `IoError.Host`. Generic `readAll`
+returns no partial buffer on error, but earlier reads may have consumed data.
+`OpenMode` and `FsError` are nominal enums, with ordinary variant values and
+exhaustive matching; neither requires a host handle.
 `list` ordena por bytes nativos; `atomicWrite` usa un temporal en el mismo
 directorio, hace flush y rename. Los límites globales de bytes, entradas y
 trabajo se comprueban antes de materializar bytes o entradas: un rechazo es
@@ -1464,8 +1491,9 @@ atómico y no publica resultados parciales. El cleanup se ejecuta en las rutas
 normales, durante unwind y al cancelar una operación suspendible. El host no
 sigue enlaces simbólicos al eliminar un recurso temporal y no incluye paths
 físicos ni contenido en `FsError`; la operación de rename no promete
-durabilidad de hardware. La evidencia ejecutable de este contrato es
-`STD-A-FS-EVIDENCE-001`.
+durabilidad de hardware. The executable evidence is tracked by
+`STD-A-FS-EVIDENCE-001`, which remains open with `STD-FS-IMPL-001` until the
+remaining filesystem admission paths and integrated owner checks are complete.
 
 `STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
 `testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
@@ -3247,10 +3275,10 @@ La derivación estática utiliza `Encode[C]` y `Decode[C]`, donde `C` es el code
 
 ~~~tondo pseudocode
 pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](value: Self, var encoder: S): Unit ! E
+    fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E
 }
 pub trait Decode[C] {
-    fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
+    fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E
 }
 ~~~
 
@@ -3313,11 +3341,11 @@ pub trait Decoder[C, E] {
 }
 
 pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](value: Self, var encoder: S): Unit ! E
+    fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E
 }
 
 pub trait Decode[C] {
-    fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
+    fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E
 }
 ~~~
 
@@ -3493,10 +3521,25 @@ un `T` no describible se rechaza durante compilación. Por tanto `std.reflect`
 no publica un tipo de error runtime en 0.1. Esta ausencia es parte del contrato,
 no una omisión provisional.
 
-`FieldInfo` contiene únicamente `name`, `type`, ordinal declarativo y docs
-retenidas; `VariantInfo`, nombre, ordinal y descriptores de su payload;
-`ParameterInfo`, posición, tipo y modo (`value`, `ref`, `mut` o `var`); y
-`FunctionInfo`, parámetros, outcome, variadicidad y flags `suspendible`/`unsafe`.
+Secondary descriptors expose query methods, with no public fields:
+
+- `FieldInfo`: `name(): String`, `typeInfo(): TypeInfo`, `ordinal(): Int`,
+  `docs(): String?`. Ordinals preserve declaration positions even when private
+  fields are omitted. Documentation retains multiline text; absent docs yield
+  `none`.
+- `VariantInfo`: `name(): String`, `ordinal(): Int`,
+  `payloadKind(): VariantPayloadKind`, `tupleElements(): Array[TypeInfo]`,
+  `fields(): Array[FieldInfo]`. `VariantPayloadKind` is the closed enum
+  `Unit | Tuple | Record`. Inapplicable views are empty. Enum record payload
+  fields follow the enum's public payload contract.
+- `ParameterInfo`: `position(): Int`, `typeInfo(): TypeInfo`,
+  `mode(): ParameterMode`. `ParameterMode` is the closed enum
+  `Value | Ref | Mut | Var`. Positions and ordinals start at zero.
+- `FunctionInfo`: `parameters(): Array[ParameterInfo]`, `outcome(): TypeInfo`,
+  `variadic(): Bool`, `suspends(): Bool`, `isUnsafe(): Bool`. A variadic tail
+  occupies the last parameter position, describes its element type and has
+  `Value` mode. The outcome includes the complete `Result` or `Option` type.
+
 Todas las colecciones devueltas son valores inmutables canónicos. Sus elementos
 no dependen de direcciones, vtables ni del orden de un registro global.
 
@@ -3553,6 +3596,61 @@ performance gates.
 inmutables de `GenerateRequest`, `DeriveRequest`, `GenerateResponse`,
 `DeriveResponse`, modelo semántico, diagnostics y outputs descritos por el
 toolchain.
+
+The public request types have private fields and query methods.
+`GenerateRequest` exposes `snapshot(): Snapshot`, `inputs(): Array[Input]`,
+`outputs(): Array[OutputSpec]`, `limits(): Limits`,
+`input(name: String): Input ! Error`, and `sourceBuilder(): SourceBuilder`.
+`DeriveRequest` exposes `snapshot(): Snapshot`, `target(): String`,
+`module(): String`, `traitIdentity(): String`, `bounds(): Array[String]`,
+`span(): Span`, `limits(): Limits`, and `sourceBuilder(): SourceBuilder`. The span identifies the original derive
+request; the snapshot contains its separately authorized declaration views.
+
+`GenerateResponse` has `outputs: Map[String, String]` and
+`diagnostics: Array[Diagnostic]`. `DeriveResponse` has `source: String`,
+`diagnostics: Array[Diagnostic]` and `mappings: Array[SourceMap]`. A diagnostic
+has `severity: DiagnosticSeverity`, `message: String` and `origin: Span?`;
+the closed severities are `Note`, `Warning`, `Error`. Error diagnostics prevent
+publication of the response. `Error` has the variants `UnknownInput(String)`,
+`UnknownOutput(String)`, `DuplicateOutput(String)`, `MissingOutput(String)`,
+`OutputLimit`, `Provider(String)` and `TypeRendering(String)`.
+
+`SourceBuilder.add(mut self, path: String, source: String): Unit ! Error`
+admits one declared output. `SourceBuilder.finish(self): GenerateResponse ! Error`
+requires the complete output set. The UTF-8 output budget applies to source
+bytes, including multibyte characters. `Input` contains a logical name, an
+`Array[Byte]` and its hash; it contains no physical path.
+
+`SourceBuilder.outputs(): Array[OutputSpec]` returns its declared slots.
+A derive builder owns exactly `derive/result.to` in the request's module and
+uses `finishDerive(): DeriveResponse ! Error`. Finishing with the other request
+kind's method returns `Error.Provider`; a missing source remains an error.
+The final derive source may contain imports needed for snapshot type rendering
+followed by exactly its requested impl. Other imports, duplicate imports and
+helper declarations are rejected before publication.
+
+Structural records use `origin: Origin`, where `Origin.Source(Span)` identifies
+authored source and `Origin.Builtin(String)` identifies a compiler-defined
+declaration or member. A builtin has no invented span and cannot authorize
+source diagnostics or mappings. Trait operations expose method-local
+`genericParameters`, `hasDefault` and `requiresSelfSend`; their ordinals retain
+authored order and their signatures distinguish outer parameters, `Self` and
+method-local parameters.
+
+Fields expose `typeRef: TypeRef`; tuple payloads, newtype and alias underlying
+types, function and constant signatures, and operation signatures also use
+`TypeRef`. Function signatures include public inherent methods and associated
+functions, named `Owner.method`. Type and value declarations have separate
+namespaces. Constants expose only their declared type. The private TypeRef
+representation contains
+canonical identity and explicit source-rendering data. `identity(): String`
+compares resolved types independently of transparent aliases.
+`SourceBuilder.renderType(mut self, path: String, ty: TypeRef): String ! Error`
+returns type syntax for the output's module and stages the exact imports.
+`add` includes those imports in the source-byte budget, deduplicated and ordered
+by deterministic alias. Rendering rejects an undeclared or completed path,
+private types belonging to another module, unavailable names and dependencies
+that the output package cannot import directly. Failed rendering is atomic.
 
 Además ofrece:
 
@@ -3734,7 +3832,7 @@ control terminal, virtual time y los fixtures de dogfooding del runner.
 `STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
 `testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
-`testing/stdlib-test-coordination.json` links 22 owners, 216 public signatures
+`testing/stdlib-test-coordination.json` links 22 owners, 298 public signatures
 and 171 requirements to 66 model laws and their test/campaign references. The
 generator preserves each signature's public implementation status and missing
 evidence separately from model coverage. A verified model law does not prove
@@ -3753,32 +3851,29 @@ their source contracts without promoting declared cases into observations.
 La coordinación `STD-CONF-001` queda registrada en
 `testing/stdlib-conformance-coordination.json`: contiene los 22 owners de
 `STD-0.1A` y una fila `CONF` explícita para cada firma o requisito de la matriz
-(214 firmas y 171 requisitos). Cada fila conserva el estado actual de la
+(298 firmas y 171 requisitos). Cada fila conserva el estado actual de la
 matriz, una razón obligatoria para `partial`/`pending`, referencias
 reproducibles y comandos. El registro cruza la matriz normativa, la auditoría
 de API, la evidencia de owners, la coordinación de modelos y el harness
 externo de codecs; no permite declarar `verified` sin la observación de la
-fila ni convierte la coordinación en promoción. `std.async` conserva la
-implementación de VM verificada y permanece `partial` únicamente en las celdas
-de conformance global, fuzz y rendimiento; su contrato concreto tiene siete
-filas, cinco callable auditadas y las rutas directa y `spawn` de `collect(limit:)`
-verificadas en `STD-A-ASYNC-IMPL-001`. La promoción sigue
-`not-promoted` hasta `STD-DOC-001` y la conformance pública completa.
+fila ni convierte la coordinación en promoción.
 
-La coordinación `STD-DOC-001` queda registrada en
-`testing/stdlib-documentation.json`. Cada owner tiene un contrato normativo y
-una lista de documentos, además de tres fronteras que nunca se mezclan:
-`kernel` describe la implementación portable o intrínseca, `bridge` describe
-el adaptador compiler/VM/host (o `not-applicable`) y `public_api` refleja
-únicamente las firmas de la auditoría pública. Una API con firmas ausentes o
-gaps conserva `partial`; una superficie intrínseca/build-only sin filas de
-firma declara `not-applicable` con razón. El registro enlaza 31 ejemplos
-verificables: cada caso runtime exige su fixture `.exit` y `.stdout`/`.codes`,
-los casos externos apuntan al harness independiente y los providers
-compiler/meta apuntan a sus tests de build. `std.meta` y `std.reflect` no
-tienen caso runtime por diseño y lo declaran de forma explícita. Esta clausura
-documental describe el draft actual, no publica una release ni promueve las
-matrices de implementación, rendimiento o conformance.
+`std.async` retains its verified hosted implementation. Its model/test/fuzz
+stage remains partial and global conformance pending; the owner performance
+stage is explicitly not applicable with a recorded reason. The contract has
+five indexed callables, including direct and spawned `collect(limit:)` routes.
+Those observations do not promote the whole library.
+
+`STD-DOC-001` is recorded in `testing/stdlib-documentation.json`. Each owner
+has normative contracts and separate kernel, bridge and public API boundaries.
+The API field describes static callable traceability; missing signatures keep
+an owner partial, including intrinsic and build-only surfaces. The current
+record links 34 examples: 28 runtime cases with exact sidecars, four external
+codec cases and two compiler cases. Reflection executes through ordinary
+Tondo runtime examples. The meta companion executes provider programs during
+compilation and has no runtime host adapter. Documentation coverage describes
+the unpublished draft; it does not promote implementation, test/fuzz,
+performance or conformance.
 
 ### 14.12 `std.protobuf`
 
@@ -4527,21 +4622,30 @@ declare rechaza el programa estáticamente con `E1008`. La superficie pública
 única es:
 
 ~~~tondo
-pub fn stdin(): std.io.Reader ! ConsoleError
-pub fn stdout(): std.io.Writer ! ConsoleError
-pub fn stderr(): std.io.Writer ! ConsoleError
-pub fn readLine(input: var std.io.Reader): String? ! ConsoleError suspends
+// Input and Output are concrete types with private representation.
+
+pub fn stdin(): Input ! ConsoleError
+pub fn stdout(): Output ! ConsoleError
+pub fn stderr(): Output ! ConsoleError
+pub fn readLine(input: var Input): String? ! ConsoleError suspends
 pub fn print(value: String): Unit ! ConsoleError
 pub fn println(value: String): Unit ! ConsoleError
 pub fn flush(): Unit ! ConsoleError suspends
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ~~~
 
+`Input` and `Output` are concrete types with private representation. `Input`
+implements `std.io.Reader`; `Output` implements `std.io.Writer`. Their methods
+have the corresponding trait signatures. `readLine` deliberately accepts only
+`Input`: its invalid-UTF-8 behavior requires retaining the cursor, which the
+general `Reader` protocol does not guarantee. Passing `Output` is a static type
+error, not a recoverable stream-direction error.
+
 Los handles son tokens distintos y reutilizan los protocolos de `std.io`; no
 hay terminal, locale, encoding o newline ambiental implícito. `readLine` solo
 avanza el cursor después de aceptar una línea UTF-8 completa, devuelve `none`
 en EOF y devuelve un `ConsoleError` tipado sin consumir datos cuando recibe
-UTF-8 inválido o un handle de output. `print` y `println` solo anexan al buffer
+UTF-8 inválido. `print` y `println` solo anexan al buffer
 de salida ordenado del runtime, nunca esperan al sistema operativo y por eso no
 declaran `suspends`; `println` añade un único LF. Ninguna de las dos hace flush
 implícito. `flush` es la única frontera de entrega suspendible y terminal para

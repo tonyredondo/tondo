@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::sha256;
+use crate::test_limits::{BudgetKind, BudgetLedger, LimitError, LimitProfile};
+use crate::test_output::CapturedOutput;
 use crate::test_plan::TestSourceClass;
 use crate::test_virtual_time::{AutoAdvance, VirtualDomain, VirtualTimeError, WaitKind};
 
@@ -23,30 +25,49 @@ pub const TEST_CONTROL_FORMAT: &str = "tondo-test-control-draft/1";
 /// Per-attempt limits enforced by the envelope before publishing a mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvelopeLimits {
-    output_bytes: u64,
-    artifact_bytes: u64,
-    snapshot_bytes: u64,
+    profile: LimitProfile,
 }
 
 impl EnvelopeLimits {
     pub const fn new(output_bytes: u64, artifact_bytes: u64, snapshot_bytes: u64) -> Self {
-        Self {
-            output_bytes,
-            artifact_bytes,
-            snapshot_bytes,
-        }
+        Self::from_profile(
+            LimitProfile::DEFAULT
+                .with_output(output_bytes)
+                .with_artifact_bytes(artifact_bytes)
+                .with_snapshot_bytes(snapshot_bytes),
+        )
+    }
+
+    pub(crate) const fn from_profile(profile: LimitProfile) -> Self {
+        Self { profile }
+    }
+
+    pub const fn profile(self) -> LimitProfile {
+        self.profile
+    }
+
+    pub const fn with_execution_limits(mut self, work: u64, virtual_timers: u64) -> Self {
+        self.profile = self
+            .profile
+            .with_work(work)
+            .with_virtual_timers(virtual_timers);
+        self
+    }
+
+    pub(crate) fn virtual_timer_limit(&self) -> u64 {
+        self.profile.virtual_timers()
     }
 
     pub const fn output_bytes(self) -> u64 {
-        self.output_bytes
+        self.profile.output()
     }
 
     pub const fn artifact_bytes(self) -> u64 {
-        self.artifact_bytes
+        self.profile.artifact_bytes()
     }
 
     pub const fn snapshot_bytes(self) -> u64 {
-        self.snapshot_bytes
+        self.profile.snapshot_bytes()
     }
 }
 
@@ -198,8 +219,8 @@ pub struct EnvelopeReport {
     artifacts: Vec<ArtifactEvidence>,
     snapshots: Vec<SnapshotEvidence>,
     virtual_time: Vec<VirtualTimeRecord>,
-    stdout: String,
-    stderr: String,
+    stdout: CapturedOutput,
+    stderr: CapturedOutput,
 }
 
 impl EnvelopeReport {
@@ -231,11 +252,11 @@ impl EnvelopeReport {
         &self.virtual_time
     }
 
-    pub fn stdout(&self) -> &str {
+    pub fn stdout(&self) -> &CapturedOutput {
         &self.stdout
     }
 
-    pub fn stderr(&self) -> &str {
+    pub fn stderr(&self) -> &CapturedOutput {
         &self.stderr
     }
 
@@ -264,8 +285,8 @@ struct ProcessReportWire {
     artifacts: Vec<ProcessArtifactWire>,
     snapshots: Vec<ProcessSnapshotWire>,
     virtual_time: Vec<ProcessVirtualTimeWire>,
-    stdout: String,
-    stderr: String,
+    stdout: CapturedOutput,
+    stderr: CapturedOutput,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -491,6 +512,13 @@ fn process_kind(kind: &str) -> &'static str {
         "output" => "output",
         "memory" => "memory",
         "instructions" => "instructions",
+        "depth" => "depth",
+        "work" => "work",
+        "metadata" => "metadata",
+        "artifact-count" => "artifact-count",
+        "snapshot-count" => "snapshot-count",
+        "virtual-timers" => "virtual-timers",
+        "ready-queue" => "ready-queue",
         _ => "resource",
     }
 }
@@ -507,6 +535,9 @@ pub enum ControlError {
     OutputLimit,
     ArtifactLimit,
     SnapshotLimit,
+    ResourceLimit {
+        kind: BudgetKind,
+    },
     TagConflict {
         key: String,
     },
@@ -565,6 +596,7 @@ impl ControlError {
             Self::OutputLimit => "R0001",
             Self::ArtifactLimit => "R0002",
             Self::SnapshotLimit => "R0003",
+            Self::ResourceLimit { .. } => "R0001",
             Self::TagConflict { .. } => "P2002",
             Self::FailNow { .. } => "P0007",
             Self::Skip { .. } => "P0008",
@@ -601,6 +633,9 @@ impl fmt::Display for ControlError {
             Self::OutputLimit => formatter.write_str("test output budget is exhausted"),
             Self::ArtifactLimit => formatter.write_str("test artifact budget is exhausted"),
             Self::SnapshotLimit => formatter.write_str("test snapshot budget is exhausted"),
+            Self::ResourceLimit { kind } => {
+                write!(formatter, "test {} budget is exhausted", kind.as_str())
+            }
             Self::TagConflict { key } => {
                 write!(formatter, "test tag `{key}` has conflicting values")
             }
@@ -650,16 +685,14 @@ impl fmt::Display for ControlError {
 
 impl Error for ControlError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EnvelopeState {
     _node_id: String,
     limits: EnvelopeLimits,
     phase: ExecutionPhase,
     terminal: Option<Terminal>,
     sequence: u64,
-    used_output: u64,
-    used_artifacts: u64,
-    used_snapshots: u64,
+    budget: BudgetLedger,
     logs: Vec<LogRecord>,
     tags: BTreeMap<String, String>,
     artifacts: BTreeMap<String, ArtifactEvidence>,
@@ -672,8 +705,8 @@ struct EnvelopeState {
     virtual_time_active: bool,
     next_child: u64,
     child_skip: Option<(u64, String)>,
-    stdout: String,
-    stderr: String,
+    stdout: CapturedOutput,
+    stderr: CapturedOutput,
 }
 
 /// Private runtime link inherited by helpers and structured tasks.
@@ -691,9 +724,7 @@ impl EnvelopeHandle {
                 phase: ExecutionPhase::Setup,
                 terminal: None,
                 sequence: 0,
-                used_output: 0,
-                used_artifacts: 0,
-                used_snapshots: 0,
+                budget: BudgetLedger::closed(limits.profile()),
                 logs: Vec::new(),
                 tags: BTreeMap::new(),
                 artifacts: BTreeMap::new(),
@@ -706,8 +737,8 @@ impl EnvelopeHandle {
                 virtual_time_active: false,
                 next_child: 0,
                 child_skip: None,
-                stdout: String::new(),
-                stderr: String::new(),
+                stdout: CapturedOutput::default(),
+                stderr: CapturedOutput::default(),
             })),
         }
     }
@@ -758,12 +789,42 @@ impl EnvelopeHandle {
                 requested: phase,
             });
         }
+        if state.phase != phase && phase != ExecutionPhase::Closed {
+            state.budget = BudgetLedger::closed(state.limits.profile());
+        }
         state.phase = phase;
         Ok(())
     }
 
     pub fn phase(&self) -> Result<ExecutionPhase, ControlError> {
         Ok(self.lock()?.phase)
+    }
+
+    pub(crate) fn limits(&self) -> Result<EnvelopeLimits, ControlError> {
+        Ok(self.lock()?.limits)
+    }
+
+    pub(crate) fn reserve_runtime_timer(&self) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        reserve_evidence(
+            &mut state.budget,
+            [(BudgetKind::Work, 1), (BudgetKind::Metadata, 64)],
+        )
+    }
+
+    pub(crate) fn record_runtime_limit(
+        &self,
+        id: &str,
+        kind: &'static str,
+    ) -> Result<bool, ControlError> {
+        let mut state = self.lock()?;
+        if state._node_id != id {
+            return Ok(false);
+        }
+        ensure_open(&state)?;
+        set_failure_terminal(&mut state, Terminal::ResourceLimit { kind });
+        Ok(true)
     }
 
     /// Preserve a hosted operation's terminal before the VM unwinds its node.
@@ -778,40 +839,49 @@ impl EnvelopeHandle {
             | ControlError::ProductionOperation { .. }
             | ControlError::Poisoned => return Err(error.clone()),
             ControlError::Skip { reason } if state.terminal.is_none() => {
-                state.terminal = Some(Terminal::Skipped {
+                let terminal = Terminal::Skipped {
                     reason: reason.clone(),
-                });
+                };
+                reserve_terminal(&mut state, &terminal)?;
+                state.terminal = Some(terminal);
             }
             ControlError::Skip { .. } => {}
             ControlError::OutputLimit
             | ControlError::ArtifactLimit
-            | ControlError::SnapshotLimit => {
+            | ControlError::SnapshotLimit
+            | ControlError::ResourceLimit { .. } => {
                 let kind = match error {
                     ControlError::OutputLimit => "output",
                     ControlError::ArtifactLimit => "artifacts",
+                    ControlError::ResourceLimit { kind } => kind.as_str(),
                     _ => "snapshots",
                 };
                 set_failure_terminal(&mut state, Terminal::ResourceLimit { kind });
             }
             _ => {
                 let message = match error {
-                    ControlError::FailNow { message } => message.clone(),
+                    ControlError::FailNow { message }
+                    | ControlError::CleanupFailure { message, .. } => message.clone(),
                     _ => error.to_string(),
                 };
-                if state.phase == ExecutionPhase::Cleanup {
-                    state.terminal = Some(Terminal::CleanupFailure {
-                        code: error.code().into(),
-                        message,
-                    });
-                } else {
-                    set_failure_terminal(
-                        &mut state,
-                        Terminal::FailNow {
-                            code: error.code(),
-                            message,
+                let terminal = if state.phase == ExecutionPhase::Cleanup
+                    || matches!(error, ControlError::CleanupFailure { .. })
+                {
+                    Terminal::CleanupFailure {
+                        code: match error {
+                            ControlError::CleanupFailure { code, .. } => code.clone(),
+                            _ => error.code().into(),
                         },
-                    );
-                }
+                        message,
+                    }
+                } else {
+                    Terminal::FailNow {
+                        code: error.code(),
+                        message,
+                    }
+                };
+                reserve_terminal(&mut state, &terminal)?;
+                set_failure_terminal(&mut state, terminal);
             }
         }
         Ok(())
@@ -822,12 +892,13 @@ impl EnvelopeHandle {
         let mut state = self.lock()?;
         ensure_open(&state)?;
         let delta = message.len() as u64;
-        let limit = state.limits.output_bytes;
-        reserve(
-            &mut state.used_output,
-            limit,
-            delta,
-            ControlError::OutputLimit,
+        reserve_evidence(
+            &mut state.budget,
+            [
+                (BudgetKind::Work, 1),
+                (BudgetKind::Output, delta),
+                (BudgetKind::Metadata, 32),
+            ],
         )?;
         state.sequence = state.sequence.saturating_add(1);
         let sequence = state.sequence;
@@ -848,69 +919,72 @@ impl EnvelopeHandle {
                 delta = delta.saturating_add((key.len() + value.len()) as u64);
             }
         }
-        let limit = state.limits.output_bytes;
-        reserve(
-            &mut state.used_output,
-            limit,
-            delta,
-            ControlError::OutputLimit,
+        let entries = values
+            .keys()
+            .filter(|key| !state.tags.contains_key(*key))
+            .count() as u64;
+        reserve_evidence(
+            &mut state.budget,
+            [
+                (BudgetKind::Work, 1),
+                (BudgetKind::Output, delta),
+                (BudgetKind::Metadata, entries.saturating_mul(48)),
+            ],
         )?;
         state.tags.extend(values);
         Ok(())
     }
 
-    pub fn stdout(&self, text: impl Into<String>) -> Result<(), ControlError> {
-        self.append_stream(&text.into(), true, false)
+    pub fn stdout(&self, text: impl AsRef<[u8]>) -> Result<(), ControlError> {
+        self.append_stream(text.as_ref(), true, false)
     }
 
-    pub fn stderr(&self, text: impl Into<String>) -> Result<(), ControlError> {
-        self.append_stream(&text.into(), false, false)
+    pub fn stderr(&self, text: impl AsRef<[u8]>) -> Result<(), ControlError> {
+        self.append_stream(text.as_ref(), false, false)
     }
 
     /// Includes the optional line ending in the same atomic output preflight.
     pub(crate) fn print_stdout(&self, text: &str, newline: bool) -> Result<(), ControlError> {
-        self.append_stream(text, true, newline)
+        self.append_stream(text.as_bytes(), true, newline)
     }
 
-    fn append_stream(&self, text: &str, stdout: bool, newline: bool) -> Result<(), ControlError> {
+    pub(crate) fn output_len(&self, stdout: bool) -> Result<usize, ControlError> {
+        let state = self.lock()?;
+        ensure_open(&state)?;
+        Ok(if stdout {
+            state.stdout.len()
+        } else {
+            state.stderr.len()
+        })
+    }
+
+    fn append_stream(&self, text: &[u8], stdout: bool, newline: bool) -> Result<(), ControlError> {
         let mut state = self.lock()?;
         ensure_open(&state)?;
-        let limit = state.limits.output_bytes;
         let delta = (text.len() as u64)
             .checked_add(u64::from(newline))
             .ok_or(ControlError::OutputLimit)?;
-        reserve(
-            &mut state.used_output,
-            limit,
-            delta,
-            ControlError::OutputLimit,
+        reserve_evidence(
+            &mut state.budget,
+            [(BudgetKind::Work, 1), (BudgetKind::Output, delta)],
         )?;
         let stream = if stdout {
             &mut state.stdout
         } else {
             &mut state.stderr
         };
-        stream.push_str(text);
+        stream.append(text);
         if newline {
-            stream.push('\n');
+            stream.append(b"\n");
         }
         Ok(())
     }
 
     pub fn fail_now(&self, message: impl Into<String>) -> Result<(), ControlError> {
-        let message = message.into();
-        let mut state = self.lock()?;
-        ensure_open(&state)?;
         let error = ControlError::FailNow {
-            message: message.clone(),
+            message: message.into(),
         };
-        set_failure_terminal(
-            &mut state,
-            Terminal::FailNow {
-                code: error.code(),
-                message,
-            },
-        );
+        self.record_host_error(&error)?;
         Err(error)
     }
 
@@ -922,9 +996,11 @@ impl EnvelopeHandle {
             return Err(ControlError::SkipDuringCleanup);
         }
         if state.terminal.is_none() {
-            state.terminal = Some(Terminal::Skipped {
+            let terminal = Terminal::Skipped {
                 reason: reason.clone(),
-            });
+            };
+            reserve_terminal(&mut state, &terminal)?;
+            state.terminal = Some(terminal);
         }
         Err(ControlError::Skip { reason })
     }
@@ -936,15 +1012,12 @@ impl EnvelopeHandle {
         code: impl Into<String>,
         message: impl Into<String>,
     ) -> Result<(), ControlError> {
-        let code = code.into();
-        let message = message.into();
-        let mut state = self.lock()?;
-        ensure_open(&state)?;
-        state.terminal = Some(Terminal::CleanupFailure {
-            code: code.clone(),
-            message: message.clone(),
-        });
-        Err(ControlError::CleanupFailure { code, message })
+        let error = ControlError::CleanupFailure {
+            code: code.into(),
+            message: message.into(),
+        };
+        self.record_host_error(&error)?;
+        Err(error)
     }
 
     pub fn attach(
@@ -963,13 +1036,7 @@ impl EnvelopeHandle {
         if state.artifacts.contains_key(&name) {
             return Err(ControlError::ArtifactConflict { name });
         }
-        let limit = state.limits.artifact_bytes;
-        reserve(
-            &mut state.used_artifacts,
-            limit,
-            bytes.len() as u64,
-            ControlError::ArtifactLimit,
-        )?;
+        reserve_artifact(&mut state.budget, &name, &media_type, bytes.len() as u64)?;
         state.artifacts.insert(
             name.clone(),
             ArtifactEvidence {
@@ -991,19 +1058,14 @@ impl EnvelopeHandle {
         validate_evidence_name(&name)
             .map_err(|_| ControlError::SnapshotConflict { name: name.clone() })?;
         let actual = actual.as_ref();
-        let actual_sha256 = sha256(actual.as_bytes());
         let mut state = self.lock()?;
         ensure_open(&state)?;
         if state.snapshots.contains_key(&name) {
             return Err(ControlError::SnapshotConflict { name });
         }
-        let limit = state.limits.snapshot_bytes;
-        reserve(
-            &mut state.used_snapshots,
-            limit,
-            actual.len() as u64,
-            ControlError::SnapshotLimit,
-        )?;
+        let has_expected = state.expected_snapshots.contains_key(&name);
+        reserve_snapshot(&mut state.budget, &name, actual.len() as u64, has_expected)?;
+        let actual_sha256 = sha256(actual.as_bytes());
         let outcome = match state.expected_snapshots.get(&name) {
             Some(expected) => {
                 let expected_sha256 = sha256(expected.as_bytes());
@@ -1058,16 +1120,19 @@ impl EnvelopeHandle {
         report: &EnvelopeReport,
         updates: &[(String, String)],
     ) -> Result<(), ControlError> {
-        let mut state = self.lock()?;
-        ensure_open(&state)?;
-        let output_limit = state.limits.output_bytes;
-        let artifact_limit = state.limits.artifact_bytes;
+        let mut committed = self.lock()?;
+        ensure_open(&committed)?;
+        // Report import is one atomic operation. Its bounded transaction also
+        // protects earlier evidence from a late duplicate or exhausted delta.
+        let mut state = committed.clone();
         for log in &report.logs {
-            reserve(
-                &mut state.used_output,
-                output_limit,
-                log.message.len() as u64,
-                ControlError::OutputLimit,
+            reserve_evidence(
+                &mut state.budget,
+                [
+                    (BudgetKind::Work, 1),
+                    (BudgetKind::Output, log.message.len() as u64),
+                    (BudgetKind::Metadata, 32),
+                ],
             )?;
             state.sequence = state.sequence.saturating_add(1);
             let sequence = state.sequence;
@@ -1082,34 +1147,40 @@ impl EnvelopeHandle {
                     return Err(ControlError::TagConflict { key: key.clone() });
                 }
             } else {
-                reserve(
-                    &mut state.used_output,
-                    output_limit,
-                    (key.len() + value.len()) as u64,
-                    ControlError::OutputLimit,
+                reserve_evidence(
+                    &mut state.budget,
+                    [
+                        (BudgetKind::Work, 1),
+                        (BudgetKind::Output, (key.len() + value.len()) as u64),
+                        (BudgetKind::Metadata, 48),
+                    ],
                 )?;
                 state.tags.insert(key.clone(), value.clone());
             }
         }
-        reserve(
-            &mut state.used_output,
-            output_limit,
-            (report.stdout.len() + report.stderr.len()) as u64,
-            ControlError::OutputLimit,
+        reserve_evidence(
+            &mut state.budget,
+            [
+                (BudgetKind::Work, 1),
+                (
+                    BudgetKind::Output,
+                    (report.stdout.len() + report.stderr.len()) as u64,
+                ),
+            ],
         )?;
-        state.stdout.push_str(&report.stdout);
-        state.stderr.push_str(&report.stderr);
+        state.stdout.append(report.stdout.as_bytes());
+        state.stderr.append(report.stderr.as_bytes());
         for artifact in &report.artifacts {
             if state.artifacts.contains_key(&artifact.name) {
                 return Err(ControlError::ArtifactConflict {
                     name: artifact.name.clone(),
                 });
             }
-            reserve(
-                &mut state.used_artifacts,
-                artifact_limit,
+            reserve_artifact(
+                &mut state.budget,
+                &artifact.name,
+                &artifact.media_type,
                 artifact.bytes.len() as u64,
-                ControlError::ArtifactLimit,
             )?;
             state
                 .artifacts
@@ -1121,14 +1192,37 @@ impl EnvelopeHandle {
                     name: snapshot.name.clone(),
                 });
             }
+            reserve_snapshot(
+                &mut state.budget,
+                &snapshot.name,
+                0,
+                matches!(
+                    snapshot.outcome,
+                    SnapshotOutcome::Matched { .. } | SnapshotOutcome::Mismatched { .. }
+                ),
+            )?;
             state
                 .snapshots
                 .insert(snapshot.name.clone(), snapshot.clone());
         }
+        reserve_evidence(
+            &mut state.budget,
+            [
+                (BudgetKind::Work, report.virtual_time.len() as u64),
+                (
+                    BudgetKind::Metadata,
+                    (report.virtual_time.len() as u64).saturating_mul(40),
+                ),
+            ],
+        )?;
         state
             .virtual_time
             .extend(report.virtual_time.iter().cloned());
         for (name, value) in updates {
+            reserve_evidence(
+                &mut state.budget,
+                [(BudgetKind::SnapshotBytes, value.len() as u64)],
+            )?;
             if state
                 .snapshot_updates
                 .insert(name.clone(), value.clone())
@@ -1138,8 +1232,12 @@ impl EnvelopeHandle {
             }
         }
         if state.terminal.is_none() {
+            if let Some(terminal) = &report.terminal {
+                reserve_terminal(&mut state, terminal)?;
+            }
             state.terminal = report.terminal.clone();
         }
+        *committed = state;
         Ok(())
     }
 
@@ -1159,22 +1257,7 @@ impl EnvelopeHandle {
 
     fn enter_virtual_time(&self) -> Result<VirtualTime<'_>, ControlError> {
         let mut state = self.lock()?;
-        ensure_open(&state)?;
-        if state.virtual_time_active {
-            return Err(ControlError::VirtualTimeActive);
-        }
-        let index = u32::try_from(state.virtual_time.len())
-            .ok()
-            .and_then(|index| index.checked_add(1))
-            .ok_or(ControlError::VirtualOverflow)?;
-        state.virtual_time_active = true;
-        state.virtual_time.push(VirtualTimeRecord {
-            index,
-            elapsed_ns: 0,
-            automatic_advances: 0,
-            settles: 0,
-            advances: 0,
-        });
+        begin_virtual_domain(&mut state)?;
         Ok(VirtualTime {
             envelope: self,
             domain: RefCell::new(VirtualDomain::new()),
@@ -1184,23 +1267,7 @@ impl EnvelopeHandle {
 
     pub(crate) fn begin_runtime_virtual_time(&self) -> Result<(), ControlError> {
         let mut state = self.lock()?;
-        ensure_open(&state)?;
-        if state.virtual_time_active {
-            return Err(ControlError::VirtualTimeActive);
-        }
-        let index = u32::try_from(state.virtual_time.len())
-            .ok()
-            .and_then(|index| index.checked_add(1))
-            .ok_or(ControlError::VirtualOverflow)?;
-        state.virtual_time_active = true;
-        state.virtual_time.push(VirtualTimeRecord {
-            index,
-            elapsed_ns: 0,
-            automatic_advances: 0,
-            settles: 0,
-            advances: 0,
-        });
-        Ok(())
+        begin_virtual_domain(&mut state)
     }
 
     pub(crate) fn record_runtime_virtual_settle(&self) -> Result<(), ControlError> {
@@ -1307,14 +1374,19 @@ impl EnvelopeHandle {
     fn record_child_skip(&self, ordinal: u64, reason: String) -> Result<(), ControlError> {
         let mut state = self.lock()?;
         ensure_open(&state)?;
-        if state.terminal.is_none() {
+        let replaces_skip = matches!(state.terminal, Some(Terminal::Skipped { .. }))
+            && state
+                .child_skip
+                .as_ref()
+                .is_some_and(|(first, _)| ordinal < *first);
+        if state.terminal.is_none() || replaces_skip {
+            reserve_terminal(
+                &mut state,
+                &Terminal::Skipped {
+                    reason: reason.clone(),
+                },
+            )?;
             state.child_skip = Some((ordinal, reason.clone()));
-            state.terminal = Some(Terminal::Skipped { reason });
-        } else if let Some((first, first_reason)) = &mut state.child_skip
-            && ordinal < *first
-        {
-            *first = ordinal;
-            *first_reason = reason.clone();
             state.terminal = Some(Terminal::Skipped { reason });
         }
         Err(ControlError::Skip {
@@ -1514,24 +1586,124 @@ fn ensure_open(state: &EnvelopeState) -> Result<(), ControlError> {
     }
 }
 
-fn reserve(
-    used: &mut u64,
-    limit: u64,
-    delta: u64,
-    error: ControlError,
+fn reserve_artifact(
+    budget: &mut BudgetLedger,
+    name: &str,
+    media_type: &str,
+    bytes: u64,
 ) -> Result<(), ControlError> {
-    let next = used.checked_add(delta).ok_or(error.clone())?;
-    if next > limit {
-        return Err(error);
+    reserve_evidence(
+        budget,
+        [
+            (BudgetKind::Work, 1),
+            (
+                BudgetKind::Output,
+                (name.len() as u64)
+                    .saturating_add(media_type.len() as u64)
+                    .saturating_add(71),
+            ),
+            (BudgetKind::Metadata, 96),
+            (BudgetKind::ArtifactBytes, bytes),
+            (BudgetKind::ArtifactCount, 1),
+        ],
+    )
+}
+
+fn reserve_snapshot(
+    budget: &mut BudgetLedger,
+    name: &str,
+    bytes: u64,
+    has_expected: bool,
+) -> Result<(), ControlError> {
+    reserve_evidence(
+        budget,
+        [
+            (BudgetKind::Work, 1),
+            (
+                BudgetKind::Output,
+                (name.len() as u64).saturating_add(if has_expected { 142 } else { 71 }),
+            ),
+            (BudgetKind::Metadata, 80),
+            (BudgetKind::SnapshotBytes, bytes),
+            (BudgetKind::SnapshotCount, 1),
+        ],
+    )
+}
+
+fn begin_virtual_domain(state: &mut EnvelopeState) -> Result<(), ControlError> {
+    ensure_open(state)?;
+    if state.virtual_time_active {
+        return Err(ControlError::VirtualTimeActive);
     }
-    *used = next;
+    let index = u32::try_from(state.virtual_time.len())
+        .ok()
+        .and_then(|index| index.checked_add(1))
+        .ok_or(ControlError::VirtualOverflow)?;
+    reserve_evidence(
+        &mut state.budget,
+        [(BudgetKind::Work, 1), (BudgetKind::Metadata, 40)],
+    )?;
+    state.virtual_time_active = true;
+    state.virtual_time.push(VirtualTimeRecord {
+        index,
+        elapsed_ns: 0,
+        automatic_advances: 0,
+        settles: 0,
+        advances: 0,
+    });
     Ok(())
 }
 
+fn reserve_evidence(
+    budget: &mut BudgetLedger,
+    deltas: impl IntoIterator<Item = (BudgetKind, u64)>,
+) -> Result<(), ControlError> {
+    budget
+        .reserve(deltas.into_iter().filter(|(_, amount)| *amount != 0))
+        .map(|_| ())
+        .map_err(|error| match error {
+            LimitError::Exhausted { kind, .. } | LimitError::Overflow(kind) => match kind {
+                BudgetKind::Output => ControlError::OutputLimit,
+                BudgetKind::ArtifactBytes => ControlError::ArtifactLimit,
+                BudgetKind::SnapshotBytes => ControlError::SnapshotLimit,
+                kind => ControlError::ResourceLimit { kind },
+            },
+            _ => ControlError::Poisoned,
+        })
+}
+
 fn set_failure_terminal(state: &mut EnvelopeState, terminal: Terminal) {
-    if !matches!(state.terminal, Some(Terminal::CleanupFailure { .. })) {
+    if matches!(terminal, Terminal::ResourceLimit { .. })
+        || (!matches!(state.terminal, Some(Terminal::ResourceLimit { .. }))
+            && (matches!(terminal, Terminal::CleanupFailure { .. })
+                || !matches!(state.terminal, Some(Terminal::CleanupFailure { .. }))))
+    {
         state.terminal = Some(terminal);
     }
+}
+
+fn reserve_terminal(state: &mut EnvelopeState, terminal: &Terminal) -> Result<(), ControlError> {
+    if state.terminal.as_ref() == Some(terminal)
+        || matches!(state.terminal, Some(Terminal::ResourceLimit { .. }))
+    {
+        return Ok(());
+    }
+    let bytes = match terminal {
+        Terminal::FailNow { message, .. } | Terminal::CleanupFailure { message, .. } => {
+            message.len()
+        }
+        Terminal::Skipped { reason } => reason.len(),
+        // The one fixed runner terminal slot must remain usable after exhaustion.
+        Terminal::ResourceLimit { .. } => return Ok(()),
+    };
+    reserve_evidence(
+        &mut state.budget,
+        [
+            (BudgetKind::Work, 1),
+            (BudgetKind::Output, bytes as u64),
+            (BudgetKind::Metadata, 64),
+        ],
+    )
 }
 
 fn validate_evidence_name(value: &str) -> Result<(), ControlError> {
@@ -1631,8 +1803,8 @@ mod tests {
             [1, 2]
         );
         assert_eq!(report.tags().get("suite"), Some(&"unit".into()));
-        assert_eq!(report.stdout(), "out");
-        assert_eq!(report.stderr(), "err");
+        assert_eq!(report.stdout().as_text(), Some("out"));
+        assert_eq!(report.stderr().as_text(), Some("err"));
     }
 
     #[test]
@@ -1653,7 +1825,39 @@ mod tests {
         assert_eq!(decoded.tags(), report.tags());
         assert_eq!(decoded.artifacts(), report.artifacts());
         assert_eq!(decoded.snapshots(), report.snapshots());
-        assert_eq!(decoded.stdout(), "out");
+        assert_eq!(decoded.stdout().as_text(), Some("out"));
+    }
+
+    #[test]
+    fn stream_bytes_merge_across_workers_and_reject_whole_over_budget_writes() {
+        let parent = EnvelopeHandle::new("parent", EnvelopeLimits::new(4, 0, 0));
+        parent.stdout([0xe2]).unwrap();
+        let worker = EnvelopeHandle::new("worker", EnvelopeLimits::new(4, 0, 0));
+        worker.stdout([0x82, 0xac]).unwrap();
+        worker.stderr([0xff]).unwrap();
+        let wire = worker.report().unwrap().encode_process().unwrap();
+        let decoded = EnvelopeReport::decode_process(&wire).unwrap();
+        assert_eq!(decoded.stdout().as_bytes(), [0x82, 0xac]);
+        assert_eq!(decoded.stderr().as_bytes(), [0xff]);
+        parent.merge_worker_report(&decoded, &[]).unwrap();
+        let before = parent.report().unwrap();
+        assert_eq!(before.stdout().as_text(), Some("€"));
+        assert_eq!(before.stderr().as_bytes(), [0xff]);
+        assert_eq!(parent.stdout([0, 1]), Err(ControlError::OutputLimit));
+        assert_eq!(parent.report().unwrap(), before);
+        assert_eq!(parent.output_len(true).unwrap(), 3);
+        assert_eq!(parent.output_len(false).unwrap(), 1);
+        parent.set_phase(ExecutionPhase::Cleanup).unwrap();
+        parent.stderr([0, 1, 2, 3]).unwrap();
+        parent.close().unwrap();
+        let complete = parent.report().unwrap();
+        assert_eq!(complete.stderr().as_bytes(), [0xff, 0, 1, 2, 3]);
+        assert!(parent.stdout([1]).is_err());
+        assert!(parent.output_len(true).is_err());
+        assert_eq!(
+            EnvelopeReport::decode_process(&complete.encode_process().unwrap()).unwrap(),
+            complete
+        );
     }
 
     #[test]
@@ -1675,8 +1879,8 @@ mod tests {
                 artifacts: Vec::new(),
                 snapshots: Vec::new(),
                 virtual_time: Vec::new(),
-                stdout: String::new(),
-                stderr: String::new(),
+                stdout: CapturedOutput::default(),
+                stderr: CapturedOutput::default(),
             };
             assert_eq!(
                 EnvelopeReport::decode_process(&report.encode_process().unwrap())
@@ -1701,8 +1905,8 @@ mod tests {
                 artifacts: Vec::new(),
                 snapshots: Vec::new(),
                 virtual_time: Vec::new(),
-                stdout: String::new(),
-                stderr: String::new(),
+                stdout: CapturedOutput::default(),
+                stderr: CapturedOutput::default(),
             };
             assert!(EnvelopeReport::decode_process(&report.encode_process().unwrap()).is_ok());
         }
@@ -1745,7 +1949,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 2]
         );
-        assert_eq!(merged.stdout(), "child-out");
+        assert_eq!(merged.stdout().as_text(), Some("child-out"));
         assert_eq!(
             parent.snapshot_updates().unwrap(),
             [("golden".into(), "value".into())]
@@ -1830,7 +2034,8 @@ mod tests {
 
     #[test]
     fn artifacts_validate_names_media_and_atomic_limits() {
-        let envelope = EnvelopeHandle::new("node", EnvelopeLimits::new(0, 3, 0));
+        // The descriptor consumes output even when the payload has its own cap.
+        let envelope = EnvelopeHandle::new("node", EnvelopeLimits::new(200, 3, 0));
         envelope.attach("a", "text/plain", b"abc".to_vec()).unwrap();
         let report = envelope.report().unwrap();
         assert_eq!(report.artifacts()[0].sha256(), sha256(b"abc"));
@@ -1854,6 +2059,109 @@ mod tests {
                 value: "plain".into()
             })
         );
+    }
+
+    #[test]
+    fn descriptor_and_count_limits_reject_without_publishing_or_charging_partial_evidence() {
+        // "a" + "text/plain" + "sha256:" and its 64 hex digits = 82 bytes.
+        let envelope = EnvelopeHandle::new("node", EnvelopeLimits::new(81, 3, 3));
+        assert_eq!(
+            envelope.attach("a", "text/plain", b"abc".to_vec()),
+            Err(ControlError::OutputLimit)
+        );
+        assert!(envelope.report().unwrap().artifacts().is_empty());
+        envelope.stdout("x".repeat(81)).unwrap();
+        let profile = LimitProfile::default()
+            .with_artifact_count(1)
+            .with_snapshot_count(1);
+        let envelope = EnvelopeHandle::new("node", profile.envelope_limits().unwrap());
+        envelope.with_snapshot_update(true).unwrap();
+        envelope.attach("a", "text/plain", Vec::new()).unwrap();
+        assert_eq!(
+            envelope.attach("b", "text/plain", Vec::new()),
+            Err(ControlError::ResourceLimit {
+                kind: BudgetKind::ArtifactCount
+            })
+        );
+        envelope.snapshot("a", "").unwrap();
+        assert_eq!(
+            envelope.snapshot("b", ""),
+            Err(ControlError::ResourceLimit {
+                kind: BudgetKind::SnapshotCount
+            })
+        );
+        let report = envelope.report().unwrap();
+        assert_eq!(report.artifacts().len(), 1);
+        assert_eq!(report.snapshots().len(), 1);
+        assert_eq!(
+            envelope.snapshot_updates().unwrap(),
+            [("a".into(), "".into())]
+        );
+    }
+
+    #[test]
+    fn empty_logs_and_sequential_domains_exhaust_finite_metadata() {
+        let profile = LimitProfile::default().with_metadata(80);
+        let logs = EnvelopeHandle::new("logs", profile.envelope_limits().unwrap());
+        logs.log("").unwrap();
+        logs.log("").unwrap();
+        assert_eq!(
+            logs.log(""),
+            Err(ControlError::ResourceLimit {
+                kind: BudgetKind::Metadata
+            })
+        );
+        assert_eq!(logs.report().unwrap().logs().len(), 2);
+        let clocks = EnvelopeHandle::new("clocks", profile.envelope_limits().unwrap());
+        clocks.with_virtual_time(|_| Ok(())).unwrap();
+        clocks.with_virtual_time(|_| Ok(())).unwrap();
+        assert_eq!(
+            clocks.with_virtual_time(|_| Ok(())),
+            Err(ControlError::ResourceLimit {
+                kind: BudgetKind::Metadata
+            })
+        );
+        assert_eq!(clocks.report().unwrap().virtual_time().len(), 2);
+        clocks.close().unwrap();
+    }
+
+    #[test]
+    fn suite_evidence_resets_allowances_once_for_teardown_and_keeps_setup_records() {
+        let envelope = EnvelopeHandle::new("suite", EnvelopeLimits::new(3, 0, 0));
+        envelope.log("abc").unwrap();
+        envelope.set_phase(ExecutionPhase::Cleanup).unwrap();
+        envelope.log("def").unwrap();
+        envelope.set_phase(ExecutionPhase::Cleanup).unwrap();
+        assert_eq!(envelope.log("x"), Err(ControlError::OutputLimit));
+        let report = envelope.report().unwrap();
+        assert_eq!(
+            report
+                .logs()
+                .iter()
+                .map(|log| (log.sequence(), log.message()))
+                .collect::<Vec<_>>(),
+            [(1, "abc"), (2, "def")]
+        );
+    }
+
+    #[test]
+    fn worker_report_merge_is_atomic_on_late_conflicts() {
+        let parent = EnvelopeHandle::new("parent", limits());
+        parent
+            .tags(BTreeMap::from([("key".into(), "before".into())]))
+            .unwrap();
+        parent.log("before").unwrap();
+        let before = parent.report().unwrap();
+        let child = EnvelopeHandle::new("child", limits());
+        child.log("must-not-be-imported").unwrap();
+        child
+            .tags(BTreeMap::from([("key".into(), "conflict".into())]))
+            .unwrap();
+        assert!(matches!(
+            parent.merge_worker_report(&child.report().unwrap(), &[]),
+            Err(ControlError::TagConflict { .. })
+        ));
+        assert_eq!(parent.report().unwrap(), before);
     }
 
     #[test]
@@ -1997,6 +2305,22 @@ mod tests {
                 reason: "first".into()
             })
         );
+        for cleanup in [false, true] {
+            let envelope = EnvelopeHandle::new("node", limits());
+            let first = envelope.child().unwrap();
+            let second = envelope.child().unwrap();
+            second.skip("second").unwrap_err();
+            if cleanup {
+                envelope
+                    .cleanup_failure("P0008", "cleanup failed")
+                    .unwrap_err();
+            } else {
+                assert!(envelope.record_runtime_limit("node", "memory").unwrap());
+            }
+            let terminal = envelope.report().unwrap().terminal().cloned();
+            first.skip("first").unwrap_err();
+            assert_eq!(envelope.report().unwrap().terminal(), terminal.as_ref());
+        }
     }
 
     #[test]
@@ -2158,8 +2482,8 @@ mod tests {
         );
         assert_eq!(std::hint::black_box(report.virtual_time())[0].settles(), 1);
         assert_eq!(std::hint::black_box(report.virtual_time())[0].advances(), 1);
-        assert_eq!(std::hint::black_box(report.stdout()), "out");
-        assert_eq!(std::hint::black_box(report.stderr()), "err");
+        assert_eq!(std::hint::black_box(report.stdout()).as_text(), Some("out"));
+        assert_eq!(std::hint::black_box(report.stderr()).as_text(), Some("err"));
 
         for error in [
             ControlError::Closed,

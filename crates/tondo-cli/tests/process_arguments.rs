@@ -24,7 +24,7 @@ fn main(): !env.EnvError {
     assert(text(arguments[1]) == "two words")
     assert(text(arguments[2]) == "*")
     assert(text(arguments[3]) == "$HOME")
-    console.print("cli-args-ok\n")
+    _ = console.print("cli-args-ok\n")
 }
 "#,
     )

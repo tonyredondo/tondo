@@ -41,15 +41,15 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendE
         }
         assert(await first? == 42)
     }
-    console.println("pool-admission:42:ready")
+    _ = console.println("pool-admission:42:ready")
     pool.shutdown()
-    console.println("pool-saturation:saturated:drained")
+    _ = console.println("pool-saturation:saturated:drained")
 
     let blocking = executor.blockingPool(1, 1)?
     assert(blocking.run(blocking_compute)? == 42)
-    console.println("blocking-transfer:42:worker")
+    _ = console.println("blocking-transfer:42:worker")
     blocking.cancel()
-    console.println("blocking-cancel:cancelled:drained")
+    _ = console.println("blocking-cancel:cancelled:drained")
 
     let actor_pool = executor.pool(1, 2)?
     let actor = actor_pool.actor(0, 2, actor_step)?
@@ -57,7 +57,7 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendE
     actor_ref.trySend(1)?
     actor_ref.trySend(2)?
     actor.stop()?
-    console.println("actor-fifo:3:stopped")
+    _ = console.println("actor-fifo:3:stopped")
     actor_pool.shutdown()
 
     let failing_pool = executor.pool(1, 1)?
@@ -75,10 +75,10 @@ fn main(): !(executor.ExecutorError | executor.SubmitError | executor.ActorSendE
             _ => panic("executor conformance returned the wrong terminal actor error")
         }
     }
-    console.println("actor-terminal:terminated:9")
+    _ = console.println("actor-terminal:terminated:9")
     failing_pool.shutdown()
 
-    console.println("threads-capability:declared")
-    console.println("aot-boundary:private-token")
-    console.println("executor-conformance-ok")
+    _ = console.println("threads-capability:declared")
+    _ = console.println("aot-boundary:private-token")
+    _ = console.println("executor-conformance-ok")
 }

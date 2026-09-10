@@ -23,7 +23,7 @@
     "exact_signature_shape_required": true,
     "strict_mode": "fails-on-any-gap"
   },
-  "status": "open-gaps",
+  "status": "verified",
   "owners": [
     {
       "id": "std.meta",
@@ -37,60 +37,137 @@
         "canonical_calls": []
       },
       "hir": [
-        "crates/tondo-compiler/src/meta.rs"
+        "stdlib/meta/src/meta.to",
+        "crates/tondo-compiler/src/meta_compile.rs"
       ],
       "lowering": [
-        "crates/tondo-compiler/src/meta_derive.rs"
+        "stdlib/meta/src/meta.to",
+        "crates/tondo-compiler/src/meta_compile.rs"
       ],
       "runtime": {
         "kind": "not-applicable",
         "paths": [],
         "reason": "build-only owner"
       },
-      "signature_count": 0,
-      "verified_count": 0,
+      "signature_count": 25,
+      "verified_count": 25,
       "gap_count": 0,
-      "owner_missing": [
-        "no-callable-signatures-indexed"
-      ],
-      "status": "open-gaps"
+      "owner_missing": [],
+      "status": "verified"
     },
     {
       "id": "std.reflect",
       "contract": "docs/contracts/std-reflect.md",
       "section": "*",
-      "exact_surface_complete": false,
+      "exact_surface_complete": true,
       "exact_signatures": [],
       "case": {
-        "path": "crates/tondo-compiler/src/reflect.rs",
-        "kind": "build-only",
+        "path": "tests/runtime/m11-std-reflect-public-001.to",
+        "kind": "runtime",
         "canonical_calls": []
       },
       "hir": [
-        "crates/tondo-compiler/src/reflect.rs"
+        "crates/tondo-compiler/src/hir/reflection.rs"
       ],
       "lowering": [
-        "crates/tondo-compiler/src/hir/check.rs"
+        "crates/tondo-compiler/src/bytecode/lower.rs",
+        "crates/tondo-compiler/src/bytecode/reflection.rs"
       ],
       "runtime": {
         "kind": "vm-inline",
         "paths": [
-          "crates/tondo-vm/src/runtime/execute.rs"
+          "crates/tondo-vm/src/runtime/reflection.rs"
         ],
-        "reason": "Runtime metadata integration is pending REFLECT-IMPL-001; the existing catalog case is component evidence only",
+        "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
         "symbols": {
           "std.reflect.typeInfo": [
-            "ReflectTypeInfo"
+            "Query::TypeInfo"
+          ],
+          "std.reflect.TypeInfo.id": [
+            "Query::Id"
+          ],
+          "std.reflect.TypeInfo.qualifiedName": [
+            "Query::QualifiedName"
+          ],
+          "std.reflect.TypeInfo.kind": [
+            "Query::Kind"
+          ],
+          "std.reflect.TypeInfo.genericArguments": [
+            "Query::GenericArguments"
+          ],
+          "std.reflect.TypeInfo.capabilities": [
+            "Query::Capabilities"
+          ],
+          "std.reflect.TypeInfo.fields": [
+            "Query::Fields"
+          ],
+          "std.reflect.TypeInfo.variants": [
+            "Query::Variants"
+          ],
+          "std.reflect.TypeInfo.tupleElements": [
+            "Query::TupleElements"
+          ],
+          "std.reflect.TypeInfo.function": [
+            "Query::Function"
+          ],
+          "std.reflect.FieldInfo.name": [
+            "Query::FieldName"
+          ],
+          "std.reflect.FieldInfo.typeInfo": [
+            "Query::FieldType"
+          ],
+          "std.reflect.FieldInfo.ordinal": [
+            "Query::FieldOrdinal"
+          ],
+          "std.reflect.FieldInfo.docs": [
+            "Query::FieldDocs"
+          ],
+          "std.reflect.VariantInfo.name": [
+            "Query::VariantName"
+          ],
+          "std.reflect.VariantInfo.ordinal": [
+            "Query::VariantOrdinal"
+          ],
+          "std.reflect.VariantInfo.payloadKind": [
+            "Query::VariantPayloadKind"
+          ],
+          "std.reflect.VariantInfo.tupleElements": [
+            "Query::VariantTupleElements"
+          ],
+          "std.reflect.VariantInfo.fields": [
+            "Query::VariantFields"
+          ],
+          "std.reflect.ParameterInfo.position": [
+            "Query::ParameterPosition"
+          ],
+          "std.reflect.ParameterInfo.typeInfo": [
+            "Query::ParameterType"
+          ],
+          "std.reflect.ParameterInfo.mode": [
+            "Query::ParameterMode"
+          ],
+          "std.reflect.FunctionInfo.parameters": [
+            "Query::FunctionParameters"
+          ],
+          "std.reflect.FunctionInfo.outcome": [
+            "Query::FunctionOutcome"
+          ],
+          "std.reflect.FunctionInfo.variadic": [
+            "Query::FunctionVariadic"
+          ],
+          "std.reflect.FunctionInfo.suspends": [
+            "Query::FunctionSuspends"
+          ],
+          "std.reflect.FunctionInfo.isUnsafe": [
+            "Query::FunctionUnsafe"
           ]
         }
       },
-      "signature_count": 1,
-      "verified_count": 0,
-      "gap_count": 1,
-      "owner_missing": [
-        "invalid-build-only-case"
-      ],
-      "status": "open-gaps"
+      "signature_count": 27,
+      "verified_count": 27,
+      "gap_count": 0,
+      "owner_missing": [],
+      "status": "verified"
     },
     {
       "id": "std.core",
@@ -318,8 +395,8 @@
         ],
         "reason": null
       },
-      "signature_count": 4,
-      "verified_count": 4,
+      "signature_count": 5,
+      "verified_count": 5,
       "gap_count": 0,
       "owner_missing": [],
       "status": "verified"
@@ -396,20 +473,23 @@
         "canonical_calls": []
       },
       "hir": [
-        "crates/tondo-compiler/src/hir/check.rs"
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/bootstrap/io.to"
       ],
       "lowering": [
-        "crates/tondo-compiler/src/hir/lower.rs"
+        "crates/tondo-compiler/src/bootstrap/io.to",
+        "crates/tondo-compiler/src/bytecode/lower.rs"
       ],
       "runtime": {
-        "kind": "host",
+        "kind": "vm-inline",
         "paths": [
+          "crates/tondo-compiler/src/bootstrap/io.to",
           "crates/tondo-compiler/src/process_host.rs"
         ],
         "reason": null
       },
-      "signature_count": 4,
-      "verified_count": 4,
+      "signature_count": 7,
+      "verified_count": 7,
       "gap_count": 0,
       "owner_missing": [],
       "status": "verified"
@@ -489,28 +569,107 @@
       "exact_surface_complete": true,
       "exact_signatures": [],
       "case": {
-        "path": "crates/tondo-compiler/src/serialization_derive.rs",
-        "kind": "build-only",
+        "path": "tests/runtime/m11-std-serialization-public-001.to",
+        "kind": "runtime",
         "canonical_calls": []
       },
       "hir": [
-        "crates/tondo-compiler/src/serialization_derive.rs"
+        "crates/tondo-compiler/src/hir.rs"
       ],
       "lowering": [
-        "crates/tondo-compiler/src/serialization_derive.rs"
+        "crates/tondo-compiler/src/bytecode/lower.rs"
       ],
       "runtime": {
-        "kind": "not-applicable",
-        "paths": [],
-        "reason": "portable protocol with compile-time static dispatch; no host provider"
+        "kind": "vm-inline",
+        "paths": [
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ],
+        "symbols": {
+          "std.serialization.Encoder.null": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.bool": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.int": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.uint": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.float32": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.float64": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.string": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.bytes": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.base64": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.startArray": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.endArray": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.startMap": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.mapKey": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.endMap": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.startRecord": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.field": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.endRecord": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.startEnum": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encoder.endEnum": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Decoder.peek": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Decoder.next": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Decoder.base64": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Decoder.own": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Decoder.reject": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Encode.encode": [
+            "BytecodeTerminatorKind::Invoke"
+          ],
+          "std.serialization.Decode.decode": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        }
       },
-      "signature_count": 0,
-      "verified_count": 0,
+      "signature_count": 26,
+      "verified_count": 26,
       "gap_count": 0,
-      "owner_missing": [
-        "no-callable-signatures-indexed"
-      ],
-      "status": "open-gaps"
+      "owner_missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path",
@@ -547,7 +706,15 @@
       "contract": "docs/contracts/stdlib-hosted.md",
       "section": "std.console",
       "exact_surface_complete": true,
-      "exact_signatures": [],
+      "exact_signatures": [
+        "stdin",
+        "stdout",
+        "stderr",
+        "readLine",
+        "print",
+        "println",
+        "flush"
+      ],
       "case": {
         "path": "tests/runtime/m11-std-console-001.to",
         "kind": "runtime",
@@ -795,8 +962,8 @@
         ],
         "reason": null
       },
-      "signature_count": 25,
-      "verified_count": 25,
+      "signature_count": 26,
+      "verified_count": 26,
       "gap_count": 0,
       "owner_missing": [],
       "status": "verified"
@@ -1944,11 +2111,11 @@
       "status": "verified"
     },
     {
-      "id": "std.console:10",
+      "id": "std.console:12",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 10,
-      "signature": "pub fn stdin(): std.io.Reader ! ConsoleError",
+      "line": 12,
+      "signature": "pub fn stdin(): Input ! ConsoleError",
       "symbol": "std.console.stdin",
       "operation": "stdin",
       "evidence": {
@@ -1993,11 +2160,11 @@
       "status": "verified"
     },
     {
-      "id": "std.console:11",
+      "id": "std.console:13",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 11,
-      "signature": "pub fn stdout(): std.io.Writer ! ConsoleError",
+      "line": 13,
+      "signature": "pub fn stdout(): Output ! ConsoleError",
       "symbol": "std.console.stdout",
       "operation": "stdout",
       "evidence": {
@@ -2042,11 +2209,11 @@
       "status": "verified"
     },
     {
-      "id": "std.console:12",
+      "id": "std.console:14",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 12,
-      "signature": "pub fn stderr(): std.io.Writer ! ConsoleError",
+      "line": 14,
+      "signature": "pub fn stderr(): Output ! ConsoleError",
       "symbol": "std.console.stderr",
       "operation": "stderr",
       "evidence": {
@@ -2091,11 +2258,11 @@
       "status": "verified"
     },
     {
-      "id": "std.console:13",
+      "id": "std.console:15",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 13,
-      "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError suspends",
+      "line": 15,
+      "signature": "pub fn readLine(input: var Input): String? ! ConsoleError suspends",
       "symbol": "std.console.readLine",
       "operation": "readLine",
       "evidence": {
@@ -2140,10 +2307,10 @@
       "status": "verified"
     },
     {
-      "id": "std.console:14",
+      "id": "std.console:16",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 14,
+      "line": 16,
       "signature": "pub fn print(value: String): Unit ! ConsoleError",
       "symbol": "std.console.print",
       "operation": "print",
@@ -2189,10 +2356,10 @@
       "status": "verified"
     },
     {
-      "id": "std.console:15",
+      "id": "std.console:17",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 15,
+      "line": 17,
       "signature": "pub fn println(value: String): Unit ! ConsoleError",
       "symbol": "std.console.println",
       "operation": "println",
@@ -2238,10 +2405,10 @@
       "status": "verified"
     },
     {
-      "id": "std.console:16",
+      "id": "std.console:18",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 16,
+      "line": 18,
       "signature": "pub fn flush(): Unit ! ConsoleError suspends",
       "symbol": "std.console.flush",
       "operation": "flush",
@@ -3082,10 +3249,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:256",
+      "id": "std.format:261",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 256,
+      "line": 261,
       "signature": "pub fn Builder.new(): Builder",
       "symbol": "std.format.Builder.new",
       "operation": "new",
@@ -3130,10 +3297,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:257",
+      "id": "std.format:262",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 257,
+      "line": 262,
       "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
       "symbol": "std.format.Builder.append",
       "operation": "append",
@@ -3178,10 +3345,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:258",
+      "id": "std.format:263",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 258,
+      "line": 263,
       "signature": "pub fn Builder.finish(var self): String ! FormatError",
       "symbol": "std.format.Builder.finish",
       "operation": "finish",
@@ -3226,10 +3393,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:259",
+      "id": "std.format:264",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 259,
+      "line": 264,
       "signature": "pub fn format[T: Display](value: T): String ! FormatError",
       "symbol": "std.format.format",
       "operation": "format",
@@ -3274,10 +3441,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:260",
+      "id": "std.format:265",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 260,
+      "line": 265,
       "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
       "symbol": "std.format.join",
       "operation": "join",
@@ -3322,10 +3489,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:85",
+      "id": "std.fs:107",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 85,
+      "line": 107,
       "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError suspends",
       "symbol": "std.fs.open",
       "operation": "open",
@@ -3370,10 +3537,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:86",
+      "id": "std.fs:108",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 86,
+      "line": 108,
       "signature": "pub fn openDirectory(path: Path): Directory ! FsError suspends",
       "symbol": "std.fs.openDirectory",
       "operation": "openDirectory",
@@ -3418,10 +3585,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:87",
+      "id": "std.fs:109",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 87,
+      "line": 109,
       "signature": "pub fn readAll(path: Path): Bytes ! FsError suspends",
       "symbol": "std.fs.readAll",
       "operation": "readAll",
@@ -3466,10 +3633,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:88",
+      "id": "std.fs:110",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 88,
+      "line": 110,
       "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError suspends",
       "symbol": "std.fs.writeAll",
       "operation": "writeAll",
@@ -3514,10 +3681,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:89",
+      "id": "std.fs:111",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 89,
+      "line": 111,
       "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError suspends",
       "symbol": "std.fs.createDirectory",
       "operation": "createDirectory",
@@ -3562,10 +3729,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:90",
+      "id": "std.fs:112",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 90,
+      "line": 112,
       "signature": "pub fn remove(path: Path): Unit ! FsError suspends",
       "symbol": "std.fs.remove",
       "operation": "remove",
@@ -3610,10 +3777,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:91",
+      "id": "std.fs:113",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 91,
+      "line": 113,
       "signature": "pub fn metadata(path: Path): Metadata ! FsError suspends",
       "symbol": "std.fs.metadata",
       "operation": "metadata",
@@ -3658,10 +3825,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:92",
+      "id": "std.fs:114",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 92,
+      "line": 114,
       "signature": "pub fn list(path: Path): Array[Path] ! FsError suspends",
       "symbol": "std.fs.list",
       "operation": "list",
@@ -3706,10 +3873,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:93",
+      "id": "std.fs:115",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 93,
+      "line": 115,
       "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError suspends",
       "symbol": "std.fs.rename",
       "operation": "rename",
@@ -3754,10 +3921,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:94",
+      "id": "std.fs:116",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 94,
+      "line": 116,
       "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError suspends",
       "symbol": "std.fs.atomicWrite",
       "operation": "atomicWrite",
@@ -3802,10 +3969,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:95",
+      "id": "std.fs:117",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 95,
+      "line": 117,
       "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends",
       "symbol": "std.fs.File.read",
       "operation": "read",
@@ -3850,10 +4017,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:96",
+      "id": "std.fs:118",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 96,
+      "line": 118,
       "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError suspends",
       "symbol": "std.fs.File.write",
       "operation": "write",
@@ -3898,10 +4065,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:97",
+      "id": "std.fs:119",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 97,
+      "line": 119,
       "signature": "pub fn File.flush(var self): Unit ! FsError suspends",
       "symbol": "std.fs.File.flush",
       "operation": "flush",
@@ -3946,10 +4113,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:98",
+      "id": "std.fs:120",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 98,
+      "line": 120,
       "signature": "pub fn Directory.list(var self): Array[Path] ! FsError suspends",
       "symbol": "std.fs.Directory.list",
       "operation": "list",
@@ -3994,17 +4161,174 @@
       "status": "verified"
     },
     {
-      "id": "std.io:286",
+      "id": "std.io:285",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 286,
+      "line": 285,
+      "signature": "fn read(var self, max: Int): ReadResult ! IoError suspends",
+      "symbol": "std.io.Reader.read",
+      "operation": "read",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to"
+          ],
+          "symbol": "read",
+          "symbols": [
+            "read"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "read",
+          "symbols": [
+            "read"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/process_host.rs"
+          ],
+          "reason": null,
+          "symbol": "std.io.Reader.read",
+          "symbols": [
+            "read"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-io-001.to",
+          "kind": "runtime",
+          "call": "read",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Reader"
+    },
+    {
+      "id": "std.io:288",
+      "owner": "std.io",
+      "contract": "docs/contracts/stdlib-core.md",
+      "line": 288,
+      "signature": "fn write(var self, data: Bytes): Int ! IoError suspends",
+      "symbol": "std.io.Writer.write",
+      "operation": "write",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to"
+          ],
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/process_host.rs"
+          ],
+          "reason": null,
+          "symbol": "std.io.Writer.write",
+          "symbols": [
+            "write"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-io-001.to",
+          "kind": "runtime",
+          "call": "write",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Writer"
+    },
+    {
+      "id": "std.io:289",
+      "owner": "std.io",
+      "contract": "docs/contracts/stdlib-core.md",
+      "line": 289,
+      "signature": "fn flush(var self): Unit ! IoError suspends",
+      "symbol": "std.io.Writer.flush",
+      "operation": "flush",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to"
+          ],
+          "symbol": "flush",
+          "symbols": [
+            "flush"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "flush",
+          "symbols": [
+            "flush"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/process_host.rs"
+          ],
+          "reason": null,
+          "symbol": "std.io.Writer.flush",
+          "symbols": [
+            "flush"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-io-001.to",
+          "kind": "runtime",
+          "call": "flush",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Writer"
+    },
+    {
+      "id": "std.io:291",
+      "owner": "std.io",
+      "contract": "docs/contracts/stdlib-core.md",
+      "line": 291,
       "signature": "pub fn defaultLimits(): IoLimits",
       "symbol": "std.io.defaultLimits",
       "operation": "defaultLimits",
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to"
           ],
           "symbol": "defaultLimits",
           "symbols": [
@@ -4013,16 +4337,18 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs"
           ],
           "symbol": "defaultLimits",
           "symbols": [
-            "IoLimitsDefault"
+            "defaultLimits"
           ]
         },
         "host_vm": {
-          "kind": "host",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
@@ -4042,17 +4368,18 @@
       "status": "verified"
     },
     {
-      "id": "std.io:287",
+      "id": "std.io:292",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 287,
+      "line": 292,
       "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "symbol": "std.io.limits",
       "operation": "limits",
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to"
           ],
           "symbol": "limits",
           "symbols": [
@@ -4061,7 +4388,8 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs"
           ],
           "symbol": "limits",
           "symbols": [
@@ -4069,8 +4397,9 @@
           ]
         },
         "host_vm": {
-          "kind": "host",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
@@ -4090,17 +4419,18 @@
       "status": "verified"
     },
     {
-      "id": "std.io:288",
+      "id": "std.io:293",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 288,
-      "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends",
+      "line": 293,
+      "signature": "pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends",
       "symbol": "std.io.readAll",
       "operation": "readAll",
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to"
           ],
           "symbol": "readAll",
           "symbols": [
@@ -4109,16 +4439,18 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs"
           ],
           "symbol": "readAll",
           "symbols": [
-            "IoReadAll"
+            "readAll"
           ]
         },
         "host_vm": {
-          "kind": "host",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
@@ -4138,17 +4470,18 @@
       "status": "verified"
     },
     {
-      "id": "std.io:289",
+      "id": "std.io:294",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 289,
-      "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends",
+      "line": 294,
+      "signature": "pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends",
       "symbol": "std.io.writeAll",
       "operation": "writeAll",
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/bootstrap/io.to"
           ],
           "symbol": "writeAll",
           "symbols": [
@@ -4157,16 +4490,18 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/bootstrap/io.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs"
           ],
           "symbol": "writeAll",
           "symbols": [
-            "IoWriteAll"
+            "writeAll"
           ]
         },
         "host_vm": {
-          "kind": "host",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/bootstrap/io.to",
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
@@ -4184,6 +4519,56 @@
       },
       "missing": [],
       "status": "verified"
+    },
+    {
+      "id": "std.iter:162",
+      "owner": "std.iter",
+      "contract": "docs/contracts/stdlib-core.md",
+      "line": 162,
+      "signature": "fn next(mut self): T?",
+      "symbol": "std.iter.Iterator.next",
+      "operation": "next",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "next",
+          "symbols": [
+            "next"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "symbol": "next",
+          "symbols": [
+            "next"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.iter.Iterator.next",
+          "symbols": [
+            "next"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-iter-001.to",
+          "kind": "runtime",
+          "call": "next",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Iterator[T]"
     },
     {
       "id": "std.iter:164",
@@ -5557,10 +5942,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:235",
+      "id": "std.math:240",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 235,
+      "line": 240,
       "signature": "pub fn floor(value: Float): Float",
       "symbol": "std.math.floor",
       "operation": "floor",
@@ -5605,10 +5990,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:236",
+      "id": "std.math:241",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 236,
+      "line": 241,
       "signature": "pub fn ceil(value: Float): Float",
       "symbol": "std.math.ceil",
       "operation": "ceil",
@@ -5653,10 +6038,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:237",
+      "id": "std.math:242",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 237,
+      "line": 242,
       "signature": "pub fn round(value: Float): Float",
       "symbol": "std.math.round",
       "operation": "round",
@@ -5701,10 +6086,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:238",
+      "id": "std.math:243",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 238,
+      "line": 243,
       "signature": "pub fn roundTiesAway(value: Float): Float",
       "symbol": "std.math.roundTiesAway",
       "operation": "roundTiesAway",
@@ -5749,10 +6134,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:239",
+      "id": "std.math:244",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 239,
+      "line": 244,
       "signature": "pub fn truncate(value: Float): Float",
       "symbol": "std.math.truncate",
       "operation": "truncate",
@@ -5797,10 +6182,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:240",
+      "id": "std.math:245",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 240,
+      "line": 245,
       "signature": "pub fn sqrt(value: Float): Float ! MathError",
       "symbol": "std.math.sqrt",
       "operation": "sqrt",
@@ -5845,10 +6230,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:241",
+      "id": "std.math:246",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 241,
+      "line": 246,
       "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
       "symbol": "std.math.fma",
       "operation": "fma",
@@ -5893,10 +6278,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:242",
+      "id": "std.math:247",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 242,
+      "line": 247,
       "signature": "pub fn abs(value: Float): Float",
       "symbol": "std.math.abs",
       "operation": "abs",
@@ -5941,10 +6326,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:243",
+      "id": "std.math:248",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 243,
+      "line": 248,
       "signature": "pub fn min(a: Float, b: Float): Float",
       "symbol": "std.math.min",
       "operation": "min",
@@ -5989,10 +6374,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:244",
+      "id": "std.math:249",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 244,
+      "line": 249,
       "signature": "pub fn max(a: Float, b: Float): Float",
       "symbol": "std.math.max",
       "operation": "max",
@@ -6968,10 +7353,1210 @@
       "status": "verified"
     },
     {
-      "id": "std.path:47",
+      "id": "std.meta:15",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 15,
+      "signature": "pub fn TypeRef.identity(self): String",
+      "symbol": "std.meta.TypeRef.identity",
+      "operation": "identity",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "identity",
+          "symbols": [
+            "identity"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "identity",
+          "symbols": [
+            "identity"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.TypeRef.identity",
+          "symbols": [
+            "identity"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "identity",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:16",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 16,
+      "signature": "pub fn GenerateRequest.snapshot(self): Snapshot",
+      "symbol": "std.meta.GenerateRequest.snapshot",
+      "operation": "snapshot",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "snapshot",
+          "symbols": [
+            "snapshot"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "snapshot",
+          "symbols": [
+            "snapshot"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.GenerateRequest.snapshot",
+          "symbols": [
+            "snapshot"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "snapshot",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:17",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 17,
+      "signature": "pub fn GenerateRequest.inputs(self): Array[Input]",
+      "symbol": "std.meta.GenerateRequest.inputs",
+      "operation": "inputs",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "inputs",
+          "symbols": [
+            "inputs"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "inputs",
+          "symbols": [
+            "inputs"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.GenerateRequest.inputs",
+          "symbols": [
+            "inputs"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "inputs",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:18",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 18,
+      "signature": "pub fn GenerateRequest.outputs(self): Array[OutputSpec]",
+      "symbol": "std.meta.GenerateRequest.outputs",
+      "operation": "outputs",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "outputs",
+          "symbols": [
+            "outputs"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "outputs",
+          "symbols": [
+            "outputs"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.GenerateRequest.outputs",
+          "symbols": [
+            "outputs"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "outputs",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:19",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 19,
+      "signature": "pub fn GenerateRequest.limits(self): Limits",
+      "symbol": "std.meta.GenerateRequest.limits",
+      "operation": "limits",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "limits",
+          "symbols": [
+            "limits"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "limits",
+          "symbols": [
+            "limits"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.GenerateRequest.limits",
+          "symbols": [
+            "limits"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "limits",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:20",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 20,
+      "signature": "pub fn GenerateRequest.input(self, name: String): Input ! Error",
+      "symbol": "std.meta.GenerateRequest.input",
+      "operation": "input",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "input",
+          "symbols": [
+            "input"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "input",
+          "symbols": [
+            "input"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.GenerateRequest.input",
+          "symbols": [
+            "input"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "input",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:21",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 21,
+      "signature": "pub fn DeriveRequest.snapshot(self): Snapshot",
+      "symbol": "std.meta.DeriveRequest.snapshot",
+      "operation": "snapshot",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "snapshot",
+          "symbols": [
+            "snapshot"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "snapshot",
+          "symbols": [
+            "snapshot"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.snapshot",
+          "symbols": [
+            "snapshot"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "snapshot",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:22",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 22,
+      "signature": "pub fn DeriveRequest.target(self): String",
+      "symbol": "std.meta.DeriveRequest.target",
+      "operation": "target",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "target",
+          "symbols": [
+            "target"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "target",
+          "symbols": [
+            "target"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.target",
+          "symbols": [
+            "target"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "target",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:23",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 23,
+      "signature": "pub fn DeriveRequest.module(self): String",
+      "symbol": "std.meta.DeriveRequest.module",
+      "operation": "module",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "module",
+          "symbols": [
+            "module"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "module",
+          "symbols": [
+            "module"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.module",
+          "symbols": [
+            "module"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "module",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:24",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 24,
+      "signature": "pub fn DeriveRequest.traitIdentity(self): String",
+      "symbol": "std.meta.DeriveRequest.traitIdentity",
+      "operation": "traitIdentity",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "traitIdentity",
+          "symbols": [
+            "traitIdentity"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "traitIdentity",
+          "symbols": [
+            "traitIdentity"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.traitIdentity",
+          "symbols": [
+            "traitIdentity"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "traitIdentity",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:25",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 25,
+      "signature": "pub fn DeriveRequest.bounds(self): Array[String]",
+      "symbol": "std.meta.DeriveRequest.bounds",
+      "operation": "bounds",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "bounds",
+          "symbols": [
+            "bounds"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "bounds",
+          "symbols": [
+            "bounds"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.bounds",
+          "symbols": [
+            "bounds"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "bounds",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:26",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 26,
+      "signature": "pub fn DeriveRequest.span(self): Span",
+      "symbol": "std.meta.DeriveRequest.span",
+      "operation": "span",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "span",
+          "symbols": [
+            "span"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "span",
+          "symbols": [
+            "span"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.span",
+          "symbols": [
+            "span"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "span",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:27",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 27,
+      "signature": "pub fn DeriveRequest.limits(self): Limits",
+      "symbol": "std.meta.DeriveRequest.limits",
+      "operation": "limits",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "limits",
+          "symbols": [
+            "limits"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "limits",
+          "symbols": [
+            "limits"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.limits",
+          "symbols": [
+            "limits"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "limits",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:28",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 28,
+      "signature": "pub fn GenerateRequest.sourceBuilder(self): SourceBuilder",
+      "symbol": "std.meta.GenerateRequest.sourceBuilder",
+      "operation": "sourceBuilder",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "sourceBuilder",
+          "symbols": [
+            "sourceBuilder"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "sourceBuilder",
+          "symbols": [
+            "sourceBuilder"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.GenerateRequest.sourceBuilder",
+          "symbols": [
+            "sourceBuilder"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "sourceBuilder",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:29",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 29,
+      "signature": "pub fn DeriveRequest.sourceBuilder(self): SourceBuilder",
+      "symbol": "std.meta.DeriveRequest.sourceBuilder",
+      "operation": "sourceBuilder",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "sourceBuilder",
+          "symbols": [
+            "sourceBuilder"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "sourceBuilder",
+          "symbols": [
+            "sourceBuilder"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.DeriveRequest.sourceBuilder",
+          "symbols": [
+            "sourceBuilder"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "sourceBuilder",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:30",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 30,
+      "signature": "pub fn SourceBuilder.outputs(self): Array[OutputSpec]",
+      "symbol": "std.meta.SourceBuilder.outputs",
+      "operation": "outputs",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "outputs",
+          "symbols": [
+            "outputs"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "outputs",
+          "symbols": [
+            "outputs"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.SourceBuilder.outputs",
+          "symbols": [
+            "outputs"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "outputs",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:31",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 31,
+      "signature": "pub fn SourceBuilder.renderType(mut self, path: String, ty: TypeRef): String ! Error",
+      "symbol": "std.meta.SourceBuilder.renderType",
+      "operation": "renderType",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "renderType",
+          "symbols": [
+            "renderType"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "renderType",
+          "symbols": [
+            "renderType"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.SourceBuilder.renderType",
+          "symbols": [
+            "renderType"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "renderType",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:32",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 32,
+      "signature": "pub fn SourceBuilder.add(mut self, path: String, source: String): Unit ! Error",
+      "symbol": "std.meta.SourceBuilder.add",
+      "operation": "add",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "add",
+          "symbols": [
+            "add"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "add",
+          "symbols": [
+            "add"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.SourceBuilder.add",
+          "symbols": [
+            "add"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "add",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:33",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 33,
+      "signature": "pub fn SourceBuilder.finish(self): GenerateResponse ! Error",
+      "symbol": "std.meta.SourceBuilder.finish",
+      "operation": "finish",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.SourceBuilder.finish",
+          "symbols": [
+            "finish"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "finish",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:34",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 34,
+      "signature": "pub fn SourceBuilder.finishDerive(self): DeriveResponse ! Error",
+      "symbol": "std.meta.SourceBuilder.finishDerive",
+      "operation": "finishDerive",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "finishDerive",
+          "symbols": [
+            "finishDerive"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "finishDerive",
+          "symbols": [
+            "finishDerive"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.SourceBuilder.finishDerive",
+          "symbols": [
+            "finishDerive"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "finishDerive",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:35",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 35,
+      "signature": "pub fn stringLiteral(value: String): String",
+      "symbol": "std.meta.stringLiteral",
+      "operation": "stringLiteral",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "stringLiteral",
+          "symbols": [
+            "stringLiteral"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "stringLiteral",
+          "symbols": [
+            "stringLiteral"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.stringLiteral",
+          "symbols": [
+            "stringLiteral"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "stringLiteral",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:36",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 36,
+      "signature": "pub fn indentation(level: UInt32): String ! Error",
+      "symbol": "std.meta.indentation",
+      "operation": "indentation",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "indentation",
+          "symbols": [
+            "indentation"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "indentation",
+          "symbols": [
+            "indentation"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.indentation",
+          "symbols": [
+            "indentation"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "indentation",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:37",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 37,
+      "signature": "pub fn api(): String",
+      "symbol": "std.meta.api",
+      "operation": "api",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "api",
+          "symbols": [
+            "api"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "api",
+          "symbols": [
+            "api"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.api",
+          "symbols": [
+            "api"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "api",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:38",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 38,
+      "signature": "pub fn target(): String",
+      "symbol": "std.meta.target",
+      "operation": "target",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "target",
+          "symbols": [
+            "target"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "target",
+          "symbols": [
+            "target"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.target",
+          "symbols": [
+            "target"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "target",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.meta:39",
+      "owner": "std.meta",
+      "contract": "docs/contracts/std-meta.md",
+      "line": 39,
+      "signature": "pub fn profile(): String",
+      "symbol": "std.meta.profile",
+      "operation": "profile",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "profile",
+          "symbols": [
+            "profile"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "stdlib/meta/src/meta.to",
+            "crates/tondo-compiler/src/meta_compile.rs"
+          ],
+          "symbol": "profile",
+          "symbols": [
+            "profile"
+          ]
+        },
+        "host_vm": {
+          "kind": "not-applicable",
+          "paths": [],
+          "reason": "build-only owner",
+          "symbol": "std.meta.profile",
+          "symbols": [
+            "profile"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "kind": "build-only",
+          "call": "profile",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.path:68",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 47,
+      "line": 68,
       "signature": "pub fn Path.fromString(value: String): Path ! PathError",
       "symbol": "std.path.Path.fromString",
       "operation": "fromString",
@@ -7016,10 +8601,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:48",
+      "id": "std.path:69",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 48,
+      "line": 69,
       "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
       "symbol": "std.path.Path.fromBytes",
       "operation": "fromBytes",
@@ -7064,10 +8649,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:49",
+      "id": "std.path:70",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 49,
+      "line": 70,
       "signature": "pub fn Path.join(self, component: String): Path ! PathError",
       "symbol": "std.path.Path.join",
       "operation": "join",
@@ -7112,10 +8697,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:50",
+      "id": "std.path:71",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 50,
+      "line": 71,
       "signature": "pub fn Path.parent(self): Path?",
       "symbol": "std.path.Path.parent",
       "operation": "parent",
@@ -7160,10 +8745,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:51",
+      "id": "std.path:72",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 51,
+      "line": 72,
       "signature": "pub fn Path.fileName(self): String?",
       "symbol": "std.path.Path.fileName",
       "operation": "fileName",
@@ -7208,10 +8793,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:52",
+      "id": "std.path:73",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 52,
+      "line": 73,
       "signature": "pub fn Path.extension(self): String?",
       "symbol": "std.path.Path.extension",
       "operation": "extension",
@@ -7256,10 +8841,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:53",
+      "id": "std.path:74",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 53,
+      "line": 74,
       "signature": "pub fn Path.kind(self): Bool",
       "symbol": "std.path.Path.kind",
       "operation": "kind",
@@ -7304,10 +8889,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:54",
+      "id": "std.path:75",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 54,
+      "line": 75,
       "signature": "pub fn Path.isEmpty(self): Bool",
       "symbol": "std.path.Path.isEmpty",
       "operation": "isEmpty",
@@ -7352,10 +8937,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:55",
+      "id": "std.path:76",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 55,
+      "line": 76,
       "signature": "pub fn Path.toString(self): String ! PathError",
       "symbol": "std.path.Path.toString",
       "operation": "toString",
@@ -7400,10 +8985,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:56",
+      "id": "std.path:77",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 56,
+      "line": 77,
       "signature": "pub fn Path.toBytes(self): Bytes",
       "symbol": "std.path.Path.toBytes",
       "operation": "toBytes",
@@ -7448,10 +9033,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:148",
+      "id": "std.process:209",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 148,
+      "line": 209,
       "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
       "symbol": "std.process.command",
       "operation": "command",
@@ -7496,10 +9081,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:149",
+      "id": "std.process:210",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 149,
+      "line": 210,
       "signature": "pub fn shell(command: String): Command ! ProcessError",
       "symbol": "std.process.shell",
       "operation": "shell",
@@ -7544,10 +9129,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:150",
+      "id": "std.process:211",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 150,
+      "line": 211,
       "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
       "symbol": "std.process.pipe",
       "operation": "pipe",
@@ -7592,10 +9177,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:151",
+      "id": "std.process:212",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 151,
+      "line": 212,
       "signature": "pub fn Command.mergeStderr(self): Command",
       "symbol": "std.process.Command.mergeStderr",
       "operation": "mergeStderr",
@@ -7640,10 +9225,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:152",
+      "id": "std.process:213",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 152,
+      "line": 213,
       "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
       "symbol": "std.process.Pipeline.mergeStderr",
       "operation": "mergeStderr",
@@ -7688,10 +9273,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:153",
+      "id": "std.process:214",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 153,
+      "line": 214,
       "signature": "pub fn Command.run(self): ExitStatus ! ProcessError suspends",
       "symbol": "std.process.Command.run",
       "operation": "run",
@@ -7736,10 +9321,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:154",
+      "id": "std.process:215",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 154,
+      "line": 215,
       "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError suspends",
       "symbol": "std.process.Command.output",
       "operation": "output",
@@ -7784,10 +9369,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:155",
+      "id": "std.process:216",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 155,
+      "line": 216,
       "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends",
       "symbol": "std.process.Command.check",
       "operation": "check",
@@ -7832,10 +9417,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:156",
+      "id": "std.process:217",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 156,
+      "line": 217,
       "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError suspends",
       "symbol": "std.process.Command.start",
       "operation": "start",
@@ -7880,10 +9465,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:157",
+      "id": "std.process:218",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 157,
+      "line": 218,
       "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError suspends",
       "symbol": "std.process.ProcessHandle.wait",
       "operation": "wait",
@@ -7928,10 +9513,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:158",
+      "id": "std.process:219",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 158,
+      "line": 219,
       "signature": "pub fn ProcessHandle.cancel(var self): Unit suspends",
       "symbol": "std.process.ProcessHandle.cancel",
       "operation": "cancel",
@@ -7976,10 +9561,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:159",
+      "id": "std.process:220",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 159,
+      "line": 220,
       "signature": "pub fn ProcessOutput.stdout(self): Bytes",
       "symbol": "std.process.ProcessOutput.stdout",
       "operation": "stdout",
@@ -8024,10 +9609,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:160",
+      "id": "std.process:221",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 160,
+      "line": 221,
       "signature": "pub fn ProcessOutput.stderr(self): Bytes",
       "symbol": "std.process.ProcessOutput.stderr",
       "operation": "stderr",
@@ -8072,10 +9657,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:161",
+      "id": "std.process:222",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 161,
+      "line": 222,
       "signature": "pub fn ProcessOutput.combined(self): Bytes",
       "symbol": "std.process.ProcessOutput.combined",
       "operation": "combined",
@@ -8120,10 +9705,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:162",
+      "id": "std.process:223",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 162,
+      "line": 223,
       "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
       "symbol": "std.process.ProcessOutput.statuses",
       "operation": "statuses",
@@ -8168,10 +9753,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:163",
+      "id": "std.process:224",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 163,
+      "line": 224,
       "signature": "pub fn ExitStatus.code(self): Int?",
       "symbol": "std.process.ExitStatus.code",
       "operation": "code",
@@ -8216,10 +9801,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:164",
+      "id": "std.process:225",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 164,
+      "line": 225,
       "signature": "pub fn ExitStatus.success(self): Bool",
       "symbol": "std.process.ExitStatus.success",
       "operation": "success",
@@ -8999,30 +10584,1353 @@
       "status": "verified"
     },
     {
-      "id": "std.reflect:32",
+      "id": "std.reflect:45",
       "owner": "std.reflect",
       "contract": "docs/contracts/std-reflect.md",
-      "line": 32,
+      "line": 45,
       "signature": "pub fn typeInfo[T](): TypeInfo",
       "symbol": "std.reflect.typeInfo",
       "operation": "typeInfo",
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/reflect.rs"
+            "crates/tondo-compiler/src/hir/reflection.rs"
           ],
           "symbol": "typeInfo",
           "symbols": [
-            "typeInfo"
+            "Query::TypeInfo"
           ]
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
           ],
           "symbol": "typeInfo",
           "symbols": [
-            "typeInfo"
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.typeInfo",
+          "symbols": [
+            "Query::TypeInfo"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "typeInfo",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:46",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 46,
+      "signature": "pub fn TypeInfo.id(self): TypeId",
+      "symbol": "std.reflect.TypeInfo.id",
+      "operation": "id",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "id",
+          "symbols": [
+            "Query::Id"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "id",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.id",
+          "symbols": [
+            "Query::Id"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "id",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:47",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 47,
+      "signature": "pub fn TypeInfo.qualifiedName(self): String",
+      "symbol": "std.reflect.TypeInfo.qualifiedName",
+      "operation": "qualifiedName",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "qualifiedName",
+          "symbols": [
+            "Query::QualifiedName"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "qualifiedName",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.qualifiedName",
+          "symbols": [
+            "Query::QualifiedName"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "qualifiedName",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:48",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 48,
+      "signature": "pub fn TypeInfo.kind(self): TypeKind",
+      "symbol": "std.reflect.TypeInfo.kind",
+      "operation": "kind",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "kind",
+          "symbols": [
+            "Query::Kind"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "kind",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.kind",
+          "symbols": [
+            "Query::Kind"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "kind",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:49",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 49,
+      "signature": "pub fn TypeInfo.genericArguments(self): Array[TypeInfo]",
+      "symbol": "std.reflect.TypeInfo.genericArguments",
+      "operation": "genericArguments",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "genericArguments",
+          "symbols": [
+            "Query::GenericArguments"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "genericArguments",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.genericArguments",
+          "symbols": [
+            "Query::GenericArguments"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "genericArguments",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:50",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 50,
+      "signature": "pub fn TypeInfo.capabilities(self): Set[TypeCapability]",
+      "symbol": "std.reflect.TypeInfo.capabilities",
+      "operation": "capabilities",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "capabilities",
+          "symbols": [
+            "Query::Capabilities"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "capabilities",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.capabilities",
+          "symbols": [
+            "Query::Capabilities"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "capabilities",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:51",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 51,
+      "signature": "pub fn TypeInfo.fields(self): Array[FieldInfo]",
+      "symbol": "std.reflect.TypeInfo.fields",
+      "operation": "fields",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "fields",
+          "symbols": [
+            "Query::Fields"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "fields",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.fields",
+          "symbols": [
+            "Query::Fields"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "fields",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:52",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 52,
+      "signature": "pub fn TypeInfo.variants(self): Array[VariantInfo]",
+      "symbol": "std.reflect.TypeInfo.variants",
+      "operation": "variants",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "variants",
+          "symbols": [
+            "Query::Variants"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "variants",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.variants",
+          "symbols": [
+            "Query::Variants"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "variants",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:53",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 53,
+      "signature": "pub fn TypeInfo.tupleElements(self): Array[TypeInfo]",
+      "symbol": "std.reflect.TypeInfo.tupleElements",
+      "operation": "tupleElements",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "tupleElements",
+          "symbols": [
+            "Query::TupleElements"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "tupleElements",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.tupleElements",
+          "symbols": [
+            "Query::TupleElements"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "tupleElements",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:54",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 54,
+      "signature": "pub fn TypeInfo.function(self): FunctionInfo?",
+      "symbol": "std.reflect.TypeInfo.function",
+      "operation": "function",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "function",
+          "symbols": [
+            "Query::Function"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "function",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.TypeInfo.function",
+          "symbols": [
+            "Query::Function"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "function",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:55",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 55,
+      "signature": "pub fn FieldInfo.name(self): String",
+      "symbol": "std.reflect.FieldInfo.name",
+      "operation": "name",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "name",
+          "symbols": [
+            "Query::FieldName"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "name",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FieldInfo.name",
+          "symbols": [
+            "Query::FieldName"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "name",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:56",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 56,
+      "signature": "pub fn FieldInfo.typeInfo(self): TypeInfo",
+      "symbol": "std.reflect.FieldInfo.typeInfo",
+      "operation": "typeInfo",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "typeInfo",
+          "symbols": [
+            "Query::FieldType"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "typeInfo",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FieldInfo.typeInfo",
+          "symbols": [
+            "Query::FieldType"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "typeInfo",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:57",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 57,
+      "signature": "pub fn FieldInfo.ordinal(self): Int",
+      "symbol": "std.reflect.FieldInfo.ordinal",
+      "operation": "ordinal",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "ordinal",
+          "symbols": [
+            "Query::FieldOrdinal"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "ordinal",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FieldInfo.ordinal",
+          "symbols": [
+            "Query::FieldOrdinal"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "ordinal",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:58",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 58,
+      "signature": "pub fn FieldInfo.docs(self): String?",
+      "symbol": "std.reflect.FieldInfo.docs",
+      "operation": "docs",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "docs",
+          "symbols": [
+            "Query::FieldDocs"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "docs",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FieldInfo.docs",
+          "symbols": [
+            "Query::FieldDocs"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "docs",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:59",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 59,
+      "signature": "pub fn VariantInfo.name(self): String",
+      "symbol": "std.reflect.VariantInfo.name",
+      "operation": "name",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "name",
+          "symbols": [
+            "Query::VariantName"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "name",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.VariantInfo.name",
+          "symbols": [
+            "Query::VariantName"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "name",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:60",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 60,
+      "signature": "pub fn VariantInfo.ordinal(self): Int",
+      "symbol": "std.reflect.VariantInfo.ordinal",
+      "operation": "ordinal",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "ordinal",
+          "symbols": [
+            "Query::VariantOrdinal"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "ordinal",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.VariantInfo.ordinal",
+          "symbols": [
+            "Query::VariantOrdinal"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "ordinal",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:61",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 61,
+      "signature": "pub fn VariantInfo.payloadKind(self): VariantPayloadKind",
+      "symbol": "std.reflect.VariantInfo.payloadKind",
+      "operation": "payloadKind",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "payloadKind",
+          "symbols": [
+            "Query::VariantPayloadKind"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "payloadKind",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.VariantInfo.payloadKind",
+          "symbols": [
+            "Query::VariantPayloadKind"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "payloadKind",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:62",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 62,
+      "signature": "pub fn VariantInfo.tupleElements(self): Array[TypeInfo]",
+      "symbol": "std.reflect.VariantInfo.tupleElements",
+      "operation": "tupleElements",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "tupleElements",
+          "symbols": [
+            "Query::VariantTupleElements"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "tupleElements",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.VariantInfo.tupleElements",
+          "symbols": [
+            "Query::VariantTupleElements"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "tupleElements",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:63",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 63,
+      "signature": "pub fn VariantInfo.fields(self): Array[FieldInfo]",
+      "symbol": "std.reflect.VariantInfo.fields",
+      "operation": "fields",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "fields",
+          "symbols": [
+            "Query::VariantFields"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "fields",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.VariantInfo.fields",
+          "symbols": [
+            "Query::VariantFields"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "fields",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:64",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 64,
+      "signature": "pub fn ParameterInfo.position(self): Int",
+      "symbol": "std.reflect.ParameterInfo.position",
+      "operation": "position",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "position",
+          "symbols": [
+            "Query::ParameterPosition"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "position",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.ParameterInfo.position",
+          "symbols": [
+            "Query::ParameterPosition"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "position",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:65",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 65,
+      "signature": "pub fn ParameterInfo.typeInfo(self): TypeInfo",
+      "symbol": "std.reflect.ParameterInfo.typeInfo",
+      "operation": "typeInfo",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "typeInfo",
+          "symbols": [
+            "Query::ParameterType"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "typeInfo",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.ParameterInfo.typeInfo",
+          "symbols": [
+            "Query::ParameterType"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "typeInfo",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:66",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 66,
+      "signature": "pub fn ParameterInfo.mode(self): ParameterMode",
+      "symbol": "std.reflect.ParameterInfo.mode",
+      "operation": "mode",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "mode",
+          "symbols": [
+            "Query::ParameterMode"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "mode",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.ParameterInfo.mode",
+          "symbols": [
+            "Query::ParameterMode"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "mode",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:67",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 67,
+      "signature": "pub fn FunctionInfo.parameters(self): Array[ParameterInfo]",
+      "symbol": "std.reflect.FunctionInfo.parameters",
+      "operation": "parameters",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "parameters",
+          "symbols": [
+            "Query::FunctionParameters"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "parameters",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FunctionInfo.parameters",
+          "symbols": [
+            "Query::FunctionParameters"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "parameters",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:68",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 68,
+      "signature": "pub fn FunctionInfo.outcome(self): TypeInfo",
+      "symbol": "std.reflect.FunctionInfo.outcome",
+      "operation": "outcome",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "outcome",
+          "symbols": [
+            "Query::FunctionOutcome"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "outcome",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FunctionInfo.outcome",
+          "symbols": [
+            "Query::FunctionOutcome"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "outcome",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:69",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 69,
+      "signature": "pub fn FunctionInfo.variadic(self): Bool",
+      "symbol": "std.reflect.FunctionInfo.variadic",
+      "operation": "variadic",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "variadic",
+          "symbols": [
+            "Query::FunctionVariadic"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "variadic",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FunctionInfo.variadic",
+          "symbols": [
+            "Query::FunctionVariadic"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "variadic",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:70",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 70,
+      "signature": "pub fn FunctionInfo.suspends(self): Bool",
+      "symbol": "std.reflect.FunctionInfo.suspends",
+      "operation": "suspends",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "suspends",
+          "symbols": [
+            "Query::FunctionSuspends"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "suspends",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FunctionInfo.suspends",
+          "symbols": [
+            "Query::FunctionSuspends"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "suspends",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.reflect:71",
+      "owner": "std.reflect",
+      "contract": "docs/contracts/std-reflect.md",
+      "line": 71,
+      "signature": "pub fn FunctionInfo.isUnsafe(self): Bool",
+      "symbol": "std.reflect.FunctionInfo.isUnsafe",
+      "operation": "isUnsafe",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/reflection.rs"
+          ],
+          "symbol": "isUnsafe",
+          "symbols": [
+            "Query::FunctionUnsafe"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/bytecode/reflection.rs"
+          ],
+          "symbol": "isUnsafe",
+          "symbols": [
+            "HirBootstrapHostFunction::Reflection"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/reflection.rs"
+          ],
+          "reason": "Compiler-retained descriptors execute as checked hosted VM queries",
+          "symbol": "std.reflect.FunctionInfo.isUnsafe",
+          "symbols": [
+            "Query::FunctionUnsafe"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-reflect-public-001.to",
+          "kind": "runtime",
+          "call": "isUnsafe",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.serialization:61",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 61,
+      "signature": "fn null(var self): Unit ! E",
+      "symbol": "std.serialization.Encoder.null",
+      "operation": "null",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "null",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderNull"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "null",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
           ]
         },
         "host_vm": {
@@ -9030,27 +11938,1247 @@
           "paths": [
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": "Runtime metadata integration is pending REFLECT-IMPL-001; the existing catalog case is component evidence only",
-          "symbol": "std.reflect.typeInfo",
+          "reason": null,
+          "symbol": "std.serialization.Encoder.null",
           "symbols": [
-            "ReflectTypeInfo"
+            "BytecodeTerminatorKind::Invoke"
           ]
         },
         "public_case": {
-          "path": "crates/tondo-compiler/src/reflect.rs",
-          "kind": "build-only",
-          "call": "typeInfo",
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "null",
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "invalid-build-only-case",
-        "lowering-symbol",
-        "public-case-call",
-        "vm-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:62",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 62,
+      "signature": "fn bool(var self, value: Bool): Unit ! E",
+      "symbol": "std.serialization.Encoder.bool",
+      "operation": "bool",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "bool",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderBool"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "bool",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.bool",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "bool",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:63",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 63,
+      "signature": "fn int(var self, value: Int64): Unit ! E",
+      "symbol": "std.serialization.Encoder.int",
+      "operation": "int",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "int",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderInt"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "int",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.int",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "int",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:64",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 64,
+      "signature": "fn uint(var self, value: UInt64): Unit ! E",
+      "symbol": "std.serialization.Encoder.uint",
+      "operation": "uint",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "uint",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderUInt"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "uint",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.uint",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "uint",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:65",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 65,
+      "signature": "fn float32(var self, value: Float32): Unit ! E",
+      "symbol": "std.serialization.Encoder.float32",
+      "operation": "float32",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "float32",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderFloat32"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "float32",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.float32",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "float32",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:66",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 66,
+      "signature": "fn float64(var self, value: Float64): Unit ! E",
+      "symbol": "std.serialization.Encoder.float64",
+      "operation": "float64",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "float64",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderFloat64"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "float64",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.float64",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "float64",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:67",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 67,
+      "signature": "fn string(var self, value: String): Unit ! E",
+      "symbol": "std.serialization.Encoder.string",
+      "operation": "string",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "string",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderString"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "string",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.string",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "string",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:68",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 68,
+      "signature": "fn bytes(var self, value: Bytes): Unit ! E",
+      "symbol": "std.serialization.Encoder.bytes",
+      "operation": "bytes",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "bytes",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderBytes"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "bytes",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.bytes",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "bytes",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:69",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 69,
+      "signature": "fn base64(var self, value: Bytes): Unit ! E",
+      "symbol": "std.serialization.Encoder.base64",
+      "operation": "base64",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "base64",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderBase64"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "base64",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.base64",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "base64",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:71",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 71,
+      "signature": "fn startArray(var self, length: Int?): Unit ! E",
+      "symbol": "std.serialization.Encoder.startArray",
+      "operation": "startArray",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "startArray",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderStartArray"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "startArray",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.startArray",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "startArray",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:72",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 72,
+      "signature": "fn endArray(var self): Unit ! E",
+      "symbol": "std.serialization.Encoder.endArray",
+      "operation": "endArray",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "endArray",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderEndArray"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "endArray",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.endArray",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "endArray",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:74",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 74,
+      "signature": "fn startMap(var self, length: Int?): Unit ! E",
+      "symbol": "std.serialization.Encoder.startMap",
+      "operation": "startMap",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "startMap",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderStartMap"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "startMap",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.startMap",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "startMap",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:75",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 75,
+      "signature": "fn mapKey(var self): Unit ! E",
+      "symbol": "std.serialization.Encoder.mapKey",
+      "operation": "mapKey",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "mapKey",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderMapKey"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "mapKey",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.mapKey",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "mapKey",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:76",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 76,
+      "signature": "fn endMap(var self): Unit ! E",
+      "symbol": "std.serialization.Encoder.endMap",
+      "operation": "endMap",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "endMap",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderEndMap"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "endMap",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.endMap",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "endMap",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:78",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 78,
+      "signature": "fn startRecord(var self, name: String, fields: Int?): Unit ! E",
+      "symbol": "std.serialization.Encoder.startRecord",
+      "operation": "startRecord",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "startRecord",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderStartRecord"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "startRecord",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.startRecord",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "startRecord",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:79",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 79,
+      "signature": "fn field(var self, name: String): Unit ! E",
+      "symbol": "std.serialization.Encoder.field",
+      "operation": "field",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "field",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderField"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "field",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.field",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "field",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:80",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 80,
+      "signature": "fn endRecord(var self): Unit ! E",
+      "symbol": "std.serialization.Encoder.endRecord",
+      "operation": "endRecord",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "endRecord",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderEndRecord"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "endRecord",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.endRecord",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "endRecord",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:82",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 82,
+      "signature": "fn startEnum(var self, name: String, variant: String): Unit ! E",
+      "symbol": "std.serialization.Encoder.startEnum",
+      "operation": "startEnum",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "startEnum",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderStartEnum"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "startEnum",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.startEnum",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "startEnum",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:83",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 83,
+      "signature": "fn endEnum(var self): Unit ! E",
+      "symbol": "std.serialization.Encoder.endEnum",
+      "operation": "endEnum",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "endEnum",
+          "symbols": [
+            "HirSerializationTraitMethod::EncoderEndEnum"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "endEnum",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encoder.endEnum",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "endEnum",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encoder[C, E]"
+    },
+    {
+      "id": "std.serialization:87",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 87,
+      "signature": "fn peek(var self): SerializationEvent? ! E",
+      "symbol": "std.serialization.Decoder.peek",
+      "operation": "peek",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "peek",
+          "symbols": [
+            "HirSerializationTraitMethod::DecoderPeek"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "peek",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Decoder.peek",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "peek",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Decoder[C, E]"
+    },
+    {
+      "id": "std.serialization:88",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 88,
+      "signature": "fn next(var self): SerializationEvent ! E",
+      "symbol": "std.serialization.Decoder.next",
+      "operation": "next",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "next",
+          "symbols": [
+            "HirSerializationTraitMethod::DecoderNext"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "next",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Decoder.next",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "next",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Decoder[C, E]"
+    },
+    {
+      "id": "std.serialization:89",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 89,
+      "signature": "fn base64(var self): Bytes ! E",
+      "symbol": "std.serialization.Decoder.base64",
+      "operation": "base64",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "base64",
+          "symbols": [
+            "HirSerializationTraitMethod::DecoderBase64"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "base64",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Decoder.base64",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "base64",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Decoder[C, E]"
+    },
+    {
+      "id": "std.serialization:90",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 90,
+      "signature": "fn own(var self, event: SerializationEvent): SerializationEvent ! E",
+      "symbol": "std.serialization.Decoder.own",
+      "operation": "own",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "own",
+          "symbols": [
+            "HirSerializationTraitMethod::DecoderOwn"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "own",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Decoder.own",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "own",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Decoder[C, E]"
+    },
+    {
+      "id": "std.serialization:91",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 91,
+      "signature": "fn reject(var self, error: SerializationError): E",
+      "symbol": "std.serialization.Decoder.reject",
+      "operation": "reject",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "reject",
+          "symbols": [
+            "HirSerializationTraitMethod::DecoderReject"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "reject",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Decoder.reject",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "reject",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Decoder[C, E]"
+    },
+    {
+      "id": "std.serialization:95",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 95,
+      "signature": "fn encode[E, S: Encoder[C, E]](value: Self, encoder: var S): Unit ! E",
+      "symbol": "std.serialization.Encode.encode",
+      "operation": "encode",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "encode",
+          "symbols": [
+            "HirSerializationTraitMethod::Encode"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "encode",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Encode.encode",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "encode",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Encode[C]"
+    },
+    {
+      "id": "std.serialization:99",
+      "owner": "std.serialization",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "line": 99,
+      "signature": "fn decode[E, D: Decoder[C, E]](decoder: var D): Self ! E",
+      "symbol": "std.serialization.Decode.decode",
+      "operation": "decode",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs"
+          ],
+          "symbol": "decode",
+          "symbols": [
+            "HirSerializationTraitMethod::Decode"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/bytecode/lower.rs"
+          ],
+          "symbol": "decode",
+          "symbols": [
+            "HirPreludeTraitMethod::Serialization("
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ],
+          "reason": null,
+          "symbol": "std.serialization.Decode.decode",
+          "symbols": [
+            "BytecodeTerminatorKind::Invoke"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-serialization-public-001.to",
+          "kind": "runtime",
+          "call": "decode",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Decode[C]"
     },
     {
       "id": "std.testing:69",
@@ -9303,10 +13431,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:148",
+      "id": "std.testing:203",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 148,
+      "line": 203,
       "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError",
       "symbol": "std.testing.FloatTolerance.from",
       "operation": "from",
@@ -9353,10 +13481,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:149",
+      "id": "std.testing:204",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 149,
+      "line": 204,
       "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)",
       "symbol": "std.testing.assertFloatNear",
       "operation": "assertFloatNear",
@@ -9403,10 +13531,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:150",
+      "id": "std.testing:205",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 150,
+      "line": 205,
       "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)",
       "symbol": "std.testing.assertFloat32Near",
       "operation": "assertFloat32Near",
@@ -9453,10 +13581,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:187",
+      "id": "std.testing:254",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 187,
+      "line": 254,
       "signature": "pub fn assertSome[T](value: T?): T",
       "symbol": "std.testing.assertSome",
       "operation": "assertSome",
@@ -9503,10 +13631,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:188",
+      "id": "std.testing:255",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 188,
+      "line": 255,
       "signature": "pub fn assertNone[T](value: T?): Unit",
       "symbol": "std.testing.assertNone",
       "operation": "assertNone",
@@ -9553,10 +13681,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:189",
+      "id": "std.testing:256",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 189,
+      "line": 256,
       "signature": "pub fn assertOk[T, E: Display](value: T ! E): T",
       "symbol": "std.testing.assertOk",
       "operation": "assertOk",
@@ -9603,10 +13731,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:190",
+      "id": "std.testing:257",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 190,
+      "line": 257,
       "signature": "pub fn assertErr[T: Display, E](value: T ! E): E",
       "symbol": "std.testing.assertErr",
       "operation": "assertErr",
@@ -9653,10 +13781,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:238",
+      "id": "std.testing:305",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 238,
+      "line": 305,
       "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError",
       "symbol": "std.testing.tempDirectory",
       "operation": "tempDirectory",
@@ -9703,10 +13831,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:239",
+      "id": "std.testing:306",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 239,
+      "line": 306,
       "signature": "pub fn TempDirectory.path(ref self): Path",
       "symbol": "std.testing.TempDirectory.path",
       "operation": "path",
@@ -9753,10 +13881,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:240",
+      "id": "std.testing:307",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 240,
+      "line": 307,
       "signature": "pub fn TempDirectory.cleanup(self)",
       "symbol": "std.testing.TempDirectory.cleanup",
       "operation": "cleanup",
@@ -9803,10 +13931,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:282",
+      "id": "std.testing:402",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 282,
+      "line": 402,
       "signature": "pub fn Generator.new(seed: UInt64): Generator",
       "symbol": "std.testing.Generator.new",
       "operation": "new",
@@ -9853,10 +13981,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:283",
+      "id": "std.testing:403",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 283,
+      "line": 403,
       "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator",
       "symbol": "std.testing.Generator.forCase",
       "operation": "forCase",
@@ -9903,10 +14031,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:284",
+      "id": "std.testing:404",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 284,
+      "line": 404,
       "signature": "pub fn Generator.id(ref self): GenerationId",
       "symbol": "std.testing.Generator.id",
       "operation": "id",
@@ -9953,10 +14081,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:285",
+      "id": "std.testing:405",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 285,
+      "line": 405,
       "signature": "pub fn Generator.drawCount(ref self): UInt64",
       "symbol": "std.testing.Generator.drawCount",
       "operation": "drawCount",
@@ -10003,10 +14131,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:286",
+      "id": "std.testing:406",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 286,
+      "line": 406,
       "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError",
       "symbol": "std.testing.Generator.nextUInt",
       "operation": "nextUInt",
@@ -10053,10 +14181,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:287",
+      "id": "std.testing:407",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 287,
+      "line": 407,
       "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError",
       "symbol": "std.testing.Generator.nextBool",
       "operation": "nextBool",
@@ -10103,10 +14231,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:288",
+      "id": "std.testing:408",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 288,
+      "line": 408,
       "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError",
       "symbol": "std.testing.Generator.nextInt",
       "operation": "nextInt",
@@ -10153,10 +14281,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:289",
+      "id": "std.testing:409",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 289,
+      "line": 409,
       "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError",
       "symbol": "std.testing.Generator.nextBytes",
       "operation": "nextBytes",
@@ -10203,10 +14331,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:290",
+      "id": "std.testing:410",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 290,
+      "line": 410,
       "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError",
       "symbol": "std.testing.Generator.nextText",
       "operation": "nextText",
@@ -10253,10 +14381,61 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:296",
+      "id": "std.testing:413",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 296,
+      "line": 413,
+      "signature": "fn candidates(self, limit: Int): Array[Self] ! GenerationError",
+      "symbol": "std.testing.Shrink.candidates",
+      "operation": "candidates",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir.rs",
+            "crates/tondo-compiler/src/test_check.rs"
+          ],
+          "symbol": "candidates",
+          "symbols": [
+            "candidates"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/test_generation.rs"
+          ],
+          "symbol": "candidates",
+          "symbols": [
+            "candidates"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs"
+          ],
+          "reason": null,
+          "symbol": "std.testing.Shrink.candidates",
+          "symbols": [
+            "candidates"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
+          "call": "candidates",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "Shrink"
+    },
+    {
+      "id": "std.testing:416",
+      "owner": "std.testing",
+      "contract": "docs/contracts/stdlib-testing.md",
+      "line": 416,
       "signature": "pub fn shrink[T: Shrink + Equatable](value: ref T): Array[T] ! GenerationError",
       "symbol": "std.testing.shrink",
       "operation": "shrink",
@@ -11409,10 +15588,10 @@
   ],
   "summary": {
     "owners": 21,
-    "signatures": 216,
-    "verified": 215,
-    "signature_gaps": 1,
-    "owner_gaps": 3,
-    "gaps": 4
+    "signatures": 298,
+    "verified": 298,
+    "signature_gaps": 0,
+    "owner_gaps": 0,
+    "gaps": 0
   }
 }

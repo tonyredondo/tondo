@@ -118,22 +118,43 @@ impl Drop for ResourceHandle {
 /// Errors returned by a leaf body or by worker setup/cleanup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunError {
-    Error { code: String, message: String },
-    Panic { code: String, message: String },
-    ResourceLimit { kind: String },
+    Error {
+        code: Option<String>,
+        error_type: String,
+        message: String,
+        source: Option<crate::test_result::SourceSpan>,
+    },
+    Panic {
+        code: String,
+        message: String,
+    },
+    ResourceLimit {
+        kind: String,
+    },
     Timeout,
-    Infrastructure { message: String },
-    BlockedSetup { suite: String },
-    BlockedSkip { suite: String },
-    Skip { reason: String },
-    ForcedTermination { message: String },
+    Infrastructure {
+        message: String,
+    },
+    BlockedSetup {
+        suite: String,
+    },
+    BlockedSkip {
+        suite: String,
+    },
+    Skip {
+        reason: String,
+    },
+    ForcedTermination {
+        message: String,
+    },
     Control(ControlError),
 }
 
 impl RunError {
     pub fn code(&self) -> Option<&str> {
         match self {
-            Self::Error { code, .. } | Self::Panic { code, .. } => Some(code),
+            Self::Error { code, .. } => code.as_deref(),
+            Self::Panic { code, .. } => Some(code),
             Self::Control(error) => Some(error.code()),
             Self::ResourceLimit { .. }
             | Self::Timeout
@@ -142,6 +163,20 @@ impl RunError {
             | Self::BlockedSkip { .. }
             | Self::Skip { .. }
             | Self::ForcedTermination { .. } => None,
+        }
+    }
+
+    pub fn error_type(&self) -> Option<&str> {
+        match self {
+            Self::Error { error_type, .. } => Some(error_type),
+            _ => None,
+        }
+    }
+
+    pub fn source(&self) -> Option<&crate::test_result::SourceSpan> {
+        match self {
+            Self::Error { source, .. } => source.as_ref(),
+            _ => None,
         }
     }
 
@@ -184,7 +219,10 @@ impl RunError {
 impl std::fmt::Display for RunError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Error { code, message } => write!(formatter, "{code}: {message}"),
+            Self::Error { code, message, .. } => match code {
+                Some(code) => write!(formatter, "{code}: {message}"),
+                None => formatter.write_str(message),
+            },
             Self::Panic { code, message } => write!(formatter, "{code}: {message}"),
             Self::ResourceLimit { kind } => write!(formatter, "resource limit: {kind}"),
             Self::Timeout => formatter.write_str("test worker timed out"),
@@ -408,14 +446,14 @@ impl WorkerContext {
             .map_err(RunError::from_control)
     }
 
-    pub fn stdout(&self, text: impl Into<String>) -> Result<(), RunError> {
+    pub fn stdout(&self, text: impl AsRef<[u8]>) -> Result<(), RunError> {
         self.worker
             .envelope
             .stdout(text)
             .map_err(RunError::from_control)
     }
 
-    pub fn stderr(&self, text: impl Into<String>) -> Result<(), RunError> {
+    pub fn stderr(&self, text: impl AsRef<[u8]>) -> Result<(), RunError> {
         self.worker
             .envelope
             .stderr(text)
@@ -1130,7 +1168,9 @@ mod tests {
             LeafProgram::new("skipped", |context| context.skip("not applicable")),
             LeafProgram::new("error", |_| {
                 Err(RunError::Error {
-                    code: "E1".into(),
+                    code: Some("E1".into()),
+                    error_type: "model.TestError".into(),
+                    source: None,
                     message: "expected error".into(),
                 })
             }),
@@ -1241,7 +1281,9 @@ mod tests {
                 Ok(())
             })?;
             Err(RunError::Error {
-                code: "E".into(),
+                code: Some("E".into()),
+                error_type: "model.TestError".into(),
+                source: None,
                 message: "body".into(),
             })
         });
@@ -1585,7 +1627,13 @@ mod tests {
         assert_eq!(std::hint::black_box(leaf.id()), "views");
         assert_eq!(std::hint::black_box(leaf.status()), RuntimeStatus::Passed);
         assert!(std::hint::black_box(leaf.worker()).environment_empty());
-        assert!(std::hint::black_box(leaf.report()).stdout().contains("out"));
+        assert!(
+            std::hint::black_box(leaf.report())
+                .stdout()
+                .as_text()
+                .unwrap()
+                .contains("out")
+        );
         assert!(std::hint::black_box(leaf.error()).is_none());
         assert!(std::hint::black_box(leaf.cleanup_executed()));
         assert!(!std::hint::black_box(leaf.forced_termination()));
@@ -1601,7 +1649,9 @@ mod tests {
         }
         for error in [
             RunError::Error {
-                code: "E".into(),
+                code: Some("E".into()),
+                error_type: "model.TestError".into(),
+                source: None,
                 message: "error".into(),
             },
             RunError::Panic {

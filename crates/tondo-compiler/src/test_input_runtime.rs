@@ -236,18 +236,15 @@ impl MaterializedInput {
         if self.revoked {
             return;
         }
-        for byte in &mut self.bytes {
-            *byte = 0;
-        }
+        self.bytes.fill(0);
+        std::hint::black_box(&mut self.bytes);
         self.revoked = true;
     }
 }
 
 impl Drop for MaterializedInput {
     fn drop(&mut self) {
-        for byte in &mut self.bytes {
-            *byte = 0;
-        }
+        self.revoke();
     }
 }
 
@@ -345,8 +342,9 @@ pub fn materialize<P: InputProvider>(
             }
             Ok(Err(_)) | Err(_) => return Err(InputError::ProviderFailed { name }),
         };
-        let digest = sha256(&bytes);
-        if descriptor.visibility() == TestInputVisibility::Public {
+        let public = descriptor.visibility() == TestInputVisibility::Public;
+        if public {
+            let digest = sha256(&bytes);
             let expected = descriptor.sha256().unwrap_or_default();
             if digest != expected {
                 return Err(InputError::PublicHashMismatch {
@@ -355,9 +353,6 @@ pub fn materialize<P: InputProvider>(
                     actual: digest,
                 });
             }
-        }
-        let public = descriptor.visibility() == TestInputVisibility::Public;
-        if public {
             records.push(InputRecord {
                 name: descriptor.name().into(),
                 profile: descriptor.profile(),

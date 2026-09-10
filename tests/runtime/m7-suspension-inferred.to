@@ -28,5 +28,5 @@ fn exercise_cancel() {
 
 fn main() {
     assert(compute() == 42)
-    console.print("suspension-inferred-ok\n")
+    _ = console.print("suspension-inferred-ok\n")
 }

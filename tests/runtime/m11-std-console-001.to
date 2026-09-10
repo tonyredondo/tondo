@@ -9,7 +9,7 @@ fn main(): !console.ConsoleError {
     }
     let _stdout = console.stdout()?
     let _stderr = console.stderr()?
-    console.print("line-one")
-    console.println("line-two")
-    console.flush()
+    console.print("line-one")?
+    console.println("line-two")?
+    console.flush()?
 }

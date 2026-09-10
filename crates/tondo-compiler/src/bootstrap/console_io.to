@@ -1,0 +1,18 @@
+import std.console
+import std.bytes
+
+impl Reader for console.Input {
+    fn read(var self, max: Int): ReadResult ! IoError suspends {
+        self.read(max)
+    }
+}
+
+impl Writer for console.Output {
+    fn write(var self, data: bytes.Bytes): Int ! IoError suspends {
+        self.write(data)
+    }
+
+    fn flush(var self): Unit ! IoError suspends {
+        self.flush()
+    }
+}

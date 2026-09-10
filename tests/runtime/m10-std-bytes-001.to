@@ -27,5 +27,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error) {
     assert(String(built)? == "Aabc")
     assert(built.equal(bytes.Bytes("Aabc")?))
     assert(built.hash() == bytes.Bytes("Aabc")?.hash())
-    console.print("bytes-ok\n")
+    _ = console.print("bytes-ok\n")
 }

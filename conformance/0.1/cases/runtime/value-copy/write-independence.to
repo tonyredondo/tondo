@@ -56,5 +56,5 @@ fn main() {
     assert(copiedCounter() == 2)
     assert(count == 0)
 
-    console.print("write-independence\n")
+    _ = console.print("write-independence\n")
 }

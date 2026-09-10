@@ -2818,7 +2818,7 @@ fn member_kind_name(kind: MemberKind) -> &'static str {
 fn local_kind_name(kind: LocalKind) -> &'static str {
     match kind {
         LocalKind::GenericParameter => "generic-parameter",
-        LocalKind::Parameter => "parameter",
+        LocalKind::Parameter | LocalKind::SignatureParameter => "parameter",
         LocalKind::Binding => "binding",
         LocalKind::Pattern => "pattern",
         LocalKind::ForPattern => "for-pattern",
@@ -3028,6 +3028,7 @@ mod tests {
             [
                 LocalKind::GenericParameter,
                 LocalKind::Parameter,
+                LocalKind::SignatureParameter,
                 LocalKind::Binding,
                 LocalKind::Pattern,
                 LocalKind::ForPattern,
@@ -3036,6 +3037,7 @@ mod tests {
             .map(local_kind_name),
             [
                 "generic-parameter",
+                "parameter",
                 "parameter",
                 "binding",
                 "pattern",

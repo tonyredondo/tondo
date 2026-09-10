@@ -477,7 +477,7 @@ mod tests {
                 module: "main".into(),
                 logical_path: "main.to".into(),
                 contents_hex: tondo_conformance::encode_hex(
-                    b"import std.console\nconsole.print(\"ok\\n\")\n",
+                    b"import std.console\nconsole.print(\"ok\\n\")?\n",
                 ),
             }],
             warning_profiles: Vec::new(),

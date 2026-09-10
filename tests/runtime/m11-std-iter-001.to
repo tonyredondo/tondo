@@ -9,7 +9,27 @@ fn is_even(value: Int): Bool {
     value % 2 == 0
 }
 
+fn take_next[I: Iterator[Int]](cursor: var I): Int? {
+    cursor.next()
+}
+
+type Counter = { current: Int }
+impl Iterator[Int] for Counter {
+    fn next(mut self): Int? {
+        if self.current == 4 {
+            return none
+        }
+        let value = self.current
+        self.current += 1
+        some(value)
+    }
+}
+
 fn main() {
+    var cursor = Counter { current: 2 }
+    assert(take_next(var cursor) == some(2))
+    assert(take_next(var cursor) == some(3))
+    assert(take_next(var cursor) == none)
     let mapped = [1, 2, 3, 4].map(plus_one)
     let first = mapped.take(2).collect().unwrapOr(Array.new[Int]())
     assert(first == [2, 3])

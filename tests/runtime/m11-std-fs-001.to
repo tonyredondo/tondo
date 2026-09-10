@@ -4,25 +4,32 @@ import std.fs
 import std.bytes
 
 fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
-    let existing = path.fromString("Cargo.toml")?
+    let existing = path.Path.fromString("Cargo.toml")?
     let _contents = fs.readAll(existing)?
 
-    let missing = path.fromString("tondo-no-such-file")?
+    let missing = path.Path.fromString("tondo-no-such-file")?
     match fs.readAll(missing) {
         ok(_) => assert(false)
             err(_) => ()
     }
-    let workspace = path.fromString("target/tondo-wave5-fs")?
+    let workspace = path.Path.fromString("target/tondo-wave5-fs")?
     fs.createDirectory(workspace, true)?
     let file = workspace.join("data.bin")?
     fs.atomicWrite(file, bytes.Bytes("ok")?)?
     fs.writeAll(file, bytes.Bytes("ok")?)?
     let _entries = fs.list(workspace)?
-    let _metadata = fs.metadata(file)?
-    var append_file = fs.open(file, fs.OpenMode.Append())?
+    let info = fs.metadata(file)?
+    assert(info.kind == fs.FileKind.File)
+    assert(info.size == 2)
+    let directory_info = fs.metadata(workspace)?
+    assert(directory_info.kind == fs.FileKind.Directory)
+    var append_file = fs.open(file, fs.OpenMode.Append)?
     let _written = append_file.write(bytes.Bytes("!")?)?
     append_file.flush()?
-    var read_file = fs.open(file, fs.OpenMode.Read())?
+    assert(info.size == 2)
+    let updated = fs.metadata(file)?
+    assert(updated.size == 3)
+    var read_file = fs.open(file, fs.OpenMode.Read)?
     let _read = read_file.read(16)?
     var directory = fs.openDirectory(workspace)?
     let _directory_entries = directory.list()?
@@ -30,5 +37,5 @@ fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
     fs.rename(file, moved)?
     fs.remove(moved)?
     fs.remove(workspace)?
-    console.print("fs-ok\n")
+    _ = console.print("fs-ok\n")
 }

@@ -171,7 +171,7 @@ jq -e '
     and .formats.assertion == "tondo-test-assertion-0.1/1"
     and .formats.text_diff == "tondo-test-text-diff-0.1/1"
     and .formats.generation == "tondo-test-generation-0.1/1"
-    and .formats.report_reuse == ["tondo-test-report-0.1/7", "tondo-junit-report-0.1/4"]
+    and .formats.report_reuse == ["tondo-test-report-0.1/8", "tondo-junit-report-0.1/5"]
     and .formats.new_snapshot_store == false
     and .formats.new_junit_schema == false
     and (.corpora | map(.id)) == [

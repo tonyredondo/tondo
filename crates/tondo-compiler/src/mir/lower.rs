@@ -194,6 +194,8 @@ struct FunctionBuilder<'a> {
     borrow_aliases: BTreeMap<LocalId, MirPlace>,
     loops: BTreeMap<HirLoopId, LoopTargets>,
     lexical_scopes: Vec<HirScopeId>,
+    scope_locals: BTreeMap<HirScopeId, Vec<MirLocalId>>,
+    storage_boundaries: Vec<StorageBoundary>,
     defer_scopes: Vec<HirScopeId>,
     task_scopes: Vec<HirScopeId>,
     fallback_parameters: Vec<MirPlace>,
@@ -213,6 +215,19 @@ struct LoopTargets {
     loan_depth: usize,
     defer_depth: usize,
     task_scope_depth: usize,
+    lexical_depth: usize,
+}
+
+enum StorageBoundaryKind {
+    Enter(HirScopeId),
+    Exit(Vec<HirScopeId>),
+}
+
+struct StorageBoundary {
+    block: MirBlockId,
+    statement: usize,
+    span: Span,
+    kind: StorageBoundaryKind,
 }
 
 #[derive(Clone, Copy)]
@@ -282,6 +297,8 @@ impl<'a> FunctionBuilder<'a> {
             borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
             lexical_scopes: Vec::new(),
+            scope_locals: BTreeMap::new(),
+            storage_boundaries: Vec::new(),
             defer_scopes: Vec::new(),
             task_scopes: Vec::new(),
             fallback_parameters: Vec::new(),
@@ -363,6 +380,8 @@ impl<'a> FunctionBuilder<'a> {
             borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
             lexical_scopes: Vec::new(),
+            scope_locals: BTreeMap::new(),
+            storage_boundaries: Vec::new(),
             defer_scopes: Vec::new(),
             task_scopes: Vec::new(),
             fallback_parameters: Vec::new(),
@@ -439,6 +458,25 @@ impl<'a> FunctionBuilder<'a> {
             let span = self.expression(root)?.span();
             self.terminate_return(end, span)?;
         }
+        // Cancellation and phase limits can interrupt a pure infinite loop.
+        // Such a body has no checked operation to create this edge lazily,
+        // but its registered cleanup still needs a structural unwind entry.
+        if self
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .any(|statement| {
+                matches!(
+                    statement.kind,
+                    MirStatementKind::RegisterDefer { .. }
+                        | MirStatementKind::RegisterFallback { .. }
+                        | MirStatementKind::EnterTaskScope { .. }
+                )
+            })
+        {
+            self.current_unwind(self.span)?;
+        }
+        self.lower_storage_boundaries()?;
         self.infer_region_releases()?;
         let mut blocks = Vec::with_capacity(self.blocks.len());
         for block in self.blocks {
@@ -578,10 +616,7 @@ impl<'a> FunctionBuilder<'a> {
                     destination,
                     MirOperand {
                         ty: expression.ty(),
-                        kind: MirOperandKind::PreludeTraitFunction {
-                            method: *method,
-                            arguments: arguments.clone(),
-                        },
+                        kind: prelude_trait_reference(*method, arguments),
                     },
                 )?;
                 Ok(Some(block))
@@ -1519,13 +1554,7 @@ impl<'a> FunctionBuilder<'a> {
                             message: format!("break targets inactive loop#{}", target.index()),
                         })?;
                 self.release_loans_from(block, span, targets.loan_depth)?;
-                self.terminate_scope_exit_goto(
-                    block,
-                    span,
-                    targets.break_target,
-                    targets.defer_depth,
-                    targets.task_scope_depth,
-                )?;
+                self.terminate_scope_exit_goto(block, span, targets.break_target, targets)?;
                 Ok(None)
             }
             HirExpressionKind::Continue { target } => {
@@ -1542,13 +1571,7 @@ impl<'a> FunctionBuilder<'a> {
                             message: format!("continue targets inactive loop#{}", target.index()),
                         })?;
                 self.release_loans_from(block, span, targets.loan_depth)?;
-                self.terminate_scope_exit_goto(
-                    block,
-                    span,
-                    targets.continue_target,
-                    targets.defer_depth,
-                    targets.task_scope_depth,
-                )?;
+                self.terminate_scope_exit_goto(block, span, targets.continue_target, targets)?;
                 Ok(None)
             }
             HirExpressionKind::Recovery | HirExpressionKind::SyntheticFunction => {
@@ -1577,6 +1600,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.register_fallback(block, span, owner)?;
             }
         }
+        self.record_storage_boundary(block, span, StorageBoundaryKind::Enter(scope));
         let owns_defers = statements
             .iter()
             .any(|statement| matches!(statement, HirStatement::Defer { .. }));
@@ -1612,7 +1636,7 @@ impl<'a> FunctionBuilder<'a> {
         let Some(block) = result else {
             return Ok(None);
         };
-        if owns_defers || owns_task_scope {
+        let block = if owns_defers || owns_task_scope {
             if !self.is_terminal(destination.ty, span)? {
                 self.push_statement(block, span, MirStatementKind::DisarmCleanup(destination))?;
             }
@@ -1621,11 +1645,12 @@ impl<'a> FunctionBuilder<'a> {
                 span,
                 owns_task_scope.then_some(scope).into_iter().collect(),
                 owns_defers.then_some(scope).into_iter().collect(),
-            )
-            .map(Some)
+            )?
         } else {
-            Ok(Some(block))
-        }
+            block
+        };
+        self.record_storage_boundary(block, span, StorageBoundaryKind::Exit(vec![scope]));
+        Ok(Some(block))
     }
 
     fn lower_statement(
@@ -1859,6 +1884,12 @@ impl<'a> FunctionBuilder<'a> {
         guarded: Option<HirExpressionId>,
         block: MirBlockId,
     ) -> Result<Option<(MirBlockId, MirOperand, Option<MirPlace>)>, MirError> {
+        // A statically named callee retains parameter associations, including
+        // its receiver. Materializing it as an anonymous function value loses
+        // those associations before the deferred call is verified.
+        if let Some(callee) = self.direct_callee(expression)? {
+            return Ok(Some((block, callee, None)));
+        }
         if guarded == Some(expression)
             && matches!(
                 self.expression(expression)?.kind(),
@@ -2301,6 +2332,7 @@ impl<'a> FunctionBuilder<'a> {
                 loan_depth: self.active_loans.len(),
                 defer_depth: self.defer_scopes.len(),
                 task_scope_depth: self.task_scopes.len(),
+                lexical_depth: self.lexical_scopes.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -2356,6 +2388,7 @@ impl<'a> FunctionBuilder<'a> {
                 loan_depth: self.active_loans.len(),
                 defer_depth: self.defer_scopes.len(),
                 task_scope_depth: self.task_scopes.len(),
+                lexical_depth: self.lexical_scopes.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -2778,6 +2811,7 @@ impl<'a> FunctionBuilder<'a> {
                 loan_depth: self.active_loans.len(),
                 defer_depth: self.defer_scopes.len(),
                 task_scope_depth: self.task_scopes.len(),
+                lexical_depth: self.lexical_scopes.len(),
             },
         );
         let Some(body_start) = self.bind_irrefutable(pattern, item, body_start)? else {
@@ -4481,12 +4515,7 @@ impl<'a> FunctionBuilder<'a> {
         Ok(Some(join))
     }
 
-    fn lower_callee(
-        &mut self,
-        id: HirExpressionId,
-        protocol: HirCallProtocol,
-        block: MirBlockId,
-    ) -> Result<Option<(MirBlockId, MirOperand)>, MirError> {
+    fn direct_callee(&self, id: HirExpressionId) -> Result<Option<MirOperand>, MirError> {
         let expression = self.expression(id)?;
         let operand = match expression.kind() {
             HirExpressionKind::Function(callable) => Some(MirOperand {
@@ -4508,14 +4537,20 @@ impl<'a> FunctionBuilder<'a> {
             }),
             HirExpressionKind::PreludeTraitFunction { method, arguments } => Some(MirOperand {
                 ty: expression.ty(),
-                kind: MirOperandKind::PreludeTraitFunction {
-                    method: *method,
-                    arguments: arguments.clone(),
-                },
+                kind: prelude_trait_reference(*method, arguments),
             }),
             _ => None,
         };
-        if let Some(operand) = operand {
+        Ok(operand)
+    }
+
+    fn lower_callee(
+        &mut self,
+        id: HirExpressionId,
+        protocol: HirCallProtocol,
+        block: MirBlockId,
+    ) -> Result<Option<(MirBlockId, MirOperand)>, MirError> {
+        if let Some(operand) = self.direct_callee(id)? {
             Ok(Some((block, operand)))
         } else if matches!(protocol, HirCallProtocol::Call | HirCallProtocol::CallMut)
             && self.expression(id)?.category() == HirValueCategory::Place
@@ -6083,7 +6118,99 @@ impl<'a> FunctionBuilder<'a> {
             })?,
         );
         self.locals.push(MirLocal { ty, span, kind });
+        if matches!(kind, MirLocalKind::User(_) | MirLocalKind::Temporary)
+            && let Some(scope) = self.lexical_scopes.last()
+        {
+            self.scope_locals.entry(*scope).or_default().push(id);
+        }
         Ok(id)
+    }
+
+    fn record_storage_boundary(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        kind: StorageBoundaryKind,
+    ) {
+        self.storage_boundaries.push(StorageBoundary {
+            block,
+            statement: self.blocks[block.index() as usize].statements.len(),
+            span,
+            kind,
+        });
+    }
+
+    /// Scope entry dominates alternative bindings, including locals first
+    /// encountered in a later branch. Scope exits occur after defer/task drains
+    /// and before loop backedges. Affine cleanup and function-wide parameter or
+    /// return storage keep their existing ownership protocol.
+    fn lower_storage_boundaries(&mut self) -> Result<(), MirError> {
+        let mut managed = BTreeSet::new();
+        for locals in self.scope_locals.values() {
+            for local in locals {
+                let info = &self.locals[local.index() as usize];
+                if matches!(self.hir.interner().kind(info.ty), Ok(TypeKind::Scalar(scalar)) if *scalar != ScalarType::String)
+                {
+                    continue;
+                }
+                let mut discardable_copy = true;
+                for capability in [HirCapability::Copy, HirCapability::Discard] {
+                    let status = self
+                        .capability_analysis
+                        .status(self.hir, info.ty, capability, &self.capability_assumptions)
+                        .map_err(|error| MirError::Construction {
+                            span: info.span,
+                            message: format!("cannot classify scoped storage: {error}"),
+                        })?;
+                    discardable_copy &= status == HirCapabilityStatus::Satisfied;
+                }
+                if discardable_copy {
+                    managed.insert(*local);
+                }
+            }
+        }
+        let mut insertions: BTreeMap<(MirBlockId, usize), Vec<MirStatement>> = BTreeMap::new();
+        for boundary in &self.storage_boundaries {
+            let (scopes, entering) = match &boundary.kind {
+                StorageBoundaryKind::Enter(scope) => (std::slice::from_ref(scope), true),
+                StorageBoundaryKind::Exit(scopes) => (scopes.as_slice(), false),
+            };
+            let statements = insertions
+                .entry((boundary.block, boundary.statement))
+                .or_default();
+            for scope in scopes.iter().rev() {
+                for local in self.scope_locals.get(scope).into_iter().flatten() {
+                    if managed.contains(local) {
+                        statements.push(MirStatement {
+                            span: boundary.span,
+                            kind: if entering {
+                                MirStatementKind::StorageLive(*local)
+                            } else {
+                                MirStatementKind::StorageDead(*local)
+                            },
+                        });
+                    }
+                }
+            }
+        }
+        for ((block, position), statements) in insertions.into_iter().rev() {
+            let added = u32::try_from(statements.len()).map_err(|_| MirError::NodeLimit {
+                span: self.span,
+                resource: "statement",
+            })?;
+            self.statement_count = self
+                .statement_count
+                .checked_add(added)
+                .filter(|count| *count <= self.limits.max_statements_per_function)
+                .ok_or(MirError::NodeLimit {
+                    span: self.span,
+                    resource: "statement",
+                })?;
+            self.blocks[block.index() as usize]
+                .statements
+                .splice(position..position, statements);
+        }
+        Ok(())
     }
 
     fn reserve_loan(
@@ -6882,12 +7009,11 @@ impl<'a> FunctionBuilder<'a> {
         block: MirBlockId,
         span: Span,
         target: MirBlockId,
-        defer_depth: usize,
-        task_scope_depth: usize,
+        bounds: LoopTargets,
     ) -> Result<(), MirError> {
         let defer_scopes = self
             .defer_scopes
-            .get(defer_depth..)
+            .get(bounds.defer_depth..)
             .ok_or_else(|| MirError::Construction {
                 span,
                 message: "control transfer has an invalid defer-scope depth".into(),
@@ -6895,23 +7021,23 @@ impl<'a> FunctionBuilder<'a> {
             .to_vec();
         let task_scopes = self
             .task_scopes
-            .get(task_scope_depth..)
+            .get(bounds.task_scope_depth..)
             .ok_or_else(|| MirError::Construction {
                 span,
                 message: "control transfer has an invalid task-scope depth".into(),
             })?
             .to_vec();
-        if defer_scopes.is_empty() && task_scopes.is_empty() {
-            return self.terminate(block, span, MirTerminatorKind::Goto { target });
-        }
-        let drain = self.allocate_block(MirBlockKind::Normal)?;
-        let unwind = self.current_unwind(span)?;
-        self.terminate(block, span, MirTerminatorKind::Goto { target: drain })?;
-        self.terminate(
-            drain,
-            span,
-            Self::scope_drain_terminator(task_scopes, defer_scopes, target, unwind),
-        )
+        let scopes = self
+            .lexical_scopes
+            .get(bounds.lexical_depth..)
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "control transfer has an invalid lexical-scope depth".into(),
+            })?
+            .to_vec();
+        let block = self.drain_scopes_to_normal(block, span, task_scopes, defer_scopes)?;
+        self.record_storage_boundary(block, span, StorageBoundaryKind::Exit(scopes));
+        self.terminate(block, span, MirTerminatorKind::Goto { target })
     }
 
     fn local_place(&self, local: MirLocalId) -> MirPlace {
@@ -7581,6 +7707,22 @@ fn mir_operation_access_place(
         kind: projection,
     });
     Ok(Some(place))
+}
+
+fn prelude_trait_reference(method: HirPreludeTraitMethod, arguments: &[TypeId]) -> MirOperandKind {
+    // The sealed Shrink implementation uses the same bounded host kernel as
+    // testing.shrink, whether the method is materialized or called directly.
+    if method == HirPreludeTraitMethod::ShrinkCandidates {
+        MirOperandKind::Function {
+            callable: HirCallableId::Host(HirBootstrapHostFunction::TestingShrinkCandidates),
+            arguments: arguments.to_vec(),
+        }
+    } else {
+        MirOperandKind::PreludeTraitFunction {
+            method,
+            arguments: arguments.to_vec(),
+        }
+    }
 }
 
 fn materialized_operand_local(operand: &MirOperand, span: Span) -> Result<MirLocalId, MirError> {
@@ -11613,6 +11755,15 @@ mod tests {
                             && !is_iterator_defer_target(to)
                 ))
         );
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn deferred_hosted_receiver_keeps_its_named_call_association() {
+        let (resolved, hir) = checked(
+            "import std.time\nfn example(): Unit ! time.ClockError {\n let timer = time.Timer.after(time.Duration.fromNanoseconds(1))?\n defer timer.cancel()\n}\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         verify_mir(&resolved, &hir, &mir).unwrap();
     }
 

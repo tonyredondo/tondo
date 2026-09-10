@@ -40,7 +40,8 @@ expect_failure missing-cleanup env TONDO_STDLIB_HOSTED_CONTRACT="$tmp_dir/missin
 for signature in \
     'pub type File' \
     'pub type Directory' \
-    'pub type Metadata' \
+    'pub enum FileKind { File, Directory, Symlink, Other }' \
+    'pub type Metadata = { kind: FileKind, size: Int, readOnly: Bool }' \
     'pub enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }' \
     'pub enum FsError { NotFound, PermissionDenied, AlreadyExists, InvalidPath, NotDirectory, IsDirectory, Closed, ResourceLimit, Cancelled, Io }' \
     'pub fn open(path: Path, mode: OpenMode): File ! FsError' \
@@ -63,9 +64,7 @@ done
 for symbol in \
     'IntrinsicType::File' \
     'IntrinsicType::Directory' \
-    'IntrinsicType::Metadata' \
-    'IntrinsicType::OpenMode' \
-    'IntrinsicType::FsError' \
+    'lower_bootstrap_fs_nominal_declarations' \
     'HirBootstrapHostFunction::FsOpen' \
     'HirBootstrapHostFunction::FsOpenDirectory' \
     'HirBootstrapHostFunction::FsMetadata' \
@@ -87,14 +86,8 @@ done
 for symbol in \
     'BytecodeIntrinsicType::File' \
     'BytecodeIntrinsicType::Directory' \
-    'BytecodeIntrinsicType::Metadata' \
-    'BytecodeIntrinsicType::OpenMode' \
-    'BytecodeIntrinsicType::FsError' \
     'RuntimeHostValueKind::File' \
-    'RuntimeHostValueKind::Directory' \
-    'RuntimeHostValueKind::Metadata' \
-    'RuntimeHostValueKind::OpenMode' \
-    'RuntimeHostValueKind::FsError'; do
+    'RuntimeHostValueKind::Directory'; do
     grep -Fq "$symbol" crates/tondo-vm/src/runtime/execute.rs \
         crates/tondo-vm/src/bytecode.rs crates/tondo-compiler/src/process_host.rs
 done
@@ -147,7 +140,7 @@ for marker in \
     'límites de bytes' \
     'cancelación' \
     'atomicWrite' \
-    'orden lexicográfico de bytes' \
+    'Directory iteration orders paths by native bytes.' \
     'ResourceLimit'; do
     grep -Fq "$marker" docs/contracts/stdlib-hosted.md
 done
@@ -166,10 +159,13 @@ jq -e '
   any(.leaves[]; .id == "STD-A-FS-EVIDENCE-001" and .owners == ["std.fs"])
   and any(.owners[]; .id == "std.fs"
     and .cells.SPEC.status == "verified"
-    and .cells.IMPL.status == "verified"
-    and .cells.HOST.status == "verified"
+    and .cells.IMPL.status == "partial"
+    and (.cells.IMPL.reason | length > 0)
+    and .cells.HOST.status == "partial"
+    and (.cells.HOST.reason | length > 0)
     and .cells.MODEL.status == "verified"
-    and .cells.TEST.status == "verified"
+    and .cells.TEST.status == "partial"
+    and (.cells.TEST.reason | length > 0)
     and .cells.FUZZ.status == "partial"
     and .cells.FUZZ.component_status == "partial"
     and .cells.FUZZ.evidence_kind == "constant-admission"
@@ -182,4 +178,9 @@ jq -e '
 
 scripts/stdlib-owner-evidence-check.sh >/dev/null
 
-echo "std.fs component tests: OK (whole-owner FUZZ and CONF promotion remain pending)"
+# Finding retired opaque type symbols does not establish the public contract.
+cargo test --locked -p tondo-stdlib --lib fs::
+cargo test --locked -p tondo-compiler --lib filesystem_
+cargo test --locked -p tondo-cli --test cli filesystem_
+
+echo "std.fs component tests: OK (remaining admission paths and owner promotion are pending)"

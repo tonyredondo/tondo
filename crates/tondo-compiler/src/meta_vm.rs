@@ -14,10 +14,20 @@ use tondo_vm::bytecode::{
 };
 use tondo_vm::runtime::{
     RejectingHost, RuntimeValue, VmError, VmLimits, VmOutcome, VmStatistics, execute_with_limits,
+    execute_with_owned_request,
 };
 
 use crate::driver::{BuildTarget, CapabilityName, HostProfile};
 use crate::meta::MetaLimits;
+
+#[path = "meta_compile.rs"]
+mod compile;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetaEntryKind {
+    Generate,
+    Derive,
+}
 
 /// Untrusted compiled provider payload. Loading revalidates the complete
 /// bytecode program under the orchestrator-owned target and limits.
@@ -25,11 +35,48 @@ use crate::meta::MetaLimits;
 pub struct MetaVmArtifact {
     program: BytecodeProgram,
     entry: BytecodeFunctionId,
+    entry_kind: Option<MetaEntryKind>,
 }
 
 impl MetaVmArtifact {
+    /// Identity of the exact executable and entry ABI, independent of the
+    /// filesystem location used to obtain the already ordered source graph.
+    pub fn hash(&self) -> Result<String, MetaVmError> {
+        #[derive(serde::Serialize)]
+        struct Artifact<'a> {
+            format: &'static str,
+            target: &'static str,
+            profile: &'static str,
+            program: &'a BytecodeProgram,
+            entry: BytecodeFunctionId,
+            entry_kind: &'static str,
+        }
+        let bytes = serde_json::to_vec(&Artifact {
+            format: "tondo-meta-artifact-0.1/1",
+            target: "tondo-meta",
+            profile: "meta",
+            program: &self.program,
+            entry: self.entry,
+            entry_kind: match self.entry_kind {
+                Some(MetaEntryKind::Generate) => "generate",
+                Some(MetaEntryKind::Derive) => "derive",
+                None => "internal",
+            },
+        })
+        .map_err(|error| MetaVmError::StructuredOutput(error.to_string()))?;
+        Ok(crate::artifact::sha256(&bytes))
+    }
+
     pub fn new(program: BytecodeProgram, entry: BytecodeFunctionId) -> Self {
-        Self { program, entry }
+        Self {
+            program,
+            entry,
+            entry_kind: None,
+        }
+    }
+
+    pub fn entry_kind(&self) -> Option<MetaEntryKind> {
+        self.entry_kind
     }
 
     pub fn load(self, limits: MetaVmLimits) -> Result<MetaVmProgram, MetaVmError> {
@@ -162,6 +209,27 @@ impl MetaVmProgram {
         let mut host = RejectingHost;
         let execution =
             execute_with_limits(&self.program, self.entry, &mut host, self.limits.vm())?;
+        self.measure_execution(execution, meter)
+    }
+
+    /// Bind an orchestrator-owned request to an ordinary provider parameter.
+    /// The fresh VM admits its complete shape and live storage before entering
+    /// provider code; no host callback is installed to fetch request fields.
+    pub fn run_with_request(
+        &self,
+        request: RuntimeValue,
+        meter: impl FnOnce(&VmOutcome) -> Result<u64, MetaVmError>,
+    ) -> Result<MetaVmExecution, MetaVmError> {
+        let execution =
+            execute_with_owned_request(&self.program, self.entry, request, self.limits.vm())?;
+        self.measure_execution(execution, meter)
+    }
+
+    fn measure_execution(
+        &self,
+        execution: tondo_vm::runtime::VmExecution,
+        meter: impl FnOnce(&VmOutcome) -> Result<u64, MetaVmError>,
+    ) -> Result<MetaVmExecution, MetaVmError> {
         let output_bytes = meter(&execution.outcome)?;
         if output_bytes > self.limits.max_output_bytes {
             return Err(MetaVmError::OutputLimit {
@@ -184,6 +252,16 @@ impl MetaVmProgram {
 
 #[derive(Debug)]
 pub enum MetaVmError {
+    ProviderPanic {
+        code: String,
+        message: String,
+    },
+    ProviderContract(crate::meta::MetaContractError),
+    ProviderDiagnostics(Vec<crate::meta::MetaProviderDiagnostic>),
+    ReportedOutputLimit {
+        limit: u64,
+    },
+    Compilation(String),
     WrongTarget {
         target: String,
         profile: &'static str,
@@ -206,6 +284,20 @@ pub enum MetaVmError {
 impl fmt::Display for MetaVmError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ProviderPanic { code, message } => {
+                write!(formatter, "provider panicked ({code}): {message}")
+            }
+            Self::ProviderContract(error) => error.fmt(formatter),
+            Self::ProviderDiagnostics(diagnostics) => {
+                write!(formatter, "provider diagnostics: {diagnostics:?}")
+            }
+            Self::ReportedOutputLimit { limit } => write!(
+                formatter,
+                "provider exhausted the {limit}-byte output limit"
+            ),
+            Self::Compilation(message) => {
+                write!(formatter, "meta provider compilation failed: {message}")
+            }
             Self::WrongTarget { target, profile } => write!(
                 formatter,
                 "meta bytecode requires target/profile `tondo-meta`/`meta`, found `{target}`/`{profile}`"
@@ -244,6 +336,28 @@ impl fmt::Display for MetaVmError {
 }
 
 impl Error for MetaVmError {}
+
+/// Counts canonical UTF-8 JSON without constructing another output buffer.
+pub(crate) fn canonical_output_bytes(value: &impl serde::Serialize) -> Result<u64, MetaVmError> {
+    #[derive(Default)]
+    struct Counter(u64);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self
+                .0
+                .checked_add(bytes.len() as u64)
+                .ok_or_else(|| std::io::Error::other("output size overflow"))?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter::default();
+    serde_json::to_writer(&mut counter, value)
+        .map_err(|error| MetaVmError::StructuredOutput(error.to_string()))?;
+    Ok(counter.0)
+}
 
 impl From<VmError> for MetaVmError {
     fn from(error: VmError) -> Self {
@@ -464,6 +578,7 @@ mod tests {
             source_loan: None,
         };
         BytecodeProgram {
+            reflection: Default::default(),
             types: vec![
                 BytecodeType {
                     name: "Unit".into(),
@@ -483,6 +598,7 @@ mod tests {
             ],
             nominals: Vec::new(),
             callables: vec![BytecodeCallable {
+                assertion_display: None,
                 name: "meta_main".into(),
                 generic_arity: 0,
                 parameters: Vec::new(),

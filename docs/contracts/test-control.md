@@ -15,6 +15,10 @@ equal repeats are idempotent, conflicting values leave the old map untouched
 and report the smallest conflicting UTF-8 key as `P2002`. New bytes are charged
 before publication, so a failed budget check never leaves a partial merge.
 Stdout and stderr are separate buffers and share the output budget.
+They retain exact bytes, with encoding selected only when a detached stream
+is serialized. Worker reports use the same closed UTF-8/Base64 stream object
+as public reports; merging reports concatenates decoded original bytes before
+reselecting an encoding. UTF-8 scalars may span writes or suite phases.
 
 Attachments and snapshots use separate per-attempt registries. Attachment names
 and media types use the closed grammar and duplicate names produce `P2006`.
@@ -41,7 +45,10 @@ operation. It preserves the error's code and budget category, then asks the VM
 to unwind once. The typed terminal remains in the envelope after that control
 signal is consumed, so successful cleanup operations do not reissue it.
 `console.print/println` use this same path and preflight all bytes, including a
-println's newline, before appending to the current node's stdout. These hosted
+println's newline, before appending to the current node's stdout.
+Writer writes and codec adapters also use the active node's stdout/stderr.
+Their output quota failure is a runner resource terminal, including when a
+codec wraps an I/O error in its own recoverable error type. These hosted
 checks do not promote the still-open general worker isolation and runtime
 budget boundaries documented in `test-backend.md`.
 

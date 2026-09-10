@@ -11,6 +11,40 @@ use std::fmt;
 use crate::artifact::sha256;
 use crate::test_control::EnvelopeLimits;
 
+pub use tondo_stdlib::testing::TEXT_DIFF_MEMORY_MODEL;
+
+pub const ASSERTION_DIAGNOSTIC_MODEL: &str = "utf8-prefix-1024/1";
+pub const FIXED_HOST_RETURN_MEMORY_MODEL: &str = "prepaid-console32-io96-collection64/1";
+pub const COLLECTION_HOST_RETURN_MEMORY_MODEL: &str =
+    "prepaid-collection-reply-value32-walk64-literal32-cursor64-96-128/2";
+pub const CHANNEL_RECEIVE_MEMORY_MODEL: &str = "prepaid-direct-receive-option32-try42/1";
+pub const CHANNEL_ENDPOINT_MEMORY_MODEL: &str = "prepaid-channel-new128-fork64-close32-values/1";
+pub const CHANNEL_COMPLETION_MEMORY_MODEL: &str = "prepaid-channel-ack64-error73-try76-end32/1";
+pub const SYNC_GUARD_RETURN_MEMORY_MODEL: &str =
+    "prepaid-sync-guard64-permit32-empty32-error73-ref32-release32/1";
+pub const SYNC_WAIT_RETURN_MEMORY_MODEL: &str =
+    "prepaid-condition32-barrier75-cancel73-reused-request/1";
+pub const SYNC_VALUE_RETURN_MEMORY_MODEL: &str =
+    "prepaid-sync-construct32-64-error73-atomic-payload-once-ref64/1";
+pub(crate) const ASSERTION_VALUE_BYTES: usize = 1024;
+pub const SHRINK_MEMORY_MODEL: &str = "candidate-32-utf8-depth64/1";
+pub const TEXT_OUTPUT_MEMORY_MODEL: &str = "exact-utf8-text-output-32/1";
+/// Detached construction of the public record and its two UInt64 fields.
+pub const GENERATION_ID_RECORD_BYTES: u64 =
+    3 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + "GenerationId".len() as u64;
+pub const TOLERANCE_ERROR_RESULT_BYTES: u64 =
+    2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + "FloatToleranceError".len() as u64;
+pub const TEMP_ERROR_RESULT_BYTES: u64 =
+    2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + "TempError".len() as u64;
+pub const GENERATION_ERROR_RESULT_BYTES: u64 =
+    2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + "GenerationError".len() as u64;
+/// Record, array and scalar descriptors; hunk strings are moved from the kernel.
+pub const TEXT_DIFF_RECORD_BYTES: u64 =
+    6 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + "TextDiff".len() as u64;
+pub const TEXT_DIFF_HUNK_BYTES: u64 =
+    2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + "TextDiffHunk".len() as u64;
+pub const TEXT_DIFF_TRANSFER_MODEL: &str = "moved-hunks-overlapping-descriptors/1";
+
 pub const TEST_LIMITS_FORMAT: &str = "tondo-test-limits-draft/1";
 
 /// Normative defaults for one test attempt. Every structural budget is finite;
@@ -35,26 +69,27 @@ pub struct LimitProfile {
 
 impl Default for LimitProfile {
     fn default() -> Self {
-        Self {
-            work: 10_000_000,
-            memory: 64 * 1024 * 1024,
-            depth: 256,
-            output: 1024 * 1024,
-            artifact_bytes: 16 * 1024 * 1024,
-            artifact_count: 256,
-            snapshot_bytes: 16 * 1024 * 1024,
-            snapshot_count: 256,
-            metadata: 1024 * 1024,
-            virtual_timers: 1_024,
-            ready_queue: 4_096,
-            instructions: 10_000_000,
-            timeout_ns: Some(30_000_000_000),
-            grace_ns: 1_000_000_000,
-        }
+        Self::DEFAULT
     }
 }
 
 impl LimitProfile {
+    pub(crate) const DEFAULT: Self = Self {
+        work: 10_000_000,
+        memory: 64 * 1024 * 1024,
+        depth: 256,
+        output: 1024 * 1024,
+        artifact_bytes: 16 * 1024 * 1024,
+        artifact_count: 256,
+        snapshot_bytes: 16 * 1024 * 1024,
+        snapshot_count: 256,
+        metadata: 1024 * 1024,
+        virtual_timers: 1_024,
+        ready_queue: 4_096,
+        instructions: 10_000_000,
+        timeout_ns: Some(30_000_000_000),
+        grace_ns: 1_000_000_000,
+    };
     pub const fn work(self) -> u64 {
         self.work
     }
@@ -212,11 +247,7 @@ impl LimitProfile {
 
     pub fn envelope_limits(self) -> Result<EnvelopeLimits, LimitError> {
         self.validate()?;
-        Ok(EnvelopeLimits::new(
-            self.output,
-            self.artifact_bytes,
-            self.snapshot_bytes,
-        ))
+        Ok(EnvelopeLimits::from_profile(self))
     }
 }
 
@@ -257,7 +288,7 @@ impl BudgetKind {
         }
     }
 
-    fn limit(self, profile: LimitProfile) -> u64 {
+    pub(crate) fn limit(self, profile: LimitProfile) -> u64 {
         match self {
             Self::Work => profile.work,
             Self::Memory => profile.memory,
@@ -365,10 +396,16 @@ pub struct BudgetLedger {
 impl BudgetLedger {
     pub fn new(profile: LimitProfile) -> Result<Self, LimitError> {
         profile.validate()?;
-        Ok(Self {
+        Ok(Self::closed(profile))
+    }
+
+    /// Envelopes may deliberately deny a channel with a zero allowance. The
+    /// public runner admits its positive profile before creating the envelope.
+    pub(crate) fn closed(profile: LimitProfile) -> Self {
+        Self {
             profile,
             used: BTreeMap::new(),
-        })
+        }
     }
 
     pub const fn profile(&self) -> LimitProfile {

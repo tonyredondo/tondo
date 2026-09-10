@@ -101,13 +101,16 @@ grep -q 'Máquina wire estática' "$document"
 
 jq -e '
   any(.owners[]; .id == "std.serialization"
-    and .runtime.kind == "not-applicable"
-    and .runtime.reason == "portable protocol with compile-time static dispatch; no host provider"
+    and .runtime.kind == "vm-inline"
+    and .case.kind == "runtime"
+    and .case.path == "tests/runtime/m11-std-serialization-public-001.to"
     and (has("legacy_abi") | not))
 ' testing/stdlib-public-api-config.json >/dev/null
 
 jq -e '
-  ([.rows[] | select(.owner == "std.serialization")] | length) == 0
+  ([.rows[] | select(.owner == "std.serialization")] | length) == 26
+  and all(.rows[] | select(.owner == "std.serialization");
+    has("declaring_trait") and .missing == [] and .status == "verified")
 ' testing/stdlib-public-api.json >/dev/null
 
 echo "std.serialization owner contract: OK"

@@ -159,7 +159,7 @@ pub fn Set.values[K: Key](self): Iterator[K]
 
 pub type Range
 pub trait Iterator[T] {
-    fn next(var self): T?
+    fn next(mut self): T?
 }
 pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]
 pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]
@@ -168,6 +168,11 @@ pub fn Iterator.collect[T](self): Array[T] ! CollectionError
 
 pub enum CollectionError { InvalidCapacity, InvalidIndex, InvalidStep, ResourceLimit }
 ```
+
+The current hosted adapters chain and collect, but their internal cursor does
+not yet satisfy `I: Iterator[T]` or expose direct `next()`. Ordinary nominal
+implementations support the public protocol. `STD-ITER-PROTOCOL-001` tracks
+the remaining adapter integration; this boundary prevents whole-owner closure.
 
 Los cuatro combinadores conservan un único protocolo `Iterator[T]` y son
 lazy: `map` y `filter` guardan el callback y solo consumen la fuente al pedir
@@ -285,31 +290,43 @@ pub trait Writer {
 }
 pub fn defaultLimits(): IoLimits
 pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
-pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends
-pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends
+pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends
+pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends
 pub type IoLimits
 ```
 
-`read` puede devolver menos bytes que `max`; `0` solo significa EOF cuando el
-resultado es `Eof`. `write` puede hacer partial I/O y devuelve exactamente los
-bytes aceptados. `defaultLimits` ofrece una política segura y `limits` rechaza
-cotas no positivas. `readAll` comprueba el límite agregado antes de consumir un
-handle hosted y nunca devuelve un buffer parcial junto a éxito. `writeAll`
-acepta short writes, exige progreso y hace `flush` al completar. La cancelación
-se propaga como `IoError.Cancelled` en cada punto de espera del backend y el
-writer no puede retener una vista del `Bytes` después de completar la operación.
+`read` may return fewer bytes than `max`; only `Eof` denotes normal EOF.
+`write` may perform partial I/O and returns the exact accepted byte count.
+`defaultLimits` supplies the default policy and `limits` rejects nonpositive
+bounds. `readAll` publishes no partial buffer on failure. The hosted console
+Input checks the aggregate limit before consuming its captured input; other
+readers, including File, may already have consumed earlier chunks. `writeAll`
+accepts short writes, requires progress and flushes on completion. Cancellation
+propagates as `IoError.Cancelled` at each backend wait point; a writer cannot
+retain a view of the Bytes after the operation completes.
 
-`STD-A-IO-EVIDENCE-001` cierra las cuatro firmas públicas del owner portable
-`std.io` mediante el contrato compartido [`testing/stdlib-core.json`](../../testing/stdlib-core.json).
-La evidencia enlaza Reader/Writer, `IoLimits`, HIR/lowering, bytecode, VM y el
-fixture `m11-std-io-001.to`; el kernel prueba particiones deterministas de
-chunks, short reads/writes, EOF, límites exactos, progreso cero, sobreescrituras,
-errores después de datos aceptados, `flush` y cancelación sin publicar éxito
-parcial. `HOST` es `not-applicable`: console, filesystem y process poseen los
-adaptadores capability-gated y solo reutilizan estos protocolos. Las dimensiones
-de coste declaradas son bytes copiados, chunks procesados y work-units; sus
-baselines por owner y promoción global de conformance siguen visibles como
-trabajo posterior.
+`Reader` and `Writer` are ordinary static traits. A bare trait cannot be used as
+a value type. `IoError` and `ReadResult` are ordinary enums, and `IoLimits` has
+private fields. Generic helpers execute user implementations with the normal
+trait dispatch rules. A zero-length or oversized `Data` is `InvalidData`;
+aggregate overflow is `ResourceLimit`. Generic `readAll` returns no partial
+buffer on error but cannot rewind a reader that has already consumed chunks.
+The concrete `console.Input` adapter checks its aggregate bound before
+consumption. `writeAll` rejects zero or overreported progress and calls `flush`
+exactly once after all bytes, including empty input, have been accepted.
+
+The public CLI tests `io_static_protocols_execute_user_implementations`,
+`io_static_helpers_preserve_progress_errors_and_flush` and
+`io_static_protocols_reject_value_traits_and_private_limit_construction` cover
+these shapes and behaviors through compiled Tondo programs. The hosted tests
+add concrete-console specialization, result admission before I/O effects and
+resource retirement. Kernel evidence in
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) remains a separate
+boundary. `filesystem_handles_implement_static_io_protocols` adds the concrete
+File adapter, generic and function-value calls, EOF, bounded reads and mode
+errors. Its exact error mapping is defined in the hosted filesystem contract.
+These tests do not promote native protocol lowering, arbitrary codec adapters,
+whole-owner fuzzing or global conformance.
 
 `STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
 `testing/stdlib-fuzz.json`. Performance and public conformance remain separate.

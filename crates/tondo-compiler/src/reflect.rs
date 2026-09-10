@@ -17,74 +17,10 @@ pub struct ReflectTypeId {
     slot: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ReflectTypeKind {
-    Primitive(ReflectPrimitiveKind),
-    Record,
-    Enum,
-    Newtype,
-    Tuple,
-    Union,
-    Function,
-    Applied(ReflectAppliedKind),
-    Reference(ReflectReferenceKind),
-    Opaque,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ReflectPrimitiveKind {
-    Bool,
-    Int,
-    Int8,
-    Int16,
-    Int32,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
-    Float,
-    Float32,
-    Byte,
-    Char,
-    String,
-    Unit,
-    Never,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ReflectAppliedKind {
-    Array,
-    Map,
-    Set,
-    Range,
-    Option,
-    Result,
-    Other,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ReflectReferenceKind {
-    Ref,
-    Pointer,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ReflectCapability {
-    Copy,
-    Discard,
-    Equatable,
-    Key,
-    Send,
-    Share,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ReflectParameterMode {
-    Value,
-    Ref,
-    Mut,
-    Var,
-}
+pub use tondo_vm::reflection::{
+    ReflectAppliedKind, ReflectCapability, ReflectParameterMode, ReflectPrimitiveKind,
+    ReflectReferenceKind, ReflectTypeKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReflectFieldTemplate {
@@ -844,7 +780,8 @@ fn build_field(
     })
 }
 
-fn artifact_tag(hash: &str) -> [u8; 32] {
+/// Converts an already validated canonical SHA-256 identity to its opaque tag.
+pub(crate) fn artifact_tag(hash: &str) -> [u8; 32] {
     let digest = &hash["sha256:".len()..];
     let mut bytes = [0_u8; 32];
     for (index, byte) in bytes.iter_mut().enumerate() {
@@ -863,7 +800,19 @@ fn required(field: &str, value: String) -> Result<String, ReflectError> {
 }
 
 fn optional_docs(value: Option<String>) -> Result<Option<String>, ReflectError> {
-    value.map(|value| required("docs", value)).transpose()
+    value
+        .map(|value| {
+            if value.is_empty()
+                || value
+                    .chars()
+                    .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
+            {
+                Err(ReflectError::InvalidText("docs".into()))
+            } else {
+                Ok(value)
+            }
+        })
+        .transpose()
 }
 
 fn unique_ordinal_name<'a>(
@@ -1285,7 +1234,14 @@ mod tests {
     fn malformed_shapes_members_and_text_are_rejected() {
         assert!(ReflectTypeTemplate::new("bad\nname", ReflectTypeKind::Opaque).is_err());
         assert!(ReflectFieldTemplate::new("", "std.Int", 0, None::<String>, true).is_err());
-        assert!(ReflectFieldTemplate::new("x", "std.Int", 0, Some("bad\ndoc"), true).is_err());
+        assert!(ReflectFieldTemplate::new("x", "std.Int", 0, Some("bad\0doc"), true).is_err());
+        assert_eq!(
+            ReflectFieldTemplate::new("x", "std.Int", 0, Some("first\n\tsecond"), true)
+                .unwrap()
+                .docs
+                .as_deref(),
+            Some("first\n\tsecond")
+        );
         assert!(ReflectParameterTemplate::new("", ReflectParameterMode::Value).is_err());
         assert!(ReflectFunctionTemplate::new([], "", false, false, false).is_err());
         assert!(

@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::str;
 
-use crate::source::{FileId, SourceDatabase, SourceError};
+use crate::source::{FileId, SourceDatabase, SourceError, TextRange};
 
 use super::{Doc, render};
 use crate::syntax::{
@@ -60,6 +60,107 @@ impl FormattedSource {
     pub fn into_bytes(self) -> Vec<u8> {
         self.0
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappedFormattedSource {
+    source: FormattedSource,
+    mappings: Vec<super::FormatTokenMapping>,
+    original_len: usize,
+}
+
+impl MappedFormattedSource {
+    pub fn source(&self) -> &FormattedSource {
+        &self.source
+    }
+    pub fn mappings(&self) -> &[super::FormatTokenMapping] {
+        &self.mappings
+    }
+
+    /// Map exact token boundaries or unchanged token bytes. Removed trivia and
+    /// interiors of rewritten tokens have no image; callers must reject them.
+    pub fn map_range(&self, original: TextRange) -> Option<TextRange> {
+        let point = |offset, end| {
+            if offset == 0 {
+                return Some(0);
+            }
+            if offset as usize == self.original_len {
+                return u32::try_from(self.source.bytes().len()).ok();
+            }
+            let count = self.mappings.partition_point(|mapping| {
+                if end {
+                    mapping.original.start() < offset
+                } else {
+                    mapping.original.start() <= offset
+                }
+            });
+            let mapping = self.mappings.get(count.checked_sub(1)?)?;
+            if self
+                .mappings
+                .get(count)
+                .is_some_and(|next| next.original == mapping.original)
+                || count
+                    .checked_sub(2)
+                    .and_then(|index| self.mappings.get(index))
+                    .is_some_and(|previous| previous.original == mapping.original)
+            {
+                return None;
+            }
+            let mapped = if offset == mapping.original.start() {
+                mapping.formatted.start
+            } else if offset == mapping.original.end() {
+                mapping.formatted.end
+            } else if mapping.verbatim && offset < mapping.original.end() {
+                mapping.formatted.start + (offset - mapping.original.start()) as usize
+            } else {
+                return None;
+            };
+            (mapped <= self.source.bytes().len()
+                && self
+                    .source
+                    .bytes()
+                    .get(mapped)
+                    .is_none_or(|byte| byte & 0xC0 != 0x80))
+            .then_some(mapped)
+            .and_then(|value| u32::try_from(value).ok())
+        };
+        let start = point(original.start(), false)?;
+        let end = if original.start() == original.end() {
+            start
+        } else {
+            point(original.end(), true)?
+        };
+        TextRange::new(start, end).ok()
+    }
+}
+
+/// Canonical formatting with source token provenance for generated-source maps.
+pub fn format_parsed_with_mappings(
+    sources: &SourceDatabase,
+    file: FileId,
+    parsed: &Parsed,
+) -> Result<MappedFormattedSource, FormatError> {
+    if !parsed.diagnostics().is_empty() {
+        return Err(FormatError::InvalidSyntax);
+    }
+    let source =
+        str::from_utf8(sources.get(file)?.bytes()).map_err(|_| FormatError::InvalidUtf8)?;
+    let mut formatter = Formatter::new(source, parsed.cst());
+    formatter.track_origins = true;
+    let document = formatter.format_root();
+    let (mut output, mut mappings) =
+        super::document::render_with_mappings(&document, WIDTH, INDENT);
+    while output.ends_with('\n') {
+        output.pop();
+    }
+    output.push('\n');
+    mappings.sort_by_key(|mapping| (mapping.original.start(), mapping.original.end()));
+    mappings.dedup();
+    Ok(MappedFormattedSource {
+        source: FormattedSource(output.into_bytes()),
+        mappings,
+        original_len: source.len(),
+    })
 }
 
 pub fn format_parsed(
@@ -272,6 +373,7 @@ struct Formatter<'a> {
     cst: &'a Cst,
     comments: CommentMap,
     suppressed_trailing: Cell<Option<TokenId>>,
+    track_origins: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -281,6 +383,7 @@ impl<'a> Formatter<'a> {
             cst,
             comments: CommentMap::new(source, cst),
             suppressed_trailing: Cell::new(None),
+            track_origins: false,
         }
     }
 
@@ -1712,17 +1815,26 @@ impl<'a> Formatter<'a> {
     }
 
     fn token_text(&self, token: SyntaxTokenRef<'a>) -> Doc<'a> {
-        if token.kind() == TokenKind::Identifier
+        let range = token.range();
+        let original = &self.source[range.start() as usize..range.end() as usize];
+        let text = if token.kind() == TokenKind::Identifier
             && let Some(normalized) = token.token().normalized_identifier()
         {
-            return Doc::text(normalized);
-        }
-        let range = token.range();
-        let text = &self.source[range.start() as usize..range.end() as usize];
-        if text.contains("\r\n") {
-            Doc::text(Cow::Owned(text.replace("\r\n", "\n")))
+            Cow::Borrowed(normalized)
+        } else if original.contains("\r\n") {
+            Cow::Owned(original.replace("\r\n", "\n"))
         } else {
-            Doc::text(text)
+            Cow::Borrowed(original)
+        };
+        if self.track_origins {
+            let verbatim = text == original;
+            Doc::SourceText {
+                text,
+                original: range,
+                verbatim,
+            }
+        } else {
+            Doc::Text(text)
         }
     }
 

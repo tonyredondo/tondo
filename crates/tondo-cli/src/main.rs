@@ -54,8 +54,11 @@ mod project_discovery;
 mod test_campaign;
 mod test_cli;
 mod test_deadline;
+mod test_human;
+mod test_inputs;
 mod test_interrupt;
 mod test_outputs;
+mod test_processes;
 
 const EXIT_DIAGNOSTIC: u8 = 1;
 const EXIT_USAGE: u8 = 2;
@@ -71,6 +74,7 @@ Usage:
   tondo <command> [--diagnostic-format <human|json>] [--warnings core] <source.to>
   tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] [--project <dir>]
   tondo build [--project <dir>] [--emit-artifact <path>]
+  tondo lock [--project <dir>]
   tondo run [--diagnostic-format <human|json>] [--warnings core] <source.to> -- [argument ...]
   tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [--diagnostics <profiles>] [options]
   tondo dump analyze <file.tdump> [--format human|json]
@@ -79,6 +83,7 @@ Commands:
   fmt      Format one Tondo source file
   check    Analyze one Tondo source file
   build    Analyze and materialize a closed native build envelope
+  lock     Resolve local source packages into tondo.lock.toml
   run      Compile and run one Tondo script
   doc-test Validate Tondo examples embedded in Markdown
   test     Discover, compile and run project tests
@@ -90,6 +95,7 @@ Options:
   --check                           Verify formatting without writing output (fmt only)
   --project <dir>                   Project directory (default: current directory)
   --test-plan <path>                Optional advanced TOML test-plan sidecar
+  --process-cgroup <absolute-path>  Delegated Linux cgroup-v2 root for process tests
   --diagnostics <profiles>          Dynamic profiles: race,leaks,crash or all
   --emit-interface <path>           Write the canonical compiled interface on success
   --emit-artifact <path>            Write canonical build metadata on success
@@ -167,6 +173,29 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     }
     if arguments.first().and_then(|argument| argument.to_str()) == Some("dump") {
         return run_dump_command(&arguments);
+    }
+    if arguments.first().and_then(|argument| argument.to_str()) == Some("lock") {
+        let root = match &arguments[1..] {
+            [] => env::current_dir().map_err(|error| error.to_string())?,
+            [option, path] if option == "--project" => PathBuf::from(path),
+            _ => {
+                eprintln!("tondo: usage: tondo lock [--project <dir>]");
+                return Ok(ExitCode::from(EXIT_USAGE));
+            }
+        };
+        let bytes = match project_discovery::resolve_local_lock(&root) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!("tondo: {error}");
+                return Ok(ExitCode::from(EXIT_DIAGNOSTIC));
+            }
+        };
+        atomic_publish(&root.join("tondo.lock.toml"), &bytes).map_err(|error| match error {
+            TestCommandError::Usage(message)
+            | TestCommandError::Internal(message)
+            | TestCommandError::Diagnostic(message) => message,
+        })?;
+        return Ok(ExitCode::SUCCESS);
     }
 
     let mut invocation = match parse_invocation(&arguments) {
@@ -397,6 +426,8 @@ struct ProjectDocuments {
     manifest: Vec<u8>,
     lockfile: Vec<u8>,
     production: Option<(Vec<u8>, Vec<u8>)>,
+    test_dependencies: Option<Vec<u8>>,
+    runtime_inputs: Vec<u8>,
 }
 
 impl ProjectLocation {
@@ -428,6 +459,8 @@ impl ProjectLocation {
                         manifest: discovered.manifest_bytes,
                         lockfile: discovered.lockfile_bytes,
                         production: discovered.production,
+                        test_dependencies: discovered.test_dependencies,
+                        runtime_inputs: discovered.runtime_inputs,
                     },
                 })
             }
@@ -444,7 +477,13 @@ enum TestCommandError {
 
 impl From<tondo_compiler::driver::DriverError> for TestCommandError {
     fn from(error: tondo_compiler::driver::DriverError) -> Self {
-        Self::Internal(error.to_string())
+        match error {
+            tondo_compiler::driver::DriverError::TestDependency(_)
+            | tondo_compiler::driver::DriverError::Artifact(_) => {
+                Self::Diagnostic(error.to_string())
+            }
+            _ => Self::Internal(error.to_string()),
+        }
     }
 }
 
@@ -478,10 +517,16 @@ fn load_test_project_plan(
     project: &ProjectPlan,
     production: Option<&ProjectPlan>,
     path: Option<&Path>,
+    test_dependencies: Option<&[u8]>,
 ) -> Result<TestProjectPlan, TestCommandError> {
     let Some(path) = path else {
-        return TestProjectPlan::for_discovered_project(production, project, 1)
-            .map_err(|error| TestCommandError::Usage(error.to_string()));
+        let plan = TestProjectPlan::for_discovered_project(production, project, 1)
+            .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+        return tondo_compiler::test_dependencies::TestDependencySources::default_test_plan(
+            plan,
+            test_dependencies,
+        )
+        .map_err(TestCommandError::Diagnostic);
     };
     if path
         .extension()
@@ -793,11 +838,10 @@ fn combined_store_hash(stores: &[(&str, String)]) -> String {
 
 fn load_snapshot_inputs(
     base: &Path,
-    request: &CompilationRequest,
+    package: &str,
     test_plan: &TestProjectPlan,
     update: bool,
 ) -> Result<SnapshotInputs, TestCommandError> {
-    let package = request.packages().root().as_str();
     let mut stores = Vec::new();
     for descriptor in test_plan.snapshot_stores() {
         let relative = PathBuf::from(descriptor.path());
@@ -1055,8 +1099,17 @@ fn prepare_test_request(
         max_vm_heap_bytes: plan.limits().memory_bytes(),
         ..ResourceLimits::default()
     };
+    let project_inputs = project
+        .required_inputs()
+        .filter_map(|input| {
+            supplied
+                .get(input.path())
+                .cloned()
+                .map(|bytes| (input.path().to_owned(), bytes))
+        })
+        .collect();
     let mut request = project
-        .resolve(supplied)
+        .resolve(&project_inputs)
         .map_err(|error| TestCommandError::Usage(error.to_string()))?
         .into_compilation_request(Operation::Check, format, test_limits)
         .map_err(|error| TestCommandError::Usage(error.to_string()))?
@@ -1092,25 +1145,44 @@ fn execute_test_plan_at(
         project,
         loaded.production.as_ref(),
         test_plan_path.as_deref(),
+        loaded.documents.test_dependencies.as_deref(),
     )?;
     let mut execution_plan = plan.clone();
     overlay_test_project_plan(&mut execution_plan, &test_project_plan)?;
+    let dependencies = tondo_compiler::test_dependencies::TestDependencySources::parse(
+        loaded.production.as_ref().unwrap_or(project),
+        &test_project_plan,
+        loaded.documents.test_dependencies.as_deref(),
+    )
+    .map_err(TestCommandError::Diagnostic)?;
     let mut supplied = BTreeMap::new();
-    for input in project.required_inputs() {
+    for input in project
+        .required_inputs()
+        .chain(dependencies.required_inputs())
+    {
+        if supplied.contains_key(input.path()) {
+            return Err(TestCommandError::Diagnostic(format!(
+                "test dependency reuses project input `{}`",
+                input.path()
+            )));
+        }
         let bytes = read_input(
             &base.join(input.path()),
             &format!("{} input `{}`", input.kind().as_str(), input.path()),
         )
-        .map_err(TestCommandError::Usage)?;
+        .map_err(TestCommandError::Diagnostic)?;
         supplied.insert(input.path().to_owned(), Arc::<[u8]>::from(bytes));
     }
-    let request = Arc::new(prepare_test_request(
-        &loaded.project,
-        loaded.production.as_ref(),
-        &supplied,
-        &test_project_plan,
-        execution_plan.diagnostic_format,
-    )?);
+    let request = Arc::new(
+        prepare_test_request(
+            &loaded.project,
+            loaded.production.as_ref(),
+            &supplied,
+            &test_project_plan,
+            execution_plan.diagnostic_format,
+        )?
+        .with_test_dependencies(&dependencies, &supplied)?,
+    );
     for compilation in request.test_compilation_requests()? {
         validate_test_compilation(compilation, execution_plan.diagnostic_format)?;
     }
@@ -1123,7 +1195,7 @@ fn execute_test_plan_at(
     )?;
     let snapshot_inputs = load_snapshot_inputs(
         base,
-        &request,
+        project.root_package_id(),
         &test_project_plan,
         execution_plan.update_snapshots,
     )?;
@@ -1136,6 +1208,12 @@ fn execute_test_plan_at(
         &snapshot_inputs,
         &ownership,
     )?;
+    let runtime_inputs = test_inputs::CapturedInputs::capture(
+        &identity.inputs,
+        &snapshot_inputs,
+        test_project_plan.limits().memory_bytes(),
+    )
+    .map_err(TestCommandError::Diagnostic)?;
     let (matched, selected) = select_test_entries(entries, &execution_plan)?;
     // A selector with no matches needs --allow-empty. A shard may receive no
     // leaves from a nonempty selection and must still emit its ordinary report.
@@ -1144,16 +1222,17 @@ fn execute_test_plan_at(
             "tondo: no tests matched the selection".into(),
         ));
     }
+    let ordered = order_test_entries(selected, &execution_plan)?;
     if execution_plan.list {
+        let list = build_test_list(
+            &request,
+            &execution_plan,
+            &ordered,
+            &ownership,
+            &snapshot_inputs,
+            &identity,
+        )?;
         if execution_plan.test_format == test_cli::TestFormat::Json {
-            let list = build_test_list(
-                &request,
-                &execution_plan,
-                &selected,
-                &ownership,
-                &snapshot_inputs,
-                &identity,
-            )?;
             let bytes = list
                 .canonical_bytes()
                 .map_err(|error| TestCommandError::Internal(error.to_string()))?;
@@ -1163,14 +1242,22 @@ fn execute_test_plan_at(
                     .map_err(|error| { TestCommandError::Internal(error.to_string()) })?
             );
         } else {
-            for entry in &selected {
-                println!("{}", entry.id());
-            }
+            test_human::write_list(&list, &mut io::stdout().lock())
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?;
         }
         return Ok(0);
     }
 
-    let ordered = order_test_entries(selected, &execution_plan)?;
+    let process_root = test_processes::prepare(
+        execution_plan.process_cgroup.as_deref(),
+        request
+            .capabilities()
+            .iter()
+            .any(|value| value.as_str() == "process"),
+    )
+    .map_err(|error| {
+        TestCommandError::Internal(format!("process isolation unavailable: {error}"))
+    })?;
     let worker_timeout = execution_plan.timeout_ms;
     let worker_update_snapshots = execution_plan.update_snapshots;
     let diagnostic_run_id = diagnostic_run_id(&request, &execution_plan, &ordered, &identity);
@@ -1206,6 +1293,7 @@ fn execute_test_plan_at(
                     &test_project_plan,
                     &snapshot_inputs,
                     &participation,
+                    &runtime_inputs,
                 )?
                 .encode()
                 .map_err(TestCommandError::Internal)?,
@@ -1213,6 +1301,12 @@ fn execute_test_plan_at(
             Ok((
                 key,
                 Arc::new(SharedWorkerGroup {
+                    project_root: base.to_owned(),
+                    process_root: process_root.clone(),
+                    temporary_filesystem: request
+                        .capabilities()
+                        .iter()
+                        .any(|value| value.as_str() == "filesystem"),
                     input,
                     entries,
                     timeout_ms: worker_timeout,
@@ -1310,6 +1404,7 @@ fn execute_test_plan_at(
         &identity,
         &snapshot_inputs,
     )?;
+    check_worker_inputs(&worker_groups)?;
     attach_worker_diagnostics(&worker_groups, &mut attempts)?;
     let mut suite_attempts = collect_suite_attempts(&worker_groups, &initial_plan)?;
     let retry_rounds = test_campaign::retry_units(
@@ -1417,19 +1512,13 @@ fn execute_test_plan_at(
             .map_err(|error| TestCommandError::Internal(error.to_string()))?
         );
     } else {
-        for test in report.tests() {
-            println!("{} {}", status_label(test.status), test.id);
-            if execution_plan.show_output {
-                for attempt in &test.attempts {
-                    if !attempt.stdout.is_empty() {
-                        print!("{}", attempt.stdout);
-                    }
-                    if !attempt.stderr.is_empty() {
-                        eprint!("{}", attempt.stderr);
-                    }
-                }
-            }
-        }
+        test_human::write_report(
+            &report,
+            execution_plan.show_output,
+            &mut io::stdout().lock(),
+            &mut io::stderr().lock(),
+        )
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
     }
     if let Some(exit) = diagnostic_exit_status(&report) {
         return Ok(exit);
@@ -1481,6 +1570,8 @@ struct WorkerSnapshotUpdate {
 struct WorkerError {
     kind: String,
     code: Option<String>,
+    error_type: Option<String>,
+    source: Option<tondo_compiler::test_result::SourceSpan>,
     message: String,
 }
 
@@ -1520,7 +1611,7 @@ struct DiagnosticReportContext<'a> {
     crashed: bool,
 }
 
-const WORKER_INPUT_FORMAT: &str = "tondo-test-worker-input/2";
+const WORKER_INPUT_FORMAT: &str = "tondo-test-worker-input/5";
 // Includes verified code, constants and snapshot values. Reject excess before
 // starting an attempt. This transport is private to the same CLI executable.
 const MAX_WORKER_INPUT_BYTES: usize = 512 * 1024 * 1024;
@@ -1674,14 +1765,19 @@ struct WorkerInput {
     format: String,
     source_revision: String,
     target: String,
+    temporary_filesystem: bool,
+    process_isolation: bool,
     program: tondo_vm::bytecode::BytecodeProgram,
     entry: tondo_vm::bytecode::BytecodeFunctionId,
     limits: tondo_vm::runtime::VmLimits,
     output_bytes: u64,
     artifact_bytes: u64,
     snapshot_bytes: u64,
+    virtual_timers: u64,
     entries: Vec<WorkerTestEntry>,
     expected: BTreeMap<String, BTreeMap<String, String>>,
+    runtime_inputs: test_inputs::CapturedInputs,
+    source_files: BTreeMap<u32, String>,
 }
 
 impl WorkerInput {
@@ -1690,6 +1786,7 @@ impl WorkerInput {
         plan: &TestProjectPlan,
         snapshots: &SnapshotInputs,
         entries: &[tondo_compiler::test_backend::TestEntry],
+        runtime_inputs: &test_inputs::CapturedInputs,
     ) -> Result<Self, TestCommandError> {
         let limits = plan.limits();
         let participation = tondo_compiler::test_backend::TestParticipation::new(
@@ -1701,9 +1798,13 @@ impl WorkerInput {
             BTreeMap::new(),
             false,
         );
-        let compiled = tondo_compiler::driver::compile(
-            request.for_test_participation(entries, participation)?,
-        )?;
+        let participation_request = request.for_test_participation(entries, participation)?;
+        let source_files = participation_request
+            .sources()
+            .iter()
+            .map(|(file, source)| (file.index(), source.path().to_string()))
+            .collect();
+        let compiled = tondo_compiler::driver::compile(participation_request)?;
         validate_test_output(&compiled, request.diagnostic_format())?;
         let (program, entry) = compiled.into_compiled_program().ok_or_else(|| {
             TestCommandError::Internal(
@@ -1714,12 +1815,21 @@ impl WorkerInput {
             format: WORKER_INPUT_FORMAT.into(),
             source_revision: diagnostic_source_revision(request),
             target: request.target().name().to_owned(),
+            temporary_filesystem: request
+                .capabilities()
+                .iter()
+                .any(|value| value.as_str() == "filesystem"),
+            process_isolation: request
+                .capabilities()
+                .iter()
+                .any(|value| value.as_str() == "process"),
             program,
             entry,
             limits: request.runtime_limits(),
             output_bytes: limits.output_bytes(),
             artifact_bytes: limits.artifact_bytes(),
             snapshot_bytes: limits.snapshot_bytes(),
+            virtual_timers: limits.virtual_timers(),
             entries: entries
                 .iter()
                 .map(|entry| WorkerTestEntry {
@@ -1731,6 +1841,8 @@ impl WorkerInput {
                 .into_iter()
                 .map(|id| snapshots.expected_for(&id).map(|expected| (id, expected)))
                 .collect::<Result<_, _>>()?,
+            runtime_inputs: runtime_inputs.clone(),
+            source_files,
         })
     }
 
@@ -1769,7 +1881,18 @@ impl WorkerInput {
                 input.format
             ));
         }
+        input.limits.validate().map_err(|error| error.to_string())?;
+        input
+            .envelope_limits()
+            .profile()
+            .validate()
+            .map_err(|error| error.to_string())?;
         Ok(input)
+    }
+
+    fn envelope_limits(&self) -> EnvelopeLimits {
+        EnvelopeLimits::new(self.output_bytes, self.artifact_bytes, self.snapshot_bytes)
+            .with_execution_limits(self.limits.max_steps, self.virtual_timers)
     }
 }
 
@@ -1852,6 +1975,9 @@ const WORKER_RESPONSE_FORMAT: &str = "tondo-test-worker-process/2";
 const WORKER_BATCH_RESPONSE_FORMAT: &str = "tondo-test-worker-batch/2";
 
 struct SharedWorkerGroup {
+    project_root: PathBuf,
+    process_root: Option<test_processes::ProcessRoot>,
+    temporary_filesystem: bool,
     input: Arc<Vec<u8>>,
     entries: Vec<String>,
     timeout_ms: Option<u64>,
@@ -1885,6 +2011,9 @@ impl SharedWorkerGroup {
                 invocation,
             };
             spawn_test_worker(
+                &self.project_root,
+                self.process_root.as_ref(),
+                self.temporary_filesystem,
                 self.input.clone(),
                 &self.entries,
                 self.timeout_ms,
@@ -1929,7 +2058,90 @@ impl SharedWorkerGroup {
     }
 }
 
+fn check_worker_inputs(
+    groups: &BTreeMap<(u32, String), Arc<SharedWorkerGroup>>,
+) -> Result<(), TestCommandError> {
+    for group in groups.values() {
+        let invocations = group
+            .invocations
+            .lock()
+            .map_err(|_| TestCommandError::Internal("worker cache is poisoned".into()))?;
+        for result in invocations
+            .values()
+            .filter_map(|slot| slot.get().and_then(|result| result.as_ref().ok()))
+        {
+            check_worker_group_inputs(result)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_worker_group_inputs(result: &WorkerGroupResult) -> Result<(), TestCommandError> {
+    if let Some(error) = result
+        .leaves
+        .values()
+        .filter_map(|response| response.error.as_ref())
+        .find(|error| error.kind == "cleanup")
+    {
+        return Err(TestCommandError::Internal(error.message.clone()));
+    }
+    if let Some(error) = result
+        .leaves
+        .values()
+        .filter_map(|response| response.error.as_ref())
+        .find(|error| error.kind == "input")
+    {
+        return Err(TestCommandError::Diagnostic(error.message.clone()));
+    }
+    Ok(())
+}
+
 impl WorkerError {
+    fn from_execution(
+        execution: &tondo_compiler::test_backend::TestNodeExecution,
+        source_files: &BTreeMap<u32, String>,
+    ) -> Option<Self> {
+        if execution.timed_out {
+            return Some(Self {
+                kind: "timeout".into(),
+                code: None,
+                error_type: None,
+                source: None,
+                message: "test phase exceeded its wall-clock deadline".into(),
+            });
+        }
+        if let Some(panic) = execution
+            .panic
+            .as_ref()
+            .and_then(tondo_vm::runtime::VmPanic::language_panic)
+        {
+            return Some(Self {
+                kind: "panic".into(),
+                code: Some(panic.code.code().into()),
+                error_type: None,
+                source: None,
+                message: panic.message.clone(),
+            });
+        }
+        if execution.report.terminal().is_some() {
+            return None;
+        }
+        execution.error_type.as_ref().map(|error_type| Self {
+            kind: "error".into(),
+            code: None,
+            error_type: Some(error_type.clone()),
+            source: execution.error_span.and_then(|span| {
+                (span.start < span.end).then_some(())?;
+                Some(tondo_compiler::test_result::SourceSpan {
+                    file: source_files.get(&span.file)?.clone(),
+                    start: u64::from(span.start),
+                    end: u64::from(span.end),
+                })
+            }),
+            message: format!("unhandled test error: `{error_type}`"),
+        })
+    }
+
     #[cfg(test)]
     fn from_run_error(error: &RunError) -> Self {
         let kind = match error {
@@ -1945,20 +2157,34 @@ impl WorkerError {
         Self {
             kind: kind.into(),
             code: error.code().map(str::to_owned),
+            error_type: error.error_type().map(str::to_owned),
+            source: error.source().cloned(),
             message: error.to_string(),
         }
     }
 
     fn into_run_error(self) -> Result<(), RunError> {
+        if self.kind == "error" {
+            return Err(match self.error_type.filter(|name| !name.is_empty()) {
+                Some(error_type) => RunError::Error {
+                    code: self.code,
+                    error_type,
+                    message: self.message,
+                    source: self.source,
+                },
+                None => RunError::Infrastructure {
+                    message: "recoverable worker error omitted its type identity".into(),
+                },
+            });
+        }
         let code = self.code.unwrap_or_else(|| "T3001".into());
         let message = self.message;
         Err(match self.kind.as_str() {
-            "error" => RunError::Error { code, message },
             "panic" => RunError::Panic { code, message },
             "resource-limit" => RunError::ResourceLimit { kind: code },
             "timeout" => RunError::Timeout,
             "skip" => RunError::Skip { reason: message },
-            "infrastructure" => RunError::Infrastructure { message },
+            "infrastructure" | "input" | "cleanup" => RunError::Infrastructure { message },
             "blocked-setup" => RunError::BlockedSetup { suite: message },
             "blocked-skip" => RunError::BlockedSkip { suite: message },
             other => RunError::Infrastructure {
@@ -2003,6 +2229,8 @@ fn infrastructure_worker_response(error: impl Into<String>) -> WorkerResponse {
         report: empty_worker_report(),
         updates: Vec::new(),
         error: Some(WorkerError {
+            source: None,
+            error_type: None,
             kind: "infrastructure".into(),
             code: None,
             message: error.into(),
@@ -2011,7 +2239,92 @@ fn infrastructure_worker_response(error: impl Into<String>) -> WorkerResponse {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_test_worker(
+    project_root: &Path,
+    process_root: Option<&test_processes::ProcessRoot>,
+    temporary_filesystem: bool,
+    input: Arc<Vec<u8>>,
+    entries: &[String],
+    timeout_ms: Option<u64>,
+    phase_limits: test_deadline::Limits,
+    update_snapshots: bool,
+    diagnostic_context: &DiagnosticWorkerContext<'_>,
+) -> Result<WorkerGroupResult, RunError> {
+    let mut processes = process_root
+        .map(test_processes::ProcessRoot::create)
+        .transpose()
+        .map_err(|error| {
+            isolation_failure(format!(
+                "cannot create isolated worker process group: {error}"
+            ))
+        })?;
+    let mut root = temporary_filesystem
+        .then(|| tondo_compiler::test_temporaries::TemporaryRoot::create(project_root))
+        .transpose()
+        .map_err(|error| {
+            isolation_failure(format!(
+                "cannot create isolated worker temporary root: {error}"
+            ))
+        })?;
+    let result = spawn_test_worker_with_root(
+        project_root,
+        root.as_ref().map(|root| root.path()),
+        processes.as_mut(),
+        input,
+        entries,
+        timeout_ms,
+        phase_limits,
+        update_snapshots,
+        diagnostic_context,
+    );
+    // Also close an empty group when executable lookup, spawn or admission
+    // failed. The inner wait closes a running group before joining pipes.
+    let process_cleanup = processes
+        .as_mut()
+        .map(test_processes::ProcessGroup::close)
+        .transpose();
+    if let Err(error) = process_cleanup {
+        if let Some(root) = &mut root {
+            root.retain_after_failed_isolation();
+        }
+        return Err(isolation_failure(format!(
+            "isolated worker process cleanup failed: {error}; temporary root retained: {:?}",
+            root.as_ref().map(|root| root.path())
+        )));
+    }
+    // The inner call reaps the worker on every return path. Cleanup precedes
+    // any result, snapshot or artifact publication, including forced exit.
+    if let Some(root) = &mut root
+        && let Err(error) = root.cleanup()
+    {
+        let message = format!("isolated worker temporary cleanup failed: {error}");
+        test_interrupt::abort_isolation(&message);
+        return Ok(WorkerGroupResult {
+            leaves: entries
+                .iter()
+                .map(|id| {
+                    let mut response = infrastructure_worker_response(message.clone());
+                    response.error.as_mut().unwrap().kind = "cleanup".into();
+                    (id.clone(), response)
+                })
+                .collect(),
+            suites: Vec::new(),
+        });
+    }
+    result
+}
+
+fn isolation_failure(message: String) -> RunError {
+    test_interrupt::abort_isolation(&message);
+    RunError::Infrastructure { message }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_test_worker_with_root(
+    project_root: &Path,
+    temporary_root: Option<&Path>,
+    mut processes: Option<&mut test_processes::ProcessGroup>,
     input: Arc<Vec<u8>>,
     entries: &[String],
     timeout_ms: Option<u64>,
@@ -2031,6 +2344,7 @@ fn spawn_test_worker(
             })?,
         );
     command
+        .current_dir(project_root)
         .arg("__test-worker")
         .arg("--input-bytes")
         .arg(input.len().to_string())
@@ -2039,6 +2353,12 @@ fn spawn_test_worker(
     command
         .arg("--source-revision")
         .arg(diagnostic_context.source_revision);
+    if let Some(root) = temporary_root {
+        command.arg("--temporary-root").arg(root);
+    }
+    if let Some(group) = &processes {
+        command.arg("--process-cgroup").arg(group.path());
+    }
     for entry in entries {
         command.arg("--entry").arg(entry);
     }
@@ -2068,6 +2388,16 @@ fn spawn_test_worker(
         .map_err(|error| RunError::Infrastructure {
             message: format!("cannot spawn isolated test worker: {error}"),
         })?;
+    // The worker is blocked on sealed stdin. No Tondo instruction can execute
+    // until its whole OS thread group has entered the provider's fresh cgroup.
+    if let Some(group) = &mut processes
+        && let Err(error) = group.admit(child.id())
+    {
+        let reaped = reap_terminated_worker(&mut child);
+        return Err(isolation_failure(format!(
+            "cannot admit isolated test worker: {error}; reap={reaped:?}"
+        )));
+    }
     let mut stdin = child
         .stdin
         .take()
@@ -2083,11 +2413,17 @@ fn spawn_test_worker(
         Ok::<(), io::Error>(())
     });
     let phases = Arc::new(Mutex::new(test_deadline::Watchdog::new(phase_limits)));
-    let result = wait_worker_controlled(child, timeout_ms, Some(&control), Some(phases.clone()));
+    let result = wait_worker_controlled(
+        child,
+        timeout_ms,
+        Some(&control),
+        Some(phases.clone()),
+        processes,
+    );
     drop(control);
-    let written = writer.join();
     let (status, stdout, stderr) = result?;
-    written
+    writer
+        .join()
         .map_err(|_| RunError::Infrastructure {
             message: "closed worker input writer panicked".into(),
         })?
@@ -2124,6 +2460,8 @@ fn spawn_test_worker(
     {
         let error = || {
             Some(WorkerError {
+                source: None,
+                error_type: None,
                 kind: "timeout".into(),
                 code: None,
                 message: "test phase exceeded its wall-clock deadline".into(),
@@ -2195,7 +2533,7 @@ fn wait_worker(
     child: Child,
     timeout_ms: Option<u64>,
 ) -> Result<(String, Vec<u8>, Vec<u8>), RunError> {
-    wait_worker_controlled(child, timeout_ms, None, None)
+    wait_worker_controlled(child, timeout_ms, None, None, None)
 }
 
 fn wait_worker_controlled(
@@ -2203,6 +2541,7 @@ fn wait_worker_controlled(
     timeout_ms: Option<u64>,
     control: Option<&std::sync::mpsc::Sender<Vec<u8>>>,
     phases: Option<Arc<Mutex<test_deadline::Watchdog>>>,
+    processes: Option<&mut test_processes::ProcessGroup>,
 ) -> Result<(String, Vec<u8>, Vec<u8>), RunError> {
     // Drain both pipes while the worker is running. Waiting for process exit
     // before reading would deadlock a valid worker whose bounded report is
@@ -2217,64 +2556,32 @@ fn wait_worker_controlled(
         .map(|pipe| std::thread::spawn(move || read_worker_diagnostics(pipe, phase_reader)));
     let started = Instant::now();
     let mut cancellation = test_interrupt::WorkerCancellation::new();
-    loop {
+    let outcome = loop {
         let requests = test_interrupt::requests();
         let (first_request, forced) = cancellation.poll(requests);
         if first_request && let Some(control) = control {
             let _ = control.send(vec![b'C']);
         }
         match child.try_wait() {
-            Ok(Some(status)) => {
-                let stdout = join_worker_pipe(stdout_reader, "output")?;
-                let stderr = join_worker_pipe(stderr_reader, "diagnostics")?;
-                let worker_interrupt = serde_json::from_slice::<WorkerInterruptResponse>(&stdout)
-                    .ok()
-                    .filter(|response| response.format == "tondo-test-worker-interrupt/1");
-                if worker_interrupt.is_some()
-                    || status.code() == Some(4)
-                    || cancellation.requested()
-                {
-                    if requests == 0 {
-                        test_interrupt::worker_requested_interruption(1);
-                        cancellation.poll(1);
-                    }
-                    if forced
-                        || worker_interrupt.is_some_and(|response| !response.cleanup_complete)
-                        || !matches!(status.code(), Some(0 | 4))
-                    {
-                        test_interrupt::isolation_lost();
-                        eprintln!(
-                            "tondo test: interrupted worker cleanup failed: {}",
-                            String::from_utf8_lossy(&stderr).trim()
-                        );
-                    } else {
-                        cancellation.close();
-                    }
-                    return Err(RunError::Infrastructure {
-                        message: "isolated worker interrupted".into(),
-                    });
-                }
-                return Ok((status.to_string(), stdout, stderr));
-            }
+            Ok(Some(status)) => break Ok(status),
             Ok(None) => {
                 if forced {
                     test_interrupt::isolation_lost();
-                    let killed = child.kill();
-                    let reaped = child.wait();
-                    let _ = join_worker_pipe(stdout_reader, "output");
-                    let _ = join_worker_pipe(stderr_reader, "diagnostics");
-                    return Err(RunError::Infrastructure {
-                        message: format!(
-                            "interrupted worker exceeded cleanup grace: kill={killed:?}, reap={reaped:?}"
-                        ),
+                    break Err(RunError::Infrastructure {
+                        message: "interrupted worker exceeded cleanup grace".into(),
                     });
                 }
                 if !cancellation.requested()
                     && let Some(phases) = &phases
                 {
-                    let mut phases = phases.lock().map_err(|_| RunError::Infrastructure {
-                        message: "worker watchdog lock is poisoned".into(),
-                    })?;
+                    let mut phases = match phases.lock() {
+                        Ok(phases) => phases,
+                        Err(_) => {
+                            break Err(RunError::Infrastructure {
+                                message: "worker watchdog lock is poisoned".into(),
+                            });
+                        }
+                    };
                     let (expired, stuck) = phases.poll(Instant::now());
                     if let Some(sequence) = expired
                         && let Some(control) = control
@@ -2285,14 +2592,8 @@ fn wait_worker_controlled(
                     }
                     if stuck || phases.idle_expired(Instant::now()) {
                         drop(phases);
-                        let killed = child.kill();
-                        let reaped = child.wait();
-                        let _ = join_worker_pipe(stdout_reader, "output");
-                        let _ = join_worker_pipe(stderr_reader, "diagnostics");
-                        return Err(RunError::Infrastructure {
-                            message: format!(
-                                "test phase worker did not complete isolated cleanup: kill={killed:?}, reap={reaped:?}"
-                            ),
+                        break Err(RunError::Infrastructure {
+                            message: "test phase worker did not complete isolated cleanup".into(),
                         });
                     }
                 }
@@ -2301,21 +2602,81 @@ fn wait_worker_controlled(
                     && timeout_ms
                         .is_some_and(|limit| started.elapsed() >= Duration::from_millis(limit))
                 {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = join_worker_pipe(stdout_reader, "output");
-                    let _ = join_worker_pipe(stderr_reader, "diagnostics");
-                    return Err(RunError::Timeout);
+                    break Err(RunError::Timeout);
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = join_worker_pipe(stdout_reader, "output");
-                let _ = join_worker_pipe(stderr_reader, "diagnostics");
-                return Err(RunError::Infrastructure {
+                break Err(RunError::Infrastructure {
                     message: format!("cannot poll isolated test worker: {error}"),
+                });
+            }
+        }
+    };
+    // A successfully reaped leader can still have descendants holding these
+    // pipes. Terminate the entire group before joining either pipe reader.
+    let contained = processes
+        .map(test_processes::ProcessGroup::close)
+        .transpose();
+    let reaped = if outcome.is_err() {
+        reap_terminated_worker(&mut child)
+    } else {
+        Ok(())
+    };
+    contained.map_err(|error| {
+        test_interrupt::isolation_lost();
+        RunError::Infrastructure {
+            message: format!("isolated worker process cleanup failed: {error}"),
+        }
+    })?;
+    reaped?;
+    let stdout = join_worker_pipe(stdout_reader, "output")?;
+    let stderr = join_worker_pipe(stderr_reader, "diagnostics")?;
+    let status = outcome?;
+    let worker_interrupt = serde_json::from_slice::<WorkerInterruptResponse>(&stdout)
+        .ok()
+        .filter(|response| response.format == "tondo-test-worker-interrupt/1");
+    let requests = test_interrupt::requests();
+    let (_, forced) = cancellation.poll(requests);
+    if worker_interrupt.is_some() || status.code() == Some(4) || cancellation.requested() {
+        if requests == 0 {
+            test_interrupt::worker_requested_interruption(1);
+            cancellation.poll(1);
+        }
+        if forced
+            || worker_interrupt.is_some_and(|response| !response.cleanup_complete)
+            || !matches!(status.code(), Some(0 | 4))
+        {
+            test_interrupt::isolation_lost();
+            eprintln!(
+                "tondo test: interrupted worker cleanup failed: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            );
+        } else {
+            cancellation.close();
+        }
+        return Err(RunError::Infrastructure {
+            message: "isolated worker interrupted".into(),
+        });
+    }
+    Ok((status.to_string(), stdout, stderr))
+}
+
+fn reap_terminated_worker(child: &mut Child) -> Result<(), RunError> {
+    let killed = child.kill();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            outcome => {
+                test_interrupt::isolation_lost();
+                return Err(RunError::Infrastructure {
+                    message: format!(
+                        "cannot reap isolated worker: kill={killed:?}, reap={outcome:?}"
+                    ),
                 });
             }
         }
@@ -2357,6 +2718,8 @@ fn run_test_worker_on_explicit_stack(arguments: Vec<OsString>) -> Result<ExitCod
 }
 
 fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
+    let mut temporary_root = None;
+    let mut process_cgroup = None;
     let mut input_bytes = None;
     let mut input_hash = String::new();
     let mut entries = Vec::new();
@@ -2372,6 +2735,30 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
             .to_str()
             .ok_or_else(|| "hidden test-worker arguments must be UTF-8".to_owned())?;
         match value {
+            "--process-cgroup" => {
+                index += 1;
+                let path = PathBuf::from(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "worker `--process-cgroup` requires a path".to_owned())?,
+                );
+                if !path.is_absolute() || process_cgroup.is_some() {
+                    return Err("worker process cgroup must be one absolute path".into());
+                }
+                process_cgroup = Some(path);
+            }
+            "--temporary-root" => {
+                index += 1;
+                let path = PathBuf::from(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "worker `--temporary-root` requires a path".to_owned())?,
+                );
+                if !path.is_absolute() || temporary_root.is_some() {
+                    return Err("worker temporary root must be one absolute path".into());
+                }
+                temporary_root = Some(path);
+            }
             "--input-bytes" => {
                 index += 1;
                 input_bytes = Some(
@@ -2496,6 +2883,8 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     let result = match input.and_then(|input| {
         execute_test_worker(
             input,
+            temporary_root,
+            process_cgroup,
             &entries,
             update_snapshots,
             phases,
@@ -2556,11 +2945,23 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
 
 fn execute_test_worker(
     input: WorkerInput,
+    temporary_root: Option<PathBuf>,
+    process_cgroup: Option<PathBuf>,
     entry_ids: &[String],
     update_snapshots: bool,
     phases: Arc<test_deadline::WorkerPhases>,
     diagnostic_context: &DiagnosticWorkerContext<'_>,
 ) -> Result<WorkerGroupResult, String> {
+    if input.temporary_filesystem != temporary_root.is_some() {
+        return Err("temporary root does not match the compiled filesystem capability".into());
+    }
+    if input.process_isolation != process_cgroup.is_some() {
+        return Err("process isolation does not match the compiled process capability".into());
+    }
+    if let Some(path) = &process_cgroup {
+        test_processes::validate_worker(path)
+            .map_err(|error| format!("invalid worker process isolation: {error}"))?;
+    }
     if input.source_revision != diagnostic_context.source_revision {
         return Err("closed worker source revision mismatch".into());
     }
@@ -2583,11 +2984,7 @@ fn execute_test_worker(
     {
         return Err("worker selection differs from the compiled participation".into());
     }
-    let envelope_limits = EnvelopeLimits::new(
-        input.output_bytes,
-        input.artifact_bytes,
-        input.snapshot_bytes,
-    );
+    let envelope_limits = input.envelope_limits();
     for entry in &selected {
         if !input.expected.contains_key(entry.id()) {
             return Err(format!(
@@ -2606,7 +3003,25 @@ fn execute_test_worker(
             }
         }
     }
-    let participation = tondo_compiler::test_backend::TestParticipation::new(
+    let (runtime_plan, mut materialized) = match input.runtime_inputs.materialize() {
+        Ok(values) => values,
+        Err(error) => {
+            test_interrupt::worker_clean();
+            return Ok(WorkerGroupResult {
+                leaves: entry_ids
+                    .iter()
+                    .map(|id| {
+                        let mut response = infrastructure_worker_response(error.clone());
+                        response.error.as_mut().unwrap().kind = "input".into();
+                        (id.clone(), response)
+                    })
+                    .collect(),
+                suites: Vec::new(),
+            });
+        }
+    };
+    let environment = test_inputs::CapturedInputs::environment(&runtime_plan, &materialized)?;
+    let mut participation = tondo_compiler::test_backend::TestParticipation::new(
         envelope_limits,
         input.expected,
         update_snapshots,
@@ -2614,15 +3029,20 @@ fn execute_test_worker(
     .with_interruption(test_interrupt::token())
     .with_selection(selection)
     .with_phases(phases);
-    let execution = tondo_compiler::test_backend::execute_compiled(
+    if let Some(root) = temporary_root {
+        participation = participation.with_temporary_root(root);
+    }
+    let execution = tondo_compiler::test_backend::execute_compiled_with_environment(
         &input.program,
         input.entry,
         input.limits,
         participation.clone(),
         (!diagnostic_context.profiles.is_empty())
             .then(tondo_vm::runtime::DiagnosticConfig::default),
-    )
-    .map_err(|error| error.to_string())?;
+        environment,
+    );
+    materialized.revoke().map_err(|error| error.to_string())?;
+    let execution = execution.map_err(|error| error.to_string())?;
     test_interrupt::worker_clean();
     if test_interrupt::requests() > 0 {
         return Err("test participation interrupted after cleanup".into());
@@ -2643,25 +3063,11 @@ fn execute_test_worker(
             execution.kind == tondo_compiler::test_backend::TestExecutionKind::Leaf
                 && execution.id == entry.id()
         }) {
-            let error = if execution.timed_out {
-                Some(WorkerError {
-                    kind: "timeout".into(),
-                    code: None,
-                    message: "test phase exceeded its wall-clock deadline".into(),
-                })
-            } else {
-                execution
-                    .panic
-                    .as_ref()
-                    .and_then(tondo_vm::runtime::VmPanic::language_panic)
-                    .map(|panic| WorkerError {
-                        kind: "panic".into(),
-                        code: Some(panic.code.code().into()),
-                        message: panic.message.clone(),
-                    })
-            };
+            let error = WorkerError::from_execution(execution, &input.source_files);
             let status = if execution.timed_out {
                 "timeout"
+            } else if error.as_ref().is_some_and(|error| error.kind == "error") {
+                "failed-error"
             } else if error.is_some() {
                 "failed-panic"
             } else if matches!(
@@ -2714,6 +3120,7 @@ fn execute_test_worker(
                 execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
                     && (execution.timed_out
                         || execution.panic.is_some()
+                        || execution.error_type.is_some()
                         || execution.report.terminal().is_some())
                     && entry
                         .id()
@@ -2738,6 +3145,8 @@ fn execute_test_worker(
                 report: empty_worker_report(),
                 updates: Vec::new(),
                 error: Some(WorkerError {
+                    source: None,
+                    error_type: None,
                     kind: if skipped {
                         "blocked-skip".into()
                     } else {
@@ -2773,25 +3182,10 @@ fn execute_test_worker(
             execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
         })
         .map(|execution| {
-            let error = if execution.timed_out {
-                Some(WorkerError {
-                    kind: "timeout".into(),
-                    code: None,
-                    message: "test phase exceeded its wall-clock deadline".into(),
-                })
-            } else {
-                execution
-                    .panic
-                    .as_ref()
-                    .and_then(tondo_vm::runtime::VmPanic::language_panic)
-                    .map(|panic| WorkerError {
-                        kind: "panic".into(),
-                        code: Some(panic.code.code().into()),
-                        message: panic.message.clone(),
-                    })
-            };
+            let error = WorkerError::from_execution(execution, &input.source_files);
             let status = match execution.report.terminal() {
                 _ if execution.timed_out => "timeout",
+                _ if error.as_ref().is_some_and(|error| error.kind == "error") => "failed-error",
                 _ if error.is_some() => "failed-panic",
                 Some(Terminal::Skipped { .. }) => "skipped",
                 Some(Terminal::ResourceLimit { .. }) => "resource-limit",
@@ -2886,6 +3280,8 @@ fn execute_test_worker(
             report: empty_worker_report(),
             updates: Vec::new(),
             error: Some(WorkerError {
+                source: None,
+                error_type: None,
                 kind: if skipped {
                     "blocked-skip".into()
                 } else {
@@ -3291,8 +3687,8 @@ fn execute_campaign(
                 invocation: attempt.worker().invocation_id(),
                 status: attempt.status(),
                 report: attempt.report().clone(),
-                error: None,
-                snapshot_updates: Vec::new(),
+                error: attempt.error().cloned(),
+                snapshot_updates: attempt.snapshot_updates().to_vec(),
                 diagnostics: Vec::new(),
                 diagnostic_artifacts: Vec::new(),
             })
@@ -3509,6 +3905,14 @@ impl TestInvocationIdentity {
         let plan_bytes = plan
             .canonical_bytes()
             .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        if let Some(bytes) = &documents.test_dependencies {
+            hashes.push((
+                "plan:test-dependencies".into(),
+                "test-dependencies".into(),
+                TestInputProfile::Build,
+                tondo_compiler::artifact::sha256(bytes),
+            ));
+        }
         for (name, bytes) in [
             ("project-manifest", documents.manifest.as_slice()),
             ("project-lockfile", documents.lockfile.as_slice()),
@@ -3555,9 +3959,92 @@ impl TestInvocationIdentity {
         }
         let inputs = TestInputPlan::from_public_hashes(plan, hashes)
             .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        let inputs = inputs
+            .with_runtime_inputs(plan, &documents.runtime_inputs)
+            .map_err(|error| TestCommandError::Diagnostic(error.to_string()))?;
         let plan_value: serde_json::Value = serde_json::from_slice(&plan_bytes)
             .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-        let resource_profile = serde_json::json!({"limits": plan_value["limits"], "jobs": execution.jobs, "timeout_ms": execution.timeout_ms});
+        let vm_defaults = ResourceLimits::default();
+        let envelope = EnvelopeLimits::new(
+            plan.limits().output_bytes(),
+            plan.limits().artifact_bytes(),
+            plan.limits().snapshot_bytes(),
+        )
+        .with_execution_limits(plan.limits().instructions(), plan.limits().virtual_timers())
+        .profile();
+        let mut resource_profile = serde_json::json!({
+            "limits": plan_value["limits"], "jobs": execution.jobs, "timeout_ms": execution.timeout_ms,
+            "hosted_accounting": "tondo-test-resources/2",
+            "vm_stack_depth": vm_defaults.max_vm_stack_depth,
+            "vm_frame_base_bytes": tondo_vm::runtime::TEST_FRAME_BASE_BYTES,
+            "vm_frame_slot_bytes": tondo_vm::runtime::TEST_FRAME_SLOT_BYTES,
+            "vm_frame_loan_bytes": tondo_vm::runtime::TEST_FRAME_LOAN_BYTES,
+            "host_buffer_bytes": tondo_vm::runtime::TEST_HOST_BUFFER_BYTES,
+            "detached_value_bytes": tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES,
+            "sync_generation_bytes": tondo_vm::runtime::TEST_SYNC_GENERATION_BYTES,
+            "host_job_bytes": tondo_vm::runtime::TEST_HOST_JOB_BYTES,
+            "host_channel_bytes": tondo_vm::runtime::TEST_HOST_CHANNEL_BYTES,
+            "text_diff_memory_model": tondo_compiler::test_limits::TEXT_DIFF_MEMORY_MODEL,
+            "text_diff_record_bytes": tondo_compiler::test_limits::TEXT_DIFF_RECORD_BYTES,
+            "text_diff_hunk_bytes": tondo_compiler::test_limits::TEXT_DIFF_HUNK_BYTES,
+            "text_diff_transfer_model": tondo_compiler::test_limits::TEXT_DIFF_TRANSFER_MODEL,
+            "assertion_diagnostic_model": tondo_compiler::test_limits::ASSERTION_DIAGNOSTIC_MODEL,
+            "shrink_memory_model": tondo_compiler::test_limits::SHRINK_MEMORY_MODEL,
+            "text_output_memory_model": tondo_compiler::test_limits::TEXT_OUTPUT_MEMORY_MODEL,
+            "generation_id_record_bytes": tondo_compiler::test_limits::GENERATION_ID_RECORD_BYTES,
+            "tolerance_error_result_bytes": tondo_compiler::test_limits::TOLERANCE_ERROR_RESULT_BYTES,
+            "temp_error_result_bytes": tondo_compiler::test_limits::TEMP_ERROR_RESULT_BYTES,
+            "generation_error_result_bytes": tondo_compiler::test_limits::GENERATION_ERROR_RESULT_BYTES,
+            "temporary_root_model": tondo_compiler::test_temporaries::TEMPORARY_ROOT_MODEL,
+            "process_isolation_model": test_processes::PROCESS_ISOLATION_MODEL,
+            "vm_task_bytes": tondo_vm::runtime::TEST_TASK_BYTES,
+            "vm_task_scope_bytes": tondo_vm::runtime::TEST_TASK_SCOPE_BYTES,
+            "vm_scheduler_value_bytes": tondo_vm::runtime::TEST_SCHEDULER_VALUE_BYTES,
+            "vm_select_base_bytes": tondo_vm::runtime::TEST_SELECT_BASE_BYTES,
+            "vm_select_arm_bytes": tondo_vm::runtime::TEST_SELECT_ARM_BYTES,
+            "vm_cleanup_base_bytes": tondo_vm::runtime::TEST_CLEANUP_BASE_BYTES,
+            "vm_scheduler_handle_bytes": tondo_vm::runtime::TEST_SCHEDULER_HANDLE_BYTES,
+            "vm_executor_worker_bytes": tondo_vm::runtime::TEST_EXECUTOR_WORKER_BYTES,
+            "vm_heap_objects": vm_defaults.max_vm_heap_objects,
+            "vm_entry_instructions": tondo_vm::runtime::TEST_ENTRY_INSTRUCTIONS,
+            "vm_containment_instructions": tondo_vm::runtime::TEST_CONTAINMENT_INSTRUCTIONS,
+            "evidence_work": envelope.work(),
+            "evidence_metadata_bytes": envelope.metadata(),
+            "artifact_count": envelope.artifact_count(),
+            "snapshot_count": envelope.snapshot_count(),
+        });
+        resource_profile["host_argument_snapshot"] = serde_json::json!({
+            "model": tondo_vm::runtime::TEST_SNAPSHOT_MEMORY_MODEL,
+            "depth": tondo_vm::runtime::TEST_SNAPSHOT_MAX_DEPTH,
+            "frame_bytes": tondo_vm::runtime::TEST_SNAPSHOT_FRAME_BYTES,
+            "string_import_model": tondo_vm::runtime::TEST_STRING_IMPORT_MEMORY_MODEL,
+            "host_return_model": tondo_vm::runtime::TEST_HOST_RETURN_MEMORY_MODEL,
+            "fixed_host_return_model": tondo_compiler::test_limits::FIXED_HOST_RETURN_MEMORY_MODEL,
+            "collection_host_return_model": tondo_compiler::test_limits::COLLECTION_HOST_RETURN_MEMORY_MODEL,
+            "channel_receive_model": tondo_compiler::test_limits::CHANNEL_RECEIVE_MEMORY_MODEL,
+            "channel_endpoint_model": tondo_compiler::test_limits::CHANNEL_ENDPOINT_MEMORY_MODEL,
+            "channel_completion_model": tondo_compiler::test_limits::CHANNEL_COMPLETION_MEMORY_MODEL,
+            "sync_guard_return_model": tondo_compiler::test_limits::SYNC_GUARD_RETURN_MEMORY_MODEL,
+            "sync_wait_return_model": tondo_compiler::test_limits::SYNC_WAIT_RETURN_MEMORY_MODEL,
+            "sync_value_return_model": tondo_compiler::test_limits::SYNC_VALUE_RETURN_MEMORY_MODEL,
+            "host_import_model": tondo_vm::runtime::TEST_HOST_IMPORT_MEMORY_MODEL,
+            "host_import_frame_bytes": tondo_vm::runtime::TEST_HOST_IMPORT_FRAME_BYTES,
+            "host_import_admission_bytes": tondo_vm::runtime::TEST_HOST_IMPORT_ADMISSION_BYTES,
+            "worker_host_import_context_bytes": tondo_vm::runtime::TEST_WORKER_HOST_IMPORT_CONTEXT_BYTES,
+            "host_import_max_depth": tondo_vm::runtime::TEST_SNAPSHOT_MAX_DEPTH,
+            "detached_walk_frame_bytes": tondo_vm::runtime::TEST_DETACHED_WALK_FRAME_BYTES,
+            "job_argument_model": tondo_vm::runtime::TEST_HOST_JOB_ARGUMENT_MODEL,
+            "text_measure_model": tondo_vm::runtime::TEST_TEXT_MEASURE_MEMORY_MODEL,
+        });
+        resource_profile["place_validation"] = serde_json::json!({
+            "model": tondo_vm::runtime::TEST_PLACE_MEMORY_MODEL,
+            "path_bytes": tondo_vm::runtime::TEST_PLACE_PATH_BYTES,
+            "component_bytes": tondo_vm::runtime::TEST_PLACE_COMPONENT_BYTES,
+            "index_bytes": tondo_vm::runtime::TEST_PLACE_INDEX_BYTES,
+        });
+        resource_profile["slice_memory_model"] = tondo_vm::runtime::TEST_SLICE_MEMORY_MODEL.into();
+        resource_profile["assertion_display_model"] =
+            tondo_vm::runtime::TEST_ASSERTION_DISPLAY_MODEL.into();
         let hash = tondo_compiler::artifact::sha256(
             &serde_json::to_vec(&resource_profile)
                 .map_err(|error| TestCommandError::Internal(error.to_string()))?,
@@ -3594,6 +4081,7 @@ fn build_test_list(
         },
         identity,
     )?;
+    let mut suites = BTreeMap::new();
     let tests = entries
         .iter()
         .map(|entry| {
@@ -3602,9 +4090,27 @@ fn build_test_list(
                 .resolution
                 .owners_for(Some(entry.logical_path()))
                 .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            let ancestors = suite_ids(entry);
+            for (index, id) in ancestors.iter().enumerate() {
+                suites.entry(id.clone()).or_insert_with(|| {
+                    let (package, module, path) = identity_parts(id);
+                    let mut suite = TestNode::new(
+                        id.clone(),
+                        index.checked_sub(1).map(|parent| ancestors[parent].clone()),
+                        package,
+                        ResultNodeKind::Suite,
+                        module,
+                        id.rsplit("::").next().expect("a suite ID has a name"),
+                        Vec::new(),
+                    );
+                    suite.path = path;
+                    suite.owners = owners.clone();
+                    suite
+                });
+            }
             let mut node = TestNode::new(
                 entry.id().to_owned(),
-                None,
+                ancestors.last().cloned(),
                 package,
                 ResultNodeKind::Test,
                 module,
@@ -3623,7 +4129,7 @@ fn build_test_list(
             sha256: snapshots.before_sha256.clone(),
         },
         entries.iter().map(|entry| entry.id().to_owned()).collect(),
-        Vec::new(),
+        suites.into_values().collect(),
         tests,
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))
@@ -3648,6 +4154,20 @@ fn report_metadata(
     metadata.limits.jobs = plan.jobs;
     metadata.limits.timeout_ms = plan.timeout_ms;
     metadata.inputs.public_sha256 = identity.inputs.public_sha256().to_owned();
+    metadata.inputs.secret_profile_sha256 =
+        identity.inputs.secret_profile_sha256().map(str::to_owned);
+    metadata.inputs.secret_count = identity.inputs.secret_count();
+    metadata.inputs.reproducibility = match identity.inputs.reproducibility() {
+        tondo_compiler::test_inputs::TestReproducibility::Closed => {
+            tondo_compiler::test_report::InputReproducibility::Closed
+        }
+        tondo_compiler::test_inputs::TestReproducibility::SecretDependentVersioned => {
+            tondo_compiler::test_report::InputReproducibility::SecretDependentVersioned
+        }
+        tondo_compiler::test_inputs::TestReproducibility::SecretDependentUnversioned => {
+            tondo_compiler::test_report::InputReproducibility::SecretDependentUnversioned
+        }
+    };
     metadata.limits.resource_profile_sha256 = identity.resource_profile_sha256.clone();
     metadata.policy.deny_skips = plan.deny_skips;
     metadata.policy.allow_flaky = plan.allow_flaky;
@@ -3788,8 +4308,17 @@ fn build_test_report(
                 .collect::<Vec<_>>();
             selected.sort_by_key(|attempt| (attempt.iteration, attempt.round));
             if selected.is_empty() {
+                let prefix = format!("{id}::");
+                let cause = attempts.iter().find_map(|attempt| {
+                    attempt
+                        .id
+                        .starts_with(&prefix)
+                        .then_some(attempt.error.as_ref())
+                        .flatten()
+                });
+                let detail = cause.map_or_else(String::new, |error| format!(": {error}"));
                 return Err(TestCommandError::Internal(format!(
-                    "runtime did not return suite `{id}`"
+                    "runtime did not return suite `{id}`{detail}"
                 )));
             }
             let attempts = selected
@@ -4080,8 +4609,10 @@ fn failure_record(source: &CliAttempt) -> Option<FailureRecord> {
         return Some(FailureRecord {
             kind: kind.into(),
             code: error.code().map(str::to_owned),
+            error_type: error.error_type().map(str::to_owned),
             message: error.to_string().replace(['\r', '\n'], " "),
-            source: None,
+            source: error.source().cloned(),
+            stack: Vec::new(),
         });
     }
     let (kind, code, message) = match source.report.terminal() {
@@ -4100,8 +4631,10 @@ fn failure_record(source: &CliAttempt) -> Option<FailureRecord> {
     Some(FailureRecord {
         kind: kind.into(),
         code,
+        error_type: None,
         message: message.replace(['\r', '\n'], " "),
         source: None,
+        stack: Vec::new(),
     })
 }
 
@@ -4153,10 +4686,18 @@ fn attempt_artifact_store(
         "{}-{}-{}-{}",
         attempt.id, attempt.iteration, attempt.round, index
     );
+    // A suite can retain both setup and teardown evidence. The store must
+    // admit the independently bounded records already accepted by its worker.
+    let max_items = tondo_compiler::test_limits::LimitProfile::default()
+        .artifact_count()
+        .checked_mul(2)
+        .and_then(|count| count.checked_add(attempt.diagnostic_artifacts.len() as u64))
+        .and_then(|count| u32::try_from(count).ok())
+        .ok_or_else(|| TestCommandError::Internal("artifact item budget overflows".into()))?;
     tondo_compiler::test_artifacts::ArtifactStore::new(
         &root,
         identity,
-        tondo_compiler::test_artifacts::ArtifactLimits::new(max_bytes, 64),
+        tondo_compiler::test_artifacts::ArtifactLimits::new(max_bytes, max_items),
     )
     .map(Some)
     .map_err(|error| TestCommandError::Internal(error.to_string()))
@@ -4692,6 +5233,48 @@ fn validate_source_extension(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn worker_containment_closes_inherited_pipes_after_leader_exit_and_forced_timeout() {
+        let root = env::var_os("TONDO_TEST_PROCESS_CGROUP")
+            .map(PathBuf::from)
+            .expect(
+                "process lifecycle tests require an explicit delegated TONDO_TEST_PROCESS_CGROUP",
+            );
+        let provider = test_processes::prepare(Some(&root), true).unwrap().unwrap();
+        for (script, timeout, normal) in [
+            (
+                "read ready; /bin/sleep 60 & printf out; printf err >&2; exit 0",
+                10_000,
+                true,
+            ),
+            ("read ready; /bin/sleep 60 & wait", 50, false),
+        ] {
+            let mut group = provider.create().unwrap();
+            assert!(test_processes::validate_worker(group.path()).is_err());
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", script])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            group.admit(child.id()).unwrap();
+            child.stdin.take().unwrap().write_all(b"ready\n").unwrap();
+            let outcome =
+                wait_worker_controlled(child, Some(timeout), None, None, Some(&mut group));
+            if normal {
+                let (_, stdout, stderr) = outcome.unwrap();
+                assert_eq!(stdout, b"out");
+                assert_eq!(stderr, b"err");
+            } else {
+                assert!(matches!(outcome, Err(RunError::Timeout)), "{outcome:?}");
+            }
+            assert!(!group.path().exists());
+            group.close().unwrap();
+        }
+    }
+
     fn arguments(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
     }
@@ -4748,7 +5331,7 @@ mod tests {
         fs::create_dir_all(root.join("tests")).unwrap();
         fs::write(root.join("src/main.to"), b"fn main() {}\n").unwrap();
         fs::write(root.join("tests/smoke.to"), source).unwrap();
-        fs::write(root.join("tondo.toml"), "[package]\nname = \"cli\"\n").unwrap();
+        fs::write(root.join("tondo.toml"), "[package]\nname = \"cli\"\n[target]\ncapabilities = [\"console\", \"filesystem\", \"clock\", \"environment\", \"threads\"]\n").unwrap();
         let discovered = project_discovery::discover_for_tests(&root).unwrap();
         let project =
             ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes).unwrap();
@@ -4819,6 +5402,7 @@ mod tests {
             &loaded.project,
             loaded.production.as_ref(),
             Some(&root.join("tondo.test.toml")),
+            loaded.documents.test_dependencies.as_deref(),
         )
         .unwrap();
         let supplied = loaded
@@ -4859,8 +5443,26 @@ mod tests {
             store.canonical_bytes().unwrap(),
         )
         .unwrap();
-        let snapshots = load_snapshot_inputs(&root, &request, &plan, false).unwrap();
-        let input = WorkerInput::capture(&request, &plan, &snapshots, &entries).unwrap();
+        let snapshots =
+            load_snapshot_inputs(&root, loaded.project.root_package_id(), &plan, false).unwrap();
+        let execution = test_cli::parse(&[OsString::from("test")]).unwrap();
+        let ownership = resolve_ownership(&execution, &root).unwrap();
+        let identity = TestInvocationIdentity::capture(
+            &loaded.documents,
+            &supplied,
+            &plan,
+            &execution,
+            &snapshots,
+            &ownership,
+        )
+        .unwrap();
+        let captured = test_inputs::CapturedInputs::capture(
+            &identity.inputs,
+            &snapshots,
+            plan.limits().memory_bytes(),
+        )
+        .unwrap();
+        let input = WorkerInput::capture(&request, &plan, &snapshots, &entries, &captured).unwrap();
         let encoded = Arc::new(input.encode().unwrap());
         let revision = diagnostic_source_revision(&request);
         let context = DiagnosticWorkerContext {
@@ -4870,6 +5472,11 @@ mod tests {
             shard: "all",
             invocation: 0,
         };
+        // Runtime filesystem providers belong to the coordinator, independently
+        // of the source project that has already been compiled.
+        let worker_project = root.with_extension("worker-project");
+        fs::create_dir(&worker_project).unwrap();
+        let temporary_filesystem = input.temporary_filesystem;
         // No worker can reconstruct the invocation from these paths now.
         fs::remove_dir_all(&root).unwrap();
         let phase_limits = test_deadline::Limits {
@@ -4877,8 +5484,18 @@ mod tests {
             setup: 10_000,
             teardown: 10_000,
         };
-        let result =
-            spawn_test_worker(encoded, &ids, Some(10_000), phase_limits, false, &context).unwrap();
+        let result = spawn_test_worker(
+            &worker_project,
+            None,
+            temporary_filesystem,
+            encoded,
+            &ids,
+            Some(10_000),
+            phase_limits,
+            false,
+            &context,
+        )
+        .unwrap();
         let response = &result.leaves[&ids[0]];
         assert_eq!(response.status, "passed", "{:?}", response.error);
         assert!(response.error.is_none());
@@ -4896,6 +5513,9 @@ mod tests {
             .blocks
             .clear();
         let result = spawn_test_worker(
+            &worker_project,
+            None,
+            temporary_filesystem,
             Arc::new(invalid.encode().unwrap()),
             &ids,
             Some(10_000),
@@ -4917,6 +5537,9 @@ mod tests {
         let mut revision_context = context;
         revision_context.source_revision = "wrong-source-revision";
         let result = spawn_test_worker(
+            &worker_project,
+            None,
+            temporary_filesystem,
             Arc::new(bytes),
             &ids,
             Some(10_000),
@@ -4943,6 +5566,9 @@ mod tests {
             .unwrap()
             .insert("golden".into(), "different".into());
         let result = spawn_test_worker(
+            &worker_project,
+            None,
+            temporary_filesystem,
             Arc::new(changed.encode().unwrap()),
             &ids,
             Some(10_000),
@@ -4952,6 +5578,13 @@ mod tests {
         )
         .unwrap();
         assert_ne!(result.leaves[&ids[0]].status, "passed");
+        assert_eq!(
+            fs::read_dir(worker_project.join("target/.tondo-test-root"))
+                .unwrap()
+                .count(),
+            0
+        );
+        fs::remove_dir_all(worker_project).unwrap();
     }
 
     #[test]
@@ -5003,10 +5636,14 @@ mod tests {
     #[test]
     fn closed_worker_input_rejects_drift_missing_identity_and_oversize() {
         let input = WorkerInput {
+            source_files: BTreeMap::new(),
             format: WORKER_INPUT_FORMAT.into(),
             source_revision: "1".repeat(64),
             target: BuildTarget::vm_hosted().name().into(),
+            temporary_filesystem: false,
+            process_isolation: false,
             program: tondo_vm::bytecode::BytecodeProgram {
+                reflection: Default::default(),
                 types: Vec::new(),
                 nominals: Vec::new(),
                 callables: Vec::new(),
@@ -5018,13 +5655,33 @@ mod tests {
             output_bytes: 4096,
             artifact_bytes: 4096,
             snapshot_bytes: 4096,
+            virtual_timers: 1024,
             entries: Vec::new(),
             expected: BTreeMap::new(),
+            runtime_inputs: test_inputs::CapturedInputs::default(),
         };
         let bytes = input.encode().unwrap();
         let hash = tondo_compiler::artifact::sha256(&bytes);
         let read = WorkerInput::read(bytes.as_slice(), &hash, bytes.len()).unwrap();
         assert_eq!(read.encode().unwrap(), bytes);
+        for (field, expected) in [
+            ("max_steps", "invalid VM limit `max_steps`"),
+            ("virtual_timers", "virtual-timers budget must be positive"),
+            ("output_bytes", "output budget must be positive"),
+            ("artifact_bytes", "artifact-bytes budget must be positive"),
+            ("snapshot_bytes", "snapshot-bytes budget must be positive"),
+        ] {
+            let mut invalid = serde_json::to_value(&input).unwrap();
+            if field == "max_steps" {
+                invalid["limits"][field] = 0.into();
+            } else {
+                invalid[field] = 0.into();
+            }
+            let invalid = serde_json::to_vec(&invalid).unwrap();
+            let hash = tondo_compiler::artifact::sha256(&invalid);
+            let error = WorkerInput::read(invalid.as_slice(), &hash, invalid.len()).unwrap_err();
+            assert_eq!(error, expected, "{field}");
+        }
         assert!(
             WorkerInput::read(bytes.as_slice(), "", bytes.len())
                 .unwrap_err()
@@ -5603,7 +6260,9 @@ mod tests {
             status: RuntimeStatus::FailedError,
             report: report.clone(),
             error: Some(RunError::Error {
-                code: "E-test".into(),
+                code: Some("E-test".into()),
+                error_type: "model.TestError".into(),
+                source: None,
                 message: "bad\nvalue".into(),
             }),
             snapshot_updates: Vec::new(),
@@ -5880,7 +6539,8 @@ mod tests {
         let project =
             ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes).unwrap();
         let error =
-            load_test_project_plan(&project, None, Some(Path::new("tondo.test.json"))).unwrap_err();
+            load_test_project_plan(&project, None, Some(Path::new("tondo.test.json")), None)
+                .unwrap_err();
         assert!(matches!(
             error,
             TestCommandError::Usage(message) if message.contains("JSON plans are unsupported")
@@ -5909,7 +6569,9 @@ mod tests {
 
         let errors = [
             RunError::Error {
-                code: "T1".into(),
+                code: Some("T1".into()),
+                error_type: "model.TestError".into(),
+                source: None,
                 message: "error".into(),
             },
             RunError::Panic {
@@ -5947,6 +6609,8 @@ mod tests {
         ] {
             assert!(
                 WorkerError {
+                    source: None,
+                    error_type: None,
                     kind: kind.into(),
                     code: None,
                     message: "wire error".into(),

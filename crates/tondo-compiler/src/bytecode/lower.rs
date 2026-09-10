@@ -20,6 +20,9 @@ use crate::mir::{
 };
 use crate::resolve::{MemberOwner, ResolvedProgram, SymbolId, SymbolKind};
 use crate::source::Span;
+
+#[path = "reflection.rs"]
+mod reflection;
 use crate::types::{
     Assignability, CursorMode, FunctionType, IntrinsicType, NumericConversion, ParameterMode,
     ScalarType, TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
@@ -89,11 +92,44 @@ pub fn lower_to_bytecode(
     mir: &MirProgram,
     limits: BytecodeLoweringLimits,
 ) -> Result<bc::BytecodeProgram, BytecodeError> {
+    lower_with_entry(resolved, hir, mir, limits, None)
+}
+
+/// Lower a closed provider entry and the callable instances it references.
+/// Declarations and constants retain their normal typed verification; unused
+/// ordinary functions and bootstrap host signatures are not executable roots.
+pub fn lower_entry_to_bytecode(
+    resolved: &ResolvedProgram,
+    hir: &HirProgram,
+    mir: &MirProgram,
+    limits: BytecodeLoweringLimits,
+    entry: HirCallableId,
+) -> Result<bc::BytecodeProgram, BytecodeError> {
+    let callable = hir
+        .callable(entry)
+        .ok_or_else(|| BytecodeError::construction("entry", "callable is missing"))?;
+    if callable.generic_arity() != 0 || mir.function(entry).is_none() {
+        return Err(BytecodeError::construction(
+            "entry",
+            "entry must have a concrete function body",
+        ));
+    }
+    lower_with_entry(resolved, hir, mir, limits, Some(entry))
+}
+
+fn lower_with_entry(
+    resolved: &ResolvedProgram,
+    hir: &HirProgram,
+    mir: &MirProgram,
+    limits: BytecodeLoweringLimits,
+    entry: Option<HirCallableId>,
+) -> Result<bc::BytecodeProgram, BytecodeError> {
     verify_mir(resolved, hir, mir).map_err(|error| {
         BytecodeError::construction("MIR admission", format!("input MIR is invalid: {error}"))
     })?;
 
-    let mut monomorphization = monomorphize(resolved, hir, mir, limits.max_generic_instantiations)?;
+    let mut monomorphization =
+        monomorphize(resolved, hir, mir, limits.max_generic_instantiations, entry)?;
     let nominal_ids = nominal_ids(hir, limits.max_nominals)?;
     let callable_ids = callable_ids(&monomorphization.callables, limits.max_callables)?;
     let function_ids = function_ids(&monomorphization.functions, limits.max_functions)?;
@@ -160,7 +196,8 @@ pub fn lower_to_bytecode(
     };
 
     let mut program = bc::BytecodeProgram {
-        types: catalog.types,
+        reflection: Default::default(),
+        types: std::mem::take(&mut catalog.types),
         nominals,
         callables,
         constants,
@@ -176,6 +213,15 @@ pub fn lower_to_bytecode(
     specialize_terminal_fallbacks(&mut program)?;
     specialize_defer_guards(&mut program)?;
     specialize_iterator_exhaustion_guards(&mut program)?;
+    program.reflection = reflection::lower(
+        resolved,
+        hir,
+        &mut monomorphization,
+        &catalog,
+        &callable_ids,
+        &program,
+        limits.max_types,
+    )?;
     match bc::verify_bytecode_with_limits(
         &program,
         bc::BytecodeVerificationLimits {
@@ -553,6 +599,7 @@ fn monomorphize(
     hir: &HirProgram,
     mir: &MirProgram,
     generic_limit: u32,
+    entry: Option<HirCallableId>,
 ) -> Result<Monomorphization, BytecodeError> {
     let mut interner = hir.interner().clone();
     let mut callables = BTreeSet::new();
@@ -565,6 +612,7 @@ fn monomorphize(
     for callable in hir
         .callables()
         .filter(|callable| callable.generic_arity() == 0)
+        .filter(|callable| entry.is_none_or(|entry| callable.id() == entry))
     {
         register_instance(
             hir,
@@ -584,6 +632,7 @@ fn monomorphize(
     for closure in hir
         .closures()
         .filter(|closure| closure.generic_arity() == 0)
+        .filter(|_| entry.is_none())
     {
         register_instance(
             hir,
@@ -622,6 +671,7 @@ fn monomorphize(
                 &mut functions,
                 &mut pending,
                 &mut dispatches,
+                &mut prelude_dispatches,
             )?;
         }
     }
@@ -672,6 +722,7 @@ fn monomorphize(
                     &mut functions,
                     &mut pending,
                     &mut dispatches,
+                    &mut prelude_dispatches,
                 )?,
                 FunctionReference::PreludeTrait { method, .. } => {
                     if !has_intrinsic_prelude_dispatch(hir, &mut interner, method, &arguments)? {
@@ -812,8 +863,14 @@ fn register_reference(
     functions: &mut BTreeSet<ExecutableInstance>,
     pending: &mut BTreeSet<ExecutableInstance>,
     dispatches: &mut BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &mut BTreeMap<PreludeTraitInstance, CallableInstance>,
 ) -> Result<(), BytecodeError> {
-    let target = resolve_source_trait_dispatch(resolved, hir, interner, &reference)?;
+    let target =
+        if let Some(target) = resolve_console_read_all(resolved, hir, interner, &reference)? {
+            Some(target)
+        } else {
+            resolve_source_trait_dispatch(resolved, hir, interner, &reference)?
+        };
     let target = if let Some(target) = target {
         if let Some(existing) = dispatches.get(&reference) {
             if existing != &target {
@@ -829,6 +886,26 @@ fn register_reference(
     } else {
         reference
     };
+    if let Some(value_type) = assertion_display_type(&target) {
+        let method = HirPreludeTraitMethod::Display;
+        if !has_intrinsic_prelude_dispatch(hir, interner, method, &[value_type])? {
+            register_prelude_reference(
+                hir,
+                mir,
+                interner,
+                PreludeTraitInstance {
+                    method,
+                    arguments: vec![value_type],
+                },
+                generic_limit,
+                generic_count,
+                callables,
+                functions,
+                pending,
+                prelude_dispatches,
+            )?;
+        }
+    }
     register_instance(
         hir,
         mir,
@@ -840,6 +917,65 @@ fn register_reference(
         functions,
         pending,
     )
+}
+
+/// The concrete console adapter can check its complete buffered input before
+/// consuming any bytes. Select that implementation after specialization, also
+/// for calls reached through generic wrappers and function values.
+fn resolve_console_read_all(
+    resolved: &ResolvedProgram,
+    hir: &HirProgram,
+    interner: &mut TypeInterner,
+    reference: &CallableInstance,
+) -> Result<Option<CallableInstance>, BytecodeError> {
+    let HirCallableId::Symbol(symbol) = reference.callable else {
+        return Ok(None);
+    };
+    let Some(symbol) = resolved.symbol(symbol) else {
+        return Ok(None);
+    };
+    if symbol.identity().package().as_str() != "toolchain:std:0.1-bootstrap"
+        || symbol.identity().module().as_str() != "io"
+        || symbol.name().as_str() != "readAll"
+    {
+        return Ok(None);
+    }
+    let [reader] = reference.arguments.as_slice() else {
+        return Ok(None);
+    };
+    if !matches!(
+        interner
+            .kind(*reader)
+            .map_err(|error| BytecodeError::construction(
+                "I/O specialization",
+                error.to_string()
+            ))?,
+        TypeKind::Intrinsic {
+            constructor: IntrinsicType::Reader,
+            ..
+        }
+    ) {
+        return Ok(None);
+    }
+    let target = CallableInstance {
+        callable: HirCallableId::Host(HirBootstrapHostFunction::IoReadAll),
+        arguments: Vec::new(),
+    };
+    verify_dispatch_signature(hir, interner, reference, &target, symbol.span())?;
+    Ok(Some(target))
+}
+
+fn assertion_display_type(instance: &CallableInstance) -> Option<TypeId> {
+    let index = match instance.callable {
+        HirCallableId::Host(
+            HirBootstrapHostFunction::TestingAssertEqual
+            | HirBootstrapHostFunction::TestingAssertNotEqual
+            | HirBootstrapHostFunction::TestingAssertErr,
+        ) => 0,
+        HirCallableId::Host(HirBootstrapHostFunction::TestingAssertOk) => 1,
+        _ => return None,
+    };
+    instance.arguments.get(index).copied()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1434,8 +1570,25 @@ impl TypeCatalog {
     ) -> Result<Self, BytecodeError> {
         let mut seeds = BTreeSet::new();
         collect_metadata_types(hir, &mut seeds);
-        for map in type_maps.values() {
+        for (instance, map) in type_maps {
+            seeds.extend(instance.arguments().iter().copied());
             seeds.extend(map.values().copied());
+        }
+        let mut nominal_payloads = BTreeMap::new();
+        for (_, declaration) in hir.declarations() {
+            let HirTypeDeclarationKind::Nominal(nominal) = declaration.kind() else {
+                continue;
+            };
+            let TypeKind::Nominal { identity, .. } = interner
+                .kind(nominal.self_type())
+                .map_err(|error| BytecodeError::construction("type catalog", error.to_string()))?
+            else {
+                return Err(BytecodeError::construction(
+                    "type catalog",
+                    "nominal declaration has no nominal self type",
+                ));
+            };
+            nominal_payloads.insert(identity.clone(), nominal_payload_types(nominal.shape()));
         }
         let mut opaque_witnesses = BTreeMap::new();
         let mut queue = seeds.iter().copied().collect::<VecDeque<_>>();
@@ -1448,6 +1601,25 @@ impl TypeCatalog {
                 if seeds.insert(child) {
                     ensure_count(seeds.len(), limit, None, "type table")?;
                     queue.push_back(child);
+                }
+            }
+            if let TypeKind::Nominal {
+                identity,
+                arguments,
+            } = &kind
+                && let Some(payloads) = nominal_payloads.get(identity)
+            {
+                // Every variant needs concrete trace metadata, including an
+                // inactive variant with no constructor in the executable body.
+                let substitution = TypeSubstitution::new(arguments.clone());
+                for payload in payloads {
+                    let concrete = substitution.apply(interner, *payload).map_err(|error| {
+                        BytecodeError::construction("type catalog", error.to_string())
+                    })?;
+                    if seeds.insert(concrete) {
+                        ensure_count(seeds.len(), limit, None, "type table")?;
+                        queue.push_back(concrete);
+                    }
                 }
             }
             if matches!(kind, TypeKind::OpaqueResult { .. }) {
@@ -1628,31 +1800,30 @@ impl TypeCatalog {
     }
 }
 
+fn nominal_payload_types(shape: &HirNominalShape) -> Vec<TypeId> {
+    match shape {
+        HirNominalShape::Newtype { underlying } => vec![*underlying],
+        HirNominalShape::Record { fields } => fields.iter().map(|field| field.ty()).collect(),
+        HirNominalShape::Enum { variants } => variants
+            .iter()
+            .flat_map(|variant| match variant.payload() {
+                HirVariantPayload::Unit => Vec::new(),
+                HirVariantPayload::Tuple(items) => items.clone(),
+                HirVariantPayload::Record(fields) => {
+                    fields.iter().map(|field| field.ty()).collect()
+                }
+            })
+            .collect(),
+    }
+}
+
 fn collect_metadata_types(hir: &HirProgram, types: &mut BTreeSet<TypeId>) {
     for (_, declaration) in hir.declarations() {
         let HirTypeDeclarationKind::Nominal(nominal) = declaration.kind() else {
             continue;
         };
         types.insert(nominal.self_type());
-        match nominal.shape() {
-            HirNominalShape::Newtype { underlying } => {
-                types.insert(*underlying);
-            }
-            HirNominalShape::Record { fields } => {
-                types.extend(fields.iter().map(|field| field.ty()));
-            }
-            HirNominalShape::Enum { variants } => {
-                for variant in variants {
-                    match variant.payload() {
-                        HirVariantPayload::Unit => {}
-                        HirVariantPayload::Tuple(items) => types.extend(items.iter().copied()),
-                        HirVariantPayload::Record(fields) => {
-                            types.extend(fields.iter().map(|field| field.ty()));
-                        }
-                    }
-                }
-            }
-        }
+        types.extend(nominal_payload_types(nominal.shape()));
     }
     for (_, constant) in hir.constants() {
         if let Some(value) = constant.evaluated() {
@@ -2527,6 +2698,25 @@ fn lower_callables(
             name.push(']');
         }
         output[id.index() as usize] = Some(bc::BytecodeCallable {
+            assertion_display: match instance {
+                ExecutableInstance::Named(named) => assertion_display_type(named)
+                    .map(|value_type| {
+                        let dispatch = PreludeTraitInstance {
+                            method: HirPreludeTraitMethod::Display,
+                            arguments: vec![value_type],
+                        };
+                        Ok::<_, BytecodeError>(bc::BytecodeAssertionDisplay {
+                            value_type: catalog.id(value_type)?,
+                            callable: monomorphization
+                                .prelude_dispatches
+                                .get(&dispatch)
+                                .map(|target| map_named_callable_instance(target, callable_ids))
+                                .transpose()?,
+                        })
+                    })
+                    .transpose()?,
+                ExecutableInstance::Closure(_) => None,
+            },
             name,
             generic_arity: 0,
             parameters: parameters
@@ -4354,6 +4544,7 @@ fn scalar_type(value: ScalarType) -> bc::BytecodeScalarType {
 
 fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
     match value {
+        IntrinsicType::Reflection(kind) => bc::BytecodeIntrinsicType::Reflection(kind),
         IntrinsicType::Array => bc::BytecodeIntrinsicType::Array,
         IntrinsicType::Map => bc::BytecodeIntrinsicType::Map,
         IntrinsicType::Set => bc::BytecodeIntrinsicType::Set,
@@ -4394,13 +4585,8 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::FsError => bc::BytecodeIntrinsicType::FsError,
         IntrinsicType::MathError => bc::BytecodeIntrinsicType::MathError,
         IntrinsicType::FloatTolerance => bc::BytecodeIntrinsicType::FloatTolerance,
-        IntrinsicType::FloatToleranceError => bc::BytecodeIntrinsicType::FloatToleranceError,
-        IntrinsicType::TextDiff => bc::BytecodeIntrinsicType::TextDiff,
         IntrinsicType::TempDirectory => bc::BytecodeIntrinsicType::TempDirectory,
-        IntrinsicType::TempError => bc::BytecodeIntrinsicType::TempError,
         IntrinsicType::Generator => bc::BytecodeIntrinsicType::Generator,
-        IntrinsicType::GenerationId => bc::BytecodeIntrinsicType::GenerationId,
-        IntrinsicType::GenerationError => bc::BytecodeIntrinsicType::GenerationError,
         IntrinsicType::Reader => bc::BytecodeIntrinsicType::Reader,
         IntrinsicType::Writer => bc::BytecodeIntrinsicType::Writer,
         IntrinsicType::IoLimits => bc::BytecodeIntrinsicType::IoLimits,
@@ -4617,9 +4803,16 @@ mod tests {
             parsed.diagnostics()
         );
         let packages = PackageGraph::loose(&sources, file).unwrap();
-        let (resolved, diagnostics) = resolve(&packages, &sources, [(file, &parsed)], 100)
-            .unwrap()
-            .into_parts();
+        let parsed_files =
+            crate::driver::bootstrap_parsed_for_test(&packages, &mut sources, file, parsed);
+        let (resolved, diagnostics) = resolve(
+            &packages,
+            &sources,
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
+            100,
+        )
+        .unwrap()
+        .into_parts();
         assert!(
             diagnostics.is_empty(),
             "source:\n{source}\n{diagnostics:#?}"
@@ -4627,7 +4820,7 @@ mod tests {
         let (hir, diagnostics) = lower_types(
             &packages,
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 100_000,
@@ -4640,7 +4833,7 @@ mod tests {
         assert!(diagnostics.is_empty());
         let (hir, diagnostics, complete) = check_expressions(
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             hir,
             ExpressionCheckLimits {
@@ -4655,6 +4848,605 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
         assert!(complete);
         (resolved, hir)
+    }
+
+    #[test]
+    fn reflection_public_primitive_queries_execute_without_a_host() {
+        let outcome = execute_outcome(
+            r#"
+import std.reflect
+fn run(): Bool {
+    let info = reflect.typeInfo[Int]()
+    assert(info.qualifiedName() == "Int")
+    assert(info.kind() == reflect.TypeKind.Primitive(reflect.PrimitiveKind.Int))
+    assert(info.id() == reflect.typeInfo[Int]().id())
+    assert(info.id() != reflect.typeInfo[String]().id())
+    let names = [info.id(): "integer", reflect.typeInfo[String]().id(): "text"]
+    assert(names[reflect.typeInfo[Int]().id()] == some("integer"))
+    assert(Set[info.id(), info.id()] == Set[reflect.typeInfo[Int]().id()])
+    assert(info.capabilities().contains(reflect.TypeCapability.Copy))
+    assert(info.fields().length() == 0)
+    assert(info.variants().length() == 0)
+    assert(info.genericArguments().length() == 0)
+    assert(info.tupleElements().length() == 0)
+    match info.function() {
+        none => true
+        some(_) => false
+    }
+}
+"#,
+            "run",
+        );
+        assert_eq!(outcome, VmOutcome::Returned(RuntimeValue::Bool(true)));
+    }
+
+    #[test]
+    fn reflection_public_records_retain_only_public_field_types_and_docs() {
+        let source = r#"
+import std.reflect
+pub type Hidden = { secret: Int }
+pub type Record[T] = {
+    /// Kept documentation.
+    /// Second line with λ.
+    @json.name("item") value: T,
+    priv hidden: Hidden
+}
+pub type Unrelated = { other: Bool }
+fn run(): Int {
+    let info = reflect.typeInfo[Record[String]]()
+    assert(info.kind() == reflect.TypeKind.Record)
+    assert(info.genericArguments()[0].kind() == reflect.TypeKind.Primitive(reflect.PrimitiveKind.String))
+    let field = info.fields()[0]
+    assert(field.name() == "value")
+    assert(field.ordinal() == 0)
+    assert(field.typeInfo().qualifiedName() == "String")
+    assert(field.docs() == some("Kept documentation.\nSecond line with λ."))
+    info.fields().length()
+}
+"#;
+        let program = lowered(source);
+        assert_eq!(program.reflection.types.len(), 2);
+        assert_eq!(program.reflection.fields.len(), 1);
+        let field = &program.reflection.fields[0];
+        assert_eq!(
+            (field.name.as_str(), field.ordinal, field.docs.as_deref()),
+            ("value", 0, Some("Kept documentation.\nSecond line with λ."))
+        );
+        assert_eq!(
+            program.reflection.types[field.ty as usize].qualified_name,
+            "String"
+        );
+        assert_eq!(
+            execute(&program, function_id(&program, "run"), &mut RejectingHost)
+                .unwrap()
+                .outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(1))
+        );
+    }
+
+    #[test]
+    fn reflection_public_applied_queries_preserve_concrete_arguments() {
+        let outcome = execute_outcome(
+            r#"
+import std.reflect
+fn describe[T](): reflect.TypeInfo { reflect.typeInfo[T]() }
+fn run(): Bool {
+    let info = describe[Array[Int]]()
+    assert(info.kind() == reflect.TypeKind.Applied(reflect.AppliedKind.Array))
+    assert(info.genericArguments().length() == 1)
+    info.genericArguments()[0].id() == reflect.typeInfo[Int]().id()
+}
+"#,
+            "run",
+        );
+        assert_eq!(outcome, VmOutcome::Returned(RuntimeValue::Bool(true)));
+    }
+
+    #[test]
+    fn reflection_public_metadata_is_deterministic_and_drops_removed_roots() {
+        let source = "import std.reflect\nfn run(): reflect.TypeInfo { reflect.typeInfo[Int]() }\n";
+        let first = lowered(source);
+        let second = lowered(source);
+        assert_eq!(first.reflection, second.reflection);
+        let removed = lowered("import std.reflect\nfn run(): Int { 42 }\n");
+        assert!(removed.reflection.types.is_empty());
+        assert!(
+            removed
+                .reflection
+                .calls
+                .iter()
+                .all(|call| call.root.is_none())
+        );
+        let changed = lowered(
+            "import std.reflect\nfn run(): reflect.TypeInfo { reflect.typeInfo[String]() }\n",
+        );
+        assert_ne!(
+            first.reflection.artifact_tag,
+            changed.reflection.artifact_tag
+        );
+    }
+
+    #[test]
+    fn reflection_entry_lowering_drops_queries_in_unreachable_functions() {
+        let (resolved, hir) = checked(
+            r#"
+import std.reflect
+fn live(): reflect.TypeInfo { reflect.typeInfo[Int]() }
+fn unused(): reflect.TypeInfo { reflect.typeInfo[String]() }
+fn empty(): Int { 42 }
+"#,
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let lower = |name| {
+            let symbol = resolved
+                .symbols()
+                .find(|symbol| symbol.name().as_str() == name)
+                .unwrap();
+            lower_entry_to_bytecode(
+                &resolved,
+                &hir,
+                &mir,
+                BytecodeLoweringLimits::default(),
+                HirCallableId::Symbol(symbol.id()),
+            )
+            .unwrap()
+        };
+        let live = lower("live");
+        assert_eq!(live.reflection.types.len(), 1);
+        assert_eq!(live.reflection.types[0].qualified_name, "Int");
+        assert!(
+            !live
+                .callables
+                .iter()
+                .any(|call| call.name.ends_with("::unused"))
+        );
+        let empty = lower("empty");
+        assert!(empty.reflection.is_empty());
+        assert_eq!(
+            execute(&empty, function_id(&empty, "empty"), &mut RejectingHost)
+                .unwrap()
+                .outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(42))
+        );
+    }
+
+    #[test]
+    fn reflection_public_handles_cross_frames_but_not_external_entry_arguments() {
+        let source = r#"
+import std.reflect
+fn produce(): reflect.TypeInfo { reflect.typeInfo[Int]() }
+fn consume(info: reflect.TypeInfo): String { info.qualifiedName() }
+fn run(): String { consume(produce()) }
+"#;
+        let first = lowered(source);
+        let changed = lowered(&source.replace("typeInfo[Int]", "typeInfo[String]"));
+        let VmOutcome::Returned(info) =
+            execute(&first, function_id(&first, "produce"), &mut RejectingHost)
+                .unwrap()
+                .outcome
+        else {
+            panic!("typeInfo must return");
+        };
+        let run = |program: &bc::BytecodeProgram, info| {
+            tondo_vm::runtime::execute_with_arguments(
+                program,
+                function_id(program, "consume"),
+                vec![info],
+                &mut RejectingHost,
+            )
+        };
+        assert_eq!(
+            execute(&first, function_id(&first, "run"), &mut RejectingHost)
+                .unwrap()
+                .outcome,
+            VmOutcome::Returned(RuntimeValue::String("Int".into()))
+        );
+        assert!(run(&first, info.clone()).is_err());
+        assert!(
+            run(&changed, info).is_err(),
+            "a foreign descriptor cannot index the receiving artifact"
+        );
+    }
+
+    #[test]
+    fn reflection_public_metadata_rejects_broken_roots_and_capabilities() {
+        let source = "import std.reflect\nfn run(): reflect.TypeInfo { reflect.typeInfo[Int]() }\n";
+        let program = lowered(source);
+        let mut malformed = program.clone();
+        malformed
+            .reflection
+            .calls
+            .iter_mut()
+            .find(|call| call.root.is_some())
+            .unwrap()
+            .root = Some(u32::MAX);
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("type reference")
+        );
+        let mut malformed = program.clone();
+        malformed.reflection.types[0].capabilities.clear();
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("capabilities")
+        );
+        let mut malformed = program.clone();
+        malformed
+            .reflection
+            .types
+            .push(program.reflection.types[0].clone());
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("unreachable")
+        );
+        let mut malformed = program;
+        malformed.reflection.calls.clear();
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("admitted query")
+        );
+    }
+
+    #[test]
+    fn reflection_public_function_describes_modes_variadic_tail_and_flags() {
+        let program = lowered(
+            r#"
+import std.reflect
+fn run(): reflect.TypeInfo {
+    reflect.typeInfo[unsafe fn(ref Int, mut String, var Bool, ...Byte): Int ! String suspends]()
+}
+"#,
+        );
+        use tondo_vm::reflection::{ReflectParameterMode as M, ReflectTypeKind as K};
+        let root = program
+            .reflection
+            .types
+            .iter()
+            .find(|ty| ty.kind == K::Function)
+            .unwrap();
+        let function = &program.reflection.functions[root.function.unwrap() as usize];
+        assert!(function.variadic && function.suspends && function.unsafe_);
+        let parameters = function
+            .parameters
+            .iter()
+            .map(|index| {
+                let parameter = &program.reflection.parameters[*index as usize];
+                (
+                    parameter.position,
+                    program.reflection.types[parameter.ty as usize]
+                        .qualified_name
+                        .as_str(),
+                    parameter.mode,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            parameters,
+            vec![
+                (0, "Int", M::Ref),
+                (1, "String", M::Mut),
+                (2, "Bool", M::Var),
+                (3, "Byte", M::Value)
+            ]
+        );
+        assert_eq!(
+            program.reflection.types[function.outcome as usize].qualified_name,
+            "Int ! String"
+        );
+        let mut malformed = program.clone();
+        malformed.reflection.functions[0].suspends = false;
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("signature")
+        );
+        let mut malformed = program;
+        malformed.reflection.parameters[0].mode = M::Value;
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("parameter descriptor")
+        );
+    }
+
+    #[test]
+    fn reflection_public_secondary_descriptors_execute_typed_queries() {
+        let program = lowered(
+            r#"
+import std.reflect
+pub enum Choice[T] {
+    Empty
+    Item(T)
+    Named { name: T }
+}
+pub type Sparse = { priv hidden: Int, visible: String }
+fn checkFunction(info: reflect.FunctionInfo): Bool {
+    assert(info.variadic())
+    assert(info.suspends())
+    assert(info.isUnsafe())
+    assert(info.outcome().qualifiedName() == "Int ! String")
+    let parameters = info.parameters()
+    assert(parameters.length() == 4)
+    assert(parameters[0].position() == 0)
+    assert(parameters[0].typeInfo().qualifiedName() == "Int")
+    assert(parameters[0].mode() == reflect.ParameterMode.Ref)
+    assert(parameters[1].mode() == reflect.ParameterMode.Mut)
+    assert(parameters[2].mode() == reflect.ParameterMode.Var)
+    assert(parameters[3].mode() == reflect.ParameterMode.Value)
+    assert(parameters[3].position() == 3)
+    parameters[3].typeInfo().qualifiedName() == "Byte"
+}
+fn run(): Bool {
+    let variants = reflect.typeInfo[Choice[String]]().variants()
+    assert(variants.length() == 3)
+    assert(variants[0].name() == "Empty")
+    assert(variants[0].ordinal() == 0)
+    assert(variants[0].payloadKind() == reflect.VariantPayloadKind.Unit)
+    assert(variants[0].tupleElements().length() == 0)
+    assert(variants[0].fields().length() == 0)
+    assert(variants[1].payloadKind() == reflect.VariantPayloadKind.Tuple)
+    assert(variants[1].tupleElements()[0].qualifiedName() == "String")
+    assert(variants[1].fields().length() == 0)
+    assert(variants[2].payloadKind() == reflect.VariantPayloadKind.Record)
+    assert(variants[2].tupleElements().length() == 0)
+    let fields = variants[2].fields()
+    assert(fields.length() == 1)
+    assert(fields[0].name() == "name")
+    assert(fields[0].ordinal() == 0)
+    assert(fields[0].typeInfo().qualifiedName() == "String")
+    assert(fields[0].docs() == none)
+    let sparse = reflect.typeInfo[Sparse]().fields()
+    assert(sparse.length() == 1)
+    assert(sparse[0].ordinal() == 1)
+    assert(sparse[0].name() == "visible")
+    let pure = reflect.typeInfo[fn(): Unit]().function()
+    match pure {
+        some(info) => {
+            assert(not info.variadic())
+            assert(not info.suspends())
+            assert(not info.isUnsafe())
+            assert(info.parameters().length() == 0)
+        }
+        none => panic("missing function")
+    }
+    match reflect.typeInfo[unsafe fn(ref Int, mut String, var Bool, ...Byte): Int ! String suspends]().function() {
+        some(info) => checkFunction(info)
+        none => false
+    }
+}
+"#,
+        );
+        assert_eq!(
+            execute(&program, function_id(&program, "run"), &mut RejectingHost)
+                .unwrap()
+                .outcome,
+            VmOutcome::Returned(RuntimeValue::Bool(true))
+        );
+        let mut malformed = program.clone();
+        malformed.reflection.variants[0].payload_kind =
+            tondo_vm::reflection::ReflectVariantPayloadKind::Record;
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("payload")
+        );
+        use tondo_vm::reflection::ReflectionOperation as Q;
+        let row = program
+            .reflection
+            .calls
+            .iter()
+            .position(|call| call.operation == Q::FieldName)
+            .unwrap();
+        let mut malformed = program.clone();
+        let receiver = malformed
+            .reflection
+            .calls
+            .iter()
+            .find(|call| call.operation == Q::VariantName)
+            .unwrap()
+            .callable;
+        let wrong_type = malformed.callables[receiver.index() as usize].parameters[0].ty;
+        let callable = malformed.reflection.calls[row].callable;
+        malformed.callables[callable.index() as usize].parameters[0].ty = wrong_type;
+        malformed.callables[callable.index() as usize].function_type =
+            malformed.callables[receiver.index() as usize].function_type;
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("receiver")
+        );
+        let mut malformed = program.clone();
+        malformed.callables[callable.index() as usize].outcome = wrong_type;
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("outcome")
+        );
+        let mut malformed = program;
+        malformed.reflection.calls.remove(row);
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("admitted query")
+        );
+    }
+
+    #[test]
+    fn meta_owned_request_executes_typed_input_with_fresh_state_and_bounded_import() {
+        let program = lowered(
+            r#"
+pub type Request = { names: Array[String], suffix: String }
+fn generate(request: Request): String {
+    var result = ""
+    for name in request.names {
+        result = "{result}{name}"
+    }
+    "{result}{request.suffix}"
+}
+"#,
+        );
+        let request = RuntimeValue::Record {
+            name: "Request".into(),
+            values: vec![
+                RuntimeValue::Array(vec![
+                    RuntimeValue::String("alpha".into()),
+                    RuntimeValue::String("β".into()),
+                ]),
+                RuntimeValue::String("!".into()),
+            ],
+        };
+        let entry = function_id(&program, "generate");
+        let run = |request, limits| {
+            tondo_vm::runtime::execute_with_owned_request(&program, entry, request, limits)
+        };
+        let first = run(request.clone(), Default::default()).unwrap();
+        assert_eq!(
+            first.outcome,
+            VmOutcome::Returned(RuntimeValue::String("alphaβ!".into()))
+        );
+        let second = run(request.clone(), Default::default()).unwrap();
+        assert_eq!(first.outcome, second.outcome);
+        assert_eq!(first.statistics, second.statistics);
+        assert!(
+            run(
+                RuntimeValue::String("wrong shape".into()),
+                Default::default()
+            )
+            .is_err()
+        );
+        assert!(
+            run(
+                RuntimeValue::Record {
+                    name: "Request".into(),
+                    values: vec![]
+                },
+                Default::default()
+            )
+            .is_err()
+        );
+        assert!(
+            run(
+                request.clone(),
+                VmLimits {
+                    max_heap_bytes: 1,
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .is_resource_limit()
+        );
+        assert!(
+            run(
+                request,
+                VmLimits {
+                    max_steps: 1,
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .is_resource_limit()
+        );
+    }
+
+    #[test]
+    fn reflection_public_nominal_payloads_and_structural_kinds_are_concrete() {
+        let program = lowered(
+            r#"
+import std.reflect
+pub enum Choice[T] {
+    Empty
+    Item(T)
+    Named { name: T, flag: Bool }
+}
+pub type Count = Int
+fn choice(): reflect.TypeInfo { reflect.typeInfo[Choice[String]]() }
+fn tuple(): reflect.TypeInfo { reflect.typeInfo[(Int, Bool)]() }
+fn union(): reflect.TypeInfo { reflect.typeInfo[Int | String]() }
+fn newtype(): reflect.TypeInfo { reflect.typeInfo[Count]() }
+fn optional(): reflect.TypeInfo { reflect.typeInfo[Int?]() }
+"#,
+        );
+        use tondo_vm::reflection::{
+            ReflectAppliedKind as A, ReflectPrimitiveKind as P, ReflectTypeKind as K,
+        };
+        for kind in [
+            K::Enum,
+            K::Tuple,
+            K::Union,
+            K::Newtype,
+            K::Applied(A::Option),
+        ] {
+            assert!(
+                program.reflection.types.iter().any(|ty| ty.kind == kind),
+                "{kind:?}"
+            );
+        }
+        assert_eq!(
+            program
+                .reflection
+                .variants
+                .iter()
+                .map(|v| v.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Empty", "Item", "Named"]
+        );
+        let item = &program.reflection.variants[1];
+        assert_eq!(
+            program.reflection.types[item.tuple_types[0] as usize].kind,
+            K::Primitive(P::String)
+        );
+        let named = &program.reflection.variants[2];
+        assert_eq!(named.record_fields.len(), 2);
+        let mut malformed = program.clone();
+        let string = malformed
+            .reflection
+            .types
+            .iter_mut()
+            .find(|ty| ty.kind == K::Primitive(P::String))
+            .unwrap();
+        string.kind = K::Primitive(P::Int);
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("kind or arguments")
+        );
+        let mut malformed = program.clone();
+        let int = malformed
+            .reflection
+            .types
+            .iter()
+            .position(|ty| ty.kind == K::Primitive(P::Int))
+            .unwrap() as u32;
+        malformed.reflection.fields[0].ty = int;
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("payload")
+        );
+        let mut malformed = program;
+        malformed.reflection.variants[1].tuple_types.clear();
+        assert!(
+            bc::verify_bytecode(&malformed)
+                .unwrap_err()
+                .message()
+                .contains("payload")
+        );
     }
 
     #[test]
@@ -6015,13 +6807,34 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
             nominal.identity != nominal.name && nominal.identity.ends_with(&nominal.name)
         }));
         assert_eq!(program.constants.len(), 1);
-        assert!(
-            program
-                .callables
+        // Bytes receiver contracts also expose the two compiler-owned
+        // conversions. Their bodies execute in the host; every other callable
+        // outside std must still have a local bytecode implementation.
+        let conversions = [
+            HirBootstrapHostFunction::BytesFromString.name(),
+            HirBootstrapHostFunction::BytesToString.name(),
+        ];
+        let external = program
+            .callables
+            .iter()
+            .filter(|callable| {
+                !callable.name.starts_with("std.") && callable.implementation.is_none()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            external
                 .iter()
-                .filter(|callable| !callable.name.starts_with("std."))
-                .all(|callable| callable.implementation.is_some())
+                .map(|callable| callable.name.as_str())
+                .collect::<Vec<_>>(),
+            conversions
         );
+        for conversion in external {
+            assert_eq!(conversion.parameters.len(), 1);
+            assert!(matches!(
+                program.types[conversion.outcome.index() as usize].kind,
+                bc::BytecodeTypeKind::Result { .. }
+            ));
+        }
         assert!(program.types.iter().any(|ty| matches!(
             ty.kind,
             bc::BytecodeTypeKind::Nominal {
@@ -6575,6 +7388,58 @@ fn execute(): String {
     }
 
     #[test]
+    fn inactive_generic_payload_catalog_closure_obeys_the_exact_type_limit() {
+        let source = "type Payload = { number: Int }\n\
+            enum Choice[T] { Empty, Items(Array[T]) }\n\
+            fn main(): Choice[Payload] { Choice.Empty }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let program =
+            lower_to_bytecode(&resolved, &hir, &mir, BytecodeLoweringLimits::default()).unwrap();
+        let payload = program
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(&ty.kind,
+            bc::BytecodeTypeKind::Nominal { nominal: Some(nominal), .. }
+                if program.nominals[nominal.index() as usize].name == "Payload")
+            })
+            .unwrap();
+        assert!(program.types.iter().any(|ty| matches!(&ty.kind,
+            bc::BytecodeTypeKind::Intrinsic { constructor: bc::BytecodeIntrinsicType::Array, arguments }
+                if arguments == &[bc::BytecodeTypeId::new(payload as u32)])));
+        let count = program.types.len() as u32;
+        let exact = lower_to_bytecode(
+            &resolved,
+            &hir,
+            &mir,
+            BytecodeLoweringLimits {
+                max_types: count,
+                ..BytecodeLoweringLimits::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(exact, program);
+        let error = lower_to_bytecode(
+            &resolved,
+            &hir,
+            &mir,
+            BytecodeLoweringLimits {
+                max_types: count - 1,
+                ..BytecodeLoweringLimits::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            BytecodeError::NodeLimit {
+                resource: "type table",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn generic_nominals_and_projection_types_are_concrete_per_instance() {
         let source = "type Box[T] = { value: T }\n\
                       fn unwrap[T](boxed: Box[T]): T {\n\
@@ -7116,7 +7981,7 @@ fn execute(): String {
                     panic!("console print must receive one String")
                 };
                 self.output.push_str(text);
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
         }
 
@@ -11476,15 +12341,15 @@ fn execute(): String {
                 };
                 self.output.push_str(text);
                 self.calls += 1;
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
         }
 
         let program = lowered(
             "import std.console\n\
              fn main() {\n\
-                 console.print(\"Hello\")\n\
-                 console.print(\", Tondo!\")\n\
+                 _ = console.print(\"Hello\")\n\
+                 _ = console.print(\", Tondo!\")\n\
              }\n",
         );
         let entry = function_id(&program, "main");
@@ -11494,6 +12359,22 @@ fn execute(): String {
         assert_eq!(execution.outcome, VmOutcome::Returned(RuntimeValue::Unit));
         assert_eq!(host.calls, 2);
         assert_eq!(host.output, "Hello, Tondo!");
+    }
+
+    #[test]
+    fn runtime_measures_string_scalars_and_bytes_without_a_host_snapshot() {
+        let program = lowered(
+            "fn measure(value: String): (Int, Int) {\n (value.length(), value.byteLength())\n}\nfn main(): ((Int, Int), (Int, Int)) {\n (measure(\"é🙂é\"), measure(\"\"))\n}\n",
+        );
+        let entry = function_id(&program, "main");
+        let result = execute(&program, entry, &mut RejectingHost).unwrap();
+        assert_eq!(
+            result.outcome,
+            VmOutcome::Returned(RuntimeValue::Tuple(vec![
+                RuntimeValue::Tuple(vec![RuntimeValue::Integer(4), RuntimeValue::Integer(9)]),
+                RuntimeValue::Tuple(vec![RuntimeValue::Integer(0), RuntimeValue::Integer(0)]),
+            ]))
+        );
     }
 
     #[test]
@@ -11514,7 +12395,7 @@ fn execute(): String {
                     panic!("console print must receive one String")
                 };
                 self.output.push_str(text);
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
         }
 
@@ -11528,7 +12409,7 @@ fn execute(): String {
         let program = lowered(
             "import std.console\n\
              fn emit(value: String) {\n\
-                 console.print(value)\n\
+                 _ = console.print(value)\n\
              }\n\
              fn hidden(value: Int): impl Discard { value }\n\
              fn consume[T: Discard](value: T) {\n\
@@ -11775,14 +12656,14 @@ fn execute(): String {
                     panic!("console print must receive one String")
                 };
                 self.output.push_str(text);
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
         }
 
         let program = lowered(
             "import std.console\n\
              fn emit(value: String) {\n\
-                 console.print(value)\n\
+                 _ = console.print(value)\n\
              }\n\
              fn first() {\n\
                  emit(\"first\")\n\
@@ -12732,17 +13613,18 @@ fn execute(): String {
                     panic!("console print must receive one String")
                 };
                 self.output.push_str(text);
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
         }
 
         let program = lowered(
             "import std.console\n\
+             fn emit(text: String) {\n _ = console.print(text)\n }\n\
              fn main() {\n\
                  let first: Join[Int, String]? = none\n\
-                 defer console.print(\"a\")\n\
+                 defer emit(\"a\")\n\
                  let second: Join[Int, String]? = none\n\
-                 defer console.print(\"b\")\n\
+                 defer emit(\"b\")\n\
                  panic(\"stop\")\n\
              }\n",
         );
@@ -12870,7 +13752,7 @@ fn execute(): String {
                     panic!("console print must receive one String")
                 };
                 self.output.push_str(text);
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
         }
 
@@ -12878,7 +13760,7 @@ fn execute(): String {
             "import std.console\n\
              fn cleanup(value: Int) {\n\
                  assert(value == 1)\n\
-                 console.print(\"cleanup\")\n\
+                 _ = console.print(\"cleanup\")\n\
              }\n\
              fn guarded[T: Discard](owner: T, action: fn(T)) {\n\
                  defer action(owner)\n\
@@ -13863,12 +14745,13 @@ fn execute(): String {
                 _arguments: &[RuntimeValue],
             ) -> Result<RuntimeValue, VmError> {
                 self.calls += 1;
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
         }
 
-        let mut program =
-            lowered("import std.console\nfn main() { console.print(\"must not execute\") }\n");
+        let mut program = lowered(
+            "import std.console\nfn main() { _ = console.print(\"must not execute\")\n }\n",
+        );
         let entry = function_id(&program, "main");
         program.functions[entry.index() as usize].entry = bc::BytecodeBlockId::new(u32::MAX);
         let mut host = CountingHost::default();

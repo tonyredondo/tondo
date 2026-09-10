@@ -86,6 +86,7 @@ jq -n \
             },
             test: {
               status: $owner.cells.TEST.status,
+              reason: $owner.cells.TEST.reason,
               commands: $owner.commands,
               refs: $owner.cells.TEST.refs
             },

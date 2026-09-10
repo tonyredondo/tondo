@@ -10,5 +10,5 @@ fn main() {
     assert(values == [2: other])
     assert(values.remove(1) == none)
 
-    console.print("map-remove-gc\n")
+    _ = console.print("map-remove-gc\n")
 }

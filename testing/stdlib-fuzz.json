@@ -7,7 +7,7 @@
   "scope": "mixed component probes; no whole-owner or native promotion",
   "target": "stdlib_owners",
   "audited_sources": [
-    {"path":"fuzz/fuzz_targets/stdlib_owners.rs","sha256":"6327473dabcc6133cd7371430071c934c97913f40538b2cba65798bf5c1e7873"},
+    {"path":"fuzz/fuzz_targets/stdlib_owners.rs","sha256":"b31018c147206cc8bb4dbb7a70d7288dc77cdd11587b256d03ed821f9e313d18"},
     {"path":"crates/tondo-reliability/src/codec_fuzz.rs","sha256":"a67d748281a37bbad0678357927c939372fd425ec5fb27d6c0f5ba154d060b1e"},
     {"path":"crates/tondo-reliability/src/scalar_fuzz.rs","sha256":"bdba8ed7eee6cbb16a81755e1b8ac76078b7c33726c5c403b11ecd70c95e2fed"}
   ],

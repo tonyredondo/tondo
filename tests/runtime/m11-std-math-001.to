@@ -38,5 +38,5 @@ fn main(): !math.MathError {
         ok(_) => assert(false)
         err(_) => ()
     }
-    console.print("math-ok\n")
+    _ = console.print("math-ok\n")
 }

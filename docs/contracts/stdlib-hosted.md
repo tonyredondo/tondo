@@ -1,21 +1,42 @@
 # Tondo STD-0.1A hosted owner contract
 
-Estado: contrato de owner cerrado para `std.console`, `std.path`, `std.fs` y
-`std.process`. Los cuatro módulos usan los protocolos de `std.io`; importar un
-módulo nunca concede por sí solo la capability del host.
+This document specifies the hosted owners. Individual implementation and
+conformance boundaries remain in the tracker; a contract alone does not close
+an owner. Importing a module never grants its host capability.
 
 ## `std.console`
 
 ```tondo
-pub fn stdin(): std.io.Reader ! ConsoleError
-pub fn stdout(): std.io.Writer ! ConsoleError
-pub fn stderr(): std.io.Writer ! ConsoleError
-pub fn readLine(var input: std.io.Reader): String? ! ConsoleError suspends
+// Input and Output are concrete types with private representation.
+
+pub fn stdin(): Input ! ConsoleError
+pub fn stdout(): Output ! ConsoleError
+pub fn stderr(): Output ! ConsoleError
+pub fn readLine(input: var Input): String? ! ConsoleError suspends
 pub fn print(value: String): Unit ! ConsoleError
 pub fn println(value: String): Unit ! ConsoleError
 pub fn flush(): Unit ! ConsoleError suspends
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ```
+
+`Input` and `Output` are concrete public types with private representation.
+`Input` implements the static `std.io.Reader` trait and `Output` implements
+`std.io.Writer`; neither trait is a public handle alias. `readLine` is specific
+to `Input`, preserving the cursor on invalid UTF-8. An `Output` argument is
+rejected statically. Generic readers have no implicit rewind capability.
+
+The hosted protocol adapters and generic helper tests are executable.
+`ConsoleError` is an ordinary nominal enum, including the nested `IoError`
+payload. `print`, `println` and `flush` return `Unit ! ConsoleError`; callers
+handle, propagate or explicitly discard that result. The public CLI regression
+`console_public_errors_and_results_execute` checks every error variant and the
+three output results. Full owner promotion still requires current integrated
+evidence, whole-owner fuzzing and public conformance.
+
+Console output and successful `readLine` admit the complete typed VM result
+before emitting bytes or advancing the input cursor. EOF and invalid UTF-8 do
+not consume input. Cancellation returns `ConsoleError.Cancelled`, remains
+idempotent before polling, and releases the retired request and response.
 
 `print` y `println` escriben mediante `std.io.Writer`; no asumen terminal,
 locale ni newline de plataforma (`println` usa LF). El orden de varias writes
@@ -79,7 +100,8 @@ ejecuta sin capability `filesystem` y es determinista en todos los targets.
 ```tondo
 pub type File
 pub type Directory
-pub type Metadata
+pub enum FileKind { File, Directory, Symlink, Other }
+pub type Metadata = { kind: FileKind, size: Int, readOnly: Bool }
 pub enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
 pub enum FsError { NotFound, PermissionDenied, AlreadyExists, InvalidPath, NotDirectory, IsDirectory, Closed, ResourceLimit, Cancelled, Io }
 pub fn open(path: Path, mode: OpenMode): File ! FsError suspends
@@ -98,10 +120,25 @@ pub fn File.flush(var self): Unit ! FsError suspends
 pub fn Directory.list(var self): Array[Path] ! FsError suspends
 ```
 
-Las operaciones requieren `filesystem`. `File` es un handle afín que ofrece la
-misma semántica de lectura/escritura que `Reader`/`Writer` mediante sus
-métodos `read`/`write`/`flush`; `std.io.readAll` y `std.io.writeAll` siguen
-recibiendo los handles `Reader`/`Writer` explícitos. `Directory` es un handle
+Operations require `filesystem`. `OpenMode` and `FsError` are public nominal
+enums: use `OpenMode.Read`, without a constructor call, and match their variants
+normally. Neither enum allocates a host handle. OS errors retain their structured
+category; their message text never determines the public error variant.
+
+`File` is affine and implements the ordinary `io.Reader` and `io.Writer` traits.
+The implementations belong to the trait owner `std.io` and are selected only
+with the available, explicitly imported compiler-provided `std.fs` module.
+An explicitly supplied source module retains its own declarations and receives
+no hosted File adapter. Direct File methods
+retain `Option[Bytes] ! FsError`; generic readers translate `some`/`none` to
+`ReadResult.Data`/`Eof`. The adapters preserve `Closed`, `Cancelled` and
+`ResourceLimit`, map other filesystem errors to `IoError.Host`, and reject
+nonpositive read requests as `IoError.InvalidData` before calling the file.
+`io.readAll` and `io.writeAll` accept a mutable File through generic dispatch,
+including instantiated function values. An aggregate read limit returns no
+partial buffer, but cannot rewind chunks consumed by earlier successful reads.
+
+`Directory` es un handle
 afín de iteración. Ambos cierran sus recursos en cleanup normal y durante
 unwind. `Read` devuelve `none` al alcanzar EOF, `Write` acepta short writes y
 devuelve los bytes escritos. `Write` y `ReadWrite` abren un archivo existente;
@@ -124,16 +161,40 @@ una violación de la invariante de runtime. `FsError.Closed` queda reservado
 para un cierre observable del recurso que pueda ocurrir sin invalidar esa
 invariante.
 
-`atomicWrite` escribe en un temporal dentro del mismo directorio, hace flush y
-rename; no promete durabilidad de hardware salvo una capability posterior. La
-iteración devuelve paths en orden lexicográfico de bytes para determinismo. Los
-errores no incluyen rutas físicas adicionales ni fragmentos de contenido.
+`atomicWrite` creates a temporary file in the same directory, flushes it and
+renames it over the destination. It does not promise hardware durability.
+Exclusive creation establishes ownership of that temporary: a name collision
+preserves the existing file and returns an error. Later write, flush or rename
+failure closes the created handle and attempts to remove only that operation's
+temporary. Directory iteration orders paths by native bytes. Errors expose no
+additional physical paths or content fragments.
 
-La evidencia ejecutable está identificada por `STD-A-FS-EVIDENCE-001`: cubre
-las 14 firmas públicas, el contrato de capability, el modelo de handles, el
-adaptador host, el fixture runtime y los límites/cleanup. `STD-A-FUZZ-001`
-promueve el fuzz owner-aware; captura de rendimiento por target y conformance
-global permanecen explícitos como promoción posterior.
+`STD-FS-IMPL-001` and `STD-A-FS-EVIDENCE-001` remain open. Public enum matching,
+File protocol calls, typed errors and File result admission have focused tests;
+fourteen discovered function signatures did not establish those behaviors.
+`fs.open` also reserves its result and path scratch before the OS call, so a
+memory rejection neither creates nor truncates a file. Focused tests retain
+exact File/error transport charges and release path scratch on both outcomes.
+Path mutations also admit the typed result and copied path/payload storage
+before effects or write-quota consumption; atomic writes include their temporary
+name and path. `metadata` admits the complete nominal result and path conversion
+storage before its OS query, and creates no Metadata host handle. Directory
+construction and bounded `readAll`/listing materialization still need complete
+admission and integrated owner evidence. Whole-owner fuzzing, target performance and
+global public conformance remain separate, unpromoted boundaries.
+
+`Metadata` is an ordinary record with public `kind`, `size` and `readOnly` fields.
+It follows normal value semantics and is immutable under `let`. Each call
+observes the entry itself with `symlink_metadata`, so a dangling link still has
+kind `FileKind.Symlink`. `Other` covers entries such as sockets and devices.
+`size` is the host-reported byte length, whose meaning for nonregular entries is
+platform-dependent; values larger than `Int` return `FsError.ResourceLimit`
+without a partial record. `readOnly` records the host read-only attribute, which
+does not establish the caller's effective write permission. Existing snapshots
+remain unchanged when the file changes or disappears. Field access, copying,
+record construction and exhaustive `FileKind` matching are ordinary language
+operations. This public contract establishes the hosted route; retired internal
+Metadata ABI scaffolds do not establish native AOT support.
 
 ## `std.process`
 

@@ -36,6 +36,7 @@ pub(crate) use availability::{
 pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 pub(crate) use check::check_expressions_configured;
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
+pub(crate) use lower::prelude_trait_arity;
 pub use lower::{TypeLoweringLimits, lower_types, lower_types_extension};
 pub(crate) use regions::{
     StaticCollectionRegion, StaticRegionRelation, StaticSlice, parse_nonnegative_integer,
@@ -46,11 +47,20 @@ pub use terminal::{
     HirTerminalContract, HirTerminalOperation, HirTerminalStatus, HirTerminalUnwindAction,
 };
 
-fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<IntrinsicType> {
+pub(crate) fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<IntrinsicType> {
     if module.package().as_str() != "toolchain:std:0.1-bootstrap" {
         return None;
     }
     match module.path().as_str() {
+        "reflect" => Some(IntrinsicType::Reflection(match name.as_str() {
+            "TypeInfo" => tondo_vm::reflection::ReflectionDescriptorKind::TypeInfo,
+            "TypeId" => tondo_vm::reflection::ReflectionDescriptorKind::TypeId,
+            "FieldInfo" => tondo_vm::reflection::ReflectionDescriptorKind::FieldInfo,
+            "VariantInfo" => tondo_vm::reflection::ReflectionDescriptorKind::VariantInfo,
+            "ParameterInfo" => tondo_vm::reflection::ReflectionDescriptorKind::ParameterInfo,
+            "FunctionInfo" => tondo_vm::reflection::ReflectionDescriptorKind::FunctionInfo,
+            _ => return None,
+        })),
         "bytes" => Some(match name.as_str() {
             "Bytes" => IntrinsicType::Bytes,
             "BytesBuilder" => IntrinsicType::BytesBuilder,
@@ -77,11 +87,8 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             _ => return None,
         }),
         "fs" => Some(match name.as_str() {
-            "FsError" => IntrinsicType::FsError,
             "File" => IntrinsicType::File,
             "Directory" => IntrinsicType::Directory,
-            "Metadata" => IntrinsicType::Metadata,
-            "OpenMode" => IntrinsicType::OpenMode,
             _ => return None,
         }),
         "math" => Some(match name.as_str() {
@@ -137,24 +144,13 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
         "testing" => Some(match name.as_str() {
             "VirtualTime" => IntrinsicType::VirtualTime,
             "FloatTolerance" => IntrinsicType::FloatTolerance,
-            "FloatToleranceError" => IntrinsicType::FloatToleranceError,
-            "TextDiff" => IntrinsicType::TextDiff,
             "TempDirectory" => IntrinsicType::TempDirectory,
-            "TempError" => IntrinsicType::TempError,
             "Generator" => IntrinsicType::Generator,
-            "GenerationId" => IntrinsicType::GenerationId,
-            "GenerationError" => IntrinsicType::GenerationError,
-            _ => return None,
-        }),
-        "io" => Some(match name.as_str() {
-            "Reader" => IntrinsicType::Reader,
-            "Writer" => IntrinsicType::Writer,
-            "IoLimits" => IntrinsicType::IoLimits,
-            "IoError" => IntrinsicType::IoError,
             _ => return None,
         }),
         "console" => Some(match name.as_str() {
-            "ConsoleError" => IntrinsicType::ConsoleError,
+            "Input" => IntrinsicType::Reader,
+            "Output" => IntrinsicType::Writer,
             _ => return None,
         }),
         "json" => Some(match name.as_str() {
@@ -354,6 +350,21 @@ pub struct HirProgram {
 }
 
 impl HirProgram {
+    /// A signature projection may absorb erased declarations into trailing
+    /// trivia. Restore authored ranges before exposing derive/impl metadata.
+    pub(crate) fn restore_meta_declaration_spans(&mut self, spans: &BTreeMap<Span, Span>) {
+        for request in &mut self.derive_requests {
+            if let Some(span) = spans.get(&request.span) {
+                request.span = *span;
+            }
+        }
+        for implementation in &mut self.implementations {
+            if let Some(span) = spans.get(&implementation.span) {
+                implementation.span = *span;
+            }
+        }
+    }
+
     fn empty(max_type_nodes: u32) -> Result<Self, TypeError> {
         Ok(Self {
             interner: TypeInterner::new(max_type_nodes)?,
@@ -1036,11 +1047,25 @@ pub struct HirTypeDeclaration {
 pub struct HirDeriveRequest {
     span: Span,
     generic_parameters: Vec<String>,
+    generic_bounds: Vec<Vec<String>>,
+    bound_references: Vec<Vec<HirTraitReference>>,
     traits: Vec<String>,
+    trait_arguments: Vec<Vec<TypeId>>,
     target: String,
 }
 
 impl HirDeriveRequest {
+    pub fn generic_bounds(&self) -> &[Vec<String>] {
+        &self.generic_bounds
+    }
+
+    pub(crate) fn bound_references(&self) -> &[Vec<HirTraitReference>] {
+        &self.bound_references
+    }
+
+    pub fn trait_arguments(&self) -> &[Vec<TypeId>] {
+        &self.trait_arguments
+    }
     pub fn span(&self) -> Span {
         self.span
     }
@@ -1245,7 +1270,7 @@ impl HirTraitIdentity {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirTraitReference {
     constructor: HirTraitConstructor,
     arguments: Vec<TypeId>,
@@ -1330,6 +1355,50 @@ pub enum HirPreludeTraitMethod {
 }
 
 impl HirPreludeTraitMethod {
+    /// The operation set used by implementation checking and structural models.
+    pub(crate) fn for_trait(name: &str) -> Option<&'static [Self]> {
+        use HirSerializationTraitMethod::*;
+        Some(match name {
+            "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Call" | "CallMut"
+            | "CallOnce" => &[],
+            "Display" => &[Self::Display],
+            "Iterator" => &[Self::IteratorNext],
+            "AsyncIterator" => &[Self::AsyncIteratorNext],
+            "Shrink" => &[Self::ShrinkCandidates],
+            "Encode" => &[Self::Serialization(Encode)],
+            "Decode" => &[Self::Serialization(Decode)],
+            "Encoder" => &[
+                Self::Serialization(EncoderNull),
+                Self::Serialization(EncoderBool),
+                Self::Serialization(EncoderInt),
+                Self::Serialization(EncoderUInt),
+                Self::Serialization(EncoderFloat32),
+                Self::Serialization(EncoderFloat64),
+                Self::Serialization(EncoderString),
+                Self::Serialization(EncoderBytes),
+                Self::Serialization(EncoderBase64),
+                Self::Serialization(EncoderStartArray),
+                Self::Serialization(EncoderEndArray),
+                Self::Serialization(EncoderStartMap),
+                Self::Serialization(EncoderMapKey),
+                Self::Serialization(EncoderEndMap),
+                Self::Serialization(EncoderStartRecord),
+                Self::Serialization(EncoderField),
+                Self::Serialization(EncoderEndRecord),
+                Self::Serialization(EncoderStartEnum),
+                Self::Serialization(EncoderEndEnum),
+            ],
+            "Decoder" => &[
+                Self::Serialization(DecoderPeek),
+                Self::Serialization(DecoderNext),
+                Self::Serialization(DecoderBase64),
+                Self::Serialization(DecoderOwn),
+                Self::Serialization(DecoderReject),
+            ],
+            _ => return None,
+        })
+    }
+
     pub(crate) fn trait_name(self) -> &'static str {
         match self {
             Self::Display => "Display",
@@ -1469,8 +1538,10 @@ impl HirPreludeTraitMethod {
             }
             (Self::ShrinkCandidates, [target]) => {
                 let array = interner.intrinsic(IntrinsicType::Array, vec![*target])?;
-                let generation_error =
-                    interner.intrinsic(IntrinsicType::GenerationError, Vec::new())?;
+                let generation_error = interner.nominal(
+                    SymbolIdentity::bootstrap_standard("testing", "GenerationError"),
+                    Vec::new(),
+                )?;
                 let outcome = interner.result(array, generation_error)?;
                 return interner
                     .function(FunctionType::new(
@@ -1795,6 +1866,16 @@ fn intrinsic_display_type(interner: &TypeInterner, root: TypeId) -> Result<bool,
                 constructor: IntrinsicType::Array,
                 arguments,
             } if arguments.len() == 1 => pending.push(arguments[0]),
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } if arguments.is_empty()
+                && identity.package().as_str() == crate::project::BOOTSTRAP_STANDARD_PACKAGE
+                && identity.source_id().as_str() == crate::project::BOOTSTRAP_STANDARD_PACKAGE
+                && identity.module().as_str() == "testing"
+                && identity.namespace() == crate::package::Namespace::Type
+                && matches!(identity.declaration().names(), [name] if matches!(name.as_str(), "FloatToleranceError" | "TempError" | "GenerationError")) =>
+                {}
             _ => return Ok(false),
         }
     }
@@ -1815,6 +1896,32 @@ pub struct HirImplementationMethodContract {
     function_type: TypeId,
     has_receiver: bool,
     generic_bounds: Vec<Vec<HirTraitReference>>,
+}
+
+/// The sole signature difference that may remain before checking a body.
+/// Receiver-selected calls can infer suspension only after their types are
+/// known. This never infers selectable, changes a signature, or admits typed HIR.
+fn can_infer_required_suspension(
+    interner: &TypeInterner,
+    callable: &HirCallableSignature,
+    required: TypeId,
+) -> bool {
+    let (Ok(TypeKind::Function(actual)), Ok(TypeKind::Function(expected))) = (
+        interner.kind(callable.function_type),
+        interner.kind(required),
+    ) else {
+        return false;
+    };
+    callable.body_source.is_some()
+        && !callable.no_suspend
+        && !actual.is_async()
+        && !actual.is_selectable()
+        && expected.is_async()
+        && !expected.is_selectable()
+        && actual.is_unsafe() == expected.is_unsafe()
+        && actual.parameters() == expected.parameters()
+        && actual.variadic() == expected.variadic()
+        && actual.outcome() == expected.outcome()
 }
 
 impl HirImplementationMethodContract {
@@ -2638,6 +2745,7 @@ impl HirSelectArm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
+    Reflection(tondo_vm::reflection::ReflectionOperation),
     ConsolePrint,
     ConsolePrintln,
     ConsoleFlush,
@@ -3127,6 +3235,7 @@ pub enum HirBootstrapHostFunction {
     TestingGeneratorNextText,
     TestingGeneratorDrawCount,
     TestingShrink,
+    TestingShrinkCandidates,
     TestingAssertSome,
     TestingAssertNone,
     TestingAssertOk,
@@ -3147,6 +3256,7 @@ pub enum HirBootstrapHostFunction {
 impl HirBootstrapHostFunction {
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Reflection(operation) => operation.name(),
             Self::ConsolePrint => "std.console.print",
             Self::ConsolePrintln => "std.console.println",
             Self::ConsoleFlush => "std.console.flush",
@@ -3653,6 +3763,7 @@ impl HirBootstrapHostFunction {
             Self::TestingGeneratorNextText => "std.testing.Generator.nextText",
             Self::TestingGeneratorDrawCount => "std.testing.Generator.drawCount",
             Self::TestingShrink => "std.testing.shrink",
+            Self::TestingShrinkCandidates => "std.testing.Shrink.candidates",
             Self::TestingAssertSome => "std.testing.assertSome",
             Self::TestingAssertNone => "std.testing.assertNone",
             Self::TestingAssertOk => "std.testing.assertOk",
@@ -4200,11 +4311,8 @@ mod error_tests {
             ),
             ("path", "Path", IntrinsicType::Path),
             ("path", "PathError", IntrinsicType::PathError),
-            ("fs", "FsError", IntrinsicType::FsError),
             ("fs", "File", IntrinsicType::File),
             ("fs", "Directory", IntrinsicType::Directory),
-            ("fs", "Metadata", IntrinsicType::Metadata),
-            ("fs", "OpenMode", IntrinsicType::OpenMode),
             ("math", "MathError", IntrinsicType::MathError),
             ("process", "Command", IntrinsicType::Command),
             ("process", "Pipeline", IntrinsicType::Pipeline),
@@ -4231,22 +4339,10 @@ mod error_tests {
             ("env", "EnvError", IntrinsicType::EnvError),
             ("testing", "VirtualTime", IntrinsicType::VirtualTime),
             ("testing", "FloatTolerance", IntrinsicType::FloatTolerance),
-            (
-                "testing",
-                "FloatToleranceError",
-                IntrinsicType::FloatToleranceError,
-            ),
-            ("testing", "TextDiff", IntrinsicType::TextDiff),
             ("testing", "TempDirectory", IntrinsicType::TempDirectory),
-            ("testing", "TempError", IntrinsicType::TempError),
             ("testing", "Generator", IntrinsicType::Generator),
-            ("testing", "GenerationId", IntrinsicType::GenerationId),
-            ("testing", "GenerationError", IntrinsicType::GenerationError),
-            ("io", "Reader", IntrinsicType::Reader),
-            ("io", "Writer", IntrinsicType::Writer),
-            ("io", "IoLimits", IntrinsicType::IoLimits),
-            ("io", "IoError", IntrinsicType::IoError),
-            ("console", "ConsoleError", IntrinsicType::ConsoleError),
+            ("console", "Input", IntrinsicType::Reader),
+            ("console", "Output", IntrinsicType::Writer),
             ("json", "JsonLimits", IntrinsicType::JsonLimits),
             (
                 "json",

@@ -7,7 +7,7 @@ use crate::source::Span;
 
 mod lower;
 
-pub use lower::lower_to_bytecode;
+pub use lower::{lower_entry_to_bytecode, lower_to_bytecode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BytecodeLoweringLimits {

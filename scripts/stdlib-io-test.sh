@@ -34,20 +34,17 @@ expect_failure wrong-owner env TONDO_STDLIB_CORE_CONTRACT="$tmp_dir/wrong-owner.
 for signature in \
     'pub fn defaultLimits(): IoLimits' \
     'pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError' \
-    'pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError' \
-    'pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError'; do
+    'pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError' \
+    'pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError'; do
     grep -Fq "$signature" docs/contracts/stdlib-core.md
 done
 
 for symbol in \
     'IntrinsicType::Reader' \
     'IntrinsicType::Writer' \
-    'IntrinsicType::IoLimits' \
     'HirBootstrapHostFunction::ReaderRead' \
     'HirBootstrapHostFunction::WriterWrite' \
     'HirBootstrapHostFunction::WriterFlush' \
-    'HirBootstrapHostFunction::IoLimitsDefault' \
-    'HirBootstrapHostFunction::IoLimitsNew' \
     'HirBootstrapHostFunction::IoReadAll' \
     'HirBootstrapHostFunction::IoWriteAll'; do
     grep -Fq "$symbol" crates/tondo-compiler/src/hir.rs \
@@ -57,14 +54,26 @@ done
 for symbol in \
     'BytecodeIntrinsicType::Reader' \
     'BytecodeIntrinsicType::Writer' \
-    'BytecodeIntrinsicType::IoLimits' \
     'RuntimeHostValueKind::Reader' \
-    'RuntimeHostValueKind::Writer' \
-    'RuntimeHostValueKind::IoLimits' \
-    'RuntimeHostValueKind::IoError'; do
+    'RuntimeHostValueKind::Writer'; do
     grep -Fq "$symbol" crates/tondo-vm/src/runtime/execute.rs \
         crates/tondo-vm/src/bytecode.rs
 done
+
+for declaration in \
+    'pub trait Reader' \
+    'pub trait Writer' \
+    'pub enum ReadResult { Data(bytes.Bytes), Eof }' \
+    'pub enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }' \
+    'pub type IoLimits = { priv maxBytes: Int, priv maxRead: Int }' \
+    'pub fn readAll[R: Reader](reader: var R, policy: IoLimits)' \
+    'pub fn writeAll[W: Writer](writer: var W, data: bytes.Bytes)'; do
+    grep -Fq "$declaration" crates/tondo-compiler/src/bootstrap/io.to
+done
+
+# Execute implementations supplied by ordinary Tondo source. Host registration
+# symbols alone cannot establish generic protocol behavior or nominal shapes.
+cargo test --locked -p tondo-cli --test cli io_static_
 
 for symbol in \
     'std.io.defaultLimits' \
@@ -120,7 +129,14 @@ grep -Fq 'std.io' testing/stdlib-performance-conformance.json
 grep -Fq 'fragmented_stream' docs/contracts/stdlib-performance.md
 
 jq -e '
-  ([.rows[] | select(.owner == "std.io")] | length) == 4
+  ([.rows[] | select(.owner == "std.io")] | length) == 7
+  and ([.rows[] | select(.owner == "std.io" and .declaring_trait != null)
+    | {trait: .declaring_trait, signature}]
+    | sort_by(.signature)) == ([
+      {trait: "Reader", signature: "fn read(var self, max: Int): ReadResult ! IoError suspends"},
+      {trait: "Writer", signature: "fn write(var self, data: Bytes): Int ! IoError suspends"},
+      {trait: "Writer", signature: "fn flush(var self): Unit ! IoError suspends"}
+    ] | sort_by(.signature))
   and all(.rows[] | select(.owner == "std.io"); .missing == [])
   and all(.rows[] | select(.owner == "std.io"); .status == "verified")
 ' testing/stdlib-public-api.json >/dev/null

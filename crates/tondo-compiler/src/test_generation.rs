@@ -534,7 +534,9 @@ mod tests {
             .run_with_shrink(&runner(), |_, value| {
                 if *value >= 2 {
                     Err(RunError::Error {
-                        code: "P".into(),
+                        code: Some("P".into()),
+                        error_type: "model.TestError".into(),
+                        source: None,
                         message: "property failed".into(),
                     })
                 } else {
@@ -639,7 +641,9 @@ mod tests {
         let failed = cases
             .run(&runner(), |_, _| {
                 Err(RunError::Error {
-                    code: "E".into(),
+                    code: Some("E".into()),
+                    error_type: "model.TestError".into(),
+                    source: None,
                     message: "generated failure".into(),
                 })
             })

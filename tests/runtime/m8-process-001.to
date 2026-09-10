@@ -109,5 +109,5 @@ fn main(): !(process.ProcessError | bytes.Utf8Error | env.EnvError) {
     let cancelled = sleeping.cancel()?
     assert(not cancelled[0].success)
 
-    console.print("process-ok\n")
+    _ = console.print("process-ok\n")
 }

@@ -8,5 +8,5 @@ fn main() {
     var value = 41
     increment(mut value)
     assert(value == 42)
-    console.print("suspends-exclusive-ok\n")
+    _ = console.print("suspends-exclusive-ok\n")
 }

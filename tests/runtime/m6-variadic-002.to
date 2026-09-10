@@ -80,5 +80,5 @@ fn main() {
     let operations = [make(20), make(22)]
     assert(runAll(...operations) == 42)
 
-    console.print("variadic-002\n")
+    _ = console.print("variadic-002\n")
 }

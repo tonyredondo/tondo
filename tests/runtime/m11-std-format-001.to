@@ -28,5 +28,5 @@ fn main(): !format.FormatError {
     let built = builder.finish()?
     assert(built == "tondo")
 
-    console.print("format-ok\n")
+    _ = console.print("format-ok\n")
 }

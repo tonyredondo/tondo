@@ -17,7 +17,8 @@ optional target capability.
 
 Public inputs carry only a validated `sha256:` value. Secret inputs carry no
 content hash; they require opaque non-empty `provider` and `descriptor` strings
-and may carry a version. Public descriptors cannot contain secret metadata.
+and may carry a version. Secrets are runtime-only; source references must be
+public build/both inputs. Public descriptors cannot contain secret metadata.
 No input value is accepted by the wire schema or emitted by `canonical_bytes()`.
 
 ## Identity and reproducibility
@@ -47,5 +48,8 @@ cover public closure, canonical round-tripping, versioned/unversioned secret
 states, missing/colliding references, hash/capability drift, unknown fields,
 and the absence of a secret-value channel.
 
+`with_runtime_inputs` merges explicit descriptors with captured public records
+and runs the same closed validation. Worker admission rechecks plan identity,
+capabilities and descriptor digests without reconstructing a source graph.
 Materialization, revocation, cache policy, redaction boundaries, and worker
-isolation remain the responsibility of `UTEST-INPUTS-001`.
+isolation belong to the [runtime contract](test-input-runtime.md).

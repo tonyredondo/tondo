@@ -121,7 +121,7 @@ fn record_bridge_peak(
 
 fn validate_hosted_completion(completion: BlockingCompletion) -> Result<(), VmError> {
     match completion {
-        BlockingCompletion::Returned(RuntimeValue::ResultOk(value))
+        BlockingCompletion::Returned(RuntimeValue::ResultOk(value), _)
             if *value == RuntimeValue::Integer(42) =>
         {
             Ok(())
@@ -434,7 +434,7 @@ fn executor_performance_probe() {
         BlockingCompletion::Panicked(panic),
         BlockingCompletion::Failed(VmError::Host("performance edge".into())),
         BlockingCompletion::Cancelled,
-        BlockingCompletion::Returned(RuntimeValue::Integer(7)),
+        BlockingCompletion::Returned(RuntimeValue::Integer(7), None),
     ] {
         assert!(validate_hosted_completion(completion).is_err());
     }

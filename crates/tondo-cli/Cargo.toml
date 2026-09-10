@@ -16,6 +16,9 @@ tondo-conformance = { path = "../tondo-conformance" }
 tondo-reference-adapter = { path = "../tondo-reference-adapter" }
 tondo-vm = { path = "../tondo-vm" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "=0.31.3", features = ["fs"] }
+
 [lints]
 workspace = true
 

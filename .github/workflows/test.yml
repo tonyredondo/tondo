@@ -87,13 +87,13 @@ jobs:
           TONDO_TEST_TARGET: linux-x86_64
           TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || 'HEAD^' }}
           CARGO_INCREMENTAL: "1"
-        run: bash scripts/fast-gate.sh
+        run: bash scripts/ci-test-scope.sh bash scripts/fast-gate.sh
 
       - name: Run full strict gate
         if: github.event_name == 'workflow_dispatch' && inputs.tier == 'full'
         env:
           TONDO_TEST_TARGET: linux-x86_64
-        run: bash scripts/test-gate.sh
+        run: bash scripts/ci-test-scope.sh bash scripts/test-gate.sh
 
       - name: Upload strict-gate evidence
         if: failure() || (always() && github.event_name == 'workflow_dispatch' && inputs.tier == 'full')
@@ -154,7 +154,7 @@ jobs:
         shell: bash
         env:
           TONDO_TEST_TARGET: ${{ matrix.target-id }}
-        run: bash scripts/platform-test.sh
+        run: bash scripts/ci-test-scope.sh bash scripts/platform-test.sh
 
       - name: Retain portable testing reports
         if: always()

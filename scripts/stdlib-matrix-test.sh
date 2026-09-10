@@ -23,7 +23,10 @@ expect_failure() {
 jq 'del(.owners[-1])' testing/stdlib-matrix.json > "$tmp_dir/missing-owner.json"
 expect_failure missing-owner env TONDO_STDLIB_MATRIX="$tmp_dir/missing-owner.json" scripts/stdlib-matrix-check.sh
 
-jq '(.owners[] | select(.id == "std.meta") | .stages["IMPL/HOST"].reason) = null' testing/stdlib-matrix.json > "$tmp_dir/missing-reason.json"
+jq -e '.owners[] | select(.id == "std.iter") | .stages["IMPL/HOST"]
+    | .status == "partial" and (.reason | type == "string" and length > 0)' \
+    testing/stdlib-matrix.json >/dev/null
+jq '(.owners[] | select(.id == "std.iter") | .stages["IMPL/HOST"].reason) = null' testing/stdlib-matrix.json > "$tmp_dir/missing-reason.json"
 expect_failure missing-reason env TONDO_STDLIB_MATRIX="$tmp_dir/missing-reason.json" scripts/stdlib-matrix-check.sh
 
 for stage in IMPL HOST MODEL TEST FUZZ; do

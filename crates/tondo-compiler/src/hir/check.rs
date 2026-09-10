@@ -184,7 +184,7 @@ fn check_expressions_pass<'a>(
         next_loop_id,
         next_scope_id,
         expression_start,
-        test_node_closures: BTreeSet::new(),
+        test_node_closures: BTreeMap::new(),
         capability_analysis: None,
         reported_capability_requirements: BTreeSet::new(),
         opaque_body: None,
@@ -195,6 +195,7 @@ fn check_expressions_pass<'a>(
     checker.check_discard_parameters()?;
     checker.check_constants()?;
     checker.check_callables()?;
+    checker.check_inferred_implementation_effects()?;
     checker.check_ownership_availability()?;
     checker.check_constant_collection_diagnostics()?;
     checker.check_reachability_warnings()?;
@@ -397,6 +398,7 @@ struct BodyContext {
     defer_block: bool,
     defer_control_boundary: bool,
     script_errors: Option<Rc<RefCell<BTreeSet<TypeId>>>>,
+    test_suite_setup: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -726,7 +728,7 @@ struct ExpressionChecker<'a> {
     next_scope_id: u32,
     expression_start: usize,
     capability_analysis: Option<CapabilityAnalysis>,
-    test_node_closures: BTreeSet<(FileId, TextRange)>,
+    test_node_closures: BTreeMap<(FileId, TextRange), HirBootstrapHostFunction>,
     reported_capability_requirements: BTreeSet<(Span, TypeId, HirCapability)>,
     opaque_body: Option<OpaqueBodyInference>,
     closure_body: Option<ClosureBodyInference>,
@@ -850,7 +852,7 @@ impl<'a> ExpressionChecker<'a> {
             .iter()
             .filter(|closure| {
                 self.test_node_closures
-                    .contains(&(closure.span.file(), closure.span.range()))
+                    .contains_key(&(closure.span.file(), closure.span.range()))
             })
             .map(|closure| closure.id)
             .collect::<Vec<_>>();
@@ -1089,13 +1091,8 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance
-                        | IntrinsicType::FloatToleranceError
-                        | IntrinsicType::TextDiff
                         | IntrinsicType::TempDirectory
-                        | IntrinsicType::TempError
                         | IntrinsicType::Generator
-                        | IntrinsicType::GenerationId
-                        | IntrinsicType::GenerationError
                         | IntrinsicType::Reader
                         | IntrinsicType::Writer
                         | IntrinsicType::IoLimits
@@ -1156,6 +1153,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::ProtoUnknownPolicy
                         | IntrinsicType::ProtoReader
                         | IntrinsicType::ProtoWriter
+                        | IntrinsicType::Reflection(_)
                         | IntrinsicType::UnknownFields => None,
                     };
                     if let Some((required, capability, context)) = requirement {
@@ -1428,6 +1426,39 @@ impl<'a> ExpressionChecker<'a> {
         Ok(())
     }
 
+    fn check_inferred_implementation_effects(&mut self) -> Result<(), HirError> {
+        for implementation in 0..self.program.implementations.len() {
+            for index in 0..self.program.implementations[implementation].methods.len() {
+                let method = &self.program.implementations[implementation].methods[index];
+                let Some(contract) = &method.contract else {
+                    continue;
+                };
+                let Some(callable) = self
+                    .program
+                    .callable(HirCallableId::Implementation(method.id))
+                else {
+                    continue;
+                };
+                if callable.function_type == contract.function_type {
+                    continue;
+                }
+                let span = method.span;
+                let message = format!(
+                    "method `{}` does not match the trait signature after suspension inference",
+                    method.name
+                );
+                let expected_actual = self
+                    .program
+                    .interner
+                    .canonical(contract.function_type)
+                    .ok()
+                    .zip(self.program.interner.canonical(callable.function_type).ok());
+                self.emit(span, "E1114", message, Vec::new(), expected_actual)?;
+            }
+        }
+        Ok(())
+    }
+
     fn check_callables(&mut self) -> Result<(), HirError> {
         let callables = self.program.callables.clone();
         for callable in callables {
@@ -1589,31 +1620,21 @@ impl<'a> ExpressionChecker<'a> {
         errors: Rc<RefCell<BTreeSet<TypeId>>>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
-        let error_marker = self.program.interner.error();
-        let members = errors
-            .borrow()
-            .iter()
-            .copied()
-            .filter(|member| *member != error_marker)
-            .collect::<Vec<_>>();
-        let inferred_error = self.program.interner.union(members)?;
         let unit = self.program.interner.scalar(ScalarType::Unit);
-        let provisional_outcome = self.program.interner.result(unit, error_marker)?;
-        let final_outcome = self.program.interner.result(unit, inferred_error)?;
-
+        let (root, final_outcome) =
+            self.finish_inferred_error_region(root, expression_start, unit, errors, context)?;
         let signature_index = self
             .program
             .callables
             .iter()
             .position(|callable| callable.id == callable_id)
             .expect("the checked script callable remains indexed");
-        let function = match self
+        let TypeKind::Function(function) = self
             .program
             .interner
             .kind(self.program.callables[signature_index].function_type())?
-        {
-            TypeKind::Function(function) => function.clone(),
-            _ => unreachable!("a script entry has a function type"),
+        else {
+            unreachable!("a script entry has a function type")
         };
         let final_function = self.program.interner.function(FunctionType::with_effects(
             function.is_async(),
@@ -1623,82 +1644,9 @@ impl<'a> ExpressionChecker<'a> {
             None,
             final_outcome,
         ))?;
-
-        let expression_end = self.program.expressions.len();
-        let mut propagated = Vec::new();
-        let mut failed = Vec::new();
-        for index in expression_start..expression_end {
-            let expression = &mut self.program.expressions[index];
-            if expression.ty == provisional_outcome {
-                expression.ty = final_outcome;
-            }
-            match &expression.kind {
-                HirExpressionKind::PropagateResult { value, .. } => {
-                    propagated.push((index, *value));
-                }
-                HirExpressionKind::Fail { error } => failed.push((index, *error)),
-                _ => {}
-            }
-        }
-
-        for (index, value) in propagated {
-            let value_type = self.expression_type(value);
-            let TypeKind::Result {
-                error: produced_error,
-                ..
-            } = self.program.interner.kind(value_type)?
-            else {
-                continue;
-            };
-            if *produced_error == error_marker {
-                continue;
-            }
-            let coercion = self
-                .error_assignability(*produced_error, inferred_error)?
-                .expect("an inferred script error union accepts every collected member");
-            let HirExpressionKind::PropagateResult { error_coercion, .. } =
-                &mut self.program.expressions[index].kind
-            else {
-                unreachable!("the recorded propagation remains a propagation expression")
-            };
-            *error_coercion = coercion;
-        }
-
-        for (_index, placeholder) in failed {
-            let HirExpressionKind::Coerce { value: error, .. } =
-                self.program.expressions[placeholder.0 as usize].kind
-            else {
-                return Err(HirError::TraitSelectionInvariant {
-                    message: "an inferred script fail has no coercion placeholder".into(),
-                });
-            };
-            let actual = self.expression_type(error);
-            if actual == error_marker {
-                continue;
-            }
-            let coercion = if actual == inferred_error {
-                Assignability::Exact
-            } else {
-                self.error_assignability(actual, inferred_error)?
-                    .expect("an inferred script error union accepts every collected member")
-            };
-            let expression = &mut self.program.expressions[placeholder.0 as usize];
-            expression.ty = inferred_error;
-            let HirExpressionKind::Coerce { kind, .. } = &mut expression.kind else {
-                unreachable!("the inferred script error placeholder remains a coercion")
-            };
-            *kind = coercion;
-        }
-
         let signature = &mut self.program.callables[signature_index];
         signature.outcome = final_outcome;
         signature.function_type = final_function;
-        context.callable = Some(CallableContext {
-            full: final_outcome,
-            success: unit,
-            error: Some(inferred_error),
-            signature: signature.span,
-        });
         Ok(root)
     }
 
@@ -1722,7 +1670,19 @@ impl<'a> ExpressionChecker<'a> {
         let final_outcome = self.program.interner.result(success, inferred_error)?;
         let mut propagated = Vec::new();
         let mut failed = Vec::new();
-        for index in expression_start..self.program.expressions.len() {
+        // A nested closure has its own error channel. Walk this body's
+        // expression edges, which deliberately exclude closure bodies.
+        let mut pending = vec![root];
+        let mut region = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if (id.0 as usize) >= expression_start && region.insert(id) {
+                pending.extend(super::verify::expression_children(
+                    &self.program.expressions[id.0 as usize],
+                ));
+            }
+        }
+        for id in region {
+            let index = id.0 as usize;
             let expression = &mut self.program.expressions[index];
             if expression.ty == provisional_outcome {
                 expression.ty = final_outcome;
@@ -1774,12 +1734,19 @@ impl<'a> ExpressionChecker<'a> {
                 self.error_assignability(actual, inferred_error)?
                     .expect("an inferred closure error union accepts every collected member")
             };
-            let expression = &mut self.program.expressions[placeholder.0 as usize];
-            expression.ty = inferred_error;
-            let HirExpressionKind::Coerce { kind, .. } = &mut expression.kind else {
-                unreachable!("the inferred closure error placeholder remains a coercion")
-            };
-            *kind = coercion;
+            if coercion == Assignability::Exact {
+                // Keep existing references to the placeholder, but remove the
+                // identity coercion: closed HIR never carries redundant coercions.
+                self.program.expressions[placeholder.0 as usize] =
+                    self.program.expressions[error.0 as usize].clone();
+            } else {
+                let expression = &mut self.program.expressions[placeholder.0 as usize];
+                expression.ty = inferred_error;
+                expression.kind = HirExpressionKind::Coerce {
+                    value: error,
+                    kind: coercion,
+                };
+            }
         }
         context.callable = Some(CallableContext {
             full: final_outcome,
@@ -3719,6 +3686,8 @@ impl<'a> ExpressionChecker<'a> {
 
         let mut closure_context = context.clone();
         closure_context.callable_id = None;
+        closure_context.test_suite_setup = self.test_node_closures.get(&(file, node.range()))
+            == Some(&HirBootstrapHostFunction::TestingRunSuite);
         closure_context.loops.clear();
         closure_context.defer_control_boundary = false;
         closure_context.script_errors = inferred_errors.clone();
@@ -4489,7 +4458,7 @@ impl<'a> ExpressionChecker<'a> {
                     .unwrap_or_default();
                 self.emit(
                     use_span,
-                    if self.test_node_closures.contains(&(file, closure_range)) {
+                    if self.test_node_closures.contains_key(&(file, closure_range)) {
                         "E2005"
                     } else {
                         "E1402"
@@ -6171,7 +6140,12 @@ impl<'a> ExpressionChecker<'a> {
             .filter(|token| {
                 self.resolved
                     .reference(file, token.range())
-                    .is_some_and(|reference| matches!(reference.entity(), ResolvedEntity::Name(_)))
+                    .is_some_and(|reference| {
+                        matches!(
+                            reference.entity(),
+                            ResolvedEntity::Name(_) | ResolvedEntity::ContextualCandidates { .. }
+                        )
+                    })
             })
             .last()
         else {
@@ -6182,9 +6156,16 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return self.recovery_expression(file, node.range());
         };
-        let ResolvedEntity::Name(name) = reference.entity() else {
-            self.complete = false;
-            return self.recovery_expression(file, node.range());
+        let name = match reference.entity() {
+            ResolvedEntity::Name(name) => name,
+            // Constructor and associated-function paths were handled above.
+            // Qualified external names retain both namespaces until this
+            // value context selects the callable candidate.
+            ResolvedEntity::ContextualCandidates { value_name, .. } => value_name,
+            ResolvedEntity::Module(_) => {
+                self.complete = false;
+                return self.recovery_expression(file, node.range());
+            }
         };
         let (ty, category, kind) = match name {
             ResolvedName::Local(local) => {
@@ -6244,6 +6225,63 @@ impl<'a> ExpressionChecker<'a> {
                         return self.recovery_expression(file, node.range());
                     }
                 }
+            }
+            ResolvedName::External {
+                module,
+                namespace: Namespace::Value,
+                name,
+            } if module.package().as_str() == "toolchain:std:0.1-bootstrap" => {
+                let qualified = format!("std.{}.{name}", module.path());
+                let (first, ambiguous) = {
+                    let mut candidates = self.program.callables().filter_map(|callable| {
+                        let HirCallableId::Host(function) = callable.id() else {
+                            return None;
+                        };
+                        (function.name() == qualified)
+                            .then_some((callable.function_type(), function))
+                    });
+                    (candidates.next(), candidates.next().is_some())
+                };
+                if ambiguous {
+                    self.emit(
+                        self.sources.span(file, token.range())?,
+                        "E1101",
+                        "standard function reference has more than one callable signature",
+                        Vec::new(),
+                        None,
+                    )?;
+                    return self.recovery_expression(file, node.range());
+                }
+                let Some((ty, function)) = first else {
+                    self.complete = false;
+                    return self.recovery_expression(file, node.range());
+                };
+                if matches!(
+                    function,
+                    HirBootstrapHostFunction::TestingRunLeaf
+                        | HirBootstrapHostFunction::TestingRunSuite
+                        | HirBootstrapHostFunction::TestingBeginSuiteCleanup
+                ) {
+                    // Generated participation invokes these operations
+                    // directly. They are never first-class function values,
+                    // even inside a file that also contains generated code.
+                    self.emit(
+                        self.sources.span(file, token.range())?,
+                        "E1102",
+                        "test participation functions are compiler-private",
+                        Vec::new(),
+                        None,
+                    )?;
+                    return self.recovery_expression(file, node.range());
+                }
+                // A function value uses the same registered signature as a
+                // direct call. The normal path logic below handles explicit
+                // generic arguments and contextual specialization.
+                (
+                    ty,
+                    HirValueCategory::Value,
+                    HirExpressionKind::Function(HirCallableId::Host(function)),
+                )
             }
             ResolvedName::Prelude { .. }
             | ResolvedName::External { .. }
@@ -7363,8 +7401,26 @@ impl<'a> ExpressionChecker<'a> {
                 let reference = self.resolved.reference(file, token.range())?;
                 let resolved = match reference.entity() {
                     ResolvedEntity::Name(name) => Some(name.clone()),
-                    ResolvedEntity::ContextualCandidates { type_name, .. } => {
-                        Some(type_name.clone())
+                    ResolvedEntity::ContextualCandidates {
+                        type_name,
+                        value_name,
+                    } => {
+                        // External bootstrap modules retain both namespaces.
+                        // A registered free function is not a constructor;
+                        // leave its type arguments for function specialization.
+                        if let ResolvedName::External { module, name, .. } = value_name
+                            && module.package().as_str() == "toolchain:std:0.1-bootstrap"
+                            && self.program.callables().any(|callable| {
+                                matches!(callable.id(), HirCallableId::Host(function)
+                                    if function.name().strip_prefix("std.")
+                                        .and_then(|name| name.strip_prefix(module.path().as_str()))
+                                        .and_then(|name| name.strip_prefix('.')) == Some(name.as_str()))
+                            })
+                        {
+                            Some(value_name.clone())
+                        } else {
+                            Some(type_name.clone())
+                        }
                     }
                     ResolvedEntity::Module(_) => None,
                 }?;
@@ -8274,9 +8330,14 @@ impl<'a> ExpressionChecker<'a> {
             .resolved
             .symbol(owner)
             .expect("nominal HIR declarations retain valid symbols");
-        let source = self.sources.get(file)?;
-        Ok(owner.identity().source_id() == source.source_id()
-            && owner.identity().module() == source.module())
+        Ok(self.owner_module_contains(owner.identity(), file))
+    }
+
+    fn owner_module_contains(&self, owner: &crate::package::SymbolIdentity, file: FileId) -> bool {
+        self.resolved.file(file).is_some_and(|resolution| {
+            resolution.module().package() == owner.package()
+                && resolution.module().path() == owner.module()
+        })
     }
 
     fn check_shorthand_value(
@@ -8692,6 +8753,7 @@ impl<'a> ExpressionChecker<'a> {
         let unit = self.program.interner.scalar(ScalarType::Unit);
         let mut closure_context = context.clone();
         closure_context.callable_id = None;
+        closure_context.test_suite_setup = false;
         closure_context.loops.clear();
         closure_context.script_errors = None;
         closure_context.receiver = None;
@@ -9993,10 +10055,7 @@ impl<'a> ExpressionChecker<'a> {
                 .resolved
                 .symbol(symbol)
                 .expect("nominal HIR declarations retain valid symbols");
-            let source = self.sources.get(file)?;
-            if owner.identity().source_id() != source.source_id()
-                || owner.identity().module() != source.module()
-            {
+            if !self.owner_module_contains(owner.identity(), file) {
                 self.emit(
                     self.sources.span(file, token.range())?,
                     "E1501",
@@ -10307,7 +10366,13 @@ impl<'a> ExpressionChecker<'a> {
                     )?;
                     return self.recovery_pattern(file, node.range());
                 }
-                let spelling = self.source_text(file, node.range())?.to_owned();
+                let last = node
+                    .descendant_tokens()
+                    .filter(|token| !token.kind().is_trivia() && token.kind() != TokenKind::Nl)
+                    .last()
+                    .unwrap_or(token);
+                let range = TextRange::new(token.range().start(), last.range().end())?;
+                let spelling = self.source_text(file, range)?.to_owned();
                 let normalized = decode_string_literal_pattern(&spelling, token.kind())
                     .unwrap_or_else(|| spelling.clone());
                 let ty = self.program.interner.scalar(ScalarType::String);
@@ -10357,11 +10422,17 @@ impl<'a> ExpressionChecker<'a> {
         token: SyntaxTokenRef<'_>,
         expected: TypeId,
     ) -> Result<CheckedPattern, HirError> {
-        let spelling = self.source_text(file, node.range())?.to_owned();
         let negative = node
             .descendant_tokens()
             .any(|token| token.kind() == TokenKind::Minus);
         let token_spelling = self.token_text(file, token)?;
+        // CST ranges preserve trivia, including comments around a minus sign.
+        // Semantic literal spelling contains only the sign and numeric token.
+        let spelling = if negative {
+            format!("-{token_spelling}")
+        } else {
+            token_spelling.to_owned()
+        };
         let (member, literal, normalized) = match token.kind() {
             TokenKind::IntegerLiteral => {
                 let explicit = integer_suffix(token_spelling);
@@ -12795,6 +12866,16 @@ impl<'a> ExpressionChecker<'a> {
         node: SyntaxNodeRef<'_>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        if context.test_suite_setup && node.kind() == SyntaxKind::ReturnStmt {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1205",
+                "suite setup cannot return before its registered descendants",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
         if context.defer_control_boundary && node.kind() == SyntaxKind::ReturnStmt {
             self.emit(
                 self.sources.span(file, node.range())?,
@@ -15524,6 +15605,11 @@ impl<'a> ExpressionChecker<'a> {
         let (module_token, function_token, static_type) = match identifiers.as_slice() {
             [module_token, function_token] => (module_token, function_token, 0_u8),
             [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("TextDiff") =>
+            {
+                (module_token, function_token, 31_u8)
+            }
+            [module_token, type_token, function_token]
                 if type_token.token().normalized_identifier() == Some("FloatTolerance") =>
             {
                 (module_token, function_token, 1_u8)
@@ -15688,8 +15774,6 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(None);
         }
         let function_name = function_token.token().normalized_identifier();
-        let generated_testing =
-            self.sources.get(file)?.origin() == crate::source::SourceOrigin::GeneratedTesting;
         let generated_standard =
             self.sources.get(file)?.origin() == crate::source::SourceOrigin::GeneratedStandard;
         if module.path().as_str() == "bytes" && function_name == Some("Bytes") {
@@ -15697,7 +15781,13 @@ impl<'a> ExpressionChecker<'a> {
             // call. Leave it for the nominal-constructor checker below.
             return Ok(None);
         }
-        let host_function = if static_type == 1 {
+        let host_function = if static_type == 31 {
+            if module.path().as_str() == "testing" && function_name == Some("render") {
+                HirBootstrapHostFunction::TestingTextDiffRender
+            } else {
+                return Ok(None);
+            }
+        } else if static_type == 1 {
             if module.path().as_str() == "testing" && function_name == Some("from") {
                 HirBootstrapHostFunction::TestingFloatToleranceFrom
             } else {
@@ -15705,6 +15795,9 @@ impl<'a> ExpressionChecker<'a> {
             }
         } else if static_type == 2 {
             match (module.path().as_str(), function_name) {
+                ("reflect", Some("typeInfo")) => HirBootstrapHostFunction::Reflection(
+                    tondo_vm::reflection::ReflectionOperation::TypeInfo,
+                ),
                 ("testing", Some("path")) => HirBootstrapHostFunction::TestingTempDirectoryPath,
                 ("testing", Some("cleanup")) => {
                     HirBootstrapHostFunction::TestingTempDirectoryCleanup
@@ -16066,12 +16159,6 @@ impl<'a> ExpressionChecker<'a> {
                 ("iter", Some("collect")) => HirBootstrapHostFunction::IterCollect,
                 ("format", Some("format")) => HirBootstrapHostFunction::FormatFormat,
                 ("format", Some("join")) => HirBootstrapHostFunction::FormatJoin,
-                ("io", Some("defaultLimits")) => HirBootstrapHostFunction::IoLimitsDefault,
-                ("io", Some("limits")) => HirBootstrapHostFunction::IoLimitsNew,
-                ("io", Some("readAll")) => HirBootstrapHostFunction::IoReadAll,
-                ("io", Some("writeAll")) => HirBootstrapHostFunction::IoWriteAll,
-                ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
-                ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
                 ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
                 ("fs", Some("writeAll")) => HirBootstrapHostFunction::FsWriteAll,
                 ("fs", Some("createDirectory")) => HirBootstrapHostFunction::FsCreateDirectory,
@@ -16113,13 +16200,9 @@ impl<'a> ExpressionChecker<'a> {
                 ("testing", Some("withVirtualTime")) => {
                     HirBootstrapHostFunction::TestingWithVirtualTime
                 }
-                ("testing", Some("__runLeaf")) if generated_testing => {
-                    HirBootstrapHostFunction::TestingRunLeaf
-                }
-                ("testing", Some("__runSuite")) if generated_testing => {
-                    HirBootstrapHostFunction::TestingRunSuite
-                }
-                ("testing", Some("__beginSuiteCleanup")) if generated_testing => {
+                ("testing", Some("__runLeaf")) => HirBootstrapHostFunction::TestingRunLeaf,
+                ("testing", Some("__runSuite")) => HirBootstrapHostFunction::TestingRunSuite,
+                ("testing", Some("__beginSuiteCleanup")) => {
                     HirBootstrapHostFunction::TestingBeginSuiteCleanup
                 }
                 ("process", Some(name))
@@ -16168,6 +16251,25 @@ impl<'a> ExpressionChecker<'a> {
                 _ => return Ok(None),
             }
         };
+        if matches!(
+            host_function,
+            HirBootstrapHostFunction::TestingRunLeaf
+                | HirBootstrapHostFunction::TestingRunSuite
+                | HirBootstrapHostFunction::TestingBeginSuiteCleanup
+        ) && !self
+            .sources
+            .get(file)?
+            .is_testing_call(function_token.range())
+        {
+            self.emit(
+                self.sources.span(file, function_token.range())?,
+                "E1102",
+                "test participation functions are compiler-private",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
         let external_value = self
             .resolved
             .reference(file, function_token.range())
@@ -16197,118 +16299,56 @@ impl<'a> ExpressionChecker<'a> {
         {
             return Ok(None);
         }
-        if !matches!(
+        if matches!(
             host_function,
-            HirBootstrapHostFunction::ConsolePrint | HirBootstrapHostFunction::ConsolePrintln
-        ) {
-            if matches!(
-                host_function,
-                HirBootstrapHostFunction::TestingRunLeaf
-                    | HirBootstrapHostFunction::TestingRunSuite
-            ) && let Some(argument) = suffix
-                .child_nodes()
-                .filter(|child| child.kind() == SyntaxKind::CallArgument)
-                .nth(1)
-                && let Some(body) = argument
-                    .child_nodes()
-                    .find(|child| AstExpression::cast(*child).is_some())
-            {
-                self.test_node_closures.insert((file, body.range()));
-            }
-            let callee = self.bootstrap_host_callee(
-                host_function,
-                self.sources.span(file, base_path.range())?,
-            )?;
-            let explicit_generics = explicit_bracket
-                .map(|bracket| {
-                    self.expression_generic_arguments(file, bracket, Some(context))?
-                        .ok_or_else(|| HirError::TraitSelectionInvariant {
-                            message: "bootstrap host generic arguments could not be parsed".into(),
-                        })
-                        .map(|arguments| ExplicitGenericArguments {
-                            arguments: arguments
-                                .into_iter()
-                                .enumerate()
-                                .map(|(position, argument)| {
-                                    (
-                                        u32::try_from(position)
-                                            .expect("bootstrap generic position fits in u32"),
-                                        argument,
-                                    )
-                                })
-                                .collect(),
-                        })
-                })
-                .transpose()?;
-            return self
-                .check_call(
-                    CallSite {
-                        file,
-                        range,
-                        suffix,
-                        expected,
-                    },
-                    callee,
-                    None,
-                    explicit_generics,
-                    context,
-                )
-                .map(Some);
-        }
-
-        let arguments = suffix
+            HirBootstrapHostFunction::TestingRunLeaf | HirBootstrapHostFunction::TestingRunSuite
+        ) && let Some(argument) = suffix
             .child_nodes()
             .filter(|child| child.kind() == SyntaxKind::CallArgument)
-            .collect::<Vec<_>>();
-        let string_type = self.program.interner.scalar(ScalarType::String);
-        let mut lowered = Vec::new();
-        let mut invalid_shape = arguments.len() != 1;
-        for argument in &arguments {
-            let tokens = argument
-                .child_tokens()
-                .filter(|token| !token.kind().is_trivia())
-                .collect::<Vec<_>>();
-            invalid_shape |= tokens.iter().any(|token| {
-                matches!(
-                    token.kind(),
-                    TokenKind::Colon
-                        | TokenKind::Ellipsis
-                        | TokenKind::Ref
-                        | TokenKind::Mut
-                        | TokenKind::Var
-                )
-            });
-            if let Some(expression) = argument
+            .nth(1)
+            && let Some(body) = argument
                 .child_nodes()
                 .find(|child| AstExpression::cast(*child).is_some())
-            {
-                lowered.push(self.check_expression(
-                    file,
-                    expression,
-                    Some(ExpressionExpectation::Direct(string_type)),
-                    context,
-                )?);
-            }
+        {
+            self.test_node_closures
+                .insert((file, body.range()), host_function);
         }
-        if invalid_shape || lowered.len() != 1 {
-            self.emit(
-                self.sources.span(file, suffix.range())?,
-                "E1102",
-                "bootstrap `std.console.print` expects exactly one String value argument",
-                Vec::new(),
-                None,
-            )?;
-            return Ok(Some(self.recovery_expression(file, range)?));
-        }
-        Ok(Some(self.allocate_expression(HirExpression {
-            span: self.sources.span(file, range)?,
-            ty: self.program.interner.scalar(ScalarType::Unit),
-            category: HirValueCategory::Value,
-            kind: HirExpressionKind::BootstrapHostCall {
-                function: host_function,
-                arguments: lowered,
+        let callee =
+            self.bootstrap_host_callee(host_function, self.sources.span(file, base_path.range())?)?;
+        let explicit_generics = explicit_bracket
+            .map(|bracket| {
+                self.expression_generic_arguments(file, bracket, Some(context))?
+                    .ok_or_else(|| HirError::TraitSelectionInvariant {
+                        message: "bootstrap host generic arguments could not be parsed".into(),
+                    })
+                    .map(|arguments| ExplicitGenericArguments {
+                        arguments: arguments
+                            .into_iter()
+                            .enumerate()
+                            .map(|(position, argument)| {
+                                (
+                                    u32::try_from(position)
+                                        .expect("bootstrap generic position fits in u32"),
+                                    argument,
+                                )
+                            })
+                            .collect(),
+                    })
+            })
+            .transpose()?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
             },
-        })?))
+            callee,
+            None,
+            explicit_generics,
+            context,
+        )
+        .map(Some)
     }
 
     fn bootstrap_host_callee(
@@ -16949,11 +16989,11 @@ impl<'a> ExpressionChecker<'a> {
                 )? {
                     return Ok(Some(call));
                 }
-                if let Some(call) = self.check_qualified_env_call(
+                if let Some(call) = self.check_qualified_path_or_env_call(
                     file,
                     range,
                     suffix,
-                    explicit_bracket,
+                    explicit_bracket.or(owner_bracket),
                     &tokens,
                     resolved_index,
                     &resolved,
@@ -17153,7 +17193,7 @@ impl<'a> ExpressionChecker<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn check_qualified_env_call(
+    fn check_qualified_path_or_env_call(
         &mut self,
         file: FileId,
         range: TextRange,
@@ -17174,28 +17214,33 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(None);
         };
         if module.package().as_str() != "toolchain:std:0.1-bootstrap"
-            || module.path().as_str() != "env"
+            || !matches!(module.path().as_str(), "path" | "env")
             || resolved_index + 2 != tokens.len()
         {
             return Ok(None);
         }
         let member_token = *tokens
             .last()
-            .expect("a qualified environment operation has a member token");
+            .expect("a qualified constructor has a member token");
         let member = member_token
             .token()
             .normalized_identifier()
             .unwrap_or(self.token_text(file, member_token)?);
-        let function = match (name.as_str(), member) {
-            ("Name", "fromText") => HirBootstrapHostFunction::EnvNameFromText,
-            ("Name", "fromBytes") => HirBootstrapHostFunction::EnvNameFromBytes,
+        let function = match (module.path().as_str(), name.as_str(), member) {
+            ("env", "Name", "fromText") => HirBootstrapHostFunction::EnvNameFromText,
+            ("env", "Name", "fromBytes") => HirBootstrapHostFunction::EnvNameFromBytes,
+            ("path", "Path", "fromString") => HirBootstrapHostFunction::PathFromString,
+            ("path", "Path", "fromBytes") => HirBootstrapHostFunction::PathFromBytes,
             _ => return Ok(None),
         };
         if let Some(bracket) = explicit_bracket {
             self.emit(
                 self.sources.span(file, bracket.range())?,
                 "E1104",
-                "std.env operations do not declare generic parameters",
+                format!(
+                    "std.{} operations do not declare generic parameters",
+                    module.path().as_str()
+                ),
                 Vec::new(),
                 None,
             )?;
@@ -18094,7 +18139,8 @@ impl<'a> ExpressionChecker<'a> {
                 namespace: Namespace::Type,
                 name,
             } if module.package().as_str() == "toolchain:std:0.1-bootstrap"
-                && module.path().as_str() == "serialization" =>
+                && (module.path().as_str() == "serialization"
+                    || (module.path().as_str() == "testing" && name.as_str() == "Shrink")) =>
             {
                 name
             }
@@ -18102,6 +18148,11 @@ impl<'a> ExpressionChecker<'a> {
         };
         let (mut method_name, mut method, trait_arity) = match name.as_str() {
             "Display" => ("display", HirPreludeTraitMethod::Display, 0usize),
+            "Shrink" => (
+                "candidates",
+                HirPreludeTraitMethod::ShrinkCandidates,
+                0usize,
+            ),
             "Iterator" => ("next", HirPreludeTraitMethod::IteratorNext, 1usize),
             "AsyncIterator" => ("next", HirPreludeTraitMethod::AsyncIteratorNext, 1usize),
             "Encode" => (
@@ -18259,6 +18310,12 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(Some(self.recovery_expression(file, range)?));
         }
 
+        if !self.check_prelude_method_availability(
+            self.sources.span(file, member_token.range())?,
+            method,
+        )? {
+            return self.recovery_expression(file, range).map(Some);
+        }
         let (_, function_type) = self.prelude_trait_function_template(method)?;
         let callee = self.allocate_expression(HirExpression {
             span: self.sources.span(file, member_token.range())?,
@@ -18742,6 +18799,7 @@ impl<'a> ExpressionChecker<'a> {
                 HirTraitConstructor::Prelude(name) => {
                     let method = match (name.as_str(), member_name.as_str()) {
                         ("Display", "display") => Some(HirPreludeTraitMethod::Display),
+                        ("Shrink", "candidates") => Some(HirPreludeTraitMethod::ShrinkCandidates),
                         ("Iterator", "next") => Some(HirPreludeTraitMethod::IteratorNext),
                         ("AsyncIterator", "next") => Some(HirPreludeTraitMethod::AsyncIteratorNext),
                         ("Encode", method)
@@ -18848,6 +18906,12 @@ impl<'a> ExpressionChecker<'a> {
                 u32::try_from(query.arguments().len()).expect("trait arity fits in u32"),
                 query.target(),
             );
+            if !self.check_prelude_method_availability(
+                self.sources.span(file, member_token.range())?,
+                method,
+            )? {
+                return self.recovery_expression(file, range).map(Some);
+            }
             let (_, function_type) = self.prelude_trait_function_template(method)?;
             let callee = self.allocate_expression(HirExpression {
                 span: self.sources.span(file, member_token.range())?,
@@ -19770,6 +19834,17 @@ impl<'a> ExpressionChecker<'a> {
                 "toUpperAscii" => HirBootstrapHostFunction::TextUpperAscii,
                 _ => return Ok(None),
             },
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } if arguments.is_empty()
+                && *identity == SymbolIdentity::bootstrap_standard("testing", "TextDiff") =>
+            {
+                match member {
+                    "render" => HirBootstrapHostFunction::TestingTextDiffRender,
+                    _ => return Ok(None),
+                }
+            }
             TypeKind::Nominal { identity, .. }
                 if identity.package().as_str() == "toolchain:std:0.1-bootstrap"
                     && identity.module().as_str() == "encoding" =>
@@ -19880,6 +19955,13 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Set, "contains") => HirBootstrapHostFunction::CollectionSetContains,
                 (IntrinsicType::Set, "values") => HirBootstrapHostFunction::CollectionSetValues,
                 (IntrinsicType::Path, "join") => HirBootstrapHostFunction::PathJoin,
+                (IntrinsicType::Reflection(kind), name)
+                    if tondo_vm::reflection::ReflectionOperation::query(kind, name).is_some() =>
+                {
+                    HirBootstrapHostFunction::Reflection(
+                        tondo_vm::reflection::ReflectionOperation::query(kind, name).unwrap(),
+                    )
+                }
                 (IntrinsicType::Path, "parent") => HirBootstrapHostFunction::PathParent,
                 (IntrinsicType::Path, "fileName") => HirBootstrapHostFunction::PathFileName,
                 (IntrinsicType::Path, "extension") => HirBootstrapHostFunction::PathExtension,
@@ -19997,9 +20079,6 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Atomic, "swap") => HirBootstrapHostFunction::SyncAtomicSwap,
                 (IntrinsicType::Atomic, "compareExchange") => {
                     HirBootstrapHostFunction::SyncAtomicCompareExchange
-                }
-                (IntrinsicType::TextDiff, "render") => {
-                    HirBootstrapHostFunction::TestingTextDiffRender
                 }
                 (IntrinsicType::TempDirectory, "path") => {
                     HirBootstrapHostFunction::TestingTempDirectoryPath
@@ -20418,10 +20497,7 @@ impl<'a> ExpressionChecker<'a> {
             .resolved
             .symbol(owner)
             .expect("callable member owners remain indexed");
-        let source = self.sources.get(file)?;
-        if owner.identity().source_id() == source.source_id()
-            && owner.identity().module() == source.module()
-        {
+        if self.owner_module_contains(owner.identity(), file) {
             return Ok(true);
         }
         self.emit(
@@ -20460,10 +20536,7 @@ impl<'a> ExpressionChecker<'a> {
                 .resolved
                 .symbol(owner)
                 .expect("callable member owners remain indexed");
-            let source = self.sources.get(file)?;
-            if owner.identity().source_id() != source.source_id()
-                || owner.identity().module() != source.module()
-            {
+            if !self.owner_module_contains(owner.identity(), file) {
                 self.emit(
                     self.sources.span(file, token.range())?,
                     "E1501",
@@ -21118,6 +21191,31 @@ impl<'a> ExpressionChecker<'a> {
             values.push(value);
         }
         Ok((values, valid))
+    }
+
+    fn check_prelude_method_availability(
+        &mut self,
+        span: Span,
+        method: HirPreludeTraitMethod,
+    ) -> Result<bool, HirError> {
+        if method == HirPreludeTraitMethod::ShrinkCandidates
+            && self
+                .program
+                .callable(HirCallableId::Host(
+                    HirBootstrapHostFunction::TestingShrinkCandidates,
+                ))
+                .is_none()
+        {
+            self.emit(
+                span,
+                "E2003",
+                "Shrink.candidates belongs to test-only std.testing",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     fn prelude_trait_function_template(
@@ -24202,13 +24300,21 @@ mod tests {
             parsed.diagnostics()
         );
         let packages = PackageGraph::loose(&sources, file).unwrap();
-        let resolved = resolve(&packages, &sources, [(file, &parsed)], 100).unwrap();
+        let parsed_files =
+            crate::driver::bootstrap_parsed_for_test(&packages, &mut sources, file, parsed);
+        let resolved = resolve(
+            &packages,
+            &sources,
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
+            100,
+        )
+        .unwrap();
         let (resolved, diagnostics) = resolved.into_parts();
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
         let lowered = lower_types(
             &packages,
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 100_000,
@@ -24221,7 +24327,7 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
         let checked = check_expressions(
             &sources,
-            [(file, &parsed)],
+            parsed_files.iter().map(|(file, parsed)| (*file, parsed)),
             &resolved,
             program,
             ExpressionCheckLimits {
@@ -33153,6 +33259,58 @@ fn build(input: Int, flag: Bool) {
     }
 
     #[test]
+    fn literal_pattern_spellings_exclude_trivia_and_preserve_token_contents() {
+        let (_, _, output) = check(
+            r#"fn integers(value: (Int, Int32)): Bool {
+    match value {
+        (9, /* prefix */ - /* sign */ 0xAi32) => true
+        _ => false
+    }
+}
+fn floats(value: (Float64, Float32)): Bool {
+    match value {
+        (1.25, /* prefix */ - /* sign */ 2.5f32) => true
+        _ => false
+    }
+}
+fn strings(value: (String, String)): Bool {
+    match value {
+        ("left", /* prefix */ " right ") => true
+        _ => false
+    }
+}
+"#,
+        );
+        assert!(output.diagnostics().is_empty(), "{:?}", codes(&output));
+        let mut actual = output
+            .program()
+            .patterns
+            .iter()
+            .filter_map(|pattern| match pattern.kind() {
+                HirPatternKind::Literal(HirLiteral::Integer(value)) => {
+                    Some(format!("integer:{value}"))
+                }
+                HirPatternKind::Literal(HirLiteral::Float(value)) => Some(format!("float:{value}")),
+                HirPatternKind::Literal(HirLiteral::String(value)) => {
+                    Some(format!("string:{value}"))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        actual.sort();
+        let mut expected = vec![
+            "integer:9",
+            "integer:-0xAi32",
+            "float:1.25",
+            "float:-2.5f32",
+            "string:\"left\"",
+            "string:\" right \"",
+        ];
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn literal_pattern_coverage_uses_decoded_scalar_values() {
         let (_, _, character) = check(
             "fn inspect(value: Char): Int {\n\
@@ -34033,7 +34191,7 @@ fn build(input: Int, flag: Bool) {
     fn bootstrap_console_print_has_one_canonical_typed_call_shape() {
         let (_, _, output) = check(
             "import std.console\n\
-             fn main() { console.print(\"Hello, Tondo!\") }\n",
+             fn main() { _ = console.print(\"Hello, Tondo!\")\n }\n",
         );
         assert!(
             output.diagnostics().is_empty(),
@@ -34047,17 +34205,21 @@ fn build(input: Int, flag: Bool) {
             .filter(|expression| {
                 matches!(
                     expression.kind(),
-                    HirExpressionKind::BootstrapHostCall {
-                        function: HirBootstrapHostFunction::ConsolePrint,
-                        ..
-                    }
+                    HirExpressionKind::Call { callee, .. }
+                        if output.program().expression(*callee).is_some_and(|callee|
+                            matches!(callee.kind(), HirExpressionKind::Function(HirCallableId::Host(HirBootstrapHostFunction::ConsolePrint))))
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(calls.len(), 1);
-        assert_eq!(
-            calls[0].ty(),
-            output.program().interner().scalar(ScalarType::Unit)
+        let interner = output.program().interner();
+        let TypeKind::Result { success, error } = interner.kind(calls[0].ty()).unwrap() else {
+            panic!("console print must expose a Result");
+        };
+        assert_eq!(*success, interner.scalar(ScalarType::Unit));
+        assert!(
+            matches!(interner.kind(*error).unwrap(), TypeKind::Nominal { identity, .. }
+            if identity.module().as_str() == "console" && identity.declaration().to_string() == "ConsoleError")
         );
 
         for source in [
@@ -34548,7 +34710,7 @@ fn build(input: Int, flag: Bool) {
              fn control(value: Bool, parts: Array[String]): Int {\n\
                  let operation = (number: Int): Int { number + 1 }\n\
                  assert(value, \"prefix\", ...parts)\n\
-                 console.print(\"checked\")\n\
+                 _ = console.print(\"checked\")\n\
                  if value {\n\
                      operation(1)\n\
                  } else {\n\
@@ -34838,6 +35000,12 @@ fn build(input: Int, flag: Bool) {
             .program()
             .expressions()
             .filter(|expression| matches!(expression.kind(), E::Variant { .. }))
+            .filter(|expression| {
+                matches!(
+                    output.program().interner().kind(expression.ty()).unwrap(),
+                    TypeKind::Nominal { identity, .. } if identity.module().as_str() == "encoding"
+                )
+            })
             .count();
         assert_eq!(variant_count, 7);
         let (_, _, invalid_static) = check(

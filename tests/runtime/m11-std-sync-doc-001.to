@@ -74,5 +74,5 @@ fn main(): !sync.SyncError {
     assert(nonblocking_queue.dequeue() == some(1))
     assert(nonblocking_queue.dequeue() == some(2))
     assert(nonblocking_queue.dequeue() == none)
-    console.println("sync-doc-ok")
+    _ = console.println("sync-doc-ok")
 }

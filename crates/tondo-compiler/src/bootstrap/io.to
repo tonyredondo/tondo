@@ -1,0 +1,76 @@
+import std.bytes
+
+pub enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
+pub enum ReadResult { Data(bytes.Bytes), Eof }
+
+pub trait Reader {
+    fn read(var self, max: Int): ReadResult ! IoError suspends
+}
+
+pub trait Writer {
+    fn write(var self, data: bytes.Bytes): Int ! IoError suspends
+    fn flush(var self): Unit ! IoError suspends
+}
+
+pub type IoLimits = { priv maxBytes: Int, priv maxRead: Int }
+
+pub fn defaultLimits(): IoLimits {
+    IoLimits { maxBytes: 67108864, maxRead: 65536 }
+}
+
+pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError {
+    if maxBytes <= 0 or maxRead <= 0 {
+        return err(IoError.ResourceLimit)
+    }
+    IoLimits { maxBytes, maxRead }
+}
+
+pub fn readAll[R: Reader](reader: var R, policy: IoLimits): bytes.Bytes ! IoError suspends {
+    var output = match bytes.builder() {
+        ok(value) => value
+        err(_) => return err(IoError.ResourceLimit)
+    }
+    let request = if policy.maxRead < policy.maxBytes { policy.maxRead } else { policy.maxBytes }
+    var total = 0
+    for {
+        match reader.read(request)? {
+            ReadResult.Eof => {
+                return match output.finish() {
+                    ok(value) => value
+                    err(_) => return err(IoError.ResourceLimit)
+                }
+            }
+            ReadResult.Data(chunk) => {
+                let size = chunk.length()
+                if size == 0 or size > request {
+                    return err(IoError.InvalidData)
+                }
+                if size > policy.maxBytes - total {
+                    return err(IoError.ResourceLimit)
+                }
+                match output.append(chunk) {
+                    ok(_) => {}
+                    err(_) => return err(IoError.ResourceLimit)
+                }
+                total += size
+            }
+        }
+    }
+}
+
+pub fn writeAll[W: Writer](writer: var W, data: bytes.Bytes): Unit ! IoError suspends {
+    var offset = 0
+    let length = data.length()
+    for offset < length {
+        let remaining = match data.slice(offset, length) {
+            ok(value) => value
+            err(_) => return err(IoError.ResourceLimit)
+        }
+        let written = writer.write(remaining)?
+        if written <= 0 or written > length - offset {
+            return err(IoError.InvalidData)
+        }
+        offset += written
+    }
+    writer.flush()
+}

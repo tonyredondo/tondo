@@ -11,7 +11,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::test_control::EnvelopeReport;
-use crate::test_runtime::{LeafProgram, RuntimeError, RuntimeRunner, RuntimeStatus, WorkerInfo};
+use crate::test_runtime::{
+    LeafProgram, RunError, RuntimeError, RuntimeRunner, RuntimeStatus, WorkerInfo,
+};
 
 pub const TEST_REPEAT_FORMAT: &str = "tondo-test-repeat-0.1/1";
 pub const MAX_REPEAT_COUNT: u32 = 1_000;
@@ -238,6 +240,8 @@ pub struct RepeatAttempt {
     status: RuntimeStatus,
     worker: WorkerInfo,
     report: EnvelopeReport,
+    error: Option<RunError>,
+    snapshot_updates: Vec<(String, String)>,
 }
 
 impl RepeatAttempt {
@@ -267,6 +271,14 @@ impl RepeatAttempt {
 
     pub fn report(&self) -> &EnvelopeReport {
         &self.report
+    }
+
+    pub fn error(&self) -> Option<&RunError> {
+        self.error.as_ref()
+    }
+
+    pub fn snapshot_updates(&self) -> &[(String, String)] {
+        &self.snapshot_updates
     }
 }
 
@@ -380,6 +392,8 @@ impl RepeatCampaign {
                     status: leaf.status(),
                     worker: leaf.worker(),
                     report: leaf.report().clone(),
+                    error: leaf.error().cloned(),
+                    snapshot_updates: leaf.snapshot_updates().to_vec(),
                 });
             }
             if report.active_resources() != 0 {
@@ -595,7 +609,9 @@ mod tests {
             active_body.store(false, Ordering::SeqCst);
             if call == 1 {
                 Err(RunError::Error {
-                    code: "E".into(),
+                    code: Some("E".into()),
+                    error_type: "model.TestError".into(),
+                    source: None,
                     message: "iteration".into(),
                 })
             } else {

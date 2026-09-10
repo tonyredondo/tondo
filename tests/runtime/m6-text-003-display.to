@@ -60,5 +60,5 @@ fn main() {
         """
     assert(multilineExpression == "answer: 42")
 
-    console.print("text-display\n")
+    _ = console.print("text-display\n")
 }

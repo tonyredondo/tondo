@@ -38,12 +38,12 @@ jq -e '
     "STD-A-DIST-001", "STD-A-FUZZ-001", "STD-A-PERF-001",
     "STD-A-SELECTABLE-IMPL-001"
   ]
-  and .invariants.public_api.signatures == 216
+  and .invariants.public_api.signatures == 298
   and .invariants.public_api.gaps == 0
-  and .invariants.matrix == {owners:22,requirements:171,rows:387,open_rows:0,status:"verified",applicable_open_cells:0}
+  and .invariants.matrix == {owners:22,requirements:171,rows:469,open_rows:0,status:"verified",applicable_open_cells:0}
   and .invariants.fuzz == {owners:22,verified:22,partial:0}
   and .invariants.performance == {captured_owners:10,not_applicable_owners:12,deferred_dimensions:[]}
-  and .invariants.conformance == {owners:22,rows:387,cases:206,passed:true}
+  and .invariants.conformance == {owners:22,rows:469,cases:206,passed:true}
   and .invariants.distribution == {clean_source_workspaces:2,byte_identical:true,public_release:false}
   and .invariants.claims == {g5:false,native_backend:false,tlf:false,public_release:false}
   and (.negative_cases | sort) == [

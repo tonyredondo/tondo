@@ -1,0 +1,46 @@
+import std.fs
+import std.bytes
+
+fn fileIoError(error: fs.FsError): IoError {
+    match error {
+        fs.FsError.Closed => IoError.Closed
+        fs.FsError.Cancelled => IoError.Cancelled
+        fs.FsError.ResourceLimit => IoError.ResourceLimit
+        fs.FsError.NotFound => IoError.Host
+        fs.FsError.PermissionDenied => IoError.Host
+        fs.FsError.AlreadyExists => IoError.Host
+        fs.FsError.InvalidPath => IoError.Host
+        fs.FsError.NotDirectory => IoError.Host
+        fs.FsError.IsDirectory => IoError.Host
+        fs.FsError.Io => IoError.Host
+    }
+}
+
+impl Reader for fs.File {
+    fn read(var self, max: Int): ReadResult ! IoError suspends {
+        if max <= 0 {
+            return err(IoError.InvalidData)
+        }
+        match self.read(max) {
+            ok(some(data)) => ReadResult.Data(data)
+            ok(none) => ReadResult.Eof
+            err(error) => err(fileIoError(error))
+        }
+    }
+}
+
+impl Writer for fs.File {
+    fn write(var self, data: bytes.Bytes): Int ! IoError suspends {
+        match self.write(data) {
+            ok(count) => count
+            err(error) => err(fileIoError(error))
+        }
+    }
+
+    fn flush(var self): Unit ! IoError suspends {
+        match self.flush() {
+            ok(_) => {}
+            err(error) => err(fileIoError(error))
+        }
+    }
+}

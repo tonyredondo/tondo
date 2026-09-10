@@ -76,6 +76,13 @@ The output owns:
   projections, assignment targets, standalone explicit discard, and exact
   named-function specializations.
 
+Literal pattern spellings exclude surrounding CST trivia. Numeric patterns
+retain the actual token and explicit sign, including radix and type suffix;
+comments between the sign and token remain in source spans only. String patterns
+retain the range between their significant delimiter tokens, preserving internal
+spaces and escapes. MIR constants therefore carry valid literal spellings even
+inside spaced or commented tuple patterns; bytecode verification stays strict.
+
 The checker deliberately leaves its completion flag false when it encounters a
 surface whose semantics belongs to an unfinished phase. It checks bounded and
 unbounded generic function bodies, invariant call inference, explicit
@@ -198,6 +205,15 @@ Call arguments remain in source evaluation order while each HIR argument stores
 its resolved receiver, fixed-parameter, variadic-element, or variadic-spread
 target. Dot calls and qualified inherent calls therefore share one explicit
 receiver representation without rewriting or reevaluating source expressions.
+The early suspension pass does not resolve a qualified call through an
+unrelated bare function name. Receiver-selected effects are completed by the
+typed fixed point. A body-bearing implementation may temporarily differ from
+its trait contract only by a still-uninferred `suspends` bit; every parameter,
+outcome, unsafe and selectable bit must already match. This partial HIR state
+is not executable. After body inference, every implementation must match the
+exact trait signature or produce `E1114`; even a pure synchronous body cannot
+silently acquire an asynchronous trait contract. `@sync`/`@nosuspend` and
+selectable requirements retain their existing strict checks.
 For VARIADIC-001, a callable may have one unique named final value parameter
 whose signature type is `...T` and whose body binding is exactly `Array[T]`.
 Zero individual elements are valid; every supplied element is associated with

@@ -23,7 +23,7 @@ fn main() {
         }
         err(_) => assert(false)
     }
-    console.println("array-alias-bounds:3:9")
+    _ = console.println("array-alias-bounds:3:9")
 
     let map: concurrent.Map[String, Int] = concurrent.Map["a": 1, "b": 2]
     let map_alias = map
@@ -53,7 +53,7 @@ fn main() {
         }
         err(_) => assert(false)
     }
-    console.println("map-linearization:25:2")
+    _ = console.println("map-linearization:25:2")
 
     let set: concurrent.Set[Int] = concurrent.Set[1, 2]
     match set.insert(1) {
@@ -80,7 +80,7 @@ fn main() {
         }
         err(_) => assert(false)
     }
-    console.println("set-linearization:21:2")
+    _ = console.println("set-linearization:21:2")
 
     let stack: concurrent.Stack[Int] = concurrent.Stack[1, 2, 3]
     _ = stack.push(4)
@@ -123,7 +123,7 @@ fn main() {
         }
         err(_) => assert(false)
     }
-    console.println("stack-queue-order:321:234:3")
+    _ = console.println("stack-queue-order:321:234:3")
 
     let cursor_array: concurrent.Array[Int] = concurrent.Array[1, 2]
     var array_cursor_order = 0
@@ -168,7 +168,7 @@ fn main() {
     assert(set_cursor_order == 12)
     assert(stack_cursor_order == 21)
     assert(queue_cursor_order == 12)
-    console.println("cursor-horizon:12:12:12:21:12")
+    _ = console.println("cursor-horizon:12:12:12:21:12")
 
     let snapshot_values: concurrent.Array[Int] = concurrent.Array[4, 5]
     match snapshot_values.snapshot() {
@@ -181,7 +181,7 @@ fn main() {
         }
         err(_) => assert(false)
     }
-    console.println("snapshot-equivalence:9")
+    _ = console.println("snapshot-equivalence:9")
 
     let empty_array: concurrent.Array[Int] = concurrent.Array[]
     let empty_stack: concurrent.Stack[Int] = concurrent.Stack[]
@@ -192,13 +192,13 @@ fn main() {
     assert(empty_array.get(0) == none)
     assert(empty_stack.pop() == none)
     assert(empty_queue.dequeue() == none)
-    console.println("limits-cleanup:empty-none")
+    _ = console.println("limits-cleanup:empty-none")
 
     let threaded: concurrent.Array[Int] = concurrent.Array[0]
     let threaded_alias = threaded
     _ = threaded_alias.set(0, 7)
     assert(threaded.get(0) == some(7))
-    console.println("threads-capability:shared-alias")
+    _ = console.println("threads-capability:shared-alias")
 
-    console.println("sync-collection-conformance-ok")
+    _ = console.println("sync-collection-conformance-ok")
 }

@@ -18,6 +18,7 @@ pub enum SourceError {
     DuplicateFile(String),
     UnknownFile(FileId),
     InvalidRange(TextRange),
+    InvalidDiagnosticMapping,
     OffsetOutOfBounds { offset: u32, length: u32 },
 }
 
@@ -48,6 +49,9 @@ impl fmt::Display for SourceError {
                 "invalid byte range {}..{}",
                 range.start, range.end
             ),
+            Self::InvalidDiagnosticMapping => {
+                formatter.write_str("invalid generated diagnostic mapping")
+            }
             Self::OffsetOutOfBounds { offset, length } => write!(
                 formatter,
                 "byte offset {offset} lies outside a source of {length} bytes"
@@ -305,6 +309,14 @@ pub enum SourceOrigin {
     GeneratedTesting,
 }
 
+/// An exact generated range associated with an admitted input span. Mapping
+/// attributes the diagnostic to that span; it does not interpolate offsets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceDiagnosticMapping {
+    pub generated: TextRange,
+    pub origin: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct SourceInput {
     source_id: SourceId,
@@ -313,6 +325,8 @@ pub struct SourceInput {
     origin: SourceOrigin,
     bytes: Arc<[u8]>,
     diagnostic_origin: Option<Span>,
+    diagnostic_mappings: Arc<[SourceDiagnosticMapping]>,
+    testing_calls: Arc<[TextRange]>,
 }
 
 impl SourceInput {
@@ -330,6 +344,8 @@ impl SourceInput {
             origin,
             bytes: bytes.into(),
             diagnostic_origin: None,
+            diagnostic_mappings: Arc::default(),
+            testing_calls: Arc::default(),
         }
     }
 
@@ -337,6 +353,18 @@ impl SourceInput {
     /// declaration. Generated files never become editable user input.
     pub fn with_diagnostic_origin(mut self, origin: Option<Span>) -> Self {
         self.diagnostic_origin = origin;
+        self
+    }
+
+    /// Supplies sorted, nonoverlapping mappings, validated on database
+    /// admission. Unmapped output retains its generated source location.
+    pub fn with_diagnostic_mappings(mut self, mappings: &[SourceDiagnosticMapping]) -> Self {
+        self.diagnostic_mappings = Arc::from(mappings);
+        self
+    }
+
+    pub(crate) fn with_testing_calls(mut self, calls: &[TextRange]) -> Self {
+        self.testing_calls = Arc::from(calls);
         self
     }
 
@@ -358,6 +386,8 @@ pub struct SourceFile {
     origin: SourceOrigin,
     bytes: Arc<[u8]>,
     diagnostic_origin: Option<Span>,
+    diagnostic_mappings: Arc<[SourceDiagnosticMapping]>,
+    testing_calls: Arc<[TextRange]>,
     line_index: OnceLock<LineIndex>,
 }
 
@@ -384,6 +414,25 @@ impl SourceFile {
 
     pub fn diagnostic_origin(&self) -> Option<Span> {
         self.diagnostic_origin
+    }
+
+    pub fn diagnostic_mappings(&self) -> &[SourceDiagnosticMapping] {
+        &self.diagnostic_mappings
+    }
+
+    pub(crate) fn testing_calls(&self) -> &[TextRange] {
+        &self.testing_calls
+    }
+
+    /// Only the exact identifier emitted by the participation lowerer may
+    /// invoke a runner operation. Copied user bodies share the generated file
+    /// but never inherit permission from its file-wide origin.
+    pub(crate) fn is_testing_call(&self, range: TextRange) -> bool {
+        self.origin == SourceOrigin::GeneratedTesting
+            && self
+                .testing_calls
+                .binary_search_by_key(&range.start(), |call| call.start())
+                .is_ok_and(|index| self.testing_calls[index] == range)
     }
 
     pub fn text(&self) -> Result<&str, std::str::Utf8Error> {
@@ -460,6 +509,32 @@ impl SourceDatabase {
         if self.by_key.contains_key(&key) {
             return Err(SourceError::DuplicateFile(input.path.to_string()));
         }
+        if !input.diagnostic_mappings.is_empty() {
+            if input.origin != SourceOrigin::GeneratedMeta || input.diagnostic_origin.is_some() {
+                return Err(SourceError::InvalidDiagnosticMapping);
+            }
+            let text = std::str::from_utf8(&input.bytes)
+                .map_err(|_| SourceError::InvalidDiagnosticMapping)?;
+            let mut previous: Option<TextRange> = None;
+            for mapping in input.diagnostic_mappings.iter() {
+                let range = mapping.generated;
+                let origin = self.get(mapping.origin.file())?;
+                let origin_text = origin
+                    .text()
+                    .map_err(|_| SourceError::InvalidDiagnosticMapping)?;
+                if !text.is_char_boundary(range.start() as usize)
+                    || !text.is_char_boundary(range.end() as usize)
+                    || !origin_text.is_char_boundary(mapping.origin.range().start() as usize)
+                    || !origin_text.is_char_boundary(mapping.origin.range().end() as usize)
+                    || previous.is_some_and(|previous| {
+                        previous.end() > range.start() || previous.start() == range.start()
+                    })
+                {
+                    return Err(SourceError::InvalidDiagnosticMapping);
+                }
+                previous = Some(range);
+            }
+        }
 
         let file_id = FileId(index);
         self.files.push(SourceFile {
@@ -469,6 +544,8 @@ impl SourceDatabase {
             origin: input.origin,
             bytes: input.bytes,
             diagnostic_origin: input.diagnostic_origin,
+            diagnostic_mappings: input.diagnostic_mappings,
+            testing_calls: input.testing_calls,
             line_index: OnceLock::new(),
         });
         self.by_key.insert(key, file_id);
@@ -506,11 +583,25 @@ impl SourceDatabase {
         Ok(Span { file, range })
     }
 
-    /// Resolves one generated-source mapping. Meta output is deliberately
-    /// mapped as a whole to its authorized declaration, so diagnostics remain
-    /// stable even when provider formatting changes.
+    /// Resolves a diagnostic contained in one admitted generated range. A
+    /// diagnostic crossing mappings, or in unmapped source, retains its source
+    /// location. No whole-file attribution is inferred from a partial map.
     pub fn diagnostic_span(&self, span: Span) -> Result<Span, SourceError> {
-        Ok(self.get(span.file())?.diagnostic_origin().unwrap_or(span))
+        let source = self.get(span.file())?;
+        self.span(span.file(), span.range())?;
+        let index = source
+            .diagnostic_mappings
+            .partition_point(|mapping| mapping.generated.start() <= span.range().start());
+        if let Some(mapping) = index
+            .checked_sub(1)
+            .map(|index| source.diagnostic_mappings[index])
+            && span.range().end() <= mapping.generated.end()
+            && (span.range().start() < mapping.generated.end()
+                || mapping.generated.start() == mapping.generated.end())
+        {
+            return Ok(mapping.origin);
+        }
+        Ok(source.diagnostic_origin().unwrap_or(span))
     }
 }
 
@@ -575,6 +666,92 @@ mod tests {
             LogicalPath::new(path).unwrap(),
             bytes,
         )
+    }
+
+    #[test]
+    fn diagnostic_mappings_preserve_partial_ranges_and_unmapped_locations() {
+        let mut database = SourceDatabase::new();
+        let original = database
+            .add(virtual_input("main.to", "aλbc".as_bytes()))
+            .unwrap();
+        let origin = database
+            .span(original, TextRange::new(1, 3).unwrap())
+            .unwrap();
+        let generated = database
+            .add(
+                SourceInput::new(
+                    SourceId::new("root:test").unwrap(),
+                    ModulePath::new("app").unwrap(),
+                    LogicalPath::new("generated.to").unwrap(),
+                    SourceOrigin::GeneratedMeta,
+                    "prefix λ suffix".as_bytes(),
+                )
+                .with_diagnostic_mappings(&[SourceDiagnosticMapping {
+                    generated: TextRange::new(7, 9).unwrap(),
+                    origin,
+                }]),
+            )
+            .unwrap();
+        let span = |start, end| {
+            database
+                .span(generated, TextRange::new(start, end).unwrap())
+                .unwrap()
+        };
+        assert_eq!(database.diagnostic_span(span(7, 9)).unwrap(), origin);
+        for unmapped in [span(0, 6), span(6, 9), span(7, 10), span(9, 9)] {
+            assert_eq!(database.diagnostic_span(unmapped).unwrap(), unmapped);
+        }
+    }
+
+    #[test]
+    fn diagnostic_mappings_reject_invalid_utf8_origins_and_overlaps_atomically() {
+        let mut database = SourceDatabase::new();
+        let original = database
+            .add(virtual_input("main.to", "aλb".as_bytes()))
+            .unwrap();
+        let origin = database
+            .span(original, TextRange::new(1, 3).unwrap())
+            .unwrap();
+        let good = SourceDiagnosticMapping {
+            generated: TextRange::new(0, 2).unwrap(),
+            origin,
+        };
+        for mappings in [
+            vec![SourceDiagnosticMapping {
+                generated: TextRange::new(1, 2).unwrap(),
+                origin,
+            }],
+            vec![SourceDiagnosticMapping {
+                generated: TextRange::new(0, 9).unwrap(),
+                origin,
+            }],
+            vec![good, good],
+            vec![SourceDiagnosticMapping {
+                origin: database
+                    .span(original, TextRange::new(2, 3).unwrap())
+                    .unwrap(),
+                ..good
+            }],
+            vec![SourceDiagnosticMapping {
+                origin: origin.with_file(FileId(42)),
+                ..good
+            }],
+        ] {
+            let input = SourceInput::new(
+                SourceId::new("root:test").unwrap(),
+                ModulePath::new("app").unwrap(),
+                LogicalPath::new("generated.to").unwrap(),
+                SourceOrigin::GeneratedMeta,
+                "λx".as_bytes(),
+            )
+            .with_diagnostic_mappings(&mappings);
+            assert!(database.add(input).is_err());
+            assert_eq!(database.len(), 1);
+        }
+        let input =
+            virtual_input("generated.to", "λx".as_bytes()).with_diagnostic_mappings(&[good]);
+        assert!(database.add(input).is_err());
+        assert_eq!(database.len(), 1);
     }
 
     #[test]

@@ -49,5 +49,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | text.TextError) {
         err(_) => ()
     }
 
-    console.print("text-complete\n")
+    _ = console.print("text-complete\n")
 }

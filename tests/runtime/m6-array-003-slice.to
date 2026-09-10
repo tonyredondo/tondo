@@ -19,5 +19,5 @@ fn main() {
     assert(values[::minimum] == [4])
     assert(empty[::-1] == empty)
 
-    console.print("array-slice\n")
+    _ = console.print("array-slice\n")
 }

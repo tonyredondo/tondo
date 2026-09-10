@@ -97,5 +97,5 @@ fn main() {
     assert(classifyError(NumericConversionError.NotFinite) == 2)
     assert(classifyError(NumericConversionError.NotIntegral) == 3)
 
-    console.print("numeric-conversions\n")
+    _ = console.print("numeric-conversions\n")
 }

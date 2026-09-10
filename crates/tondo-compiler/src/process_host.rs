@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
+use std::fmt::{self, Write as _};
 use std::fs::OpenOptions;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command as OsCommand, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -15,22 +16,32 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use os_pipe::pipe;
+use tondo_stdlib::fs::{FileKind, FsError, OpenMode as FsOpenMode};
 use tondo_stdlib::testing::{
-    FloatTolerance, Generator, MAX_SHRINK_CANDIDATES, TextDiff, diff_text,
+    DiffLimits, FloatTolerance, FloatToleranceError, GenerationError, Generator,
+    MAX_SHRINK_CANDIDATES, TextDiff, TextDiffHunk, TextDiffHunkView, TextDiffPlan,
+    TextDiffRenderPlan,
 };
 use tondo_stdlib::{
     encoding, io as stdlib_io, json, math, messagepack, path, protobuf,
     serialization as stdlib_serialization, yaml,
 };
 use tondo_vm::runtime::{
-    RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
+    RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmHostCompletion, VmHostImportAdmission,
+    VmHostReturn, VmHostReturnBudget, VmHostReturnPreview, VmMemoryBudget, VmMemoryCharge,
+    VmTestNodeKind, VmTestNodeOutcome,
 };
 
 use crate::test_backend::{TestExecutionKind, TestParticipation};
 use crate::test_control::{ControlError, EnvelopeHandle};
+use crate::test_temporaries::TempError;
+
+mod filesystem;
 
 const INT_MIN: i128 = i64::MIN as i128;
 const INT_MAX: i128 = i64::MAX as i128;
+// Result, Metadata, FileKind, Int and Bool, plus both nominal names.
+const METADATA_RESULT_BYTES: u64 = 5 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + 16;
 const NANOS_PER_MICROSECOND: i128 = 1_000;
 const NANOS_PER_MILLISECOND: i128 = 1_000_000;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
@@ -38,27 +49,144 @@ const DEFAULT_MAX_TIME_RESOURCES: usize = 1_048_576;
 static NEXT_CLOCK_DOMAIN: AtomicU64 = AtomicU64::new(1);
 static NEXT_ATOMIC_TEMP: AtomicU64 = AtomicU64::new(1);
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
-const MAX_TEMP_DIRECTORY_ENTRIES: usize = 1_048_576;
 const MAX_SHRINK_DEPTH: usize = 64;
 
-fn testing_value_text(value: &RuntimeValue) -> String {
-    const MAX_BYTES: usize = 1_024;
-    let mut text = format!("{value:?}");
-    if text.len() > MAX_BYTES {
-        text.truncate(MAX_BYTES);
-        text.push_str("...<truncated>");
+const TESTING_TRUNCATION_MARKER: &str = "...<truncated>";
+
+struct TestingValueText<'a>(&'a RuntimeValue);
+
+/// Stop Debug formatting at a UTF-8 boundary, before constructing a complete
+/// diagnostic for a potentially large value.
+struct TestingDiagnosticPrefix<'a> {
+    output: &'a mut dyn fmt::Write,
+    remaining: usize,
+    truncated: bool,
+}
+
+impl fmt::Write for TestingDiagnosticPrefix<'_> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        if self.truncated {
+            return Err(fmt::Error);
+        }
+        let end = text.floor_char_boundary(self.remaining.min(text.len()));
+        self.output.write_str(&text[..end])?;
+        self.remaining -= end;
+        if end < text.len() {
+            self.truncated = true;
+            Err(fmt::Error)
+        } else {
+            Ok(())
+        }
     }
-    text
+}
+
+impl fmt::Display for TestingValueText<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut prefix = TestingDiagnosticPrefix {
+            output: formatter,
+            remaining: crate::test_limits::ASSERTION_VALUE_BYTES,
+            truncated: false,
+        };
+        let result = write!(prefix, "{:?}", self.0);
+        if prefix.truncated {
+            formatter.write_str(TESTING_TRUNCATION_MARKER)
+        } else {
+            result
+        }
+    }
+}
+
+#[derive(Default)]
+struct TestingDiagnosticLength(usize);
+
+impl fmt::Write for TestingDiagnosticLength {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.0 += text.len();
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+enum ShrinkError {
+    Generation(GenerationError),
+    Memory(VmError),
+}
+
+impl From<VmError> for ShrinkError {
+    fn from(error: VmError) -> Self {
+        Self::Memory(error)
+    }
+}
+
+struct ShrinkCandidates {
+    values: Vec<RuntimeValue>,
+    memory: Option<VmMemoryCharge>,
+}
+
+impl ShrinkCandidates {
+    fn new(budget: Option<&VmMemoryBudget>) -> Result<Self, ShrinkError> {
+        let memory = budget
+            .map(|budget| budget.reserve(tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES))
+            .transpose()?;
+        Ok(Self {
+            values: Vec::new(),
+            memory,
+        })
+    }
+
+    fn reserve(&mut self, bytes: u64) -> Result<(), ShrinkError> {
+        if let Some(memory) = &mut self.memory {
+            let total = memory
+                .bytes()
+                .checked_add(bytes)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: memory.budget().limit(),
+                })?;
+            memory.resize(total)?;
+        }
+        Ok(())
+    }
 }
 
 fn push_shrink_candidate(
-    candidates: &mut Vec<RuntimeValue>,
+    candidates: &mut ShrinkCandidates,
     candidate: RuntimeValue,
     limit: usize,
-) {
-    if candidates.len() < limit && !candidates.contains(&candidate) {
-        candidates.push(candidate);
+) -> Result<(), ShrinkError> {
+    if candidates.values.len() < limit && !candidates.values.contains(&candidate) {
+        candidates.reserve(tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)?;
+        candidates.values.push(candidate);
     }
+    Ok(())
+}
+
+/// The closed Shrink shapes can be sized and depth-checked without allocating
+/// a traversal stack. Validate before cloning an array prefix or nested value.
+fn shrink_value_bytes(value: &RuntimeValue, depth: usize) -> Result<u64, ShrinkError> {
+    if depth > MAX_SHRINK_DEPTH {
+        return Err(ShrinkError::Generation(GenerationError::LimitExceeded));
+    }
+    let mut bytes = tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES;
+    match value {
+        RuntimeValue::Integer(_) | RuntimeValue::Float(_) => {}
+        RuntimeValue::String(text) => {
+            bytes = bytes
+                .checked_add(text.len() as u64)
+                .ok_or(ShrinkError::Generation(GenerationError::LimitExceeded))?;
+        }
+        RuntimeValue::Array(values) => {
+            for value in values {
+                bytes = bytes
+                    .checked_add(shrink_value_bytes(value, depth + 1)?)
+                    .ok_or(ShrinkError::Generation(GenerationError::LimitExceeded))?;
+            }
+        }
+        _ => {
+            return Err(ShrinkError::Generation(GenerationError::InvalidBounds));
+        }
+    }
+    Ok(bytes)
 }
 
 fn generic_argument(name: &str) -> Option<&str> {
@@ -186,78 +314,127 @@ fn shrink_runtime_value(
     value: &RuntimeValue,
     limit: usize,
     depth: usize,
-) -> Result<Vec<RuntimeValue>, &'static str> {
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
+    budget: Option<&VmMemoryBudget>,
+) -> Result<ShrinkCandidates, ShrinkError> {
     if limit > MAX_SHRINK_CANDIDATES {
-        return Err("shrink candidate limit exceeded");
-    }
-    if depth > MAX_SHRINK_DEPTH {
-        return Err("shrink depth limit exceeded");
+        return Err(ShrinkError::Generation(GenerationError::LimitExceeded));
     }
 
-    let mut candidates = Vec::new();
+    let original_bytes = shrink_value_bytes(value, depth)?;
+    if limit == 0 {
+        return ShrinkCandidates::new(budget);
+    }
+    let mut candidates = ShrinkCandidates::new(budget)?;
     match value {
         RuntimeValue::Integer(original) => {
             let mut current = *original;
-            while current != 0 && candidates.len() < limit {
+            while current != 0 && candidates.values.len() < limit {
                 current /= 2;
-                push_shrink_candidate(&mut candidates, RuntimeValue::Integer(current), limit);
+                push_shrink_candidate(&mut candidates, RuntimeValue::Integer(current), limit)?;
             }
         }
         RuntimeValue::Float(original) => {
             if !original.is_nan() {
                 for candidate in [0.0, *original / 2.0, -*original / 2.0] {
-                    if candidates.len() == limit {
+                    if candidates.values.len() == limit {
                         break;
                     }
-                    push_shrink_candidate(&mut candidates, RuntimeValue::Float(candidate), limit);
+                    push_shrink_candidate(&mut candidates, RuntimeValue::Float(candidate), limit)?;
                 }
             }
         }
         RuntimeValue::String(text) => {
-            for length in 0..=text.len() {
-                if candidates.len() == limit {
+            for end in text
+                .char_indices()
+                .map(|(end, _)| end)
+                .chain(std::iter::once(text.len()))
+            {
+                if candidates.values.len() == limit {
                     break;
                 }
-                let end = text.floor_char_boundary(length);
-                push_shrink_candidate(
-                    &mut candidates,
-                    RuntimeValue::String(text[..end].to_owned()),
-                    limit,
-                );
+                candidates.reserve(tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + end as u64)?;
+                candidates
+                    .values
+                    .push(RuntimeValue::String(text[..end].to_owned()));
             }
         }
         RuntimeValue::Array(values) => {
+            let mut prefix_bytes = tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES;
             for length in 0..=values.len() {
-                if candidates.len() == limit {
+                if candidates.values.len() == limit {
                     break;
                 }
-                push_shrink_candidate(
-                    &mut candidates,
-                    RuntimeValue::Array(values[..length].to_vec()),
-                    limit,
-                );
+                if length > 0 {
+                    prefix_bytes += shrink_value_bytes(&values[length - 1], depth + 1)?;
+                }
+                candidates.reserve(prefix_bytes)?;
+                candidates
+                    .values
+                    .push(RuntimeValue::Array(values[..length].to_vec()));
             }
             for index in 0..values.len() {
-                if candidates.len() == limit {
+                if candidates.values.len() == limit {
                     break;
                 }
-                let remaining = limit.saturating_sub(candidates.len());
-                let element_candidates =
-                    shrink_runtime_value(&values[index], remaining, depth + 1)?;
-                for element in element_candidates {
-                    if candidates.len() == limit {
+                let remaining = limit.saturating_sub(candidates.values.len());
+                let ShrinkCandidates {
+                    values: elements,
+                    memory: mut element_memory,
+                } = shrink_runtime_value(&values[index], remaining, depth + 1, budget)?;
+                let copied_bytes = original_bytes - shrink_value_bytes(&values[index], depth + 1)?;
+                for element in elements {
+                    if candidates.values.len() == limit {
                         break;
                     }
-                    let mut candidate = values.clone();
-                    candidate[index] = element;
-                    push_shrink_candidate(&mut candidates, RuntimeValue::Array(candidate), limit);
+                    let element_bytes = shrink_value_bytes(&element, depth + 1)?;
+                    let duplicate = candidates.values.iter().any(|candidate| {
+                        let RuntimeValue::Array(candidate) = candidate else {
+                            return false;
+                        };
+                        candidate.len() == values.len()
+                            && candidate.iter().zip(values).enumerate().all(
+                                |(position, (previous, original))| {
+                                    previous
+                                        == if position == index {
+                                            &element
+                                        } else {
+                                            original
+                                        }
+                                },
+                            )
+                    });
+                    if duplicate {
+                        drop(element);
+                        if let Some(memory) = &mut element_memory {
+                            memory.resize(memory.bytes() - element_bytes)?;
+                        }
+                        continue;
+                    }
+                    candidates.reserve(copied_bytes)?;
+                    if let (Some(source), Some(destination)) =
+                        (&mut element_memory, &mut candidates.memory)
+                    {
+                        source.transfer_to(destination, element_bytes)?;
+                    }
+                    let mut element = Some(element);
+                    let candidate = values
+                        .iter()
+                        .enumerate()
+                        .map(|(position, original)| {
+                            if position == index {
+                                element
+                                    .take()
+                                    .expect("one replacement in a shrink candidate")
+                            } else {
+                                original.clone()
+                            }
+                        })
+                        .collect();
+                    candidates.values.push(RuntimeValue::Array(candidate));
                 }
             }
         }
-        _ => return Err("value does not implement the sealed Shrink protocol"),
+        _ => unreachable!("the complete Shrink shape was checked before allocation"),
     }
 
     Ok(candidates)
@@ -363,57 +540,27 @@ enum HostValue {
         file: std::fs::File,
         readable: bool,
         writable: bool,
+        append: bool,
+        temporary: bool,
     },
     Directory {
         path: PathBuf,
-    },
-    Metadata {
-        _file: bool,
-        _directory: bool,
-        _symlink: bool,
-        _len: u64,
-        _readonly: bool,
-    },
-    OpenMode(FsOpenMode),
-    FsError {
-        _message: String,
     },
     MathError {
         _message: String,
     },
     FloatTolerance(FloatTolerance),
-    FloatToleranceError {
-        _message: String,
-    },
-    TextDiff(TextDiff),
     TempDirectory {
         path: PathBuf,
     },
-    TempError {
-        _message: String,
-    },
     Generator(Generator),
     #[allow(dead_code)]
-    GenerationId {
-        seed: u64,
-        case_index: u64,
-    },
-    GenerationError {
-        _message: String,
-    },
     Reader {
         stream: StreamKind,
         offset: usize,
     },
     Writer {
         stream: StreamKind,
-    },
-    IoLimits(stdlib_io::IoLimits),
-    IoError {
-        _message: String,
-    },
-    ConsoleError {
-        _message: String,
     },
     Instant {
         domain: u64,
@@ -612,21 +759,33 @@ impl stdlib_io::Reader for EncodingReader<'_> {
 }
 
 struct EncodingWriter<'a> {
-    bytes: &'a mut Vec<u8>,
-    max_bytes: u64,
+    host: &'a mut BootstrapHost,
+    stream: StreamKind,
+    control_error: Option<VmError>,
 }
 
 impl stdlib_io::Writer for EncodingWriter<'_> {
     fn write(&mut self, data: &[u8]) -> Result<usize, stdlib_io::IoError> {
-        let next = self
-            .bytes
-            .len()
+        if self.stream == StreamKind::Stdin {
+            return Err(stdlib_io::IoError::InvalidData);
+        }
+        let length = match self.host.output_len(self.stream) {
+            Ok(length) => length,
+            Err(error) => {
+                self.control_error = Some(error);
+                return Err(stdlib_io::IoError::ResourceLimit);
+            }
+        };
+        let next = length
             .checked_add(data.len())
             .ok_or(stdlib_io::IoError::ResourceLimit)?;
-        if u64::try_from(next).map_or(true, |value| value > self.max_bytes) {
+        if u64::try_from(next).map_or(true, |value| value > self.host.max_bytes) {
             return Err(stdlib_io::IoError::ResourceLimit);
         }
-        self.bytes.extend_from_slice(data);
+        if let Err(error) = self.host.emit_writer_bytes(self.stream, data) {
+            self.control_error = Some(error);
+            return Err(stdlib_io::IoError::ResourceLimit);
+        }
         Ok(data.len())
     }
 
@@ -750,16 +909,6 @@ fn runtime_json_length_value(value: Option<usize>) -> RuntimeValue {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FsOpenMode {
-    Read,
-    Write,
-    ReadWrite,
-    Append,
-    Create,
-    CreateNew,
-}
-
 enum ClockProvider {
     Real { origin: StdInstant },
     Virtual { now: i128, resolution: i128 },
@@ -881,6 +1030,34 @@ enum SyncWaitKind {
     ChannelReceive,
 }
 
+#[derive(Debug)]
+struct HostAsyncMemory {
+    request: VmMemoryCharge,
+    response: Option<VmMemoryCharge>,
+}
+
+#[derive(Clone, Copy)]
+enum ChannelReceiveResult {
+    Optional,
+    Try,
+}
+
+impl ChannelReceiveResult {
+    fn framing(self) -> u64 {
+        match self {
+            Self::Optional => 32,
+            Self::Try => 32 + "TryReceive".len() as u64,
+        }
+    }
+
+    fn preview(self, value: &RuntimeValue) -> VmHostReturnPreview<'_> {
+        match self {
+            Self::Optional => VmHostReturnPreview::OptionSome(value),
+            Self::Try => VmHostReturnPreview::Variant(0, value),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PendingSync {
     arguments: Vec<RuntimeValue>,
@@ -889,7 +1066,7 @@ struct PendingSync {
     owner: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ChannelState {
     /// `Some(n)` is a bounded channel, including rendezvous `Some(0)`. `None`
     /// is the explicitly requested unbounded form, still limited by the host
@@ -900,6 +1077,49 @@ struct ChannelState {
     receivers: usize,
     sender_closed: bool,
     receiver_closed: bool,
+    memory: Option<VmMemoryCharge>,
+}
+
+impl ChannelState {
+    fn push(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        if let Some(memory) = &mut self.memory {
+            let bytes = value
+                .retained_bytes()
+                .and_then(|bytes| memory.bytes().checked_add(bytes))
+                .ok_or(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: memory.budget().limit(),
+                })?;
+            memory.resize(bytes)?;
+        }
+        self.queue.push_back(value.clone());
+        Ok(())
+    }
+
+    fn pop(&mut self) -> Result<Option<RuntimeValue>, VmError> {
+        if let (Some(memory), Some(value)) = (&mut self.memory, self.queue.front()) {
+            let bytes = value
+                .retained_bytes()
+                .and_then(|bytes| memory.bytes().checked_sub(bytes))
+                .ok_or_else(|| {
+                    VmError::Invariant("channel payload exceeds its reservation".into())
+                })?;
+            memory.resize(bytes)?;
+        }
+        Ok(self.queue.pop_front())
+    }
+
+    fn drain(&mut self) -> Result<Vec<RuntimeValue>, VmError> {
+        if let Some(memory) = &mut self.memory {
+            let bytes = BootstrapHost::sync_payload_bytes(&self.queue, 0)
+                .and_then(|bytes| memory.bytes().checked_sub(bytes))
+                .ok_or_else(|| {
+                    VmError::Invariant("channel queue exceeds its reservation".into())
+                })?;
+            memory.resize(bytes)?;
+        }
+        Ok(self.queue.drain(..).collect())
+    }
 }
 
 pub(crate) struct BootstrapHost {
@@ -911,6 +1131,9 @@ pub(crate) struct BootstrapHost {
     environment_available: bool,
     env_snapshot_id: Option<u64>,
     values: BTreeMap<u64, HostValue>,
+    test_memory: Option<VmMemoryBudget>,
+    /// Owner charges for hosted payloads supported by the phase collector.
+    buffer_memory: BTreeMap<u64, VmMemoryCharge>,
     /// Birth generations for the live structural members of each hosted
     /// concurrent collection.  Direct cursors retain only a cutoff and the
     /// last observed generation, so removal/reinsertion cannot make one
@@ -918,8 +1141,10 @@ pub(crate) struct BootstrapHost {
     sync_generations: BTreeMap<u64, Vec<u64>>,
     next_sync_generation: u64,
     jobs: BTreeMap<u64, AsyncJob>,
+    async_memory: BTreeMap<u64, HostAsyncMemory>,
     ready_jobs: BTreeMap<u64, Result<RuntimeValue, VmError>>,
     ready_fs_jobs: BTreeSet<u64>,
+    ready_console_jobs: BTreeSet<u64>,
     sync_waiters: BTreeMap<u64, PendingSync>,
     sync_queues: BTreeMap<SyncResource, VecDeque<u64>>,
     channels: BTreeMap<u64, ChannelState>,
@@ -929,7 +1154,7 @@ pub(crate) struct BootstrapHost {
     current_unit: u64,
     time_jobs: BTreeMap<u64, TimeJob>,
     clock: ClockProvider,
-    previous_clock: Option<(ClockProvider, u64)>,
+    previous_clock: Option<(ClockProvider, u64, usize)>,
     clock_domain: u64,
     virtual_controller: Option<u64>,
     next_value: u64,
@@ -938,6 +1163,8 @@ pub(crate) struct BootstrapHost {
     max_time_resources: usize,
     time_resources: usize,
     testing: Option<EnvelopeHandle>,
+    testing_temporary_root: Option<PathBuf>,
+    temporary_write_bytes: u64,
     testing_participation: Option<TestParticipation>,
     testing_stack: Vec<Option<EnvelopeHandle>>,
     testing_control: Option<String>,
@@ -950,6 +1177,19 @@ impl BootstrapHost {
 
     pub(crate) fn with_max_bytes(arguments: Vec<String>, max_bytes: u64) -> Self {
         Self::with_limits(arguments, max_bytes, DEFAULT_MAX_TIME_RESOURCES)
+    }
+
+    pub(crate) fn with_test_environment(
+        environment: BTreeMap<Vec<u8>, Vec<u8>>,
+        max_bytes: u64,
+    ) -> Self {
+        Self::with_environment_limits(
+            Vec::new(),
+            environment,
+            true,
+            max_bytes,
+            DEFAULT_MAX_TIME_RESOURCES,
+        )
     }
 
     #[allow(dead_code)]
@@ -985,11 +1225,15 @@ impl BootstrapHost {
             environment_available,
             env_snapshot_id: None,
             values: BTreeMap::new(),
+            test_memory: None,
+            buffer_memory: BTreeMap::new(),
             sync_generations: BTreeMap::new(),
             next_sync_generation: 1,
             jobs: BTreeMap::new(),
+            async_memory: BTreeMap::new(),
             ready_jobs: BTreeMap::new(),
             ready_fs_jobs: BTreeSet::new(),
+            ready_console_jobs: BTreeSet::new(),
             sync_waiters: BTreeMap::new(),
             sync_queues: BTreeMap::new(),
             channels: BTreeMap::new(),
@@ -1006,6 +1250,8 @@ impl BootstrapHost {
             max_time_resources,
             time_resources: 0,
             testing: None,
+            testing_temporary_root: None,
+            temporary_write_bytes: 0,
             testing_participation: None,
             testing_stack: Vec::new(),
             testing_control: None,
@@ -1017,7 +1263,46 @@ impl BootstrapHost {
     }
 
     pub(crate) fn install_testing_participation(&mut self, participation: TestParticipation) {
+        self.testing_temporary_root = participation.temporary_root().map(PathBuf::from);
+        self.temporary_write_bytes = 0;
         self.testing_participation = Some(participation);
+    }
+
+    pub(crate) fn install_testing_temporary_root(&mut self, root: PathBuf) {
+        self.testing_temporary_root = Some(root);
+        self.temporary_write_bytes = 0;
+    }
+
+    fn is_temporary_path(&self, path: &std::path::Path) -> bool {
+        self.testing_temporary_root
+            .as_ref()
+            .is_some_and(|root| path.starts_with(root))
+    }
+
+    fn check_temporary_mutation(
+        &self,
+        target: &std::path::Path,
+        mutation: crate::test_temporaries::Mutation<'_>,
+    ) -> io::Result<()> {
+        if let Some(root) = &self.testing_temporary_root {
+            crate::test_temporaries::check_mutation(root, target, mutation)?;
+        }
+        Ok(())
+    }
+
+    /// Count admitted requested bytes, including failed or partial host I/O.
+    /// Open temporary files keep this owner across rename/unlink; overwrites
+    /// and removal do not replenish the finite worker write budget.
+    fn admit_temporary_write(&mut self, bytes: u64) -> io::Result<()> {
+        let limit = crate::test_temporaries::MAX_TEMP_BYTES;
+        if bytes > limit.saturating_sub(self.temporary_write_bytes) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "temporary write byte limit exceeded",
+            ));
+        }
+        self.temporary_write_bytes += bytes;
+        Ok(())
     }
 
     fn testing_envelope(&self) -> Result<EnvelopeHandle, VmError> {
@@ -1034,13 +1319,27 @@ impl BootstrapHost {
         match result {
             Ok(()) => Ok(RuntimeValue::Unit),
             Err(error) => {
-                envelope.record_host_error(&error).map_err(|error| {
-                    VmError::Host(format!("cannot record test terminal: {error}"))
-                })?;
+                envelope
+                    .record_host_error(&error)
+                    .map_err(|error| Self::testing_runtime_error(envelope, error))?;
                 self.testing_control = Some(error.to_string());
                 Ok(RuntimeValue::Unit)
             }
         }
+    }
+
+    fn testing_assertion_failure(
+        &mut self,
+        envelope: &EnvelopeHandle,
+        arguments: fmt::Arguments<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        let mut length = TestingDiagnosticLength::default();
+        fmt::write(&mut length, arguments).expect("bounded runtime diagnostics always format");
+        let _memory = self
+            .reserve_test_memory(tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + length.0 as u64)?;
+        let mut message = String::with_capacity(length.0);
+        fmt::write(&mut message, arguments).expect("bounded runtime diagnostics always format");
+        self.testing_result(envelope, Err(ControlError::FailNow { message }))
     }
 
     #[allow(dead_code)]
@@ -1100,6 +1399,233 @@ impl BootstrapHost {
         std::mem::take(&mut self.stderr)
     }
 
+    fn allocate_bytes(&mut self, bytes: Vec<u8>) -> Result<RuntimeValue, VmError> {
+        let [value] = self.allocate_byte_chunks([bytes])?;
+        Ok(value)
+    }
+
+    fn allocate_byte_chunks<const N: usize>(
+        &mut self,
+        chunks: [Vec<u8>; N],
+    ) -> Result<[RuntimeValue; N], VmError> {
+        let mut charge = self.reserve_buffer_payloads(chunks.iter().map(Vec::len))?;
+        Ok(chunks.map(|bytes| {
+            let memory = Self::split_buffer_charge(&mut charge, bytes.len());
+            self.publish_buffer(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes), memory)
+        }))
+    }
+
+    fn reserve_buffer_payloads(
+        &self,
+        mut lengths: impl Iterator<Item = usize>,
+    ) -> Result<Option<VmMemoryCharge>, VmError> {
+        let (total, count) = lengths
+            .try_fold((0_u64, 0_u64), |(total, count), length| {
+                Some((
+                    total
+                        .checked_add(length as u64)?
+                        .checked_add(tondo_vm::runtime::TEST_HOST_BUFFER_BYTES)?,
+                    count.checked_add(1)?,
+                ))
+            })
+            .ok_or(VmError::ResourceLimit {
+                resource: "memory",
+                limit: self.max_bytes,
+            })?;
+        self.next_value
+            .checked_add(count)
+            .ok_or(VmError::ResourceLimit {
+                resource: "host values",
+                limit: u64::MAX,
+            })?;
+        self.test_memory
+            .as_ref()
+            .map(|budget| budget.reserve(total))
+            .transpose()
+    }
+
+    fn split_buffer_charge(
+        charge: &mut Option<VmMemoryCharge>,
+        length: usize,
+    ) -> Option<VmMemoryCharge> {
+        charge.as_mut().map(|charge| {
+            charge
+                .split_off(length as u64 + tondo_vm::runtime::TEST_HOST_BUFFER_BYTES)
+                .expect("every buffer belongs to the admitted sum")
+        })
+    }
+
+    fn reserve_test_memory(&self, bytes: u64) -> Result<Option<VmMemoryCharge>, VmError> {
+        self.test_memory
+            .as_ref()
+            .map(|budget| budget.reserve(bytes))
+            .transpose()
+    }
+
+    fn reserve_text_output(&self, length: usize) -> Result<Option<VmMemoryCharge>, VmError> {
+        let bytes = u64::try_from(length)
+            .ok()
+            .filter(|bytes| *bytes <= self.max_bytes)
+            .and_then(|bytes| bytes.checked_add(tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES))
+            .ok_or(VmError::ResourceLimit {
+                resource: "host text bytes",
+                limit: self.max_bytes,
+            })?;
+        self.reserve_test_memory(bytes)
+    }
+
+    fn allocate_buffer(
+        &mut self,
+        kind: RuntimeHostValueKind,
+        value: HostValue,
+        length: usize,
+    ) -> Result<RuntimeValue, VmError> {
+        let charge = self.reserve_buffer_payloads(std::iter::once(length))?;
+        Ok(self.publish_buffer(kind, value, charge))
+    }
+
+    fn allocate_path(&mut self, path: path::Path) -> Result<RuntimeValue, VmError> {
+        let length = path.as_bytes().len();
+        self.allocate_buffer(RuntimeHostValueKind::Path, HostValue::Path(path), length)
+    }
+
+    fn allocate_environment_name(&mut self, bytes: Vec<u8>) -> Result<RuntimeValue, VmError> {
+        let length = bytes.len();
+        self.allocate_buffer(
+            RuntimeHostValueKind::EnvName,
+            HostValue::EnvName(bytes),
+            length,
+        )
+    }
+
+    fn environment_arguments(
+        &mut self,
+        snapshot: &RuntimeValue,
+    ) -> Result<Vec<RuntimeValue>, VmError> {
+        let values = &self.environment_snapshot_data(snapshot)?.arguments;
+        let mut charge = self.reserve_buffer_payloads(values.iter().map(Vec::len))?;
+        let values = values.clone();
+        Ok(values
+            .into_iter()
+            .map(|bytes| {
+                let memory = Self::split_buffer_charge(&mut charge, bytes.len());
+                self.publish_buffer(
+                    RuntimeHostValueKind::EnvValue,
+                    HostValue::EnvValue(bytes),
+                    memory,
+                )
+            })
+            .collect())
+    }
+
+    fn publish_buffer(
+        &mut self,
+        kind: RuntimeHostValueKind,
+        value: HostValue,
+        memory: Option<VmMemoryCharge>,
+    ) -> RuntimeValue {
+        let id = self.next_value;
+        let value = self.allocate(kind, value);
+        if let Some(memory) = memory {
+            self.buffer_memory.insert(id, memory);
+        }
+        value
+    }
+
+    fn allocate_builder(&mut self, kind: RuntimeHostValueKind) -> Result<RuntimeValue, VmError> {
+        let value = match kind {
+            RuntimeHostValueKind::BytesBuilder => HostValue::BytesBuilder(Vec::new()),
+            RuntimeHostValueKind::FormatBuilder => HostValue::FormatBuilder(Vec::new()),
+            _ => return Err(VmError::Host("invalid byte buffer builder kind".into())),
+        };
+        self.allocate_buffer(kind, value, 0)
+    }
+
+    fn reserve_sync_payloads<'a>(
+        &self,
+        values: impl IntoIterator<Item = &'a RuntimeValue>,
+        generations: usize,
+    ) -> Result<Option<VmMemoryCharge>, VmError> {
+        self.next_value
+            .checked_add(1)
+            .ok_or(VmError::ResourceLimit {
+                resource: "host values",
+                limit: u64::MAX,
+            })?;
+        self.next_sync_generation
+            .checked_add(generations as u64)
+            .ok_or(VmError::ResourceLimit {
+                resource: "sync generations",
+                limit: u64::MAX,
+            })?;
+        let Some(budget) = &self.test_memory else {
+            return Ok(None);
+        };
+        let bytes = Self::sync_payload_bytes(values, generations)
+            .and_then(|bytes| bytes.checked_add(tondo_vm::runtime::TEST_HOST_BUFFER_BYTES))
+            .ok_or(VmError::ResourceLimit {
+                resource: "memory",
+                limit: budget.limit(),
+            })?;
+        budget.reserve(bytes).map(Some)
+    }
+
+    fn sync_payload_bytes<'a>(
+        values: impl IntoIterator<Item = &'a RuntimeValue>,
+        generations: usize,
+    ) -> Option<u64> {
+        let base =
+            (generations as u64).checked_mul(tondo_vm::runtime::TEST_SYNC_GENERATION_BYTES)?;
+        values
+            .into_iter()
+            .try_fold(base, |sum, value| sum.checked_add(value.retained_bytes()?))
+    }
+
+    /// Update the original owner's charge before changing a retained payload.
+    /// The values are borrowed so rejection cannot allocate a replacement copy.
+    fn resize_sync_payload<'a, 'b>(
+        memory: &mut BTreeMap<u64, VmMemoryCharge>,
+        id: u64,
+        removed: impl IntoIterator<Item = &'a RuntimeValue>,
+        added: impl IntoIterator<Item = &'b RuntimeValue>,
+        removed_generations: usize,
+        added_generations: usize,
+    ) -> Result<(), VmError> {
+        let Some(charge) = memory.get_mut(&id) else {
+            return Ok(());
+        };
+        let removed = Self::sync_payload_bytes(removed, removed_generations);
+        let added = Self::sync_payload_bytes(added, added_generations);
+        let bytes = removed
+            .and_then(|removed| charge.bytes().checked_sub(removed))
+            .and_then(|bytes| bytes.checked_add(added?))
+            .ok_or(VmError::ResourceLimit {
+                resource: "memory",
+                limit: charge.budget().limit(),
+            })?;
+        charge.resize(bytes)
+    }
+
+    fn reserve_buffer_growth(
+        &mut self,
+        receiver: &RuntimeValue,
+        length: usize,
+    ) -> Result<(), VmError> {
+        let RuntimeValue::Host { id, .. } = receiver else {
+            return Err(VmError::Host("buffer receiver is invalid".into()));
+        };
+        if let Some(memory) = self.buffer_memory.get_mut(id) {
+            let bytes = (length as u64)
+                .checked_add(tondo_vm::runtime::TEST_HOST_BUFFER_BYTES)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: self.max_bytes,
+                })?;
+            memory.resize(bytes)?;
+        }
+        Ok(())
+    }
+
     fn allocate(&mut self, kind: RuntimeHostValueKind, value: HostValue) -> RuntimeValue {
         let id = self.next_value;
         self.next_value = self
@@ -1137,6 +1663,81 @@ impl BootstrapHost {
         }
     }
 
+    fn sync_guard_available(&self, id: u64, kind: RuntimeHostValueKind) -> Result<bool, VmError> {
+        let available = match (kind, self.values.get(&id)) {
+            (RuntimeHostValueKind::MutexGuard, Some(HostValue::SyncMutex { locked, .. })) => {
+                !locked
+            }
+            (RuntimeHostValueKind::ReadGuard, Some(HostValue::SyncRwLock { writer, .. })) => {
+                !writer
+            }
+            (
+                RuntimeHostValueKind::WriteGuard,
+                Some(HostValue::SyncRwLock {
+                    readers, writer, ..
+                }),
+            ) => !writer && *readers == 0,
+            (RuntimeHostValueKind::Permit, Some(HostValue::SyncSemaphore { permits, .. })) => {
+                *permits > 0
+            }
+            _ => {
+                return Err(VmError::Host(
+                    "synchronization guard owner is stale or invalid".into(),
+                ));
+            }
+        };
+        Ok(available)
+    }
+
+    /// Reserve the guard before taking the resource. A quota failure leaves
+    /// lock ownership, reader counts and permits unchanged.
+    fn acquire_sync_guard(
+        &mut self,
+        id: u64,
+        kind: RuntimeHostValueKind,
+        unit: u64,
+    ) -> Result<Option<RuntimeValue>, VmError> {
+        if !self.sync_guard_available(id, kind)? {
+            return Ok(None);
+        }
+        let memory = self.reserve_sync_payloads([], 0)?;
+        let guard = match (kind, self.values.get_mut(&id)) {
+            (
+                RuntimeHostValueKind::MutexGuard,
+                Some(HostValue::SyncMutex { locked, owner, .. }),
+            ) => {
+                *locked = true;
+                *owner = Some(unit);
+                HostValue::SyncMutexGuard { owner: id }
+            }
+            (RuntimeHostValueKind::ReadGuard, Some(HostValue::SyncRwLock { readers, .. })) => {
+                *readers = readers.checked_add(1).ok_or(VmError::ResourceLimit {
+                    resource: "readers",
+                    limit: usize::MAX as u64,
+                })?;
+                HostValue::SyncReadGuard { owner: id }
+            }
+            (
+                RuntimeHostValueKind::WriteGuard,
+                Some(HostValue::SyncRwLock {
+                    writer,
+                    writer_owner,
+                    ..
+                }),
+            ) => {
+                *writer = true;
+                *writer_owner = Some(unit);
+                HostValue::SyncWriteGuard { owner: id }
+            }
+            (RuntimeHostValueKind::Permit, Some(HostValue::SyncSemaphore { permits, .. })) => {
+                *permits -= 1;
+                HostValue::SyncPermit { owner: id }
+            }
+            _ => unreachable!("the resource was validated before guard admission"),
+        };
+        Ok(Some(self.publish_buffer(kind, guard, memory)))
+    }
+
     fn sync_result_error(variant: u32) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(Self::sync_error(variant)))
     }
@@ -1154,6 +1755,21 @@ impl BootstrapHost {
             return Err(VmError::Host(format!("{label} token is stale or invalid")));
         }
         Ok(*id)
+    }
+
+    fn sync_array_index(
+        &self,
+        receiver: &RuntimeValue,
+        index: i128,
+    ) -> Result<Option<(u64, usize)>, VmError> {
+        let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
+        let Some(HostValue::SyncArray(values)) = self.values.get(&id) else {
+            return Err(VmError::Host("sync.Array token is stale or invalid".into()));
+        };
+        Ok(usize::try_from(index)
+            .ok()
+            .filter(|index| *index < values.len())
+            .map(|index| (id, index)))
     }
 
     fn channel_error(variant: u32) -> RuntimeValue {
@@ -1240,51 +1856,281 @@ impl BootstrapHost {
             })
     }
 
+    fn prepare_pending_response<'a>(
+        memory: &BTreeMap<u64, HostAsyncMemory>,
+        call: u64,
+        framing: u64,
+        payloads: impl IntoIterator<Item = &'a RuntimeValue>,
+    ) -> Result<Option<VmMemoryCharge>, VmError> {
+        let memory = memory.get(&call);
+        if memory.is_some_and(|memory| memory.response.is_some()) {
+            return Err(VmError::Invariant(
+                "pending response was admitted twice".into(),
+            ));
+        }
+        let mut response = VmHostReturnBudget::new(memory.map(|memory| memory.request.budget()));
+        response.reserve(framing, payloads)?;
+        Ok(response.into_reservation())
+    }
+
+    fn commit_pending_response(
+        memory: &mut BTreeMap<u64, HostAsyncMemory>,
+        call: u64,
+        response: Option<VmMemoryCharge>,
+    ) {
+        if let Some(response) = response {
+            memory
+                .get_mut(&call)
+                .expect("a prepared response retains its request")
+                .response = Some(response);
+        }
+    }
+
+    fn reserve_channel_delivery(
+        memory: &mut BTreeMap<u64, HostAsyncMemory>,
+        call: u64,
+        value: &RuntimeValue,
+    ) -> Result<(), VmError> {
+        let response = Self::prepare_pending_response(memory, call, 32, [value])?;
+        Self::commit_pending_response(memory, call, response);
+        Ok(())
+    }
+
     fn channel_match_waiters(
         &mut self,
         channel: u64,
-    ) -> Result<Option<(u64, u64, RuntimeValue)>, VmError> {
-        let Some(queue) = self
-            .sync_queues
-            .get(&SyncResource::Channel(channel))
-            .cloned()
-        else {
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<Option<(u64, u64)>, VmError> {
+        // A registered receive must consume earlier committed values before
+        // rendezvousing with a new send, whichever waiter the scheduler polls first.
+        if !self
+            .channels
+            .get(&channel)
+            .ok_or_else(|| VmError::Host("channel waiter identity is stale".into()))?
+            .queue
+            .is_empty()
+        {
             return Ok(None);
-        };
-        let send = queue.iter().copied().find(|call| {
-            self.sync_waiters
-                .get(call)
-                .is_some_and(|pending| pending.kind == SyncWaitKind::ChannelSend)
-        });
-        let receive = queue.iter().copied().find(|call| {
-            self.sync_waiters
-                .get(call)
-                .is_some_and(|pending| pending.kind == SyncWaitKind::ChannelReceive)
-        });
+        }
+        let send = self.channel_waiting_call(channel, SyncWaitKind::ChannelSend);
+        let receive = self.channel_waiting_call(channel, SyncWaitKind::ChannelReceive);
         let (Some(send), Some(receive)) = (send, receive) else {
             return Ok(None);
+        };
+        let acknowledgement = admission
+            .prepare(send, VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))
+            .and_then(|import| {
+                Self::prepare_pending_response(&self.async_memory, send, 64, [])
+                    .map(|response| (import, response))
+            });
+        let (send_import, acknowledgement) = match acknowledgement {
+            Ok(response) => response,
+            Err(error) => {
+                self.remove_sync_waiter(send, SyncResource::Channel(channel));
+                self.ready_jobs.insert(send, Err(error));
+                return Ok(None);
+            }
         };
         let payload = self
             .sync_waiters
             .get(&send)
             .and_then(|pending| pending.arguments.get(1))
-            .cloned()
             .ok_or_else(|| VmError::Host("channel send waiter has no payload".into()))?;
+        let delivery = admission
+            .prepare(receive, VmHostReturnPreview::OptionSome(payload))
+            .and_then(|import| {
+                Self::prepare_pending_response(&self.async_memory, receive, 32, [payload])
+                    .map(|response| (import, response))
+            });
+        let (receive_import, delivery) = match delivery {
+            Ok(response) => response,
+            Err(error) => {
+                // The peer retains its payload and all tentative sender
+                // reservations release if this receiving phase cannot admit it.
+                self.remove_sync_waiter(receive, SyncResource::Channel(channel));
+                self.ready_jobs.insert(receive, Err(error));
+                return Ok(None);
+            }
+        };
+        admission.commit(&mut [send_import, receive_import])?;
+        Self::commit_pending_response(&mut self.async_memory, send, acknowledgement);
+        Self::commit_pending_response(&mut self.async_memory, receive, delivery);
+        let payload = self
+            .sync_waiters
+            .get_mut(&send)
+            .and_then(|pending| pending.arguments.pop())
+            .expect("the send payload was validated before reservation");
         self.remove_sync_waiter(send, SyncResource::Channel(channel));
         self.remove_sync_waiter(receive, SyncResource::Channel(channel));
         self.ready_jobs.insert(
             send,
             Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
         );
-        self.ready_jobs.insert(
-            receive,
-            Ok(RuntimeValue::OptionSome(Box::new(payload.clone()))),
-        );
-        Ok(Some((send, receive, payload)))
+        self.ready_jobs
+            .insert(receive, Ok(RuntimeValue::OptionSome(Box::new(payload))));
+        Ok(Some((send, receive)))
     }
 
-    fn channel_new(&mut self, capacity: Option<usize>) -> RuntimeValue {
+    fn channel_deliver_to_waiter(
+        &mut self,
+        channel: u64,
+        value: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<bool, VmError> {
+        if self
+            .channels
+            .get(&channel)
+            .is_some_and(|state| !state.queue.is_empty())
+        {
+            return Ok(false);
+        }
+        while let Some(receive) = self.channel_waiting_call(channel, SyncWaitKind::ChannelReceive) {
+            let delivery = admission
+                .prepare(receive, VmHostReturnPreview::OptionSome(value))
+                .and_then(|import| {
+                    Self::prepare_pending_response(&self.async_memory, receive, 32, [value])
+                        .map(|response| (import, response))
+                });
+            match delivery {
+                Ok((peer_import, delivery)) => {
+                    let caller_import = admission
+                        .prepare_current(VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))?;
+                    response.reserve(64, [])?;
+                    admission.commit(&mut [caller_import, peer_import])?;
+                    Self::commit_pending_response(&mut self.async_memory, receive, delivery);
+                    self.remove_sync_waiter(receive, SyncResource::Channel(channel));
+                    self.ready_jobs.insert(
+                        receive,
+                        Ok(RuntimeValue::OptionSome(Box::new(value.clone()))),
+                    );
+                    return Ok(true);
+                }
+                Err(error) => {
+                    self.remove_sync_waiter(receive, SyncResource::Channel(channel));
+                    self.ready_jobs.insert(receive, Err(error));
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn channel_take_waiting_send(
+        &mut self,
+        channel: u64,
+        response: &mut VmHostReturnBudget<'_>,
+        result: ChannelReceiveResult,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<Option<RuntimeValue>, VmError> {
+        let (send, peer_import, acknowledgement) = loop {
+            let Some(send) = self.channel_waiting_call(channel, SyncWaitKind::ChannelSend) else {
+                return Ok(None);
+            };
+            let acknowledgement = admission
+                .prepare(send, VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))
+                .and_then(|import| {
+                    Self::prepare_pending_response(&self.async_memory, send, 64, [])
+                        .map(|response| (import, response))
+                });
+            match acknowledgement {
+                Ok((import, response)) => break (send, import, response),
+                Err(error) => {
+                    self.remove_sync_waiter(send, SyncResource::Channel(channel));
+                    self.ready_jobs.insert(send, Err(error));
+                }
+            }
+        };
+        let payload = self
+            .sync_waiters
+            .get(&send)
+            .and_then(|pending| pending.arguments.get(1))
+            .ok_or_else(|| VmError::Host("channel send waiter has no payload".into()))?;
+        let caller_import = admission.prepare_current(result.preview(payload))?;
+        response.reserve(result.framing(), [payload])?;
+        admission.commit(&mut [caller_import, peer_import])?;
+        Self::commit_pending_response(&mut self.async_memory, send, acknowledgement);
+        let payload = self
+            .sync_waiters
+            .get_mut(&send)
+            .and_then(|pending| pending.arguments.pop())
+            .ok_or_else(|| VmError::Host("channel send waiter has no payload".into()))?;
+        self.remove_sync_waiter(send, SyncResource::Channel(channel));
+        self.ready_jobs.insert(
+            send,
+            Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+        );
+        Ok(Some(payload))
+    }
+
+    fn channel_bounded(
+        &mut self,
+        capacity: i128,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        let error_bytes = 64 + "ChannelError".len() as u64;
+        let Ok(capacity) = usize::try_from(capacity) else {
+            response.reserve(error_bytes, [])?;
+            return Ok(Self::channel_result_error(0));
+        };
+        let Ok(capacity_limit) = u64::try_from(capacity) else {
+            response.reserve(error_bytes, [])?;
+            return Ok(Self::channel_result_error(1));
+        };
+        if capacity_limit > self.max_bytes {
+            response.reserve(error_bytes, [])?;
+            return Ok(Self::channel_result_error(1));
+        }
+        self.channel_new(Some(capacity), response, admission)
+    }
+
+    fn channel_new(
+        &mut self,
+        capacity: Option<usize>,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        self.next_value
+            .checked_add(3)
+            .ok_or(VmError::ResourceLimit {
+                resource: "host values",
+                limit: u64::MAX,
+            })?;
+        let mut memory = self
+            .test_memory
+            .as_ref()
+            .map(|budget| {
+                let bytes = (capacity.unwrap_or(0) as u64)
+                    .checked_mul(tondo_vm::runtime::TEST_SCHEDULER_VALUE_BYTES)
+                    .and_then(|bytes| bytes.checked_add(tondo_vm::runtime::TEST_HOST_CHANNEL_BYTES))
+                    .and_then(|bytes| {
+                        bytes.checked_add(2 * tondo_vm::runtime::TEST_HOST_BUFFER_BYTES)
+                    })
+                    .ok_or(VmError::ResourceLimit {
+                        resource: "memory",
+                        limit: budget.limit(),
+                    })?;
+                budget.reserve(bytes)
+            })
+            .transpose()?;
+        let sender_memory = Self::split_buffer_charge(&mut memory, 0);
+        let receiver_memory = Self::split_buffer_charge(&mut memory, 0);
         let channel = self.next_value;
+        // The checked identities can describe the result before any endpoint
+        // becomes visible. Return this same graph after both budgets admit it.
+        response.reserve(128, [])?;
+        let result = RuntimeValue::ResultOk(Box::new(RuntimeValue::Tuple(vec![
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ChannelSender,
+                id: channel + 1,
+            },
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ChannelReceiver,
+                id: channel + 2,
+            },
+        ])));
+        let imported = admission.prepare_current(VmHostReturnPreview::Value(&result))?;
+        admission.commit(&mut [imported])?;
         self.next_value = self
             .next_value
             .checked_add(1)
@@ -1298,22 +2144,37 @@ impl BootstrapHost {
                 receivers: 1,
                 sender_closed: false,
                 receiver_closed: false,
+                memory,
             },
         );
-        let sender = self.allocate(
+        self.publish_buffer(
             RuntimeHostValueKind::ChannelSender,
             HostValue::ChannelSender { channel },
+            sender_memory,
         );
-        let receiver = self.allocate(
+        self.publish_buffer(
             RuntimeHostValueKind::ChannelReceiver,
             HostValue::ChannelReceiver { channel },
+            receiver_memory,
         );
-        RuntimeValue::Tuple(vec![sender, receiver])
+        Ok(result)
+    }
+
+    fn release_closed_channel(&mut self, channel: u64) {
+        if self
+            .channels
+            .get(&channel)
+            .is_some_and(|state| state.senders == 0 && state.receivers == 0)
+            && !self.sync_resource_has_waiters(SyncResource::Channel(channel))
+        {
+            self.channels.remove(&channel);
+        }
     }
 
     fn channel_close_sender(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
         let (endpoint, channel) = self.channel_sender_id(value)?;
         let _ = self.values.remove(&endpoint);
+        self.buffer_memory.remove(&endpoint);
         let state = self
             .channels
             .get_mut(&channel)
@@ -1325,6 +2186,7 @@ impl BootstrapHost {
         if state.senders == 0 {
             state.sender_closed = true;
         }
+        self.release_closed_channel(channel);
         Ok(())
     }
 
@@ -1335,6 +2197,7 @@ impl BootstrapHost {
         let (endpoint, channel) = self.channel_receiver_id(value)?;
         self.channel_iterator_receivers.remove(&endpoint);
         let _ = self.values.remove(&endpoint);
+        self.buffer_memory.remove(&endpoint);
         let state = self
             .channels
             .get_mut(&channel)
@@ -1343,49 +2206,131 @@ impl BootstrapHost {
             .receivers
             .checked_sub(1)
             .ok_or_else(|| VmError::Host("Receiver endpoint count underflow".into()))?;
-        if state.receivers == 0 {
+        let drained = if state.receivers == 0 {
             state.receiver_closed = true;
-            return Ok(state.queue.drain(..).collect());
-        }
-        Ok(Vec::new())
+            state.drain()?
+        } else {
+            Vec::new()
+        };
+        self.release_closed_channel(channel);
+        Ok(drained)
     }
 
-    fn channel_fork_sender(&mut self, value: &RuntimeValue) -> Result<RuntimeValue, VmError> {
+    /// Final engine teardown cannot execute the user's deferred close or
+    /// materialize its returned array after a resource terminal. Retire only
+    /// an unreachable endpoint; the collector preserves all returned roots.
+    fn channel_retire_receiver(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        let (endpoint, channel) = self.channel_receiver_id(value)?;
+        self.channel_iterator_receivers.remove(&endpoint);
+        self.values.remove(&endpoint);
+        self.buffer_memory.remove(&endpoint);
+        let state = self.channels.get_mut(&channel).expect("validated channel");
+        state.receivers = state
+            .receivers
+            .checked_sub(1)
+            .ok_or_else(|| VmError::Host("Receiver endpoint count underflow".into()))?;
+        if state.receivers == 0 {
+            state.receiver_closed = true;
+            // Pop releases the existing payload charge without allocating a
+            // result container or copying any queued value.
+            while state.pop()?.is_some() {}
+        }
+        self.release_closed_channel(channel);
+        Ok(())
+    }
+
+    fn channel_close_receiver_admitted(
+        &mut self,
+        value: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        let (_, channel) = self.channel_receiver_id(value)?;
+        let state = self
+            .channels
+            .get(&channel)
+            .expect("the endpoint validated its channel identity");
+        let (first, second) = if state.receivers == 1 {
+            state.queue.as_slices()
+        } else {
+            (&[][..], &[][..])
+        };
+        let imported =
+            admission.prepare_current(VmHostReturnPreview::ArrayParts { first, second })?;
+        response.reserve(32, first.iter().chain(second))?;
+        admission.commit(&mut [imported])?;
+        Ok(RuntimeValue::Array(self.channel_close_receiver(value)?))
+    }
+
+    fn channel_fork_sender(
+        &mut self,
+        value: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
         let (_, channel) = self.channel_sender_id(value)?;
+        let memory = self.reserve_buffer_payloads(std::iter::once(0))?;
         let state = self
             .channels
             .get_mut(&channel)
             .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
-        state.senders = state
+        let senders = state
             .senders
             .checked_add(1)
             .ok_or_else(|| VmError::Host("Sender endpoint count exhausted".into()))?;
-        Ok(self.allocate(
+        response.reserve(64, [])?;
+        let result = RuntimeValue::ResultOk(Box::new(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ChannelSender,
+            id: self.next_value,
+        }));
+        let imported = admission.prepare_current(VmHostReturnPreview::Value(&result))?;
+        admission.commit(&mut [imported])?;
+        state.senders = senders;
+        self.publish_buffer(
             RuntimeHostValueKind::ChannelSender,
             HostValue::ChannelSender { channel },
-        ))
+            memory,
+        );
+        Ok(result)
     }
 
-    fn channel_fork_receiver(&mut self, value: &RuntimeValue) -> Result<RuntimeValue, VmError> {
+    fn channel_fork_receiver(
+        &mut self,
+        value: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
         let (_, channel) = self.channel_receiver_id(value)?;
+        let memory = self.reserve_buffer_payloads(std::iter::once(0))?;
         let state = self
             .channels
             .get_mut(&channel)
             .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
-        state.receivers = state
+        let receivers = state
             .receivers
             .checked_add(1)
             .ok_or_else(|| VmError::Host("Receiver endpoint count exhausted".into()))?;
-        Ok(self.allocate(
+        response.reserve(64, [])?;
+        let result = RuntimeValue::ResultOk(Box::new(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ChannelReceiver,
+            id: self.next_value,
+        }));
+        let imported = admission.prepare_current(VmHostReturnPreview::Value(&result))?;
+        admission.commit(&mut [imported])?;
+        state.receivers = receivers;
+        self.publish_buffer(
             RuntimeHostValueKind::ChannelReceiver,
             HostValue::ChannelReceiver { channel },
-        ))
+            memory,
+        );
+        Ok(result)
     }
 
     fn channel_send_now(
         &mut self,
         sender: &RuntimeValue,
-        value: RuntimeValue,
+        value: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
     ) -> Result<RuntimeValue, VmError> {
         let (_, channel) = self.channel_sender_id(sender)?;
         let receiver_closed = self
@@ -1394,13 +2339,15 @@ impl BootstrapHost {
             .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?
             .receiver_closed;
         if receiver_closed {
-            return Ok(Self::channel_send_result_error(0, value));
+            response.reserve(64 + "SendError".len() as u64, [value])?;
+            return Ok(Self::channel_send_result_error(0, value.clone()));
         }
-        if self
-            .channel_waiting_call(channel, SyncWaitKind::ChannelReceive)
-            .is_some()
-        {
-            let _ = self.channel_match_waiters(channel)?;
+        if self.channel_deliver_to_waiter(
+            channel,
+            value,
+            response,
+            &mut VmHostImportAdmission::disabled(),
+        )? {
             return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)));
         }
         let state = self
@@ -1408,10 +2355,12 @@ impl BootstrapHost {
             .get_mut(&channel)
             .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
         if state.receivers == 0 {
-            return Ok(Self::channel_send_result_error(0, value));
+            response.reserve(64 + "SendError".len() as u64, [value])?;
+            return Ok(Self::channel_send_result_error(0, value.clone()));
         }
         if state.capacity.is_none() && state.queue.len() as u64 >= self.max_bytes {
-            return Ok(Self::channel_send_result_error(1, value));
+            response.reserve(64 + "SendError".len() as u64, [value])?;
+            return Ok(Self::channel_send_result_error(1, value.clone()));
         }
         if state
             .capacity
@@ -1421,14 +2370,31 @@ impl BootstrapHost {
                 "channel send would block outside the VM scheduler".into(),
             ));
         }
-        state.queue.push_back(value);
+        response.reserve(64, [])?;
+        state.push(value)?;
         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
     }
 
     fn channel_try_send_now(
         &mut self,
         sender: &RuntimeValue,
-        value: RuntimeValue,
+        value: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        self.channel_try_send_admitted(
+            sender,
+            value,
+            response,
+            &mut VmHostImportAdmission::disabled(),
+        )
+    }
+
+    fn channel_try_send_admitted(
+        &mut self,
+        sender: &RuntimeValue,
+        value: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
     ) -> Result<RuntimeValue, VmError> {
         let (_, channel) = self.channel_sender_id(sender)?;
         let receiver_closed = self
@@ -1437,13 +2403,10 @@ impl BootstrapHost {
             .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?
             .receiver_closed;
         if receiver_closed {
-            return Ok(Self::channel_try_send_result_error(1, value));
+            response.reserve(64 + "TrySendError".len() as u64, [value])?;
+            return Ok(Self::channel_try_send_result_error(1, value.clone()));
         }
-        if self
-            .channel_waiting_call(channel, SyncWaitKind::ChannelReceive)
-            .is_some()
-        {
-            let _ = self.channel_match_waiters(channel)?;
+        if self.channel_deliver_to_waiter(channel, value, response, admission)? {
             return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)));
         }
         let state = self
@@ -1451,29 +2414,49 @@ impl BootstrapHost {
             .get_mut(&channel)
             .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
         if state.receivers == 0 {
-            return Ok(Self::channel_try_send_result_error(1, value));
+            response.reserve(64 + "TrySendError".len() as u64, [value])?;
+            return Ok(Self::channel_try_send_result_error(1, value.clone()));
         }
         if state.capacity.is_none() && state.queue.len() as u64 >= self.max_bytes {
-            return Ok(Self::channel_try_send_result_error(2, value));
+            response.reserve(64 + "TrySendError".len() as u64, [value])?;
+            return Ok(Self::channel_try_send_result_error(2, value.clone()));
         }
         if state
             .capacity
             .is_some_and(|capacity| state.queue.len() >= capacity)
         {
-            return Ok(Self::channel_try_send_result_error(0, value));
+            response.reserve(64 + "TrySendError".len() as u64, [value])?;
+            return Ok(Self::channel_try_send_result_error(0, value.clone()));
         }
-        state.queue.push_back(value);
+        let import =
+            admission.prepare_current(VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))?;
+        response.reserve(64, [])?;
+        admission.commit(&mut [import])?;
+        state.push(value)?;
         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
     }
 
-    fn channel_receive_now(&mut self, receiver: &RuntimeValue) -> Result<RuntimeValue, VmError> {
+    fn channel_receive_now(
+        &mut self,
+        receiver: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+    ) -> Result<RuntimeValue, VmError> {
         let (_, channel) = self.channel_receiver_id(receiver)?;
         if let Some(state) = self.channels.get_mut(&channel)
-            && let Some(value) = state.queue.pop_front()
+            && let Some(value) = state.queue.front()
         {
+            response.reserve(32, [value])?;
+            let value = state
+                .pop()?
+                .expect("the admitted channel front remains present");
             return Ok(RuntimeValue::OptionSome(Box::new(value)));
         }
-        if let Some((_, _, value)) = self.channel_match_waiters(channel)? {
+        if let Some(value) = self.channel_take_waiting_send(
+            channel,
+            response,
+            ChannelReceiveResult::Optional,
+            &mut VmHostImportAdmission::disabled(),
+        )? {
             return Ok(RuntimeValue::OptionSome(Box::new(value)));
         }
         let state = self
@@ -1481,6 +2464,7 @@ impl BootstrapHost {
             .get(&channel)
             .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
         if state.receiver_closed || state.sender_closed {
+            response.reserve(32, [])?;
             return Ok(RuntimeValue::OptionNone);
         }
         Err(VmError::Host(
@@ -1491,20 +2475,42 @@ impl BootstrapHost {
     fn channel_try_receive_now(
         &mut self,
         receiver: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        self.channel_try_receive_admitted(
+            receiver,
+            response,
+            &mut VmHostImportAdmission::disabled(),
+        )
+    }
+
+    fn channel_try_receive_admitted(
+        &mut self,
+        receiver: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
     ) -> Result<RuntimeValue, VmError> {
         let (_, channel) = self.channel_receiver_id(receiver)?;
+        let framing = ChannelReceiveResult::Try.framing();
         if let Some(state) = self.channels.get_mut(&channel)
-            && let Some(value) = state.queue.pop_front()
+            && let Some(value) = state.queue.front()
         {
+            response.reserve(framing, [value])?;
+            let value = state
+                .pop()?
+                .expect("the admitted channel front remains present");
             return Ok(Self::channel_try_receive(0, Some(value)));
         }
-        if let Some((_, _, value)) = self.channel_match_waiters(channel)? {
+        if let Some(value) =
+            self.channel_take_waiting_send(channel, response, ChannelReceiveResult::Try, admission)?
+        {
             return Ok(Self::channel_try_receive(0, Some(value)));
         }
         let state = self
             .channels
             .get(&channel)
             .ok_or_else(|| VmError::Host("Receiver channel identity is stale".into()))?;
+        response.reserve(framing, [])?;
         if state.receiver_closed || state.sender_closed {
             Ok(Self::channel_try_receive(2, None))
         } else {
@@ -1551,6 +2557,30 @@ impl BootstrapHost {
             3 => matches!(failure, 0 | 1),
             4 => matches!(failure, 0 | 1 | 4),
             _ => false,
+        }
+    }
+
+    fn validate_atomic_compare_exchange_orders(
+        success: &RuntimeValue,
+        failure: &RuntimeValue,
+    ) -> Result<(), VmError> {
+        let success = Self::sync_memory_order(success)?;
+        let failure = Self::sync_memory_order(failure)?;
+        if !Self::sync_valid_cas_failure_order(failure)
+            || !Self::sync_valid_cas_orders(success, failure)
+        {
+            return Err(VmError::Host(
+                "Atomic.compareExchange has incompatible memory orders".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn sync_atomic_value(&self, atomic: &RuntimeValue) -> Result<&RuntimeValue, VmError> {
+        let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
+        match self.values.get(&id) {
+            Some(HostValue::SyncAtomic { value }) => Ok(value),
+            _ => Err(VmError::Host("Atomic token is stale or invalid".into())),
         }
     }
 
@@ -1668,6 +2698,62 @@ impl BootstrapHost {
             }
         }
         self.sync_waiters.remove(&call);
+        if let SyncResource::Channel(channel) = resource {
+            self.release_closed_channel(channel);
+        }
+    }
+
+    fn sync_condition_id(&self, condition: &RuntimeValue) -> Result<u64, VmError> {
+        let id = self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
+        match self.values.get(&id) {
+            Some(HostValue::SyncCondition) => Ok(id),
+            _ => Err(VmError::Host("Condition token is stale or invalid".into())),
+        }
+    }
+
+    fn condition_wait_state(&self, arguments: &[RuntimeValue]) -> Result<(u64, u64, u64), VmError> {
+        let [condition, guard] = arguments else {
+            return Err(VmError::Host(
+                "std.sync.Condition.wait received an invalid argument list".into(),
+            ));
+        };
+        let condition_id = self.sync_condition_id(condition)?;
+        let guard_id = self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
+        let mutex_id = match self.values.get(&guard_id) {
+            Some(HostValue::SyncMutexGuard { owner }) => *owner,
+            _ => return Err(VmError::Host("MutexGuard token is stale".into())),
+        };
+        match self.values.get(&mutex_id) {
+            Some(HostValue::SyncMutex { locked, owner, .. })
+                if *locked && *owner == Some(self.current_unit) => {}
+            _ => {
+                return Err(VmError::Host(
+                    "Condition.wait requires the current task to own the mutex".into(),
+                ));
+            }
+        }
+        Ok((condition_id, guard_id, mutex_id))
+    }
+
+    fn barrier_wait_state(
+        &self,
+        arguments: &[RuntimeValue],
+    ) -> Result<(u64, usize, usize, u64), VmError> {
+        let [barrier] = arguments else {
+            return Err(VmError::Host(
+                "std.sync.Barrier.wait received an invalid argument list".into(),
+            ));
+        };
+        let id = self.sync_host_id(barrier, RuntimeHostValueKind::Barrier, "Barrier")?;
+        let (parties, arrived, generation) = match self.values.get(&id) {
+            Some(HostValue::SyncBarrier {
+                parties,
+                arrived,
+                generation,
+            }) => (*parties, *arrived, *generation),
+            _ => return Err(VmError::Host("Barrier token is stale or invalid".into())),
+        };
+        Ok((id, parties, arrived, generation))
     }
 
     fn pending_sync_for(
@@ -1806,28 +2892,7 @@ impl BootstrapHost {
                 }
             }
             "std.sync.Condition.wait" => {
-                let [condition, guard] = arguments else {
-                    return Err(VmError::Host(
-                        "std.sync.Condition.wait received an invalid argument list".into(),
-                    ));
-                };
-                let condition_id =
-                    self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
-                let guard_id =
-                    self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
-                let mutex_id = match self.values.get(&guard_id) {
-                    Some(HostValue::SyncMutexGuard { owner }) => *owner,
-                    _ => return Err(VmError::Host("MutexGuard token is stale".into())),
-                };
-                match self.values.get(&mutex_id) {
-                    Some(HostValue::SyncMutex { locked, owner, .. })
-                        if *locked && *owner == Some(self.current_unit) => {}
-                    _ => {
-                        return Err(VmError::Host(
-                            "Condition.wait requires the current task to own the mutex".into(),
-                        ));
-                    }
-                }
+                let (condition_id, guard_id, mutex_id) = self.condition_wait_state(arguments)?;
                 // The release and registration are one host transition. The
                 // guard token remains owned by the parked task and is returned
                 // only after a notification plus a successful re-acquire.
@@ -1888,23 +2953,7 @@ impl BootstrapHost {
                 return Ok(false);
             }
             "std.sync.Barrier.wait" => {
-                let [barrier] = arguments else {
-                    return Err(VmError::Host(
-                        "std.sync.Barrier.wait received an invalid argument list".into(),
-                    ));
-                };
-                let id = self.sync_host_id(barrier, RuntimeHostValueKind::Barrier, "Barrier")?;
-                let (parties, arrived, generation) = match self.values.get(&id) {
-                    Some(HostValue::SyncBarrier {
-                        parties,
-                        arrived,
-                        generation,
-                    }) => (*parties, *arrived, *generation),
-                    _ => return Err(VmError::Host("Barrier token is stale or invalid".into())),
-                };
-                if parties == 1 {
-                    return Ok(false);
-                }
+                let (id, parties, arrived, generation) = self.barrier_wait_state(arguments)?;
                 let next_arrived = arrived.saturating_add(1);
                 if next_arrived < parties {
                     if let Some(HostValue::SyncBarrier { arrived, .. }) = self.values.get_mut(&id) {
@@ -1990,93 +3039,51 @@ impl BootstrapHost {
         }
     }
 
-    fn poll_sync(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
-        let Some(pending) = self.sync_waiters.get(&call).cloned() else {
+    fn poll_sync(
+        &mut self,
+        call: u64,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<Option<RuntimeValue>, VmError> {
+        let Some(pending) = self.sync_waiters.get(&call) else {
             return Ok(None);
         };
         if matches!(
             pending.kind,
             SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive
         ) {
-            return self.poll_channel(call);
+            return self.poll_channel(call, admission);
         }
+        let pending = pending.clone();
         if !self.sync_waiter_is_front(call, pending.resource) {
             return Ok(None);
         }
         match pending.kind {
-            SyncWaitKind::MutexLock => {
-                let SyncResource::Mutex(id) = pending.resource else {
-                    unreachable!("mutex waiter resource mismatch")
-                };
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncMutex { locked, owner, .. }) if !*locked => {
-                        *locked = true;
-                        *owner = Some(pending.owner);
-                        true
+            SyncWaitKind::MutexLock | SyncWaitKind::RwRead | SyncWaitKind::RwWrite => {
+                let (id, kind) = match (pending.kind, pending.resource) {
+                    (SyncWaitKind::MutexLock, SyncResource::Mutex(id)) => {
+                        (id, RuntimeHostValueKind::MutexGuard)
                     }
-                    Some(HostValue::SyncMutex { .. }) => false,
-                    _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
+                    (SyncWaitKind::RwRead, SyncResource::RwLock(id)) => {
+                        (id, RuntimeHostValueKind::ReadGuard)
+                    }
+                    (SyncWaitKind::RwWrite, SyncResource::RwLock(id)) => {
+                        (id, RuntimeHostValueKind::WriteGuard)
+                    }
+                    _ => {
+                        return Err(VmError::Host(
+                            "synchronization waiter resource mismatch".into(),
+                        ));
+                    }
                 };
-                if !available {
+                if !self.sync_guard_available(id, kind)? {
                     return Ok(None);
                 }
-                self.remove_sync_waiter(call, pending.resource);
-                let guard = self.allocate(
-                    RuntimeHostValueKind::MutexGuard,
-                    HostValue::SyncMutexGuard { owner: id },
-                );
-                Ok(Some(RuntimeValue::ResultOk(Box::new(guard))))
-            }
-            SyncWaitKind::RwRead => {
-                let SyncResource::RwLock(id) = pending.resource else {
-                    unreachable!("rw reader resource mismatch")
-                };
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncRwLock {
-                        readers, writer, ..
-                    }) if !*writer => {
-                        *readers = readers.saturating_add(1);
-                        true
-                    }
-                    Some(HostValue::SyncRwLock { .. }) => false,
-                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
-                };
-                if !available {
+                let response = Self::prepare_pending_response(&self.async_memory, call, 64, [])?;
+                let Some(guard) = self.acquire_sync_guard(id, kind, pending.owner)? else {
                     return Ok(None);
-                }
-                self.remove_sync_waiter(call, pending.resource);
-                let guard = self.allocate(
-                    RuntimeHostValueKind::ReadGuard,
-                    HostValue::SyncReadGuard { owner: id },
-                );
-                Ok(Some(RuntimeValue::ResultOk(Box::new(guard))))
-            }
-            SyncWaitKind::RwWrite => {
-                let SyncResource::RwLock(id) = pending.resource else {
-                    unreachable!("rw writer resource mismatch")
                 };
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncRwLock {
-                        readers,
-                        writer,
-                        writer_owner,
-                        ..
-                    }) if !*writer && *readers == 0 => {
-                        *writer = true;
-                        *writer_owner = Some(pending.owner);
-                        true
-                    }
-                    Some(HostValue::SyncRwLock { .. }) => false,
-                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
-                };
-                if !available {
-                    return Ok(None);
-                }
+                Self::commit_pending_response(&mut self.async_memory, call, response);
                 self.remove_sync_waiter(call, pending.resource);
-                let guard = self.allocate(
-                    RuntimeHostValueKind::WriteGuard,
-                    HostValue::SyncWriteGuard { owner: id },
-                );
                 Ok(Some(RuntimeValue::ResultOk(Box::new(guard))))
             }
             SyncWaitKind::Condition {
@@ -2108,24 +3115,20 @@ impl BootstrapHost {
             }
             SyncWaitKind::SemaphoreAcquire => {
                 let SyncResource::Semaphore(id) = pending.resource else {
-                    unreachable!("semaphore waiter resource mismatch")
+                    return Err(VmError::Host("semaphore waiter resource mismatch".into()));
                 };
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncSemaphore { permits, .. }) if *permits > 0 => {
-                        *permits -= 1;
-                        true
-                    }
-                    Some(HostValue::SyncSemaphore { .. }) => false,
-                    _ => return Err(VmError::Host("Semaphore token is stale or invalid".into())),
-                };
-                if !available {
+                if !self.sync_guard_available(id, RuntimeHostValueKind::Permit)? {
                     return Ok(None);
                 }
+                let response = Self::prepare_pending_response(&self.async_memory, call, 32, [])?;
+                let Some(permit) =
+                    self.acquire_sync_guard(id, RuntimeHostValueKind::Permit, pending.owner)?
+                else {
+                    return Ok(None);
+                };
+                Self::commit_pending_response(&mut self.async_memory, call, response);
                 self.remove_sync_waiter(call, pending.resource);
-                Ok(Some(self.allocate(
-                    RuntimeHostValueKind::Permit,
-                    HostValue::SyncPermit { owner: id },
-                )))
+                Ok(Some(permit))
             }
             SyncWaitKind::Barrier { .. } => Ok(None),
             SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive => {
@@ -2134,14 +3137,47 @@ impl BootstrapHost {
         }
     }
 
-    fn poll_channel(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
-        let Some(pending) = self.sync_waiters.get(&call).cloned() else {
+    fn finish_channel_send_error(
+        &mut self,
+        call: u64,
+        channel: u64,
+        variant: u32,
+    ) -> Result<RuntimeValue, VmError> {
+        let payload = self
+            .sync_waiters
+            .get(&call)
+            .and_then(|pending| pending.arguments.get(1))
+            .ok_or_else(|| VmError::Host("channel send waiter has no payload".into()))?;
+        let response = Self::prepare_pending_response(
+            &self.async_memory,
+            call,
+            64 + "SendError".len() as u64,
+            [payload],
+        )?;
+        let payload = self
+            .sync_waiters
+            .get_mut(&call)
+            .and_then(|pending| pending.arguments.pop())
+            .expect("the pending payload was validated before admission");
+        Self::commit_pending_response(&mut self.async_memory, call, response);
+        self.remove_sync_waiter(call, SyncResource::Channel(channel));
+        Ok(Self::channel_send_result_error(variant, payload))
+    }
+
+    fn poll_channel(
+        &mut self,
+        call: u64,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<Option<RuntimeValue>, VmError> {
+        let Some(pending) = self.sync_waiters.get(&call) else {
             return Ok(None);
         };
-        let SyncResource::Channel(channel) = pending.resource else {
+        let resource = pending.resource;
+        let kind = pending.kind;
+        let SyncResource::Channel(channel) = resource else {
             unreachable!("channel waiter resource mismatch")
         };
-        match pending.kind {
+        match kind {
             SyncWaitKind::ChannelSend => {
                 if !self.channel_waiter_is_oldest(channel, call, SyncWaitKind::ChannelSend) {
                     return Ok(None);
@@ -2152,36 +3188,21 @@ impl BootstrapHost {
                     .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?
                     .receiver_closed;
                 if receiver_closed {
-                    let payload = pending.arguments.get(1).cloned().ok_or_else(|| {
-                        VmError::Host("channel send waiter has no payload".into())
-                    })?;
-                    self.remove_sync_waiter(call, pending.resource);
-                    return Ok(Some(Self::channel_send_result_error(0, payload)));
+                    return self.finish_channel_send_error(call, channel, 0).map(Some);
                 }
                 if self
                     .channel_waiting_call(channel, SyncWaitKind::ChannelReceive)
                     .is_some()
                 {
-                    let Some((send, _receive, _payload)) = self.channel_match_waiters(channel)?
-                    else {
-                        return Ok(None);
-                    };
-                    if send != call {
-                        return Ok(None);
-                    }
-                    self.ready_jobs.remove(&call);
-                    return Ok(Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))));
+                    self.channel_match_waiters(channel, admission)?;
+                    return self.ready_jobs.remove(&call).transpose();
                 }
                 let state = self
                     .channels
                     .get_mut(&channel)
                     .ok_or_else(|| VmError::Host("Sender channel identity is stale".into()))?;
                 if state.capacity.is_none() && state.queue.len() as u64 >= self.max_bytes {
-                    let payload = pending.arguments.get(1).cloned().ok_or_else(|| {
-                        VmError::Host("channel send waiter has no payload".into())
-                    })?;
-                    self.remove_sync_waiter(call, pending.resource);
-                    return Ok(Some(Self::channel_send_result_error(1, payload)));
+                    return self.finish_channel_send_error(call, channel, 1).map(Some);
                 }
                 if state
                     .capacity
@@ -2189,12 +3210,21 @@ impl BootstrapHost {
                 {
                     return Ok(None);
                 }
-                let payload =
-                    pending.arguments.get(1).cloned().ok_or_else(|| {
-                        VmError::Host("channel send waiter has no payload".into())
-                    })?;
-                state.queue.push_back(payload);
-                self.remove_sync_waiter(call, pending.resource);
+                let payload = self
+                    .sync_waiters
+                    .get(&call)
+                    .and_then(|pending| pending.arguments.get(1))
+                    .ok_or_else(|| VmError::Host("channel send waiter has no payload".into()))?;
+                let import =
+                    admission.prepare(call, VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))?;
+                let acknowledgement =
+                    Self::prepare_pending_response(&self.async_memory, call, 64, [])?;
+                // Queue growth still has its own admission. If it rejects,
+                // the VM releases this pool while delivering the failed call.
+                admission.commit(&mut [import])?;
+                state.push(payload)?;
+                Self::commit_pending_response(&mut self.async_memory, call, acknowledgement);
+                self.remove_sync_waiter(call, resource);
                 Ok(Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))))
             }
             SyncWaitKind::ChannelReceive => {
@@ -2202,24 +3232,21 @@ impl BootstrapHost {
                     return Ok(None);
                 }
                 if let Some(state) = self.channels.get_mut(&channel)
-                    && let Some(value) = state.queue.pop_front()
+                    && let Some(value) = state.queue.front()
                 {
-                    self.remove_sync_waiter(call, pending.resource);
+                    Self::reserve_channel_delivery(&mut self.async_memory, call, value)?;
+                    let value = state
+                        .pop()?
+                        .expect("the front value was validated before admission");
+                    self.remove_sync_waiter(call, resource);
                     return Ok(Some(RuntimeValue::OptionSome(Box::new(value))));
                 }
                 if self
                     .channel_waiting_call(channel, SyncWaitKind::ChannelSend)
                     .is_some()
                 {
-                    let Some((_send, receive, payload)) = self.channel_match_waiters(channel)?
-                    else {
-                        return Ok(None);
-                    };
-                    if receive != call {
-                        return Ok(None);
-                    }
-                    self.ready_jobs.remove(&call);
-                    return Ok(Some(RuntimeValue::OptionSome(Box::new(payload))));
+                    self.channel_match_waiters(channel, admission)?;
+                    return self.ready_jobs.remove(&call).transpose();
                 }
                 let closed = self
                     .channels
@@ -2232,13 +3259,35 @@ impl BootstrapHost {
                         .get(&channel)
                         .is_some_and(|state| state.receiver_closed)
                 {
-                    self.remove_sync_waiter(call, pending.resource);
+                    let response =
+                        Self::prepare_pending_response(&self.async_memory, call, 32, [])?;
+                    Self::commit_pending_response(&mut self.async_memory, call, response);
+                    self.remove_sync_waiter(call, resource);
                     return Ok(Some(RuntimeValue::OptionNone));
                 }
                 Ok(None)
             }
             _ => unreachable!("poll_channel called for a non-channel waiter"),
         }
+    }
+
+    fn publish_sync_cancellation(&mut self, call: u64) -> Result<(), VmError> {
+        if let Some(memory) = self.async_memory.get_mut(&call) {
+            if let Some(response) = &mut memory.response {
+                if response.bytes() < 73 {
+                    return Err(VmError::Host(
+                        "synchronization cancellation exceeds its prepared reply".into(),
+                    ));
+                }
+                response.resize(73)?;
+            } else {
+                // The waiter has retired. Reuse its admitted request metadata
+                // so cancelling a parked acquisition needs no additional quota.
+                memory.response = Some(memory.request.split_off(73)?);
+            }
+        }
+        self.ready_jobs.insert(call, Ok(Self::sync_result_error(5)));
+        Ok(())
     }
 
     fn cancel_sync_waiter(&mut self, call: u64) -> Result<bool, VmError> {
@@ -2268,8 +3317,7 @@ impl BootstrapHost {
                     let remaining = self.sync_queues.remove(&resource).unwrap_or_default();
                     for waiter in remaining {
                         self.sync_waiters.remove(&waiter);
-                        self.ready_jobs
-                            .insert(waiter, Ok(Self::sync_result_error(5)));
+                        self.publish_sync_cancellation(waiter)?;
                     }
                     if let Some(HostValue::SyncBarrier {
                         arrived,
@@ -2281,7 +3329,7 @@ impl BootstrapHost {
                         *generation = generation.saturating_add(1);
                     }
                 }
-                self.ready_jobs.insert(call, Ok(Self::sync_result_error(5)));
+                self.publish_sync_cancellation(call)?;
                 Ok(true)
             }
             SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive => {
@@ -2291,7 +3339,7 @@ impl BootstrapHost {
             _ => {
                 let resource = pending.resource;
                 self.remove_sync_waiter(call, resource);
-                self.ready_jobs.insert(call, Ok(Self::sync_result_error(5)));
+                self.publish_sync_cancellation(call)?;
                 Ok(true)
             }
         }
@@ -2406,7 +3454,7 @@ impl BootstrapHost {
 
     fn yaml_error_parts(&mut self, error: &yaml::YamlError) -> RuntimeValue {
         let kind_values = match &error.kind {
-            yaml::YamlErrorKind::Io(message) => vec![self.io_error(message.clone())],
+            yaml::YamlErrorKind::Io(_) => vec![self.io_error(stdlib_io::IoError::Host)],
             _ => Vec::new(),
         };
         let path = error
@@ -2494,10 +3542,8 @@ impl BootstrapHost {
         }
     }
 
-    fn filesystem_path(&self, value: &RuntimeValue) -> Result<PathBuf, String> {
-        let path = self
-            .path(value)
-            .map_err(|error| format!("invalid Path value: {error}"))?;
+    fn filesystem_path(&self, value: &RuntimeValue) -> Result<PathBuf, FsError> {
+        let path = self.path(value).map_err(|_| FsError::InvalidPath)?;
         #[cfg(unix)]
         {
             Ok(PathBuf::from(OsString::from_vec(path.as_bytes().to_vec())))
@@ -2506,7 +3552,7 @@ impl BootstrapHost {
         {
             path.to_string()
                 .map(PathBuf::from)
-                .map_err(|error| format!("path is not representable on this target: {error:?}"))
+                .map_err(|_| FsError::InvalidPath)
         }
     }
 
@@ -2525,7 +3571,7 @@ impl BootstrapHost {
         }
     }
 
-    fn directory_path(&self, value: &RuntimeValue) -> Result<(u64, PathBuf), VmError> {
+    fn directory_path(&self, value: &RuntimeValue) -> Result<&std::path::Path, VmError> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::Directory,
             id,
@@ -2534,27 +3580,33 @@ impl BootstrapHost {
             return Err(VmError::Host("Directory value is invalid".into()));
         };
         match self.values.get(id) {
-            Some(HostValue::Directory { path }) => Ok((*id, path.clone())),
+            Some(HostValue::Directory { path }) => Ok(path),
             _ => Err(VmError::Host("Directory token is stale".into())),
         }
     }
 
     fn fs_open_mode(&self, value: &RuntimeValue) -> Result<FsOpenMode, VmError> {
-        let RuntimeValue::Host {
-            kind: RuntimeHostValueKind::OpenMode,
-            id,
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
         } = value
         else {
             return Err(VmError::Host("OpenMode value is invalid".into()));
         };
-        match self.values.get(id) {
-            Some(HostValue::OpenMode(mode)) => Ok(*mode),
-            _ => Err(VmError::Host("OpenMode token is stale".into())),
+        if name != "OpenMode" || !values.is_empty() {
+            return Err(VmError::Host("OpenMode shape is invalid".into()));
         }
+        FsOpenMode::from_variant(*variant)
+            .ok_or_else(|| VmError::Host("OpenMode variant is invalid".into()))
     }
 
-    fn path_bytes(&self, value: &RuntimeValue) -> Result<Vec<u8>, VmError> {
-        Ok(self.path(value)?.as_bytes().to_vec())
+    fn fs_mode_value(mode: FsOpenMode) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "OpenMode".into(),
+            variant: mode as u32,
+            values: Vec::new(),
+        }
     }
 
     fn path_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -2570,17 +3622,21 @@ impl BootstrapHost {
         RuntimeValue::ResultErr(Box::new(self.path_error(message)))
     }
 
-    fn fs_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        self.allocate(
-            RuntimeHostValueKind::FsError,
-            HostValue::FsError {
-                _message: message.into(),
-            },
-        )
+    fn fs_result_error(&self, error: FsError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "FsError".to_owned(),
+            variant: error.variant(),
+            values: Vec::new(),
+        }))
     }
 
-    fn fs_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        RuntimeValue::ResultErr(Box::new(self.fs_error(message)))
+    fn fs_io_result_error(&self, error: &io::Error) -> RuntimeValue {
+        let error = if TempError::from_io(error) == TempError::LimitExceeded {
+            FsError::ResourceLimit
+        } else {
+            FsError::from_io(error)
+        };
+        self.fs_result_error(error)
     }
 
     fn math_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -2606,34 +3662,142 @@ impl BootstrapHost {
         }
     }
 
-    fn float_tolerance_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        self.allocate(
-            RuntimeHostValueKind::FloatToleranceError,
-            HostValue::FloatToleranceError {
-                _message: message.into(),
-            },
-        )
+    fn float_tolerance_result_error(
+        &self,
+        error: FloatToleranceError,
+    ) -> Result<RuntimeValue, VmError> {
+        let _memory = self.reserve_test_memory(crate::test_limits::TOLERANCE_ERROR_RESULT_BYTES)?;
+        let variant = match error {
+            FloatToleranceError::Negative => 0,
+            FloatToleranceError::NonFinite => 1,
+            FloatToleranceError::Overflow => 2,
+        };
+        Ok(RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "FloatToleranceError".into(),
+            variant,
+            values: Vec::new(),
+        })))
     }
 
-    fn float_tolerance_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        RuntimeValue::ResultErr(Box::new(self.float_tolerance_error(message)))
+    fn testing_diff(
+        &self,
+        expected: &str,
+        actual: &str,
+    ) -> Result<(TextDiff, Option<VmMemoryCharge>), VmError> {
+        let plan = TextDiffPlan::new(expected, actual, DiffLimits::default());
+        let mut memory = self
+            .test_memory
+            .as_ref()
+            .map(|budget| budget.reserve(plan.memory_bytes()))
+            .transpose()?;
+        let diff = plan.compute();
+        if let Some(memory) = &mut memory {
+            memory.resize(diff.retained_bytes())?;
+        }
+        Ok((diff, memory))
     }
 
-    fn text_diff(&self, value: &RuntimeValue) -> Result<&TextDiff, VmError> {
-        let RuntimeValue::Host {
-            kind: RuntimeHostValueKind::TextDiff,
-            id,
+    fn testing_diff_record(
+        &self,
+        expected: &str,
+        actual: &str,
+    ) -> Result<(RuntimeValue, Option<VmMemoryCharge>), VmError> {
+        let (diff, mut memory) = self.testing_diff(expected, actual)?;
+        let descriptors = crate::test_limits::TEXT_DIFF_RECORD_BYTES
+            + crate::test_limits::TEXT_DIFF_HUNK_BYTES * diff.hunks.len() as u64;
+        let retained = diff.retained_bytes();
+        // The old and new vectors overlap during conversion, but owned string
+        // payloads move into the nominal variants and are never duplicated.
+        if let Some(memory) = &mut memory {
+            memory.resize(retained + descriptors)?;
+        }
+        let final_bytes = descriptors + retained - 32 - 32 * diff.hunks.len() as u64;
+        let hunks = diff
+            .hunks
+            .into_iter()
+            .map(|hunk| {
+                let (variant, text) = match hunk {
+                    TextDiffHunk::Equal(text) => (0, text),
+                    TextDiffHunk::Delete(text) => (1, text),
+                    TextDiffHunk::Insert(text) => (2, text),
+                };
+                RuntimeValue::Variant {
+                    name: "TextDiffHunk".into(),
+                    variant,
+                    values: vec![RuntimeValue::String(text)],
+                }
+            })
+            .collect();
+        let record = RuntimeValue::Record {
+            name: "TextDiff".into(),
+            values: vec![
+                RuntimeValue::Bool(diff.equal),
+                RuntimeValue::Array(hunks),
+                RuntimeValue::Integer(diff.expected_bytes as i128),
+                RuntimeValue::Integer(diff.actual_bytes as i128),
+                RuntimeValue::Bool(diff.truncated),
+            ],
+        };
+        if let Some(memory) = &mut memory {
+            memory.resize(final_bytes)?;
+        }
+        Ok((record, memory))
+    }
+
+    fn testing_diff_hunk(value: &RuntimeValue) -> Result<TextDiffHunkView<'_>, VmError> {
+        if let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
         } = value
-        else {
+            && name == "TextDiffHunk"
+            && let [RuntimeValue::String(text)] = values.as_slice()
+        {
+            return match variant {
+                0 => Ok(TextDiffHunkView::Equal(text)),
+                1 => Ok(TextDiffHunkView::Delete(text)),
+                2 => Ok(TextDiffHunkView::Insert(text)),
+                _ => Err(VmError::Host("TextDiffHunk variant is invalid".into())),
+            };
+        }
+        Err(VmError::Host("TextDiffHunk value is invalid".into()))
+    }
+
+    fn render_testing_diff(&self, value: &RuntimeValue) -> Result<RuntimeValue, VmError> {
+        let RuntimeValue::Record { name, values } = value else {
             return Err(VmError::Host("TextDiff value is invalid".into()));
         };
-        match self.values.get(id) {
-            Some(HostValue::TextDiff(diff)) => Ok(diff),
-            _ => Err(VmError::Host("TextDiff token is stale".into())),
+        let [
+            RuntimeValue::Bool(_),
+            RuntimeValue::Array(hunks),
+            RuntimeValue::Integer(_),
+            RuntimeValue::Integer(_),
+            RuntimeValue::Bool(truncated),
+        ] = values.as_slice()
+        else {
+            return Err(VmError::Host("TextDiff fields are invalid".into()));
+        };
+        if name != "TextDiff" {
+            return Err(VmError::Host("TextDiff record name is invalid".into()));
         }
+        for hunk in hunks {
+            Self::testing_diff_hunk(hunk)?;
+        }
+        let plan = TextDiffRenderPlan::new(
+            hunks.iter().map(|hunk| {
+                Self::testing_diff_hunk(hunk).expect("immutable hunk shapes were validated")
+            }),
+            *truncated,
+            DiffLimits::default(),
+        );
+        let length = plan.rendered_len();
+        let _memory = self.reserve_text_output(length)?;
+        let mut output = String::with_capacity(length);
+        plan.write_rendered(&mut output);
+        Ok(RuntimeValue::String(output))
     }
 
-    fn temp_directory(&self, value: &RuntimeValue) -> Result<PathBuf, VmError> {
+    fn temp_directory(&self, value: &RuntimeValue) -> Result<&std::path::Path, VmError> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::TempDirectory,
             id,
@@ -2642,22 +3806,25 @@ impl BootstrapHost {
             return Err(VmError::Host("TempDirectory value is invalid".into()));
         };
         match self.values.get(id) {
-            Some(HostValue::TempDirectory { path }) => Ok(path.clone()),
+            Some(HostValue::TempDirectory { path }) => Ok(path),
             _ => Err(VmError::Host("TempDirectory token is stale".into())),
         }
     }
 
-    fn temp_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        self.allocate(
-            RuntimeHostValueKind::TempError,
-            HostValue::TempError {
-                _message: message.into(),
-            },
-        )
-    }
-
-    fn temp_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        RuntimeValue::ResultErr(Box::new(self.temp_error(message)))
+    fn temp_result_error(&self, error: TempError) -> Result<RuntimeValue, VmError> {
+        let _memory = self.reserve_test_memory(crate::test_limits::TEMP_ERROR_RESULT_BYTES)?;
+        let variant = match error {
+            TempError::InvalidPrefix => 0,
+            TempError::Unavailable => 1,
+            TempError::PermissionDenied => 2,
+            TempError::LimitExceeded => 3,
+            TempError::IoError => 4,
+        };
+        Ok(RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "TempError".into(),
+            variant,
+            values: Vec::new(),
+        })))
     }
 
     fn generator_mut(&mut self, value: &RuntimeValue) -> Result<&mut Generator, VmError> {
@@ -2674,17 +3841,1164 @@ impl BootstrapHost {
         }
     }
 
-    fn generation_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        self.allocate(
-            RuntimeHostValueKind::GenerationError,
-            HostValue::GenerationError {
-                _message: message.into(),
-            },
+    fn generation_result_error(&self, error: GenerationError) -> Result<RuntimeValue, VmError> {
+        let _memory =
+            self.reserve_test_memory(crate::test_limits::GENERATION_ERROR_RESULT_BYTES)?;
+        let variant = match error {
+            GenerationError::InvalidBounds => 0,
+            GenerationError::LimitExceeded => 1,
+            GenerationError::Exhausted => 2,
+        };
+        Ok(RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "GenerationError".into(),
+            variant,
+            values: Vec::new(),
+        })))
+    }
+
+    fn testing_shrink(&self, value: &RuntimeValue, limit: usize) -> Result<RuntimeValue, VmError> {
+        let result_memory =
+            self.reserve_test_memory(tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)?;
+        let candidates = match shrink_runtime_value(value, limit, 0, self.test_memory.as_ref()) {
+            Ok(candidates) => candidates,
+            Err(ShrinkError::Memory(error)) => return Err(error),
+            Err(ShrinkError::Generation(error)) => {
+                drop(result_memory);
+                return self.generation_result_error(error);
+            }
+        };
+        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+            candidates.values,
+        ))))
+    }
+
+    fn start_async_admitted(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<u64, VmError> {
+        let base_name = name.split_once('[').map_or(name, |(base, _)| base);
+        let memory = self
+            .test_memory
+            .as_ref()
+            .map(|budget| {
+                // Only pending synchronization retains an argument copy.
+                // Immediate operations borrow the caller's already admitted
+                // arguments and charge their own retained output separately.
+                let argument_capacity = if Self::is_sync_suspendable(base_name) {
+                    Self::sync_payload_bytes(arguments, 0)
+                } else {
+                    Some(0)
+                };
+                let bytes = argument_capacity
+                    .and_then(|bytes| bytes.checked_add(tondo_vm::runtime::TEST_HOST_JOB_BYTES))
+                    .and_then(|bytes| bytes.checked_add(name.len() as u64))
+                    .ok_or(VmError::ResourceLimit {
+                        resource: "memory",
+                        limit: budget.limit(),
+                    })?;
+                budget.reserve(bytes)
+            })
+            .transpose()?;
+        // Conditions retain a guard through cancellation. Barrier participants
+        // must all have admitted replies before any generation can complete.
+        let response_bytes = match base_name {
+            "std.sync.Condition.wait" => {
+                self.condition_wait_state(arguments)?;
+                32
+            }
+            "std.sync.Barrier.wait" => {
+                self.barrier_wait_state(arguments)?;
+                75
+            }
+            _ => 0,
+        };
+        let mut response = if response_bytes != 0 {
+            self.test_memory
+                .as_ref()
+                .map(|budget| budget.reserve(response_bytes))
+                .transpose()?
+        } else {
+            None
+        };
+        let call = (|| {
+            if matches!(
+                name,
+                "std.console.flush"
+                    | "std.console.readLine"
+                    | "std.process.Command.start"
+                    | "std.process.Pipeline.start"
+                    | "std.io.Reader.read"
+                    | "std.io.Writer.write"
+                    | "std.io.Writer.flush"
+                    | "std.io.readAll"
+                    | "std.io.writeAll"
+                    | "std.encoding.Base64Options.encodeTo"
+                    | "std.encoding.Base64Options.decodeFrom"
+                    | "std.encoding.HexOptions.encodeTo"
+                    | "std.encoding.HexOptions.decodeFrom"
+                    | "std.fs.open"
+                    | "std.fs.openDirectory"
+                    | "std.fs.readAll"
+                    | "std.fs.writeAll"
+                    | "std.fs.createDirectory"
+                    | "std.fs.remove"
+                    | "std.fs.metadata"
+                    | "std.fs.list"
+                    | "std.fs.rename"
+                    | "std.fs.atomicWrite"
+                    | "std.fs.File.read"
+                    | "std.fs.File.write"
+                    | "std.fs.File.flush"
+                    | "std.fs.Directory.list"
+                    | "std.json.JsonReader.fromReader"
+                    | "std.json.JsonWriter.toWriter"
+                    | "std.json.JsonWriter.write"
+                    | "std.json.JsonWriter.finish"
+                    | "std.messagepack.MessagePackReader.fromReader"
+                    | "std.messagepack.MessagePackWriter.toWriter"
+                    | "std.messagepack.MessagePackWriter.write"
+                    | "std.messagepack.MessagePackWriter.finish"
+                    | "std.protobuf.ProtoReader.fromReader"
+                    | "std.protobuf.ProtoWriter.toWriter"
+                    | "std.protobuf.ProtoWriter.write"
+                    | "std.protobuf.ProtoWriter.finish"
+                    | "std.sync.Mutex.lock"
+                    | "std.sync.RwLock.read"
+                    | "std.sync.RwLock.write"
+                    | "std.sync.Condition.wait"
+                    | "std.sync.Semaphore.acquire"
+                    | "std.sync.Once.getOrInit"
+                    | "std.sync.Barrier.wait"
+                    | "std.channel.Sender.send"
+                    | "std.channel.Receiver.receive"
+                    | "std.sync.Array.get"
+                    | "std.sync.Array.set"
+                    | "std.sync.Array.compareExchange"
+                    | "std.sync.Array.snapshot"
+                    | "std.sync.Map.get"
+                    | "std.sync.Map.contains"
+                    | "std.sync.Map.insert"
+                    | "std.sync.Map.remove"
+                    | "std.sync.Map.compareExchange"
+                    | "std.sync.Map.snapshot"
+                    | "std.sync.Set.contains"
+                    | "std.sync.Set.insert"
+                    | "std.sync.Set.remove"
+                    | "std.sync.Set.snapshot"
+                    | "std.sync.Stack.push"
+                    | "std.sync.Stack.pop"
+                    | "std.sync.Stack.peek"
+                    | "std.sync.Stack.snapshot"
+                    | "std.sync.Queue.enqueue"
+                    | "std.sync.Queue.dequeue"
+                    | "std.sync.Queue.peek"
+                    | "std.sync.Queue.snapshot"
+            ) || name.starts_with("std.sync.Mutex.lock")
+                || name.starts_with("std.sync.RwLock.read")
+                || name.starts_with("std.sync.RwLock.write")
+                || name.starts_with("std.sync.Condition.wait")
+                || name.starts_with("std.sync.Semaphore.acquire")
+                || name.starts_with("std.sync.Once.getOrInit")
+                || name.starts_with("std.sync.Barrier.wait")
+                || name.starts_with("std.channel.Sender.send")
+                || name.starts_with("std.channel.Receiver.receive")
+                || name.starts_with("std.channel.Receiver.__asyncIteratorNext")
+                || name.starts_with("std.sync.Array.get")
+                || name.starts_with("std.sync.Array.set")
+                || name.starts_with("std.sync.Array.compareExchange")
+                || name.starts_with("std.sync.Array.snapshot")
+                || name.starts_with("std.sync.Map.get")
+                || name.starts_with("std.sync.Map.contains")
+                || name.starts_with("std.sync.Map.insert")
+                || name.starts_with("std.sync.Map.remove")
+                || name.starts_with("std.sync.Map.compareExchange")
+                || name.starts_with("std.sync.Map.snapshot")
+                || name.starts_with("std.sync.Set.contains")
+                || name.starts_with("std.sync.Set.insert")
+                || name.starts_with("std.sync.Set.remove")
+                || name.starts_with("std.sync.Set.snapshot")
+                || name.starts_with("std.sync.Stack.push")
+                || name.starts_with("std.sync.Stack.pop")
+                || name.starts_with("std.sync.Stack.peek")
+                || name.starts_with("std.sync.Stack.snapshot")
+                || name.starts_with("std.sync.Queue.enqueue")
+                || name.starts_with("std.sync.Queue.dequeue")
+                || name.starts_with("std.sync.Queue.peek")
+                || name.starts_with("std.sync.Queue.snapshot")
+            {
+                let call = self.next_async_call()?;
+                if self.pending_sync_for(call, name, arguments)? {
+                    return Ok(call);
+                }
+                let budget = self.test_memory.clone();
+                let result = self
+                    .invoke_admitted_with_import(name, arguments, budget.as_ref(), admission)
+                    .map(|returned| {
+                        response = returned.memory;
+                        returned.value
+                    });
+                if name.starts_with("std.fs.") {
+                    self.ready_fs_jobs.insert(call);
+                }
+                if name.starts_with("std.console.") {
+                    self.ready_console_jobs.insert(call);
+                }
+                self.ready_jobs.insert(call, result);
+                return Ok(call);
+            }
+            if name == "std.testing.VirtualTime.settle" {
+                let [controller] = arguments else {
+                    return Err(VmError::Host(
+                        "VirtualTime.settle received an invalid argument list".into(),
+                    ));
+                };
+                self.virtual_controller(controller)?;
+                return self.start_virtual_control_job(TimeJobKind::Settle);
+            }
+            if name == "std.testing.VirtualTime.advance" {
+                let [controller, duration] = arguments else {
+                    return Err(VmError::Host(
+                        "VirtualTime.advance received an invalid argument list".into(),
+                    ));
+                };
+                self.virtual_controller(controller)?;
+                let duration = Self::duration(duration)?;
+                if duration < 0 {
+                    return Err(VmError::Host(
+                        "P2005: virtual time duration cannot be negative".into(),
+                    ));
+                }
+                self.clock
+                    .advance_virtual(duration)
+                    .map_err(|error| VmError::Host(format!("P2005: {error}")))?;
+                let target = self.clock.now()?;
+                return self.start_virtual_control_job(TimeJobKind::Advance { target });
+            }
+            if name == "std.time.sleep" {
+                let [delay] = arguments else {
+                    return Err(VmError::Host(
+                        "std.time.sleep received an invalid bootstrap argument list".into(),
+                    ));
+                };
+                let completion = match self.validate_delay(delay) {
+                    Ok(delay) => {
+                        let now = self.clock.now()?;
+                        let deadline = now
+                            .checked_add(delay)
+                            .ok_or_else(|| VmError::Host("sleep deadline overflow".into()))?;
+                        return self.start_time_job(deadline, None, false);
+                    }
+                    Err(error) => Some(error),
+                };
+                return self.start_time_job(i128::MIN, completion, false);
+            }
+            if name == "std.time.Timer.wait" {
+                let [receiver] = arguments else {
+                    return Err(VmError::Host(
+                        "std.time.Timer.wait received an invalid bootstrap argument list".into(),
+                    ));
+                };
+                let (domain, deadline) = self.timer(receiver)?;
+                let RuntimeValue::Host { id, .. } = receiver else {
+                    unreachable!("timer() validated the token")
+                };
+                self.values.remove(id);
+                let completion = (domain != self.clock_domain)
+                    .then(|| self.clock_result_error("timer belongs to another clock domain"));
+                return self.start_time_job(deadline, completion, true);
+            }
+            let mode =
+                Self::mode(name).ok_or_else(|| VmError::UnsupportedHostCall(name.to_owned()))?;
+            let [receiver] = arguments else {
+                return Err(VmError::Host(format!(
+                    "{name} received an invalid bootstrap argument list"
+                )));
+            };
+            let group = match receiver {
+                RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProcessHandle,
+                    id,
+                } => match self.values.remove(id) {
+                    Some(HostValue::ProcessHandle(group)) => Ok(group),
+                    _ => return Err(VmError::Host("ProcessHandle token is stale".into())),
+                },
+                _ => Err(self.plan(receiver)?),
+            };
+            self.spawn_job(group, mode)
+        })()?;
+        if let Some(memory) = memory {
+            self.async_memory.insert(
+                call,
+                HostAsyncMemory {
+                    request: memory,
+                    response,
+                },
+            );
+        }
+        Ok(call)
+    }
+
+    fn invoke_admitted(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        budget: Option<&VmMemoryBudget>,
+    ) -> Result<VmHostReturn, VmError> {
+        self.invoke_admitted_with_import(
+            name,
+            arguments,
+            budget,
+            &mut VmHostImportAdmission::disabled(),
         )
     }
 
-    fn generation_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        RuntimeValue::ResultErr(Box::new(self.generation_error(message)))
+    fn invoke_admitted_with_import(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        budget: Option<&VmMemoryBudget>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<VmHostReturn, VmError> {
+        // Admit closed descriptors and nominal names before consuming input
+        // or emitting output, then transfer without a measurement walk.
+        let base_name = name.split_once('[').map_or(name, |(base, _)| base);
+        let maximum = match base_name {
+            "std.io.Reader.read" => Some(3 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + 10),
+            "std.io.readAll"
+            | "std.io.Writer.write"
+            | "std.io.writeAll"
+            | "std.io.Writer.flush" => Some(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + 7),
+            "std.sync.Set.insert" | "std.sync.Stack.push" | "std.sync.Queue.enqueue" => {
+                Some(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)
+            }
+            "std.console.print" | "std.console.println" | "std.console.flush" => {
+                Some(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)
+            }
+            _ => None,
+        };
+        let mut response = VmHostReturnBudget::new(budget);
+        if let Some(maximum) = maximum {
+            response.reserve(maximum, [])?;
+        }
+        let value = if base_name == "std.console.readLine" {
+            let [reader] = arguments else {
+                return Err(VmError::Host("readLine expects one Input".into()));
+            };
+            self.console_read_line_admitted(reader, &mut response, admission)?
+        } else if Self::is_file_operation(base_name) {
+            self.invoke_file_admitted(base_name, arguments, &mut response, admission)?
+        } else if Self::is_filesystem_mutation(base_name) {
+            self.invoke_filesystem_mutation_admitted(
+                base_name,
+                arguments,
+                &mut response,
+                admission,
+            )?
+        } else if Self::is_io_operation(base_name) {
+            self.invoke_io_admitted(base_name, arguments, admission)?
+        } else {
+            if Self::is_console_output(base_name) {
+                let imported = admission
+                    .prepare_current(VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))?;
+                admission.commit(&mut [imported])?;
+            }
+            self.invoke_with_return_budget(name, arguments, &mut response)?
+        };
+        if maximum.is_some() {
+            let bytes = fixed_host_response_bytes(&value).ok_or_else(|| {
+                VmError::Invariant("prepaid host response has an unsupported shape".into())
+            })?;
+            response.shrink(bytes)?;
+        }
+        response.finish(value)
+    }
+
+    fn console_read_line_admitted(
+        &mut self,
+        reader: &RuntimeValue,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        let (id, stream, offset) = self.reader_state(reader)?;
+        if stream != StreamKind::Stdin {
+            response.reserve(115, [])?;
+            return Ok(self.console_result_error(stdlib_io::IoError::InvalidData));
+        }
+        if offset >= self.stdin.len() {
+            response.reserve(64, [])?;
+            return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone)));
+        }
+        let remaining = &self.stdin[offset..];
+        let end = remaining
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(remaining.len(), |index| index + 1);
+        let line = &remaining[..end];
+        let text = line.strip_suffix(b"\n").unwrap_or(line);
+        let text = match std::str::from_utf8(text) {
+            Ok(text) => text,
+            Err(_) => {
+                response.reserve(115, [])?;
+                return Ok(self.console_result_error(stdlib_io::IoError::InvalidData));
+            }
+        };
+        let bytes = (text.len() as u64)
+            .checked_add(96)
+            .ok_or(VmError::ResourceLimit {
+                resource: "memory",
+                limit: self.max_bytes,
+            })?;
+        response.reserve(bytes, [])?;
+        let result = RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(Box::new(
+            RuntimeValue::String(text.to_owned()),
+        ))));
+        let imported = admission.prepare_current(VmHostReturnPreview::Value(&result))?;
+        admission.commit(&mut [imported])?;
+        if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+            *offset += end;
+        }
+        Ok(result)
+    }
+
+    fn console_stream_admitted(
+        &mut self,
+        stream: StreamKind,
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        let memory = self.reserve_buffer_payloads(std::iter::once(0))?;
+        response.reserve(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES, [])?;
+        let (kind, value) = if stream == StreamKind::Stdin {
+            (
+                RuntimeHostValueKind::Reader,
+                HostValue::Reader { stream, offset: 0 },
+            )
+        } else {
+            (RuntimeHostValueKind::Writer, HostValue::Writer { stream })
+        };
+        let result = RuntimeValue::ResultOk(Box::new(RuntimeValue::Host {
+            kind,
+            id: self.next_value,
+        }));
+        let imported = admission.prepare_current(VmHostReturnPreview::Value(&result))?;
+        admission.commit(&mut [imported])?;
+        self.publish_buffer(kind, value, memory);
+        Ok(result)
+    }
+
+    fn is_console_output(name: &str) -> bool {
+        matches!(
+            name,
+            "std.console.print" | "std.console.println" | "std.console.flush"
+        )
+    }
+
+    fn is_file_operation(name: &str) -> bool {
+        matches!(
+            name,
+            "std.fs.open"
+                | "std.fs.openDirectory"
+                | "std.fs.readAll"
+                | "std.fs.list"
+                | "std.fs.Directory.list"
+                | "std.fs.metadata"
+                | "std.fs.File.read"
+                | "std.fs.File.write"
+                | "std.fs.File.flush"
+        )
+    }
+
+    fn admit_file_result(
+        &self,
+        admission: &mut VmHostImportAdmission<'_>,
+        success: VmHostReturnPreview<'_>,
+    ) -> Result<(), VmError> {
+        let failure = self.fs_result_error(FsError::Io);
+        let outcomes = [success, VmHostReturnPreview::Value(&failure)];
+        let imported = admission.prepare_current(VmHostReturnPreview::StorageBound(&outcomes))?;
+        admission.commit(&mut [imported])
+    }
+
+    fn invoke_file_admitted(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        if matches!(
+            name,
+            "std.fs.openDirectory" | "std.fs.readAll" | "std.fs.list" | "std.fs.Directory.list"
+        ) {
+            return self
+                .invoke_filesystem_observation_admitted(name, arguments, response, admission);
+        }
+        response.reserve(
+            match name {
+                "std.fs.File.read" => 96,
+                "std.fs.metadata" => METADATA_RESULT_BYTES,
+                _ => 71,
+            },
+            [],
+        )?;
+        let value = (|| match (name, arguments) {
+            ("std.fs.metadata", [receiver]) => {
+                let path_bytes = match self.path(receiver) {
+                    Ok(path) => path.as_bytes().len() as u64,
+                    Err(_) => return Ok(self.fs_result_error(FsError::InvalidPath)),
+                };
+                let path_bytes = path_bytes
+                    .checked_mul(if cfg!(unix) { 1 } else { 3 })
+                    .ok_or(VmError::ResourceLimit {
+                        resource: "memory",
+                        limit: self.max_bytes,
+                    })?;
+                let _path_storage = self.reserve_test_memory(path_bytes)?;
+                // Reserve the complete nominal result before converting the path
+                // or querying the OS. The scalar fields need no host identity.
+                let mut snapshot = RuntimeValue::Record {
+                    name: "Metadata".into(),
+                    values: vec![
+                        RuntimeValue::Variant {
+                            name: "FileKind".into(),
+                            variant: FileKind::File.variant(),
+                            values: Vec::new(),
+                        },
+                        RuntimeValue::Integer(0),
+                        RuntimeValue::Bool(false),
+                    ],
+                };
+                self.admit_file_result(admission, VmHostReturnPreview::ResultOk(&snapshot))?;
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let metadata = match std::fs::symlink_metadata(path) {
+                    Ok(metadata) => metadata,
+                    Err(error) => return Ok(self.fs_io_result_error(&error)),
+                };
+                let Ok(size) = i64::try_from(metadata.len()) else {
+                    return Ok(self.fs_result_error(FsError::ResourceLimit));
+                };
+                let RuntimeValue::Record { values, .. } = &mut snapshot else {
+                    unreachable!("metadata snapshot is a record")
+                };
+                let RuntimeValue::Variant { variant, .. } = &mut values[0] else {
+                    unreachable!("metadata kind is an enum")
+                };
+                *variant = FileKind::from_file_type(metadata.file_type()).variant();
+                values[1] = RuntimeValue::Integer(i128::from(size));
+                values[2] = RuntimeValue::Bool(metadata.permissions().readonly());
+                Ok(RuntimeValue::ResultOk(Box::new(snapshot)))
+            }
+            ("std.fs.open", [receiver, mode]) => {
+                let mode = self.fs_open_mode(mode)?;
+                let path_bytes = match self.path(receiver) {
+                    Ok(path) => path.as_bytes().len() as u64,
+                    Err(_) => return Ok(self.fs_result_error(FsError::InvalidPath)),
+                };
+                // Unix moves the byte copy into OsString. Other targets may
+                // retain both the UTF-8 validation copy and native encoding.
+                let path_bytes = path_bytes
+                    .checked_mul(if cfg!(unix) { 1 } else { 3 })
+                    .ok_or(VmError::ResourceLimit {
+                        resource: "memory",
+                        limit: self.max_bytes,
+                    })?;
+                let memory = self.reserve_buffer_payloads(std::iter::once(0))?;
+                let _path_storage = self.reserve_test_memory(path_bytes)?;
+                self.admit_file_result(
+                    admission,
+                    VmHostReturnPreview::ResultOk(&RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::File,
+                        id: self.next_value,
+                    }),
+                )?;
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let temporary = self.is_temporary_path(&path);
+                if matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew)
+                    && let Err(error) = self.check_temporary_mutation(
+                        &path,
+                        crate::test_temporaries::Mutation::Write { length: 0 },
+                    )
+                {
+                    return Ok(self.fs_io_result_error(&error));
+                }
+                match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        return Ok(self.fs_result_error(FsError::IsDirectory));
+                    }
+                    Ok(_) => {}
+                    Err(error) if !matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew) => {
+                        return Ok(self.fs_io_result_error(&error));
+                    }
+                    Err(_) => {}
+                }
+                let mut options = OpenOptions::new();
+                match mode {
+                    FsOpenMode::Read => {
+                        options.read(true);
+                    }
+                    FsOpenMode::Write => {
+                        options.write(true);
+                    }
+                    FsOpenMode::ReadWrite => {
+                        options.read(true).write(true);
+                    }
+                    FsOpenMode::Append => {
+                        options.append(true);
+                    }
+                    FsOpenMode::Create => {
+                        options.write(true).create(true).truncate(true);
+                    }
+                    FsOpenMode::CreateNew => {
+                        options.write(true).create_new(true);
+                    }
+                }
+                match options.open(path) {
+                    Ok(file) => Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
+                        RuntimeHostValueKind::File,
+                        HostValue::File {
+                            file,
+                            append: matches!(mode, FsOpenMode::Append),
+                            temporary,
+                            readable: matches!(mode, FsOpenMode::Read | FsOpenMode::ReadWrite),
+                            writable: matches!(
+                                mode,
+                                FsOpenMode::Write
+                                    | FsOpenMode::ReadWrite
+                                    | FsOpenMode::Append
+                                    | FsOpenMode::Create
+                                    | FsOpenMode::CreateNew
+                            ),
+                        },
+                        memory,
+                    )))),
+                    Err(error) => Ok(self.fs_io_result_error(&error)),
+                }
+            }
+            ("std.fs.File.read", [receiver, RuntimeValue::Integer(maximum)]) => {
+                let maximum = match usize::try_from(*maximum) {
+                    Ok(maximum) if maximum > 0 => maximum,
+                    _ => return Ok(self.fs_result_error(FsError::ResourceLimit)),
+                };
+                if self.ensure_bytes_len(maximum).is_err() {
+                    return Ok(self.fs_result_error(FsError::ResourceLimit));
+                }
+                let id = self.file_id(receiver)?;
+                let memory = self.reserve_buffer_payloads(std::iter::once(maximum))?;
+                let bytes = self.next_io_bytes()?;
+                let failure = self.fs_result_error(FsError::Io);
+                let outcomes = [
+                    VmHostReturnPreview::ResultOkOption(Some(&bytes)),
+                    VmHostReturnPreview::ResultOkOption(None),
+                    VmHostReturnPreview::Value(&failure),
+                ];
+                let imported =
+                    admission.prepare_current(VmHostReturnPreview::StorageBound(&outcomes))?;
+                admission.commit(&mut [imported])?;
+                drop(failure);
+                // Keep the requested capacity charged after a short read.
+                // No seek, metadata snapshot or rollback is required.
+                let mut buffer = vec![0; maximum];
+                let read = match self.values.get_mut(&id) {
+                    Some(HostValue::File {
+                        file,
+                        readable: true,
+                        ..
+                    }) => file
+                        .read(&mut buffer)
+                        .map_err(|error| FsError::from_io(&error)),
+                    Some(HostValue::File { .. }) => Err(FsError::Io),
+                    _ => return Err(VmError::Host("File token is stale".to_owned())),
+                };
+                match read {
+                    Ok(0) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
+                    Ok(count) => {
+                        buffer.truncate(count);
+                        let bytes = self.publish_buffer(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(buffer),
+                            memory,
+                        );
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
+                            Box::new(bytes),
+                        ))))
+                    }
+                    Err(error) => Ok(self.fs_result_error(error)),
+                }
+            }
+            ("std.fs.File.write", [receiver, bytes]) => {
+                let length = self.bytes(bytes)?.len();
+                if self.ensure_bytes_len(length).is_err() {
+                    return Ok(self.fs_result_error(FsError::ResourceLimit));
+                }
+                let id = self.file_id(receiver)?;
+                let _scratch = self.reserve_test_memory(length as u64)?;
+                self.admit_file_result(
+                    admission,
+                    VmHostReturnPreview::ResultOk(&RuntimeValue::Integer(0)),
+                )?;
+                let growth = match self.values.get_mut(&id) {
+                    Some(HostValue::File {
+                        file,
+                        writable: true,
+                        append,
+                        temporary: true,
+                        ..
+                    }) => {
+                        let growth = (|| -> io::Result<u64> {
+                            let old = file.metadata()?.len();
+                            let position = if *append {
+                                old
+                            } else {
+                                file.stream_position()?
+                            };
+                            let end = position.checked_add(length as u64).ok_or_else(|| {
+                                io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "temporary write length overflow",
+                                )
+                            })?;
+                            Ok(end.saturating_sub(old))
+                        })();
+                        Some(growth)
+                    }
+                    _ => None,
+                };
+                if let Some(growth) = growth {
+                    let admitted = growth.and_then(|bytes| {
+                        let root = self.testing_temporary_root.as_deref().ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                "temporary root provider is unavailable",
+                            )
+                        })?;
+                        self.check_temporary_mutation(
+                            root,
+                            crate::test_temporaries::Mutation::FileGrowth { bytes },
+                        )?;
+                        self.admit_temporary_write(length as u64)
+                    });
+                    if let Err(error) = admitted {
+                        return Ok(self.fs_io_result_error(&error));
+                    }
+                }
+                let bytes = self.bytes(bytes)?.to_vec();
+                let written = match self.values.get_mut(&id) {
+                    Some(HostValue::File { file, writable, .. }) if *writable => {
+                        file.write(&bytes).map_err(|error| FsError::from_io(&error))
+                    }
+                    Some(HostValue::File { .. }) => Err(FsError::Io),
+                    _ => return Err(VmError::Host("File token is stale".to_owned())),
+                };
+                match written {
+                    Ok(count) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                        i128::try_from(count).map_err(|_| {
+                            VmError::Host("write length does not fit in Int".into())
+                        })?,
+                    )))),
+                    Err(error) => Ok(self.fs_result_error(error)),
+                }
+            }
+            ("std.fs.File.flush", [receiver]) => {
+                let id = self.file_id(receiver)?;
+                self.admit_file_result(
+                    admission,
+                    VmHostReturnPreview::ResultOk(&RuntimeValue::Unit),
+                )?;
+                let flushed = match self.values.get_mut(&id) {
+                    Some(HostValue::File { file, writable, .. }) if *writable => {
+                        file.flush().map_err(|error| FsError::from_io(&error))
+                    }
+                    Some(HostValue::File { .. }) => Err(FsError::Io),
+                    _ => return Err(VmError::Host("File token is stale".to_owned())),
+                };
+                match flushed {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_result_error(error)),
+                }
+            }
+            _ => Err(VmError::Host(format!(
+                "{name} received an invalid file argument list"
+            ))),
+        })()?;
+        response.shrink(fixed_host_response_bytes(&value).ok_or_else(|| {
+            VmError::Invariant("file reply has an unsupported storage shape".into())
+        })?)?;
+        Ok(value)
+    }
+
+    fn is_filesystem_mutation(name: &str) -> bool {
+        matches!(
+            name,
+            "std.fs.writeAll"
+                | "std.fs.createDirectory"
+                | "std.fs.remove"
+                | "std.fs.rename"
+                | "std.fs.atomicWrite"
+        )
+    }
+
+    fn invoke_filesystem_mutation_admitted(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        response: &mut VmHostReturnBudget<'_>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        response.reserve(71, [])?;
+        let path_count = if name == "std.fs.rename" { 2 } else { 1 };
+        let mut path_bytes = 0_u64;
+        for argument in arguments.iter().take(path_count) {
+            let path = match self.path(argument) {
+                Ok(path) => path,
+                Err(_) => return Ok(self.fs_result_error(FsError::InvalidPath)),
+            };
+            path_bytes = path_bytes.checked_add(path.as_bytes().len() as u64).ok_or(
+                VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: self.max_bytes,
+                },
+            )?;
+        }
+        let path_bytes = path_bytes
+            .checked_mul(if cfg!(unix) { 1 } else { 3 })
+            .ok_or(VmError::ResourceLimit {
+                resource: "memory",
+                limit: self.max_bytes,
+            })?;
+        let _path_storage = self.reserve_test_memory(path_bytes)?;
+        self.admit_file_result(
+            admission,
+            VmHostReturnPreview::ResultOk(&RuntimeValue::Unit),
+        )?;
+        let value = (|| match (name, arguments) {
+            ("std.fs.writeAll", [receiver, bytes]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let length = self.bytes(bytes)?.len();
+                if self.ensure_bytes_len(length).is_err() {
+                    return Ok(self.fs_result_error(FsError::ResourceLimit));
+                }
+                let _scratch = self.reserve_test_memory(length as u64)?;
+                let admitted = self
+                    .check_temporary_mutation(
+                        &path,
+                        crate::test_temporaries::Mutation::Write {
+                            length: length as u64,
+                        },
+                    )
+                    .and_then(|()| {
+                        if self.is_temporary_path(&path) {
+                            self.admit_temporary_write(length as u64)
+                        } else {
+                            Ok(())
+                        }
+                    });
+                if let Err(error) = admitted {
+                    return Ok(self.fs_io_result_error(&error));
+                }
+                let bytes = self.bytes(bytes)?.to_vec();
+                match std::fs::write(path, bytes) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_io_result_error(&error)),
+                }
+            }
+            ("std.fs.createDirectory", [receiver, RuntimeValue::Bool(parents)]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                if let Err(error) = self.check_temporary_mutation(
+                    &path,
+                    crate::test_temporaries::Mutation::CreateDirectory,
+                ) {
+                    return Ok(self.fs_io_result_error(&error));
+                }
+                let result = if *parents {
+                    std::fs::create_dir_all(path)
+                } else {
+                    std::fs::create_dir(path)
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_io_result_error(&error)),
+                }
+            }
+            ("std.fs.remove", [receiver]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                if let Err(error) =
+                    self.check_temporary_mutation(&path, crate::test_temporaries::Mutation::Remove)
+                {
+                    return Ok(self.fs_io_result_error(&error));
+                }
+                let result = match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path),
+                    Ok(_) => std::fs::remove_file(path),
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_io_result_error(&error)),
+                }
+            }
+            ("std.fs.rename", [from, to]) => {
+                let from = match self.filesystem_path(from) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let to = match self.filesystem_path(to) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                if let Err(error) = self
+                    .check_temporary_mutation(&from, crate::test_temporaries::Mutation::Remove)
+                    .and_then(|()| {
+                        self.check_temporary_mutation(
+                            &to,
+                            crate::test_temporaries::Mutation::Rename { source: &from },
+                        )
+                    })
+                {
+                    return Ok(self.fs_io_result_error(&error));
+                }
+                if self.is_temporary_path(&to)
+                    && !self.is_temporary_path(&from)
+                    && let Err(error) = crate::test_temporaries::imported_bytes(&from)
+                        .and_then(|bytes| self.admit_temporary_write(bytes))
+                {
+                    return Ok(self.fs_io_result_error(&error));
+                }
+                match std::fs::rename(from, to) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_io_result_error(&error)),
+                }
+            }
+            ("std.fs.atomicWrite", [receiver, bytes]) => {
+                let target = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let length = self.bytes(bytes)?.len();
+                if self.ensure_bytes_len(length).is_err() {
+                    return Ok(self.fs_result_error(FsError::ResourceLimit));
+                }
+                let _scratch = self.reserve_test_memory(length as u64)?;
+                // Bound both the generated name and the independent native
+                // path before allocating either or creating a temporary file.
+                const NAME_BYTES: usize = 44;
+                let parent = if target.file_name().is_some() {
+                    target.parent().expect("a file name has a lexical parent")
+                } else {
+                    &target
+                };
+                let capacity = parent.as_os_str().as_encoded_bytes().len() + 1 + NAME_BYTES;
+                let _temporary_storage =
+                    self.reserve_test_memory((capacity + NAME_BYTES) as u64)?;
+                let admitted = self
+                    .check_temporary_mutation(
+                        &target,
+                        crate::test_temporaries::Mutation::AtomicWrite {
+                            length: length as u64,
+                        },
+                    )
+                    .and_then(|()| {
+                        if self.is_temporary_path(&target) {
+                            self.admit_temporary_write(length as u64)
+                        } else {
+                            Ok(())
+                        }
+                    });
+                if let Err(error) = admitted {
+                    return Ok(self.fs_io_result_error(&error));
+                }
+                let bytes = self.bytes(bytes)?.to_vec();
+                let suffix = NEXT_ATOMIC_TEMP.fetch_add(1, Ordering::Relaxed);
+                let mut temporary = PathBuf::with_capacity(capacity);
+                temporary.push(parent);
+                temporary.push(format!(".tondo-atomic-{}-{suffix}", std::process::id()));
+                let result = atomic_write_file(&target, &temporary, &bytes);
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_io_result_error(&error)),
+                }
+            }
+            _ => Err(VmError::Host(format!(
+                "{name} received an invalid filesystem argument list"
+            ))),
+        })()?;
+        response.shrink(fixed_host_response_bytes(&value).ok_or_else(|| {
+            VmError::Invariant("filesystem mutation reply has an unsupported storage shape".into())
+        })?)?;
+        Ok(value)
+    }
+
+    fn is_io_operation(name: &str) -> bool {
+        matches!(
+            name,
+            "std.io.readAll"
+                | "std.io.writeAll"
+                | "std.io.Reader.read"
+                | "std.io.Writer.write"
+                | "std.io.Writer.flush"
+        )
+    }
+
+    fn invoke_io_admitted(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<RuntimeValue, VmError> {
+        match (name, arguments) {
+            ("std.io.readAll", [reader, limits]) => {
+                let limits = self.io_limits(limits)?;
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.io_result_error(stdlib_io::IoError::InvalidData));
+                }
+                let remaining = self.stdin.len().saturating_sub(offset);
+                // The public helper checks the aggregate bound before touching
+                // the handle, so a rejected operation cannot consume input.
+                if remaining > limits.max_bytes {
+                    return Ok(self.io_result_error(stdlib_io::IoError::ResourceLimit));
+                }
+                if self
+                    .ensure_bytes_len(limits.max_read.min(remaining))
+                    .is_err()
+                {
+                    return Ok(self.io_result_error(stdlib_io::IoError::ResourceLimit));
+                }
+                let memory = self.reserve_buffer_payloads(std::iter::once(remaining))?;
+                let result = RuntimeValue::ResultOk(Box::new(self.next_io_bytes()?));
+                let imported = admission.prepare_current(VmHostReturnPreview::Value(&result))?;
+                admission.commit(&mut [imported])?;
+                let mut output = Vec::with_capacity(remaining);
+                let mut cursor = offset;
+                while cursor < self.stdin.len() {
+                    let count = limits.max_read.min(self.stdin.len() - cursor);
+                    output.extend_from_slice(&self.stdin[cursor..cursor + count]);
+                    cursor += count;
+                }
+                self.publish_buffer(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(output),
+                    memory,
+                );
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = cursor;
+                }
+                Ok(result)
+            }
+            ("std.io.writeAll", [writer, bytes]) => {
+                let length = self.bytes(bytes)?.len();
+                if self.ensure_bytes_len(length).is_err() {
+                    return Ok(self.io_result_error(stdlib_io::IoError::ResourceLimit));
+                }
+                let stream = self.writer_stream(writer)?;
+                if stream == StreamKind::Stdin {
+                    return Ok(self.io_result_error(stdlib_io::IoError::InvalidData));
+                }
+                let imported = admission
+                    .prepare_current(VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))?;
+                admission.commit(&mut [imported])?;
+                self.emit_writer_value(stream, bytes)?;
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("std.io.Reader.read", [reader, RuntimeValue::Integer(maximum)]) => {
+                let Ok(maximum) = usize::try_from(*maximum) else {
+                    return Ok(self.io_result_error(stdlib_io::IoError::InvalidData));
+                };
+                if maximum == 0 {
+                    return Ok(self.io_result_error(stdlib_io::IoError::InvalidData));
+                }
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.io_result_error(stdlib_io::IoError::InvalidData));
+                }
+                if offset >= self.stdin.len() {
+                    return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                        name: "ReadResult".to_owned(),
+                        variant: 1,
+                        values: Vec::new(),
+                    })));
+                }
+                let count = maximum.min(self.stdin.len() - offset);
+                if self.ensure_bytes_len(count).is_err() {
+                    return Ok(self.io_result_error(stdlib_io::IoError::ResourceLimit));
+                }
+                let memory = self.reserve_buffer_payloads(std::iter::once(count))?;
+                let result = RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                    name: "ReadResult".to_owned(),
+                    variant: 0,
+                    values: vec![self.next_io_bytes()?],
+                }));
+                let imported = admission.prepare_current(VmHostReturnPreview::Value(&result))?;
+                admission.commit(&mut [imported])?;
+                let bytes = self.stdin[offset..offset + count].to_vec();
+                self.publish_buffer(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes), memory);
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = offset.saturating_add(count);
+                }
+                Ok(result)
+            }
+            ("std.io.Writer.write", [writer, bytes]) => {
+                let stream = self.writer_stream(writer)?;
+                let length = self.bytes(bytes)?.len();
+                if self.ensure_bytes_len(length).is_err() {
+                    return Ok(self.io_result_error(stdlib_io::IoError::ResourceLimit));
+                }
+                if stream == StreamKind::Stdin {
+                    return Ok(self.io_result_error(stdlib_io::IoError::InvalidData));
+                }
+                let count = i128::try_from(length)
+                    .map_err(|_| VmError::Host("write length does not fit in Int".into()))?;
+                let imported = admission.prepare_current(VmHostReturnPreview::ResultOk(
+                    &RuntimeValue::Integer(count),
+                ))?;
+                admission.commit(&mut [imported])?;
+                self.emit_writer_value(stream, bytes)?;
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                    count,
+                ))))
+            }
+            ("std.io.Writer.flush", [writer]) => {
+                let stream = self.writer_stream(writer)?;
+                if stream == StreamKind::Stdin {
+                    return Ok(self.io_result_error(stdlib_io::IoError::InvalidData));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            _ => Err(VmError::Host(format!(
+                "{name} received an invalid bootstrap argument list"
+            ))),
+        }
+    }
+
+    /// Describe the next buffer without publishing it. No host allocation may
+    /// intervene between admitting this identity and publishing its payload.
+    fn next_io_bytes(&self) -> Result<RuntimeValue, VmError> {
+        self.next_value
+            .checked_add(1)
+            .ok_or(VmError::ResourceLimit {
+                resource: "host values",
+                limit: u64::MAX,
+            })?;
+        Ok(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Bytes,
+            id: self.next_value,
+        })
     }
 
     fn reader_state(&self, value: &RuntimeValue) -> Result<(u64, StreamKind, usize), VmError> {
@@ -2715,44 +5029,125 @@ impl BootstrapHost {
         }
     }
 
-    fn io_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        self.allocate(
-            RuntimeHostValueKind::IoError,
-            HostValue::IoError {
-                _message: message.into(),
-            },
+    fn output_len(&self, stream: StreamKind) -> Result<usize, VmError> {
+        if let Some(envelope) = &self.testing {
+            return envelope
+                .output_len(stream == StreamKind::Stdout)
+                .map_err(|error| Self::testing_runtime_error(envelope, error));
+        }
+        Ok(match stream {
+            StreamKind::Stdout => self.stdout.len(),
+            StreamKind::Stderr => self.stderr.len(),
+            StreamKind::Stdin => 0,
+        })
+    }
+
+    /// All Writer adapters use the current node's sink. Quota exhaustion stays
+    /// a runner terminal even when a codec translates its I/O errors to values.
+    fn emit_writer_bytes(&mut self, stream: StreamKind, bytes: &[u8]) -> Result<(), VmError> {
+        Self::emit_stream_bytes(
+            self.testing.as_ref(),
+            &mut self.stdout,
+            &mut self.stderr,
+            stream,
+            bytes,
         )
     }
 
-    fn io_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        RuntimeValue::ResultErr(Box::new(self.io_error(message)))
+    /// Borrow the registry payload through publication instead of creating an
+    /// unaccounted temporary copy before the envelope admits the output.
+    fn emit_writer_value(
+        &mut self,
+        stream: StreamKind,
+        value: &RuntimeValue,
+    ) -> Result<(), VmError> {
+        let id = self.bytes_id(value)?;
+        let Some(HostValue::Bytes(bytes)) = self.values.get(&id) else {
+            unreachable!("the Bytes token was validated before borrowing its payload")
+        };
+        Self::emit_stream_bytes(
+            self.testing.as_ref(),
+            &mut self.stdout,
+            &mut self.stderr,
+            stream,
+            bytes,
+        )
     }
 
-    fn io_limits(&self, value: &RuntimeValue) -> Result<stdlib_io::IoLimits, VmError> {
-        let RuntimeValue::Host {
-            kind: RuntimeHostValueKind::IoLimits,
-            id,
-        } = value
-        else {
-            return Err(VmError::Host("IoLimits value is invalid".into()));
-        };
-        match self.values.get(id) {
-            Some(HostValue::IoLimits(limits)) => Ok(*limits),
-            _ => Err(VmError::Host("IoLimits token is stale".into())),
+    fn emit_stream_bytes(
+        testing: Option<&EnvelopeHandle>,
+        stdout: &mut Vec<u8>,
+        stderr: &mut Vec<u8>,
+        stream: StreamKind,
+        bytes: &[u8],
+    ) -> Result<(), VmError> {
+        if stream == StreamKind::Stdin {
+            return Err(VmError::Host("stdin is not writable".into()));
+        }
+        if let Some(envelope) = testing {
+            let result = match stream {
+                StreamKind::Stdout => envelope.stdout(bytes),
+                StreamKind::Stderr => envelope.stderr(bytes),
+                StreamKind::Stdin => unreachable!("stdin rejected above"),
+            };
+            return result.map_err(|error| Self::testing_runtime_error(envelope, error));
+        }
+        match stream {
+            StreamKind::Stdout => stdout.extend_from_slice(bytes),
+            StreamKind::Stderr => stderr.extend_from_slice(bytes),
+            StreamKind::Stdin => unreachable!("stdin rejected above"),
+        }
+        Ok(())
+    }
+
+    fn io_error(&self, error: stdlib_io::IoError) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "IoError".to_owned(),
+            variant: match error {
+                stdlib_io::IoError::Closed => 0,
+                stdlib_io::IoError::Cancelled => 1,
+                stdlib_io::IoError::InvalidData => 2,
+                stdlib_io::IoError::ResourceLimit => 3,
+                stdlib_io::IoError::Host => 4,
+            },
+            values: Vec::new(),
         }
     }
 
-    fn console_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        self.allocate(
-            RuntimeHostValueKind::ConsoleError,
-            HostValue::ConsoleError {
-                _message: message.into(),
-            },
-        )
+    fn io_result_error(&self, error: stdlib_io::IoError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.io_error(error)))
     }
 
-    fn console_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        RuntimeValue::ResultErr(Box::new(self.console_error(message)))
+    fn io_limits(&self, value: &RuntimeValue) -> Result<stdlib_io::IoLimits, VmError> {
+        if let RuntimeValue::Record { name, values } = value {
+            let [
+                RuntimeValue::Integer(max_bytes),
+                RuntimeValue::Integer(max_read),
+            ] = values.as_slice()
+            else {
+                return Err(VmError::Host("IoLimits fields are invalid".into()));
+            };
+            if name != "IoLimits" {
+                return Err(VmError::Host("IoLimits record identity is invalid".into()));
+            }
+            let max_bytes = usize::try_from(*max_bytes)
+                .map_err(|_| VmError::Host("IoLimits maxBytes is invalid".into()))?;
+            let max_read = usize::try_from(*max_read)
+                .map_err(|_| VmError::Host("IoLimits maxRead is invalid".into()))?;
+            return stdlib_io::IoLimits::new(max_bytes, max_read)
+                .map_err(|_| VmError::Host("IoLimits fields must be positive".into()));
+        }
+        Err(VmError::Host(
+            "IoLimits must be a validated nominal record".into(),
+        ))
+    }
+
+    fn console_result_error(&self, error: stdlib_io::IoError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "ConsoleError".to_owned(),
+            variant: 3,
+            values: vec![self.io_error(error)],
+        }))
     }
 
     fn valid_temp_prefix(prefix: &str) -> bool {
@@ -2760,31 +5155,6 @@ impl BootstrapHost {
             && prefix
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    }
-
-    fn remove_temp_tree(path: &std::path::Path, entries: &mut usize) -> io::Result<()> {
-        let metadata = std::fs::symlink_metadata(path)?;
-        if metadata.file_type().is_symlink() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "temporary tree contains a symlink",
-            ));
-        }
-        if metadata.is_dir() {
-            for entry in std::fs::read_dir(path)? {
-                *entries = entries.saturating_add(1);
-                if *entries > MAX_TEMP_DIRECTORY_ENTRIES {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "temporary tree entry limit exceeded",
-                    ));
-                }
-                Self::remove_temp_tree(&entry?.path(), entries)?;
-            }
-            std::fs::remove_dir(path)
-        } else {
-            std::fs::remove_file(path)
-        }
     }
 
     fn duration_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -2858,66 +5228,72 @@ impl BootstrapHost {
         }
     }
 
-    fn environment_snapshot(&mut self) -> Result<RuntimeValue, RuntimeValue> {
+    fn environment_snapshot(&mut self) -> Result<RuntimeValue, VmError> {
         if !self.environment_available {
-            return Err(self.env_result_error("environment snapshot is unavailable"));
+            return Ok(self.env_result_error("environment snapshot is unavailable"));
         }
         if let Some(id) = self.env_snapshot_id {
             if matches!(self.values.get(&id), Some(HostValue::EnvSnapshot(_))) {
-                return Ok(RuntimeValue::Host {
+                return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Host {
                     kind: RuntimeHostValueKind::EnvSnapshot,
                     id,
-                });
+                })));
             }
             self.env_snapshot_id = None;
         }
 
-        let host_arguments = self.arguments.clone();
-        let host_environment = self.environment.clone();
-        let mut total = 0_u64;
-        let mut arguments = Vec::with_capacity(host_arguments.len());
-        for argument in host_arguments {
-            let bytes = argument.into_bytes();
-            let length = u64::try_from(bytes.len()).map_err(|_| {
-                self.env_result_error("environment argument length is not representable")
-            })?;
-            total = total
-                .checked_add(length)
-                .ok_or_else(|| self.env_result_error("environment snapshot byte count overflow"))?;
-            arguments.push(bytes);
+        if self
+            .environment
+            .keys()
+            .any(|name| !Self::valid_environment_name(name))
+        {
+            return Ok(self.env_result_error("environment contains an invalid name"));
         }
-        for (name, value) in &host_environment {
-            if !Self::valid_environment_name(name) {
-                return Err(self.env_result_error("environment contains an invalid name"));
-            }
-            for bytes in [name, value] {
-                let length = u64::try_from(bytes.len()).map_err(|_| {
-                    self.env_result_error("environment entry length is not representable")
-                })?;
-                total = total.checked_add(length).ok_or_else(|| {
-                    self.env_result_error("environment snapshot byte count overflow")
-                })?;
-            }
+        let mut total = 0_u64;
+        let mut payload = 0usize;
+        let lengths = self.arguments.iter().map(String::len).chain(
+            self.environment
+                .iter()
+                .flat_map(|(name, value)| [name.len(), value.len()]),
+        );
+        for length in lengths {
+            let Some(next) = total.checked_add(length as u64) else {
+                return Ok(self.env_result_error("environment snapshot byte count overflow"));
+            };
+            total = next;
+            let Some(next) = payload.checked_add(length).and_then(|bytes| {
+                bytes.checked_add(tondo_vm::runtime::TEST_HOST_BUFFER_BYTES as usize)
+            }) else {
+                return Ok(self.env_result_error("environment snapshot storage count overflow"));
+            };
+            payload = next;
         }
         if total > self.max_bytes {
-            return Err(self.env_result_error("environment snapshot exceeds byte limit"));
+            return Ok(self.env_result_error("environment snapshot exceeds byte limit"));
         }
-
-        let snapshot = self.allocate(
+        // The cache is weak. A live snapshot owns its sealed byte copies;
+        // admission happens before copying the immutable input tables.
+        let memory = self.reserve_buffer_payloads(std::iter::once(payload))?;
+        let snapshot = self.publish_buffer(
             RuntimeHostValueKind::EnvSnapshot,
             HostValue::EnvSnapshot(EnvSnapshot {
-                arguments,
-                entries: host_environment,
+                arguments: self
+                    .arguments
+                    .iter()
+                    .map(|argument| argument.as_bytes().to_vec())
+                    .collect(),
+                entries: self.environment.clone(),
             }),
+            memory,
         );
         let RuntimeValue::Host { id, .. } = snapshot else {
             unreachable!("environment snapshots are host values")
         };
         self.env_snapshot_id = Some(id);
-        Ok(snapshot)
+        Ok(RuntimeValue::ResultOk(Box::new(snapshot)))
     }
 
-    fn environment_snapshot_data(&self, value: &RuntimeValue) -> Result<EnvSnapshot, VmError> {
+    fn environment_snapshot_data(&self, value: &RuntimeValue) -> Result<&EnvSnapshot, VmError> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::EnvSnapshot,
             id,
@@ -2926,7 +5302,7 @@ impl BootstrapHost {
             return Err(VmError::Host("std.env.Snapshot receiver is invalid".into()));
         };
         match self.values.get(id) {
-            Some(HostValue::EnvSnapshot(snapshot)) => Ok(snapshot.clone()),
+            Some(HostValue::EnvSnapshot(snapshot)) => Ok(snapshot),
             _ => Err(VmError::Host("std.env.Snapshot token is stale".into())),
         }
     }
@@ -2980,23 +5356,54 @@ impl BootstrapHost {
         )
     }
 
-    fn allocate_timer(&mut self, deadline: i128) -> Result<RuntimeValue, RuntimeValue> {
-        self.reserve_time_resource()?;
-        Ok(self.allocate(
+    fn allocate_timer(&mut self, deadline: i128) -> Result<RuntimeValue, VmError> {
+        if self.time_resources >= self.max_time_resources {
+            if self.previous_clock.is_some() {
+                return Err(VmError::ResourceLimit {
+                    resource: "virtual-timers",
+                    limit: self
+                        .testing_envelope()?
+                        .limits()
+                        .map_err(|error| VmError::Host(error.to_string()))?
+                        .virtual_timer_limit(),
+                });
+            }
+            return Ok(self.clock_result_error("time resource limit reached"));
+        }
+        self.reserve_testing_timer_metadata()?;
+        self.time_resources += 1;
+        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
             RuntimeHostValueKind::Timer,
             HostValue::Timer {
                 domain: self.clock_domain,
                 deadline,
             },
-        ))
+        ))))
     }
 
-    fn reserve_time_resource(&mut self) -> Result<(), RuntimeValue> {
-        if self.time_resources >= self.max_time_resources {
-            return Err(self.clock_result_error("time resource limit reached"));
+    fn reserve_testing_timer_metadata(&self) -> Result<(), VmError> {
+        if self.previous_clock.is_some() {
+            let envelope = self.testing_envelope()?;
+            envelope
+                .reserve_runtime_timer()
+                .map_err(|error| Self::testing_runtime_error(&envelope, error))?;
         }
-        self.time_resources += 1;
         Ok(())
+    }
+
+    fn testing_runtime_error(envelope: &EnvelopeHandle, error: ControlError) -> VmError {
+        let kind = match error {
+            ControlError::ResourceLimit { kind } => kind,
+            ControlError::OutputLimit => crate::test_limits::BudgetKind::Output,
+            error => return VmError::Host(format!("{}: {error}", error.code())),
+        };
+        match envelope.limits() {
+            Ok(limits) => VmError::ResourceLimit {
+                resource: kind.as_str(),
+                limit: kind.limit(limits.profile()),
+            },
+            Err(error) => VmError::Host(error.to_string()),
+        }
     }
 
     fn release_time_resource(&mut self) {
@@ -3095,9 +5502,7 @@ impl BootstrapHost {
             encoding::EncodingErrorKind::InvalidPadding => (3, Vec::new()),
             encoding::EncodingErrorKind::NonCanonical => (4, Vec::new()),
             encoding::EncodingErrorKind::ResourceLimit => (5, Vec::new()),
-            encoding::EncodingErrorKind::Io(error) => {
-                (6, vec![self.io_error(format!("{error:?}"))])
-            }
+            encoding::EncodingErrorKind::Io(error) => (6, vec![self.io_error(error.clone())]),
             encoding::EncodingErrorKind::Closed => (7, Vec::new()),
             encoding::EncodingErrorKind::NoProgress => (8, Vec::new()),
         };
@@ -3269,10 +5674,9 @@ impl BootstrapHost {
                         self.encoding_error_kind_result(encoding::EncodingErrorKind::ResourceLimit)
                     );
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(bytes.into_vec()),
-                ))))
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_bytes(bytes.into_vec())?,
+                )))
             }
             Err(error) => Ok(self.encoding_result_error(&error)),
         }
@@ -3808,7 +6212,10 @@ impl BootstrapHost {
         }
     }
 
-    fn runtime_messagepack_event(&mut self, event: messagepack::MessagePackEvent) -> RuntimeValue {
+    fn runtime_messagepack_event(
+        &mut self,
+        event: messagepack::MessagePackEvent,
+    ) -> Result<RuntimeValue, VmError> {
         use messagepack::MessagePackEvent as Event;
         let (variant, values) = match event {
             Event::Nil => (0, Vec::new()),
@@ -3818,10 +6225,7 @@ impl BootstrapHost {
             Event::Float32(value) => (4, vec![RuntimeValue::Float(f32::from_bits(value) as f64)]),
             Event::Float64(value) => (5, vec![RuntimeValue::Float(f64::from_bits(value))]),
             Event::String(value) => (6, vec![RuntimeValue::String(value)]),
-            Event::Binary(value) => (
-                7,
-                vec![self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value))],
-            ),
+            Event::Binary(value) => (7, vec![self.allocate_bytes(value)?]),
             Event::StartArray(value) => (
                 8,
                 vec![value.map_or(RuntimeValue::OptionNone, |value| {
@@ -3843,16 +6247,16 @@ impl BootstrapHost {
                     name: "MessagePackExt".into(),
                     values: vec![
                         RuntimeValue::Integer(i128::from(value.type_code)),
-                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value.payload)),
+                        self.allocate_bytes(value.payload)?,
                     ],
                 }],
             ),
         };
-        RuntimeValue::Variant {
+        Ok(RuntimeValue::Variant {
             name: "MessagePackEvent".into(),
             variant,
             values,
-        }
+        })
     }
 
     fn messagepack_event(
@@ -4035,7 +6439,10 @@ impl BootstrapHost {
         }
     }
 
-    fn runtime_proto_event(&mut self, event: protobuf::ProtoEvent) -> RuntimeValue {
+    fn runtime_proto_event(
+        &mut self,
+        event: protobuf::ProtoEvent,
+    ) -> Result<RuntimeValue, VmError> {
         use protobuf::ProtoEvent as Event;
         let (variant, values) = match event {
             Event::StartMessage(value) => (0, vec![RuntimeValue::String(value)]),
@@ -4051,20 +6458,17 @@ impl BootstrapHost {
             Event::Fixed32(value) => (4, vec![RuntimeValue::Integer(value as i128)]),
             Event::Fixed64(value) => (5, vec![RuntimeValue::Integer(value as i128)]),
             Event::StartLengthDelimited(number) => (6, vec![RuntimeValue::Integer(number as i128)]),
-            Event::Bytes(value) => (
-                7,
-                vec![self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value))],
-            ),
+            Event::Bytes(value) => (7, vec![self.allocate_bytes(value)?]),
             Event::EndLengthDelimited => (8, Vec::new()),
             Event::StartPacked(number) => (9, vec![RuntimeValue::Integer(number as i128)]),
             Event::EndPacked => (10, Vec::new()),
-            Event::Unknown(field) => (11, vec![self.runtime_unknown_field(field)]),
+            Event::Unknown(field) => (11, vec![self.runtime_unknown_field(field)?]),
         };
-        RuntimeValue::Variant {
+        Ok(RuntimeValue::Variant {
             name: "ProtoEvent".into(),
             variant,
             values,
-        }
+        })
     }
 
     fn runtime_proto_wire_type(&self, wire: protobuf::ProtoWireType) -> RuntimeValue {
@@ -4075,22 +6479,20 @@ impl BootstrapHost {
         }
     }
 
-    fn runtime_unknown_field(&mut self, field: protobuf::UnknownField) -> RuntimeValue {
-        RuntimeValue::Record {
+    fn runtime_unknown_field(
+        &mut self,
+        field: protobuf::UnknownField,
+    ) -> Result<RuntimeValue, VmError> {
+        let [tag, payload] = self.allocate_byte_chunks([field.tag_bytes, field.payload_bytes])?;
+        Ok(RuntimeValue::Record {
             name: "UnknownField".into(),
             values: vec![
                 RuntimeValue::Integer(field.number as i128),
                 self.runtime_proto_wire_type(field.wire_type),
-                self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(field.tag_bytes),
-                ),
-                self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(field.payload_bytes),
-                ),
+                tag,
+                payload,
             ],
-        }
+        })
     }
 
     fn proto_wire_type(&self, value: &RuntimeValue) -> Result<protobuf::ProtoWireType, VmError> {
@@ -4583,7 +6985,10 @@ impl BootstrapHost {
         }
     }
 
-    fn yaml_scalar_to_runtime(&mut self, scalar: yaml::YamlScalar) -> RuntimeValue {
+    fn yaml_scalar_to_runtime(
+        &mut self,
+        scalar: yaml::YamlScalar,
+    ) -> Result<RuntimeValue, VmError> {
         let (variant, values) = match scalar {
             yaml::YamlScalar::Null => (0, Vec::new()),
             yaml::YamlScalar::Bool(value) => (1, vec![RuntimeValue::Bool(value)]),
@@ -4591,16 +6996,13 @@ impl BootstrapHost {
             yaml::YamlScalar::UInt(value) => (3, vec![RuntimeValue::Integer(i128::from(value))]),
             yaml::YamlScalar::Float(value) => (4, vec![RuntimeValue::Float(value)]),
             yaml::YamlScalar::Text(value) => (5, vec![RuntimeValue::String(value)]),
-            yaml::YamlScalar::Bytes(value) => (
-                6,
-                vec![self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value))],
-            ),
+            yaml::YamlScalar::Bytes(value) => (6, vec![self.allocate_bytes(value)?]),
         };
-        RuntimeValue::Variant {
+        Ok(RuntimeValue::Variant {
             name: "YamlScalar".into(),
             variant,
             values,
-        }
+        })
     }
 
     fn runtime_yaml_scalar(&self, value: &RuntimeValue) -> Result<yaml::YamlScalar, VmError> {
@@ -4655,12 +7057,12 @@ impl BootstrapHost {
         }
     }
 
-    fn runtime_yaml_event(&mut self, event: yaml::YamlEvent) -> RuntimeValue {
+    fn runtime_yaml_event(&mut self, event: yaml::YamlEvent) -> Result<RuntimeValue, VmError> {
         let (variant, values) = match event {
             yaml::YamlEvent::StreamStart => (0, Vec::new()),
             yaml::YamlEvent::DocumentStart => (1, Vec::new()),
             yaml::YamlEvent::DocumentEnd => (2, Vec::new()),
-            yaml::YamlEvent::Scalar(value) => (3, vec![self.yaml_scalar_to_runtime(value)]),
+            yaml::YamlEvent::Scalar(value) => (3, vec![self.yaml_scalar_to_runtime(value)?]),
             yaml::YamlEvent::SequenceStart(anchor) => (
                 4,
                 vec![match anchor {
@@ -4683,11 +7085,11 @@ impl BootstrapHost {
             yaml::YamlEvent::Tag(value) => (11, vec![Self::yaml_tag_to_runtime(value)]),
             yaml::YamlEvent::StreamEnd => (12, Vec::new()),
         };
-        RuntimeValue::Variant {
+        Ok(RuntimeValue::Variant {
             name: "YamlEvent".into(),
             variant,
             values,
-        }
+        })
     }
 
     fn yaml_event(&self, value: &RuntimeValue) -> Result<yaml::YamlEvent, VmError> {
@@ -5018,9 +7420,20 @@ impl BootstrapHost {
         } else if completion.is_some() {
             false
         } else if self.time_resources < self.max_time_resources {
+            self.reserve_testing_timer_metadata()?;
             self.time_resources += 1;
             true
         } else {
+            if self.previous_clock.is_some() {
+                return Err(VmError::ResourceLimit {
+                    resource: "virtual-timers",
+                    limit: self
+                        .testing_envelope()?
+                        .limits()
+                        .map_err(|error| VmError::Host(error.to_string()))?
+                        .virtual_timer_limit(),
+                });
+            }
             completion = Some(self.clock_result_error("time resource limit reached"));
             false
         };
@@ -5105,19 +7518,43 @@ impl BootstrapHost {
         }
     }
 
+    fn sync_cursor_state(
+        &self,
+        receiver: &RuntimeValue,
+        expected: RuntimeHostValueKind,
+        label: &str,
+    ) -> Result<(u64, &[u64]), VmError> {
+        let id = self.sync_host_id(receiver, expected, label)?;
+        let length = match (expected, self.values.get(&id)) {
+            (RuntimeHostValueKind::SyncArray, Some(HostValue::SyncArray(values)))
+            | (RuntimeHostValueKind::SyncSet, Some(HostValue::SyncSet(values)))
+            | (RuntimeHostValueKind::SyncStack, Some(HostValue::SyncStack(values))) => values.len(),
+            (RuntimeHostValueKind::SyncMap, Some(HostValue::SyncMap(entries))) => entries.len(),
+            (RuntimeHostValueKind::SyncQueue, Some(HostValue::SyncQueue(values))) => values.len(),
+            _ => return Err(VmError::Host(format!("{label} token is stale or invalid"))),
+        };
+        let generations = self
+            .sync_generations
+            .get(&id)
+            .ok_or_else(|| VmError::Host(format!("{label} token has no cursor metadata")))?;
+        if generations.len() != length {
+            return Err(VmError::Host(format!(
+                "{label} cursor metadata has a different length"
+            )));
+        }
+        Ok((id, generations))
+    }
+
     fn sync_cursor_start(
         &self,
         receiver: &RuntimeValue,
         expected: RuntimeHostValueKind,
         label: &str,
+        response: &mut VmHostReturnBudget<'_>,
     ) -> Result<RuntimeValue, VmError> {
-        let id = self.sync_host_id(receiver, expected, label)?;
-        if !self.sync_generations.contains_key(&id) {
-            return Err(VmError::Host(format!(
-                "{label} token has no cursor metadata"
-            )));
-        }
+        self.sync_cursor_state(receiver, expected, label)?;
         let cutoff = self.next_sync_generation.saturating_sub(1);
+        response.reserve(64, [])?;
         Ok(RuntimeValue::Tuple(vec![RuntimeValue::Integer(
             i128::from(cutoff),
         )]))
@@ -5148,11 +7585,12 @@ impl BootstrapHost {
         receiver: &RuntimeValue,
         cutoff: &RuntimeValue,
         last: &RuntimeValue,
-        expected: RuntimeHostValueKind,
-        label: &str,
+        collection: (RuntimeHostValueKind, &str),
         descending: bool,
+        response: &mut VmHostReturnBudget<'_>,
     ) -> Result<RuntimeValue, VmError> {
-        let id = self.sync_host_id(receiver, expected, label)?;
+        let (expected, label) = collection;
+        let (id, generations) = self.sync_cursor_state(receiver, expected, label)?;
         let RuntimeValue::Integer(cutoff) = cutoff else {
             return Err(VmError::Host("sync cursor cutoff is not an Int".into()));
         };
@@ -5163,10 +7601,6 @@ impl BootstrapHost {
             .map_err(|_| VmError::Host("sync cursor cutoff is outside UInt64".into()))?;
         let last = u64::try_from(*last)
             .map_err(|_| VmError::Host("sync cursor position is outside UInt64".into()))?;
-        let generations = self
-            .sync_generations
-            .get(&id)
-            .ok_or_else(|| VmError::Host(format!("{label} token has no cursor metadata")))?;
         let select = |generation: &u64| {
             if descending {
                 *generation <= cutoff && *generation < last
@@ -5188,28 +7622,190 @@ impl BootstrapHost {
                 .min_by_key(|(_, generation)| **generation)
         };
         let Some((index, generation)) = selected else {
+            response.reserve(32, [])?;
             return Ok(RuntimeValue::OptionNone);
         };
         let payload = match self.values.get(&id) {
             Some(HostValue::SyncArray(values))
             | Some(HostValue::SyncSet(values))
-            | Some(HostValue::SyncStack(values)) => values.get(index).cloned().map(|value| {
-                RuntimeValue::Tuple(vec![RuntimeValue::Integer(i128::from(*generation)), value])
-            }),
-            Some(HostValue::SyncMap(entries)) => entries.get(index).cloned().map(|(key, value)| {
-                RuntimeValue::Tuple(vec![
-                    RuntimeValue::Integer(i128::from(*generation)),
-                    RuntimeValue::Tuple(vec![key, value]),
-                ])
-            }),
-            Some(HostValue::SyncQueue(values)) => values.get(index).cloned().map(|value| {
-                RuntimeValue::Tuple(vec![RuntimeValue::Integer(i128::from(*generation)), value])
-            }),
+            | Some(HostValue::SyncStack(values)) => {
+                let value = &values[index];
+                response.reserve(96, [value])?;
+                value.clone()
+            }
+            Some(HostValue::SyncMap(entries)) => {
+                let (key, value) = &entries[index];
+                response.reserve(128, [key, value])?;
+                RuntimeValue::Tuple(vec![key.clone(), value.clone()])
+            }
+            Some(HostValue::SyncQueue(values)) => {
+                let value = &values[index];
+                response.reserve(96, [value])?;
+                value.clone()
+            }
             _ => return Err(VmError::Host(format!("{label} token is stale or invalid"))),
         };
-        Ok(payload.map_or(RuntimeValue::OptionNone, |payload| {
-            RuntimeValue::OptionSome(Box::new(payload))
-        }))
+        Ok(RuntimeValue::OptionSome(Box::new(RuntimeValue::Tuple(
+            vec![RuntimeValue::Integer(i128::from(*generation)), payload],
+        ))))
+    }
+
+    fn collect_host_values_with_teardown(
+        &mut self,
+        roots: &tondo_vm::runtime::VmHostRoots,
+        teardown: bool,
+    ) -> Result<(), VmError> {
+        let mut pending = roots.clone();
+        for value in self
+            .ready_jobs
+            .values()
+            .filter_map(|result| result.as_ref().ok())
+        {
+            value.trace_host_roots(&mut pending);
+        }
+        for job in self.time_jobs.values() {
+            if let Some(value) = &job.completion {
+                value.trace_host_roots(&mut pending);
+            }
+        }
+        for waiter in self.sync_waiters.values() {
+            for value in &waiter.arguments {
+                value.trace_host_roots(&mut pending);
+            }
+        }
+        let mut live = tondo_vm::runtime::VmHostRoots::new();
+        while let Some(root @ (kind, id)) = pending.pop_first() {
+            if !live.insert(root) {
+                continue;
+            }
+            match (kind, self.values.get(&id)) {
+                (RuntimeHostValueKind::Mutex, Some(HostValue::SyncMutex { value, .. }))
+                | (RuntimeHostValueKind::RwLock, Some(HostValue::SyncRwLock { value, .. }))
+                | (RuntimeHostValueKind::Atomic, Some(HostValue::SyncAtomic { value }))
+                | (RuntimeHostValueKind::Once, Some(HostValue::SyncOnce { value: Some(value) })) => {
+                    value.trace_host_roots(&mut pending)
+                }
+                (RuntimeHostValueKind::SyncArray, Some(HostValue::SyncArray(values)))
+                | (RuntimeHostValueKind::SyncSet, Some(HostValue::SyncSet(values)))
+                | (RuntimeHostValueKind::SyncStack, Some(HostValue::SyncStack(values))) => {
+                    for value in values {
+                        value.trace_host_roots(&mut pending);
+                    }
+                }
+                (RuntimeHostValueKind::SyncMap, Some(HostValue::SyncMap(entries))) => {
+                    for (key, value) in entries {
+                        key.trace_host_roots(&mut pending);
+                        value.trace_host_roots(&mut pending);
+                    }
+                }
+                (RuntimeHostValueKind::SyncQueue, Some(HostValue::SyncQueue(values))) => {
+                    for value in values {
+                        value.trace_host_roots(&mut pending);
+                    }
+                }
+                (RuntimeHostValueKind::MutexGuard, Some(HostValue::SyncMutexGuard { owner })) => {
+                    pending.insert((RuntimeHostValueKind::Mutex, *owner));
+                }
+                (RuntimeHostValueKind::ReadGuard, Some(HostValue::SyncReadGuard { owner }))
+                | (RuntimeHostValueKind::WriteGuard, Some(HostValue::SyncWriteGuard { owner })) => {
+                    pending.insert((RuntimeHostValueKind::RwLock, *owner));
+                }
+                (RuntimeHostValueKind::Permit, Some(HostValue::SyncPermit { owner })) => {
+                    pending.insert((RuntimeHostValueKind::Semaphore, *owner));
+                }
+                (
+                    RuntimeHostValueKind::JsonValueView,
+                    Some(HostValue::JsonValueView { _bytes: bytes }),
+                )
+                | (RuntimeHostValueKind::JsonRaw, Some(HostValue::JsonRaw { _bytes: bytes }))
+                | (
+                    RuntimeHostValueKind::YamlValueView,
+                    Some(HostValue::YamlValueView { _bytes: bytes }),
+                ) => {
+                    pending.insert((RuntimeHostValueKind::Bytes, *bytes));
+                }
+                (
+                    RuntimeHostValueKind::ChannelSender,
+                    Some(HostValue::ChannelSender { channel }),
+                )
+                | (
+                    RuntimeHostValueKind::ChannelReceiver,
+                    Some(HostValue::ChannelReceiver { channel }),
+                ) => {
+                    if let Some(channel) = self.channels.get(channel) {
+                        for value in &channel.queue {
+                            value.trace_host_roots(&mut pending);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut dead = Vec::new();
+        for id in self.buffer_memory.keys() {
+            let kind = match self.values.get(id) {
+                Some(HostValue::Reader { .. }) => RuntimeHostValueKind::Reader,
+                Some(HostValue::Writer { .. }) => RuntimeHostValueKind::Writer,
+                Some(HostValue::Bytes(_)) => RuntimeHostValueKind::Bytes,
+                Some(HostValue::BytesBuilder(_)) => RuntimeHostValueKind::BytesBuilder,
+                Some(HostValue::FormatBuilder(_)) => RuntimeHostValueKind::FormatBuilder,
+                Some(HostValue::Path(_)) => RuntimeHostValueKind::Path,
+                Some(HostValue::EnvName(_)) => RuntimeHostValueKind::EnvName,
+                Some(HostValue::EnvValue(_)) => RuntimeHostValueKind::EnvValue,
+                Some(HostValue::EnvSnapshot(_)) => RuntimeHostValueKind::EnvSnapshot,
+                Some(HostValue::SyncArray(_)) => RuntimeHostValueKind::SyncArray,
+                Some(HostValue::SyncMap(_)) => RuntimeHostValueKind::SyncMap,
+                Some(HostValue::SyncSet(_)) => RuntimeHostValueKind::SyncSet,
+                Some(HostValue::SyncStack(_)) => RuntimeHostValueKind::SyncStack,
+                Some(HostValue::SyncQueue(_)) => RuntimeHostValueKind::SyncQueue,
+                Some(HostValue::SyncMutex { .. }) => RuntimeHostValueKind::Mutex,
+                Some(HostValue::SyncMutexGuard { .. }) => RuntimeHostValueKind::MutexGuard,
+                Some(HostValue::SyncRwLock { .. }) => RuntimeHostValueKind::RwLock,
+                Some(HostValue::SyncReadGuard { .. }) => RuntimeHostValueKind::ReadGuard,
+                Some(HostValue::SyncWriteGuard { .. }) => RuntimeHostValueKind::WriteGuard,
+                Some(HostValue::SyncCondition) => RuntimeHostValueKind::Condition,
+                Some(HostValue::SyncSemaphore { .. }) => RuntimeHostValueKind::Semaphore,
+                Some(HostValue::SyncPermit { .. }) => RuntimeHostValueKind::Permit,
+                Some(HostValue::SyncOnce { .. }) => RuntimeHostValueKind::Once,
+                Some(HostValue::SyncBarrier { .. }) => RuntimeHostValueKind::Barrier,
+                Some(HostValue::SyncAtomic { .. }) => RuntimeHostValueKind::Atomic,
+                Some(HostValue::ChannelSender { .. }) => RuntimeHostValueKind::ChannelSender,
+                Some(HostValue::ChannelReceiver { .. }) => RuntimeHostValueKind::ChannelReceiver,
+                Some(HostValue::TempDirectory { .. }) => RuntimeHostValueKind::TempDirectory,
+                Some(HostValue::File { .. }) => RuntimeHostValueKind::File,
+                Some(HostValue::Directory { .. }) => RuntimeHostValueKind::Directory,
+                Some(HostValue::Generator(_)) => RuntimeHostValueKind::Generator,
+                Some(HostValue::FloatTolerance(_)) => RuntimeHostValueKind::FloatTolerance,
+                None => {
+                    dead.push((None, *id));
+                    continue;
+                }
+                _ => {
+                    return Err(VmError::Host(
+                        "accounted host value has no collector kind".into(),
+                    ));
+                }
+            };
+            if !live.contains(&(kind, *id)) {
+                dead.push((Some(kind), *id));
+            }
+        }
+        for (kind, id) in dead {
+            if let Some(kind) = kind {
+                if teardown && kind == RuntimeHostValueKind::ChannelReceiver {
+                    self.channel_retire_receiver(&RuntimeValue::Host { kind, id })?;
+                } else {
+                    self.cleanup(&RuntimeValue::Host { kind, id })?;
+                }
+            }
+            self.values.remove(&id);
+            self.buffer_memory.remove(&id);
+            self.sync_generations.remove(&id);
+            if self.env_snapshot_id == Some(id) {
+                self.env_snapshot_id = None;
+            }
+        }
+        Ok(())
     }
 
     fn channel_discard_receiver(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
@@ -5228,6 +7824,89 @@ impl BootstrapHost {
     }
 }
 
+fn fixed_host_response_bytes(value: &RuntimeValue) -> Option<u64> {
+    const NODE: u64 = tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES;
+    match value {
+        RuntimeValue::Unit => Some(NODE),
+        RuntimeValue::ResultOk(value) => match value.as_ref() {
+            RuntimeValue::OptionNone => Some(2 * NODE),
+            RuntimeValue::OptionSome(value)
+                if matches!(
+                    value.as_ref(),
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Bytes,
+                        ..
+                    }
+                ) =>
+            {
+                Some(3 * NODE)
+            }
+            RuntimeValue::Unit
+            | RuntimeValue::Bool(_)
+            | RuntimeValue::Integer(_)
+            | RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Bytes | RuntimeHostValueKind::File,
+                ..
+            } => Some(2 * NODE),
+            RuntimeValue::Record { name, values }
+                if name == "Metadata"
+                    && matches!(values.as_slice(), [
+                        RuntimeValue::Variant { name, variant: 0..=3, values },
+                        RuntimeValue::Integer(_), RuntimeValue::Bool(_)
+                    ] if name == "FileKind" && values.is_empty()) =>
+            {
+                Some(METADATA_RESULT_BYTES)
+            }
+            RuntimeValue::Variant {
+                name,
+                variant: 0,
+                values,
+            } if name == "ReadResult"
+                && matches!(
+                    values.as_slice(),
+                    [RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Bytes,
+                        ..
+                    }]
+                ) =>
+            {
+                Some(3 * NODE + name.len() as u64)
+            }
+            RuntimeValue::Variant {
+                name,
+                variant: 1,
+                values,
+            } if name == "ReadResult" && values.is_empty() => Some(2 * NODE + name.len() as u64),
+            _ => None,
+        },
+        RuntimeValue::ResultErr(value)
+            if matches!(
+                value.as_ref(),
+                RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::CollectionError,
+                    ..
+                }
+            ) =>
+        {
+            Some(2 * NODE)
+        }
+        RuntimeValue::ResultErr(value) => match value.as_ref() {
+            RuntimeValue::Variant {
+                name,
+                variant: 0..=4,
+                values,
+            } if name == "IoError" && values.is_empty() => Some(2 * NODE + name.len() as u64),
+            RuntimeValue::Variant {
+                name,
+                variant: 0..=9,
+                values,
+            } if name == "FsError" && values.is_empty() => Some(2 * NODE + name.len() as u64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl Default for BootstrapHost {
     fn default() -> Self {
         Self::new(Vec::new())
@@ -5235,6 +7914,305 @@ impl Default for BootstrapHost {
 }
 
 impl VmHost for BootstrapHost {
+    fn preview_return<'a>(
+        &'a self,
+        name: &str,
+        arguments: &'a [RuntimeValue],
+    ) -> Result<Option<VmHostReturnPreview<'a>>, VmError> {
+        let name = name.split_once('[').map_or(name, |(base, _)| base);
+        match (name, arguments) {
+            ("std.channel.Receiver.tryReceive", [receiver]) => {
+                let (_, channel) = self.channel_receiver_id(receiver)?;
+                Ok(self.channels[&channel]
+                    .queue
+                    .front()
+                    .map(|value| VmHostReturnPreview::Variant(0, value)))
+            }
+            ("std.sync.Atomic.swap", [atomic, _, order]) => {
+                Self::sync_memory_order(order)?;
+                Ok(Some(VmHostReturnPreview::Value(
+                    self.sync_atomic_value(atomic)?,
+                )))
+            }
+            ("std.sync.Atomic.compareExchange", [atomic, expected, _, success, failure]) => {
+                Self::validate_atomic_compare_exchange_orders(success, failure)?;
+                let previous = self.sync_atomic_value(atomic)?;
+                Ok(Some(VmHostReturnPreview::Variant(
+                    u32::from(previous != expected),
+                    previous,
+                )))
+            }
+            ("std.sync.Array.set", [receiver, RuntimeValue::Integer(index), _]) => {
+                let Some((id, index)) = self.sync_array_index(receiver, *index)? else {
+                    return Ok(None);
+                };
+                let Some(HostValue::SyncArray(values)) = self.values.get(&id) else {
+                    unreachable!("the immutable array was validated above");
+                };
+                Ok(Some(VmHostReturnPreview::ResultOk(&values[index])))
+            }
+            (
+                "std.sync.Array.compareExchange",
+                [receiver, RuntimeValue::Integer(index), expected, _],
+            ) => {
+                let Some((id, index)) = self.sync_array_index(receiver, *index)? else {
+                    return Ok(None);
+                };
+                let Some(HostValue::SyncArray(values)) = self.values.get(&id) else {
+                    unreachable!("array validated above");
+                };
+                Ok(Some(VmHostReturnPreview::ResultOkVariant(
+                    u32::from(values[index] != *expected),
+                    &values[index],
+                )))
+            }
+            ("std.sync.Map.compareExchange", [receiver, key, expected, desired]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let Some(HostValue::SyncMap(entries)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Map token is stale or invalid".into()));
+                };
+                let previous = entries
+                    .iter()
+                    .find(|(entry_key, _)| entry_key == key)
+                    .map(|(_, value)| value);
+                if previous.is_none()
+                    && matches!(expected, RuntimeValue::OptionNone)
+                    && matches!(desired, RuntimeValue::OptionSome(_))
+                    && entries.len() as u64 >= self.max_bytes
+                {
+                    return Ok(None);
+                }
+                let matched = match (previous, expected) {
+                    (None, RuntimeValue::OptionNone) => true,
+                    (Some(previous), RuntimeValue::OptionSome(expected)) => {
+                        previous == expected.as_ref()
+                    }
+                    _ => false,
+                };
+                Ok(Some(VmHostReturnPreview::ResultOkVariantOption(
+                    u32::from(!matched),
+                    previous,
+                )))
+            }
+            ("std.sync.Map.insert", [receiver, key, _]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let Some(HostValue::SyncMap(entries)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Map token is stale or invalid".into()));
+                };
+                let previous = entries
+                    .iter()
+                    .find(|(entry_key, _)| entry_key == key)
+                    .map(|(_, value)| value);
+                if previous.is_none() && entries.len() as u64 >= self.max_bytes {
+                    return Ok(None);
+                }
+                Ok(Some(VmHostReturnPreview::ResultOkOption(previous)))
+            }
+            ("std.sync.Map.remove", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let Some(HostValue::SyncMap(entries)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Map token is stale or invalid".into()));
+                };
+                Ok(Some(
+                    entries
+                        .iter()
+                        .find(|(entry_key, _)| entry_key == key)
+                        .map_or(
+                            VmHostReturnPreview::Value(&RuntimeValue::OptionNone),
+                            |(_, value)| VmHostReturnPreview::OptionSome(value),
+                        ),
+                ))
+            }
+            ("std.sync.Stack.pop", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                let Some(HostValue::SyncStack(values)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Stack token is stale or invalid".into()));
+                };
+                Ok(Some(values.last().map_or(
+                    VmHostReturnPreview::Value(&RuntimeValue::OptionNone),
+                    VmHostReturnPreview::OptionSome,
+                )))
+            }
+            ("std.sync.Queue.dequeue", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                let Some(HostValue::SyncQueue(values)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Queue token is stale or invalid".into()));
+                };
+                Ok(Some(values.front().map_or(
+                    VmHostReturnPreview::Value(&RuntimeValue::OptionNone),
+                    VmHostReturnPreview::OptionSome,
+                )))
+            }
+            ("std.sync.Set.insert", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
+                let Some(HostValue::SyncSet(values)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Set token is stale or invalid".into()));
+                };
+                if values.contains(key) {
+                    Ok(Some(VmHostReturnPreview::ResultOk(&RuntimeValue::Bool(
+                        false,
+                    ))))
+                } else if values.len() as u64 >= self.max_bytes {
+                    Ok(None)
+                } else {
+                    Ok(Some(VmHostReturnPreview::ResultOk(&RuntimeValue::Bool(
+                        true,
+                    ))))
+                }
+            }
+            ("std.sync.Stack.push", [receiver, _]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                let Some(HostValue::SyncStack(values)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Stack token is stale or invalid".into()));
+                };
+                Ok(((values.len() as u64) < self.max_bytes)
+                    .then_some(VmHostReturnPreview::ResultOk(&RuntimeValue::Unit)))
+            }
+            ("std.sync.Queue.enqueue", [receiver, _]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                let Some(HostValue::SyncQueue(values)) = self.values.get(&id) else {
+                    return Err(VmError::Host("sync.Queue token is stale or invalid".into()));
+                };
+                Ok(((values.len() as u64) < self.max_bytes)
+                    .then_some(VmHostReturnPreview::ResultOk(&RuntimeValue::Unit)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn preview_polled_return(&self, call: u64) -> Result<Option<VmHostReturnPreview<'_>>, VmError> {
+        let Some(pending) = self.sync_waiters.get(&call) else {
+            return Ok(None);
+        };
+        let SyncResource::Channel(channel) = pending.resource else {
+            return Ok(None);
+        };
+        if pending.kind != SyncWaitKind::ChannelReceive
+            || !self.channel_waiter_is_oldest(channel, call, SyncWaitKind::ChannelReceive)
+        {
+            return Ok(None);
+        }
+        let state = self
+            .channels
+            .get(&channel)
+            .ok_or_else(|| VmError::Host("channel waiter identity is stale".into()))?;
+        Ok(state.queue.front().map(VmHostReturnPreview::OptionSome))
+    }
+
+    fn discard_previewed_return(&mut self, call: u64) -> Result<(), VmError> {
+        if self.preview_polled_return(call)?.is_none() {
+            return Err(VmError::Host(
+                "channel call has no ready buffered preview".into(),
+            ));
+        }
+        let resource = self
+            .sync_waiters
+            .get(&call)
+            .expect("the ready preview validated its channel waiter")
+            .resource;
+        self.remove_sync_waiter(call, resource);
+        self.async_memory.remove(&call);
+        Ok(())
+    }
+
+    fn invoke_owned(
+        &mut self,
+        name: &str,
+        arguments: Vec<RuntimeValue>,
+        memory: Option<VmMemoryCharge>,
+        budget: Option<&VmMemoryBudget>,
+    ) -> Result<VmHostReturn, VmError> {
+        let result = self.invoke_admitted(name, &arguments, budget);
+        drop(arguments);
+        drop(memory);
+        result
+    }
+
+    fn set_test_memory_budget(&mut self, budget: Option<VmMemoryBudget>) {
+        self.test_memory = budget;
+    }
+
+    fn invoke_owned_with_import_admission(
+        &mut self,
+        name: &str,
+        arguments: Vec<RuntimeValue>,
+        memory: Option<VmMemoryCharge>,
+        budget: Option<&VmMemoryBudget>,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<VmHostReturn, VmError> {
+        let base = name.split_once('[').map_or(name, |(base, _)| base);
+        if Self::is_io_operation(base)
+            || Self::is_file_operation(base)
+            || Self::is_filesystem_mutation(base)
+            || Self::is_console_output(base)
+            || base == "std.console.readLine"
+        {
+            return self.invoke_admitted_with_import(name, &arguments, budget, admission);
+        }
+        let mut response = VmHostReturnBudget::new(budget);
+        let result = match (base, arguments.as_slice()) {
+            ("std.console.stdin", []) => {
+                self.console_stream_admitted(StreamKind::Stdin, &mut response, admission)
+            }
+            ("std.console.stdout", []) => {
+                self.console_stream_admitted(StreamKind::Stdout, &mut response, admission)
+            }
+            ("std.console.stderr", []) => {
+                self.console_stream_admitted(StreamKind::Stderr, &mut response, admission)
+            }
+            ("std.channel.bounded", [RuntimeValue::Integer(capacity)]) => {
+                self.channel_bounded(*capacity, &mut response, admission)
+            }
+            ("std.channel.unbounded", []) => self.channel_new(None, &mut response, admission),
+            ("std.channel.Sender.fork", [sender]) => {
+                self.channel_fork_sender(sender, &mut response, admission)
+            }
+            ("std.channel.Receiver.fork", [receiver]) => {
+                self.channel_fork_receiver(receiver, &mut response, admission)
+            }
+            ("std.channel.Receiver.close", [receiver]) => {
+                self.channel_close_receiver_admitted(receiver, &mut response, admission)
+            }
+            ("std.channel.Sender.trySend", [sender, value]) => {
+                self.channel_try_send_admitted(sender, value, &mut response, admission)
+            }
+            ("std.channel.Receiver.tryReceive", [receiver]) => {
+                self.channel_try_receive_admitted(receiver, &mut response, admission)
+            }
+            _ => return self.invoke_owned(name, arguments, memory, budget),
+        }
+        .and_then(|value| response.finish(value));
+        drop(arguments);
+        drop(memory);
+        result
+    }
+
+    fn tracks_host_roots(&self) -> bool {
+        self.test_memory.is_some() || !self.buffer_memory.is_empty()
+    }
+
+    fn collect_host_values(
+        &mut self,
+        roots: &tondo_vm::runtime::VmHostRoots,
+    ) -> Result<(), VmError> {
+        self.collect_host_values_with_teardown(roots, false)
+    }
+
+    fn retire_host_values(
+        &mut self,
+        roots: &tondo_vm::runtime::VmHostRoots,
+    ) -> Result<(), VmError> {
+        self.collect_host_values_with_teardown(roots, true)
+    }
+
+    fn has_test_participation(&self) -> bool {
+        self.testing_participation.is_some()
+    }
+
     fn selects_test_node(&self, id: &str) -> bool {
         self.testing_participation
             .as_ref()
@@ -5263,14 +8241,28 @@ impl VmHost for BootstrapHost {
             ));
         }
         let envelope = self.testing_envelope()?;
+        let timer_limit = usize::try_from(
+            envelope
+                .limits()
+                .map_err(|error| VmError::Host(error.to_string()))?
+                .virtual_timer_limit(),
+        )
+        .ok()
+        .and_then(|limit| self.time_resources.checked_add(limit))
+        .ok_or(VmError::ResourceLimit {
+            resource: "virtual-timers",
+            limit: self.max_time_resources as u64,
+        })?;
         envelope
             .begin_runtime_virtual_time()
-            .map_err(|error| VmError::Host(format!("{}: {error}", error.code())))?;
+            .map_err(|error| Self::testing_runtime_error(&envelope, error))?;
         let virtual_clock = ClockProvider::virtual_time(1)?;
         self.previous_clock = Some((
             std::mem::replace(&mut self.clock, virtual_clock),
             self.clock_domain,
+            self.max_time_resources,
         ));
+        self.max_time_resources = timer_limit;
         self.clock_domain = NEXT_CLOCK_DOMAIN.fetch_add(1, Ordering::Relaxed);
         let controller = self.allocate(
             RuntimeHostValueKind::VirtualTime,
@@ -5292,11 +8284,13 @@ impl VmHost for BootstrapHost {
         let elapsed_ns = self.clock.now()?;
         self.values.remove(&id);
         self.virtual_controller = None;
-        let (previous, previous_domain) = self.previous_clock.take().ok_or_else(|| {
-            VmError::Host("virtual time has no production clock to restore".into())
-        })?;
+        let (previous, previous_domain, previous_timer_limit) =
+            self.previous_clock.take().ok_or_else(|| {
+                VmError::Host("virtual time has no production clock to restore".into())
+            })?;
         self.clock = previous;
         self.clock_domain = previous_domain;
+        self.max_time_resources = previous_timer_limit;
         let envelope = self.testing_envelope()?;
         envelope
             .finish_runtime_virtual_time(elapsed_ns)
@@ -5314,6 +8308,15 @@ impl VmHost for BootstrapHost {
     }
 
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+        self.invoke_with_return_budget(name, arguments, &mut VmHostReturnBudget::new(None))
+    }
+
+    fn invoke_with_return_budget(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        response: &mut VmHostReturnBudget<'_>,
+    ) -> Result<RuntimeValue, VmError> {
         // Generic host callables are monomorphized in bytecode and carry their
         // type arguments in brackets (for example `assertSome[Int]`). The
         // host contract is owned by the unspecialized function name.
@@ -5322,69 +8325,52 @@ impl VmHost for BootstrapHost {
         match (name, arguments) {
             ("std.console.print", [RuntimeValue::String(text)]) => {
                 if let Some(envelope) = self.testing.clone() {
-                    return self.testing_result(&envelope, envelope.print_stdout(text, false));
+                    self.testing_result(&envelope, envelope.print_stdout(text, false))?;
+                } else {
+                    self.stdout.extend_from_slice(text.as_bytes());
                 }
-                self.stdout.extend_from_slice(text.as_bytes());
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
             ("std.console.println", [RuntimeValue::String(text)]) => {
                 if let Some(envelope) = self.testing.clone() {
-                    return self.testing_result(&envelope, envelope.print_stdout(text, true));
+                    self.testing_result(&envelope, envelope.print_stdout(text, true))?;
+                } else {
+                    self.stdout.extend_from_slice(text.as_bytes());
+                    self.stdout.push(b'\n');
                 }
-                self.stdout.extend_from_slice(text.as_bytes());
-                self.stdout.push(b'\n');
-                Ok(RuntimeValue::Unit)
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
-            ("std.console.flush", []) => Ok(RuntimeValue::Unit),
-            ("std.console.stdin", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                RuntimeHostValueKind::Reader,
-                HostValue::Reader {
-                    stream: StreamKind::Stdin,
-                    offset: 0,
-                },
-            )))),
-            ("std.console.stdout", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                RuntimeHostValueKind::Writer,
-                HostValue::Writer {
-                    stream: StreamKind::Stdout,
-                },
-            )))),
-            ("std.console.stderr", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                RuntimeHostValueKind::Writer,
-                HostValue::Writer {
-                    stream: StreamKind::Stderr,
-                },
-            )))),
-            ("std.console.readLine", [reader]) => {
-                let (id, stream, offset) = self.reader_state(reader)?;
-                if stream != StreamKind::Stdin {
-                    return Ok(self.console_result_error("readLine requires stdin"));
-                }
-                if offset >= self.stdin.len() {
-                    return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone)));
-                }
-                let remaining = &self.stdin[offset..];
-                let end = remaining
-                    .iter()
-                    .position(|byte| *byte == b'\n')
-                    .map_or(remaining.len(), |index| index + 1);
-                let line = &remaining[..end];
-                let value = line.strip_suffix(b"\n").unwrap_or(line);
-                let value = match std::str::from_utf8(value) {
-                    Ok(value) => value.to_owned(),
-                    Err(_) => return Ok(self.console_result_error("stdin is not UTF-8")),
-                };
-                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
-                    *offset = offset.saturating_add(end);
-                }
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
-                    Box::new(RuntimeValue::String(value)),
-                ))))
+            ("std.console.flush", []) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+            ("std.console.stdin", []) => self.console_stream_admitted(
+                StreamKind::Stdin,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            ),
+            ("std.console.stdout", []) => self.console_stream_admitted(
+                StreamKind::Stdout,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            ),
+            ("std.console.stderr", []) => self.console_stream_admitted(
+                StreamKind::Stderr,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            ),
+            ("std.console.readLine", [reader]) => self.console_read_line_admitted(
+                reader,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            ),
+            ("std.io.defaultLimits", []) => {
+                let limits = stdlib_io::IoLimits::default();
+                Ok(RuntimeValue::Record {
+                    name: "IoLimits".to_owned(),
+                    values: vec![
+                        RuntimeValue::Integer(limits.max_bytes as i128),
+                        RuntimeValue::Integer(limits.max_read as i128),
+                    ],
+                })
             }
-            ("std.io.defaultLimits", []) => Ok(self.allocate(
-                RuntimeHostValueKind::IoLimits,
-                HostValue::IoLimits(stdlib_io::IoLimits::default()),
-            )),
             (
                 "std.io.limits",
                 [
@@ -5393,112 +8379,24 @@ impl VmHost for BootstrapHost {
                 ],
             ) => {
                 let Ok(max_bytes) = usize::try_from(*max_bytes) else {
-                    return Ok(self.io_result_error("max_bytes is invalid"));
+                    return Ok(self.io_result_error(stdlib_io::IoError::ResourceLimit));
                 };
                 let Ok(max_read) = usize::try_from(*max_read) else {
-                    return Ok(self.io_result_error("max_read is invalid"));
+                    return Ok(self.io_result_error(stdlib_io::IoError::ResourceLimit));
                 };
                 match stdlib_io::IoLimits::new(max_bytes, max_read) {
-                    Ok(limits) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::IoLimits, HostValue::IoLimits(limits)),
-                    ))),
-                    Err(error) => Ok(self.io_result_error(format!("{error:?}"))),
+                    Ok(limits) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Record {
+                        name: "IoLimits".to_owned(),
+                        values: vec![
+                            RuntimeValue::Integer(limits.max_bytes as i128),
+                            RuntimeValue::Integer(limits.max_read as i128),
+                        ],
+                    }))),
+                    Err(error) => Ok(self.io_result_error(error)),
                 }
             }
-            ("std.io.readAll", [reader, limits]) => {
-                let limits = self.io_limits(limits)?;
-                let (id, stream, offset) = self.reader_state(reader)?;
-                if stream != StreamKind::Stdin {
-                    return Ok(self.io_result_error("reader is not readable"));
-                }
-                let remaining = self.stdin.len().saturating_sub(offset);
-                // The public helper checks the aggregate bound before touching
-                // the handle, so a rejected operation cannot consume input.
-                if remaining > limits.max_bytes {
-                    return Ok(self.io_result_error("readAll exceeds max_bytes"));
-                }
-                let mut output = Vec::with_capacity(remaining);
-                let mut cursor = offset;
-                while cursor < self.stdin.len() {
-                    let count = limits.max_read.min(self.stdin.len() - cursor);
-                    if let Err(message) = self.ensure_bytes_len(count) {
-                        return Ok(self.io_result_error(message));
-                    }
-                    output.extend_from_slice(&self.stdin[cursor..cursor + count]);
-                    cursor += count;
-                }
-                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
-                    *offset = cursor;
-                }
-                let bytes = self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output));
-                Ok(RuntimeValue::ResultOk(Box::new(bytes)))
-            }
-            ("std.io.writeAll", [writer, bytes]) => {
-                let bytes = self.bytes(bytes)?.to_vec();
-                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
-                    return Ok(self.io_result_error(message));
-                }
-                let stream = self.writer_stream(writer)?;
-                if stream == StreamKind::Stdin {
-                    return Ok(self.io_result_error("stdin is not writable"));
-                }
-                match stream {
-                    StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
-                    StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
-                    StreamKind::Stdin => unreachable!("stdin rejected above"),
-                }
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
-            }
-            ("std.io.Reader.read", [reader, RuntimeValue::Integer(maximum)]) => {
-                let Ok(maximum) = usize::try_from(*maximum) else {
-                    return Ok(self.io_result_error("read length is invalid"));
-                };
-                if maximum == 0 {
-                    return Ok(self.io_result_error("read length must be positive"));
-                }
-                let (id, stream, offset) = self.reader_state(reader)?;
-                if stream != StreamKind::Stdin {
-                    return Ok(self.io_result_error("reader is not readable"));
-                }
-                if offset >= self.stdin.len() {
-                    return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone)));
-                }
-                let count = maximum.min(self.stdin.len() - offset);
-                if let Err(message) = self.ensure_bytes_len(count) {
-                    return Ok(self.io_result_error(message));
-                }
-                let bytes = self.stdin[offset..offset + count].to_vec();
-                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
-                    *offset = offset.saturating_add(count);
-                }
-                let bytes = self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes));
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
-                    Box::new(bytes),
-                ))))
-            }
-            ("std.io.Writer.write", [writer, bytes]) => {
-                let stream = self.writer_stream(writer)?;
-                let bytes = self.bytes(bytes)?.to_vec();
-                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
-                    return Ok(self.io_result_error(message));
-                }
-                match stream {
-                    StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
-                    StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
-                    StreamKind::Stdin => return Ok(self.io_result_error("stdin is not writable")),
-                }
-                let count = i128::try_from(bytes.len())
-                    .map_err(|_| VmError::Host("write length does not fit in Int".into()))?;
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
-                    count,
-                ))))
-            }
-            ("std.io.Writer.flush", [writer]) => {
-                let stream = self.writer_stream(writer)?;
-                if stream == StreamKind::Stdin {
-                    return Ok(self.io_result_error("stdin is not writable"));
-                }
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            (name, arguments) if Self::is_io_operation(name) => {
+                self.invoke_io_admitted(name, arguments, &mut VmHostImportAdmission::disabled())
             }
             ("intrinsic.encoding.Base64Alphabet.Standard", []) => Ok(RuntimeValue::Variant {
                 name: "Base64Alphabet".into(),
@@ -5723,52 +8621,30 @@ impl VmHost for BootstrapHost {
                 let options = self.encoding_base64_options(options)?;
                 let input = self.encoding_input(input)?;
                 let stream = self.writer_stream(writer)?;
-                let result = match stream {
-                    StreamKind::Stdout => {
-                        let mut writer = EncodingWriter {
-                            bytes: &mut self.stdout,
-                            max_bytes: self.max_bytes,
-                        };
-                        options.encode_to(&input, &mut writer)
-                    }
-                    StreamKind::Stderr => {
-                        let mut writer = EncodingWriter {
-                            bytes: &mut self.stderr,
-                            max_bytes: self.max_bytes,
-                        };
-                        options.encode_to(&input, &mut writer)
-                    }
-                    StreamKind::Stdin => Err(encoding::EncodingError {
-                        kind: encoding::EncodingErrorKind::Io(stdlib_io::IoError::InvalidData),
-                        offset: 0,
-                    }),
+                let mut writer = EncodingWriter {
+                    host: self,
+                    stream,
+                    control_error: None,
                 };
+                let result = options.encode_to(&input, &mut writer);
+                if let Some(error) = writer.control_error {
+                    return Err(error);
+                }
                 self.encoding_unit_result(result)
             }
             ("std.encoding.HexOptions.encodeTo", [options, input, writer]) => {
                 let options = self.encoding_hex_options(options)?;
                 let input = self.encoding_input(input)?;
                 let stream = self.writer_stream(writer)?;
-                let result = match stream {
-                    StreamKind::Stdout => {
-                        let mut writer = EncodingWriter {
-                            bytes: &mut self.stdout,
-                            max_bytes: self.max_bytes,
-                        };
-                        options.encode_to(&input, &mut writer)
-                    }
-                    StreamKind::Stderr => {
-                        let mut writer = EncodingWriter {
-                            bytes: &mut self.stderr,
-                            max_bytes: self.max_bytes,
-                        };
-                        options.encode_to(&input, &mut writer)
-                    }
-                    StreamKind::Stdin => Err(encoding::EncodingError {
-                        kind: encoding::EncodingErrorKind::Io(stdlib_io::IoError::InvalidData),
-                        offset: 0,
-                    }),
+                let mut writer = EncodingWriter {
+                    host: self,
+                    stream,
+                    control_error: None,
                 };
+                let result = options.encode_to(&input, &mut writer);
+                if let Some(error) = writer.control_error {
+                    return Err(error);
+                }
                 self.encoding_unit_result(result)
             }
             ("std.encoding.Base64Options.decodeFrom", [options, reader]) => {
@@ -6248,7 +9124,7 @@ impl VmHost for BootstrapHost {
                 };
                 match messagepack::encode_value(&value, self.messagepack_encode_options(options)?) {
                     Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                        self.allocate_bytes(output)?,
                     ))),
                     Err(error) => Ok(self.messagepack_result_error(&error)),
                 }
@@ -6263,7 +9139,7 @@ impl VmHost for BootstrapHost {
                     self.messagepack_limits(limits)?,
                 ) {
                     Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                        self.allocate_bytes(output)?,
                     ))),
                     Err(error) => Ok(self.messagepack_result_error(&error)),
                 }
@@ -6333,10 +9209,7 @@ impl VmHost for BootstrapHost {
                         name: "MessagePackExt".into(),
                         values: vec![
                             RuntimeValue::Integer(i128::from(ext.type_code)),
-                            self.allocate(
-                                RuntimeHostValueKind::Bytes,
-                                HostValue::Bytes(ext.payload),
-                            ),
+                            self.allocate_bytes(ext.payload)?,
                         ],
                     }))),
                     Err(error) => Ok(self.messagepack_result_error(&error)),
@@ -6404,7 +9277,7 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(Some(event)) => Ok(RuntimeValue::ResultOk(Box::new(
-                        RuntimeValue::OptionSome(Box::new(self.runtime_messagepack_event(event))),
+                        RuntimeValue::OptionSome(Box::new(self.runtime_messagepack_event(event)?)),
                     ))),
                     Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
                     Err(error) => Ok(self.messagepack_result_error(&error)),
@@ -6425,7 +9298,7 @@ impl VmHost for BootstrapHost {
                     Some(HostValue::MessagePackReader { reader, finished }) => {
                         match reader.own(event) {
                             Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(
-                                self.runtime_messagepack_event(event),
+                                self.runtime_messagepack_event(event)?,
                             ))),
                             Err(error) => {
                                 *finished = true;
@@ -6528,11 +9401,7 @@ impl VmHost for BootstrapHost {
                 match result {
                     Ok(bytes) => {
                         if let Some(stream) = stream {
-                            match stream {
-                                StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
-                                StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
-                                StreamKind::Stdin => {}
-                            }
+                            self.emit_writer_bytes(stream, &bytes)?;
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
                     }
@@ -6573,7 +9442,7 @@ impl VmHost for BootstrapHost {
                 }
                 match protobuf::encode::<u64>(&0, self.proto_encode_options(options)?) {
                     Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                        self.allocate_bytes(output)?,
                     ))),
                     Err(error) => Ok(self.protobuf_result_error(&error)),
                 }
@@ -6584,7 +9453,7 @@ impl VmHost for BootstrapHost {
                 }
                 match protobuf::encode_deterministic::<u64>(&0, self.proto_limits(limits)?) {
                     Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                        self.allocate_bytes(output)?,
                     ))),
                     Err(error) => Ok(self.protobuf_result_error(&error)),
                 }
@@ -6656,7 +9525,7 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(Some(event)) => Ok(RuntimeValue::ResultOk(Box::new(
-                        RuntimeValue::OptionSome(Box::new(self.runtime_proto_event(event))),
+                        RuntimeValue::OptionSome(Box::new(self.runtime_proto_event(event)?)),
                     ))),
                     Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
                     Err(error) => Ok(self.protobuf_result_error(&error)),
@@ -6674,7 +9543,7 @@ impl VmHost for BootstrapHost {
                 match self.values.get_mut(id) {
                     Some(HostValue::ProtoReader { reader, finished }) => match reader.own(event) {
                         Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(
-                            self.runtime_proto_event(event),
+                            self.runtime_proto_event(event)?,
                         ))),
                         Err(error) => {
                             *finished = true;
@@ -6766,11 +9635,7 @@ impl VmHost for BootstrapHost {
                 match result {
                     Ok(bytes) => {
                         if let Some(stream) = stream {
-                            match stream {
-                                StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
-                                StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
-                                StreamKind::Stdin => {}
-                            }
+                            self.emit_writer_bytes(stream, &bytes)?;
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
                     }
@@ -7023,10 +9888,9 @@ impl VmHost for BootstrapHost {
                         if self.ensure_bytes_len(output.len()).is_err() {
                             return Ok(self.yaml_result_error(yaml::YamlErrorKind::NodeLimit));
                         }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(output),
-                        ))))
+                        Ok(RuntimeValue::ResultOk(Box::new(
+                            self.allocate_bytes(output)?,
+                        )))
                     }
                     Err(error) => Ok(self.yaml_result_structured_error(&error)),
                 }
@@ -7045,10 +9909,9 @@ impl VmHost for BootstrapHost {
                         if self.ensure_bytes_len(output.len()).is_err() {
                             return Ok(self.yaml_result_error(yaml::YamlErrorKind::NodeLimit));
                         }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(output),
-                        ))))
+                        Ok(RuntimeValue::ResultOk(Box::new(
+                            self.allocate_bytes(output)?,
+                        )))
                     }
                     Err(error) => Ok(self.yaml_result_structured_error(&error)),
                 }
@@ -7119,7 +9982,7 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(Some(event)) => Ok(RuntimeValue::ResultOk(Box::new(
-                        RuntimeValue::OptionSome(Box::new(self.runtime_yaml_event(event))),
+                        RuntimeValue::OptionSome(Box::new(self.runtime_yaml_event(event)?)),
                     ))),
                     Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
                     Err(error) => Ok(self.yaml_result_structured_error(&error)),
@@ -7149,7 +10012,7 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.runtime_yaml_event(event),
+                        self.runtime_yaml_event(event)?,
                     ))),
                     Err(error) => Ok(self.yaml_result_structured_error(&error)),
                 }
@@ -7259,11 +10122,7 @@ impl VmHost for BootstrapHost {
                             return Ok(self.yaml_result_error(yaml::YamlErrorKind::NodeLimit));
                         }
                         if let Some(stream) = stream {
-                            match stream {
-                                StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
-                                StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
-                                StreamKind::Stdin => unreachable!("stdin rejected at construction"),
-                            }
+                            self.emit_writer_bytes(stream, &bytes)?;
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
                     }
@@ -7292,10 +10151,9 @@ impl VmHost for BootstrapHost {
                         if self.ensure_bytes_len(output.len()).is_err() {
                             return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(output),
-                        ))))
+                        Ok(RuntimeValue::ResultOk(Box::new(
+                            self.allocate_bytes(output)?,
+                        )))
                     }
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
@@ -7358,10 +10216,9 @@ impl VmHost for BootstrapHost {
                         if self.ensure_bytes_len(output.len()).is_err() {
                             return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(output),
-                        ))))
+                        Ok(RuntimeValue::ResultOk(Box::new(
+                            self.allocate_bytes(output)?,
+                        )))
                     }
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
@@ -7378,10 +10235,9 @@ impl VmHost for BootstrapHost {
                         if self.ensure_bytes_len(output.len()).is_err() {
                             return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(output),
-                        ))))
+                        Ok(RuntimeValue::ResultOk(Box::new(
+                            self.allocate_bytes(output)?,
+                        )))
                     }
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
@@ -7638,10 +10494,9 @@ impl VmHost for BootstrapHost {
                                         self.json_result_error(json::JsonErrorKind::LimitExceeded)
                                     );
                                 }
-                                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                                    RuntimeHostValueKind::Bytes,
-                                    HostValue::Bytes(bytes),
-                                ))))
+                                Ok(RuntimeValue::ResultOk(Box::new(
+                                    self.allocate_bytes(bytes)?,
+                                )))
                             }
                             Err(stdlib_serialization::Base64DecodeError) => {
                                 if let Some(HostValue::JsonSerializationReader {
@@ -7871,13 +10726,7 @@ impl VmHost for BootstrapHost {
                         if self.ensure_bytes_len(bytes.len()).is_err() {
                             return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
-                        match stream {
-                            StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
-                            StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
-                            StreamKind::Stdin => {
-                                unreachable!("stdin rejected at construction")
-                            }
-                        }
+                        self.emit_writer_bytes(stream, &bytes)?;
                         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
                     }
                     Err(error) => Ok(self.json_result_structured_error(&error)),
@@ -8020,10 +10869,9 @@ impl VmHost for BootstrapHost {
                         if self.ensure_bytes_len(bytes.len()).is_err() {
                             return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(bytes),
-                        ))))
+                        Ok(RuntimeValue::ResultOk(Box::new(
+                            self.allocate_bytes(bytes)?,
+                        )))
                     }
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
@@ -8036,10 +10884,9 @@ impl VmHost for BootstrapHost {
                             if let Err(message) = self.ensure_bytes_len(output.len()) {
                                 return Ok(self.bytes_result_error(message));
                             }
-                            Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                                RuntimeHostValueKind::Bytes,
-                                HostValue::Bytes(output),
-                            ))))
+                            Ok(RuntimeValue::ResultOk(Box::new(
+                                self.allocate_bytes(output)?,
+                            )))
                         }
                         Err(error) => Ok(self.bytes_result_error(error.to_string())),
                     },
@@ -8048,39 +10895,32 @@ impl VmHost for BootstrapHost {
             }
             ("std.path.Path.fromString", [RuntimeValue::String(value)]) => {
                 match path::Path::from_string(value) {
-                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
-                    ))),
+                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate_path(path)?))),
                     Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
                 }
             }
             ("std.path.Path.fromBytes", [bytes]) => {
                 let input = self.bytes(bytes)?.to_vec();
                 match path::Path::from_bytes(&input) {
-                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
-                    ))),
+                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate_path(path)?))),
                     Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
                 }
             }
             ("std.path.Path.join", [receiver, RuntimeValue::String(component)]) => {
                 let receiver = self.path(receiver)?.clone();
                 match receiver.join(component) {
-                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(
-                        self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
-                    ))),
+                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate_path(path)?))),
                     Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
                 }
             }
             ("std.path.Path.parent", [receiver]) => {
                 let parent = self.path(receiver)?.parent();
-                Ok(parent
-                    .map(|path| {
-                        RuntimeValue::OptionSome(Box::new(
-                            self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
-                        ))
-                    })
-                    .unwrap_or(RuntimeValue::OptionNone))
+                match parent {
+                    Some(path) => Ok(RuntimeValue::OptionSome(Box::new(
+                        self.allocate_path(path)?,
+                    ))),
+                    None => Ok(RuntimeValue::OptionNone),
+                }
             }
             ("std.path.Path.fileName", [receiver]) => Ok(self
                 .path(receiver)?
@@ -8106,412 +10946,27 @@ impl VmHost for BootstrapHost {
             },
             ("std.path.Path.toBytes", [receiver]) => {
                 let bytes = self.path(receiver)?.to_bytes();
-                Ok(self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes)))
+                Ok(self.allocate_bytes(bytes)?)
             }
-            ("std.fs.OpenMode.Read", []) => Ok(self.allocate(
-                RuntimeHostValueKind::OpenMode,
-                HostValue::OpenMode(FsOpenMode::Read),
-            )),
-            ("std.fs.OpenMode.Write", []) => Ok(self.allocate(
-                RuntimeHostValueKind::OpenMode,
-                HostValue::OpenMode(FsOpenMode::Write),
-            )),
-            ("std.fs.OpenMode.ReadWrite", []) => Ok(self.allocate(
-                RuntimeHostValueKind::OpenMode,
-                HostValue::OpenMode(FsOpenMode::ReadWrite),
-            )),
-            ("std.fs.OpenMode.Append", []) => Ok(self.allocate(
-                RuntimeHostValueKind::OpenMode,
-                HostValue::OpenMode(FsOpenMode::Append),
-            )),
-            ("std.fs.OpenMode.Create", []) => Ok(self.allocate(
-                RuntimeHostValueKind::OpenMode,
-                HostValue::OpenMode(FsOpenMode::Create),
-            )),
-            ("std.fs.OpenMode.CreateNew", []) => Ok(self.allocate(
-                RuntimeHostValueKind::OpenMode,
-                HostValue::OpenMode(FsOpenMode::CreateNew),
-            )),
-            ("std.fs.open", [receiver, mode]) => {
-                let path = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                let mode = self.fs_open_mode(mode)?;
-                match std::fs::symlink_metadata(&path) {
-                    Ok(metadata) if metadata.is_dir() => {
-                        return Ok(self.fs_result_error("path is a directory"));
-                    }
-                    Ok(_) => {}
-                    Err(error) if !matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew) => {
-                        return Ok(self.fs_result_error(error.to_string()));
-                    }
-                    Err(_) => {}
-                }
-                let mut options = OpenOptions::new();
-                match mode {
-                    FsOpenMode::Read => {
-                        options.read(true);
-                    }
-                    FsOpenMode::Write => {
-                        options.write(true);
-                    }
-                    FsOpenMode::ReadWrite => {
-                        options.read(true).write(true);
-                    }
-                    FsOpenMode::Append => {
-                        options.append(true);
-                    }
-                    FsOpenMode::Create => {
-                        options.write(true).create(true).truncate(true);
-                    }
-                    FsOpenMode::CreateNew => {
-                        options.write(true).create_new(true);
-                    }
-                }
-                match options.open(path) {
-                    Ok(file) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                        RuntimeHostValueKind::File,
-                        HostValue::File {
-                            file,
-                            readable: matches!(mode, FsOpenMode::Read | FsOpenMode::ReadWrite),
-                            writable: matches!(
-                                mode,
-                                FsOpenMode::Write
-                                    | FsOpenMode::ReadWrite
-                                    | FsOpenMode::Append
-                                    | FsOpenMode::Create
-                                    | FsOpenMode::CreateNew
-                            ),
-                        },
-                    )))),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.openDirectory", [receiver]) => {
-                let path = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                match std::fs::symlink_metadata(&path) {
-                    Ok(metadata) if metadata.is_dir() => {
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Directory,
-                            HostValue::Directory { path },
-                        ))))
-                    }
-                    Ok(_) => Ok(self.fs_result_error("path is not a directory")),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.metadata", [receiver]) => {
-                let path = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                match std::fs::symlink_metadata(path) {
-                    Ok(metadata) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                        RuntimeHostValueKind::Metadata,
-                        HostValue::Metadata {
-                            _file: metadata.is_file(),
-                            _directory: metadata.is_dir(),
-                            _symlink: metadata.file_type().is_symlink(),
-                            _len: metadata.len(),
-                            _readonly: metadata.permissions().readonly(),
-                        },
-                    )))),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.File.read", [receiver, RuntimeValue::Integer(maximum)]) => {
-                let maximum = match usize::try_from(*maximum) {
-                    Ok(maximum) if maximum > 0 => maximum,
-                    _ => return Ok(self.fs_result_error("read length must be positive")),
-                };
-                if let Err(message) = self.ensure_bytes_len(maximum) {
-                    return Ok(self.fs_result_error(message));
-                }
-                let id = self.file_id(receiver)?;
-                let read = match self.values.get_mut(&id) {
-                    Some(HostValue::File { file, readable, .. }) if *readable => {
-                        let mut buffer = vec![0; maximum];
-                        match file.read(&mut buffer) {
-                            Ok(0) => Ok(None),
-                            Ok(count) => {
-                                buffer.truncate(count);
-                                Ok(Some(buffer))
-                            }
-                            Err(error) => Err(error.to_string()),
-                        }
-                    }
-                    Some(HostValue::File { .. }) => Err("file is not readable".to_owned()),
-                    _ => Err("File token is stale".to_owned()),
-                };
-                match read {
-                    Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
-                    Ok(Some(bytes)) => {
-                        let bytes =
-                            self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes));
-                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
-                            Box::new(bytes),
-                        ))))
-                    }
-                    Err(error) => Ok(self.fs_result_error(error)),
-                }
-            }
-            ("std.fs.File.write", [receiver, bytes]) => {
-                let bytes = self.bytes(bytes)?.to_vec();
-                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
-                    return Ok(self.fs_result_error(message));
-                }
-                let id = self.file_id(receiver)?;
-                let written = match self.values.get_mut(&id) {
-                    Some(HostValue::File { file, writable, .. }) if *writable => {
-                        file.write(&bytes).map_err(|error| error.to_string())
-                    }
-                    Some(HostValue::File { .. }) => Err("file is not writable".to_owned()),
-                    _ => Err("File token is stale".to_owned()),
-                };
-                match written {
-                    Ok(count) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
-                        i128::try_from(count).map_err(|_| {
-                            VmError::Host("write length does not fit in Int".into())
-                        })?,
-                    )))),
-                    Err(error) => Ok(self.fs_result_error(error)),
-                }
-            }
-            ("std.fs.File.flush", [receiver]) => {
-                let id = self.file_id(receiver)?;
-                let flushed = match self.values.get_mut(&id) {
-                    Some(HostValue::File { file, writable, .. }) if *writable => {
-                        file.flush().map_err(|error| error.to_string())
-                    }
-                    Some(HostValue::File { .. }) => Err("file is not writable".to_owned()),
-                    _ => Err("File token is stale".to_owned()),
-                };
-                match flushed {
-                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.fs_result_error(error)),
-                }
-            }
-            ("std.fs.Directory.list", [receiver]) => {
-                let (_id, base) = self.directory_path(receiver)?;
-                let mut entries = match std::fs::read_dir(&base) {
-                    Ok(entries) => entries.collect::<Result<Vec<_>, _>>(),
-                    Err(error) => Err(error),
-                };
-                let entries = match entries.as_mut() {
-                    Ok(entries) => entries,
-                    Err(error) => return Ok(self.fs_result_error(error.to_string())),
-                };
-                entries.sort_by(|left, right| {
-                    native_file_name_bytes(left).cmp(&native_file_name_bytes(right))
-                });
-                if entries.len() > 1_048_576 {
-                    return Ok(self.fs_result_error("directory entry limit exceeded"));
-                }
-                #[cfg(unix)]
-                let base_bytes = {
-                    use std::os::unix::ffi::OsStrExt;
-                    base.as_os_str().as_bytes().to_vec()
-                };
-                #[cfg(not(unix))]
-                let base_bytes = base.to_string_lossy().as_bytes().to_vec();
-                let mut output = Vec::with_capacity(entries.len());
-                let mut total_bytes = 0usize;
-                for entry in entries.iter() {
-                    let name = native_file_name_bytes(entry);
-                    let separator =
-                        usize::from(!base_bytes.is_empty() && !base_bytes.ends_with(b"/"));
-                    let length = base_bytes
-                        .len()
-                        .checked_add(separator)
-                        .and_then(|length| length.checked_add(name.len()))
-                        .ok_or_else(|| {
-                            VmError::Host("directory path length overflow".to_owned())
-                        })?;
-                    total_bytes = total_bytes.checked_add(length).ok_or_else(|| {
-                        VmError::Host("directory listing length overflow".to_owned())
-                    })?;
-                    if let Err(message) = self.ensure_bytes_len(total_bytes) {
-                        return Ok(self.fs_result_error(message));
-                    }
-                    let mut child = base_bytes.clone();
-                    if separator != 0 {
-                        child.push(b'/');
-                    }
-                    child.extend_from_slice(&name);
-                    let child = match path::Path::from_bytes(&child) {
-                        Ok(path) => path,
-                        Err(error) => return Ok(self.fs_result_error(format!("{error:?}"))),
-                    };
-                    output.push(self.allocate(RuntimeHostValueKind::Path, HostValue::Path(child)));
-                }
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
-                    output,
-                ))))
-            }
-            ("std.fs.readAll", [receiver]) => {
-                let path = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                match std::fs::read(path) {
-                    Ok(bytes) => {
-                        if let Err(message) = self.ensure_bytes_len(bytes.len()) {
-                            return Ok(self.fs_result_error(message));
-                        }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(bytes),
-                        ))))
-                    }
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.writeAll", [receiver, bytes]) => {
-                let path = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                let bytes = self.bytes(bytes)?.to_vec();
-                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
-                    return Ok(self.fs_result_error(message));
-                }
-                match std::fs::write(path, bytes) {
-                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.createDirectory", [receiver, RuntimeValue::Bool(parents)]) => {
-                let path = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                let result = if *parents {
-                    std::fs::create_dir_all(path)
-                } else {
-                    std::fs::create_dir(path)
-                };
-                match result {
-                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.remove", [receiver]) => {
-                let path = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                let result = match std::fs::symlink_metadata(&path) {
-                    Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path),
-                    Ok(_) => std::fs::remove_file(path),
-                    Err(error) => Err(error),
-                };
-                match result {
-                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.list", [receiver]) => {
-                let base = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                let mut entries = match std::fs::read_dir(&base) {
-                    Ok(entries) => entries.collect::<Result<Vec<_>, _>>(),
-                    Err(error) => Err(error),
-                };
-                let entries = match entries.as_mut() {
-                    Ok(entries) => entries,
-                    Err(error) => return Ok(self.fs_result_error(error.to_string())),
-                };
-                entries.sort_by(|left, right| {
-                    native_file_name_bytes(left).cmp(&native_file_name_bytes(right))
-                });
-                if entries.len() > 1_048_576 {
-                    return Ok(self.fs_result_error("directory entry limit exceeded"));
-                }
-                let base_bytes = self.path_bytes(receiver)?;
-                let mut output = Vec::with_capacity(entries.len());
-                let mut total_bytes = 0usize;
-                for entry in entries.iter() {
-                    let name = native_file_name_bytes(entry);
-                    let separator =
-                        usize::from(!base_bytes.is_empty() && !base_bytes.ends_with(b"/"));
-                    let length = base_bytes
-                        .len()
-                        .checked_add(separator)
-                        .and_then(|length| length.checked_add(name.len()))
-                        .ok_or_else(|| {
-                            VmError::Host("directory path length overflow".to_owned())
-                        })?;
-                    total_bytes = total_bytes.checked_add(length).ok_or_else(|| {
-                        VmError::Host("directory listing length overflow".to_owned())
-                    })?;
-                    if let Err(message) = self.ensure_bytes_len(total_bytes) {
-                        return Ok(self.fs_result_error(message));
-                    }
-                    let mut child = base_bytes.clone();
-                    if separator != 0 {
-                        child.push(b'/');
-                    }
-                    child.extend_from_slice(&name);
-                    let child = match path::Path::from_bytes(&child) {
-                        Ok(path) => path,
-                        Err(error) => return Ok(self.fs_result_error(format!("{error:?}"))),
-                    };
-                    output.push(self.allocate(RuntimeHostValueKind::Path, HostValue::Path(child)));
-                }
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
-                    output,
-                ))))
-            }
-            ("std.fs.rename", [from, to]) => {
-                let from = match self.filesystem_path(from) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                let to = match self.filesystem_path(to) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                match std::fs::rename(from, to) {
-                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
-            ("std.fs.atomicWrite", [receiver, bytes]) => {
-                let target = match self.filesystem_path(receiver) {
-                    Ok(path) => path,
-                    Err(error) => return Ok(self.fs_result_error(error)),
-                };
-                let bytes = self.bytes(bytes)?.to_vec();
-                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
-                    return Ok(self.fs_result_error(message));
-                }
-                let suffix = NEXT_ATOMIC_TEMP.fetch_add(1, Ordering::Relaxed);
-                let temporary =
-                    target.with_file_name(format!(".tondo-atomic-{}-{suffix}", std::process::id()));
-                let result = (|| -> io::Result<()> {
-                    let mut file = std::fs::OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&temporary)?;
-                    file.write_all(&bytes)?;
-                    file.flush()?;
-                    drop(file);
-                    std::fs::rename(&temporary, &target)
-                })();
-                if result.is_err() {
-                    let _ = std::fs::remove_file(&temporary);
-                }
-                match result {
-                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.fs_result_error(error.to_string())),
-                }
-            }
+            ("std.fs.OpenMode.Read", []) => Ok(Self::fs_mode_value(FsOpenMode::Read)),
+            ("std.fs.OpenMode.Write", []) => Ok(Self::fs_mode_value(FsOpenMode::Write)),
+            ("std.fs.OpenMode.ReadWrite", []) => Ok(Self::fs_mode_value(FsOpenMode::ReadWrite)),
+            ("std.fs.OpenMode.Append", []) => Ok(Self::fs_mode_value(FsOpenMode::Append)),
+            ("std.fs.OpenMode.Create", []) => Ok(Self::fs_mode_value(FsOpenMode::Create)),
+            ("std.fs.OpenMode.CreateNew", []) => Ok(Self::fs_mode_value(FsOpenMode::CreateNew)),
+            (name, _) if Self::is_filesystem_mutation(name) => self
+                .invoke_filesystem_mutation_admitted(
+                    name,
+                    arguments,
+                    response,
+                    &mut VmHostImportAdmission::disabled(),
+                ),
+            (name, _) if Self::is_file_operation(name) => self.invoke_file_admitted(
+                name,
+                arguments,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            ),
             ("std.text.String.empty", []) => Ok(RuntimeValue::String(String::new())),
             ("std.text.String.fromChars", [chars]) => {
                 let text = Self::array_chars(chars)?;
@@ -8608,14 +11063,50 @@ impl VmHost for BootstrapHost {
                     RuntimeValue::String(old),
                     RuntimeValue::String(new),
                 ],
-            ) => Ok(RuntimeValue::String(text.replace(old, new))),
+            ) => {
+                // Count non-overlapping matches, including the scalar
+                // boundaries matched by an empty needle, before allocating.
+                let mut previous = 0;
+                let mut length = 0_usize;
+                for (offset, matched) in text.match_indices(old) {
+                    length = length
+                        .checked_add(offset - previous)
+                        .and_then(|length| length.checked_add(new.len()))
+                        .ok_or(VmError::ResourceLimit {
+                            resource: "host text bytes",
+                            limit: self.max_bytes,
+                        })?;
+                    previous = offset + matched.len();
+                }
+                let length =
+                    length
+                        .checked_add(text.len() - previous)
+                        .ok_or(VmError::ResourceLimit {
+                            resource: "host text bytes",
+                            limit: self.max_bytes,
+                        })?;
+                let _memory = self.reserve_text_output(length)?;
+                let mut output = String::with_capacity(length);
+                let mut previous = 0;
+                for (offset, matched) in text.match_indices(old) {
+                    output.push_str(&text[previous..offset]);
+                    output.push_str(new);
+                    previous = offset + matched.len();
+                }
+                output.push_str(&text[previous..]);
+                Ok(RuntimeValue::String(output))
+            }
             ("std.text.String.trim", [RuntimeValue::String(text)]) => {
-                Ok(RuntimeValue::String(text.trim().to_owned()))
+                let trimmed = text.trim();
+                let _memory = self.reserve_text_output(trimmed.len())?;
+                Ok(RuntimeValue::String(trimmed.to_owned()))
             }
             ("std.text.String.toLowerAscii", [RuntimeValue::String(text)]) => {
+                let _memory = self.reserve_text_output(text.len())?;
                 Ok(RuntimeValue::String(text.to_ascii_lowercase()))
             }
             ("std.text.String.toUpperAscii", [RuntimeValue::String(text)]) => {
+                let _memory = self.reserve_text_output(text.len())?;
                 Ok(RuntimeValue::String(text.to_ascii_uppercase()))
             }
             ("std.testing.log", [RuntimeValue::String(message)]) => {
@@ -8624,97 +11115,132 @@ impl VmHost for BootstrapHost {
             }
             ("std.testing.assertEqual", [expected, actual]) => {
                 let envelope = self.testing_envelope()?;
-                let result = if expected == actual {
-                    Ok(())
+                if expected == actual {
+                    self.testing_result(&envelope, Ok(()))
                 } else {
-                    Err(ControlError::FailNow {
-                        message: format!(
+                    self.testing_assertion_failure(
+                        &envelope,
+                        format_args!(
                             "assertion failed: expected {}, actual {}",
-                            testing_value_text(expected),
-                            testing_value_text(actual)
+                            TestingValueText(expected),
+                            TestingValueText(actual)
                         ),
-                    })
-                };
-                self.testing_result(&envelope, result)
+                    )
+                }
             }
             ("std.testing.assertNotEqual", [expected, actual]) => {
                 let envelope = self.testing_envelope()?;
-                let result = if expected != actual {
-                    Ok(())
+                if expected != actual {
+                    self.testing_result(&envelope, Ok(()))
                 } else {
-                    Err(ControlError::FailNow {
-                        message: format!(
+                    self.testing_assertion_failure(
+                        &envelope,
+                        format_args!(
                             "assertion failed: values are equal ({})",
-                            testing_value_text(expected)
+                            TestingValueText(expected)
                         ),
-                    })
-                };
-                self.testing_result(&envelope, result)
+                    )
+                }
             }
             (
                 "std.testing.assertTextEqual",
                 [RuntimeValue::String(expected), RuntimeValue::String(actual)],
             ) => {
                 let envelope = self.testing_envelope()?;
-                let result = if expected == actual {
-                    Ok(())
+                if expected == actual {
+                    self.testing_result(&envelope, Ok(()))
                 } else {
-                    Err(ControlError::FailNow {
-                        message: format!(
-                            "text assertion failed\n{}",
-                            diff_text(expected, actual).render()
-                        ),
-                    })
-                };
-                self.testing_result(&envelope, result)
+                    let (diff, _diff_memory) = self.testing_diff(expected, actual)?;
+                    let prefix = "text assertion failed\n";
+                    let length = prefix.len() + diff.rendered_len();
+                    let _render_memory = self.reserve_buffer_payloads(std::iter::once(length))?;
+                    let mut message = String::with_capacity(length);
+                    message.push_str(prefix);
+                    diff.write_rendered(&mut message);
+                    self.testing_result(&envelope, Err(ControlError::FailNow { message }))
+                }
             }
             (
                 "std.testing.diffText",
                 [RuntimeValue::String(expected), RuntimeValue::String(actual)],
             ) => {
-                let diff = diff_text(expected, actual);
-                if let Err(message) = self.ensure_bytes_len(diff.render().len()) {
-                    return Err(VmError::Host(message));
-                }
-                Ok(self.allocate(RuntimeHostValueKind::TextDiff, HostValue::TextDiff(diff)))
+                let (diff, _memory) = self.testing_diff_record(expected, actual)?;
+                Ok(diff)
             }
-            ("std.testing.TextDiff.render", [value]) => {
-                let rendered = self.text_diff(value)?.render();
-                if let Err(message) = self.ensure_bytes_len(rendered.len()) {
-                    return Err(VmError::Host(message));
-                }
-                Ok(RuntimeValue::String(rendered))
-            }
+            ("std.testing.TextDiff.render", [value]) => self.render_testing_diff(value),
             ("std.testing.tempDirectory", [RuntimeValue::String(prefix)]) => {
                 if !Self::valid_temp_prefix(prefix) {
-                    return Ok(self.temp_result_error("temporary directory prefix is invalid"));
+                    return self.temp_result_error(TempError::InvalidPrefix);
                 }
-                let root = PathBuf::from("target").join(".tondo-test-root");
-                if let Err(error) = std::fs::create_dir_all(&root) {
-                    return Ok(self.temp_result_error(error.to_string()));
-                }
-                let nonce = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-                let name = if prefix.is_empty() {
-                    format!("tondo-{}-{nonce}", std::process::id())
-                } else {
-                    format!("{prefix}-{}-{nonce}", std::process::id())
+                let Some(root) = self.testing_temporary_root.as_deref() else {
+                    return self.temp_result_error(TempError::Unavailable);
                 };
+                if !root.is_absolute() {
+                    return self.temp_result_error(TempError::Unavailable);
+                }
+                if let Err(error) = crate::test_temporaries::verify_directory(root) {
+                    let cause = match error.kind() {
+                        io::ErrorKind::NotFound | io::ErrorKind::InvalidData => {
+                            TempError::Unavailable
+                        }
+                        _ => TempError::from_io(&error),
+                    };
+                    return self.temp_result_error(cause);
+                }
+                let prefix = if prefix.is_empty() { "tondo" } else { prefix };
+                // Reserve the owner, result and name scratch before consuming
+                // a nonce, copying a path or creating any filesystem entry.
+                let name_bytes = prefix.len() + 1 + 10 + 1 + 20;
+                let path_bytes = root.as_os_str().as_encoded_bytes().len() + 1 + name_bytes;
+                let mut memory = self.reserve_buffer_payloads(std::iter::once(path_bytes))?;
+                let _scratch = self.reserve_test_memory(
+                    2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + name_bytes as u64,
+                )?;
+                let nonce = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+                let name = format!("{prefix}-{}-{nonce}", std::process::id());
                 let directory = root.join(name);
-                match std::fs::create_dir(&directory) {
-                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                if let Err(error) = crate::test_temporaries::check_mutation(
+                    root,
+                    &directory,
+                    crate::test_temporaries::Mutation::CreateDirectory,
+                ) {
+                    return self.temp_result_error(TempError::from_io(&error));
+                }
+                if let Some(memory) = &mut memory {
+                    memory.resize(
+                        tondo_vm::runtime::TEST_HOST_BUFFER_BYTES
+                            + directory.as_os_str().as_encoded_bytes().len() as u64,
+                    )?;
+                }
+                match crate::test_temporaries::create_private_directory(&directory) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
                         RuntimeHostValueKind::TempDirectory,
                         HostValue::TempDirectory { path: directory },
+                        memory,
                     )))),
-                    Err(error) => Ok(self.temp_result_error(error.to_string())),
+                    Err(error) => {
+                        drop(memory);
+                        self.temp_result_error(TempError::from_io(&error))
+                    }
                 }
             }
             ("std.testing.TempDirectory.path", [value]) => {
                 let directory = self.temp_directory(value)?;
-                let bytes = directory.to_string_lossy().as_bytes().to_vec();
-                let path = path::Path::from_bytes(&bytes).map_err(|error| {
+                #[cfg(unix)]
+                let bytes = {
+                    use std::os::unix::ffi::OsStrExt;
+                    directory.as_os_str().as_bytes()
+                };
+                #[cfg(not(unix))]
+                let bytes = directory
+                    .to_str()
+                    .ok_or_else(|| VmError::Host("temporary path is not valid Unicode".into()))?
+                    .as_bytes();
+                let memory = self.reserve_buffer_payloads(std::iter::once(bytes.len()))?;
+                let path = path::Path::from_bytes(bytes).map_err(|error| {
                     VmError::Host(format!("temporary path is invalid: {error:?}"))
                 })?;
-                Ok(self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)))
+                Ok(self.publish_buffer(RuntimeHostValueKind::Path, HostValue::Path(path), memory))
             }
             ("std.testing.TempDirectory.cleanup", [value]) => {
                 let RuntimeValue::Host {
@@ -8725,22 +11251,24 @@ impl VmHost for BootstrapHost {
                     return Err(VmError::Host("TempDirectory value is invalid".into()));
                 };
                 let directory = self.temp_directory(value)?;
-                let mut entries = 0;
-                Self::remove_temp_tree(&directory, &mut entries).map_err(|error| {
+                let root = self.testing_temporary_root.as_deref().ok_or_else(|| {
+                    VmError::Host("temporary root provider is unavailable during cleanup".into())
+                })?;
+                crate::test_temporaries::cleanup_directory(root, directory).map_err(|error| {
                     VmError::Host(format!("temporary directory cleanup failed: {error}"))
                 })?;
                 self.values.remove(id);
+                self.buffer_memory.remove(id);
                 Ok(RuntimeValue::Unit)
             }
             ("std.testing.Generator.new", [RuntimeValue::Integer(seed)]) => {
-                let seed = match u64::try_from(*seed) {
-                    Ok(seed) => seed,
-                    Err(_) => return Ok(self.generation_result_error("seed is outside UInt64")),
-                };
-                Ok(self.allocate(
+                let seed = u64::try_from(*seed)
+                    .map_err(|_| VmError::Host("Generator.new seed is outside UInt64".into()))?;
+                self.allocate_buffer(
                     RuntimeHostValueKind::Generator,
                     HostValue::Generator(Generator::new(seed)),
-                ))
+                    0,
+                )
             }
             (
                 "std.testing.Generator.forCase",
@@ -8751,35 +11279,50 @@ impl VmHost for BootstrapHost {
             ) => {
                 let (Ok(seed), Ok(case_index)) = (u64::try_from(*seed), u64::try_from(*case_index))
                 else {
-                    return Ok(self.generation_result_error("seed or case index is outside UInt64"));
+                    return Err(VmError::Host(
+                        "Generator.forCase seed or case index is outside UInt64".into(),
+                    ));
                 };
-                Ok(self.allocate(
+                self.allocate_buffer(
                     RuntimeHostValueKind::Generator,
                     HostValue::Generator(Generator::for_case(seed, case_index)),
-                ))
+                    0,
+                )
             }
             ("std.testing.Generator.id", [generator]) => {
+                let _memory =
+                    self.reserve_test_memory(crate::test_limits::GENERATION_ID_RECORD_BYTES)?;
                 let id = self.generator_mut(generator)?.id();
-                Ok(self.allocate(
-                    RuntimeHostValueKind::GenerationId,
-                    HostValue::GenerationId {
-                        seed: id.seed,
-                        case_index: id.case_index,
-                    },
-                ))
+                Ok(RuntimeValue::Record {
+                    name: "GenerationId".into(),
+                    values: vec![
+                        RuntimeValue::Integer(i128::from(id.seed)),
+                        RuntimeValue::Integer(i128::from(id.case_index)),
+                    ],
+                })
             }
             ("std.testing.Generator.nextUInt", [generator]) => {
+                let result_memory =
+                    self.reserve_test_memory(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)?;
                 match self.generator_mut(generator)?.next_u64() {
                     Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
                         i128::from(value),
                     )))),
-                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+                    Err(error) => {
+                        drop(result_memory);
+                        self.generation_result_error(error)
+                    }
                 }
             }
             ("std.testing.Generator.nextBool", [generator]) => {
+                let result_memory =
+                    self.reserve_test_memory(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)?;
                 match self.generator_mut(generator)?.next_bool() {
                     Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(value)))),
-                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+                    Err(error) => {
+                        drop(result_memory);
+                        self.generation_result_error(error)
+                    }
                 }
             }
             (
@@ -8789,51 +11332,98 @@ impl VmHost for BootstrapHost {
                     RuntimeValue::Integer(minimum),
                     RuntimeValue::Integer(maximum),
                 ],
-            ) => match self.generator_mut(generator)?.next_int(*minimum, *maximum) {
-                Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
-                    value,
-                )))),
-                Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
-            },
+            ) => {
+                let _result =
+                    self.reserve_test_memory(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)?;
+                match self.generator_mut(generator)?.next_int(*minimum, *maximum) {
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                        value,
+                    )))),
+                    Err(error) => {
+                        drop(_result);
+                        self.generation_result_error(error)
+                    }
+                }
+            }
             ("std.testing.Generator.nextBytes", [generator, RuntimeValue::Integer(maximum)]) => {
                 let Ok(maximum) = usize::try_from(*maximum) else {
-                    return Ok(self.generation_result_error("maximum length is invalid"));
+                    return self.generation_result_error(if *maximum < 0 {
+                        GenerationError::InvalidBounds
+                    } else {
+                        GenerationError::LimitExceeded
+                    });
                 };
+                let capacity = match self
+                    .generator_mut(generator)?
+                    .planned_buffer_capacity(maximum)
+                {
+                    Ok(capacity) => capacity,
+                    Err(error) => return self.generation_result_error(error),
+                };
+                let result_memory =
+                    self.reserve_test_memory(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)?;
+                let memory = self.reserve_buffer_payloads(std::iter::once(capacity))?;
+                // The phase quota is runner control. It must precede the
+                // ordinary hosted byte cap, whose language error is catchable.
+                if self.ensure_bytes_len(capacity).is_err() {
+                    drop(memory);
+                    drop(result_memory);
+                    return self.generation_result_error(GenerationError::LimitExceeded);
+                }
                 match self.generator_mut(generator)?.next_bytes(maximum) {
-                    Ok(value) => {
-                        if let Err(message) = self.ensure_bytes_len(value.len()) {
-                            return Ok(self.generation_result_error(message));
-                        }
-                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                            RuntimeHostValueKind::Bytes,
-                            HostValue::Bytes(value),
-                        ))))
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
+                        RuntimeHostValueKind::Bytes,
+                        HostValue::Bytes(value),
+                        memory,
+                    )))),
+                    Err(error) => {
+                        drop(memory);
+                        drop(result_memory);
+                        self.generation_result_error(error)
                     }
-                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
                 }
             }
             ("std.testing.Generator.nextText", [generator, RuntimeValue::Integer(maximum)]) => {
                 let Ok(maximum) = usize::try_from(*maximum) else {
-                    return Ok(self.generation_result_error("maximum length is invalid"));
+                    return self.generation_result_error(if *maximum < 0 {
+                        GenerationError::InvalidBounds
+                    } else {
+                        GenerationError::LimitExceeded
+                    });
                 };
+                let capacity = match self
+                    .generator_mut(generator)?
+                    .planned_buffer_capacity(maximum)
+                {
+                    Ok(capacity) => capacity,
+                    Err(error) => return self.generation_result_error(error),
+                };
+                let _memory = self.reserve_test_memory(
+                    capacity as u64 + 2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES,
+                )?;
                 match self.generator_mut(generator)?.next_text(maximum) {
                     Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(
                         value,
                     )))),
-                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+                    Err(error) => {
+                        drop(_memory);
+                        self.generation_result_error(error)
+                    }
                 }
             }
             ("std.testing.Generator.drawCount", [generator]) => Ok(RuntimeValue::Integer(
                 i128::from(self.generator_mut(generator)?.draw_count()),
             )),
-            ("std.testing.shrink", [value]) => {
-                let candidates = match shrink_runtime_value(value, MAX_SHRINK_CANDIDATES, 0) {
-                    Ok(candidates) => candidates,
-                    Err(message) => return Ok(self.generation_result_error(message)),
+            ("std.testing.shrink", [value]) => self.testing_shrink(value, MAX_SHRINK_CANDIDATES),
+            ("std.testing.Shrink.candidates", [value, RuntimeValue::Integer(limit)]) => {
+                let Ok(limit) = usize::try_from(*limit) else {
+                    return self.generation_result_error(if *limit < 0 {
+                        GenerationError::InvalidBounds
+                    } else {
+                        GenerationError::LimitExceeded
+                    });
                 };
-                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
-                    candidates,
-                ))))
+                self.testing_shrink(value, limit)
             }
             ("std.testing.assertSome", [RuntimeValue::OptionSome(value)]) => Ok((**value).clone()),
             ("std.testing.assertSome", [RuntimeValue::OptionNone]) => {
@@ -8848,52 +11438,54 @@ impl VmHost for BootstrapHost {
             ("std.testing.assertNone", [RuntimeValue::OptionNone]) => Ok(RuntimeValue::Unit),
             ("std.testing.assertNone", [RuntimeValue::OptionSome(value)]) => {
                 let envelope = self.testing_envelope()?;
-                self.testing_result(
+                self.testing_assertion_failure(
                     &envelope,
-                    Err(ControlError::FailNow {
-                        message: format!(
-                            "assertion failed: expected None, got Some({})",
-                            testing_value_text(value)
-                        ),
-                    }),
+                    format_args!(
+                        "assertion failed: expected None, got Some({})",
+                        TestingValueText(value)
+                    ),
                 )
             }
             ("std.testing.assertOk", [RuntimeValue::ResultOk(value)]) => Ok((**value).clone()),
             ("std.testing.assertOk", [RuntimeValue::ResultErr(error)]) => {
                 let envelope = self.testing_envelope()?;
-                self.testing_result(
+                self.testing_assertion_failure(
                     &envelope,
-                    Err(ControlError::FailNow {
-                        message: format!(
-                            "assertion failed: expected Ok, got Err({})",
-                            testing_value_text(error)
-                        ),
-                    }),
+                    format_args!(
+                        "assertion failed: expected Ok, got Err({})",
+                        TestingValueText(error)
+                    ),
                 )
             }
             ("std.testing.assertErr", [RuntimeValue::ResultErr(error)]) => Ok((**error).clone()),
             ("std.testing.assertErr", [RuntimeValue::ResultOk(value)]) => {
                 let envelope = self.testing_envelope()?;
-                self.testing_result(
+                self.testing_assertion_failure(
                     &envelope,
-                    Err(ControlError::FailNow {
-                        message: format!(
-                            "assertion failed: expected Err, got Ok({})",
-                            testing_value_text(value)
-                        ),
-                    }),
+                    format_args!(
+                        "assertion failed: expected Err, got Ok({})",
+                        TestingValueText(value)
+                    ),
                 )
             }
             (
                 "std.testing.FloatTolerance.from",
                 [RuntimeValue::Float(absolute), RuntimeValue::Float(relative)],
-            ) => match FloatTolerance::new(*absolute, *relative) {
-                Ok(tolerance) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::FloatTolerance,
-                    HostValue::FloatTolerance(tolerance),
-                )))),
-                Err(error) => Ok(self.float_tolerance_result_error(format!("{error:?}"))),
-            },
+            ) => {
+                let _result =
+                    self.reserve_test_memory(2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES)?;
+                match FloatTolerance::new(*absolute, *relative) {
+                    Ok(tolerance) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate_buffer(
+                        RuntimeHostValueKind::FloatTolerance,
+                        HostValue::FloatTolerance(tolerance),
+                        0,
+                    )?))),
+                    Err(error) => {
+                        drop(_result);
+                        self.float_tolerance_result_error(error)
+                    }
+                }
+            }
             (
                 "std.testing.assertFloatNear",
                 [
@@ -9135,10 +11727,7 @@ impl VmHost for BootstrapHost {
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(value))))
             }
             ("std.time.Timer.after", [delay]) => match self.timer_deadline_value(delay) {
-                Ok(deadline) => match self.allocate_timer(deadline) {
-                    Ok(timer) => Ok(RuntimeValue::ResultOk(Box::new(timer))),
-                    Err(error) => Ok(error),
-                },
+                Ok(deadline) => self.allocate_timer(deadline),
                 Err(error) => Ok(error),
             },
             ("std.time.Timer.at", [instant]) => {
@@ -9146,10 +11735,7 @@ impl VmHost for BootstrapHost {
                 if domain != self.clock_domain {
                     return Ok(self.clock_result_error("instant belongs to another clock domain"));
                 }
-                match self.allocate_timer(deadline) {
-                    Ok(timer) => Ok(RuntimeValue::ResultOk(Box::new(timer))),
-                    Err(error) => Ok(error),
-                }
+                self.allocate_timer(deadline)
             }
             ("std.time.Timer.cancel", [timer]) => {
                 let (domain, _) = self.timer(timer)?;
@@ -9165,10 +11751,7 @@ impl VmHost for BootstrapHost {
                 self.release_time_resource();
                 Ok(RuntimeValue::Unit)
             }
-            ("std.env.snapshot", []) => match self.environment_snapshot() {
-                Ok(snapshot) => Ok(RuntimeValue::ResultOk(Box::new(snapshot))),
-                Err(error) => Ok(error),
-            },
+            ("std.env.snapshot", []) => self.environment_snapshot(),
             ("std.env.Name.fromText", [RuntimeValue::String(text)]) => {
                 let bytes = text.as_bytes().to_vec();
                 if !Self::valid_environment_name(&bytes) {
@@ -9177,10 +11760,9 @@ impl VmHost for BootstrapHost {
                 if let Err(message) = self.ensure_bytes_len(bytes.len()) {
                     return Ok(self.env_result_error(message));
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::EnvName,
-                    HostValue::EnvName(bytes),
-                ))))
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_environment_name(bytes)?,
+                )))
             }
             ("std.env.Name.fromBytes", [bytes]) => {
                 let bytes = self.bytes(bytes)?.to_vec();
@@ -9190,36 +11772,28 @@ impl VmHost for BootstrapHost {
                 if let Err(message) = self.ensure_bytes_len(bytes.len()) {
                     return Ok(self.env_result_error(message));
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::EnvName,
-                    HostValue::EnvName(bytes),
-                ))))
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_environment_name(bytes)?,
+                )))
             }
             ("std.env.Snapshot.arguments", [snapshot]) => {
-                let snapshot = self.environment_snapshot_data(snapshot)?;
-                Ok(RuntimeValue::Array(
-                    snapshot
-                        .arguments
-                        .into_iter()
-                        .map(|bytes| {
-                            self.allocate(
-                                RuntimeHostValueKind::EnvValue,
-                                HostValue::EnvValue(bytes),
-                            )
-                        })
-                        .collect(),
-                ))
+                Ok(RuntimeValue::Array(self.environment_arguments(snapshot)?))
             }
             ("std.env.Snapshot.get", [snapshot, name]) => {
                 let snapshot = self.environment_snapshot_data(snapshot)?;
                 let name = self.environment_name(name)?;
                 match snapshot.entries.get(&name) {
-                    Some(bytes) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
-                        Box::new(self.allocate(
-                            RuntimeHostValueKind::EnvValue,
-                            HostValue::EnvValue(bytes.clone()),
-                        )),
-                    )))),
+                    Some(bytes) => {
+                        let memory = self.reserve_buffer_payloads(std::iter::once(bytes.len()))?;
+                        let bytes = bytes.clone();
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
+                            Box::new(self.publish_buffer(
+                                RuntimeHostValueKind::EnvValue,
+                                HostValue::EnvValue(bytes),
+                                memory,
+                            )),
+                        ))))
+                    }
                     None => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
                 }
             }
@@ -9234,34 +11808,31 @@ impl VmHost for BootstrapHost {
                 if let Err(message) = self.ensure_bytes_len(bytes.len()) {
                     return Err(VmError::Host(message));
                 }
-                Ok(self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes)))
+                Ok(self.allocate_bytes(bytes)?)
             }
             ("std.bytes.empty", []) => Ok(RuntimeValue::ResultOk(Box::new(
-                self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(Vec::new())),
+                self.allocate_bytes(Vec::new())?,
             ))),
             ("intrinsic.Bytes.fromString", [RuntimeValue::String(text)]) => {
                 if let Err(message) = self.ensure_bytes_len(text.len()) {
                     return Ok(self.bytes_result_error(message));
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(text.as_bytes().to_vec()),
-                ))))
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_bytes(text.as_bytes().to_vec())?,
+                )))
             }
             ("std.bytes.fromArray", [array]) => {
                 let bytes = Self::array_bytes(array)?;
                 if let Err(message) = self.ensure_bytes_len(bytes.len()) {
                     return Ok(self.bytes_result_error(message));
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(bytes),
-                ))))
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_bytes(bytes)?,
+                )))
             }
-            ("std.bytes.builder", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                RuntimeHostValueKind::BytesBuilder,
-                HostValue::BytesBuilder(Vec::new()),
-            )))),
+            ("std.bytes.builder", []) => Ok(RuntimeValue::ResultOk(Box::new(
+                self.allocate_builder(RuntimeHostValueKind::BytesBuilder)?,
+            ))),
             ("std.bytes.Bytes.length", [receiver]) => Ok(RuntimeValue::Integer(
                 i128::try_from(self.bytes(receiver)?.len())
                     .map_err(|_| VmError::Host("Bytes length does not fit in Int".into()))?,
@@ -9298,10 +11869,9 @@ impl VmHost for BootstrapHost {
                         bytes.len()
                     )));
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(bytes[start..end].to_vec()),
-                ))))
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_bytes(bytes[start..end].to_vec())?,
+                )))
             }
             ("std.bytes.Bytes.toArray", [receiver]) => {
                 let bytes = self.bytes(receiver)?.to_vec();
@@ -9347,6 +11917,7 @@ impl VmHost for BootstrapHost {
                 if let Err(message) = self.ensure_bytes_len(length) {
                     return Ok(self.bytes_result_error(message));
                 }
+                self.reserve_buffer_growth(receiver, length)?;
                 self.builder_mut(receiver)?.push(*byte);
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
@@ -9359,6 +11930,7 @@ impl VmHost for BootstrapHost {
                 if let Err(message) = self.ensure_bytes_len(length) {
                     return Ok(self.bytes_result_error(message));
                 }
+                self.reserve_buffer_growth(receiver, length)?;
                 self.builder_mut(receiver)?.extend_from_slice(&appended);
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
@@ -9371,20 +11943,19 @@ impl VmHost for BootstrapHost {
                 if let Err(message) = self.ensure_bytes_len(length) {
                     return Ok(self.bytes_result_error(message));
                 }
+                self.reserve_buffer_growth(receiver, length)?;
                 self.builder_mut(receiver)?.extend_from_slice(&appended);
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
             ("std.bytes.BytesBuilder.finish", [receiver]) => {
                 let bytes = self.builder(receiver)?.to_vec();
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(bytes),
-                ))))
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_bytes(bytes)?,
+                )))
             }
-            ("std.format.Builder.new", []) => Ok(self.allocate(
-                RuntimeHostValueKind::FormatBuilder,
-                HostValue::FormatBuilder(Vec::new()),
-            )),
+            ("std.format.Builder.new", []) => {
+                self.allocate_builder(RuntimeHostValueKind::FormatBuilder)
+            }
             ("std.format.Builder.append", [receiver, RuntimeValue::String(text)]) => {
                 let current = self.format_builder(receiver)?.len();
                 let Some(length) = current.checked_add(text.len()) else {
@@ -9393,6 +11964,7 @@ impl VmHost for BootstrapHost {
                 if let Err(message) = self.ensure_bytes_len(length) {
                     return Ok(self.format_result_error(message));
                 }
+                self.reserve_buffer_growth(receiver, length)?;
                 self.format_builder_mut(receiver)?
                     .extend_from_slice(text.as_bytes());
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
@@ -9566,18 +12138,15 @@ impl VmHost for BootstrapHost {
             }
             ("std.process.ProcessOutput.stdout", [receiver]) => {
                 let output = self.output(receiver)?;
-                Ok(self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output.stdout)))
+                Ok(self.allocate_bytes(output.stdout)?)
             }
             ("std.process.ProcessOutput.stderr", [receiver]) => {
                 let output = self.output(receiver)?;
-                Ok(self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output.stderr)))
+                Ok(self.allocate_bytes(output.stderr)?)
             }
             ("std.process.ProcessOutput.combined", [receiver]) => {
                 let output = self.output(receiver)?;
-                Ok(self.allocate(
-                    RuntimeHostValueKind::Bytes,
-                    HostValue::Bytes(output.combined),
-                ))
+                Ok(self.allocate_bytes(output.combined)?)
             }
             ("std.process.ProcessOutput.statuses", [receiver]) => {
                 let output = self.output(receiver)?;
@@ -9611,60 +12180,75 @@ impl VmHost for BootstrapHost {
                     values: Vec::new(),
                 })
             }
-            ("std.sync.Array.__iterStart", [receiver]) => {
-                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")
-            }
+            ("std.sync.Array.__iterStart", [receiver]) => self.sync_cursor_start(
+                receiver,
+                RuntimeHostValueKind::SyncArray,
+                "sync.Array",
+                response,
+            ),
             ("std.sync.Array.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
                 receiver,
                 cutoff,
                 last,
-                RuntimeHostValueKind::SyncArray,
-                "sync.Array",
+                (RuntimeHostValueKind::SyncArray, "sync.Array"),
                 false,
+                response,
             ),
-            ("std.sync.Map.__iterStart", [receiver]) => {
-                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")
-            }
+            ("std.sync.Map.__iterStart", [receiver]) => self.sync_cursor_start(
+                receiver,
+                RuntimeHostValueKind::SyncMap,
+                "sync.Map",
+                response,
+            ),
             ("std.sync.Map.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
                 receiver,
                 cutoff,
                 last,
-                RuntimeHostValueKind::SyncMap,
-                "sync.Map",
+                (RuntimeHostValueKind::SyncMap, "sync.Map"),
                 false,
+                response,
             ),
-            ("std.sync.Set.__iterStart", [receiver]) => {
-                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")
-            }
+            ("std.sync.Set.__iterStart", [receiver]) => self.sync_cursor_start(
+                receiver,
+                RuntimeHostValueKind::SyncSet,
+                "sync.Set",
+                response,
+            ),
             ("std.sync.Set.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
                 receiver,
                 cutoff,
                 last,
-                RuntimeHostValueKind::SyncSet,
-                "sync.Set",
+                (RuntimeHostValueKind::SyncSet, "sync.Set"),
                 false,
+                response,
             ),
-            ("std.sync.Stack.__iterStart", [receiver]) => {
-                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")
-            }
+            ("std.sync.Stack.__iterStart", [receiver]) => self.sync_cursor_start(
+                receiver,
+                RuntimeHostValueKind::SyncStack,
+                "sync.Stack",
+                response,
+            ),
             ("std.sync.Stack.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
                 receiver,
                 cutoff,
                 last,
-                RuntimeHostValueKind::SyncStack,
-                "sync.Stack",
+                (RuntimeHostValueKind::SyncStack, "sync.Stack"),
                 true,
+                response,
             ),
-            ("std.sync.Queue.__iterStart", [receiver]) => {
-                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")
-            }
+            ("std.sync.Queue.__iterStart", [receiver]) => self.sync_cursor_start(
+                receiver,
+                RuntimeHostValueKind::SyncQueue,
+                "sync.Queue",
+                response,
+            ),
             ("std.sync.Queue.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
                 receiver,
                 cutoff,
                 last,
-                RuntimeHostValueKind::SyncQueue,
-                "sync.Queue",
+                (RuntimeHostValueKind::SyncQueue, "sync.Queue"),
                 false,
+                response,
             ),
             ("std.sync.Array.literal", values) => {
                 if values.len() as u64 > self.max_bytes {
@@ -9672,40 +12256,78 @@ impl VmHost for BootstrapHost {
                         "sync.Array literal exceeds the configured collection limit".into(),
                     ));
                 }
-                Ok(self.allocate(
+                response.reserve(32, [])?;
+                let memory = self.reserve_sync_payloads(values, values.len())?;
+                Ok(self.publish_buffer(
                     RuntimeHostValueKind::SyncArray,
                     HostValue::SyncArray(values.to_vec()),
+                    memory,
                 ))
             }
             ("std.sync.Map.literal", values) if values.len().is_multiple_of(2) => {
-                let mut entries = Vec::with_capacity(values.len() / 2);
-                for pair in values.chunks_exact(2) {
-                    if let Some(index) = entries.iter().position(|(key, _)| key == &pair[0]) {
-                        entries[index].1 = pair[1].clone();
-                    } else {
-                        entries.push((pair[0].clone(), pair[1].clone()));
-                    }
-                }
-                if entries.len() as u64 > self.max_bytes {
+                // Preserve the first key position and last value without a
+                // size-dependent temporary index before storage admission.
+                let entries = || {
+                    values
+                        .chunks_exact(2)
+                        .enumerate()
+                        .filter_map(|(index, pair)| {
+                            if values[..index * 2]
+                                .chunks_exact(2)
+                                .any(|earlier| earlier[0] == pair[0])
+                            {
+                                return None;
+                            }
+                            let last = values[index * 2 + 2..]
+                                .chunks_exact(2)
+                                .rev()
+                                .find(|candidate| candidate[0] == pair[0])
+                                .unwrap_or(pair);
+                            Some((&pair[0], &last[1]))
+                        })
+                };
+                let length = entries().count();
+                if length as u64 > self.max_bytes {
                     return Err(VmError::Host(
                         "sync.Map literal exceeds the configured collection limit".into(),
                     ));
                 }
-                Ok(self.allocate(RuntimeHostValueKind::SyncMap, HostValue::SyncMap(entries)))
+                response.reserve(32, [])?;
+                let memory = self.reserve_sync_payloads(
+                    entries().flat_map(|(key, value)| [key, value]),
+                    length,
+                )?;
+                let entries = entries()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
+                Ok(self.publish_buffer(
+                    RuntimeHostValueKind::SyncMap,
+                    HostValue::SyncMap(entries),
+                    memory,
+                ))
             }
             ("std.sync.Set.literal", values) => {
-                let mut unique = Vec::with_capacity(values.len());
-                for value in values {
-                    if !unique.contains(value) {
-                        unique.push(value.clone());
-                    }
-                }
-                if unique.len() as u64 > self.max_bytes {
+                let unique = || {
+                    values
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, value)| !values[..*index].contains(value))
+                        .map(|(_, value)| value)
+                };
+                let length = unique().count();
+                if length as u64 > self.max_bytes {
                     return Err(VmError::Host(
                         "sync.Set literal exceeds the configured collection limit".into(),
                     ));
                 }
-                Ok(self.allocate(RuntimeHostValueKind::SyncSet, HostValue::SyncSet(unique)))
+                response.reserve(32, [])?;
+                let memory = self.reserve_sync_payloads(unique(), length)?;
+                let unique = unique().cloned().collect();
+                Ok(self.publish_buffer(
+                    RuntimeHostValueKind::SyncSet,
+                    HostValue::SyncSet(unique),
+                    memory,
+                ))
             }
             ("std.sync.Stack.literal", values) => {
                 if values.len() as u64 > self.max_bytes {
@@ -9713,9 +12335,12 @@ impl VmHost for BootstrapHost {
                         "sync.Stack literal exceeds the configured collection limit".into(),
                     ));
                 }
-                Ok(self.allocate(
+                response.reserve(32, [])?;
+                let memory = self.reserve_sync_payloads(values, values.len())?;
+                Ok(self.publish_buffer(
                     RuntimeHostValueKind::SyncStack,
                     HostValue::SyncStack(values.to_vec()),
+                    memory,
                 ))
             }
             ("std.sync.Queue.literal", values) => {
@@ -9724,9 +12349,12 @@ impl VmHost for BootstrapHost {
                         "sync.Queue literal exceeds the configured collection limit".into(),
                     ));
                 }
-                Ok(self.allocate(
+                response.reserve(32, [])?;
+                let memory = self.reserve_sync_payloads(values, values.len())?;
+                Ok(self.publish_buffer(
                     RuntimeHostValueKind::SyncQueue,
                     HostValue::SyncQueue(values.iter().cloned().collect()),
+                    memory,
                 ))
             }
             ("std.sync.Array.length", [receiver]) => {
@@ -9755,25 +12383,35 @@ impl VmHost for BootstrapHost {
                     return Ok(RuntimeValue::OptionNone);
                 };
                 match self.values.get(&id) {
-                    Some(HostValue::SyncArray(values)) => Ok(values
-                        .get(index)
-                        .cloned()
-                        .map(|value| RuntimeValue::OptionSome(Box::new(value)))
-                        .unwrap_or(RuntimeValue::OptionNone)),
+                    Some(HostValue::SyncArray(values)) => {
+                        response.reserve(32, values.get(index))?;
+                        Ok(values
+                            .get(index)
+                            .cloned()
+                            .map_or(RuntimeValue::OptionNone, |value| {
+                                RuntimeValue::OptionSome(Box::new(value))
+                            }))
+                    }
                     _ => Err(VmError::Host("sync.Array token is stale or invalid".into())),
                 }
             }
             ("std.sync.Array.set", [receiver, RuntimeValue::Integer(index), value]) => {
-                let id =
-                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
-                let Some(index) = usize::try_from(*index).ok() else {
+                let Some((id, index)) = self.sync_array_index(receiver, *index)? else {
+                    response.reserve(64, [])?;
                     return Ok(self.collection_result_error("sync.Array index is invalid"));
                 };
                 let previous = match self.values.get_mut(&id) {
                     Some(HostValue::SyncArray(values)) => {
-                        let Some(slot) = values.get_mut(index) else {
-                            return Ok(self.collection_result_error("sync.Array index is invalid"));
-                        };
+                        let slot = &mut values[index];
+                        response.reserve(32, [&*slot])?;
+                        Self::resize_sync_payload(
+                            &mut self.buffer_memory,
+                            id,
+                            [&*slot],
+                            [value],
+                            0,
+                            0,
+                        )?;
                         std::mem::replace(slot, value.clone())
                     }
                     _ => return Err(VmError::Host("sync.Array token is stale or invalid".into())),
@@ -9794,12 +12432,19 @@ impl VmHost for BootstrapHost {
                         let Some(slot) = values.get_mut(index) else {
                             return Ok(self.collection_result_error("sync.Array index is invalid"));
                         };
-                        let observed = slot.clone();
-                        if observed == *expected {
-                            *slot = desired.clone();
-                            (0, observed)
+                        response.reserve(64 + "CompareExchange".len() as u64, [&*slot])?;
+                        if *slot == *expected {
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [&*slot],
+                                [desired],
+                                0,
+                                0,
+                            )?;
+                            (0, std::mem::replace(slot, desired.clone()))
                         } else {
-                            (1, observed)
+                            (1, slot.clone())
                         }
                     }
                     _ => return Err(VmError::Host("sync.Array token is stale or invalid".into())),
@@ -9814,14 +12459,18 @@ impl VmHost for BootstrapHost {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
                 let values: Vec<RuntimeValue> = match self.values.get(&id) {
-                    Some(HostValue::SyncArray(values)) => values.clone(),
+                    Some(HostValue::SyncArray(values)) => {
+                        if values.len() as u64 > self.max_bytes {
+                            response.reserve(64, [])?;
+                            return Ok(self.collection_result_error(
+                                "sync.Array snapshot exceeds the configured collection limit",
+                            ));
+                        }
+                        response.reserve(64, values)?;
+                        values.clone()
+                    }
                     _ => return Err(VmError::Host("sync.Array token is stale or invalid".into())),
                 };
-                if values.len() as u64 > self.max_bytes {
-                    return Ok(self.collection_result_error(
-                        "sync.Array snapshot exceeds the configured collection limit",
-                    ));
-                }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
                     values,
                 ))))
@@ -9846,11 +12495,16 @@ impl VmHost for BootstrapHost {
             ("std.sync.Map.get", [receiver, key]) => {
                 let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
                 match self.values.get(&id) {
-                    Some(HostValue::SyncMap(entries)) => Ok(entries
-                        .iter()
-                        .find(|(entry_key, _)| entry_key == key)
-                        .map(|(_, value)| RuntimeValue::OptionSome(Box::new(value.clone())))
-                        .unwrap_or(RuntimeValue::OptionNone)),
+                    Some(HostValue::SyncMap(entries)) => {
+                        let value = entries
+                            .iter()
+                            .find(|(entry_key, _)| entry_key == key)
+                            .map(|(_, value)| value);
+                        response.reserve(32, value)?;
+                        Ok(value.map_or(RuntimeValue::OptionNone, |value| {
+                            RuntimeValue::OptionSome(Box::new(value.clone()))
+                        }))
+                    }
                     _ => Err(VmError::Host("sync.Map token is stale or invalid".into())),
                 }
             }
@@ -9870,6 +12524,15 @@ impl VmHost for BootstrapHost {
                         if let Some(index) =
                             entries.iter().position(|(entry_key, _)| entry_key == key)
                         {
+                            response.reserve(64, [&entries[index].1])?;
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [&entries[index].1],
+                                [value],
+                                0,
+                                0,
+                            )?;
                             Some(std::mem::replace(&mut entries[index].1, value.clone()))
                         } else {
                             if entries.len() as u64 >= self.max_bytes {
@@ -9877,6 +12540,15 @@ impl VmHost for BootstrapHost {
                                     "sync.Map insert exceeds the configured collection limit",
                                 ));
                             }
+                            response.reserve(64, [])?;
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [],
+                                [key, value],
+                                0,
+                                1,
+                            )?;
                             entries.push((key.clone(), value.clone()));
                             None
                         }
@@ -9897,6 +12569,17 @@ impl VmHost for BootstrapHost {
                 let (removed_index, previous) = match self.values.get_mut(&id) {
                     Some(HostValue::SyncMap(entries)) => {
                         let index = entries.iter().position(|(entry_key, _)| entry_key == key);
+                        response.reserve(32, index.map(|index| &entries[index].1))?;
+                        if let Some(index) = index {
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [&entries[index].0, &entries[index].1],
+                                [],
+                                1,
+                                0,
+                            )?;
+                        }
                         (index, index.map(|index| entries.remove(index).1))
                     }
                     _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
@@ -9915,6 +12598,20 @@ impl VmHost for BootstrapHost {
                 let (variant, observed) = match self.values.get_mut(&id) {
                     Some(HostValue::SyncMap(entries)) => {
                         let position = entries.iter().position(|(entry_key, _)| entry_key == key);
+                        if position.is_none()
+                            && matches!(expected, RuntimeValue::OptionNone)
+                            && matches!(desired, RuntimeValue::OptionSome(_))
+                            && entries.len() as u64 >= self.max_bytes
+                        {
+                            response.reserve(64, [])?;
+                            return Ok(self.collection_result_error(
+                                "sync.Map compareExchange exceeds the configured collection limit",
+                            ));
+                        }
+                        response.reserve(
+                            96 + "CompareExchange".len() as u64,
+                            position.map(|index| &entries[index].1),
+                        )?;
                         let observed = position.map_or(RuntimeValue::OptionNone, |index| {
                             RuntimeValue::OptionSome(Box::new(entries[index].1.clone()))
                         });
@@ -9922,19 +12619,38 @@ impl VmHost for BootstrapHost {
                             match desired {
                                 RuntimeValue::OptionNone => {
                                     if let Some(index) = position {
+                                        Self::resize_sync_payload(
+                                            &mut self.buffer_memory,
+                                            id,
+                                            [&entries[index].0, &entries[index].1],
+                                            [],
+                                            1,
+                                            0,
+                                        )?;
                                         entries.remove(index);
                                         removed_index = Some(index);
                                     }
                                 }
                                 RuntimeValue::OptionSome(value) => {
                                     if let Some(index) = position {
+                                        Self::resize_sync_payload(
+                                            &mut self.buffer_memory,
+                                            id,
+                                            [&entries[index].1],
+                                            [value.as_ref()],
+                                            0,
+                                            0,
+                                        )?;
                                         entries[index].1 = (**value).clone();
                                     } else {
-                                        if entries.len() as u64 >= self.max_bytes {
-                                            return Ok(self.collection_result_error(
-                                                "sync.Map compareExchange exceeds the configured collection limit",
-                                            ));
-                                        }
+                                        Self::resize_sync_payload(
+                                            &mut self.buffer_memory,
+                                            id,
+                                            [],
+                                            [key, value.as_ref()],
+                                            0,
+                                            1,
+                                        )?;
                                         entries.push((key.clone(), (**value).clone()));
                                         appended = true;
                                     }
@@ -9967,14 +12683,19 @@ impl VmHost for BootstrapHost {
             ("std.sync.Map.snapshot", [receiver]) => {
                 let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
                 let entries = match self.values.get(&id) {
-                    Some(HostValue::SyncMap(entries)) => entries.clone(),
+                    Some(HostValue::SyncMap(entries)) => {
+                        if entries.len() as u64 > self.max_bytes {
+                            response.reserve(64, [])?;
+                            return Ok(self.collection_result_error(
+                                "sync.Map snapshot exceeds the configured collection limit",
+                            ));
+                        }
+                        response
+                            .reserve(64, entries.iter().flat_map(|(key, value)| [key, value]))?;
+                        entries.clone()
+                    }
                     _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
                 };
-                if entries.len() as u64 > self.max_bytes {
-                    return Ok(self.collection_result_error(
-                        "sync.Map snapshot exceeds the configured collection limit",
-                    ));
-                }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Map(entries))))
             }
             ("std.sync.Set.length", [receiver]) => {
@@ -10015,6 +12736,14 @@ impl VmHost for BootstrapHost {
                                     "sync.Set insert exceeds the configured collection limit",
                                 ));
                             }
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [],
+                                [key],
+                                0,
+                                1,
+                            )?;
                             values.push(key.clone());
                             true
                         }
@@ -10032,7 +12761,18 @@ impl VmHost for BootstrapHost {
                 let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
                 let (removed_index, removed) = match self.values.get_mut(&id) {
                     Some(HostValue::SyncSet(values)) => {
+                        response.reserve(32, [])?;
                         let index = values.iter().position(|value| value == key);
+                        if let Some(index) = index {
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [&values[index]],
+                                [],
+                                1,
+                                0,
+                            )?;
+                        }
                         (
                             index,
                             index
@@ -10053,14 +12793,18 @@ impl VmHost for BootstrapHost {
             ("std.sync.Set.snapshot", [receiver]) => {
                 let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
                 let values: Vec<RuntimeValue> = match self.values.get(&id) {
-                    Some(HostValue::SyncSet(values)) => values.clone(),
+                    Some(HostValue::SyncSet(values)) => {
+                        if values.len() as u64 > self.max_bytes {
+                            response.reserve(64, [])?;
+                            return Ok(self.collection_result_error(
+                                "sync.Set snapshot exceeds the configured collection limit",
+                            ));
+                        }
+                        response.reserve(64, values)?;
+                        values.clone()
+                    }
                     _ => return Err(VmError::Host("sync.Set token is stale or invalid".into())),
                 };
-                if values.len() as u64 > self.max_bytes {
-                    return Ok(self.collection_result_error(
-                        "sync.Set snapshot exceeds the configured collection limit",
-                    ));
-                }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Set(values))))
             }
             ("std.sync.Stack.length", [receiver]) => {
@@ -10092,6 +12836,7 @@ impl VmHost for BootstrapHost {
                                 "sync.Stack push exceeds the configured collection limit",
                             ));
                         }
+                        Self::resize_sync_payload(&mut self.buffer_memory, id, [], [value], 0, 1)?;
                         values.push(value.clone());
                     }
                     _ => return Err(VmError::Host("sync.Stack token is stale or invalid".into())),
@@ -10103,7 +12848,20 @@ impl VmHost for BootstrapHost {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
                 let value = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncStack(values)) => values.pop(),
+                    Some(HostValue::SyncStack(values)) => {
+                        response.reserve(32, values.last())?;
+                        if let Some(value) = values.last() {
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [value],
+                                [],
+                                1,
+                                0,
+                            )?;
+                        }
+                        values.pop()
+                    }
                     _ => return Err(VmError::Host("sync.Stack token is stale or invalid".into())),
                 };
                 if value.is_some() {
@@ -10117,11 +12875,15 @@ impl VmHost for BootstrapHost {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
                 match self.values.get(&id) {
-                    Some(HostValue::SyncStack(values)) => Ok(values
-                        .last()
-                        .cloned()
-                        .map(|value| RuntimeValue::OptionSome(Box::new(value)))
-                        .unwrap_or(RuntimeValue::OptionNone)),
+                    Some(HostValue::SyncStack(values)) => {
+                        response.reserve(32, values.last())?;
+                        Ok(values
+                            .last()
+                            .cloned()
+                            .map_or(RuntimeValue::OptionNone, |value| {
+                                RuntimeValue::OptionSome(Box::new(value))
+                            }))
+                    }
                     _ => Err(VmError::Host("sync.Stack token is stale or invalid".into())),
                 }
             }
@@ -10129,14 +12891,18 @@ impl VmHost for BootstrapHost {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
                 let values: Vec<RuntimeValue> = match self.values.get(&id) {
-                    Some(HostValue::SyncStack(values)) => values.iter().rev().cloned().collect(),
+                    Some(HostValue::SyncStack(values)) => {
+                        if values.len() as u64 > self.max_bytes {
+                            response.reserve(64, [])?;
+                            return Ok(self.collection_result_error(
+                                "sync.Stack snapshot exceeds the configured collection limit",
+                            ));
+                        }
+                        response.reserve(64, values)?;
+                        values.iter().rev().cloned().collect()
+                    }
                     _ => return Err(VmError::Host("sync.Stack token is stale or invalid".into())),
                 };
-                if values.len() as u64 > self.max_bytes {
-                    return Ok(self.collection_result_error(
-                        "sync.Stack snapshot exceeds the configured collection limit",
-                    ));
-                }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
                     values,
                 ))))
@@ -10170,6 +12936,7 @@ impl VmHost for BootstrapHost {
                                 "sync.Queue enqueue exceeds the configured collection limit",
                             ));
                         }
+                        Self::resize_sync_payload(&mut self.buffer_memory, id, [], [value], 0, 1)?;
                         values.push_back(value.clone());
                     }
                     _ => return Err(VmError::Host("sync.Queue token is stale or invalid".into())),
@@ -10181,7 +12948,20 @@ impl VmHost for BootstrapHost {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
                 let value = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncQueue(values)) => Ok(values.pop_front()),
+                    Some(HostValue::SyncQueue(values)) => {
+                        response.reserve(32, values.front())?;
+                        if let Some(value) = values.front() {
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [value],
+                                [],
+                                1,
+                                0,
+                            )?;
+                        }
+                        Ok(values.pop_front())
+                    }
                     _ => Err(VmError::Host("sync.Queue token is stale or invalid".into())),
                 }?;
                 if value.is_some() {
@@ -10195,11 +12975,15 @@ impl VmHost for BootstrapHost {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
                 match self.values.get(&id) {
-                    Some(HostValue::SyncQueue(values)) => Ok(values
-                        .front()
-                        .cloned()
-                        .map(|value| RuntimeValue::OptionSome(Box::new(value)))
-                        .unwrap_or(RuntimeValue::OptionNone)),
+                    Some(HostValue::SyncQueue(values)) => {
+                        response.reserve(32, values.front())?;
+                        Ok(values
+                            .front()
+                            .cloned()
+                            .map_or(RuntimeValue::OptionNone, |value| {
+                                RuntimeValue::OptionSome(Box::new(value))
+                            }))
+                    }
                     _ => Err(VmError::Host("sync.Queue token is stale or invalid".into())),
                 }
             }
@@ -10207,72 +12991,66 @@ impl VmHost for BootstrapHost {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
                 let values: Vec<RuntimeValue> = match self.values.get(&id) {
-                    Some(HostValue::SyncQueue(values)) => values.iter().cloned().collect(),
+                    Some(HostValue::SyncQueue(values)) => {
+                        if values.len() as u64 > self.max_bytes {
+                            response.reserve(64, [])?;
+                            return Ok(self.collection_result_error(
+                                "sync.Queue snapshot exceeds the configured collection limit",
+                            ));
+                        }
+                        response.reserve(64, values)?;
+                        values.iter().cloned().collect()
+                    }
                     _ => return Err(VmError::Host("sync.Queue token is stale or invalid".into())),
                 };
-                if values.len() as u64 > self.max_bytes {
-                    return Ok(self.collection_result_error(
-                        "sync.Queue snapshot exceeds the configured collection limit",
-                    ));
-                }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
                     values,
                 ))))
             }
-            ("std.sync.mutex", [value]) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                RuntimeHostValueKind::Mutex,
-                HostValue::SyncMutex {
-                    value: value.clone(),
-                    locked: false,
-                    owner: None,
-                },
-            )))),
+            ("std.sync.mutex", [value]) => {
+                response.reserve(64, [])?;
+                let memory = self.reserve_sync_payloads([value], 0)?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
+                    RuntimeHostValueKind::Mutex,
+                    HostValue::SyncMutex {
+                        value: value.clone(),
+                        locked: false,
+                        owner: None,
+                    },
+                    memory,
+                ))))
+            }
             ("std.sync.Mutex.lock", [mutex]) => {
                 let id = self.sync_host_id(mutex, RuntimeHostValueKind::Mutex, "Mutex")?;
-                let (available, reentrant) = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncMutex { locked, owner, .. }) if !*locked => {
-                        *locked = true;
-                        *owner = Some(self.current_unit);
-                        (true, false)
-                    }
-                    Some(HostValue::SyncMutex { owner, .. }) => {
-                        (false, *owner == Some(self.current_unit))
-                    }
-                    _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
-                };
-                if !available {
-                    if reentrant {
+                if self.sync_guard_available(id, RuntimeHostValueKind::MutexGuard)? {
+                    response.reserve(64, [])?;
+                }
+                let Some(guard) = self.acquire_sync_guard(
+                    id,
+                    RuntimeHostValueKind::MutexGuard,
+                    self.current_unit,
+                )?
+                else {
+                    if matches!(self.values.get(&id), Some(HostValue::SyncMutex { owner: Some(owner), .. }) if *owner == self.current_unit)
+                    {
+                        response.reserve(64 + "SyncError".len() as u64, [])?;
                         return Ok(Self::sync_result_error(3));
                     }
                     return Err(VmError::Host(
                         "Mutex.lock is contended; use the async host path".into(),
                     ));
-                }
-                let guard = self.allocate(
-                    RuntimeHostValueKind::MutexGuard,
-                    HostValue::SyncMutexGuard { owner: id },
-                );
+                };
                 Ok(RuntimeValue::ResultOk(Box::new(guard)))
             }
             ("std.sync.Mutex.tryLock", [mutex]) => {
                 let id = self.sync_host_id(mutex, RuntimeHostValueKind::Mutex, "Mutex")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncMutex { locked, owner, .. }) if !*locked => {
-                        *locked = true;
-                        *owner = Some(self.current_unit);
-                        true
-                    }
-                    Some(HostValue::SyncMutex { .. }) => false,
-                    _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
-                };
-                if !available {
-                    return Ok(RuntimeValue::OptionNone);
-                }
-                let guard = self.allocate(
-                    RuntimeHostValueKind::MutexGuard,
-                    HostValue::SyncMutexGuard { owner: id },
-                );
-                Ok(RuntimeValue::OptionSome(Box::new(guard)))
+                let available = self.sync_guard_available(id, RuntimeHostValueKind::MutexGuard)?;
+                response.reserve(if available { 64 } else { 32 }, [])?;
+                Ok(self
+                    .acquire_sync_guard(id, RuntimeHostValueKind::MutexGuard, self.current_unit)?
+                    .map_or(RuntimeValue::OptionNone, |guard| {
+                        RuntimeValue::OptionSome(Box::new(guard))
+                    }))
             }
             ("std.sync.MutexGuard.get", [guard]) | ("std.sync.MutexGuard.getMut", [guard]) => {
                 let guard_id =
@@ -10286,7 +13064,10 @@ impl VmHost for BootstrapHost {
                         value,
                         locked: true,
                         ..
-                    }) => value.clone(),
+                    }) => {
+                        response.reserve(32, [value])?;
+                        value.clone()
+                    }
                     _ => return Err(VmError::Host("Mutex owner is stale or unlocked".into())),
                 };
                 Ok(RuntimeValue::Ref(Some(Box::new(value))))
@@ -10294,8 +13075,8 @@ impl VmHost for BootstrapHost {
             ("std.sync.MutexGuard.unlock", [guard]) => {
                 let guard_id =
                     self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
-                let owner = match self.values.remove(&guard_id) {
-                    Some(HostValue::SyncMutexGuard { owner }) => owner,
+                let owner = match self.values.get(&guard_id) {
+                    Some(HostValue::SyncMutexGuard { owner }) => *owner,
                     _ => return Err(VmError::Host("MutexGuard token is stale".into())),
                 };
                 match self.values.get_mut(&owner) {
@@ -10304,118 +13085,92 @@ impl VmHost for BootstrapHost {
                         owner: lock_owner,
                         ..
                     }) => {
+                        response.reserve(32, [])?;
                         *locked = false;
                         *lock_owner = None;
                     }
                     _ => return Err(VmError::Host("Mutex owner is stale".into())),
                 }
+                self.values.remove(&guard_id);
+                self.buffer_memory.remove(&guard_id);
                 Ok(RuntimeValue::Unit)
             }
-            ("std.sync.rwLock", [value]) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                RuntimeHostValueKind::RwLock,
-                HostValue::SyncRwLock {
-                    value: value.clone(),
-                    readers: 0,
-                    writer: false,
-                    writer_owner: None,
-                },
-            )))),
+            ("std.sync.rwLock", [value]) => {
+                response.reserve(64, [])?;
+                let memory = self.reserve_sync_payloads([value], 0)?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
+                    RuntimeHostValueKind::RwLock,
+                    HostValue::SyncRwLock {
+                        value: value.clone(),
+                        readers: 0,
+                        writer: false,
+                        writer_owner: None,
+                    },
+                    memory,
+                ))))
+            }
             ("std.sync.RwLock.read", [lock]) => {
                 let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncRwLock {
-                        readers, writer, ..
-                    }) if !*writer => {
-                        *readers = readers.saturating_add(1);
-                        true
-                    }
-                    Some(HostValue::SyncRwLock { .. }) => false,
-                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
-                };
-                if !available {
-                    return Ok(Self::sync_result_error(2));
-                }
-                let guard = self.allocate(
-                    RuntimeHostValueKind::ReadGuard,
-                    HostValue::SyncReadGuard { owner: id },
-                );
-                Ok(RuntimeValue::ResultOk(Box::new(guard)))
+                let available = self.sync_guard_available(id, RuntimeHostValueKind::ReadGuard)?;
+                response.reserve(
+                    if available {
+                        64
+                    } else {
+                        64 + "SyncError".len() as u64
+                    },
+                    [],
+                )?;
+                Ok(self
+                    .acquire_sync_guard(id, RuntimeHostValueKind::ReadGuard, self.current_unit)?
+                    .map_or_else(
+                        || Self::sync_result_error(2),
+                        |guard| RuntimeValue::ResultOk(Box::new(guard)),
+                    ))
             }
             ("std.sync.RwLock.tryRead", [lock]) => {
                 let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncRwLock {
-                        readers, writer, ..
-                    }) if !*writer => {
-                        *readers = readers.saturating_add(1);
-                        true
-                    }
-                    Some(HostValue::SyncRwLock { .. }) => false,
-                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
-                };
-                if !available {
-                    return Ok(RuntimeValue::OptionNone);
-                }
-                let guard = self.allocate(
-                    RuntimeHostValueKind::ReadGuard,
-                    HostValue::SyncReadGuard { owner: id },
-                );
-                Ok(RuntimeValue::OptionSome(Box::new(guard)))
+                let available = self.sync_guard_available(id, RuntimeHostValueKind::ReadGuard)?;
+                response.reserve(if available { 64 } else { 32 }, [])?;
+                Ok(self
+                    .acquire_sync_guard(id, RuntimeHostValueKind::ReadGuard, self.current_unit)?
+                    .map_or(RuntimeValue::OptionNone, |guard| {
+                        RuntimeValue::OptionSome(Box::new(guard))
+                    }))
             }
             ("std.sync.RwLock.write", [lock]) => {
                 let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncRwLock {
-                        readers,
-                        writer,
-                        writer_owner,
-                        ..
-                    }) if !*writer && *readers == 0 => {
-                        *writer = true;
-                        *writer_owner = Some(self.current_unit);
-                        true
-                    }
-                    Some(HostValue::SyncRwLock { .. }) => false,
-                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
-                };
-                if !available {
-                    if let Some(HostValue::SyncRwLock { writer_owner, .. }) = self.values.get(&id)
-                        && *writer_owner == Some(self.current_unit)
+                let available = self.sync_guard_available(id, RuntimeHostValueKind::WriteGuard)?;
+                response.reserve(
+                    if available {
+                        64
+                    } else {
+                        64 + "SyncError".len() as u64
+                    },
+                    [],
+                )?;
+                let Some(guard) = self.acquire_sync_guard(
+                    id,
+                    RuntimeHostValueKind::WriteGuard,
+                    self.current_unit,
+                )?
+                else {
+                    if matches!(self.values.get(&id), Some(HostValue::SyncRwLock { writer_owner: Some(owner), .. }) if *owner == self.current_unit)
                     {
                         return Ok(Self::sync_result_error(3));
                     }
                     return Ok(Self::sync_result_error(2));
-                }
-                let guard = self.allocate(
-                    RuntimeHostValueKind::WriteGuard,
-                    HostValue::SyncWriteGuard { owner: id },
-                );
+                };
                 Ok(RuntimeValue::ResultOk(Box::new(guard)))
             }
             ("std.sync.RwLock.tryWrite", [lock]) => {
                 let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncRwLock {
-                        readers,
-                        writer,
-                        writer_owner,
-                        ..
-                    }) if !*writer && *readers == 0 => {
-                        *writer = true;
-                        *writer_owner = Some(self.current_unit);
-                        true
-                    }
-                    Some(HostValue::SyncRwLock { .. }) => false,
-                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
-                };
-                if !available {
-                    return Ok(RuntimeValue::OptionNone);
-                }
-                let guard = self.allocate(
-                    RuntimeHostValueKind::WriteGuard,
-                    HostValue::SyncWriteGuard { owner: id },
-                );
-                Ok(RuntimeValue::OptionSome(Box::new(guard)))
+                let available = self.sync_guard_available(id, RuntimeHostValueKind::WriteGuard)?;
+                response.reserve(if available { 64 } else { 32 }, [])?;
+                Ok(self
+                    .acquire_sync_guard(id, RuntimeHostValueKind::WriteGuard, self.current_unit)?
+                    .map_or(RuntimeValue::OptionNone, |guard| {
+                        RuntimeValue::OptionSome(Box::new(guard))
+                    }))
             }
             ("std.sync.ReadGuard.get", [guard])
             | ("std.sync.WriteGuard.get", [guard])
@@ -10459,6 +13214,7 @@ impl VmHost for BootstrapHost {
                     }) if (*writer && expected_kind == RuntimeHostValueKind::WriteGuard)
                         || (*readers > 0 && expected_kind == RuntimeHostValueKind::ReadGuard) =>
                     {
+                        response.reserve(32, [value])?;
                         value.clone()
                     }
                     _ => return Err(VmError::Host("RwLock owner is stale or unlocked".into())),
@@ -10468,21 +13224,26 @@ impl VmHost for BootstrapHost {
             ("std.sync.ReadGuard.unlock", [guard]) => {
                 let guard_id =
                     self.sync_host_id(guard, RuntimeHostValueKind::ReadGuard, "ReadGuard")?;
-                let owner = match self.values.remove(&guard_id) {
-                    Some(HostValue::SyncReadGuard { owner }) => owner,
+                let owner = match self.values.get(&guard_id) {
+                    Some(HostValue::SyncReadGuard { owner }) => *owner,
                     _ => return Err(VmError::Host("ReadGuard token is stale".into())),
                 };
                 match self.values.get_mut(&owner) {
-                    Some(HostValue::SyncRwLock { readers, .. }) if *readers > 0 => *readers -= 1,
+                    Some(HostValue::SyncRwLock { readers, .. }) if *readers > 0 => {
+                        response.reserve(32, [])?;
+                        *readers -= 1;
+                    }
                     _ => return Err(VmError::Host("RwLock owner is stale".into())),
                 }
+                self.values.remove(&guard_id);
+                self.buffer_memory.remove(&guard_id);
                 Ok(RuntimeValue::Unit)
             }
             ("std.sync.WriteGuard.unlock", [guard]) => {
                 let guard_id =
                     self.sync_host_id(guard, RuntimeHostValueKind::WriteGuard, "WriteGuard")?;
-                let owner = match self.values.remove(&guard_id) {
-                    Some(HostValue::SyncWriteGuard { owner }) => owner,
+                let owner = match self.values.get(&guard_id) {
+                    Some(HostValue::SyncWriteGuard { owner }) => *owner,
                     _ => return Err(VmError::Host("WriteGuard token is stale".into())),
                 };
                 match self.values.get_mut(&owner) {
@@ -10491,19 +13252,28 @@ impl VmHost for BootstrapHost {
                         writer_owner,
                         ..
                     }) if *writer => {
+                        response.reserve(32, [])?;
                         *writer = false;
                         *writer_owner = None;
                     }
                     _ => return Err(VmError::Host("RwLock owner is stale".into())),
                 }
+                self.values.remove(&guard_id);
+                self.buffer_memory.remove(&guard_id);
                 Ok(RuntimeValue::Unit)
             }
-            ("std.sync.condition", []) => Ok(RuntimeValue::ResultOk(Box::new(
-                self.allocate(RuntimeHostValueKind::Condition, HostValue::SyncCondition),
-            ))),
-            ("std.sync.Condition.wait", [condition, guard]) => {
-                self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
-                self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
+            ("std.sync.condition", []) => {
+                response.reserve(64, [])?;
+                let memory = self.reserve_sync_payloads([], 0)?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
+                    RuntimeHostValueKind::Condition,
+                    HostValue::SyncCondition,
+                    memory,
+                ))))
+            }
+            ("std.sync.Condition.wait", [_, guard]) => {
+                self.condition_wait_state(arguments)?;
+                response.reserve(32, [])?;
                 // A real wait atomically parks and re-acquires the mutex. The
                 // hosted preview has no scheduler hook, so it preserves the
                 // guard and returns immediately without losing ownership.
@@ -10511,146 +13281,158 @@ impl VmHost for BootstrapHost {
             }
             ("std.sync.Condition.notifyOne", [condition])
             | ("std.sync.Condition.notifyAll", [condition]) => {
-                let condition_id =
-                    self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
+                let condition_id = self.sync_condition_id(condition)?;
+                response.reserve(32, [])?;
                 self.notify_condition(condition_id, name == "std.sync.Condition.notifyAll");
                 Ok(RuntimeValue::Unit)
             }
             ("std.sync.semaphore", [RuntimeValue::Integer(capacity)]) => {
                 let Ok(capacity) = usize::try_from(*capacity) else {
+                    response.reserve(73, [])?;
                     return Ok(Self::sync_result_error(0));
                 };
                 if capacity == 0 {
+                    response.reserve(73, [])?;
                     return Ok(Self::sync_result_error(0));
                 }
                 if u64::try_from(capacity).is_err() || capacity as u64 > self.max_bytes {
+                    response.reserve(73, [])?;
                     return Ok(Self::sync_result_error(2));
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                response.reserve(64, [])?;
+                let memory = self.reserve_sync_payloads([], 0)?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
                     RuntimeHostValueKind::Semaphore,
                     HostValue::SyncSemaphore {
                         capacity,
                         permits: capacity,
                     },
+                    memory,
                 ))))
             }
             ("std.sync.Semaphore.acquire", [semaphore]) => {
                 let id =
                     self.sync_host_id(semaphore, RuntimeHostValueKind::Semaphore, "Semaphore")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncSemaphore { permits, .. }) if *permits > 0 => {
-                        *permits -= 1;
-                        true
-                    }
-                    Some(HostValue::SyncSemaphore { .. }) => false,
-                    _ => return Err(VmError::Host("Semaphore token is stale or invalid".into())),
-                };
-                if !available {
-                    return Err(VmError::Host(
-                        "Semaphore.acquire requires scheduler parking under contention".into(),
-                    ));
+                if self.sync_guard_available(id, RuntimeHostValueKind::Permit)? {
+                    response.reserve(32, [])?;
                 }
-                let permit = self.allocate(
-                    RuntimeHostValueKind::Permit,
-                    HostValue::SyncPermit { owner: id },
-                );
-                Ok(permit)
+                self.acquire_sync_guard(id, RuntimeHostValueKind::Permit, self.current_unit)?
+                    .ok_or_else(|| {
+                        VmError::Host(
+                            "Semaphore.acquire requires scheduler parking under contention".into(),
+                        )
+                    })
             }
             ("std.sync.Semaphore.tryAcquire", [semaphore]) => {
                 let id =
                     self.sync_host_id(semaphore, RuntimeHostValueKind::Semaphore, "Semaphore")?;
-                let available = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncSemaphore { permits, .. }) if *permits > 0 => {
-                        *permits -= 1;
-                        true
-                    }
-                    Some(HostValue::SyncSemaphore { .. }) => false,
-                    _ => return Err(VmError::Host("Semaphore token is stale or invalid".into())),
-                };
-                if !available {
-                    return Ok(RuntimeValue::OptionNone);
-                }
-                let permit = self.allocate(
-                    RuntimeHostValueKind::Permit,
-                    HostValue::SyncPermit { owner: id },
-                );
-                Ok(RuntimeValue::OptionSome(Box::new(permit)))
+                let available = self.sync_guard_available(id, RuntimeHostValueKind::Permit)?;
+                response.reserve(if available { 64 } else { 32 }, [])?;
+                Ok(self
+                    .acquire_sync_guard(id, RuntimeHostValueKind::Permit, self.current_unit)?
+                    .map_or(RuntimeValue::OptionNone, |permit| {
+                        RuntimeValue::OptionSome(Box::new(permit))
+                    }))
             }
             ("std.sync.Permit.release", [permit]) => {
                 let permit_id =
                     self.sync_host_id(permit, RuntimeHostValueKind::Permit, "Permit")?;
-                let owner = match self.values.remove(&permit_id) {
-                    Some(HostValue::SyncPermit { owner }) => owner,
+                let owner = match self.values.get(&permit_id) {
+                    Some(HostValue::SyncPermit { owner }) => *owner,
                     _ => return Err(VmError::Host("Permit token is stale".into())),
                 };
                 match self.values.get_mut(&owner) {
                     Some(HostValue::SyncSemaphore { capacity, permits })
                         if *permits < *capacity =>
                     {
+                        response.reserve(32, [])?;
                         *permits += 1
                     }
                     _ => return Err(VmError::Host("Semaphore owner is stale".into())),
                 }
+                self.values.remove(&permit_id);
+                self.buffer_memory.remove(&permit_id);
                 Ok(RuntimeValue::Unit)
             }
-            ("std.sync.once", []) => Ok(self.allocate(
-                RuntimeHostValueKind::Once,
-                HostValue::SyncOnce { value: None },
-            )),
+            ("std.sync.once", []) => {
+                response.reserve(32, [])?;
+                let memory = self.reserve_sync_payloads([], 0)?;
+                Ok(self.publish_buffer(
+                    RuntimeHostValueKind::Once,
+                    HostValue::SyncOnce { value: None },
+                    memory,
+                ))
+            }
             ("std.sync.Once.get", [once]) => {
                 let id = self.sync_host_id(once, RuntimeHostValueKind::Once, "Once")?;
                 let value = match self.values.get(&id) {
-                    Some(HostValue::SyncOnce { value }) => value.clone(),
+                    Some(HostValue::SyncOnce { value }) => value.as_ref(),
                     _ => return Err(VmError::Host("Once token is stale or invalid".into())),
                 };
+                response.reserve(if value.is_some() { 64 } else { 32 }, value)?;
                 Ok(value.map_or(RuntimeValue::OptionNone, |value| {
-                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Ref(Some(Box::new(value)))))
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Ref(Some(Box::new(
+                        value.clone(),
+                    )))))
                 }))
             }
             ("std.sync.Once.getOrInit", [once, _initializer]) => {
                 let id = self.sync_host_id(once, RuntimeHostValueKind::Once, "Once")?;
                 let value = match self.values.get(&id) {
-                    Some(HostValue::SyncOnce { value }) => value.clone(),
+                    Some(HostValue::SyncOnce { value }) => value.as_ref(),
                     _ => return Err(VmError::Host("Once token is stale or invalid".into())),
                 };
                 if let Some(value) = value {
+                    response.reserve(64, [value])?;
                     return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Ref(Some(
-                        Box::new(value),
+                        Box::new(value.clone()),
                     )))));
                 }
                 // Calling a Tondo initializer requires the VM continuation;
                 // this host entry point deliberately refuses to execute an
                 // opaque closure and leaves the scheduler bridge explicit.
+                response.reserve(73, [])?;
                 Ok(Self::sync_result_error(4))
             }
             ("std.sync.Once.isReady", [once]) => {
                 let id = self.sync_host_id(once, RuntimeHostValueKind::Once, "Once")?;
                 match self.values.get(&id) {
-                    Some(HostValue::SyncOnce { value }) => Ok(RuntimeValue::Bool(value.is_some())),
+                    Some(HostValue::SyncOnce { value }) => {
+                        response.reserve(32, [])?;
+                        Ok(RuntimeValue::Bool(value.is_some()))
+                    }
                     _ => Err(VmError::Host("Once token is stale or invalid".into())),
                 }
             }
             ("std.sync.barrier", [RuntimeValue::Integer(parties)]) => {
                 let Ok(parties) = usize::try_from(*parties) else {
+                    response.reserve(73, [])?;
                     return Ok(Self::sync_result_error(1));
                 };
                 if parties == 0 {
+                    response.reserve(73, [])?;
                     return Ok(Self::sync_result_error(1));
                 }
                 if u64::try_from(parties).is_err() || parties as u64 > self.max_bytes {
+                    response.reserve(73, [])?;
                     return Ok(Self::sync_result_error(2));
                 }
-                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                response.reserve(64, [])?;
+                let memory = self.reserve_sync_payloads([], 0)?;
+                Ok(RuntimeValue::ResultOk(Box::new(self.publish_buffer(
                     RuntimeHostValueKind::Barrier,
                     HostValue::SyncBarrier {
                         parties,
                         arrived: 0,
                         generation: 0,
                     },
+                    memory,
                 ))))
             }
-            ("std.sync.Barrier.wait", [barrier]) => {
-                let id = self.sync_host_id(barrier, RuntimeHostValueKind::Barrier, "Barrier")?;
+            ("std.sync.Barrier.wait", [_]) => {
+                let (id, parties, arrived, _) = self.barrier_wait_state(arguments)?;
+                let completes = parties == 1 || arrived.saturating_add(1) >= parties;
+                response.reserve(if completes { 75 } else { 73 }, [])?;
                 let role = match self.values.get_mut(&id) {
                     Some(HostValue::SyncBarrier { parties: 1, .. }) => 0,
                     Some(HostValue::SyncBarrier {
@@ -10672,12 +13454,17 @@ impl VmHost for BootstrapHost {
                     values: Vec::new(),
                 })))
             }
-            ("std.sync.atomic", [value]) => Ok(self.allocate(
-                RuntimeHostValueKind::Atomic,
-                HostValue::SyncAtomic {
-                    value: value.clone(),
-                },
-            )),
+            ("std.sync.atomic", [value]) => {
+                response.reserve(32, [])?;
+                let memory = self.reserve_sync_payloads([value], 0)?;
+                Ok(self.publish_buffer(
+                    RuntimeHostValueKind::Atomic,
+                    HostValue::SyncAtomic {
+                        value: value.clone(),
+                    },
+                    memory,
+                ))
+            }
             ("std.sync.Atomic.load", [atomic, order]) => {
                 let order = Self::sync_memory_order(order)?;
                 if !Self::sync_valid_load_order(order) {
@@ -10687,7 +13474,10 @@ impl VmHost for BootstrapHost {
                 }
                 let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
                 match self.values.get(&id) {
-                    Some(HostValue::SyncAtomic { value }) => Ok(value.clone()),
+                    Some(HostValue::SyncAtomic { value }) => {
+                        response.reserve(0, [value])?;
+                        Ok(value.clone())
+                    }
                     _ => Err(VmError::Host("Atomic token is stale or invalid".into())),
                 }
             }
@@ -10700,7 +13490,18 @@ impl VmHost for BootstrapHost {
                 }
                 let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
                 match self.values.get_mut(&id) {
-                    Some(HostValue::SyncAtomic { value: current }) => *current = value.clone(),
+                    Some(HostValue::SyncAtomic { value: current }) => {
+                        response.reserve(32, [])?;
+                        Self::resize_sync_payload(
+                            &mut self.buffer_memory,
+                            id,
+                            [&*current],
+                            [value],
+                            0,
+                            0,
+                        )?;
+                        *current = value.clone();
+                    }
                     _ => return Err(VmError::Host("Atomic token is stale or invalid".into())),
                 }
                 Ok(RuntimeValue::Unit)
@@ -10715,32 +13516,40 @@ impl VmHost for BootstrapHost {
                 let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
                 let previous = match self.values.get_mut(&id) {
                     Some(HostValue::SyncAtomic { value: current }) => {
-                        let previous = current.clone();
-                        *current = value.clone();
-                        previous
+                        response.reserve(0, [&*current])?;
+                        Self::resize_sync_payload(
+                            &mut self.buffer_memory,
+                            id,
+                            [&*current],
+                            [value],
+                            0,
+                            0,
+                        )?;
+                        std::mem::replace(current, value.clone())
                     }
                     _ => return Err(VmError::Host("Atomic token is stale or invalid".into())),
                 };
                 Ok(previous)
             }
             ("std.sync.Atomic.compareExchange", [atomic, expected, desired, success, failure]) => {
-                let success = Self::sync_memory_order(success)?;
-                let failure = Self::sync_memory_order(failure)?;
-                if !Self::sync_valid_cas_failure_order(failure)
-                    || !Self::sync_valid_cas_orders(success, failure)
-                {
-                    return Err(VmError::Host(
-                        "Atomic.compareExchange has incompatible memory orders".into(),
-                    ));
-                }
+                Self::validate_atomic_compare_exchange_orders(success, failure)?;
                 let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
                 let previous = match self.values.get_mut(&id) {
                     Some(HostValue::SyncAtomic { value: current }) => {
-                        let previous = current.clone();
+                        response.reserve(32 + "CompareExchange".len() as u64, [&*current])?;
                         if current == expected {
-                            *current = desired.clone();
+                            Self::resize_sync_payload(
+                                &mut self.buffer_memory,
+                                id,
+                                [&*current],
+                                [desired],
+                                0,
+                                0,
+                            )?;
+                            std::mem::replace(current, desired.clone())
+                        } else {
+                            current.clone()
                         }
-                        previous
                     }
                     _ => return Err(VmError::Host("Atomic token is stale or invalid".into())),
                 };
@@ -10756,53 +13565,49 @@ impl VmHost for BootstrapHost {
                 })
             }
             ("std.channel.bounded", [RuntimeValue::Integer(capacity)]) => {
-                let Ok(capacity) = usize::try_from(*capacity) else {
-                    return Ok(Self::channel_result_error(0));
-                };
-                let Ok(capacity_limit) = u64::try_from(capacity) else {
-                    return Ok(Self::channel_result_error(1));
-                };
-                if capacity_limit > self.max_bytes {
-                    return Ok(Self::channel_result_error(1));
-                }
-                Ok(RuntimeValue::ResultOk(Box::new(
-                    self.channel_new(Some(capacity)),
-                )))
+                self.channel_bounded(*capacity, response, &mut VmHostImportAdmission::disabled())
             }
             ("std.channel.unbounded", []) => {
-                Ok(RuntimeValue::ResultOk(Box::new(self.channel_new(None))))
+                self.channel_new(None, response, &mut VmHostImportAdmission::disabled())
             }
-            ("std.channel.Sender.fork", [sender]) => Ok(RuntimeValue::ResultOk(Box::new(
-                self.channel_fork_sender(sender)?,
-            ))),
+            ("std.channel.Sender.fork", [sender]) => {
+                self.channel_fork_sender(sender, response, &mut VmHostImportAdmission::disabled())
+            }
             ("std.channel.Sender.send", [sender, value]) => {
-                self.channel_send_now(sender, value.clone())
+                self.channel_send_now(sender, value, response)
             }
             ("std.channel.Sender.trySend", [sender, value]) => {
-                self.channel_try_send_now(sender, value.clone())
+                self.channel_try_send_now(sender, value, response)
             }
             ("std.channel.Sender.close", [sender]) => {
+                self.channel_sender_id(sender)?;
+                response.reserve(32, [])?;
                 self.channel_close_sender(sender)?;
                 Ok(RuntimeValue::Unit)
             }
-            ("std.channel.Receiver.fork", [receiver]) => Ok(RuntimeValue::ResultOk(Box::new(
-                self.channel_fork_receiver(receiver)?,
-            ))),
+            ("std.channel.Receiver.fork", [receiver]) => self.channel_fork_receiver(
+                receiver,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            ),
             ("std.channel.Receiver.__asyncIteratorAdopt", [receiver]) => {
                 let (endpoint, _) = self.channel_receiver_id(receiver)?;
+                response.reserve(32, [])?;
                 self.channel_iterator_receivers.insert(endpoint);
                 Ok(RuntimeValue::Unit)
             }
             ("std.channel.Receiver.receive", [receiver])
             | ("std.channel.Receiver.__asyncIteratorNext", [receiver]) => {
-                self.channel_receive_now(receiver)
+                self.channel_receive_now(receiver, response)
             }
             ("std.channel.Receiver.tryReceive", [receiver]) => {
-                self.channel_try_receive_now(receiver)
+                self.channel_try_receive_now(receiver, response)
             }
-            ("std.channel.Receiver.close", [receiver]) => {
-                Ok(RuntimeValue::Array(self.channel_close_receiver(receiver)?))
-            }
+            ("std.channel.Receiver.close", [receiver]) => self.channel_close_receiver_admitted(
+                receiver,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            ),
             ("std.console.print", _) => Err(VmError::Host(
                 "std.console.print received an invalid bootstrap argument list".into(),
             )),
@@ -10817,275 +13622,166 @@ impl VmHost for BootstrapHost {
     }
 
     fn start_async(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<u64, VmError> {
-        if matches!(
-            name,
-            "std.console.flush"
-                | "std.console.readLine"
-                | "std.process.Command.start"
-                | "std.process.Pipeline.start"
-                | "std.io.Reader.read"
-                | "std.io.Writer.write"
-                | "std.io.Writer.flush"
-                | "std.io.readAll"
-                | "std.io.writeAll"
-                | "std.encoding.Base64Options.encodeTo"
-                | "std.encoding.Base64Options.decodeFrom"
-                | "std.encoding.HexOptions.encodeTo"
-                | "std.encoding.HexOptions.decodeFrom"
-                | "std.fs.open"
-                | "std.fs.openDirectory"
-                | "std.fs.readAll"
-                | "std.fs.writeAll"
-                | "std.fs.createDirectory"
-                | "std.fs.remove"
-                | "std.fs.metadata"
-                | "std.fs.list"
-                | "std.fs.rename"
-                | "std.fs.atomicWrite"
-                | "std.fs.File.read"
-                | "std.fs.File.write"
-                | "std.fs.File.flush"
-                | "std.fs.Directory.list"
-                | "std.json.JsonReader.fromReader"
-                | "std.json.JsonWriter.toWriter"
-                | "std.json.JsonWriter.write"
-                | "std.json.JsonWriter.finish"
-                | "std.messagepack.MessagePackReader.fromReader"
-                | "std.messagepack.MessagePackWriter.toWriter"
-                | "std.messagepack.MessagePackWriter.write"
-                | "std.messagepack.MessagePackWriter.finish"
-                | "std.protobuf.ProtoReader.fromReader"
-                | "std.protobuf.ProtoWriter.toWriter"
-                | "std.protobuf.ProtoWriter.write"
-                | "std.protobuf.ProtoWriter.finish"
-                | "std.sync.Mutex.lock"
-                | "std.sync.RwLock.read"
-                | "std.sync.RwLock.write"
-                | "std.sync.Condition.wait"
-                | "std.sync.Semaphore.acquire"
-                | "std.sync.Once.getOrInit"
-                | "std.sync.Barrier.wait"
-                | "std.channel.Sender.send"
-                | "std.channel.Receiver.receive"
-                | "std.sync.Array.get"
-                | "std.sync.Array.set"
-                | "std.sync.Array.compareExchange"
-                | "std.sync.Array.snapshot"
-                | "std.sync.Map.get"
-                | "std.sync.Map.contains"
-                | "std.sync.Map.insert"
-                | "std.sync.Map.remove"
-                | "std.sync.Map.compareExchange"
-                | "std.sync.Map.snapshot"
-                | "std.sync.Set.contains"
-                | "std.sync.Set.insert"
-                | "std.sync.Set.remove"
-                | "std.sync.Set.snapshot"
-                | "std.sync.Stack.push"
-                | "std.sync.Stack.pop"
-                | "std.sync.Stack.peek"
-                | "std.sync.Stack.snapshot"
-                | "std.sync.Queue.enqueue"
-                | "std.sync.Queue.dequeue"
-                | "std.sync.Queue.peek"
-                | "std.sync.Queue.snapshot"
-        ) || name.starts_with("std.sync.Mutex.lock")
-            || name.starts_with("std.sync.RwLock.read")
-            || name.starts_with("std.sync.RwLock.write")
-            || name.starts_with("std.sync.Condition.wait")
-            || name.starts_with("std.sync.Semaphore.acquire")
-            || name.starts_with("std.sync.Once.getOrInit")
-            || name.starts_with("std.sync.Barrier.wait")
-            || name.starts_with("std.channel.Sender.send")
-            || name.starts_with("std.channel.Receiver.receive")
-            || name.starts_with("std.channel.Receiver.__asyncIteratorNext")
-            || name.starts_with("std.sync.Array.get")
-            || name.starts_with("std.sync.Array.set")
-            || name.starts_with("std.sync.Array.compareExchange")
-            || name.starts_with("std.sync.Array.snapshot")
-            || name.starts_with("std.sync.Map.get")
-            || name.starts_with("std.sync.Map.contains")
-            || name.starts_with("std.sync.Map.insert")
-            || name.starts_with("std.sync.Map.remove")
-            || name.starts_with("std.sync.Map.compareExchange")
-            || name.starts_with("std.sync.Map.snapshot")
-            || name.starts_with("std.sync.Set.contains")
-            || name.starts_with("std.sync.Set.insert")
-            || name.starts_with("std.sync.Set.remove")
-            || name.starts_with("std.sync.Set.snapshot")
-            || name.starts_with("std.sync.Stack.push")
-            || name.starts_with("std.sync.Stack.pop")
-            || name.starts_with("std.sync.Stack.peek")
-            || name.starts_with("std.sync.Stack.snapshot")
-            || name.starts_with("std.sync.Queue.enqueue")
-            || name.starts_with("std.sync.Queue.dequeue")
-            || name.starts_with("std.sync.Queue.peek")
-            || name.starts_with("std.sync.Queue.snapshot")
-        {
-            let call = self.next_async_call()?;
-            if self.pending_sync_for(call, name, arguments)? {
-                return Ok(call);
-            }
-            let result = self.invoke(name, arguments);
-            if name.starts_with("std.fs.") {
-                self.ready_fs_jobs.insert(call);
-            }
-            self.ready_jobs.insert(call, result);
-            return Ok(call);
-        }
-        if name == "std.testing.VirtualTime.settle" {
-            let [controller] = arguments else {
-                return Err(VmError::Host(
-                    "VirtualTime.settle received an invalid argument list".into(),
-                ));
-            };
-            self.virtual_controller(controller)?;
-            return self.start_virtual_control_job(TimeJobKind::Settle);
-        }
-        if name == "std.testing.VirtualTime.advance" {
-            let [controller, duration] = arguments else {
-                return Err(VmError::Host(
-                    "VirtualTime.advance received an invalid argument list".into(),
-                ));
-            };
-            self.virtual_controller(controller)?;
-            let duration = Self::duration(duration)?;
-            if duration < 0 {
-                return Err(VmError::Host(
-                    "P2005: virtual time duration cannot be negative".into(),
-                ));
-            }
-            self.clock
-                .advance_virtual(duration)
-                .map_err(|error| VmError::Host(format!("P2005: {error}")))?;
-            let target = self.clock.now()?;
-            return self.start_virtual_control_job(TimeJobKind::Advance { target });
-        }
-        if name == "std.time.sleep" {
-            let [delay] = arguments else {
-                return Err(VmError::Host(
-                    "std.time.sleep received an invalid bootstrap argument list".into(),
-                ));
-            };
-            let completion = match self.validate_delay(delay) {
-                Ok(delay) => {
-                    let now = self.clock.now()?;
-                    let deadline = now
-                        .checked_add(delay)
-                        .ok_or_else(|| VmError::Host("sleep deadline overflow".into()))?;
-                    return self.start_time_job(deadline, None, false);
-                }
-                Err(error) => Some(error),
-            };
-            return self.start_time_job(i128::MIN, completion, false);
-        }
-        if name == "std.time.Timer.wait" {
-            let [receiver] = arguments else {
-                return Err(VmError::Host(
-                    "std.time.Timer.wait received an invalid bootstrap argument list".into(),
-                ));
-            };
-            let (domain, deadline) = self.timer(receiver)?;
-            let RuntimeValue::Host { id, .. } = receiver else {
-                unreachable!("timer() validated the token")
-            };
-            self.values.remove(id);
-            let completion = (domain != self.clock_domain)
-                .then(|| self.clock_result_error("timer belongs to another clock domain"));
-            return self.start_time_job(deadline, completion, true);
-        }
-        let mode = Self::mode(name).ok_or_else(|| VmError::UnsupportedHostCall(name.to_owned()))?;
-        let [receiver] = arguments else {
-            return Err(VmError::Host(format!(
-                "{name} received an invalid bootstrap argument list"
-            )));
-        };
-        let group = match receiver {
-            RuntimeValue::Host {
-                kind: RuntimeHostValueKind::ProcessHandle,
-                id,
-            } => match self.values.remove(id) {
-                Some(HostValue::ProcessHandle(group)) => Ok(group),
-                _ => return Err(VmError::Host("ProcessHandle token is stale".into())),
-            },
-            _ => Err(self.plan(receiver)?),
-        };
-        self.spawn_job(group, mode)
+        self.start_async_admitted(name, arguments, &mut VmHostImportAdmission::disabled())
+    }
+
+    fn start_async_with_import_admission(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<u64, VmError> {
+        self.start_async_admitted(name, arguments, admission)
     }
 
     fn poll_async(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
-        if let Some(result) = self.ready_jobs.remove(&call) {
-            self.ready_fs_jobs.remove(&call);
-            return result.map(Some);
-        }
-        if self.sync_waiters.contains_key(&call) {
-            return self.poll_sync(call);
-        }
-        if self.time_jobs.contains_key(&call) {
-            let ready = {
-                let job = self
-                    .time_jobs
-                    .get(&call)
-                    .expect("time job presence was checked");
-                job.cancellation
-                    || match job.kind {
-                        TimeJobKind::Ordinary => {
-                            job.completion.is_some() || self.clock.now()? >= job.deadline
-                        }
-                        TimeJobKind::Settle => {
-                            self.jobs.is_empty()
-                                && self.time_jobs.iter().all(|(id, candidate)| {
-                                    *id == call || !matches!(candidate.kind, TimeJobKind::Ordinary)
-                                })
-                        }
-                        TimeJobKind::Advance { target } => {
-                            self.jobs.is_empty()
-                                && self.time_jobs.iter().all(|(id, candidate)| {
-                                    *id == call
-                                        || !matches!(candidate.kind, TimeJobKind::Ordinary)
-                                        || candidate.deadline > target
-                                })
-                        }
-                    }
-            };
-            return ready.then(|| self.finish_time_job(call)).transpose();
-        }
-        let result = {
-            let job = self
-                .jobs
-                .get(&call)
-                .ok_or_else(|| VmError::Host(format!("unknown async host call #{call}")))?;
-            match job.receiver.try_recv() {
-                Ok(result) => Some(result),
-                Err(mpsc::TryRecvError::Empty) => None,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(VmError::Host("process worker disconnected".into()));
-                }
+        self.poll_async_owned(call)
+            .map(|returned| returned.map(|returned| returned.value))
+    }
+
+    fn poll_async_owned(&mut self, call: u64) -> Result<Option<VmHostReturn>, VmError> {
+        self.poll_async_with_import_admission(call, &mut VmHostImportAdmission::disabled())
+    }
+
+    fn poll_async_with_import_admission(
+        &mut self,
+        call: u64,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<Option<VmHostReturn>, VmError> {
+        let owner = self
+            .async_memory
+            .get(&call)
+            .map(|memory| memory.request.budget().clone());
+        let previous = std::mem::replace(&mut self.test_memory, owner);
+        let result = (|| {
+            if let Some(result) = self.ready_jobs.remove(&call) {
+                self.ready_fs_jobs.remove(&call);
+                self.ready_console_jobs.remove(&call);
+                return result.map(Some);
             }
+            if self.sync_waiters.contains_key(&call) {
+                return self.poll_sync(call, admission);
+            }
+            if self.time_jobs.contains_key(&call) {
+                let ready = {
+                    let job = self
+                        .time_jobs
+                        .get(&call)
+                        .expect("time job presence was checked");
+                    job.cancellation
+                        || match job.kind {
+                            TimeJobKind::Ordinary => {
+                                job.completion.is_some() || self.clock.now()? >= job.deadline
+                            }
+                            TimeJobKind::Settle => {
+                                self.jobs.is_empty()
+                                    && self.time_jobs.iter().all(|(id, candidate)| {
+                                        *id == call
+                                            || !matches!(candidate.kind, TimeJobKind::Ordinary)
+                                    })
+                            }
+                            TimeJobKind::Advance { target } => {
+                                self.jobs.is_empty()
+                                    && self.time_jobs.iter().all(|(id, candidate)| {
+                                        *id == call
+                                            || !matches!(candidate.kind, TimeJobKind::Ordinary)
+                                            || candidate.deadline > target
+                                    })
+                            }
+                        }
+                };
+                return ready.then(|| self.finish_time_job(call)).transpose();
+            }
+            let result = {
+                let job = self
+                    .jobs
+                    .get(&call)
+                    .ok_or_else(|| VmError::Host(format!("unknown async host call #{call}")))?;
+                match job.receiver.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(mpsc::TryRecvError::Empty) => None,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return Err(VmError::Host("process worker disconnected".into()));
+                    }
+                }
+            };
+            result
+                .map(|result| self.finish_job(call, result))
+                .transpose()
+        })();
+        self.test_memory = previous;
+        if result.as_ref().is_err_and(VmError::is_resource_limit)
+            && let Some(pending) = self.sync_waiters.get(&call)
+            && matches!(
+                pending.kind,
+                SyncWaitKind::MutexLock
+                    | SyncWaitKind::RwRead
+                    | SyncWaitKind::RwWrite
+                    | SyncWaitKind::SemaphoreAcquire
+                    | SyncWaitKind::ChannelSend
+                    | SyncWaitKind::ChannelReceive
+            )
+        {
+            // Admission failed before acquiring a guard or publishing a channel
+            // payload. Retire the waiter so it cannot keep later callers parked.
+            let resource = pending.resource;
+            self.remove_sync_waiter(call, resource);
+        }
+        let memory = if !self.jobs.contains_key(&call)
+            && !self.sync_waiters.contains_key(&call)
+            && !self.time_jobs.contains_key(&call)
+            && !self.ready_jobs.contains_key(&call)
+        {
+            self.async_memory
+                .remove(&call)
+                .and_then(|memory| memory.response)
+        } else {
+            None
         };
-        result
-            .map(|result| self.finish_job(call, result))
-            .transpose()
+        result.map(|result| result.map(|value| VmHostReturn { value, memory }))
     }
 
     fn wait_async(&mut self, calls: &[u64]) -> Result<(u64, RuntimeValue), VmError> {
-        self.wait_async_interruptible(calls, false)?
-            .ok_or_else(|| VmError::Host("host wait interrupted".into()))
+        let completion = self
+            .wait_async_interruptible(calls, false)?
+            .ok_or_else(|| VmError::Host("host wait interrupted".into()))?;
+        completion
+            .result
+            .map(|value| (completion.call, value.value))
     }
 
     fn wait_async_interruptible(
         &mut self,
         calls: &[u64],
         allow_interruption: bool,
-    ) -> Result<Option<(u64, RuntimeValue)>, VmError> {
+    ) -> Result<Option<VmHostCompletion>, VmError> {
+        self.wait_async_with_import_admission(
+            calls,
+            allow_interruption,
+            &mut VmHostImportAdmission::disabled(),
+        )
+    }
+
+    fn wait_async_with_import_admission(
+        &mut self,
+        calls: &[u64],
+        allow_interruption: bool,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<Option<VmHostCompletion>, VmError> {
         if calls.is_empty() {
             return Err(VmError::Host("host wait received no process calls".into()));
         }
         loop {
             for call in calls {
-                if let Some(value) = self.poll_async(*call)? {
-                    return Ok(Some((*call, value)));
-                }
+                let result = match self.poll_async_with_import_admission(*call, admission) {
+                    Ok(Some(value)) => Ok(value),
+                    Ok(None) => continue,
+                    Err(error) => Err(error),
+                };
+                return Ok(Some(VmHostCompletion {
+                    call: *call,
+                    result,
+                }));
             }
             if allow_interruption
                 && (self.interruption_requested()
@@ -11157,15 +13853,56 @@ impl VmHost for BootstrapHost {
     fn cancel_async(&mut self, call: u64) -> Result<(), VmError> {
         if self.sync_waiters.contains_key(&call) {
             self.cancel_sync_waiter(call)?;
+            if !self.sync_waiters.contains_key(&call) && !self.ready_jobs.contains_key(&call) {
+                self.async_memory.remove(&call);
+            }
             return Ok(());
         }
         if self.ready_jobs.contains_key(&call) {
+            // Cancellation is idempotent. Keep the existing nominal response
+            // and its reservation instead of rebuilding the same descriptor.
+            if matches!(self.ready_jobs.get(&call), Some(Ok(RuntimeValue::ResultErr(error)))
+            if matches!(error.as_ref(), RuntimeValue::Variant { name, variant, values }
+                if values.is_empty() && (
+                    (self.ready_console_jobs.contains(&call) && name == "ConsoleError" && *variant == 2)
+                    || (self.ready_fs_jobs.contains(&call) && name == "FsError" && *variant == FsError::Cancelled.variant())
+                )))
+            {
+                return Ok(());
+            }
+            // A ready request can reuse retired request metadata for its
+            // fixed cancellation envelope. Keep the old response charged
+            // until its value is dropped, then replenish reusable metadata.
+            let response_bytes = 2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES
+                + if self.ready_console_jobs.contains(&call) {
+                    12
+                } else {
+                    7
+                };
+            let replacement = self
+                .async_memory
+                .get_mut(&call)
+                .map(|memory| memory.request.split_off(response_bytes))
+                .transpose()?;
             let cancelled = if self.ready_fs_jobs.contains(&call) {
-                self.fs_result_error("operation cancelled")
+                self.fs_result_error(FsError::Cancelled)
+            } else if self.ready_console_jobs.contains(&call) {
+                RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                    name: "ConsoleError".to_owned(),
+                    variant: 2,
+                    values: Vec::new(),
+                }))
             } else {
-                self.io_result_error("operation cancelled")
+                self.io_result_error(stdlib_io::IoError::Cancelled)
             };
-            self.ready_jobs.insert(call, Ok(cancelled));
+            drop(self.ready_jobs.insert(call, Ok(cancelled)));
+            if let Some(memory) = self.async_memory.get_mut(&call) {
+                if let Some(mut retired) = memory.response.take() {
+                    let reused = retired.bytes().min(response_bytes);
+                    retired.transfer_to(&mut memory.request, reused)?;
+                }
+                memory.response = replacement;
+            }
             return Ok(());
         }
         if let Some(job) = self.time_jobs.get_mut(&call) {
@@ -11185,9 +13922,11 @@ impl VmHost for BootstrapHost {
             return Ok(());
         };
         match kind {
+            RuntimeHostValueKind::Reader | RuntimeHostValueKind::Writer => {
+                self.values.remove(id);
+                self.buffer_memory.remove(id);
+            }
             RuntimeHostValueKind::ProcessHandle
-            | RuntimeHostValueKind::Reader
-            | RuntimeHostValueKind::Writer
             | RuntimeHostValueKind::EncodingBase64Encoder
             | RuntimeHostValueKind::EncodingBase64Decoder
             | RuntimeHostValueKind::EncodingHexEncoder
@@ -11249,11 +13988,40 @@ impl VmHost for BootstrapHost {
             }
             _ => {}
         }
+        if !self.values.contains_key(id) {
+            self.buffer_memory.remove(id);
+        }
         Ok(())
     }
 
     fn take_test_control(&mut self) -> Option<String> {
         self.testing_control.take()
+    }
+
+    fn record_test_resource_limit(
+        &mut self,
+        id: &str,
+        resource: &'static str,
+    ) -> Result<bool, VmError> {
+        let kind = match resource {
+            "instruction steps" => "instructions",
+            "stack depth" => "depth",
+            "heap bytes" | "heap objects" => "memory",
+            other => other,
+        };
+        for envelope in self
+            .testing
+            .iter()
+            .chain(self.testing_stack.iter().rev().flatten())
+        {
+            if envelope
+                .record_runtime_limit(id, kind)
+                .map_err(|error| VmError::Host(error.to_string()))?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn begin_test_node(&mut self, kind: VmTestNodeKind, id: &str) -> Result<(), VmError> {
@@ -11292,10 +14060,12 @@ impl VmHost for BootstrapHost {
             VmTestNodeKind::Leaf => TestExecutionKind::Leaf,
             VmTestNodeKind::Suite => TestExecutionKind::Suite,
         };
-        let panic = match outcome {
-            VmTestNodeOutcome::Passed => None,
-            VmTestNodeOutcome::TimedOut => None,
-            VmTestNodeOutcome::Panicked(panic) => Some(panic),
+        let (panic, error_type) = match outcome {
+            VmTestNodeOutcome::Passed
+            | VmTestNodeOutcome::TimedOut
+            | VmTestNodeOutcome::ResourceLimited => (None, None),
+            VmTestNodeOutcome::FailedError { error_type, span } => (None, Some((error_type, span))),
+            VmTestNodeOutcome::Panicked(panic) => (Some(panic), None),
             VmTestNodeOutcome::Interrupted => {
                 return participation
                     .finish_interrupted(id, envelope)
@@ -11303,7 +14073,7 @@ impl VmHost for BootstrapHost {
             }
         };
         participation
-            .finish(id, kind, envelope, panic)
+            .finish(id, kind, envelope, panic, error_type)
             .map_err(VmError::Host)
     }
 
@@ -11320,6 +14090,11 @@ impl VmHost for BootstrapHost {
 
 impl Drop for BootstrapHost {
     fn drop(&mut self) {
+        for value in self.environment.values_mut() {
+            value.fill(0);
+            std::hint::black_box(value);
+        }
+        self.environment.clear();
         for job in self.jobs.values() {
             job.cancellation.store(true, Ordering::Release);
         }
@@ -11629,16 +14404,23 @@ fn shell_stage(text: &str) -> ProcessStage {
     }
 }
 
-fn native_file_name_bytes(entry: &std::fs::DirEntry) -> Vec<u8> {
-    let name = entry.file_name();
-    #[cfg(unix)]
-    {
-        name.into_vec()
+fn atomic_write_file(
+    target: &std::path::Path,
+    temporary: &std::path::Path,
+    bytes: &[u8],
+) -> io::Result<()> {
+    // Cleanup belongs to this operation only after exclusive creation succeeds.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temporary)?;
+    let result = file.write_all(bytes).and_then(|()| file.flush());
+    drop(file);
+    let result = result.and_then(|()| std::fs::rename(temporary, target));
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
     }
-    #[cfg(not(unix))]
-    {
-        name.to_string_lossy().into_owned().into_bytes()
-    }
+    result
 }
 
 fn check_succeeded(statuses: &[ExitStatus]) -> bool {
@@ -11909,7 +14691,7 @@ mod tests {
                 &[RuntimeValue::String("hello".into())],
             )
             .unwrap(),
-            RuntimeValue::Unit
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))
         );
         assert_eq!(host.take_stdout(), b"hello\n");
         assert!(
@@ -11918,8 +14700,404 @@ mod tests {
         );
         assert_eq!(
             host.invoke("std.console.flush", &[]).unwrap(),
-            RuntimeValue::Unit
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))
         );
+    }
+
+    #[test]
+    fn async_io_admits_pending_responses_before_consuming_input_or_emitting_bytes() {
+        for read in [true, false] {
+            for short in [true, false] {
+                let mut host = BootstrapHost::with_stdin(b"abcdef".to_vec());
+                let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+                let writer = ok(host.invoke("std.console.stdout", &[]).unwrap());
+                let bytes = host.allocate_bytes(b"hi".to_vec()).unwrap();
+                let (method, arguments, payload_bytes, response_bytes, retained_bytes) = if read {
+                    (
+                        "std.io.Reader.read",
+                        vec![reader.clone(), RuntimeValue::Integer(2)],
+                        34,
+                        106,
+                        106,
+                    )
+                } else {
+                    ("std.io.Writer.write", vec![writer, bytes], 0, 71, 64)
+                };
+                let job_bytes = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64;
+                let required = job_bytes + payload_bytes + response_bytes;
+                let owner = VmMemoryBudget::new(required - u64::from(short));
+                host.set_test_memory_budget(Some(owner.clone()));
+                let before = (host.next_value, host.values.len());
+                let admitted = host.start_async(method, &arguments);
+                if short {
+                    let error = match admitted {
+                        Err(error) => error,
+                        Ok(call) => host.poll_async(call).unwrap_err(),
+                    };
+                    assert!(error.is_resource_limit());
+                    assert_eq!(host.reader_state(&reader).unwrap().2, 0);
+                    assert!(host.stdout.is_empty());
+                    assert_eq!((host.next_value, host.values.len()), before);
+                    assert!(host.ready_jobs.is_empty());
+                    assert!(host.async_memory.is_empty());
+                    assert_eq!(owner.live_bytes(), 0);
+                } else {
+                    let call = admitted.unwrap();
+                    assert_eq!(
+                        owner.live_bytes(),
+                        job_bytes + payload_bytes + retained_bytes
+                    );
+                    let returned = host.poll_async(call).unwrap().unwrap();
+                    assert!(matches!(returned, RuntimeValue::ResultOk(_)));
+                    assert_eq!(
+                        host.reader_state(&reader).unwrap().2,
+                        if read { 2 } else { 0 }
+                    );
+                    assert_eq!(
+                        host.stdout,
+                        if read {
+                            b"".as_slice()
+                        } else {
+                            b"hi".as_slice()
+                        }
+                    );
+                    assert_eq!(owner.live_bytes(), payload_bytes);
+                    drop(returned);
+                    host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
+                        .unwrap();
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_async_io_delivery_keeps_prepaid_results_through_poll_and_wait() {
+        for read in [false, true] {
+            for wait in [false, true] {
+                let mut host = BootstrapHost::with_stdin(b"abcdef".to_vec());
+                let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+                let writer = ok(host.invoke("std.console.stdout", &[]).unwrap());
+                let bytes = host.allocate_bytes(b"hi".to_vec()).unwrap();
+                let (method, arguments, payload, maximum, response) = if read {
+                    (
+                        "std.io.Reader.read",
+                        vec![reader, RuntimeValue::Integer(2)],
+                        34,
+                        106,
+                        106,
+                    )
+                } else {
+                    ("std.io.Writer.write", vec![writer, bytes], 0, 71, 64)
+                };
+                let job = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64;
+                let owner = VmMemoryBudget::new(job + payload + maximum);
+                let parent = VmMemoryBudget::new(1);
+                host.set_test_memory_budget(Some(owner.clone()));
+                let call = host.start_async(method, &arguments).unwrap();
+                assert_eq!(owner.live_bytes(), job + payload + response);
+                host.set_test_memory_budget(Some(parent.clone()));
+                let returned = if wait {
+                    let completed = host
+                        .wait_async_interruptible(&[call], false)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(completed.call, call);
+                    completed.result.unwrap()
+                } else {
+                    host.poll_async_owned(call).unwrap().unwrap()
+                };
+                assert_eq!(returned.memory.as_ref().unwrap().bytes(), response);
+                assert_eq!(owner.live_bytes(), payload + response);
+                assert_eq!(parent.live_bytes(), 0);
+                assert_eq!(host.test_memory.as_ref().unwrap().limit(), 1);
+                assert!(host.async_memory.is_empty());
+                drop(returned);
+                assert_eq!(owner.live_bytes(), payload);
+                host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
+                    .unwrap();
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn owned_channel_delivery_moves_the_receiver_reservation_and_pending_payload() {
+        for wait in [false, true] {
+            let mut host = BootstrapHost::default();
+            let (sender, receiver) = channel_endpoints(
+                host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                    .unwrap(),
+            );
+            let method = "std.channel.Receiver.receive";
+            let response = 64 + "pending".len() as u64;
+            let job = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64 + 32;
+            let owner = VmMemoryBudget::new(job + response);
+            let parent = VmMemoryBudget::new(1);
+            host.set_test_memory_budget(Some(owner.clone()));
+            let call = host.start_async(method, &[receiver]).unwrap();
+            assert_eq!(owner.live_bytes(), job);
+            host.set_test_memory_budget(Some(parent.clone()));
+            ok(host
+                .invoke(
+                    "std.channel.Sender.send",
+                    &[sender, RuntimeValue::String("pending".into())],
+                )
+                .unwrap());
+            assert_eq!(owner.live_bytes(), job + response);
+            let Some(Ok(RuntimeValue::OptionSome(value))) = host.ready_jobs.get(&call) else {
+                panic!("missing ready receive")
+            };
+            let RuntimeValue::String(text) = value.as_ref() else {
+                panic!("missing queued String")
+            };
+            let pointer = text.as_ptr() as usize;
+            let returned = if wait {
+                host.wait_async_interruptible(&[call], false)
+                    .unwrap()
+                    .unwrap()
+                    .result
+                    .unwrap()
+            } else {
+                host.poll_async_owned(call).unwrap().unwrap()
+            };
+            let RuntimeValue::OptionSome(value) = &returned.value else {
+                panic!("missing receive")
+            };
+            let RuntimeValue::String(text) = value.as_ref() else {
+                panic!("missing String")
+            };
+            assert_eq!(text.as_ptr() as usize, pointer);
+            assert_eq!(returned.memory.as_ref().unwrap().bytes(), response);
+            assert_eq!(owner.live_bytes(), response);
+            assert_eq!(parent.live_bytes(), 0);
+            assert!(host.async_memory.is_empty());
+            drop(returned);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn cancelling_ready_owned_responses_releases_payloads_and_is_repeatable_at_the_limit() {
+        for initial in [RuntimeValue::Unit, RuntimeValue::String("x".repeat(1024))] {
+            let mut host = BootstrapHost::default();
+            let bytes = initial.retained_bytes().unwrap();
+            let owner = VmMemoryBudget::new(128 + bytes);
+            let call = 77;
+            host.ready_jobs.insert(call, Ok(initial));
+            host.async_memory.insert(
+                call,
+                super::HostAsyncMemory {
+                    request: owner.reserve(128).unwrap(),
+                    response: Some(owner.reserve(bytes).unwrap()),
+                },
+            );
+            let expected_request = 128 - 71_u64.saturating_sub(bytes);
+            for _ in 0..5 {
+                host.cancel_async(call).unwrap();
+                assert_eq!(host.async_memory[&call].request.bytes(), expected_request);
+                assert_eq!(
+                    host.async_memory[&call].response.as_ref().unwrap().bytes(),
+                    71
+                );
+                assert_eq!(owner.live_bytes(), expected_request + 71);
+            }
+            let returned = host.poll_async_owned(call).unwrap().unwrap();
+            assert!(matches!(returned.value, RuntimeValue::ResultErr(_)));
+            assert_eq!(owner.live_bytes(), 71);
+            drop(returned);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn owned_reader_return_admission_precedes_input_consumption() {
+        for whole in [false, true] {
+            let mut host = BootstrapHost::with_stdin(b"abcdef".to_vec());
+            let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+            let limits = host.invoke("std.io.defaultLimits", &[]).unwrap();
+            let (method, arguments, bytes, maximum, retained) = if whole {
+                ("std.io.readAll", vec![reader.clone(), limits], 6, 71, 64)
+            } else {
+                (
+                    "std.io.Reader.read",
+                    vec![reader.clone(), RuntimeValue::Integer(2)],
+                    2,
+                    106,
+                    106,
+                )
+            };
+            let budget = VmMemoryBudget::new(32 + bytes + maximum - 1);
+            host.set_test_memory_budget(Some(budget.clone()));
+            let before = (host.next_value, host.values.len());
+            assert!(
+                host.invoke_owned(method, arguments.clone(), None, Some(&budget))
+                    .unwrap_err()
+                    .is_resource_limit()
+            );
+            assert_eq!(
+                host.reader_state(&reader).unwrap().2,
+                0,
+                "{method} consumed before response admission"
+            );
+            assert_eq!((host.next_value, host.values.len()), before);
+            assert_eq!(budget.live_bytes(), 0);
+            let admitted = VmMemoryBudget::new(32 + bytes + maximum);
+            host.set_test_memory_budget(Some(admitted.clone()));
+            let returned = host
+                .invoke_owned(method, arguments, None, Some(&admitted))
+                .unwrap();
+            assert_eq!(admitted.live_bytes(), 32 + bytes + retained);
+            let RuntimeValue::ResultOk(value) = &returned.value else {
+                panic!("missing successful read")
+            };
+            let value = if let RuntimeValue::Variant {
+                name,
+                variant: 0,
+                values,
+            } = value.as_ref()
+            {
+                assert_eq!(name, "ReadResult");
+                assert_eq!(values.len(), 1);
+                &values[0]
+            } else {
+                value.as_ref()
+            };
+            assert_eq!(host.bytes(value).unwrap(), &b"abcdef"[..bytes as usize]);
+            assert_eq!(host.reader_state(&reader).unwrap().2, bytes as usize);
+            drop(returned);
+            assert_eq!(admitted.live_bytes(), 32 + bytes);
+            host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
+                .unwrap();
+            assert_eq!(admitted.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn owned_io_returns_precede_output_and_release_unused_nominal_descriptors() {
+        for (method, nodes, expected) in [
+            ("std.console.print", 2, b"hi".as_slice()),
+            ("std.console.println", 2, b"hi\n".as_slice()),
+            ("std.io.Writer.write", 2, b"hi".as_slice()),
+            ("std.io.writeAll", 2, b"hi".as_slice()),
+            ("std.io.Writer.flush", 2, b"".as_slice()),
+        ] {
+            let mut host = BootstrapHost::default();
+            let writer = ok(host.invoke("std.console.stdout", &[]).unwrap());
+            let bytes = host.allocate_bytes(b"hi".to_vec()).unwrap();
+            let arguments = match method {
+                "std.console.print" | "std.console.println" => {
+                    vec![RuntimeValue::String("hi".into())]
+                }
+                "std.io.Writer.flush" => vec![writer],
+                _ => vec![writer, bytes],
+            };
+            let maximum = nodes * 32 + if method.starts_with("std.io.") { 7 } else { 0 };
+            let short = VmMemoryBudget::new(maximum - 1);
+            host.set_test_memory_budget(Some(short.clone()));
+            assert!(
+                host.invoke_owned(method, arguments.clone(), None, Some(&short))
+                    .unwrap_err()
+                    .is_resource_limit()
+            );
+            assert!(host.stdout.is_empty());
+            assert_eq!(short.live_bytes(), 0);
+            let owner = VmMemoryBudget::new(maximum);
+            host.set_test_memory_budget(Some(owner.clone()));
+            let returned = host
+                .invoke_owned(method, arguments, None, Some(&owner))
+                .unwrap();
+            assert_eq!(host.stdout, expected);
+            assert_eq!(owner.live_bytes(), nodes * 32);
+            drop(returned);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        let mut host = BootstrapHost::with_stdin(Vec::new());
+        let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+        let owner = VmMemoryBudget::new(106);
+        host.set_test_memory_budget(Some(owner.clone()));
+        for maximum in [1, 0] {
+            let returned = host
+                .invoke_owned(
+                    "std.io.Reader.read",
+                    vec![reader.clone(), RuntimeValue::Integer(maximum)],
+                    None,
+                    Some(&owner),
+                )
+                .unwrap();
+            if maximum == 1 {
+                assert_eq!(
+                    returned.value,
+                    RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                        name: "ReadResult".to_owned(),
+                        variant: 1,
+                        values: Vec::new(),
+                    }))
+                );
+            } else {
+                assert!(matches!(returned.value, RuntimeValue::ResultErr(_)));
+            }
+            assert_eq!(owner.live_bytes(), if maximum == 1 { 74 } else { 71 });
+            drop(returned);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn reader_memory_admission_preserves_input_before_copy_and_publication() {
+        for whole in [false, true] {
+            let mut host = BootstrapHost::with_stdin(b"abcdef".to_vec());
+            let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+            let limits = host.invoke("std.io.defaultLimits", &[]).unwrap();
+            ok(host
+                .invoke(
+                    "std.io.Reader.read",
+                    &[reader.clone(), RuntimeValue::Integer(2)],
+                )
+                .unwrap());
+            let (method, arguments, expected) = if whole {
+                (
+                    "std.io.readAll",
+                    vec![reader.clone(), limits],
+                    b"cdef".as_slice(),
+                )
+            } else {
+                (
+                    "std.io.Reader.read",
+                    vec![reader.clone(), RuntimeValue::Integer(2)],
+                    b"cd".as_slice(),
+                )
+            };
+            let required = tondo_vm::runtime::TEST_HOST_BUFFER_BYTES + expected.len() as u64;
+            let rejected = VmMemoryBudget::new(required - 1);
+            host.test_memory = Some(rejected.clone());
+            let before = (host.next_value, host.values.len());
+            assert!(matches!(
+                host.invoke(method, &arguments),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    ..
+                })
+            ));
+            assert_eq!(
+                host.reader_state(&reader).unwrap().2,
+                2,
+                "{method} consumed input after rejected memory admission"
+            );
+            assert_eq!((host.next_value, host.values.len()), before);
+            assert_eq!(rejected.live_bytes(), 0);
+
+            let admitted = VmMemoryBudget::new(required);
+            host.test_memory = Some(admitted.clone());
+            let result = ok(host.invoke(method, &arguments).unwrap());
+            let bytes = if whole { result } else { io_data(result) };
+            assert_eq!(host.bytes(&bytes).unwrap(), expected);
+            assert_eq!(host.reader_state(&reader).unwrap().2, 2 + expected.len());
+            assert_eq!(admitted.live_bytes(), required);
+            host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
+                .unwrap();
+            assert_eq!(admitted.live_bytes(), 0);
+        }
     }
 
     #[test]
@@ -11954,16 +15132,12 @@ mod tests {
                 &[reader.clone(), RuntimeValue::Integer(2)],
             )
             .unwrap());
-        let RuntimeValue::OptionSome(first) = first else {
-            panic!("bounded read must return data");
-        };
+        let first = io_data(first);
         assert_eq!(chunks.bytes(&first).unwrap(), b"ab");
         let second = ok(chunks
             .invoke("std.io.Reader.read", &[reader, RuntimeValue::Integer(4)])
             .unwrap());
-        let RuntimeValue::OptionSome(second) = second else {
-            panic!("bounded read must return data");
-        };
+        let second = io_data(second);
         assert_eq!(chunks.bytes(&second).unwrap(), b"cdef");
 
         let bytes = chunks.allocate(
@@ -12003,11 +15177,11 @@ mod tests {
             asynchronous
                 .invoke("std.console.print", &[RuntimeValue::String("ready".into())],)
                 .unwrap(),
-            RuntimeValue::Unit
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))
         );
         let flush = asynchronous.start_async("std.console.flush", &[]).unwrap();
         let (_, value) = asynchronous.wait_async(&[flush]).unwrap();
-        assert_eq!(value, RuntimeValue::Unit);
+        assert_eq!(value, RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)));
         assert_eq!(asynchronous.take_stdout(), b"ready");
     }
 
@@ -12018,35 +15192,28 @@ mod tests {
         let invalid = host
             .invoke("std.console.readLine", std::slice::from_ref(&reader))
             .unwrap();
-        let RuntimeValue::ResultErr(error) = &invalid else {
-            panic!("invalid stdin must produce ConsoleError");
-        };
-        let RuntimeValue::Host {
-            kind: RuntimeHostValueKind::ConsoleError,
-            id,
-        } = error.as_ref()
-        else {
-            panic!("invalid stdin must preserve the nominal ConsoleError kind");
-        };
-        assert!(matches!(
-            host.values.get(id),
-            Some(HostValue::ConsoleError { _message })
-                if !_message.contains('/') && !_message.contains('\\')
-        ));
+        let expected = RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+            name: "ConsoleError".to_owned(),
+            variant: 3,
+            values: vec![RuntimeValue::Variant {
+                name: "IoError".to_owned(),
+                variant: 2,
+                values: Vec::new(),
+            }],
+        }));
+        assert_eq!(invalid, expected);
+        assert_eq!(
+            host.next_value, 1,
+            "errors must not allocate opaque host tokens"
+        );
 
         // UTF-8 rejection is atomic: retrying observes the same invalid byte
         // instead of silently advancing the reader past a failed line.
         let retry = host
             .invoke("std.console.readLine", std::slice::from_ref(&reader))
             .unwrap();
-        assert!(matches!(
-            retry,
-            RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host {
-                    kind: RuntimeHostValueKind::ConsoleError,
-                    ..
-                })
-        ));
+        assert_eq!(retry, expected);
+        assert_eq!(host.next_value, 1);
 
         // A forged reader token for stdout is still a typed public error, not
         // a host panic or an accidental read from another stream. Safe Tondo
@@ -12062,14 +15229,7 @@ mod tests {
         let wrong_stream = host
             .invoke("std.console.readLine", std::slice::from_ref(&wrong_reader))
             .unwrap();
-        assert!(matches!(
-            wrong_stream,
-            RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host {
-                    kind: RuntimeHostValueKind::ConsoleError,
-                    ..
-                })
-        ));
+        assert_eq!(wrong_stream, expected);
     }
 
     #[test]
@@ -12084,10 +15244,8 @@ mod tests {
             .unwrap());
         assert!(matches!(
             limits,
-            RuntimeValue::Host {
-                kind: RuntimeHostValueKind::IoLimits,
-                ..
-            }
+            RuntimeValue::Record { ref name, ref values }
+                if name == "IoLimits" && values == &[RuntimeValue::Integer(3), RuntimeValue::Integer(2)]
         ));
         let rejected = host
             .invoke("std.io.readAll", &[reader.clone(), limits])
@@ -12095,7 +15253,7 @@ mod tests {
         assert!(matches!(
             rejected,
             RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::IoError, .. })
+                if matches!(value.as_ref(), RuntimeValue::Variant { name, variant: 3, values } if name == "IoError" && values.is_empty())
         ));
         let first = ok(host
             .invoke(
@@ -12103,9 +15261,7 @@ mod tests {
                 &[reader.clone(), RuntimeValue::Integer(2)],
             )
             .unwrap());
-        let RuntimeValue::OptionSome(first) = first else {
-            panic!("a rejected readAll must not consume the reader");
-        };
+        let first = io_data(first);
         assert_eq!(host.bytes(&first).unwrap(), b"ab");
 
         let mut exact = BootstrapHost::with_stdin(b"abcdef".to_vec());
@@ -12137,7 +15293,7 @@ mod tests {
                 )
                 .unwrap(),
             RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::IoError, .. })
+                if matches!(value.as_ref(), RuntimeValue::Variant { name, variant: 3, values } if name == "IoError" && values.is_empty())
         ));
 
         let mut async_host = BootstrapHost::with_stdin(b"xy".to_vec());
@@ -12150,9 +15306,7 @@ mod tests {
             .unwrap();
         let (_, completed) = async_host.wait_async(&[call]).unwrap();
         let completed = ok(completed);
-        let RuntimeValue::OptionSome(completed) = completed else {
-            panic!("async read must complete with data");
-        };
+        let completed = io_data(completed);
         assert_eq!(async_host.bytes(&completed).unwrap(), b"x");
 
         let call = async_host
@@ -12163,7 +15317,7 @@ mod tests {
         assert!(matches!(
             cancelled,
             RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::IoError, .. })
+                if matches!(value.as_ref(), RuntimeValue::Variant { name, variant: 1, values } if name == "IoError" && values.is_empty())
         ));
 
         let mut cleanup_host = BootstrapHost::with_stdin(Vec::new());
@@ -12177,6 +15331,297 @@ mod tests {
     }
 
     #[test]
+    fn filesystem_metadata_admission_releases_scratch_without_allocating_handles() {
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        let location = root.path().join("file");
+        for exists in [false, true] {
+            if exists {
+                std::fs::write(&location, b"abc").unwrap();
+            }
+            let path = path::Path::from_string(location.to_str().unwrap()).unwrap();
+            let peak = METADATA_RESULT_BYTES
+                + path.as_bytes().len() as u64 * if cfg!(unix) { 1 } else { 3 };
+            for limit in [peak - 1, peak] {
+                let mut host = BootstrapHost::default();
+                let receiver =
+                    host.allocate(RuntimeHostValueKind::Path, HostValue::Path(path.clone()));
+                let budget = VmMemoryBudget::new(limit);
+                host.set_test_memory_budget(Some(budget.clone()));
+                let result =
+                    host.invoke_owned("std.fs.metadata", vec![receiver], None, Some(&budget));
+                if limit < peak {
+                    assert!(result.unwrap_err().is_resource_limit());
+                } else {
+                    let returned = result.unwrap();
+                    if exists {
+                        assert_eq!(
+                            returned.value,
+                            RuntimeValue::ResultOk(Box::new(RuntimeValue::Record {
+                                name: "Metadata".into(),
+                                values: vec![
+                                    RuntimeValue::Variant {
+                                        name: "FileKind".into(),
+                                        variant: 0,
+                                        values: Vec::new(),
+                                    },
+                                    RuntimeValue::Integer(3),
+                                    RuntimeValue::Bool(false),
+                                ],
+                            }))
+                        );
+                    } else {
+                        assert_eq!(returned.value, host.fs_result_error(FsError::NotFound));
+                    }
+                    let bytes = returned.value.retained_bytes().unwrap();
+                    assert_eq!(bytes, if exists { METADATA_RESULT_BYTES } else { 71 });
+                    assert_eq!(returned.memory.as_ref().unwrap().bytes(), bytes);
+                    assert_eq!(budget.live_bytes(), bytes);
+                    drop(returned);
+                }
+                assert_eq!(host.next_value, 1, "metadata created a host identity");
+                assert_eq!(host.values.len(), 1, "only the input Path should remain");
+                assert!(host.buffer_memory.is_empty());
+                assert_eq!(budget.live_bytes(), 0);
+            }
+        }
+        root.cleanup().unwrap();
+    }
+
+    #[test]
+    fn filesystem_metadata_nominal_results_survive_phase_admission_and_cleanup() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        for exists in [true, false] {
+            let location = if exists {
+                root.path().to_owned()
+            } else {
+                root.path().join("missing")
+            };
+            let literal = serde_json::to_string(location.to_str().unwrap()).unwrap();
+            let check = if exists {
+                "let info = outcome?\nassert(info.kind == fs.FileKind.Directory)\nassert(info.size >= 0)"
+            } else {
+                "match outcome {\n err(fs.FsError.NotFound) => {}\n _ => assert(false)\n }"
+            };
+            let source = format!(
+                "import std.fs\nimport std.path\ntest snapshot {{\n\
+                 let location = path.Path.fromString({literal})?\n\
+                 let padding = \"{}\"\nassert(padding.length() == 6000)\n\
+                 scope {{\nlet job = spawn fs.metadata(location)\n\
+                 let outcome = await job\n{check}\n}}\n}}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_host_admission_source(
+                &source,
+                crate::driver::BuildTarget::vm_hosted_capabilities(),
+                crate::driver::Operation::Test,
+            );
+            let mut succeeded = 0;
+            let mut rejected = 0;
+            for memory in (6144..=16384).step_by(128) {
+                let mut host = BootstrapHost::default();
+                let participation = TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                );
+                host.install_testing_participation(participation.clone());
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                assert!(result.is_ok(), "{exists}/{memory}: {result:?}");
+                let executions = participation.executions().unwrap();
+                assert_eq!(executions.len(), 1);
+                let terminal = executions[0].report.terminal();
+                if terminal.is_none() {
+                    succeeded += 1;
+                } else {
+                    rejected += 1;
+                    assert!(
+                        matches!(
+                            terminal,
+                            Some(crate::test_control::Terminal::ResourceLimit { kind: "memory" })
+                        ),
+                        "{exists}/{memory}: {terminal:?}"
+                    );
+                }
+                assert!(host.next_value <= 1, "metadata created a host handle");
+                assert!(host.values.is_empty());
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.ready_fs_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            assert!(
+                succeeded > 0 && rejected > 0,
+                "{exists}: sweep missed the transition"
+            );
+        }
+        root.cleanup().unwrap();
+    }
+
+    #[test]
+    fn filesystem_open_releases_path_storage_and_preserves_error_results() {
+        let location =
+            std::env::temp_dir().join(format!("tondo-file-open-storage-{}", std::process::id()));
+        let path = path::Path::from_string(location.to_str().unwrap()).unwrap();
+        let peak = 71
+            + tondo_vm::runtime::TEST_HOST_BUFFER_BYTES
+            + path.as_bytes().len() as u64 * if cfg!(unix) { 1 } else { 3 };
+        for (limit, admitted, mode) in [
+            (peak - 1, false, FsOpenMode::Create),
+            (peak, true, FsOpenMode::Create),
+            (peak, true, FsOpenMode::CreateNew),
+        ] {
+            std::fs::write(&location, b"preserved").unwrap();
+            let mut host = BootstrapHost::default();
+            let receiver = host.allocate(RuntimeHostValueKind::Path, HostValue::Path(path.clone()));
+            let budget = VmMemoryBudget::new(limit);
+            host.set_test_memory_budget(Some(budget.clone()));
+            let result = host.invoke_owned(
+                "std.fs.open",
+                vec![receiver, BootstrapHost::fs_mode_value(mode)],
+                None,
+                Some(&budget),
+            );
+            if !admitted {
+                assert!(result.unwrap_err().is_resource_limit());
+                assert_eq!(std::fs::read(&location).unwrap(), b"preserved");
+                assert_eq!(host.next_value, 1);
+            } else {
+                let returned = result.unwrap();
+                if mode == FsOpenMode::CreateNew {
+                    assert_eq!(returned.value, host.fs_result_error(FsError::AlreadyExists));
+                    assert_eq!(returned.memory.as_ref().unwrap().bytes(), 71);
+                    assert_eq!(budget.live_bytes(), 71);
+                    assert_eq!(std::fs::read(&location).unwrap(), b"preserved");
+                    assert_eq!(host.next_value, 1);
+                } else {
+                    let RuntimeValue::ResultOk(file) = &returned.value else {
+                        panic!("unexpected open result: {:?}", returned.value);
+                    };
+                    assert_eq!(returned.memory.as_ref().unwrap().bytes(), 64);
+                    assert_eq!(
+                        budget.live_bytes(),
+                        64 + tondo_vm::runtime::TEST_HOST_BUFFER_BYTES
+                    );
+                    assert_eq!(std::fs::read(&location).unwrap(), b"");
+                    host.cleanup(file).unwrap();
+                    assert_eq!(budget.live_bytes(), 64);
+                }
+                drop(returned);
+            }
+            assert!(host.buffer_memory.is_empty());
+            assert_eq!(budget.live_bytes(), 0);
+        }
+        std::fs::remove_file(location).unwrap();
+    }
+
+    #[test]
+    fn filesystem_read_admission_preserves_cursor_and_buffer_identity() {
+        let path =
+            std::env::temp_dir().join(format!("tondo-file-read-admission-{}", std::process::id()));
+        std::fs::write(&path, b"abcd").unwrap();
+        let budget = VmMemoryBudget::new(96);
+        let mut host = BootstrapHost::default();
+        let handle = host.allocate(
+            RuntimeHostValueKind::File,
+            HostValue::File {
+                file: std::fs::File::open(&path).unwrap(),
+                readable: true,
+                writable: false,
+                append: false,
+                temporary: false,
+            },
+        );
+        host.set_test_memory_budget(Some(budget.clone()));
+        let id = host.file_id(&handle).unwrap();
+        let next = host.next_value;
+        let result = host.invoke_owned(
+            "std.fs.File.read",
+            vec![handle.clone(), RuntimeValue::Integer(4)],
+            None,
+            Some(&budget),
+        );
+        assert!(result.unwrap_err().is_resource_limit());
+        let Some(HostValue::File { file, .. }) = host.values.get_mut(&id) else {
+            panic!("preexisting file disappeared");
+        };
+        assert_eq!(file.stream_position().unwrap(), 0);
+        assert_eq!(host.next_value, next);
+        assert!(host.buffer_memory.is_empty());
+        assert_eq!(budget.live_bytes(), 0);
+        host.set_test_memory_budget(None);
+        let RuntimeValue::OptionSome(bytes) = ok(host
+            .invoke(
+                "std.fs.File.read",
+                &[handle.clone(), RuntimeValue::Integer(4)],
+            )
+            .unwrap())
+        else {
+            panic!("read should preserve all input")
+        };
+        assert_eq!(host.bytes(&bytes).unwrap(), b"abcd");
+        host.cleanup(&handle).unwrap();
+        drop(host);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn filesystem_cancellation_retains_nominal_error_at_the_exact_budget() {
+        let name = "std.fs.readAll";
+        for short in [true, false] {
+            let mut host = BootstrapHost::default();
+            let missing = host.allocate(
+                RuntimeHostValueKind::Path,
+                HostValue::Path(path::Path::from_string("").unwrap()),
+            );
+            let retained = tondo_vm::runtime::TEST_HOST_JOB_BYTES + name.len() as u64 + 71;
+            // readAll admits its private OS file before opening it; a failed
+            // open releases that transient record and keeps only the reply.
+            let limit = retained + tondo_vm::runtime::TEST_HOST_BUFFER_BYTES - u64::from(short);
+            let owner = VmMemoryBudget::new(limit);
+            host.test_memory = Some(owner.clone());
+            let call = host.start_async(name, &[missing]).unwrap();
+            if short {
+                assert!(host.poll_async_owned(call).unwrap_err().is_resource_limit());
+            } else {
+                assert_eq!(owner.live_bytes(), retained);
+                for _ in 0..3 {
+                    host.cancel_async(call).unwrap();
+                    assert_eq!(owner.live_bytes(), retained);
+                }
+                let returned = host.poll_async_owned(call).unwrap().unwrap();
+                assert_eq!(returned.value, host.fs_result_error(FsError::Cancelled));
+                assert_eq!(returned.memory.as_ref().unwrap().bytes(), 71);
+                assert_eq!(owner.live_bytes(), 71);
+                drop(returned);
+            }
+            assert_eq!(owner.live_bytes(), 0);
+            assert!(host.ready_jobs.is_empty());
+            assert!(host.ready_fs_jobs.is_empty());
+            assert!(host.async_memory.is_empty());
+            assert!(host.cancel_async(call).is_err());
+        }
+    }
+
+    #[test]
     fn filesystem_preserves_native_path_bytes_and_returns_typed_errors() {
         let mut host = BootstrapHost::default();
         let native = host.allocate(
@@ -12187,7 +15632,9 @@ mod tests {
         assert!(matches!(
             result,
             RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::FsError, .. })
+                if matches!(value.as_ref(), RuntimeValue::Variant { name, variant, values }
+                    if name == "FsError" && values.is_empty()
+                        && *variant == if cfg!(unix) { FsError::NotFound.variant() } else { FsError::InvalidPath.variant() })
         ));
     }
 
@@ -12374,10 +15821,8 @@ mod tests {
             .unwrap());
         assert!(matches!(
             metadata,
-            RuntimeValue::Host {
-                kind: RuntimeHostValueKind::Metadata,
-                ..
-            }
+            RuntimeValue::Record { name, values }
+                if name == "Metadata" && values[1] == RuntimeValue::Integer(5)
         ));
         host.cleanup(&handle).unwrap();
         assert!(matches!(
@@ -12425,10 +15870,8 @@ mod tests {
             assert!(matches!(
                 value,
                 RuntimeValue::ResultErr(error)
-                    if matches!(error.as_ref(), RuntimeValue::Host {
-                        kind: RuntimeHostValueKind::FsError,
-                        ..
-                    })
+                    if matches!(error.as_ref(), RuntimeValue::Variant { name, variant, values }
+                        if name == "FsError" && values.is_empty() && *variant < 10)
             ));
         };
         let _ = host.invoke("std.fs.remove", std::slice::from_ref(&root));
@@ -12452,13 +15895,14 @@ mod tests {
             .unwrap());
 
         let read = host.invoke("std.fs.OpenMode.Read", &[]).unwrap();
-        assert!(matches!(
+        assert_eq!(
             read,
-            RuntimeValue::Host {
-                kind: RuntimeHostValueKind::OpenMode,
-                ..
+            RuntimeValue::Variant {
+                name: "OpenMode".into(),
+                variant: 0,
+                values: Vec::new(),
             }
-        ));
+        );
         fs_error(host.invoke("std.fs.open", &[missing, read]).unwrap());
 
         let create_new = host.invoke("std.fs.OpenMode.CreateNew", &[]).unwrap();
@@ -12635,6 +16079,22 @@ mod tests {
         value
     }
 
+    fn io_data(value: RuntimeValue) -> RuntimeValue {
+        let RuntimeValue::Variant {
+            name,
+            variant: 0,
+            values,
+        } = value
+        else {
+            panic!("read must return ReadResult.Data");
+        };
+        assert_eq!(name, "ReadResult");
+        let [value]: [RuntimeValue; 1] = values
+            .try_into()
+            .expect("Data carries exactly one Bytes value");
+        value
+    }
+
     fn ok(value: RuntimeValue) -> RuntimeValue {
         let RuntimeValue::ResultOk(value) = value else {
             panic!("expected successful process result");
@@ -12680,6 +16140,2297 @@ mod tests {
                 && actual_variant == variant
                 && values == payload.into_iter().collect::<Vec<_>>()
         ));
+    }
+
+    #[test]
+    fn terminal_collection_retires_abandoned_channels_and_preserves_live_payloads() {
+        let owner = VmMemoryBudget::new(8192);
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(owner.clone()));
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        let bytes = ok(host
+            .invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("retained".into())],
+            )
+            .unwrap());
+        ok(host
+            .invoke("std.channel.Sender.trySend", &[sender, bytes.clone()])
+            .unwrap());
+        let (_, live_channel) = host.channel_receiver_id(&receiver).unwrap();
+        let (abandoned_sender, abandoned_receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        let (_, dead_channel) = host.channel_receiver_id(&abandoned_receiver).unwrap();
+        ok(host
+            .invoke(
+                "std.channel.Sender.trySend",
+                &[
+                    abandoned_sender,
+                    RuntimeValue::String("abandoned".repeat(64)),
+                ],
+            )
+            .unwrap());
+        let padding = owner.reserve(owner.limit() - owner.live_bytes()).unwrap();
+        let mut roots = tondo_vm::runtime::VmHostRoots::new();
+        receiver.trace_host_roots(&mut roots);
+        host.retire_host_values(&roots).unwrap();
+        assert!(!host.channels.contains_key(&dead_channel));
+        assert_eq!(host.channels[&live_channel].queue.front(), Some(&bytes));
+        assert_eq!(host.bytes(&bytes).unwrap(), b"retained");
+        assert!(
+            host.collect_host_values(&Default::default())
+                .unwrap_err()
+                .to_string()
+                .contains("terminal obligation")
+        );
+        assert_eq!(host.channels[&live_channel].queue.front(), Some(&bytes));
+        host.retire_host_values(&Default::default()).unwrap();
+        assert!(host.channels.is_empty());
+        assert!(host.values.is_empty());
+        assert!(host.buffer_memory.is_empty());
+        assert_eq!(owner.live_bytes(), padding.bytes());
+        drop(padding);
+        assert_eq!(owner.live_bytes(), 0);
+    }
+
+    #[test]
+    fn hosted_channel_admission_and_queue_growth_preserve_the_original_owner() {
+        let owner = VmMemoryBudget::new(1024);
+        let caller = VmMemoryBudget::new(8192);
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(owner.clone()));
+        let next = host.next_value;
+        assert!(matches!(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1024)]),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                ..
+            })
+        ));
+        assert_eq!(host.next_value, next);
+        assert!(host.values.is_empty());
+        assert!(host.channels.is_empty());
+        assert_eq!(owner.live_bytes(), 0);
+
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        let (_, channel) = host.channel_sender_id(&sender).unwrap();
+        let base = owner.live_bytes();
+        assert!(base > 0);
+        host.set_test_memory_budget(Some(caller.clone()));
+        let payload = RuntimeValue::String("x".repeat(64));
+        ok(host
+            .invoke(
+                "std.channel.Sender.trySend",
+                &[sender.clone(), payload.clone()],
+            )
+            .unwrap());
+        let retained = owner.live_bytes();
+        assert_eq!(retained, base + payload.retained_bytes().unwrap());
+        assert_eq!(caller.live_bytes(), 0);
+        assert!(matches!(
+            host.invoke(
+                "std.channel.Sender.trySend",
+                &[sender.clone(), RuntimeValue::String("x".repeat(1024))]
+            ),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 1024
+            })
+        ));
+        assert_eq!(owner.live_bytes(), retained);
+        assert!(host.channels[&channel].queue.iter().eq([&payload]));
+        channel_variant(
+            host.invoke(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap(),
+            "TryReceive",
+            0,
+            Some(payload),
+        );
+        assert_eq!(owner.live_bytes(), base);
+
+        let no_room = VmMemoryBudget::new(1);
+        host.set_test_memory_budget(Some(no_room.clone()));
+        let next = host.next_value;
+        for (method, endpoint) in [
+            ("std.channel.Sender.fork", &sender),
+            ("std.channel.Receiver.fork", &receiver),
+        ] {
+            assert!(matches!(
+                host.invoke(method, std::slice::from_ref(endpoint)),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    ..
+                })
+            ));
+            assert_eq!(host.next_value, next);
+            assert_eq!(
+                (
+                    host.channels[&channel].senders,
+                    host.channels[&channel].receivers
+                ),
+                (1, 1)
+            );
+        }
+        host.invoke("std.channel.Sender.close", &[sender]).unwrap();
+        host.invoke("std.channel.Receiver.close", &[receiver])
+            .unwrap();
+        assert!(host.channels.is_empty());
+        assert!(host.buffer_memory.is_empty());
+        assert_eq!(owner.live_bytes(), 0);
+        assert_eq!(caller.live_bytes(), 0);
+        assert_eq!(no_room.live_bytes(), 0);
+    }
+
+    #[test]
+    fn hosted_channel_direct_rendezvous_delivers_once() {
+        for method in ["std.channel.Sender.trySend", "std.channel.Sender.send"] {
+            let mut host = BootstrapHost::default();
+            let (sender, receiver) = channel_endpoints(
+                host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                    .unwrap(),
+            );
+            let call = host
+                .start_async(
+                    "std.channel.Receiver.receive",
+                    std::slice::from_ref(&receiver),
+                )
+                .unwrap();
+            assert_eq!(host.poll_async(call).unwrap(), None);
+            let payload = RuntimeValue::String("delivered".into());
+            ok(host
+                .invoke(method, &[sender.clone(), payload.clone()])
+                .unwrap());
+            assert_eq!(
+                host.poll_async(call).unwrap(),
+                Some(RuntimeValue::OptionSome(Box::new(payload)))
+            );
+            channel_variant(
+                host.invoke(
+                    "std.channel.Receiver.tryReceive",
+                    std::slice::from_ref(&receiver),
+                )
+                .unwrap(),
+                "TryReceive",
+                1,
+                None,
+            );
+            host.invoke("std.channel.Sender.close", &[sender]).unwrap();
+            host.invoke("std.channel.Receiver.close", &[receiver])
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn hosted_channel_buffered_values_precede_new_sender_rendezvous() {
+        for capacity in [Some(1), Some(2), None] {
+            for route in ["pending", "send", "trySend"] {
+                for counted in [false, true] {
+                    let mut host = BootstrapHost::default();
+                    host.test_memory = counted.then(|| VmMemoryBudget::new(8192));
+                    let endpoints = match capacity {
+                        Some(capacity) => {
+                            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(capacity)])
+                        }
+                        None => host.invoke("std.channel.unbounded", &[]),
+                    }
+                    .unwrap();
+                    let (sender, receiver) = channel_endpoints(endpoints);
+                    ok(host
+                        .channel_try_send_now(
+                            &sender,
+                            &RuntimeValue::Integer(6),
+                            &mut VmHostReturnBudget::new(None),
+                        )
+                        .unwrap());
+                    let receive = host
+                        .start_async(
+                            "std.channel.Receiver.receive",
+                            std::slice::from_ref(&receiver),
+                        )
+                        .unwrap();
+                    let mut pending = None;
+                    let accepted = if route == "pending" {
+                        let send = host
+                            .start_async(
+                                "std.channel.Sender.send",
+                                &[sender.clone(), RuntimeValue::Integer(8)],
+                            )
+                            .unwrap();
+                        assert_eq!(host.poll_async(send).unwrap(), None);
+                        pending = Some(send);
+                        true
+                    } else {
+                        let result = host.invoke(
+                            &format!("std.channel.Sender.{route}"),
+                            &[sender.clone(), RuntimeValue::Integer(8)],
+                        );
+                        if capacity == Some(1) {
+                            if route == "send" {
+                                assert!(
+                                    matches!(result, Err(VmError::Host(message)) if message.contains("would block"))
+                                );
+                            } else {
+                                let RuntimeValue::ResultErr(error) = result.unwrap() else {
+                                    panic!("full buffer accepted a send")
+                                };
+                                channel_variant(
+                                    *error,
+                                    "TrySendError",
+                                    0,
+                                    Some(RuntimeValue::Integer(8)),
+                                );
+                            }
+                            false
+                        } else {
+                            ok(result.unwrap());
+                            true
+                        }
+                    };
+                    assert_eq!(
+                        host.poll_async(receive).unwrap(),
+                        Some(RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(6)))),
+                        "{capacity:?} {route} counted={counted}"
+                    );
+                    if let Some(send) = pending {
+                        ok(host.poll_async(send).unwrap().unwrap());
+                    }
+                    if accepted {
+                        assert_eq!(
+                            host.channel_receive_now(&receiver, &mut VmHostReturnBudget::new(None))
+                                .unwrap(),
+                            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(8)))
+                        );
+                    }
+                    host.invoke("std.channel.Sender.close", &[sender]).unwrap();
+                    assert_eq!(
+                        host.channel_receive_now(&receiver, &mut VmHostReturnBudget::new(None))
+                            .unwrap(),
+                        RuntimeValue::OptionNone
+                    );
+                    assert_eq!(
+                        host.invoke("std.channel.Receiver.close", &[receiver])
+                            .unwrap(),
+                        RuntimeValue::Array(Vec::new())
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_channel_endpoint_replies_are_admitted_before_identity_or_lifecycle_changes() {
+        let mut premature = Vec::new();
+        for operation in [
+            "bounded",
+            "unbounded",
+            "Sender.fork",
+            "Receiver.fork",
+            "Sender.close",
+            "Receiver.close",
+        ] {
+            for shortage in [1, 0] {
+                let mut host = BootstrapHost::default();
+                let (sender, receiver) = channel_endpoints(
+                    host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                        .unwrap(),
+                );
+                let (_, channel) = host.channel_sender_id(&sender).unwrap();
+                let payload = RuntimeValue::String("retained message".repeat(32));
+                ok(host
+                    .invoke(
+                        "std.channel.Sender.trySend",
+                        &[sender.clone(), payload.clone()],
+                    )
+                    .unwrap());
+                let (arguments, bytes) = match operation {
+                    "bounded" => (vec![RuntimeValue::Integer(0)], 128),
+                    "unbounded" => (vec![], 128),
+                    "Sender.fork" => (vec![sender.clone()], 64),
+                    "Receiver.fork" => (vec![receiver.clone()], 64),
+                    "Sender.close" => (vec![sender.clone()], 32),
+                    "Receiver.close" => (
+                        vec![receiver.clone()],
+                        32 + payload.retained_bytes().unwrap(),
+                    ),
+                    _ => unreachable!(),
+                };
+                let storage_owner = VmMemoryBudget::new(4096);
+                host.set_test_memory_budget(Some(storage_owner.clone()));
+                let reply_owner = VmMemoryBudget::new(bytes - shortage);
+                let before = (host.next_value, host.values.len(), host.channels.len());
+                let result = host.invoke_owned(
+                    &format!("std.channel.{operation}"),
+                    arguments,
+                    None,
+                    Some(&reply_owner),
+                );
+                if shortage != 0 {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    let state = &host.channels[&channel];
+                    if (host.next_value, host.values.len(), host.channels.len()) != before
+                        || state.senders != 1
+                        || state.receivers != 1
+                        || state.sender_closed
+                        || state.receiver_closed
+                        || state.queue.front() != Some(&payload)
+                    {
+                        premature.push(operation);
+                    }
+                } else {
+                    let returned = result.unwrap();
+                    assert_eq!(returned.value.retained_bytes(), Some(bytes));
+                    assert_eq!(reply_owner.live_bytes(), bytes);
+                    match operation {
+                        "bounded" | "unbounded" => {
+                            let _ = channel_endpoints(returned.value.clone());
+                        }
+                        "Sender.fork" => {
+                            assert!(host.channel_sender_id(&ok(returned.value.clone())).is_ok());
+                        }
+                        "Receiver.fork" => {
+                            assert!(
+                                host.channel_receiver_id(&ok(returned.value.clone()))
+                                    .is_ok()
+                            );
+                        }
+                        "Sender.close" => {
+                            assert!(host.channel_sender_id(&sender).is_err());
+                        }
+                        "Receiver.close" => {
+                            assert_eq!(returned.value, RuntimeValue::Array(vec![payload]));
+                            assert!(host.channel_receiver_id(&receiver).is_err());
+                        }
+                        _ => unreachable!(),
+                    }
+                    drop(returned);
+                }
+                assert_eq!(reply_owner.live_bytes(), 0);
+                drop(host);
+                assert_eq!(storage_owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            premature.is_empty(),
+            "channel state changed before reply admission: {premature:?}"
+        );
+    }
+
+    #[test]
+    fn owned_channel_endpoint_errors_shared_receivers_and_storage_limits_are_atomic() {
+        for (capacity, variant) in [(-1, 0), (i128::MAX, 0), (1, 1)] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                host.max_bytes = 0;
+                let owner = VmMemoryBudget::new(76 - shortage);
+                let result = host.invoke_owned(
+                    "std.channel.bounded",
+                    vec![RuntimeValue::Integer(capacity)],
+                    None,
+                    Some(&owner),
+                );
+                if shortage == 0 {
+                    let returned = result.unwrap();
+                    assert_eq!(returned.value, BootstrapHost::channel_result_error(variant));
+                    assert_eq!(owner.live_bytes(), 76);
+                    drop(returned);
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                }
+                assert!(host.values.is_empty());
+                assert!(host.channels.is_empty());
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        for method in [
+            "std.channel.Sender.fork",
+            "std.channel.Sender.close",
+            "std.channel.Receiver.fork",
+            "std.channel.Receiver.close",
+            "std.channel.Receiver.__asyncIteratorAdopt",
+        ] {
+            let mut host = BootstrapHost::default();
+            let owner = VmMemoryBudget::new(0);
+            assert!(matches!(
+                host.invoke_owned(method, vec![RuntimeValue::Integer(7)], None, Some(&owner)),
+                Err(VmError::Host(_))
+            ));
+        }
+        for adopt in [false, true] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                let (sender, receiver) = channel_endpoints(
+                    host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+                        .unwrap(),
+                );
+                let extra = ok(host
+                    .invoke("std.channel.Receiver.fork", std::slice::from_ref(&receiver))
+                    .unwrap());
+                let (endpoint, channel) = host.channel_receiver_id(&receiver).unwrap();
+                ok(host
+                    .invoke(
+                        "std.channel.Sender.trySend",
+                        &[sender, RuntimeValue::Integer(7)],
+                    )
+                    .unwrap());
+                let owner = VmMemoryBudget::new(32 - shortage);
+                let method = if adopt {
+                    "std.channel.Receiver.__asyncIteratorAdopt"
+                } else {
+                    "std.channel.Receiver.close"
+                };
+                let result = host.invoke_owned(method, vec![receiver], None, Some(&owner));
+                if shortage == 0 {
+                    let returned = result.unwrap();
+                    assert_eq!(
+                        returned.value,
+                        if adopt {
+                            RuntimeValue::Unit
+                        } else {
+                            RuntimeValue::Array(vec![])
+                        }
+                    );
+                    assert_eq!(owner.live_bytes(), 32);
+                    assert_eq!(host.channel_iterator_receivers.contains(&endpoint), adopt);
+                    drop(returned);
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    assert!(!host.channel_iterator_receivers.contains(&endpoint));
+                }
+                assert_eq!(
+                    host.channels[&channel].receivers,
+                    if !adopt && shortage == 0 { 1 } else { 2 }
+                );
+                assert_eq!(
+                    host.channels[&channel].queue.front(),
+                    Some(&RuntimeValue::Integer(7))
+                );
+                assert!(host.channel_receiver_id(&extra).is_ok());
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        for method in [
+            "std.channel.bounded",
+            "std.channel.Sender.fork",
+            "std.channel.Receiver.fork",
+        ] {
+            let mut host = BootstrapHost::default();
+            let (sender, receiver) = channel_endpoints(
+                host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                    .unwrap(),
+            );
+            let (_, channel) = host.channel_sender_id(&sender).unwrap();
+            let (arguments, storage, reply) = match method {
+                "std.channel.bounded" => (
+                    vec![RuntimeValue::Integer(0)],
+                    tondo_vm::runtime::TEST_HOST_CHANNEL_BYTES + 64,
+                    128,
+                ),
+                "std.channel.Sender.fork" => (vec![sender], 32, 64),
+                _ => (vec![receiver], 32, 64),
+            };
+            let storage_owner = VmMemoryBudget::new(storage - 1);
+            let reply_owner = VmMemoryBudget::new(reply);
+            host.set_test_memory_budget(Some(storage_owner.clone()));
+            let before = (host.next_value, host.values.len(), host.channels.len());
+            assert!(
+                host.invoke_owned(method, arguments, None, Some(&reply_owner))
+                    .unwrap_err()
+                    .is_resource_limit()
+            );
+            assert_eq!(
+                (host.next_value, host.values.len(), host.channels.len()),
+                before
+            );
+            assert_eq!(host.channels[&channel].senders, 1);
+            assert_eq!(host.channels[&channel].receivers, 1);
+            assert_eq!(reply_owner.live_bytes(), 0);
+            assert_eq!(storage_owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn owned_channel_send_admits_its_acknowledgement_before_buffering_or_delivery() {
+        let mut premature = Vec::new();
+        for waiting in [false, true] {
+            for method in ["std.channel.Sender.send", "std.channel.Sender.trySend"] {
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    let (sender, receiver) = channel_endpoints(
+                        host.invoke(
+                            "std.channel.bounded",
+                            &[RuntimeValue::Integer(if waiting { 0 } else { 1 })],
+                        )
+                        .unwrap(),
+                    );
+                    let (_, channel) = host.channel_sender_id(&sender).unwrap();
+                    let receive = if waiting {
+                        Some(
+                            host.start_async("std.channel.Receiver.receive", &[receiver])
+                                .unwrap(),
+                        )
+                    } else {
+                        None
+                    };
+                    let owner = VmMemoryBudget::new(64 - shortage);
+                    let payload = RuntimeValue::String("message".repeat(32));
+                    let result = host.invoke_owned(
+                        method,
+                        vec![sender, payload.clone()],
+                        None,
+                        Some(&owner),
+                    );
+                    if shortage == 1 {
+                        assert!(result.unwrap_err().is_resource_limit());
+                        if !host.channels[&channel].queue.is_empty()
+                            || receive
+                                .is_some_and(|receive| !host.sync_waiters.contains_key(&receive))
+                        {
+                            premature.push(format!("{method}:waiting={waiting}"));
+                        }
+                    } else {
+                        let returned = result.unwrap();
+                        assert_eq!(
+                            returned.value,
+                            RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))
+                        );
+                        assert_eq!(owner.live_bytes(), 64);
+                        if let Some(receive) = receive {
+                            assert_eq!(
+                                host.poll_async(receive).unwrap(),
+                                Some(RuntimeValue::OptionSome(Box::new(payload)))
+                            );
+                        } else {
+                            assert_eq!(host.channels[&channel].queue.front(), Some(&payload));
+                        }
+                        drop(returned);
+                    }
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+            }
+        }
+        assert!(
+            premature.is_empty(),
+            "send committed before acknowledgement admission: {premature:?}"
+        );
+    }
+
+    #[test]
+    fn owned_pending_channel_send_admits_completion_in_its_original_phase() {
+        let mut premature = Vec::new();
+        for route in ["buffered", "sender-poll", "receiver-poll", "direct-receive"] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                let (sender, receiver) = channel_endpoints(
+                    host.invoke(
+                        "std.channel.bounded",
+                        &[RuntimeValue::Integer(if route == "buffered" {
+                            1
+                        } else {
+                            0
+                        })],
+                    )
+                    .unwrap(),
+                );
+                let (_, channel) = host.channel_sender_id(&sender).unwrap();
+                let receiver_owner = VmMemoryBudget::new(8192);
+                host.set_test_memory_budget(Some(receiver_owner.clone()));
+                let receive = if matches!(route, "sender-poll" | "receiver-poll") {
+                    Some(
+                        host.start_async(
+                            "std.channel.Receiver.receive",
+                            std::slice::from_ref(&receiver),
+                        )
+                        .unwrap(),
+                    )
+                } else {
+                    None
+                };
+                let method = "std.channel.Sender.send";
+                let payload = RuntimeValue::String("message".repeat(32));
+                let request = tondo_vm::runtime::TEST_HOST_JOB_BYTES
+                    + method.len() as u64
+                    + 32
+                    + payload.retained_bytes().unwrap();
+                let sender_owner = VmMemoryBudget::new(request + 64 - shortage);
+                host.set_test_memory_budget(Some(sender_owner.clone()));
+                let send = host
+                    .start_async(method, &[sender, payload.clone()])
+                    .unwrap();
+                assert_eq!(sender_owner.live_bytes(), request);
+                host.set_test_memory_budget(Some(receiver_owner.clone()));
+                let mut delivered = None;
+                if route == "receiver-poll" {
+                    delivered = host.poll_async_owned(receive.unwrap()).unwrap();
+                } else if route == "direct-receive" {
+                    let returned = host
+                        .invoke_owned(
+                            "std.channel.Receiver.tryReceive",
+                            vec![receiver],
+                            None,
+                            Some(&receiver_owner),
+                        )
+                        .unwrap();
+                    if shortage == 1
+                        && returned.value != BootstrapHost::channel_try_receive(1, None)
+                    {
+                        premature.push(format!("{route}:delivered"));
+                    } else if shortage == 0 {
+                        assert_eq!(
+                            returned.value,
+                            BootstrapHost::channel_try_receive(0, Some(payload.clone()))
+                        );
+                    }
+                }
+                let result = host.poll_async_owned(send);
+                if shortage == 1 {
+                    if !result.as_ref().is_err_and(VmError::is_resource_limit)
+                        || !host.channels[&channel].queue.is_empty()
+                        || delivered.is_some()
+                        || receive.is_some_and(|receive| !host.sync_waiters.contains_key(&receive))
+                    {
+                        premature.push(route.into());
+                    }
+                    drop(result);
+                } else {
+                    let returned = result.unwrap().unwrap();
+                    assert_eq!(
+                        returned.value,
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))
+                    );
+                    if returned.memory.as_ref().map(VmMemoryCharge::bytes) != Some(64)
+                        || sender_owner.live_bytes() != 64
+                    {
+                        premature.push(format!("{route}:unowned-acknowledgement"));
+                    }
+                    if let Some(receive) = receive {
+                        let returned = delivered
+                            .take()
+                            .unwrap_or_else(|| host.poll_async_owned(receive).unwrap().unwrap());
+                        assert_eq!(returned.value, RuntimeValue::OptionSome(Box::new(payload)));
+                    } else if route == "buffered" {
+                        assert_eq!(host.channels[&channel].queue.front(), Some(&payload));
+                    }
+                    drop(returned);
+                }
+                drop(delivered);
+                drop(host);
+                assert_eq!(receiver_owner.live_bytes(), 0);
+                assert_eq!(sender_owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            premature.is_empty(),
+            "pending send completion admission: {premature:?}"
+        );
+    }
+
+    #[test]
+    fn owned_channel_error_and_terminal_responses_preserve_quota_ownership() {
+        for method in ["std.channel.Sender.send", "std.channel.Sender.trySend"] {
+            for state in ["closed", "full", "limit"] {
+                if method.ends_with(".send") && state == "full" {
+                    continue;
+                }
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    let (sender, receiver) = channel_endpoints(if state == "limit" {
+                        host.invoke("std.channel.unbounded", &[]).unwrap()
+                    } else {
+                        host.invoke("std.channel.bounded", &[RuntimeValue::Integer(0)])
+                            .unwrap()
+                    });
+                    if state == "closed" {
+                        host.invoke("std.channel.Receiver.close", &[receiver])
+                            .unwrap();
+                    }
+                    if state == "limit" {
+                        host.max_bytes = 0;
+                    }
+                    let (_, channel) = host.channel_sender_id(&sender).unwrap();
+                    let payload = RuntimeValue::String("error payload".repeat(32));
+                    let expected = if method.ends_with(".send") {
+                        BootstrapHost::channel_send_result_error(
+                            u32::from(state == "limit"),
+                            payload.clone(),
+                        )
+                    } else {
+                        BootstrapHost::channel_try_send_result_error(
+                            match state {
+                                "closed" => 1,
+                                "limit" => 2,
+                                _ => 0,
+                            },
+                            payload.clone(),
+                        )
+                    };
+                    let bytes = expected.retained_bytes().unwrap();
+                    let owner = VmMemoryBudget::new(bytes - shortage);
+                    let result =
+                        host.invoke_owned(method, vec![sender, payload], None, Some(&owner));
+                    if shortage == 0 {
+                        let returned = result.unwrap();
+                        assert_eq!(returned.value, expected);
+                        assert_eq!(owner.live_bytes(), bytes);
+                        drop(returned);
+                    } else {
+                        assert!(result.unwrap_err().is_resource_limit());
+                    }
+                    assert_eq!(owner.live_bytes(), 0);
+                    assert!(host.channels[&channel].queue.is_empty());
+                }
+            }
+        }
+        for state in ["closed-send", "limited-send", "closed-receive"] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                let (sender, receiver) =
+                    channel_endpoints(host.invoke("std.channel.unbounded", &[]).unwrap());
+                let payload = RuntimeValue::String("returned payload".repeat(32));
+                let (method, arguments, expected) = if state == "closed-receive" {
+                    host.invoke("std.channel.Sender.close", &[sender]).unwrap();
+                    (
+                        "std.channel.Receiver.receive",
+                        vec![receiver],
+                        RuntimeValue::OptionNone,
+                    )
+                } else {
+                    if state == "closed-send" {
+                        host.invoke("std.channel.Receiver.close", &[receiver])
+                            .unwrap();
+                    } else {
+                        host.max_bytes = 0;
+                    }
+                    (
+                        "std.channel.Sender.send",
+                        vec![sender, payload.clone()],
+                        BootstrapHost::channel_send_result_error(
+                            u32::from(state == "limited-send"),
+                            payload,
+                        ),
+                    )
+                };
+                let response = expected.retained_bytes().unwrap();
+                let request = tondo_vm::runtime::TEST_HOST_JOB_BYTES
+                    + method.len() as u64
+                    + arguments
+                        .iter()
+                        .map(|value| value.retained_bytes().unwrap())
+                        .sum::<u64>();
+                let owner = VmMemoryBudget::new(request + response - shortage);
+                host.set_test_memory_budget(Some(owner.clone()));
+                let call = host.start_async(method, &arguments).unwrap();
+                let pointer =
+                    host.sync_waiters[&call]
+                        .arguments
+                        .get(1)
+                        .and_then(|value| match value {
+                            RuntimeValue::String(text) => Some(text.as_ptr()),
+                            _ => None,
+                        });
+                host.set_test_memory_budget(None);
+                let result = host.poll_async_owned(call);
+                if shortage == 0 {
+                    let returned = result.unwrap().unwrap();
+                    assert_eq!(returned.value, expected);
+                    assert_eq!(returned.memory.as_ref().unwrap().bytes(), response);
+                    assert_eq!(owner.live_bytes(), response);
+                    if let Some(pointer) = pointer {
+                        let RuntimeValue::ResultErr(error) = &returned.value else {
+                            panic!("missing send error")
+                        };
+                        let RuntimeValue::Variant { values, .. } = error.as_ref() else {
+                            panic!("missing error payload")
+                        };
+                        let RuntimeValue::String(text) = &values[0] else {
+                            panic!("missing String")
+                        };
+                        assert_eq!(text.as_ptr(), pointer);
+                    }
+                    drop(returned);
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                }
+                assert!(!host.sync_waiters.contains_key(&call));
+                assert!(!host.async_memory.contains_key(&call));
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn buffered_channel_previews_preserve_fifo_and_retire_only_the_rejected_waiter() {
+        let mut host = BootstrapHost::default();
+        let (sender, receiver) = channel_endpoints(
+            host.invoke("std.channel.bounded", &[RuntimeValue::Integer(2)])
+                .unwrap(),
+        );
+        let (_, channel) = host.channel_receiver_id(&receiver).unwrap();
+        let first_owner = VmMemoryBudget::new(65536);
+        let second_owner = VmMemoryBudget::new(65536);
+        host.set_test_memory_budget(Some(first_owner.clone()));
+        let first = host
+            .start_async(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        assert!(host.preview_polled_return(first).unwrap().is_none());
+        host.set_test_memory_budget(Some(second_owner.clone()));
+        let second = host
+            .start_async(
+                "std.channel.Receiver.receive",
+                std::slice::from_ref(&receiver),
+            )
+            .unwrap();
+        // Populate retained channel storage directly so neither sender delivery
+        // nor a second receiving task can commit ahead of the observed poll.
+        let payload = RuntimeValue::Array(vec![RuntimeValue::String("é🦀".repeat(256))]);
+        host.channels
+            .get_mut(&channel)
+            .unwrap()
+            .push(&payload)
+            .unwrap();
+        let before = host.channels[&channel].queue.clone();
+        assert!(
+            matches!(host.preview_polled_return(first).unwrap(), Some(VmHostReturnPreview::OptionSome(value)) if value == &payload)
+        );
+        assert!(host.preview_polled_return(second).unwrap().is_none());
+        assert!(
+            matches!(host.preview_return("std.channel.Receiver.tryReceive", std::slice::from_ref(&receiver)).unwrap(), Some(VmHostReturnPreview::Variant(0, value)) if value == &payload)
+        );
+        assert_eq!(host.channels[&channel].queue, before);
+        assert!(host.discard_previewed_return(second).is_err());
+        let second_bytes = second_owner.live_bytes();
+        host.set_test_memory_budget(Some(VmMemoryBudget::new(0)));
+        host.discard_previewed_return(first).unwrap();
+        assert_eq!(first_owner.live_bytes(), 0);
+        assert_eq!(second_owner.live_bytes(), second_bytes);
+        assert!(host.discard_previewed_return(first).is_err());
+        assert_eq!(host.channels[&channel].queue, before);
+        assert!(
+            matches!(host.preview_polled_return(second).unwrap(), Some(VmHostReturnPreview::OptionSome(value)) if value == &payload)
+        );
+        let returned = host.poll_async_owned(second).unwrap().unwrap();
+        assert_eq!(returned.value, RuntimeValue::OptionSome(Box::new(payload)));
+        assert!(host.channels[&channel].queue.is_empty());
+        assert!(host.sync_waiters.is_empty());
+        assert!(host.async_memory.is_empty());
+        drop(returned);
+        assert_eq!(second_owner.live_bytes(), 0);
+        assert!(host.preview_polled_return(second).unwrap().is_none());
+        assert!(
+            host.preview_return(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&receiver)
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            host.preview_return(
+                "std.channel.Receiver.tryReceive",
+                std::slice::from_ref(&sender)
+            )
+            .is_err()
+        );
+        host.set_test_memory_budget(None);
+        host.channel_close_sender(&sender).unwrap();
+        host.channel_close_receiver(&receiver).unwrap();
+        assert!(
+            host.preview_return("std.channel.Receiver.tryReceive", &[receiver])
+                .is_err()
+        );
+        assert!(host.channels.is_empty());
+    }
+
+    fn compile_channel_admission_source(
+        source: &str,
+    ) -> (
+        tondo_vm::bytecode::BytecodeProgram,
+        tondo_vm::bytecode::BytecodeFunctionId,
+    ) {
+        compile_host_admission_source(
+            source,
+            crate::driver::BuildTarget::vm_hosted_capabilities(),
+            crate::driver::Operation::Run,
+        )
+    }
+
+    pub(super) fn compile_host_admission_source(
+        source: &str,
+        capabilities: BTreeSet<crate::driver::CapabilityName>,
+        operation: crate::driver::Operation,
+    ) -> (
+        tondo_vm::bytecode::BytecodeProgram,
+        tondo_vm::bytecode::BytecodeFunctionId,
+    ) {
+        use crate::driver::{
+            BuildTarget, CompilationRequest, DiagnosticFormat, Edition, HostProfile, Operation,
+            ResourceLimits, SourceForm, compile,
+        };
+        use crate::package::PackageGraph;
+        use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
+
+        let mut sources = SourceDatabase::new();
+        let root = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("root:channel-admission").unwrap(),
+                ModulePath::new("channel_admission").unwrap(),
+                LogicalPath::new("channel-admission.to").unwrap(),
+                source.as_bytes(),
+            ))
+            .unwrap();
+        let request = CompilationRequest::new(
+            operation,
+            Edition::V0_1,
+            BuildTarget::vm_hosted(),
+            HostProfile::Hosted,
+            capabilities,
+            DiagnosticFormat::Json,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            PackageGraph::loose(&sources, root).unwrap(),
+            sources,
+            root,
+        )
+        .unwrap();
+        let request = if operation == Operation::Test {
+            let entries = crate::driver::discover_tests(&request).unwrap();
+            request
+                .for_test_participation(
+                    &entries,
+                    TestParticipation::new(
+                        crate::test_control::EnvelopeLimits::new(65536, 65536, 65536),
+                        BTreeMap::new(),
+                        false,
+                    ),
+                )
+                .unwrap()
+        } else {
+            request
+        };
+        let compiled = compile(request).unwrap();
+        assert_eq!(
+            compiled.exit_code(),
+            0,
+            "{}",
+            compiled.diagnostics().human()
+        );
+        compiled.into_compiled_program().unwrap()
+    }
+
+    #[test]
+    fn console_protocol_adapters_preserve_read_all_preflight_after_specialization() {
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        for read in [
+            "io.readAll(var input, policy)",
+            "through(var input, policy)",
+            "readFunction(var input, policy)",
+        ] {
+            let source = format!(
+                r#"import std.io
+import std.console
+import std.bytes
+
+fn through[R: io.Reader](reader: var R, policy: io.IoLimits): bytes.Bytes ! io.IoError {{
+    io.readAll(var reader, policy)
+}}
+
+fn writeThrough[W: io.Writer](writer: var W, data: bytes.Bytes): Unit ! io.IoError {{
+    io.writeAll(var writer, data)
+}}
+
+fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesError) {{
+    var input: console.Input = console.stdin()?
+    let policy = io.limits(2, 1)?
+    let readFunction = io.readAll[console.Input]
+    match {read} {{
+        err(io.IoError.ResourceLimit) => {{}}
+        _ => assert(false)
+    }}
+    let contents = through(var input, io.limits(3, 1)?)?
+    assert(String(contents)? == "abc")
+    match input.read(1)? {{
+        io.ReadResult.Eof => {{}}
+        _ => assert(false)
+    }}
+    var output: console.Output = console.stdout()?
+    writeThrough(var output, contents)?
+}}
+"#
+            );
+            let (program, entry) = compile_channel_admission_source(&source);
+            let mut host = BootstrapHost::with_stdin(b"abc".to_vec());
+            let result = execute_with_limits(&program, entry, &mut host, VmLimits::default());
+            assert!(result.is_ok(), "{read}: {result:?}");
+            assert_eq!(host.stdout, b"abc", "{read}");
+            assert!(host.ready_jobs.is_empty(), "{read}");
+        }
+    }
+
+    #[test]
+    fn console_cancellation_retains_its_nominal_error_at_the_exact_budget() {
+        for name in ["std.console.readLine", "std.console.flush"] {
+            for short in [true, false] {
+                let mut host = BootstrapHost::default();
+                let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+                let arguments = if name.ends_with("readLine") {
+                    vec![reader]
+                } else {
+                    Vec::new()
+                };
+                let limit = tondo_vm::runtime::TEST_HOST_JOB_BYTES + name.len() as u64 + 64
+                    - u64::from(short);
+                let owner = VmMemoryBudget::new(limit);
+                host.test_memory = Some(owner.clone());
+                let call = host.start_async(name, &arguments).unwrap();
+                if short {
+                    assert!(host.poll_async_owned(call).unwrap_err().is_resource_limit());
+                } else {
+                    assert_eq!(owner.live_bytes(), limit);
+                    host.cancel_async(call).unwrap();
+                    assert_eq!(owner.live_bytes(), limit);
+                    host.cancel_async(call).unwrap();
+                    assert_eq!(owner.live_bytes(), limit);
+                    let returned = host.poll_async_owned(call).unwrap().unwrap();
+                    assert_eq!(
+                        returned.value,
+                        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                            name: "ConsoleError".to_owned(),
+                            variant: 2,
+                            values: Vec::new(),
+                        }))
+                    );
+                    assert_eq!(owner.live_bytes(), 76);
+                    drop(returned);
+                }
+                assert_eq!(owner.live_bytes(), 0);
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.ready_console_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                assert!(host.cancel_async(call).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn console_line_waits_for_complete_vm_result_admission() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+        let source = format!(
+            "import std.console\nfn main() {{\n var input = match console.stdin() {{\n ok(value) => value\n err(_) => panic(\"input unavailable\")\n }}\n let padding = \"{}\"\n assert(padding.length() == 6000)\n _ = console.readLine(var input)\n }}\n",
+            "p".repeat(6000)
+        );
+        let (program, entry) = compile_channel_admission_source(&source);
+        for (memory, succeeds) in [(8632, false), (16384, true)] {
+            let mut host = BootstrapHost::with_stdin(b"abc\n".to_vec());
+            host.install_testing_participation(TestParticipation::new(
+                EnvelopeLimits::new(65536, 65536, 65536),
+                BTreeMap::new(),
+                false,
+            ));
+            let result = execute_with_limits(
+                &program,
+                entry,
+                &mut host,
+                VmLimits {
+                    max_heap_bytes: memory,
+                    ..VmLimits::default()
+                },
+            );
+            if succeeds {
+                assert!(result.is_ok(), "{result:?}");
+                assert!(host.values.is_empty());
+            } else {
+                assert!(result.unwrap_err().is_resource_limit());
+                let Some(HostValue::Reader { offset, .. }) = host.values.get(&0) else {
+                    panic!("the preexisting input must remain available after rejection");
+                };
+                assert_eq!(*offset, 0, "line consumed before typed result admission");
+            }
+            assert!(host.ready_jobs.is_empty());
+            assert!(host.ready_console_jobs.is_empty());
+            assert!(host.async_memory.is_empty());
+            let owner = host.test_memory.clone().unwrap();
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn filesystem_atomic_write_preserves_unowned_temporaries_and_cleans_its_own() {
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        let target = root.path().join("target");
+        let temporary = root.path().join("temporary");
+        std::fs::write(&target, b"original").unwrap();
+        std::fs::write(&temporary, b"another operation").unwrap();
+        let error = atomic_write_file(&target, &temporary, b"replacement").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&target).unwrap(), b"original");
+        assert_eq!(std::fs::read(&temporary).unwrap(), b"another operation");
+
+        std::fs::remove_file(&temporary).unwrap();
+        atomic_write_file(&target, &temporary, b"replacement").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"replacement");
+        assert!(!temporary.exists());
+
+        let directory = root.path().join("directory");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("preserved"), b"original").unwrap();
+        assert!(atomic_write_file(&directory, &temporary, b"replacement").is_err());
+        assert_eq!(
+            std::fs::read(directory.join("preserved")).unwrap(),
+            b"original"
+        );
+        assert!(!temporary.exists());
+        root.cleanup().unwrap();
+    }
+
+    #[test]
+    fn filesystem_mutations_wait_for_complete_vm_result_admission() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        let input = root.path().join("input");
+        let output = root.path().join("output");
+        let input_literal = serde_json::to_string(input.to_str().unwrap()).unwrap();
+        let output_literal = serde_json::to_string(output.to_str().unwrap()).unwrap();
+        for (operation, effect) in [
+            ("write", "fs.writeAll(location, data)?"),
+            ("directory", "fs.createDirectory(destination, false)?"),
+            ("remove", "fs.remove(location)?"),
+            ("rename", "fs.rename(location, destination)?"),
+            ("atomic", "fs.atomicWrite(location, data)?"),
+        ] {
+            let source = format!(
+                "import std.fs\n import std.path\n import std.bytes\n test admission {{\n \
+                 let location = path.Path.fromString({input_literal})?\n \
+                 let destination = path.Path.fromString({output_literal})?\n \
+                 let data = bytes.Bytes(\"changed\")?\n \
+                 let padding = \"{}\"\n assert(padding.length() == 6000)\n {effect}\n }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_host_admission_source(
+                &source,
+                crate::driver::BuildTarget::vm_hosted_capabilities(),
+                crate::driver::Operation::Test,
+            );
+            let mut rejected = 0;
+            let mut succeeded = 0;
+            // Sweep the transition instead of relying on a platform's path
+            // length or one exact frame-storage threshold.
+            for memory in (6144..=12288).step_by(16) {
+                std::fs::write(&input, b"preserved").unwrap();
+                if output.is_dir() {
+                    std::fs::remove_dir(&output).unwrap();
+                } else if output.exists() {
+                    std::fs::remove_file(&output).unwrap();
+                }
+                let mut host = BootstrapHost::default();
+                let participation = TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                );
+                host.install_testing_participation(participation.clone());
+                host.install_testing_temporary_root(root.path().to_owned());
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                assert!(result.is_ok(), "{operation}/{memory}: {result:?}");
+                let executions = participation.executions().unwrap();
+                assert_eq!(executions.len(), 1);
+                let terminal = executions[0].report.terminal();
+                if terminal.is_none() {
+                    succeeded += 1;
+                    assert_eq!(
+                        host.temporary_write_bytes,
+                        if matches!(operation, "write" | "atomic") {
+                            7
+                        } else {
+                            0
+                        }
+                    );
+                    match operation {
+                        "write" | "atomic" => {
+                            assert_eq!(std::fs::read(&input).unwrap(), b"changed")
+                        }
+                        "directory" => assert!(output.is_dir()),
+                        "remove" => assert!(!input.exists()),
+                        "rename" => {
+                            assert!(!input.exists());
+                            assert_eq!(std::fs::read(&output).unwrap(), b"preserved");
+                        }
+                        _ => unreachable!(),
+                    }
+                } else {
+                    rejected += 1;
+                    assert_eq!(
+                        host.temporary_write_bytes, 0,
+                        "{operation}/{memory}: write quota consumed before admission"
+                    );
+                    assert!(
+                        matches!(
+                            terminal,
+                            Some(crate::test_control::Terminal::ResourceLimit { kind: "memory" })
+                        ),
+                        "{operation}/{memory}: {terminal:?}"
+                    );
+                    assert_eq!(
+                        std::fs::read(&input).unwrap(),
+                        b"preserved",
+                        "{operation}/{memory}: effect before result admission"
+                    );
+                    assert!(
+                        !output.exists(),
+                        "{operation}/{memory}: destination published before admission"
+                    );
+                    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+                }
+                assert!(
+                    host.values.is_empty(),
+                    "{operation}/{memory}: retained host handles"
+                );
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.ready_fs_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+            assert!(
+                rejected > 0 && succeeded > 0,
+                "{operation}: sweep missed the transition"
+            );
+        }
+        root.cleanup().unwrap();
+    }
+
+    #[test]
+    fn filesystem_open_admits_the_result_before_creating_or_truncating() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let path =
+            std::env::temp_dir().join(format!("tondo-file-open-admission-{}", std::process::id()));
+        let literal = serde_json::to_string(path.to_str().unwrap()).unwrap();
+        for (mode, exists) in [("Create", true), ("Create", false), ("CreateNew", false)] {
+            let source = format!(
+                "import std.fs\n import std.path\n test admission {{\n \
+                 let location = path.Path.fromString({literal})?\n \
+                 let padding = \"{}\"\n assert(padding.length() == 6000)\n \
+                 let file = fs.open(location, fs.OpenMode.{mode})?\n }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_host_admission_source(
+                &source,
+                crate::driver::BuildTarget::vm_hosted_capabilities(),
+                crate::driver::Operation::Test,
+            );
+            for (memory, succeeds) in [(8192, false), (32768, true)] {
+                if exists {
+                    std::fs::write(&path, b"preserved").unwrap();
+                } else if path.exists() {
+                    std::fs::remove_file(&path).unwrap();
+                }
+                let mut host = BootstrapHost::default();
+                let participation = TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                );
+                host.install_testing_participation(participation.clone());
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                assert!(result.is_ok(), "{mode}/{exists}/{memory}: {result:?}");
+                let executions = participation.executions().unwrap();
+                assert_eq!(executions.len(), 1);
+                let terminal = executions[0].report.terminal();
+                if succeeds {
+                    assert!(terminal.is_none(), "{mode}/{exists}: {terminal:?}");
+                    assert_eq!(std::fs::read(&path).unwrap(), b"");
+                } else {
+                    assert!(
+                        matches!(
+                            terminal,
+                            Some(crate::test_control::Terminal::ResourceLimit { kind: "memory" })
+                        ),
+                        "{mode}/{exists}: {terminal:?}"
+                    );
+                    if exists {
+                        assert_eq!(
+                            std::fs::read(&path).unwrap(),
+                            b"preserved",
+                            "truncated before admission"
+                        );
+                    } else {
+                        assert!(!path.exists(), "created before admission");
+                    }
+                }
+                assert_eq!(host.next_value, 1 + u64::from(succeeds));
+                assert!(host.values.is_empty());
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.ready_fs_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn filesystem_effects_wait_for_complete_vm_result_admission() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let path =
+            std::env::temp_dir().join(format!("tondo-file-typed-admission-{}", std::process::id()));
+        let literal = serde_json::to_string(path.to_str().unwrap()).unwrap();
+        for (operation, setup, effect, creates_buffer) in [
+            ("read", "", "_ = file.read(2)?", true),
+            (
+                "write",
+                "let data = bytes.Bytes(\"xy\")?",
+                "_ = file.write(data)?",
+                false,
+            ),
+            ("flush", "", "file.flush()?", false),
+        ] {
+            let source = format!(
+                "import std.fs\n import std.path\n import std.bytes\n test admission {{\n \
+                 let location = path.Path.fromString({literal})?\n \
+                 var file = fs.open(location, fs.OpenMode.ReadWrite)?\n {setup}\n \
+                 let padding = \"{}\"\n assert(padding.length() == 6000)\n {effect}\n }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_host_admission_source(
+                &source,
+                crate::driver::BuildTarget::vm_hosted_capabilities(),
+                crate::driver::Operation::Test,
+            );
+            for (memory, succeeds) in [(8192, false), (32768, true)] {
+                std::fs::write(&path, b"abcd").unwrap();
+                let mut host = BootstrapHost::default();
+                let participation = TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                );
+                host.install_testing_participation(participation.clone());
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                assert!(result.is_ok(), "{operation}/{memory}: {result:?}");
+                let executions = participation.executions().unwrap();
+                assert_eq!(executions.len(), 1);
+                let report = &executions[0].report;
+                if succeeds {
+                    assert!(
+                        report.terminal().is_none(),
+                        "{operation}: {:?}",
+                        report.terminal()
+                    );
+                } else {
+                    assert!(
+                        matches!(
+                            report.terminal(),
+                            Some(crate::test_control::Terminal::ResourceLimit { kind: "memory" })
+                        ),
+                        "{operation}: {:?}",
+                        report.terminal()
+                    );
+                }
+                // Path, File and optionally the input Bytes are
+                // created before padding. A rejected read must not publish
+                // another Bytes identity, and a rejected write preserves disk.
+                let setup_handles = if operation == "write" { 3 } else { 2 };
+                assert_eq!(
+                    host.next_value,
+                    setup_handles + u64::from(succeeds && creates_buffer),
+                    "{operation}/{memory}"
+                );
+                assert_eq!(
+                    std::fs::read(&path).unwrap(),
+                    if succeeds && operation == "write" {
+                        b"xycd".as_slice()
+                    } else {
+                        b"abcd".as_slice()
+                    }
+                );
+                assert!(
+                    host.values.is_empty(),
+                    "{operation}/{memory}: retained {:?}",
+                    host.values
+                        .iter()
+                        .map(|(id, value)| (
+                            *id,
+                            match value {
+                                HostValue::File { .. } => "File",
+                                HostValue::Path(_) => "Path",
+                                HostValue::Bytes(_) => "Bytes",
+                                _ => "other",
+                            }
+                        ))
+                        .collect::<Vec<_>>()
+                );
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn console_effects_wait_for_complete_vm_result_admission() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        for (operation, setup, effect) in [
+            ("read", "var input = console.stdin()?", "_ = input.read(2)?"),
+            (
+                "write",
+                "var output = console.stdout()?\n let data = bytes.Bytes(\"xy\")?",
+                "_ = output.write(data)?",
+            ),
+        ] {
+            let source = format!(
+                "import std.console\n import std.io\n import std.bytes\n test admission {{\n {setup}\n let padding = \"{}\"\n assert(padding.length() == 6000)\n {effect}\n }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_host_admission_source(
+                &source,
+                crate::driver::BuildTarget::vm_hosted_capabilities(),
+                crate::driver::Operation::Test,
+            );
+            // At 8192 both operations formerly committed their effects before
+            // the receiving VM failed to allocate the typed Result wrapper.
+            for (memory, succeeds) in [(8192, false), (16384, true)] {
+                let mut host = BootstrapHost::with_stdin(b"abc".to_vec());
+                let participation = TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                );
+                host.install_testing_participation(participation.clone());
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                let executions = participation.executions().unwrap();
+                assert!(result.is_ok(), "{operation} memory={memory}: {result:?}");
+                assert_eq!(executions.len(), 1);
+                let report = &executions[0].report;
+                if succeeds {
+                    assert!(
+                        report.terminal().is_none(),
+                        "{operation}: {:?}",
+                        report.terminal()
+                    );
+                    assert_eq!(host.next_value, 2);
+                    assert_eq!(
+                        report.stdout().as_bytes(),
+                        if operation == "write" {
+                            b"xy".as_slice()
+                        } else {
+                            b"".as_slice()
+                        }
+                    );
+                } else {
+                    assert!(matches!(
+                        report.terminal(),
+                        Some(crate::test_control::Terminal::ResourceLimit { kind: "memory" })
+                    ));
+                    assert_eq!(
+                        host.next_value,
+                        if operation == "read" { 1 } else { 2 },
+                        "{operation}: input consumed before result admission"
+                    );
+                    assert!(
+                        report.stdout().is_empty(),
+                        "{operation}: output emitted before result admission"
+                    );
+                }
+                assert!(
+                    host.values.is_empty(),
+                    "{operation} memory={memory}: retained host values {:?}",
+                    host.values
+                        .iter()
+                        .map(|(id, value)| (
+                            *id,
+                            match value {
+                                HostValue::Reader { .. } => "reader",
+                                HostValue::Writer { .. } => "writer",
+                                HostValue::Bytes(_) => "bytes",
+                                _ => "other",
+                            }
+                        ))
+                        .collect::<Vec<_>>()
+                );
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0, "{operation}: retained phase memory");
+            }
+        }
+    }
+
+    #[test]
+    fn channel_consumption_waits_for_complete_vm_result_admission() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        for method in ["receive", "tryReceive"] {
+            let source = format!(
+                "import std.channel\nfn main(): !channel.ChannelError {{\n\
+                 var (sender, receiver) = channel.bounded[Int](1)?\n\
+                 defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+                 match sender.send(7) {{\n ok(_) => ()\n err(_) => panic(\"send failed\")\n }}\n let padding = \"{}\"\n\
+                 assert(padding.length() == 6000)\n _ = receiver.{method}()\n }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_channel_admission_source(&source);
+            for (memory, succeeds) in [(10206, false), (16384, true)] {
+                let mut host = BootstrapHost::default();
+                host.install_testing_participation(TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                ));
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                if succeeds {
+                    assert!(result.is_ok(), "{method}: {result:?}");
+                    assert!(host.channels.is_empty());
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    assert_eq!(host.channels.len(), 1, "{method}");
+                    assert_eq!(
+                        host.channels.values().next().unwrap().queue,
+                        [RuntimeValue::Integer(7)],
+                        "{method}: consumed before complete VM admission"
+                    );
+                }
+                assert!(host.sync_waiters.is_empty(), "{method}: retained waiter");
+                assert!(host.async_memory.is_empty(), "{method}: retained request");
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0, "{method}: retained phase charge");
+            }
+        }
+    }
+
+    #[test]
+    fn blocking_channel_construction_waits_for_the_worker_vm_result() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let source = format!(
+            "import std.channel\n import std.executor\n\
+             fn work(): !channel.ChannelError {{\n\
+             let padding = \"{}\"\n assert(padding.length() == 6000)\n\
+             var (sender, receiver) = channel.bounded[Int](1)?\n\
+             sender.close()\n _ = receiver.close()\n }}\n\
+             test worker {{\n\
+             let pool = executor.blockingPool(1, 1)?\n defer pool.shutdown()\n\
+             pool.run(work)?\n }}\n",
+            "p".repeat(6000)
+        );
+        let mut capabilities = crate::driver::BuildTarget::vm_hosted_capabilities();
+        capabilities.insert(crate::driver::CapabilityName::new("threads").unwrap());
+        let (program, entry) =
+            compile_host_admission_source(&source, capabilities, crate::driver::Operation::Test);
+        for (memory, succeeds) in [(10368, false), (16384, true)] {
+            let mut host = BootstrapHost::default();
+            let participation = TestParticipation::new(
+                EnvelopeLimits::new(65536, 65536, 65536),
+                BTreeMap::new(),
+                false,
+            );
+            host.install_testing_participation(participation.clone());
+            let result = execute_with_limits(
+                &program,
+                entry,
+                &mut host,
+                VmLimits {
+                    max_heap_bytes: memory,
+                    ..VmLimits::default()
+                },
+            );
+            let executions = participation.executions().unwrap();
+            assert_eq!(executions.len(), 1, "memory={memory}: {result:?}");
+            assert!(result.is_ok(), "{result:?}");
+            if succeeds {
+                assert!(executions[0].report.terminal().is_none());
+                assert_eq!(host.next_value, 3);
+            } else {
+                assert!(matches!(
+                    executions[0].report.terminal(),
+                    Some(crate::test_control::Terminal::ResourceLimit { kind: "memory" })
+                ));
+                assert_eq!(
+                    host.next_value, 0,
+                    "channel published before the worker could import its result"
+                );
+            }
+            assert!(host.channels.is_empty());
+            assert!(host.values.is_empty());
+            assert!(host.sync_waiters.is_empty());
+            assert!(host.async_memory.is_empty());
+            let owner = host.test_memory.clone().unwrap();
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_mutations_wait_for_complete_vm_results() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let mut changed = Vec::new();
+        for (operation, rejected) in [
+            ("construct", 8896),
+            ("close", 9600),
+            ("fork-sender", 9280),
+            ("fork-receiver", 9280),
+        ] {
+            let existing = "var (sender, receiver) = channel.bounded[Int](1)?\n";
+            let before = match operation {
+                "construct" => "",
+                "close" => {
+                    "var (sender, receiver) = channel.bounded[Int](1)?\n\
+                    defer sender.close()\n match sender.send(7) {\n ok(_) => ()\n\
+                    err(_) => panic(\"send failed\")\n }\n"
+                }
+                _ => existing,
+            };
+            let after = match operation {
+                "construct" => {
+                    "var (sender, receiver) = channel.bounded[Int](1)?\n\
+                    sender.close()\n _ = receiver.close()\n"
+                }
+                "close" => "_ = receiver.close()\n",
+                "fork-sender" => {
+                    "let extra = sender.fork()?\n extra.close()\n\
+                    sender.close()\n _ = receiver.close()\n"
+                }
+                _ => {
+                    "let extra = receiver.fork()?\n _ = extra.close()\n\
+                    sender.close()\n _ = receiver.close()\n"
+                }
+            };
+            let source = format!(
+                "import std.channel\n fn main(): !channel.ChannelError {{\n\
+                 {before}let padding = \"{}\"\n assert(padding.length() == 6000)\n\
+                 {after} }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_channel_admission_source(&source);
+            for (memory, succeeds) in [(rejected, false), (16384, true)] {
+                let mut host = BootstrapHost::default();
+                host.install_testing_participation(TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                ));
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                if succeeds {
+                    assert!(result.is_ok(), "{operation}: {result:?}");
+                    assert!(host.channels.is_empty());
+                    assert!(host.values.is_empty());
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    let preserved = if operation == "construct" {
+                        host.next_value == 0 && host.channels.is_empty() && host.values.is_empty()
+                    } else {
+                        host.next_value == 3
+                            && host.values.len() == 2
+                            && host.channels.len() == 1
+                            && host.channels.values().all(|state| {
+                                state.senders == 1
+                                    && state.receivers == 1
+                                    && !state.receiver_closed
+                                    && if operation == "close" {
+                                        state.queue == [RuntimeValue::Integer(7)]
+                                    } else {
+                                        state.queue.is_empty()
+                                    }
+                            })
+                    };
+                    if !preserved {
+                        changed.push(operation);
+                    }
+                }
+                assert!(host.sync_waiters.is_empty());
+                assert!(host.async_memory.is_empty());
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            changed.is_empty(),
+            "endpoint state changed before complete VM admission: {changed:?}"
+        );
+    }
+
+    #[test]
+    fn synchronous_channel_delivery_waits_for_both_vm_results() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let mut committed = Vec::new();
+        for send in [false, true] {
+            let start = if send {
+                "let pending = spawn receiver.receive()\n"
+            } else {
+                "let pending = spawn sender.send(7)\n"
+            };
+            let finish = if send {
+                "match sender.trySend(7) {\n ok(_) => ()\n err(_) => panic(\"send failed\")\n }\n\
+                 match await pending {\n some(value) => assert(value == 7)\n none => panic(\"receive failed\")\n }\n"
+            } else {
+                "match receiver.tryReceive() {\n channel.TryReceive.Item(value) => assert(value == 7)\n\
+                 _ => panic(\"receive failed\")\n }\n\
+                 match await pending {\n ok(_) => ()\n err(_) => panic(\"send failed\")\n }\n"
+            };
+            let source = format!(
+                "import std.channel\nfn main(): !channel.ChannelError {{\n\
+                 var (sender, receiver) = channel.bounded[Int](0)?\n\
+                 defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+                 scope {{\n {start}let padding = \"{}\"\n\
+                 assert(padding.length() == 6000)\n {finish} }}\n }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_channel_admission_source(&source);
+            for (memory, succeeds) in [(11136, false), (16384, true)] {
+                let mut host = BootstrapHost::default();
+                host.install_testing_participation(TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                ));
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                if succeeds {
+                    assert!(result.is_ok(), "send={send}: {result:?}");
+                    assert!(host.channels.is_empty());
+                    assert!(host.sync_waiters.is_empty());
+                    assert!(host.async_memory.is_empty());
+                    assert!(host.ready_jobs.is_empty());
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    // Rejecting a peer may retire it with its own resource
+                    // failure. It must never publish a successful delivery or
+                    // acknowledgement before both typed results fit.
+                    if host.ready_jobs.values().any(Result::is_ok) {
+                        committed.push(send);
+                    }
+                    assert!(host.sync_waiters.len() <= 1);
+                    for pending in host.sync_waiters.values() {
+                        assert_eq!(
+                            pending.kind,
+                            if send {
+                                SyncWaitKind::ChannelReceive
+                            } else {
+                                SyncWaitKind::ChannelSend
+                            }
+                        );
+                        if !send {
+                            assert_eq!(pending.arguments.get(1), Some(&RuntimeValue::Integer(7)));
+                        }
+                    }
+                    assert!(host.channels.values().all(|state| state.queue.is_empty()));
+                }
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            committed.is_empty(),
+            "successful peer completion before joint VM admission: send={committed:?}"
+        );
+    }
+
+    #[test]
+    fn buffered_send_waits_for_complete_vm_acknowledgement_admission() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let mut committed = Vec::new();
+        for (constructor, rejected) in [
+            ("channel.bounded[Int](1)", 10240),
+            ("channel.unbounded[Int]()", 10176),
+        ] {
+            let source = format!(
+                "import std.channel\nfn main(): !channel.ChannelError {{\n\
+                 var (sender, receiver) = {constructor}?\n\
+                 defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+                 let padding = \"{}\"\n assert(padding.length() == 6000)\n\
+                 match sender.send(7) {{\n ok(_) => ()\n\
+                 err(_) => panic(\"send failed\")\n }}\n }}\n",
+                "p".repeat(6000)
+            );
+            let (program, entry) = compile_channel_admission_source(&source);
+            for (memory, succeeds) in [(rejected, false), (16384, true)] {
+                let mut host = BootstrapHost::default();
+                host.install_testing_participation(TestParticipation::new(
+                    EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                ));
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                if succeeds {
+                    assert!(result.is_ok(), "{constructor}: {result:?}");
+                    assert!(host.channels.is_empty());
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    // Observe the live host before destruction, without a test
+                    // boundary or any reliance on user defers after a limit.
+                    assert_eq!(host.channels.len(), 1);
+                    let queue = &host.channels.values().next().unwrap().queue;
+                    if !queue.is_empty() {
+                        committed.push((constructor, memory, queue.clone()));
+                    }
+                }
+                assert!(host.sync_waiters.is_empty());
+                assert!(host.async_memory.is_empty());
+                let owner = host.test_memory.clone().unwrap();
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            committed.is_empty(),
+            "enqueued before complete VM admission: {committed:?}"
+        );
+    }
+
+    #[test]
+    fn rendezvous_admission_preserves_the_peer_until_both_results_fit() {
+        use crate::test_control::EnvelopeLimits;
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+
+        let source = format!(
+            "import std.channel\nfn main(): !channel.ChannelError {{\n\
+             var (sender, receiver) = channel.bounded[Int](0)?\n\
+             defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+             scope {{\n let pending = spawn sender.send(7)\n\
+             let padding = \"{}\"\n assert(padding.length() == 6000)\n\
+             _ = receiver.receive()\n match await pending {{\n\
+             ok(_) => ()\n err(_) => panic(\"send failed\")\n }}\n }}\n }}\n",
+            "p".repeat(6000)
+        );
+        let (program, entry) = compile_channel_admission_source(&source);
+        for (memory, succeeds) in [(11135, false), (16384, true)] {
+            let mut host = BootstrapHost::default();
+            host.install_testing_participation(TestParticipation::new(
+                EnvelopeLimits::new(65536, 65536, 65536),
+                BTreeMap::new(),
+                false,
+            ));
+            let result = execute_with_limits(
+                &program,
+                entry,
+                &mut host,
+                VmLimits {
+                    max_heap_bytes: memory,
+                    ..VmLimits::default()
+                },
+            );
+            if succeeds {
+                assert!(result.is_ok(), "{result:?}");
+                assert!(host.sync_waiters.is_empty());
+                assert!(host.channels.is_empty());
+            } else {
+                assert!(result.unwrap_err().is_resource_limit());
+                // This ordinary function has an entry memory account but no
+                // test boundary: the harness observes host state before its
+                // destruction, without relying on user cleanup after a limit.
+                // A rejected endpoint may retire its own request; its peer must
+                // still be waiting rather than having received/acknowledged.
+                assert_eq!(
+                    host.sync_waiters.len(),
+                    1,
+                    "transferred before both VM results fit"
+                );
+                let waiting = host.sync_waiters.values().next().unwrap();
+                assert!(matches!(
+                    waiting.kind,
+                    SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive
+                ));
+                if waiting.kind == SyncWaitKind::ChannelSend {
+                    assert_eq!(waiting.arguments.get(1), Some(&RuntimeValue::Integer(7)));
+                }
+            }
+            assert!(host.ready_jobs.is_empty());
+            let owner = host.test_memory.clone().unwrap();
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn owned_channel_receive_rejection_preserves_buffered_and_waiting_values() {
+        let mut failures = Vec::new();
+        for route in ["buffered", "waiting"] {
+            for method in ["receive", "tryReceive"] {
+                for shortage in [1, 0] {
+                    let mut host = BootstrapHost::default();
+                    let (sender, receiver) = channel_endpoints(
+                        host.invoke(
+                            "std.channel.bounded",
+                            &[RuntimeValue::Integer(if route == "buffered" {
+                                1
+                            } else {
+                                0
+                            })],
+                        )
+                        .unwrap(),
+                    );
+                    let (_, channel) = host.channel_receiver_id(&receiver).unwrap();
+                    let payload = RuntimeValue::String("x".repeat(1024));
+                    let pending = if route == "buffered" {
+                        ok(host
+                            .invoke("std.channel.Sender.trySend", &[sender, payload.clone()])
+                            .unwrap());
+                        None
+                    } else {
+                        Some(
+                            host.start_async("std.channel.Sender.send", &[sender, payload.clone()])
+                                .unwrap(),
+                        )
+                    };
+                    let expected = if method == "receive" {
+                        RuntimeValue::OptionSome(Box::new(payload.clone()))
+                    } else {
+                        BootstrapHost::channel_try_receive(0, Some(payload.clone()))
+                    };
+                    let bytes = expected.retained_bytes().unwrap();
+                    let stored = if let Some(send) = pending {
+                        &host.sync_waiters[&send].arguments[1]
+                    } else {
+                        host.channels[&channel].queue.front().unwrap()
+                    };
+                    let RuntimeValue::String(stored) = stored else {
+                        panic!("String fixture")
+                    };
+                    let pointer = stored.as_ptr();
+                    let budget = VmMemoryBudget::new(bytes - shortage);
+                    let result = host.invoke_owned(
+                        &format!("std.channel.Receiver.{method}"),
+                        vec![receiver],
+                        None,
+                        Some(&budget),
+                    );
+                    if shortage == 1 {
+                        assert!(matches!(
+                            result,
+                            Err(VmError::ResourceLimit {
+                                resource: "memory",
+                                ..
+                            })
+                        ));
+                        let retained = if let Some(send) = pending {
+                            host.sync_waiters
+                                .get(&send)
+                                .and_then(|waiter| waiter.arguments.get(1))
+                        } else {
+                            host.channels[&channel].queue.front()
+                        };
+                        if retained != Some(&payload) {
+                            failures.push(format!("{route}:{method}"));
+                        }
+                        if let Some(send) = pending
+                            && host.ready_jobs.contains_key(&send)
+                        {
+                            failures.push(format!("{route}:{method}:acknowledged"));
+                        }
+                    } else {
+                        let result = result.unwrap();
+                        assert_eq!(result.value, expected);
+                        let payload = match &result.value {
+                            RuntimeValue::OptionSome(value) => value.as_ref(),
+                            RuntimeValue::Variant { values, .. } => &values[0],
+                            _ => panic!("receive result shape"),
+                        };
+                        let RuntimeValue::String(payload) = payload else {
+                            panic!("String reply")
+                        };
+                        assert_eq!(
+                            payload.as_ptr(),
+                            pointer,
+                            "delivery moves the retained payload"
+                        );
+                        assert_eq!(budget.live_bytes(), bytes);
+                        if let Some(send) = pending {
+                            ok(host.poll_async(send).unwrap().unwrap());
+                        }
+                        assert!(host.channels[&channel].queue.is_empty());
+                        drop(result);
+                    }
+                    assert_eq!(budget.live_bytes(), 0);
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "receive committed before reply admission: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_channel_receive_preserves_empty_closed_and_invalid_states() {
+        for closed in [false, true] {
+            for method in ["receive", "tryReceive"] {
+                for shortage in [1, 0] {
+                    let mut host = BootstrapHost::default();
+                    let (sender, receiver) = channel_endpoints(
+                        host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+                            .unwrap(),
+                    );
+                    if closed {
+                        host.channel_close_sender(&sender).unwrap();
+                    }
+                    let bytes = 32
+                        + if method == "tryReceive" {
+                            "TryReceive".len() as u64
+                        } else {
+                            0
+                        };
+                    let budget = VmMemoryBudget::new(bytes - shortage);
+                    let count = host.values.len();
+                    let name = format!("std.channel.Receiver.{method}");
+                    let result =
+                        host.invoke_owned(&name, vec![receiver.clone()], None, Some(&budget));
+                    if method == "receive" && !closed {
+                        assert!(
+                            matches!(result, Err(VmError::Host(_))),
+                            "open receive needs the scheduler"
+                        );
+                    } else if shortage == 1 {
+                        assert!(matches!(
+                            result,
+                            Err(VmError::ResourceLimit {
+                                resource: "memory",
+                                ..
+                            })
+                        ));
+                    } else {
+                        let result = result.unwrap();
+                        assert_eq!(budget.live_bytes(), bytes);
+                        let expected = if method == "receive" {
+                            RuntimeValue::OptionNone
+                        } else {
+                            BootstrapHost::channel_try_receive(if closed { 2 } else { 1 }, None)
+                        };
+                        assert_eq!(result.value, expected);
+                        drop(result);
+                    }
+                    assert_eq!(host.values.len(), count);
+                    assert!(host.channel_receiver_id(&receiver).is_ok());
+                    assert_eq!(budget.live_bytes(), 0);
+                    let result = host.invoke_owned(
+                        &name,
+                        vec![RuntimeValue::Integer(0)],
+                        None,
+                        Some(&budget),
+                    );
+                    assert!(matches!(result, Err(VmError::Host(_))));
+                    assert_eq!(budget.live_bytes(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hosted_channel_delivery_quota_belongs_to_the_receiver_and_preserves_the_payload() {
+        for route in ["direct", "pending", "buffered"] {
+            let owner = VmMemoryBudget::new(8192);
+            let receive_budget = VmMemoryBudget::new(
+                tondo_vm::runtime::TEST_HOST_JOB_BYTES
+                    + tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES
+                    + "std.channel.Receiver.receive".len() as u64,
+            );
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let (sender, receiver) = channel_endpoints(
+                host.invoke(
+                    "std.channel.bounded",
+                    &[RuntimeValue::Integer(if route == "buffered" {
+                        1
+                    } else {
+                        0
+                    })],
+                )
+                .unwrap(),
+            );
+            let payload = RuntimeValue::String("retained".repeat(8));
+            if route == "buffered" {
+                ok(host
+                    .invoke(
+                        "std.channel.Sender.trySend",
+                        &[sender.clone(), payload.clone()],
+                    )
+                    .unwrap());
+            }
+            host.set_test_memory_budget(Some(receive_budget.clone()));
+            let receive = host
+                .start_async(
+                    "std.channel.Receiver.receive",
+                    std::slice::from_ref(&receiver),
+                )
+                .unwrap();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let send = match route {
+                "direct" => {
+                    let result = host
+                        .invoke(
+                            "std.channel.Sender.trySend",
+                            &[sender.clone(), payload.clone()],
+                        )
+                        .unwrap();
+                    let RuntimeValue::ResultErr(error) = result else {
+                        panic!("rendezvous cannot send without an admitted receiver")
+                    };
+                    channel_variant(*error, "TrySendError", 0, Some(payload.clone()));
+                    None
+                }
+                "pending" => {
+                    let send = host
+                        .start_async(
+                            "std.channel.Sender.send",
+                            &[sender.clone(), payload.clone()],
+                        )
+                        .unwrap();
+                    assert_eq!(host.poll_async(send).unwrap(), None);
+                    Some(send)
+                }
+                "buffered" => None,
+                _ => unreachable!(),
+            };
+            assert!(matches!(
+                host.poll_async(receive),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    ..
+                })
+            ));
+            assert_eq!(receive_budget.live_bytes(), 0);
+            assert!(!host.sync_waiters.contains_key(&receive));
+            if let Some(send) = send {
+                assert!(
+                    host.async_memory[&send].response.is_none(),
+                    "a rejected receiver releases the tentative acknowledgement"
+                );
+            }
+            if route != "direct" {
+                channel_variant(
+                    host.invoke(
+                        "std.channel.Receiver.tryReceive",
+                        std::slice::from_ref(&receiver),
+                    )
+                    .unwrap(),
+                    "TryReceive",
+                    0,
+                    Some(payload),
+                );
+            }
+            if let Some(send) = send {
+                assert_eq!(
+                    host.poll_async(send).unwrap(),
+                    Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+                );
+            }
+            host.invoke("std.channel.Sender.close", &[sender]).unwrap();
+            host.invoke("std.channel.Receiver.close", &[receiver])
+                .unwrap();
+            assert!(host.channels.is_empty());
+            assert!(host.sync_waiters.is_empty());
+            assert!(host.sync_queues.is_empty());
+            assert!(host.async_memory.is_empty());
+            assert_eq!(owner.live_bytes(), 0);
+        }
     }
 
     #[test]
@@ -15070,6 +20821,430 @@ mod tests {
         host.cancel_async(cancelled).unwrap();
         sync_error(host.poll_async(cancelled).unwrap().unwrap(), 5);
         host.cleanup(&held).unwrap();
+    }
+
+    #[test]
+    fn owned_condition_wait_prepays_before_unlock_and_keeps_its_reply_through_cancellation() {
+        let mut failures = Vec::new();
+        for cancelled in [false, true] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+                let mutex = ok(host
+                    .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+                    .unwrap());
+                let RuntimeValue::Host { id: mutex_id, .. } = mutex else {
+                    panic!("expected mutex")
+                };
+                host.current_unit = 1;
+                let guard = ok(host
+                    .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                    .unwrap());
+                let method = "std.sync.Condition.wait";
+                let request = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64 + 64;
+                let owner = VmMemoryBudget::new(request + 32 - shortage);
+                host.set_test_memory_budget(Some(owner.clone()));
+                let started = host.start_async(method, &[condition.clone(), guard.clone()]);
+                if shortage == 1 {
+                    if !started.as_ref().is_err_and(VmError::is_resource_limit)
+                        || host
+                            .sync_guard_available(mutex_id, RuntimeHostValueKind::MutexGuard)
+                            .unwrap()
+                        || !host.sync_waiters.is_empty()
+                        || !host.async_memory.is_empty()
+                    {
+                        failures.push(format!("admission:cancelled={cancelled}"));
+                    }
+                } else {
+                    let call = started.unwrap();
+                    if owner.live_bytes() != request + 32 {
+                        failures.push("unowned-pending-reply".into());
+                    }
+                    assert!(host.poll_async_owned(call).unwrap().is_none());
+                    host.set_test_memory_budget(None);
+                    host.current_unit = 2;
+                    let competitor = ok(host
+                        .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                        .unwrap());
+                    if cancelled {
+                        host.cancel_async(call).unwrap();
+                    } else {
+                        host.invoke("std.sync.Condition.notifyOne", &[condition])
+                            .unwrap();
+                    }
+                    assert!(
+                        host.poll_async_owned(call).unwrap().is_none(),
+                        "notification must still reacquire the mutex"
+                    );
+                    host.cleanup(&competitor).unwrap();
+                    let other = VmMemoryBudget::new(0);
+                    host.set_test_memory_budget(Some(other.clone()));
+                    let returned = host.poll_async_owned(call).unwrap().unwrap();
+                    assert_eq!(returned.value, guard);
+                    if returned.memory.as_ref().map(VmMemoryCharge::bytes) != Some(32)
+                        || owner.live_bytes() != 32
+                    {
+                        failures.push("unowned-delivered-reply".into());
+                    }
+                    assert_eq!(other.live_bytes(), 0);
+                    assert!(matches!(
+                        host.values.get(&mutex_id),
+                        Some(HostValue::SyncMutex {
+                            locked: true,
+                            owner: Some(1),
+                            ..
+                        })
+                    ));
+                    drop(returned);
+                    host.cleanup(&guard).unwrap();
+                }
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "condition response admission: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_condition_notification_reply_precedes_wakeup_changes() {
+        let mut failures = Vec::new();
+        for all in [false, true] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+                let mutex = ok(host
+                    .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+                    .unwrap());
+                let mut calls = Vec::new();
+                for unit in [1, 2] {
+                    host.current_unit = unit;
+                    let guard = ok(host
+                        .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                        .unwrap());
+                    calls.push(
+                        host.start_async("std.sync.Condition.wait", &[condition.clone(), guard])
+                            .unwrap(),
+                    );
+                }
+                let owner = VmMemoryBudget::new(32 - shortage);
+                let method = if all {
+                    "std.sync.Condition.notifyAll"
+                } else {
+                    "std.sync.Condition.notifyOne"
+                };
+                let result = host.invoke_owned(method, vec![condition], None, Some(&owner));
+                if shortage == 0 {
+                    let returned = result.unwrap();
+                    assert_eq!(returned.value, RuntimeValue::Unit);
+                    assert_eq!(owner.live_bytes(), 32);
+                    drop(returned);
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
+                }
+                for (index, call) in calls.into_iter().enumerate() {
+                    let SyncWaitKind::Condition { notified, .. } = host.sync_waiters[&call].kind
+                    else {
+                        panic!("expected condition waiter")
+                    };
+                    if notified != (shortage == 0 && (all || index == 0)) {
+                        failures.push(format!("{method}:{index}:{shortage}"));
+                    }
+                }
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "notification committed before reply admission: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_barrier_reply_admission_precedes_arrival_and_generation_changes() {
+        let method = "std.sync.Barrier.wait";
+        let request = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64 + 32;
+        let mut failures = Vec::new();
+        for parties in [1, 3] {
+            for rejected in 0..parties {
+                let mut host = BootstrapHost::default();
+                let barrier = ok(host
+                    .invoke("std.sync.barrier", &[RuntimeValue::Integer(parties)])
+                    .unwrap());
+                let RuntimeValue::Host { id, .. } = barrier else {
+                    panic!("expected barrier")
+                };
+                let mut owners = Vec::new();
+                for index in 0..=rejected {
+                    let shortage = u64::from(index == rejected);
+                    let owner = VmMemoryBudget::new(request + 75 - shortage);
+                    host.set_test_memory_budget(Some(owner.clone()));
+                    let result = host.start_async(method, std::slice::from_ref(&barrier));
+                    if shortage == 1 {
+                        if !result.as_ref().is_err_and(VmError::is_resource_limit)
+                            || !matches!(host.values.get(&id),
+                                Some(HostValue::SyncBarrier { arrived, generation: 0, .. })
+                                    if *arrived == rejected as usize)
+                            || host.sync_waiters.len() != rejected as usize
+                            || !host.ready_jobs.is_empty()
+                            || host.async_memory.len() != rejected as usize
+                        {
+                            failures.push(format!("parties={parties},rejected={rejected}"));
+                        }
+                    } else {
+                        let call = result.unwrap();
+                        assert!(host.poll_async_owned(call).unwrap().is_none());
+                        if owner.live_bytes() != request + 75 {
+                            failures.push("unowned-pending-barrier-reply".into());
+                        }
+                    }
+                    owners.push(owner);
+                }
+                drop(host);
+                assert!(owners.iter().all(|owner| owner.live_bytes() == 0));
+            }
+        }
+        assert!(failures.is_empty(), "barrier admission: {failures:?}");
+    }
+
+    #[test]
+    fn owned_barrier_generations_keep_each_phase_reply_through_completion_or_cancellation() {
+        let method = "std.sync.Barrier.wait";
+        let request = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64 + 32;
+        let mut failures = Vec::new();
+        for parties in [1, 3] {
+            let mut host = BootstrapHost::default();
+            let barrier = ok(host
+                .invoke(
+                    "std.sync.barrier",
+                    &[RuntimeValue::Integer(parties as i128)],
+                )
+                .unwrap());
+            for cancelled in [false, true, false] {
+                if cancelled && parties == 1 {
+                    continue;
+                }
+                let count = if cancelled { parties - 1 } else { parties };
+                let mut calls = Vec::new();
+                for index in 0..count {
+                    host.current_unit = index as u64 + 1;
+                    let owner = VmMemoryBudget::new(request + 75);
+                    host.set_test_memory_budget(Some(owner.clone()));
+                    let call = host
+                        .start_async(method, std::slice::from_ref(&barrier))
+                        .unwrap();
+                    calls.push((call, owner));
+                }
+                let other = VmMemoryBudget::new(0);
+                host.set_test_memory_budget(Some(other.clone()));
+                if cancelled {
+                    assert!(host.poll_async_owned(calls[0].0).unwrap().is_none());
+                    host.cancel_async(calls[0].0).unwrap();
+                }
+                for (index, (call, owner)) in calls.into_iter().enumerate() {
+                    let returned = host.poll_async_owned(call).unwrap().unwrap();
+                    let bytes = if cancelled { 73 } else { 75 };
+                    if returned.memory.as_ref().map(VmMemoryCharge::bytes) != Some(bytes)
+                        || owner.live_bytes() != bytes
+                    {
+                        failures.push(format!(
+                            "parties={parties},cancelled={cancelled},index={index}"
+                        ));
+                    }
+                    if cancelled {
+                        sync_error(returned.value.clone(), 5);
+                    } else {
+                        assert!(matches!(ok(returned.value.clone()),
+                            RuntimeValue::Variant { name, variant, values }
+                                if name == "BarrierRole" && values.is_empty()
+                                    && variant == u32::from(index + 1 != count)));
+                    }
+                    drop(returned);
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+                assert_eq!(other.live_bytes(), 0);
+                assert!(host.sync_waiters.is_empty());
+                assert!(host.sync_queues.is_empty());
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+            }
+        }
+        assert!(failures.is_empty(), "barrier reply ownership: {failures:?}");
+    }
+
+    #[test]
+    fn owned_condition_and_barrier_validate_inputs_and_preflight_direct_responses() {
+        for parties in [1, 3] {
+            for arrived in 0..parties {
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    let barrier = ok(host
+                        .invoke("std.sync.barrier", &[RuntimeValue::Integer(parties)])
+                        .unwrap());
+                    let RuntimeValue::Host { id, .. } = barrier else {
+                        panic!("expected barrier")
+                    };
+                    if let Some(HostValue::SyncBarrier { arrived: count, .. }) =
+                        host.values.get_mut(&id)
+                    {
+                        *count = arrived as usize;
+                    }
+                    let completes = parties == 1 || arrived + 1 == parties;
+                    let bytes = if completes { 75 } else { 73 };
+                    let owner = VmMemoryBudget::new(bytes - shortage);
+                    let returned = host.invoke_owned(
+                        "std.sync.Barrier.wait",
+                        vec![barrier],
+                        None,
+                        Some(&owner),
+                    );
+                    let expected_arrived = if shortage == 1 {
+                        arrived
+                    } else if completes {
+                        0
+                    } else {
+                        arrived + 1
+                    };
+                    assert!(
+                        matches!(host.values.get(&id), Some(HostValue::SyncBarrier { arrived, .. }) if *arrived == expected_arrived as usize)
+                    );
+                    if shortage == 1 {
+                        assert!(returned.unwrap_err().is_resource_limit());
+                    } else {
+                        let returned = returned.unwrap();
+                        assert_eq!(returned.memory.as_ref().unwrap().bytes(), bytes);
+                        if completes {
+                            assert!(matches!(returned.value, RuntimeValue::ResultOk(_)));
+                        } else {
+                            sync_error(returned.value.clone(), 2);
+                        }
+                    }
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+            }
+        }
+        let mut host = BootstrapHost::default();
+        let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+            .unwrap());
+        host.current_unit = 1;
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        for shortage in [0, 1] {
+            let owner = VmMemoryBudget::new(32 - shortage);
+            let returned = host.invoke_owned(
+                "std.sync.Condition.wait",
+                vec![condition.clone(), guard.clone()],
+                None,
+                Some(&owner),
+            );
+            if shortage == 1 {
+                assert!(returned.unwrap_err().is_resource_limit());
+            } else {
+                assert_eq!(returned.unwrap().value, guard);
+            }
+            assert_eq!(owner.live_bytes(), 0);
+            assert!(host.sync_waiters.is_empty());
+        }
+        for (method, arguments) in [
+            ("std.sync.Condition.wait", vec![]),
+            (
+                "std.sync.Condition.wait",
+                vec![condition.clone(), RuntimeValue::Unit],
+            ),
+            (
+                "std.sync.Condition.wait",
+                vec![condition.clone(), guard.clone()],
+            ),
+            ("std.sync.Condition.notifyOne", vec![RuntimeValue::Unit]),
+            ("std.sync.Barrier.wait", vec![]),
+            ("std.sync.Barrier.wait", vec![condition]),
+        ] {
+            host.current_unit = 2;
+            let owner = VmMemoryBudget::new(4096);
+            host.set_test_memory_budget(Some(owner.clone()));
+            let identities = (host.next_value, host.next_job);
+            let returned = host.invoke_owned(method, arguments.clone(), None, Some(&owner));
+            if arguments.is_empty() {
+                assert!(
+                    matches!(returned, Err(VmError::UnsupportedHostCall(name)) if name == method)
+                );
+            } else {
+                assert!(
+                    matches!(returned, Err(VmError::Host(_))),
+                    "{method}: {returned:?}"
+                );
+            }
+            if method.ends_with(".wait") {
+                assert!(matches!(
+                    host.start_async(method, &arguments),
+                    Err(VmError::Host(_))
+                ));
+            }
+            assert_eq!((host.next_value, host.next_job), identities);
+            assert!(host.sync_waiters.is_empty());
+            assert!(host.async_memory.is_empty());
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        host.cleanup(&guard).unwrap();
+    }
+
+    #[test]
+    fn condition_calls_reject_mismatched_registry_values_before_unlock_or_notification() {
+        for method in [
+            "std.sync.Condition.wait",
+            "std.sync.Condition.notifyOne",
+            "std.sync.Condition.notifyAll",
+        ] {
+            let mut host = BootstrapHost::default();
+            let mutex = ok(host
+                .invoke("std.sync.mutex", &[RuntimeValue::Integer(1)])
+                .unwrap());
+            let RuntimeValue::Host { id, .. } = mutex else {
+                panic!("expected mutex")
+            };
+            host.current_unit = 1;
+            let guard = ok(host
+                .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                .unwrap());
+            let mut arguments = vec![RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Condition,
+                id,
+            }];
+            if method.ends_with(".wait") {
+                arguments.push(guard.clone());
+            }
+            let budget = VmMemoryBudget::new(4096);
+            host.set_test_memory_budget(Some(budget.clone()));
+            assert!(
+                matches!(
+                    host.invoke_owned(method, arguments.clone(), None, Some(&budget)),
+                    Err(VmError::Host(_))
+                ),
+                "{method}"
+            );
+            if method.ends_with(".wait") {
+                assert!(matches!(
+                    host.start_async(method, &arguments),
+                    Err(VmError::Host(_))
+                ));
+            }
+            assert!(matches!(
+                host.values.get(&id),
+                Some(HostValue::SyncMutex {
+                    locked: true,
+                    owner: Some(1),
+                    ..
+                })
+            ));
+            assert!(host.sync_waiters.is_empty());
+            assert_eq!(budget.live_bytes(), 0);
+            host.cleanup(&guard).unwrap();
+        }
     }
 
     #[test]
@@ -18413,7 +24588,7 @@ mod tests {
             events
                 .iter()
                 .cloned()
-                .map(|event| host.runtime_yaml_event(event))
+                .map(|event| host.runtime_yaml_event(event).unwrap())
                 .collect::<Vec<_>>()
         });
         let mut peak_logical_bytes = yaml_performance_logical_bytes(&host);
@@ -19837,6 +26012,2436 @@ mod tests {
     }
 
     #[test]
+    fn hosted_byte_memory_admission_is_atomic_and_released_with_the_registry() {
+        let budget = VmMemoryBudget::new(128);
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(budget.clone()));
+        let first_id = host.next_value;
+        assert!(matches!(
+            host.allocate_byte_chunks([vec![1; 32], vec![2; 33]]),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 128
+            })
+        ));
+        assert_eq!(host.next_value, first_id);
+        assert_eq!(budget.live_bytes(), 0);
+        assert!(host.buffer_memory.is_empty());
+        let values = host
+            .allocate_byte_chunks([vec![1; 32], vec![2; 32]])
+            .unwrap();
+        assert_eq!(budget.live_bytes(), 128);
+        assert_eq!(host.bytes(&values[0]).unwrap(), &[1; 32]);
+        assert_eq!(host.bytes(&values[1]).unwrap(), &[2; 32]);
+        assert!(host.allocate_bytes(Vec::new()).is_err());
+        assert_eq!(host.next_value, first_id + 2);
+        drop(host);
+        assert_eq!(budget.live_bytes(), 0);
+    }
+
+    #[test]
+    fn hosted_concurrent_collection_mutation_preflights_the_original_owner() {
+        let small = RuntimeValue::String("small".into());
+        let large = RuntimeValue::String("x".repeat(512));
+        let key = RuntimeValue::Integer(1);
+        let some = |value| RuntimeValue::OptionSome(Box::new(value));
+        let cases = [
+            (
+                "Array",
+                vec![small.clone()],
+                "set",
+                vec![RuntimeValue::Integer(0), large.clone()],
+            ),
+            (
+                "Array",
+                vec![small.clone()],
+                "compareExchange",
+                vec![RuntimeValue::Integer(0), small.clone(), large.clone()],
+            ),
+            (
+                "Map",
+                vec![key.clone(), small.clone()],
+                "insert",
+                vec![key.clone(), large.clone()],
+            ),
+            (
+                "Map",
+                vec![key.clone(), small.clone()],
+                "insert",
+                vec![RuntimeValue::Integer(2), large.clone()],
+            ),
+            (
+                "Map",
+                vec![key.clone(), small.clone()],
+                "compareExchange",
+                vec![key.clone(), some(small.clone()), some(large.clone())],
+            ),
+            (
+                "Map",
+                vec![key.clone(), small.clone()],
+                "compareExchange",
+                vec![
+                    RuntimeValue::Integer(2),
+                    RuntimeValue::OptionNone,
+                    some(large.clone()),
+                ],
+            ),
+            ("Set", vec![small.clone()], "insert", vec![large.clone()]),
+            ("Stack", vec![small.clone()], "push", vec![large.clone()]),
+            ("Queue", vec![small], "enqueue", vec![large]),
+        ];
+        for (kind, initial, operation, extra) in cases {
+            let owner = VmMemoryBudget::new(256);
+            let caller = VmMemoryBudget::new(4096);
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let receiver = host
+                .invoke(&format!("std.sync.{kind}.literal"), &initial)
+                .unwrap();
+            let before = host
+                .invoke(
+                    &format!("std.sync.{kind}.snapshot"),
+                    std::slice::from_ref(&receiver),
+                )
+                .unwrap();
+            let bytes = owner.live_bytes();
+            let generations = host.sync_generations.clone();
+            let next = (host.next_value, host.next_sync_generation);
+            host.set_test_memory_budget(Some(caller.clone()));
+            let mut arguments = vec![receiver.clone()];
+            arguments.extend(extra);
+            assert!(
+                matches!(
+                    host.invoke(&format!("std.sync.{kind}.{operation}"), &arguments),
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        limit: 256
+                    })
+                ),
+                "{kind}.{operation}"
+            );
+            assert_eq!(
+                host.invoke(&format!("std.sync.{kind}.snapshot"), &[receiver])
+                    .unwrap(),
+                before
+            );
+            assert_eq!(host.sync_generations, generations);
+            assert_eq!((host.next_value, host.next_sync_generation), next);
+            assert_eq!(owner.live_bytes(), bytes);
+            assert_eq!(caller.live_bytes(), 0);
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn hosted_concurrent_collection_removal_releases_storage_and_duplicate_admission_is_exact() {
+        let value = RuntimeValue::String("x".repeat(128));
+        let key = RuntimeValue::Integer(1);
+        for (kind, initial, operation, arguments) in [
+            (
+                "Map",
+                vec![key.clone(), value.clone()],
+                "remove",
+                vec![key.clone()],
+            ),
+            (
+                "Map",
+                vec![key.clone(), value.clone()],
+                "compareExchange",
+                vec![
+                    key,
+                    RuntimeValue::OptionSome(Box::new(value.clone())),
+                    RuntimeValue::OptionNone,
+                ],
+            ),
+            ("Set", vec![value.clone()], "remove", vec![value.clone()]),
+            ("Stack", vec![value.clone()], "pop", vec![]),
+            ("Queue", vec![value.clone()], "dequeue", vec![]),
+        ] {
+            let owner = VmMemoryBudget::new(256);
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let receiver = host
+                .invoke(&format!("std.sync.{kind}.literal"), &initial)
+                .unwrap();
+            let mut call = vec![receiver];
+            call.extend(arguments);
+            host.invoke(&format!("std.sync.{kind}.{operation}"), &call)
+                .unwrap();
+            assert_eq!(owner.live_bytes(), 32, "{kind}.{operation}");
+            assert!(host.sync_generations.values().all(Vec::is_empty));
+            host.collect_host_values(&Default::default()).unwrap();
+            assert!(host.sync_generations.is_empty());
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        for (kind, arguments) in [
+            ("Set", vec![value.clone(); 64]),
+            (
+                "Map",
+                (0..64)
+                    .flat_map(|_| [RuntimeValue::Integer(1), value.clone()])
+                    .collect(),
+            ),
+        ] {
+            let owner = VmMemoryBudget::new(256);
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let receiver = host
+                .invoke(&format!("std.sync.{kind}.literal"), &arguments)
+                .unwrap();
+            assert_eq!(
+                host.invoke(&format!("std.sync.{kind}.length"), &[receiver])
+                    .unwrap(),
+                RuntimeValue::Integer(1)
+            );
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn hosted_concurrent_collection_admission_and_nested_collection_are_atomic() {
+        let owner = VmMemoryBudget::new(512);
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(owner.clone()));
+        let first = (host.next_value, host.next_sync_generation);
+        assert!(matches!(
+            host.invoke(
+                "std.sync.Array.literal",
+                &[RuntimeValue::String("x".repeat(512))]
+            ),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 512
+            })
+        ));
+        assert_eq!((host.next_value, host.next_sync_generation), first);
+        assert!(host.sync_generations.is_empty());
+        assert_eq!(owner.live_bytes(), 0);
+        let bytes = host.allocate_bytes(vec![1; 128]).unwrap();
+        let inner = host.invoke("std.sync.Array.literal", &[bytes]).unwrap();
+        let outer = host.invoke("std.sync.Queue.literal", &[inner]).unwrap();
+        let mut roots = tondo_vm::runtime::VmHostRoots::new();
+        outer.trace_host_roots(&mut roots);
+        host.collect_host_values(&roots).unwrap();
+        assert_eq!(host.values.len(), 3);
+        assert_eq!(host.sync_generations.len(), 2);
+        let live = owner.live_bytes();
+        assert!(live > 160);
+        host.collect_host_values(&Default::default()).unwrap();
+        assert!(host.values.is_empty());
+        assert!(host.sync_generations.is_empty());
+        assert_eq!(owner.live_bytes(), 0);
+    }
+
+    #[test]
+    fn hosted_sync_guard_admission_is_atomic_and_cleanup_releases_the_owner() {
+        for (constructor, initial, kind) in [
+            (
+                "std.sync.mutex",
+                RuntimeValue::Integer(7),
+                RuntimeHostValueKind::MutexGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                RuntimeValue::Integer(7),
+                RuntimeHostValueKind::ReadGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                RuntimeValue::Integer(7),
+                RuntimeHostValueKind::WriteGuard,
+            ),
+            (
+                "std.sync.semaphore",
+                RuntimeValue::Integer(1),
+                RuntimeHostValueKind::Permit,
+            ),
+        ] {
+            let base = if kind == RuntimeHostValueKind::Permit {
+                32
+            } else {
+                64
+            };
+            let owner = VmMemoryBudget::new(base);
+            let caller = VmMemoryBudget::new(32);
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let resource = ok(host.invoke(constructor, &[initial]).unwrap());
+            let RuntimeValue::Host { id, .. } = resource else {
+                panic!("expected host resource")
+            };
+            let next = host.next_value;
+            assert!(matches!(
+                host.acquire_sync_guard(id, kind, 7),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    ..
+                })
+            ));
+            assert_eq!(host.next_value, next);
+            assert_eq!(owner.live_bytes(), base);
+            host.set_test_memory_budget(Some(caller.clone()));
+            let guard = host
+                .acquire_sync_guard(id, kind, 7)
+                .unwrap()
+                .expect("failed admission must leave the resource available");
+            assert_eq!(caller.live_bytes(), 32);
+            let mut roots = tondo_vm::runtime::VmHostRoots::new();
+            guard.trace_host_roots(&mut roots);
+            host.collect_host_values(&roots).unwrap();
+            assert!(host.values.contains_key(&id));
+            assert_eq!(owner.live_bytes(), base);
+            host.cleanup(&guard).unwrap();
+            assert_eq!(caller.live_bytes(), 0);
+            let guard = host.acquire_sync_guard(id, kind, 8).unwrap().unwrap();
+            // An unreachable guard is finalized even while its owner is live.
+            roots.clear();
+            resource.trace_host_roots(&mut roots);
+            host.collect_host_values(&roots).unwrap();
+            assert_eq!(caller.live_bytes(), 0);
+            assert!(
+                !matches!(guard, RuntimeValue::Host { id, .. } if host.values.contains_key(&id))
+            );
+            assert!(host.acquire_sync_guard(id, kind, 9).unwrap().is_some());
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+            assert_eq!(caller.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn owned_guard_and_permit_replies_precede_resource_acquisition() {
+        let mut premature = Vec::new();
+        for (constructor, method, permit) in [
+            ("std.sync.mutex", "std.sync.Mutex.lock", false),
+            ("std.sync.mutex", "std.sync.Mutex.tryLock", false),
+            ("std.sync.rwLock", "std.sync.RwLock.read", false),
+            ("std.sync.rwLock", "std.sync.RwLock.tryRead", false),
+            ("std.sync.rwLock", "std.sync.RwLock.write", false),
+            ("std.sync.rwLock", "std.sync.RwLock.tryWrite", false),
+            ("std.sync.semaphore", "std.sync.Semaphore.acquire", true),
+            ("std.sync.semaphore", "std.sync.Semaphore.tryAcquire", false),
+        ] {
+            for (shared_owner, shortage) in [(false, 0), (false, 1), (true, 0), (true, 1)] {
+                let mut host = BootstrapHost::default();
+                let resource = ok(host
+                    .invoke(constructor, &[RuntimeValue::Integer(1)])
+                    .unwrap());
+                let before = (host.next_value, host.values.len());
+                let bytes = if permit { 32 } else { 64 };
+                let reply = VmMemoryBudget::new(bytes + u64::from(shared_owner) * 32 - shortage);
+                let storage = if shared_owner {
+                    reply.clone()
+                } else {
+                    VmMemoryBudget::new(32)
+                };
+                host.set_test_memory_budget(Some(storage.clone()));
+                let result = host.invoke_owned(method, vec![resource], None, Some(&reply));
+                if shortage == 1 {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    if (host.next_value, host.values.len()) != before || storage.live_bytes() != 0 {
+                        premature.push(method);
+                    }
+                } else {
+                    let returned = result.unwrap();
+                    assert_eq!(returned.value.retained_bytes(), Some(bytes));
+                    assert_eq!(reply.live_bytes(), bytes + u64::from(shared_owner) * 32);
+                    assert_eq!(storage.live_bytes(), 32 + u64::from(shared_owner) * bytes);
+                    let guard = match &returned.value {
+                        RuntimeValue::ResultOk(value) | RuntimeValue::OptionSome(value) => {
+                            value.as_ref().clone()
+                        }
+                        value => value.clone(),
+                    };
+                    drop(returned);
+                    host.cleanup(&guard).unwrap();
+                    assert_eq!(storage.live_bytes(), 0);
+                }
+                assert_eq!(reply.live_bytes(), 0);
+                drop(host);
+                assert_eq!(storage.live_bytes(), 0);
+            }
+        }
+        assert!(
+            premature.is_empty(),
+            "guard acquired before reply admission: {premature:?}"
+        );
+    }
+
+    #[test]
+    fn owned_pending_guard_replies_keep_their_phase_and_reject_before_acquisition() {
+        let mut premature = Vec::new();
+        for (constructor, method, blocker, bytes) in [
+            (
+                "std.sync.mutex",
+                "std.sync.Mutex.lock",
+                RuntimeHostValueKind::MutexGuard,
+                64,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.read",
+                RuntimeHostValueKind::WriteGuard,
+                64,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.write",
+                RuntimeHostValueKind::WriteGuard,
+                64,
+            ),
+            (
+                "std.sync.semaphore",
+                "std.sync.Semaphore.acquire",
+                RuntimeHostValueKind::Permit,
+                32,
+            ),
+        ] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                let resource = ok(host
+                    .invoke(constructor, &[RuntimeValue::Integer(1)])
+                    .unwrap());
+                let RuntimeValue::Host { id, .. } = &resource else {
+                    panic!("expected synchronization resource")
+                };
+                let held = host.acquire_sync_guard(*id, blocker, 1).unwrap().unwrap();
+                let request = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64 + 32;
+                let owner = VmMemoryBudget::new(request + 32 + bytes - shortage);
+                host.current_unit = 2;
+                host.set_test_memory_budget(Some(owner.clone()));
+                let call = host.start_async(method, &[resource]).unwrap();
+                assert!(host.poll_async_owned(call).unwrap().is_none());
+                assert_eq!(owner.live_bytes(), request);
+                host.set_test_memory_budget(None);
+                host.cleanup(&held).unwrap();
+                let before = (host.next_value, host.values.len());
+                let result = host.poll_async_owned(call);
+                if shortage == 1 {
+                    if !result.as_ref().is_err_and(VmError::is_resource_limit)
+                        || (host.next_value, host.values.len()) != before
+                    {
+                        premature.push(method.into());
+                    }
+                    drop(result);
+                } else {
+                    let returned = result.unwrap().unwrap();
+                    if returned.memory.as_ref().map(VmMemoryCharge::bytes) != Some(bytes)
+                        || owner.live_bytes() != 32 + bytes
+                    {
+                        premature.push(format!("{method}:unowned-reply"));
+                    }
+                    let guard = match &returned.value {
+                        RuntimeValue::ResultOk(value) => value.as_ref().clone(),
+                        value => value.clone(),
+                    };
+                    drop(returned);
+                    host.cleanup(&guard).unwrap();
+                }
+                assert!(!host.sync_waiters.contains_key(&call));
+                assert!(!host.async_memory.contains_key(&call));
+                drop(host);
+                assert_eq!(owner.live_bytes(), 0);
+            }
+        }
+        assert!(
+            premature.is_empty(),
+            "pending guard reply admission: {premature:?}"
+        );
+    }
+
+    #[test]
+    fn owned_pending_guard_cancellation_reuses_request_memory_without_acquiring_resources() {
+        let mut failures = Vec::new();
+        for (constructor, method, blocker) in [
+            (
+                "std.sync.mutex",
+                "std.sync.Mutex.lock",
+                RuntimeHostValueKind::MutexGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.read",
+                RuntimeHostValueKind::WriteGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.write",
+                RuntimeHostValueKind::WriteGuard,
+            ),
+            (
+                "std.sync.semaphore",
+                "std.sync.Semaphore.acquire",
+                RuntimeHostValueKind::Permit,
+            ),
+        ] {
+            let mut host = BootstrapHost::default();
+            let resource = ok(host
+                .invoke(constructor, &[RuntimeValue::Integer(1)])
+                .unwrap());
+            let RuntimeValue::Host { id, .. } = resource else {
+                panic!("expected resource")
+            };
+            let held = host.acquire_sync_guard(id, blocker, 1).unwrap().unwrap();
+            let request = tondo_vm::runtime::TEST_HOST_JOB_BYTES + method.len() as u64 + 32;
+            let owner = VmMemoryBudget::new(request);
+            host.current_unit = 2;
+            host.set_test_memory_budget(Some(owner.clone()));
+            let call = host.start_async(method, &[resource]).unwrap();
+            assert!(host.poll_async_owned(call).unwrap().is_none());
+            assert_eq!(owner.live_bytes(), request);
+            let other = VmMemoryBudget::new(0);
+            host.set_test_memory_budget(Some(other.clone()));
+            let identities = (host.next_value, host.values.len());
+            host.cancel_async(call).unwrap();
+            let returned = host.poll_async_owned(call).unwrap().unwrap();
+            sync_error(returned.value.clone(), 5);
+            if returned.memory.as_ref().map(VmMemoryCharge::bytes) != Some(73)
+                || owner.live_bytes() != 73
+            {
+                failures.push(method);
+            }
+            assert_eq!(other.live_bytes(), 0);
+            assert_eq!((host.next_value, host.values.len()), identities);
+            assert!(!host.sync_guard_available(id, blocker).unwrap());
+            assert!(host.sync_waiters.is_empty());
+            assert!(host.sync_queues.is_empty());
+            assert!(host.async_memory.is_empty());
+            drop(returned);
+            assert_eq!(owner.live_bytes(), 0);
+            host.cleanup(&held).unwrap();
+        }
+        assert!(
+            failures.is_empty(),
+            "unowned cancellation replies: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_sync_constructors_admit_response_and_storage_before_publishing_identity() {
+        let mut failures = Vec::new();
+        for (method, arguments, retained, response_bytes) in [
+            (
+                "std.sync.mutex",
+                vec![RuntimeValue::String("payload".into())],
+                39,
+                64,
+            ),
+            (
+                "std.sync.rwLock",
+                vec![RuntimeValue::String("payload".into())],
+                39,
+                64,
+            ),
+            ("std.sync.condition", vec![], 0, 64),
+            ("std.sync.semaphore", vec![RuntimeValue::Integer(2)], 0, 64),
+            ("std.sync.once", vec![], 0, 32),
+            ("std.sync.barrier", vec![RuntimeValue::Integer(2)], 0, 64),
+            ("std.sync.atomic", vec![RuntimeValue::Integer(7)], 32, 32),
+        ] {
+            let storage_bytes = tondo_vm::runtime::TEST_HOST_BUFFER_BYTES + retained;
+            for shared in [false, true] {
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    let reply_owner = VmMemoryBudget::new(
+                        response_bytes + if shared { storage_bytes } else { 0 } - shortage,
+                    );
+                    let storage_owner = if shared {
+                        reply_owner.clone()
+                    } else {
+                        VmMemoryBudget::new(storage_bytes)
+                    };
+                    host.set_test_memory_budget(Some(storage_owner.clone()));
+                    let before = host.next_value;
+                    let returned =
+                        host.invoke_owned(method, arguments.clone(), None, Some(&reply_owner));
+                    if shortage == 1 {
+                        assert!(returned.unwrap_err().is_resource_limit());
+                        if host.next_value != before
+                            || !host.values.is_empty()
+                            || !host.buffer_memory.is_empty()
+                        {
+                            failures.push(format!("{method}:shared={shared}"));
+                        }
+                    } else {
+                        let returned = returned.unwrap();
+                        assert_eq!(returned.memory.as_ref().unwrap().bytes(), response_bytes);
+                        assert_eq!(host.values.len(), 1);
+                        assert_eq!(
+                            host.buffer_memory
+                                .values()
+                                .map(VmMemoryCharge::bytes)
+                                .sum::<u64>(),
+                            storage_bytes
+                        );
+                        drop(returned);
+                        assert_eq!(storage_owner.live_bytes(), storage_bytes);
+                    }
+                    drop(host);
+                    assert_eq!(reply_owner.live_bytes(), 0);
+                    assert_eq!(storage_owner.live_bytes(), 0);
+                }
+            }
+            let mut host = BootstrapHost::default();
+            let storage_owner = VmMemoryBudget::new(storage_bytes - 1);
+            let reply_owner = VmMemoryBudget::new(response_bytes);
+            host.set_test_memory_budget(Some(storage_owner.clone()));
+            let before = host.next_value;
+            assert!(
+                host.invoke_owned(method, arguments, None, Some(&reply_owner))
+                    .unwrap_err()
+                    .is_resource_limit()
+            );
+            assert_eq!(host.next_value, before);
+            assert!(host.values.is_empty());
+            assert_eq!(reply_owner.live_bytes(), 0);
+            assert_eq!(storage_owner.live_bytes(), 0);
+        }
+        assert!(
+            failures.is_empty(),
+            "constructors published before reply admission: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_atomic_responses_precede_payload_copy_and_mutation() {
+        let mut failures = Vec::new();
+        for method in ["load", "store", "swap", "compareExchange"] {
+            for matches in [false, true] {
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    let atomic = host
+                        .invoke("std.sync.atomic", &[RuntimeValue::Integer(7)])
+                        .unwrap();
+                    let RuntimeValue::Host { id, .. } = atomic else {
+                        panic!("expected atomic")
+                    };
+                    let order = host
+                        .invoke("intrinsic.sync.MemoryOrder.SeqCst", &[])
+                        .unwrap();
+                    let mut arguments = vec![atomic];
+                    let bytes = if method == "compareExchange" {
+                        64 + "CompareExchange".len() as u64
+                    } else {
+                        32
+                    };
+                    match method {
+                        "load" => arguments.push(order),
+                        "store" | "swap" => arguments.extend([RuntimeValue::Integer(9), order]),
+                        _ => arguments.extend([
+                            RuntimeValue::Integer(if matches { 7 } else { 8 }),
+                            RuntimeValue::Integer(9),
+                            order.clone(),
+                            order,
+                        ]),
+                    }
+                    let owner = VmMemoryBudget::new(bytes - shortage);
+                    let name = format!("std.sync.Atomic.{method}");
+                    let returned = host.invoke_owned(&name, arguments, None, Some(&owner));
+                    let mutated = shortage == 0
+                        && (method == "store"
+                            || method == "swap"
+                            || (method == "compareExchange" && matches));
+                    if !matches!(host.values.get(&id), Some(HostValue::SyncAtomic { value: RuntimeValue::Integer(value) }) if *value == if mutated { 9 } else { 7 })
+                    {
+                        failures.push(format!("{method}:matches={matches}:shortage={shortage}"));
+                    }
+                    if shortage == 1 {
+                        assert!(returned.unwrap_err().is_resource_limit());
+                    } else {
+                        let returned = returned.unwrap();
+                        assert_eq!(returned.memory.as_ref().unwrap().bytes(), bytes);
+                        let expected = match method {
+                            "store" => RuntimeValue::Unit,
+                            "compareExchange" => RuntimeValue::Variant {
+                                name: "CompareExchange".into(),
+                                variant: u32::from(!matches),
+                                values: vec![RuntimeValue::Integer(7)],
+                            },
+                            _ => RuntimeValue::Integer(7),
+                        };
+                        assert_eq!(returned.value, expected);
+                    }
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "atomic mutation preceded response admission: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_sync_constructor_errors_admit_exact_results_without_registry_entries() {
+        for (method, invalid_variant) in [("std.sync.semaphore", 0), ("std.sync.barrier", 1)] {
+            for (argument, variant) in [
+                (-1, invalid_variant),
+                (0, invalid_variant),
+                (i128::MAX, invalid_variant),
+                (3, 2),
+            ] {
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    host.max_bytes = 2;
+                    let owner = VmMemoryBudget::new(73 - shortage);
+                    host.set_test_memory_budget(Some(owner.clone()));
+                    let before = host.next_value;
+                    let returned = host.invoke_owned(
+                        method,
+                        vec![RuntimeValue::Integer(argument)],
+                        None,
+                        Some(&owner),
+                    );
+                    if shortage == 1 {
+                        assert!(returned.unwrap_err().is_resource_limit());
+                    } else {
+                        let returned = returned.unwrap();
+                        sync_error(returned.value.clone(), variant);
+                        assert_eq!(returned.memory.as_ref().unwrap().bytes(), 73);
+                    }
+                    assert_eq!(host.next_value, before);
+                    assert!(host.values.is_empty());
+                    assert!(host.buffer_memory.is_empty());
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_once_host_views_admit_payloads_and_preserve_the_initializer_boundary() {
+        for method in ["get", "getOrInit", "isReady"] {
+            for ready in [false, true] {
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    let once = host.invoke("std.sync.once", &[]).unwrap();
+                    let RuntimeValue::Host { id, .. } = once else {
+                        panic!("expected Once")
+                    };
+                    let payload = RuntimeValue::String("payload".into());
+                    // The host model can expose a retained value; ordinary
+                    // initializer execution is owned by the VM continuation.
+                    if ready {
+                        host.values.insert(
+                            id,
+                            HostValue::SyncOnce {
+                                value: Some(payload.clone()),
+                            },
+                        );
+                    }
+                    let (bytes, expected) = match (method, ready) {
+                        ("isReady", _) => (32, RuntimeValue::Bool(ready)),
+                        ("get", false) => (32, RuntimeValue::OptionNone),
+                        ("get", true) => (
+                            103,
+                            RuntimeValue::OptionSome(Box::new(RuntimeValue::Ref(Some(Box::new(
+                                payload.clone(),
+                            ))))),
+                        ),
+                        ("getOrInit", false) => (73, BootstrapHost::sync_result_error(4)),
+                        _ => (
+                            103,
+                            RuntimeValue::ResultOk(Box::new(RuntimeValue::Ref(Some(Box::new(
+                                payload.clone(),
+                            ))))),
+                        ),
+                    };
+                    let mut arguments = vec![once];
+                    if method == "getOrInit" {
+                        arguments.push(RuntimeValue::Function {
+                            name: "initializer".into(),
+                            type_arguments: vec![],
+                        });
+                    }
+                    let owner = VmMemoryBudget::new(bytes - shortage);
+                    let returned = host.invoke_owned(
+                        &format!("std.sync.Once.{method}"),
+                        arguments,
+                        None,
+                        Some(&owner),
+                    );
+                    if shortage == 1 {
+                        assert!(returned.unwrap_err().is_resource_limit());
+                    } else {
+                        let returned = returned.unwrap();
+                        assert_eq!(returned.value, expected);
+                        assert_eq!(returned.memory.as_ref().unwrap().bytes(), bytes);
+                    }
+                    assert!(
+                        matches!(host.values.get(&id), Some(HostValue::SyncOnce { value }) if value.as_ref() == ready.then_some(&payload))
+                    );
+                    assert_eq!(owner.live_bytes(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_guard_reads_and_releases_preflight_their_complete_responses() {
+        let mut premature = Vec::new();
+        for (constructor, kind, method) in [
+            (
+                "std.sync.mutex",
+                RuntimeHostValueKind::MutexGuard,
+                "std.sync.MutexGuard.get",
+            ),
+            (
+                "std.sync.mutex",
+                RuntimeHostValueKind::MutexGuard,
+                "std.sync.MutexGuard.getMut",
+            ),
+            (
+                "std.sync.mutex",
+                RuntimeHostValueKind::MutexGuard,
+                "std.sync.MutexGuard.unlock",
+            ),
+            (
+                "std.sync.rwLock",
+                RuntimeHostValueKind::ReadGuard,
+                "std.sync.ReadGuard.get",
+            ),
+            (
+                "std.sync.rwLock",
+                RuntimeHostValueKind::ReadGuard,
+                "std.sync.ReadGuard.unlock",
+            ),
+            (
+                "std.sync.rwLock",
+                RuntimeHostValueKind::WriteGuard,
+                "std.sync.WriteGuard.get",
+            ),
+            (
+                "std.sync.rwLock",
+                RuntimeHostValueKind::WriteGuard,
+                "std.sync.WriteGuard.getMut",
+            ),
+            (
+                "std.sync.rwLock",
+                RuntimeHostValueKind::WriteGuard,
+                "std.sync.WriteGuard.unlock",
+            ),
+            (
+                "std.sync.semaphore",
+                RuntimeHostValueKind::Permit,
+                "std.sync.Permit.release",
+            ),
+        ] {
+            for shortage in [0, 1] {
+                let mut host = BootstrapHost::default();
+                let value = if kind == RuntimeHostValueKind::Permit {
+                    RuntimeValue::Integer(1)
+                } else {
+                    RuntimeValue::String("borrowed value".repeat(64))
+                };
+                let resource = ok(host
+                    .invoke(constructor, std::slice::from_ref(&value))
+                    .unwrap());
+                let RuntimeValue::Host { id, .. } = resource else {
+                    panic!("expected resource")
+                };
+                let guard = host.acquire_sync_guard(id, kind, 0).unwrap().unwrap();
+                let RuntimeValue::Host { id: guard_id, .. } = guard else {
+                    panic!("expected guard")
+                };
+                let release = method.ends_with(".unlock") || method.ends_with(".release");
+                let expected = if release {
+                    RuntimeValue::Unit
+                } else {
+                    RuntimeValue::Ref(Some(Box::new(value)))
+                };
+                let bytes = expected.retained_bytes().unwrap();
+                let owner = VmMemoryBudget::new(bytes - shortage);
+                let result = host.invoke_owned(method, vec![guard.clone()], None, Some(&owner));
+                if shortage == 1 {
+                    assert!(result.unwrap_err().is_resource_limit());
+                    if !host.values.contains_key(&guard_id) {
+                        premature.push(method);
+                    }
+                } else {
+                    let returned = result.unwrap();
+                    assert_eq!(returned.value, expected);
+                    assert_eq!(owner.live_bytes(), bytes);
+                    assert_eq!(host.values.contains_key(&guard_id), !release);
+                    drop(returned);
+                    if release {
+                        let available_kind = if kind == RuntimeHostValueKind::ReadGuard {
+                            RuntimeHostValueKind::WriteGuard
+                        } else {
+                            kind
+                        };
+                        assert!(host.sync_guard_available(id, available_kind).unwrap());
+                    }
+                }
+                assert_eq!(owner.live_bytes(), 0);
+                if host.values.contains_key(&guard_id) {
+                    host.cleanup(&guard).unwrap();
+                }
+            }
+        }
+        assert!(
+            premature.is_empty(),
+            "guard released before reply admission: {premature:?}"
+        );
+    }
+
+    #[test]
+    fn owned_guard_empty_error_and_invalid_responses_preserve_held_resources() {
+        for (constructor, method, blocker) in [
+            (
+                "std.sync.mutex",
+                "std.sync.Mutex.lock",
+                RuntimeHostValueKind::MutexGuard,
+            ),
+            (
+                "std.sync.mutex",
+                "std.sync.Mutex.tryLock",
+                RuntimeHostValueKind::MutexGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.read",
+                RuntimeHostValueKind::WriteGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.tryRead",
+                RuntimeHostValueKind::WriteGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.write",
+                RuntimeHostValueKind::WriteGuard,
+            ),
+            (
+                "std.sync.rwLock",
+                "std.sync.RwLock.tryWrite",
+                RuntimeHostValueKind::WriteGuard,
+            ),
+            (
+                "std.sync.semaphore",
+                "std.sync.Semaphore.acquire",
+                RuntimeHostValueKind::Permit,
+            ),
+            (
+                "std.sync.semaphore",
+                "std.sync.Semaphore.tryAcquire",
+                RuntimeHostValueKind::Permit,
+            ),
+        ] {
+            for reentrant in [false, true] {
+                for shortage in [0, 1] {
+                    let mut host = BootstrapHost::default();
+                    let resource = ok(host
+                        .invoke(constructor, &[RuntimeValue::Integer(1)])
+                        .unwrap());
+                    let RuntimeValue::Host { id, .. } = resource else {
+                        panic!("expected resource")
+                    };
+                    let held = host.acquire_sync_guard(id, blocker, 1).unwrap().unwrap();
+                    host.current_unit = if reentrant { 1 } else { 2 };
+                    let expected = if method.contains(".try") {
+                        Some(RuntimeValue::OptionNone)
+                    } else if method == "std.sync.Semaphore.acquire"
+                        || (method == "std.sync.Mutex.lock" && !reentrant)
+                    {
+                        None
+                    } else {
+                        Some(BootstrapHost::sync_result_error(
+                            if reentrant
+                                && (method.ends_with(".lock") || method.ends_with(".write"))
+                            {
+                                3
+                            } else {
+                                2
+                            },
+                        ))
+                    };
+                    let bytes = expected
+                        .as_ref()
+                        .map_or(0, |value| value.retained_bytes().unwrap());
+                    let owner = VmMemoryBudget::new(bytes.saturating_sub(shortage));
+                    let before = (host.next_value, host.values.len());
+                    let result = host.invoke_owned(method, vec![resource], None, Some(&owner));
+                    if let Some(expected) = expected {
+                        if shortage == 0 {
+                            let returned = result.unwrap();
+                            assert_eq!(returned.value, expected);
+                            assert_eq!(owner.live_bytes(), bytes);
+                            drop(returned);
+                        } else {
+                            assert!(result.unwrap_err().is_resource_limit());
+                        }
+                    } else {
+                        assert!(matches!(result, Err(VmError::Host(_))));
+                    }
+                    assert_eq!((host.next_value, host.values.len()), before);
+                    assert_eq!(owner.live_bytes(), 0);
+                    assert!(!host.sync_guard_available(id, blocker).unwrap());
+                    assert!(matches!(
+                        host.invoke_owned(
+                            method,
+                            vec![RuntimeValue::Integer(7)],
+                            None,
+                            Some(&VmMemoryBudget::new(0))
+                        ),
+                        Err(VmError::Host(_))
+                    ));
+                    host.cleanup(&held).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_collection_literals_admit_replies_before_publishing_values_or_generations() {
+        let mut failures = Vec::new();
+        for collection in ["Array", "Map", "Set", "Stack", "Queue"] {
+            for empty in [true, false] {
+                let payload = RuntimeValue::String("payload".into());
+                let values = if empty {
+                    vec![]
+                } else if collection == "Map" {
+                    vec![
+                        RuntimeValue::Integer(1),
+                        payload.clone(),
+                        RuntimeValue::Integer(1),
+                        payload.clone(),
+                    ]
+                } else if collection == "Set" {
+                    vec![payload.clone(), payload]
+                } else {
+                    vec![payload]
+                };
+                let retained = if empty {
+                    0
+                } else {
+                    39 + if collection == "Map" { 32 } else { 0 }
+                        + tondo_vm::runtime::TEST_SYNC_GENERATION_BYTES
+                };
+                let storage = tondo_vm::runtime::TEST_HOST_BUFFER_BYTES + retained;
+                for shared in [false, true] {
+                    for shortage in [1, 0] {
+                        let mut host = BootstrapHost::default();
+                        let caller =
+                            VmMemoryBudget::new(32 + if shared { storage } else { 0 } - shortage);
+                        let owner = if shared {
+                            caller.clone()
+                        } else {
+                            VmMemoryBudget::new(storage)
+                        };
+                        host.set_test_memory_budget(Some(owner.clone()));
+                        let identity = host.next_value;
+                        let generation = host.next_sync_generation;
+                        let returned = host.invoke_owned(
+                            &format!("std.sync.{collection}.literal"),
+                            values.clone(),
+                            None,
+                            Some(&caller),
+                        );
+                        if shortage == 1 {
+                            assert!(returned.unwrap_err().is_resource_limit());
+                            if host.next_value != identity
+                                || host.next_sync_generation != generation
+                                || !host.values.is_empty()
+                                || !host.sync_generations.is_empty()
+                                || !host.buffer_memory.is_empty()
+                            {
+                                failures
+                                    .push(format!("{collection}:empty={empty}:shared={shared}"));
+                            }
+                        } else {
+                            let returned = returned.unwrap();
+                            assert_eq!(returned.memory.as_ref().unwrap().bytes(), 32);
+                            assert_eq!(host.next_value, identity + 1);
+                            assert_eq!(host.next_sync_generation, generation + u64::from(!empty));
+                            assert_eq!(
+                                host.buffer_memory
+                                    .values()
+                                    .map(VmMemoryCharge::bytes)
+                                    .sum::<u64>(),
+                                storage
+                            );
+                            drop(returned);
+                            assert_eq!(owner.live_bytes(), storage);
+                        }
+                        drop(host);
+                        assert_eq!(caller.live_bytes(), 0);
+                        assert_eq!(owner.live_bytes(), 0);
+                    }
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "published before reply admission: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_collection_cursors_preserve_payloads_and_reject_mismatched_registry_entries() {
+        let mut mismatches = Vec::new();
+        for collection in ["Array", "Map", "Set", "Stack", "Queue"] {
+            for empty in [true, false] {
+                let mut host = BootstrapHost::default();
+                let value = RuntimeValue::String("payload".into());
+                let values = if empty {
+                    vec![]
+                } else if collection == "Map" {
+                    vec![RuntimeValue::Integer(7), value.clone()]
+                } else {
+                    vec![value.clone()]
+                };
+                let receiver = host
+                    .invoke(&format!("std.sync.{collection}.literal"), &values)
+                    .unwrap();
+                let RuntimeValue::Host { id, .. } = receiver else {
+                    panic!("expected collection")
+                };
+                let generation = host.next_sync_generation - 1;
+                let position = if collection == "Stack" {
+                    i128::from(u64::MAX)
+                } else {
+                    0
+                };
+                let expected_item = if collection == "Map" {
+                    RuntimeValue::Tuple(vec![RuntimeValue::Integer(7), value])
+                } else {
+                    value
+                };
+                let expected = if empty {
+                    RuntimeValue::OptionNone
+                } else {
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Tuple(vec![
+                        RuntimeValue::Integer(i128::from(generation)),
+                        expected_item,
+                    ])))
+                };
+                let bytes = if empty {
+                    32
+                } else if collection == "Map" {
+                    128 + 32 + 39
+                } else {
+                    96 + 39
+                };
+                for shortage in [1, 0] {
+                    for (method, arguments, size, expected) in [
+                        (
+                            "__iterStart",
+                            vec![receiver.clone()],
+                            64,
+                            RuntimeValue::Tuple(vec![RuntimeValue::Integer(i128::from(
+                                generation,
+                            ))]),
+                        ),
+                        (
+                            "__iterNext",
+                            vec![
+                                receiver.clone(),
+                                RuntimeValue::Integer(i128::from(generation)),
+                                RuntimeValue::Integer(position),
+                            ],
+                            bytes,
+                            expected.clone(),
+                        ),
+                    ] {
+                        let budget = VmMemoryBudget::new(size - shortage);
+                        let generations = host.sync_generations.clone();
+                        let returned = host.invoke_owned(
+                            &format!("std.sync.{collection}.{method}"),
+                            arguments,
+                            None,
+                            Some(&budget),
+                        );
+                        if shortage == 1 {
+                            assert!(returned.unwrap_err().is_resource_limit());
+                        } else {
+                            let returned = returned.unwrap();
+                            assert_eq!(returned.value, expected);
+                            assert_eq!(returned.memory.as_ref().unwrap().bytes(), size);
+                            drop(returned);
+                        }
+                        assert_eq!(budget.live_bytes(), 0);
+                        assert_eq!(host.sync_generations, generations);
+                    }
+                }
+                // A token's public kind cannot validate a different registry
+                // value, even when matching cursor metadata exists.
+                host.values.insert(id, HostValue::SyncCondition);
+                for (method, arguments) in [
+                    ("__iterStart", vec![receiver.clone()]),
+                    (
+                        "__iterNext",
+                        vec![
+                            receiver.clone(),
+                            RuntimeValue::Integer(0),
+                            RuntimeValue::Integer(0),
+                        ],
+                    ),
+                ] {
+                    if !matches!(
+                        host.invoke_owned(
+                            &format!("std.sync.{collection}.{method}"),
+                            arguments,
+                            None,
+                            Some(&VmMemoryBudget::new(0))
+                        ),
+                        Err(VmError::Host(_))
+                    ) {
+                        mismatches.push(format!("{collection}:{method}:empty={empty}"));
+                    }
+                }
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "accepted mismatched cursor registry values: {mismatches:?}"
+        );
+    }
+
+    #[test]
+    fn collection_constructor_and_cursor_rejections_leave_no_partial_state() {
+        for collection in ["Array", "Map", "Set", "Stack", "Queue"] {
+            let values = if collection == "Map" {
+                vec![RuntimeValue::Integer(7), RuntimeValue::Unit]
+            } else {
+                vec![RuntimeValue::Unit]
+            };
+            let method = format!("std.sync.{collection}.literal");
+            let storage = tondo_vm::runtime::TEST_HOST_BUFFER_BYTES
+                + tondo_vm::runtime::TEST_SYNC_GENERATION_BYTES
+                + 32 * values.len() as u64;
+            let owner = VmMemoryBudget::new(storage - 1);
+            let caller = VmMemoryBudget::new(32);
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let identity = host.next_value;
+            let generation = host.next_sync_generation;
+            assert!(
+                host.invoke_owned(&method, values.clone(), None, Some(&caller))
+                    .unwrap_err()
+                    .is_resource_limit()
+            );
+            assert_eq!(host.next_value, identity);
+            assert_eq!(host.next_sync_generation, generation);
+            assert!(host.values.is_empty());
+            assert_eq!(owner.live_bytes(), 0);
+            assert_eq!(caller.live_bytes(), 0);
+            host.max_bytes = 0;
+            assert!(matches!(
+                host.invoke_owned(&method, values.clone(), None, Some(&VmMemoryBudget::new(0))),
+                Err(VmError::Host(_))
+            ));
+            host.max_bytes = 10;
+            host.set_test_memory_budget(None);
+            let receiver = host.invoke(&method, &values).unwrap();
+            let RuntimeValue::Host { id, .. } = receiver else {
+                panic!("expected collection")
+            };
+            for (cutoff, last) in [
+                (RuntimeValue::Unit, RuntimeValue::Integer(0)),
+                (RuntimeValue::Integer(0), RuntimeValue::Unit),
+                (RuntimeValue::Integer(-1), RuntimeValue::Integer(0)),
+                (RuntimeValue::Integer(0), RuntimeValue::Integer(i128::MAX)),
+            ] {
+                assert!(matches!(
+                    host.invoke_owned(
+                        &format!("std.sync.{collection}.__iterNext"),
+                        vec![receiver.clone(), cutoff, last],
+                        None,
+                        Some(&VmMemoryBudget::new(0))
+                    ),
+                    Err(VmError::Host(_))
+                ));
+            }
+            for metadata in [Some(vec![]), None] {
+                match metadata {
+                    Some(value) => {
+                        host.sync_generations.insert(id, value);
+                    }
+                    None => {
+                        host.sync_generations.remove(&id);
+                    }
+                }
+                for (suffix, arguments) in [
+                    ("__iterStart", vec![receiver.clone()]),
+                    (
+                        "__iterNext",
+                        vec![
+                            receiver.clone(),
+                            RuntimeValue::Integer(0),
+                            RuntimeValue::Integer(0),
+                        ],
+                    ),
+                ] {
+                    assert!(matches!(
+                        host.invoke_owned(
+                            &format!("std.sync.{collection}.{suffix}"),
+                            arguments,
+                            None,
+                            Some(&VmMemoryBudget::new(0))
+                        ),
+                        Err(VmError::Host(_))
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn collection_previews_validate_tokens_without_changing_host_state() {
+        for (collection, operation, kind) in [
+            ("Map", "insert", RuntimeHostValueKind::SyncMap),
+            ("Map", "remove", RuntimeHostValueKind::SyncMap),
+            ("Set", "insert", RuntimeHostValueKind::SyncSet),
+            ("Stack", "push", RuntimeHostValueKind::SyncStack),
+            ("Stack", "pop", RuntimeHostValueKind::SyncStack),
+            ("Queue", "enqueue", RuntimeHostValueKind::SyncQueue),
+            ("Queue", "dequeue", RuntimeHostValueKind::SyncQueue),
+        ] {
+            for filled in [false, true] {
+                let mut host = BootstrapHost::default();
+                let literal = if !filled {
+                    vec![]
+                } else if collection == "Map" {
+                    vec![RuntimeValue::Integer(0), RuntimeValue::Integer(7)]
+                } else {
+                    vec![RuntimeValue::Integer(7)]
+                };
+                let receiver = host
+                    .invoke(&format!("std.sync.{collection}.literal"), &literal)
+                    .unwrap();
+                let name = format!("std.sync.{collection}.{operation}[Int]");
+                let arguments = if collection == "Map" && operation == "insert" {
+                    vec![
+                        receiver.clone(),
+                        RuntimeValue::Integer(0),
+                        RuntimeValue::Integer(9),
+                    ]
+                } else if collection == "Map" || matches!(operation, "insert" | "push" | "enqueue")
+                {
+                    vec![receiver.clone(), RuntimeValue::Integer(0)]
+                } else {
+                    vec![receiver.clone()]
+                };
+                let snapshot = format!("std.sync.{collection}.snapshot");
+                let before = host
+                    .invoke(&snapshot, std::slice::from_ref(&receiver))
+                    .unwrap();
+                let generations = host.sync_generations.clone();
+                let next_value = host.next_value;
+                let preview = host.preview_return(&name, &arguments).unwrap().unwrap();
+                assert!(
+                    match preview {
+                        VmHostReturnPreview::ResultOk(
+                            RuntimeValue::Bool(true) | RuntimeValue::Unit,
+                        ) => true,
+                        VmHostReturnPreview::ResultOkOption(Some(RuntimeValue::Integer(7))) =>
+                            filled,
+                        VmHostReturnPreview::ResultOkOption(None) => !filled,
+                        VmHostReturnPreview::OptionSome(RuntimeValue::Integer(7)) => filled,
+                        VmHostReturnPreview::Value(RuntimeValue::OptionNone) => !filled,
+                        _ => false,
+                    },
+                    "{name} filled={filled}"
+                );
+                assert_eq!(
+                    host.invoke(&snapshot, std::slice::from_ref(&receiver))
+                        .unwrap(),
+                    before
+                );
+                assert_eq!(host.sync_generations, generations);
+                assert_eq!(host.next_value, next_value);
+                let RuntimeValue::Host { id, .. } = receiver else {
+                    unreachable!()
+                };
+                for invalid in [
+                    RuntimeValue::Integer(0),
+                    RuntimeValue::Host { kind, id: u64::MAX },
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::SyncArray,
+                        id,
+                    },
+                ] {
+                    let mut invalid_arguments = arguments.clone();
+                    invalid_arguments[0] = invalid;
+                    assert!(matches!(
+                        host.preview_return(&name, &invalid_arguments),
+                        Err(VmError::Host(_))
+                    ));
+                }
+                // A syntactically correct token cannot disguise another registry kind.
+                host.values.insert(id, HostValue::SyncArray(Vec::new()));
+                assert!(matches!(
+                    host.preview_return(&name, &arguments),
+                    Err(VmError::Host(_))
+                ));
+            }
+        }
+        let mut host = BootstrapHost::default();
+        host.max_bytes = 1;
+        let receiver = host
+            .invoke(
+                "std.sync.Map.literal",
+                &[RuntimeValue::Integer(0), RuntimeValue::Integer(7)],
+            )
+            .unwrap();
+        let name = "std.sync.Map.insert";
+        let new_key = [
+            receiver.clone(),
+            RuntimeValue::Integer(1),
+            RuntimeValue::Integer(9),
+        ];
+        assert!(
+            host.preview_return(name, &new_key).unwrap().is_none(),
+            "a full map cannot preview a successful insertion"
+        );
+        assert!(matches!(
+            host.invoke(name, &new_key).unwrap(),
+            RuntimeValue::ResultErr(_)
+        ));
+        let replacement = [receiver, RuntimeValue::Integer(0), RuntimeValue::Integer(9)];
+        assert!(matches!(
+            host.preview_return(name, &replacement).unwrap(),
+            Some(VmHostReturnPreview::ResultOkOption(Some(
+                RuntimeValue::Integer(7)
+            )))
+        ));
+        assert_eq!(
+            host.invoke(name, &replacement).unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(Box::new(
+                RuntimeValue::Integer(7)
+            ))))
+        );
+    }
+
+    #[test]
+    fn fixed_collection_previews_preserve_duplicate_and_capacity_error_paths() {
+        for (collection, operation) in [("Set", "insert"), ("Stack", "push"), ("Queue", "enqueue")]
+        {
+            let mut host = BootstrapHost::default();
+            host.max_bytes = 1;
+            let receiver = host
+                .invoke(
+                    &format!("std.sync.{collection}.literal"),
+                    &[RuntimeValue::Integer(7)],
+                )
+                .unwrap();
+            let name = format!("std.sync.{collection}.{operation}");
+            let snapshot = format!("std.sync.{collection}.snapshot");
+            let before = host
+                .invoke(&snapshot, std::slice::from_ref(&receiver))
+                .unwrap();
+            let generations = host.sync_generations.clone();
+            let arguments = [receiver.clone(), RuntimeValue::Integer(9)];
+            assert!(
+                host.preview_return(&name, &arguments).unwrap().is_none(),
+                "{name}"
+            );
+            assert!(matches!(
+                host.invoke(&name, &arguments).unwrap(),
+                RuntimeValue::ResultErr(_)
+            ));
+            assert_eq!(
+                host.invoke(&snapshot, std::slice::from_ref(&receiver))
+                    .unwrap(),
+                before
+            );
+            assert_eq!(host.sync_generations, generations);
+            if collection == "Set" {
+                let duplicate = [receiver.clone(), RuntimeValue::Integer(7)];
+                assert!(matches!(
+                    host.preview_return(&name, &duplicate).unwrap(),
+                    Some(VmHostReturnPreview::ResultOk(RuntimeValue::Bool(false)))
+                ));
+                assert_eq!(
+                    host.invoke(&name, &duplicate).unwrap(),
+                    RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(false)))
+                );
+                assert_eq!(host.sync_generations, generations);
+            }
+            host.max_bytes = 2;
+            assert!(matches!(
+                host.preview_return(&name, &arguments).unwrap(),
+                Some(VmHostReturnPreview::ResultOk(
+                    RuntimeValue::Bool(true) | RuntimeValue::Unit
+                ))
+            ));
+            let expected = if collection == "Set" {
+                RuntimeValue::Bool(true)
+            } else {
+                RuntimeValue::Unit
+            };
+            assert_eq!(
+                host.invoke(&name, &arguments).unwrap(),
+                RuntimeValue::ResultOk(Box::new(expected))
+            );
+            assert_eq!(
+                host.invoke(&format!("std.sync.{collection}.length"), &[receiver])
+                    .unwrap(),
+                RuntimeValue::Integer(2)
+            );
+        }
+    }
+
+    #[test]
+    fn atomic_previews_validate_orders_and_preserve_observed_storage() {
+        let order = |variant| RuntimeValue::Variant {
+            name: "MemoryOrder".into(),
+            variant,
+            values: Vec::new(),
+        };
+        let original =
+            RuntimeValue::Tuple(vec![RuntimeValue::Integer(7), RuntimeValue::Integer(8)]);
+        let replacement =
+            RuntimeValue::Tuple(vec![RuntimeValue::Integer(9), RuntimeValue::Integer(10)]);
+        for method in ["swap", "compareExchange"] {
+            for matched in [false, true] {
+                for success in 0..5 {
+                    for failure in 0..if method == "swap" { 1 } else { 5 } {
+                        let mut host = BootstrapHost::default();
+                        let atomic = host
+                            .invoke("std.sync.atomic", std::slice::from_ref(&original))
+                            .unwrap();
+                        let RuntimeValue::Host { kind, id } = atomic else {
+                            unreachable!()
+                        };
+                        let expected = if matched { &original } else { &replacement };
+                        let arguments = if method == "swap" {
+                            vec![atomic.clone(), replacement.clone(), order(success)]
+                        } else {
+                            vec![
+                                atomic.clone(),
+                                expected.clone(),
+                                replacement.clone(),
+                                order(success),
+                                order(failure),
+                            ]
+                        };
+                        let name = format!("std.sync.Atomic.{method}");
+                        let next = host.next_value;
+                        let preview = host.preview_return(&name, &arguments);
+                        let valid = method == "swap"
+                            || [vec![0], vec![0, 1], vec![0], vec![0, 1], vec![0, 1, 4]]
+                                [success as usize]
+                                .contains(&failure);
+                        if !valid {
+                            let VmError::Host(expected) = preview.unwrap_err() else {
+                                panic!("invalid order must fail host validation");
+                            };
+                            let VmError::Host(actual) = host.invoke(&name, &arguments).unwrap_err()
+                            else {
+                                panic!("invalid order must fail host validation");
+                            };
+                            assert_eq!(actual, expected);
+                            assert_eq!(host.sync_atomic_value(&atomic).unwrap(), &original);
+                            assert_eq!(host.next_value, next);
+                            continue;
+                        }
+                        let previewed = match preview.unwrap().unwrap() {
+                            VmHostReturnPreview::Value(previous) if method == "swap" => {
+                                previous.clone()
+                            }
+                            VmHostReturnPreview::Variant(variant, previous)
+                                if method == "compareExchange" =>
+                            {
+                                assert_eq!(variant, u32::from(!matched));
+                                RuntimeValue::Variant {
+                                    name: "CompareExchange".into(),
+                                    variant,
+                                    values: vec![previous.clone()],
+                                }
+                            }
+                            _ => panic!("atomic preview has the wrong shape"),
+                        };
+                        assert_eq!(host.sync_atomic_value(&atomic).unwrap(), &original);
+                        assert_eq!(host.next_value, next);
+                        assert_eq!(host.invoke(&name, &arguments).unwrap(), previewed);
+                        assert_eq!(
+                            host.sync_atomic_value(&atomic).unwrap(),
+                            if method == "swap" || matched {
+                                &replacement
+                            } else {
+                                &original
+                            }
+                        );
+                        let mut stale = arguments.clone();
+                        stale[0] = RuntimeValue::Host { kind, id: u64::MAX };
+                        assert!(host.preview_return(&name, &stale).is_err());
+                        for invalid in [RuntimeValue::Unit, order(5)] {
+                            let mut invalid_arguments = arguments.clone();
+                            invalid_arguments[if method == "swap" { 2 } else { 3 }] = invalid;
+                            assert!(host.preview_return(&name, &invalid_arguments).is_err());
+                        }
+                        host.values.insert(id, HostValue::SyncSet(Vec::new()));
+                        assert!(host.preview_return(&name, &arguments).is_err());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compare_exchange_previews_preserve_observed_clones_and_error_branches() {
+        for collection in ["Array", "Map"] {
+            for matched in [false, true] {
+                let mut host = BootstrapHost::default();
+                let mut text = String::with_capacity(4096);
+                text.push_str("previous");
+                let previous = RuntimeValue::String(text);
+                let literal = if collection == "Map" {
+                    vec![RuntimeValue::Integer(0), previous.clone()]
+                } else {
+                    vec![previous.clone()]
+                };
+                let receiver = host
+                    .invoke(&format!("std.sync.{collection}.literal"), &literal)
+                    .unwrap();
+                let expected = if matched {
+                    previous.clone()
+                } else {
+                    RuntimeValue::String("different".into())
+                };
+                let desired = RuntimeValue::String("new".into());
+                let optional = |value| RuntimeValue::OptionSome(Box::new(value));
+                let arguments = if collection == "Map" {
+                    vec![
+                        receiver.clone(),
+                        RuntimeValue::Integer(0),
+                        optional(expected),
+                        optional(desired),
+                    ]
+                } else {
+                    vec![
+                        receiver.clone(),
+                        RuntimeValue::Integer(0),
+                        expected,
+                        desired,
+                    ]
+                };
+                let name = format!("std.sync.{collection}.compareExchange");
+                let snapshot = format!("std.sync.{collection}.snapshot");
+                let before = host
+                    .invoke(&snapshot, std::slice::from_ref(&receiver))
+                    .unwrap();
+                let generations = host.sync_generations.clone();
+                let (variant, value, preview_capacity) =
+                    match host.preview_return(&name, &arguments).unwrap().unwrap() {
+                        VmHostReturnPreview::ResultOkVariant(
+                            variant,
+                            value @ RuntimeValue::String(text),
+                        ) => (variant, value.clone(), text.capacity()),
+                        VmHostReturnPreview::ResultOkVariantOption(
+                            variant,
+                            Some(value @ RuntimeValue::String(text)),
+                        ) => (variant, optional(value.clone()), text.capacity()),
+                        _ => panic!("expected borrowed observed text"),
+                    };
+                assert_eq!(variant, u32::from(!matched));
+                assert_eq!(
+                    host.invoke(&snapshot, std::slice::from_ref(&receiver))
+                        .unwrap(),
+                    before
+                );
+                assert_eq!(host.sync_generations, generations);
+                let returned = host.invoke(&name, &arguments).unwrap();
+                assert_eq!(
+                    returned,
+                    RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                        name: "CompareExchange".into(),
+                        variant,
+                        values: vec![value],
+                    }))
+                );
+                let RuntimeValue::ResultOk(inner) = returned else {
+                    unreachable!()
+                };
+                let RuntimeValue::Variant { values, .. } = inner.as_ref() else {
+                    unreachable!()
+                };
+                let text = match &values[0] {
+                    RuntimeValue::String(text) => text,
+                    RuntimeValue::OptionSome(value) => match value.as_ref() {
+                        RuntimeValue::String(text) => text,
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    text.capacity(),
+                    preview_capacity,
+                    "host publication and observed copies must preserve the admitted storage shape"
+                );
+                let RuntimeValue::Host { kind, id } = receiver else {
+                    unreachable!()
+                };
+                let mut invalid = arguments.clone();
+                invalid[0] = RuntimeValue::Host { kind, id: u64::MAX };
+                assert!(matches!(
+                    host.preview_return(&name, &invalid),
+                    Err(VmError::Host(_))
+                ));
+                if collection == "Array" {
+                    for index in [-1, 1] {
+                        let mut invalid = arguments.clone();
+                        invalid[1] = RuntimeValue::Integer(index);
+                        assert!(host.preview_return(&name, &invalid).unwrap().is_none());
+                        assert!(matches!(
+                            host.invoke(&name, &invalid).unwrap(),
+                            RuntimeValue::ResultErr(_)
+                        ));
+                    }
+                } else {
+                    host.max_bytes = 1;
+                    let mut absent = arguments.clone();
+                    absent[1] = RuntimeValue::Integer(1);
+                    absent[2] = RuntimeValue::OptionNone;
+                    assert!(host.preview_return(&name, &absent).unwrap().is_none());
+                    assert!(matches!(
+                        host.invoke(&name, &absent).unwrap(),
+                        RuntimeValue::ResultErr(_)
+                    ));
+                    absent[2] = optional(RuntimeValue::String("expected".into()));
+                    assert!(matches!(
+                        host.preview_return(&name, &absent).unwrap(),
+                        Some(VmHostReturnPreview::ResultOkVariantOption(1, None))
+                    ));
+                }
+                host.values
+                    .insert(id, HostValue::SyncQueue(VecDeque::new()));
+                assert!(matches!(
+                    host.preview_return(&name, &arguments),
+                    Err(VmError::Host(_))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn owned_collection_mutations_admit_previous_values_before_committing() {
+        let mut failures = Vec::new();
+        for (collection, operation, wrappers) in [
+            ("Array", "set", 1),
+            ("Map", "insert", 2),
+            ("Map", "remove", 1),
+            ("Stack", "pop", 1),
+            ("Queue", "dequeue", 1),
+        ] {
+            for shortage in [1, 0] {
+                let mut host = BootstrapHost::default();
+                let previous = RuntimeValue::String("x".repeat(1024));
+                let key = RuntimeValue::Integer(0);
+                let literal = if collection == "Map" {
+                    vec![key.clone(), previous.clone()]
+                } else {
+                    vec![previous.clone()]
+                };
+                // A pre-existing parent collection is outside the receiving
+                // phase. Only its returned value belongs to the new account.
+                let receiver = host
+                    .invoke(&format!("std.sync.{collection}.literal"), &literal)
+                    .unwrap();
+                let snapshot_name = format!("std.sync.{collection}.snapshot");
+                let before = host
+                    .invoke(&snapshot_name, std::slice::from_ref(&receiver))
+                    .unwrap();
+                let generations = host.sync_generations.clone();
+                let arguments = match operation {
+                    "set" | "insert" => vec![receiver.clone(), key, RuntimeValue::Unit],
+                    "remove" => vec![receiver.clone(), key],
+                    _ => vec![receiver.clone()],
+                };
+                let name = format!("std.sync.{collection}.{operation}");
+                let response = (wrappers + 1) * 32 + 1024;
+                let job = tondo_vm::runtime::TEST_HOST_JOB_BYTES + name.len() as u64;
+                let budget = VmMemoryBudget::new(job + response - shortage);
+                host.set_test_memory_budget(Some(budget.clone()));
+                let call = host.start_async(&name, &arguments).unwrap();
+                let result = host.poll_async_owned(call);
+                if shortage == 1 {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(VmError::ResourceLimit {
+                                resource: "memory",
+                                ..
+                            })
+                        ),
+                        "{name}"
+                    );
+                    host.set_test_memory_budget(None);
+                    let after = host.invoke(&snapshot_name, &[receiver]).unwrap();
+                    if before != after {
+                        failures.push(name);
+                    }
+                    assert_eq!(host.sync_generations, generations);
+                    assert_eq!(budget.live_bytes(), 0);
+                } else {
+                    let result = result.unwrap().unwrap();
+                    assert_eq!(budget.live_bytes(), response, "{name}");
+                    let expected = if operation == "insert" {
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(Box::new(
+                            previous,
+                        ))))
+                    } else if operation == "set" {
+                        RuntimeValue::ResultOk(Box::new(previous))
+                    } else {
+                        RuntimeValue::OptionSome(Box::new(previous))
+                    };
+                    assert_eq!(result.value, expected, "{name}");
+                    drop(result);
+                    assert_eq!(budget.live_bytes(), 0);
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "mutated before reply admission: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn owned_collection_replies_preserve_exact_shapes_and_atomic_rejection() {
+        for (collection, operations) in [
+            ("Array", &["get", "set", "compareExchange", "snapshot"][..]),
+            (
+                "Map",
+                &["get", "insert", "remove", "compareExchange", "snapshot"][..],
+            ),
+            ("Set", &["remove", "snapshot"][..]),
+            ("Stack", &["peek", "pop", "snapshot"][..]),
+            ("Queue", &["peek", "dequeue", "snapshot"][..]),
+        ] {
+            for operation in operations {
+                for absent in [false, true] {
+                    for shortage in [0, 1] {
+                        let key = RuntimeValue::Integer(0);
+                        let previous = RuntimeValue::Record {
+                            name: "Payload".into(),
+                            values: vec![RuntimeValue::Array(vec![RuntimeValue::String(
+                                "x".repeat(1024),
+                            )])],
+                        };
+                        let values = if absent && collection != "Array" {
+                            vec![]
+                        } else if collection == "Map" {
+                            vec![key.clone(), previous.clone()]
+                        } else {
+                            vec![previous.clone()]
+                        };
+                        let mut host = BootstrapHost::default();
+                        let literal = format!("std.sync.{collection}.literal");
+                        let receiver = host.invoke(&literal, &values).unwrap();
+                        let reference = host.invoke(&literal, &values).unwrap();
+                        let snapshot = format!("std.sync.{collection}.snapshot");
+                        let before = host
+                            .invoke(&snapshot, std::slice::from_ref(&receiver))
+                            .unwrap();
+                        let suffix = match *operation {
+                            "remove" if collection == "Set" => vec![previous.clone()],
+                            "get" | "remove" => vec![key.clone()],
+                            "set" | "insert" => vec![key.clone(), RuntimeValue::Unit],
+                            "compareExchange" if collection == "Map" => vec![
+                                key.clone(),
+                                if absent {
+                                    RuntimeValue::OptionNone
+                                } else {
+                                    RuntimeValue::OptionSome(Box::new(previous.clone()))
+                                },
+                                RuntimeValue::OptionSome(Box::new(RuntimeValue::Unit)),
+                            ],
+                            "compareExchange" => vec![
+                                key.clone(),
+                                if absent {
+                                    RuntimeValue::Unit
+                                } else {
+                                    previous.clone()
+                                },
+                                RuntimeValue::Unit,
+                            ],
+                            _ => vec![],
+                        };
+                        let name = format!("std.sync.{collection}.{operation}");
+                        let mut reference_arguments = vec![reference.clone()];
+                        reference_arguments.extend(suffix.clone());
+                        let expected = host.invoke(&name, &reference_arguments).unwrap();
+                        let expected_state = host.invoke(&snapshot, &[reference]).unwrap();
+                        let response_bytes = expected.retained_bytes().unwrap();
+                        let budget = VmMemoryBudget::new(response_bytes - shortage);
+                        let mut arguments = vec![receiver.clone()];
+                        arguments.extend(suffix);
+                        let result = host.invoke_owned(&name, arguments, None, Some(&budget));
+                        if shortage == 1 {
+                            assert!(
+                                matches!(
+                                    result,
+                                    Err(VmError::ResourceLimit {
+                                        resource: "memory",
+                                        ..
+                                    })
+                                ),
+                                "{name} absent={absent}"
+                            );
+                            assert_eq!(
+                                host.invoke(&snapshot, &[receiver]).unwrap(),
+                                before,
+                                "{name}"
+                            );
+                        } else {
+                            let result = result.unwrap();
+                            assert_eq!(result.value, expected, "{name}");
+                            assert_eq!(budget.live_bytes(), response_bytes, "{name}");
+                            assert_eq!(
+                                host.invoke(&snapshot, &[receiver]).unwrap(),
+                                expected_state,
+                                "{name}"
+                            );
+                            drop(result);
+                        }
+                        assert_eq!(budget.live_bytes(), 0, "{name}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn owned_collection_error_replies_and_storage_rejections_release_reservations() {
+        for collection in ["Array", "Map", "Set", "Stack", "Queue"] {
+            for shortage in [1, 0] {
+                let mut host = BootstrapHost::default();
+                let values = if collection == "Map" {
+                    vec![RuntimeValue::Integer(0), RuntimeValue::Unit]
+                } else {
+                    vec![RuntimeValue::Unit]
+                };
+                let receiver = host
+                    .invoke(&format!("std.sync.{collection}.literal"), &values)
+                    .unwrap();
+                host.max_bytes = 0;
+                let budget = VmMemoryBudget::new(64 - shortage);
+                let count = host.values.len();
+                let result = host.invoke_owned(
+                    &format!("std.sync.{collection}.snapshot"),
+                    vec![receiver],
+                    None,
+                    Some(&budget),
+                );
+                if shortage == 1 {
+                    assert!(matches!(
+                        result,
+                        Err(VmError::ResourceLimit {
+                            resource: "memory",
+                            ..
+                        })
+                    ));
+                    assert_eq!(host.values.len(), count, "no partial error token");
+                } else {
+                    let result = result.unwrap();
+                    assert!(
+                        matches!(result.value, RuntimeValue::ResultErr(ref value) if matches!(**value, RuntimeValue::Host { kind: RuntimeHostValueKind::CollectionError, .. }))
+                    );
+                    assert_eq!(budget.live_bytes(), 64);
+                    drop(result);
+                }
+                assert_eq!(budget.live_bytes(), 0);
+            }
+        }
+        for (collection, operation) in [
+            ("Array", "set"),
+            ("Map", "insert"),
+            ("Array", "compareExchange"),
+            ("Map", "compareExchange"),
+        ] {
+            let mut host = BootstrapHost::default();
+            let owner = VmMemoryBudget::new(256);
+            host.set_test_memory_budget(Some(owner.clone()));
+            let values = if collection == "Map" {
+                vec![RuntimeValue::Integer(0), RuntimeValue::Unit]
+            } else {
+                vec![RuntimeValue::Unit]
+            };
+            let receiver = host
+                .invoke(&format!("std.sync.{collection}.literal"), &values)
+                .unwrap();
+            let bytes = owner.live_bytes();
+            let generations = host.sync_generations.clone();
+            let caller = VmMemoryBudget::new(256);
+            host.set_test_memory_budget(Some(caller.clone()));
+            let mut arguments = vec![receiver.clone(), RuntimeValue::Integer(0)];
+            let replacement = RuntimeValue::String("x".repeat(1024));
+            if operation == "compareExchange" && collection == "Map" {
+                arguments.extend([
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Unit)),
+                    RuntimeValue::OptionSome(Box::new(replacement)),
+                ]);
+            } else if operation == "compareExchange" {
+                arguments.extend([RuntimeValue::Unit, replacement]);
+            } else {
+                arguments.push(replacement);
+            }
+            let name = format!("std.sync.{collection}.{operation}");
+            let result = host.invoke_owned(&name, arguments, None, Some(&caller));
+            assert!(
+                matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        limit: 256
+                    })
+                ),
+                "{name}"
+            );
+            assert_eq!(caller.live_bytes(), 0, "{name}");
+            assert_eq!(owner.live_bytes(), bytes, "{name}");
+            assert_eq!(host.sync_generations, generations, "{name}");
+            assert_eq!(
+                host.invoke(
+                    &format!("std.sync.{collection}.get"),
+                    &[receiver, RuntimeValue::Integer(0)]
+                )
+                .unwrap(),
+                RuntimeValue::OptionSome(Box::new(RuntimeValue::Unit))
+            );
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+        for shortage in [1, 0] {
+            let mut host = BootstrapHost::default();
+            let map = host.invoke("std.sync.Map.literal", &[]).unwrap();
+            host.max_bytes = 0;
+            let budget = VmMemoryBudget::new(64 - shortage);
+            let result = host.invoke_owned(
+                "std.sync.Map.compareExchange",
+                vec![
+                    map,
+                    RuntimeValue::Integer(0),
+                    RuntimeValue::OptionNone,
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Unit)),
+                ],
+                None,
+                Some(&budget),
+            );
+            if shortage == 1 {
+                assert!(matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        ..
+                    })
+                ));
+            } else {
+                let result = result.unwrap();
+                assert!(matches!(result.value, RuntimeValue::ResultErr(_)));
+                assert_eq!(budget.live_bytes(), 64);
+                drop(result);
+            }
+            assert_eq!(budget.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn hosted_immediate_jobs_do_not_reserve_a_nonexistent_argument_copy() {
+        let name = "std.sync.Set.insert";
+        let descriptor = tondo_vm::runtime::TEST_HOST_BUFFER_BYTES;
+        let payload = tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES
+            + 1024
+            + tondo_vm::runtime::TEST_SYNC_GENERATION_BYTES;
+        let job = tondo_vm::runtime::TEST_HOST_JOB_BYTES + name.len() as u64;
+        let response = 2 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES;
+        for shortage in [1, 0] {
+            let owner = VmMemoryBudget::new(descriptor + payload + job + response - shortage);
+            let caller = VmMemoryBudget::new(1);
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let set = host.invoke("std.sync.Set.literal", &[]).unwrap();
+            let key = RuntimeValue::String("x".repeat(1024));
+            let call = host.start_async(name, &[set.clone(), key.clone()]).unwrap();
+            assert_eq!(
+                owner.live_bytes(),
+                descriptor + job + if shortage == 0 { payload + response } else { 0 }
+            );
+            assert!(host.sync_waiters.is_empty());
+            host.set_test_memory_budget(Some(caller.clone()));
+            let result = host.poll_async(call);
+            if shortage == 0 {
+                assert_eq!(
+                    result.unwrap(),
+                    Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(true))))
+                );
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        ..
+                    })
+                ));
+            }
+            assert_eq!(
+                host.invoke("std.sync.Set.contains", &[set, key]).unwrap(),
+                RuntimeValue::Bool(shortage == 0)
+            );
+            assert!(host.async_memory.is_empty());
+            assert_eq!(caller.live_bytes(), 0);
+            assert_eq!(
+                owner.live_bytes(),
+                descriptor + if shortage == 0 { payload } else { 0 }
+            );
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn hosted_async_waiter_keeps_its_budget_when_another_phase_polls() {
+        let owner = VmMemoryBudget::new(1024);
+        let caller = VmMemoryBudget::new(1);
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(owner.clone()));
+        host.current_unit = 1;
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+            .unwrap());
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        host.current_unit = 2;
+        let call = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        assert!(host.poll_async(call).unwrap().is_none());
+        assert!(host.async_memory.contains_key(&call));
+        host.set_test_memory_budget(Some(caller.clone()));
+        host.invoke("std.sync.MutexGuard.unlock", &[guard]).unwrap();
+        let guard = ok(host
+            .poll_async(call)
+            .unwrap()
+            .expect("waiter must use its own budget"));
+        assert!(!host.async_memory.contains_key(&call));
+        assert_eq!(owner.live_bytes(), 96);
+        assert_eq!(caller.live_bytes(), 0);
+        assert_eq!(host.test_memory.as_ref().unwrap().limit(), 1);
+        host.cleanup(&guard).unwrap();
+        assert_eq!(owner.live_bytes(), 64);
+        let next = host.next_job;
+        assert!(matches!(
+            host.start_async("std.sync.Mutex.lock", &[mutex]),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 1
+            })
+        ));
+        assert_eq!(host.next_job, next);
+        assert!(host.sync_waiters.is_empty());
+        assert!(host.ready_jobs.is_empty());
+        assert!(host.async_memory.is_empty());
+        drop(host);
+        assert_eq!(owner.live_bytes(), 0);
+    }
+
+    #[test]
+    fn hosted_async_guard_quota_failure_retires_the_waiter_without_taking_the_lock() {
+        let parent = VmMemoryBudget::new(4096);
+        let call_budget = VmMemoryBudget::new(
+            tondo_vm::runtime::TEST_HOST_JOB_BYTES
+                + tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES
+                + "std.sync.Mutex.lock".len() as u64,
+        );
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(parent.clone()));
+        host.current_unit = 1;
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+            .unwrap());
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        host.current_unit = 2;
+        host.set_test_memory_budget(Some(call_budget.clone()));
+        let call = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        host.set_test_memory_budget(Some(parent.clone()));
+        host.invoke("std.sync.MutexGuard.unlock", &[guard]).unwrap();
+        assert!(matches!(
+            host.poll_async(call),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                ..
+            })
+        ));
+        assert!(!host.sync_waiters.contains_key(&call));
+        assert!(host.sync_queues.is_empty());
+        assert!(!host.async_memory.contains_key(&call));
+        assert_eq!(call_budget.live_bytes(), 0);
+        let guard = ok(host.invoke("std.sync.Mutex.lock", &[mutex]).unwrap());
+        host.cleanup(&guard).unwrap();
+        drop(host);
+        assert_eq!(parent.live_bytes(), 0);
+    }
+
+    #[test]
+    fn hosted_buffer_collection_traces_views_guards_containers_and_pending_values() {
+        let budget = VmMemoryBudget::new(4096);
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(budget.clone()));
+        let buffers = host
+            .allocate_byte_chunks(std::array::from_fn::<_, 7, _>(|index| vec![index as u8; 8]))
+            .unwrap();
+        let id = |value: &RuntimeValue| match value {
+            RuntimeValue::Host { id, .. } => *id,
+            _ => unreachable!(),
+        };
+        let mutex = host.allocate(
+            RuntimeHostValueKind::Mutex,
+            HostValue::SyncMutex {
+                value: buffers[0].clone(),
+                locked: true,
+                owner: Some(1),
+            },
+        );
+        let guard = host.allocate(
+            RuntimeHostValueKind::MutexGuard,
+            HostValue::SyncMutexGuard { owner: id(&mutex) },
+        );
+        let view = host.allocate(
+            RuntimeHostValueKind::JsonValueView,
+            HostValue::JsonValueView {
+                _bytes: id(&buffers[1]),
+            },
+        );
+        let array = host.allocate(
+            RuntimeHostValueKind::SyncArray,
+            HostValue::SyncArray(vec![view]),
+        );
+        let receiver = host.allocate(
+            RuntimeHostValueKind::ChannelReceiver,
+            HostValue::ChannelReceiver { channel: 50 },
+        );
+        host.channels.insert(
+            50,
+            ChannelState {
+                capacity: Some(1),
+                queue: VecDeque::from([buffers[2].clone()]),
+                senders: 0,
+                receivers: 1,
+                sender_closed: true,
+                receiver_closed: false,
+                memory: None,
+            },
+        );
+        host.ready_jobs
+            .insert(1, Ok(RuntimeValue::ResultOk(Box::new(buffers[3].clone()))));
+        host.sync_waiters.insert(
+            2,
+            PendingSync {
+                arguments: vec![buffers[4].clone()],
+                resource: SyncResource::Channel(50),
+                kind: SyncWaitKind::ChannelSend,
+                owner: 1,
+            },
+        );
+        host.time_jobs.insert(
+            3,
+            TimeJob {
+                deadline: 0,
+                cancellation: false,
+                completion: Some(buffers[5].clone()),
+                counts_resource: false,
+                kind: TimeJobKind::Ordinary,
+            },
+        );
+        let mut roots = tondo_vm::runtime::VmHostRoots::new();
+        for root in [&guard, &array, &receiver] {
+            root.trace_host_roots(&mut roots);
+        }
+        // A VM resource with the same integer is not a buffer root.
+        roots.insert((RuntimeHostValueKind::Group, id(&buffers[6])));
+        host.collect_host_values(&roots).unwrap();
+        assert_eq!(budget.live_bytes(), 6 * 40);
+        for (index, buffer) in buffers.iter().take(6).enumerate() {
+            assert_eq!(host.bytes(buffer).unwrap(), &[index as u8; 8]);
+        }
+        assert!(host.bytes(&buffers[6]).is_err());
+        host.ready_jobs.clear();
+        host.sync_waiters.clear();
+        host.time_jobs.clear();
+        host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
+            .unwrap();
+        assert_eq!(budget.live_bytes(), 0);
+        assert!(host.buffer_memory.is_empty());
+    }
+
+    #[test]
+    fn hosted_path_and_environment_batches_publish_atomically() {
+        let budget = VmMemoryBudget::new(128);
+        let mut host = BootstrapHost::default();
+        let oversized = host.allocate(
+            RuntimeHostValueKind::EnvSnapshot,
+            HostValue::EnvSnapshot(EnvSnapshot {
+                arguments: vec![vec![b'x'; 32], vec![b'y'; 33]],
+                entries: BTreeMap::new(),
+            }),
+        );
+        let fitting = host.allocate(
+            RuntimeHostValueKind::EnvSnapshot,
+            HostValue::EnvSnapshot(EnvSnapshot {
+                arguments: vec![vec![b'x'; 32], vec![b'y'; 32]],
+                entries: BTreeMap::new(),
+            }),
+        );
+        host.set_test_memory_budget(Some(budget.clone()));
+        let first = host.next_value;
+        assert!(
+            host.reserve_buffer_payloads(
+                [
+                    path::Path::from_bytes(&[b'x'; 32]).unwrap(),
+                    path::Path::from_bytes(&[b'y'; 33]).unwrap()
+                ]
+                .iter()
+                .map(|path| path.as_bytes().len())
+            )
+            .is_err()
+        );
+        assert!(host.environment_arguments(&oversized).is_err());
+        assert_eq!(host.next_value, first);
+        assert_eq!(budget.live_bytes(), 0);
+        assert!(host.buffer_memory.is_empty());
+        let values = host.environment_arguments(&fitting).unwrap();
+        assert_eq!(budget.live_bytes(), 128);
+        assert_eq!(host.environment_value(&values[0]).unwrap(), vec![b'x'; 32]);
+        assert_eq!(host.environment_value(&values[1]).unwrap(), vec![b'y'; 32]);
+        host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
+            .unwrap();
+        assert_eq!(budget.live_bytes(), 0);
+        host.next_value = u64::MAX;
+        assert!(matches!(
+            host.allocate_path(path::Path::from_string("a").unwrap()),
+            Err(VmError::ResourceLimit {
+                resource: "host values",
+                ..
+            })
+        ));
+        assert_eq!(budget.live_bytes(), 0);
+    }
+
+    #[test]
+    fn hosted_environment_snapshot_admission_and_weak_cache_keep_phase_ownership() {
+        let mut host = BootstrapHost::with_environment(
+            vec!["abc".into()],
+            [(b"N".to_vec(), b"value".to_vec())],
+        );
+        let rejected = VmMemoryBudget::new(136);
+        host.set_test_memory_budget(Some(rejected.clone()));
+        let first = host.next_value;
+        assert!(matches!(
+            host.invoke("std.env.snapshot", &[]),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                ..
+            })
+        ));
+        assert_eq!(host.next_value, first);
+        assert!(host.env_snapshot_id.is_none());
+        assert_eq!(rejected.live_bytes(), 0);
+        let parent = VmMemoryBudget::new(137);
+        let child = VmMemoryBudget::new(128);
+        host.set_test_memory_budget(Some(parent.clone()));
+        let snapshot = ok(host.invoke("std.env.snapshot", &[]).unwrap());
+        assert_eq!(parent.live_bytes(), 137);
+        assert_eq!(ok(host.invoke("std.env.snapshot", &[]).unwrap()), snapshot);
+        host.set_test_memory_budget(Some(child.clone()));
+        let arguments = host
+            .invoke(
+                "std.env.Snapshot.arguments",
+                std::slice::from_ref(&snapshot),
+            )
+            .unwrap();
+        let name = ok(host
+            .invoke("std.env.Name.fromText", &[RuntimeValue::String("N".into())])
+            .unwrap());
+        let value = host
+            .invoke("std.env.Snapshot.get", &[snapshot.clone(), name.clone()])
+            .unwrap();
+        assert_eq!(child.live_bytes(), 105);
+        let mut roots = tondo_vm::runtime::VmHostRoots::new();
+        for root in [&arguments, &name, &value] {
+            root.trace_host_roots(&mut roots);
+        }
+        host.collect_host_values(&roots).unwrap();
+        assert_eq!(parent.live_bytes(), 0);
+        assert_eq!(child.live_bytes(), 105);
+        assert!(host.env_snapshot_id.is_none());
+        assert!(host.environment_snapshot_data(&snapshot).is_err());
+        host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
+            .unwrap();
+        assert_eq!(child.live_bytes(), 0);
+        host.set_test_memory_budget(Some(parent.clone()));
+        assert_ne!(ok(host.invoke("std.env.snapshot", &[]).unwrap()), snapshot);
+        assert_eq!(parent.live_bytes(), 137);
+    }
+
+    #[test]
+    fn hosted_builder_growth_keeps_its_phase_owner_and_rejects_atomically() {
+        for kind in [
+            RuntimeHostValueKind::BytesBuilder,
+            RuntimeHostValueKind::FormatBuilder,
+        ] {
+            let owner = VmMemoryBudget::new(35);
+            let child = VmMemoryBudget::new(128);
+            let mut host = BootstrapHost::default();
+            host.set_test_memory_budget(Some(owner.clone()));
+            let builder = host.allocate_builder(kind).unwrap();
+            assert_eq!(owner.live_bytes(), 32);
+            host.set_test_memory_budget(Some(child.clone()));
+            let (append, payload) = match kind {
+                RuntimeHostValueKind::BytesBuilder => (
+                    "std.bytes.BytesBuilder.appendArray",
+                    RuntimeValue::Array(vec![RuntimeValue::Byte(b'x'); 3]),
+                ),
+                _ => (
+                    "std.format.Builder.append",
+                    RuntimeValue::String("xxx".into()),
+                ),
+            };
+            assert_eq!(
+                host.invoke(append, &[builder.clone(), payload.clone()])
+                    .unwrap(),
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)),
+            );
+            assert_eq!(owner.live_bytes(), 35);
+            assert_eq!(child.live_bytes(), 0);
+            assert!(matches!(
+                host.invoke(append, &[builder.clone(), payload]),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: 35
+                })
+            ));
+            let bytes = match kind {
+                RuntimeHostValueKind::BytesBuilder => host.builder(&builder).unwrap(),
+                _ => host.format_builder(&builder).unwrap(),
+            };
+            assert_eq!(bytes, b"xxx");
+            assert_eq!(owner.live_bytes(), 35);
+            if kind == RuntimeHostValueKind::BytesBuilder {
+                let output = bytes_ok(
+                    host.invoke("std.bytes.BytesBuilder.finish", &[builder])
+                        .unwrap(),
+                );
+                assert_eq!(host.bytes(&output).unwrap(), b"xxx");
+                assert_eq!(child.live_bytes(), 35);
+            }
+            drop(host);
+            assert_eq!(owner.live_bytes(), 0);
+            assert_eq!(child.live_bytes(), 0);
+        }
+    }
+
+    #[test]
     fn bytes_builder_is_mutable_only_through_its_host_token_and_obeys_limits() {
         let mut host = BootstrapHost::with_max_bytes(Vec::new(), 3);
         let builder = bytes_ok(host.invoke("std.bytes.builder", &[]).unwrap());
@@ -20519,6 +29124,124 @@ mod tests {
     }
 
     #[test]
+    fn codec_writer_output_uses_the_active_envelope_and_atomic_raw_byte_quota() {
+        use crate::test_control::EnvelopeLimits;
+        for codec in ["json", "messagepack", "protobuf", "yaml"] {
+            for stdout in [true, false] {
+                for fits in [true, false] {
+                    let mut host = BootstrapHost::with_stdin(Vec::new());
+                    let parent = EnvelopeHandle::new("parent", EnvelopeLimits::new(1024, 0, 0));
+                    host.install_testing_envelope(parent.clone());
+                    let (writer_name, options, events, expected) = match codec {
+                        "json" => (
+                            "std.json.JsonWriter",
+                            json_encode_options(&mut host),
+                            vec![host.runtime_json_event(json::JsonEvent::String("byte".into()))],
+                            b"\"byte\"".to_vec(),
+                        ),
+                        "messagepack" => (
+                            "std.messagepack.MessagePackWriter",
+                            messagepack_encode_options(&mut host, false),
+                            vec![
+                                host.runtime_messagepack_event(
+                                    messagepack::MessagePackEvent::Binary(vec![255]),
+                                )
+                                .unwrap(),
+                            ],
+                            vec![0xc4, 1, 255],
+                        ),
+                        "protobuf" => (
+                            "std.protobuf.ProtoWriter",
+                            proto_encode_options(&mut host, false),
+                            [
+                                protobuf::ProtoEvent::StartMessage("root".into()),
+                                protobuf::ProtoEvent::Field(1, protobuf::ProtoWireType::Varint),
+                                protobuf::ProtoEvent::Varint(255),
+                                protobuf::ProtoEvent::EndMessage,
+                            ]
+                            .into_iter()
+                            .map(|event| host.runtime_proto_event(event).unwrap())
+                            .collect(),
+                            vec![8, 255, 1],
+                        ),
+                        "yaml" => (
+                            "std.yaml.YamlWriter",
+                            options_for_yaml(&mut host),
+                            vec![
+                                yaml_event(0, vec![]),
+                                yaml_event(1, vec![]),
+                                yaml_event(6, vec![RuntimeValue::OptionNone]),
+                                yaml_event(7, vec![]),
+                                yaml_scalar_event(5, RuntimeValue::String("b".into())),
+                                yaml_scalar_event(2, RuntimeValue::Integer(1)),
+                                yaml_event(8, vec![]),
+                                yaml_event(2, vec![]),
+                                yaml_event(12, vec![]),
+                            ],
+                            b"b: 1\n".to_vec(),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    let sink = ok(host
+                        .invoke(
+                            if stdout {
+                                "std.console.stdout"
+                            } else {
+                                "std.console.stderr"
+                            },
+                            &[],
+                        )
+                        .unwrap());
+                    let writer = ok(host
+                        .invoke(&format!("{writer_name}.toWriter"), &[sink, options])
+                        .unwrap());
+                    for event in events {
+                        assert_eq!(
+                            ok(host
+                                .invoke(&format!("{writer_name}.write"), &[writer.clone(), event])
+                                .unwrap()),
+                            RuntimeValue::Unit
+                        );
+                    }
+                    let quota = expected.len() as u64 - u64::from(!fits);
+                    let child = EnvelopeHandle::new("child", EnvelopeLimits::new(quota, 0, 0));
+                    host.install_testing_envelope(child.clone());
+                    let result = host.invoke(&format!("{writer_name}.finish"), &[writer]);
+                    if fits {
+                        assert_eq!(ok(result.unwrap()), RuntimeValue::Unit);
+                    } else {
+                        assert!(
+                            matches!(
+                                result,
+                                Err(VmError::ResourceLimit {
+                                    resource: "output",
+                                    ..
+                                })
+                            ),
+                            "{codec}: {result:?}"
+                        );
+                    }
+                    let report = child.report().unwrap();
+                    let (written, other) = if stdout {
+                        (report.stdout(), report.stderr())
+                    } else {
+                        (report.stderr(), report.stdout())
+                    };
+                    assert_eq!(
+                        written.as_bytes(),
+                        if fits { expected.as_slice() } else { &[] },
+                        "{codec}"
+                    );
+                    assert!(other.is_empty());
+                    let parent = parent.report().unwrap();
+                    assert!(parent.stdout().is_empty() && parent.stderr().is_empty());
+                    assert!(host.stdout.is_empty() && host.stderr.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn codec_public_host_surfaces_execute_all_contract_routes() {
         let mut host = BootstrapHost::with_stdin(vec![0x01]);
         let messagepack_decode = messagepack_decode_options(&mut host);
@@ -20779,7 +29502,7 @@ mod tests {
             }),
         ];
         for event in messagepack_events {
-            let runtime = host.runtime_messagepack_event(event.clone());
+            let runtime = host.runtime_messagepack_event(event.clone()).unwrap();
             assert_eq!(host.messagepack_event(&runtime).unwrap(), event);
         }
 
@@ -21043,7 +29766,7 @@ mod tests {
             }),
         ];
         for event in proto_events {
-            let runtime = proto_host.runtime_proto_event(event.clone());
+            let runtime = proto_host.runtime_proto_event(event.clone()).unwrap();
             if !matches!(event, protobuf::ProtoEvent::Unknown(_)) {
                 assert_eq!(proto_host.proto_event(&runtime).unwrap(), event);
             }
@@ -21471,7 +30194,7 @@ mod tests {
             ok(host
                 .invoke("std.io.Reader.read", &[reader, RuntimeValue::Integer(1)])
                 .unwrap()),
-            RuntimeValue::OptionNone
+            RuntimeValue::Variant { name, variant: 1, values } if name == "ReadResult" && values.is_empty()
         ));
     }
 
@@ -21589,10 +30312,8 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(
                     value.as_ref(),
-                    RuntimeValue::Host {
-                        kind: RuntimeHostValueKind::FloatToleranceError,
-                        ..
-                    }
+                    RuntimeValue::Variant { name, variant: 0, values }
+                        if name == "FloatToleranceError" && values.is_empty()
                 )
         ));
         assert!(envelope.report().unwrap().terminal().is_none());
@@ -21601,31 +30322,312 @@ mod tests {
     #[test]
     fn testing_text_diff_is_bounded_and_rendered_without_host_paths() {
         let mut host = BootstrapHost::default();
-        let diff = host
-            .invoke(
-                "std.testing.diffText",
-                &[
-                    RuntimeValue::String("old\n".into()),
-                    RuntimeValue::String("new\n".into()),
-                ],
-            )
-            .unwrap();
-        assert!(matches!(
-            &diff,
-            RuntimeValue::Host {
-                kind: RuntimeHostValueKind::TextDiff,
-                ..
+        for (expected, actual) in [
+            ("", ""),
+            ("old\n", "new\n"),
+            ("same\né\r\n", "same\n🦀"),
+            ("a\nb\na\n", "b\na\nb\n"),
+        ] {
+            let kernel = tondo_stdlib::testing::diff_text(expected, actual);
+            let diff = host
+                .invoke(
+                    "std.testing.diffText",
+                    &[
+                        RuntimeValue::String(expected.into()),
+                        RuntimeValue::String(actual.into()),
+                    ],
+                )
+                .unwrap();
+            let RuntimeValue::Record { name, values } = &diff else {
+                panic!("diffText did not return its public record");
+            };
+            assert_eq!(name, "TextDiff");
+            assert_eq!(values[0], RuntimeValue::Bool(kernel.equal));
+            assert_eq!(values[2], RuntimeValue::Integer(expected.len() as i128));
+            assert_eq!(values[3], RuntimeValue::Integer(actual.len() as i128));
+            assert_eq!(values[4], RuntimeValue::Bool(kernel.truncated));
+            let RuntimeValue::Array(hunks) = &values[1] else {
+                panic!("TextDiff.hunks is not a public array");
+            };
+            assert_eq!(hunks.len(), kernel.hunks.len());
+            for (hunk, reference) in hunks.iter().zip(&kernel.hunks) {
+                let view = BootstrapHost::testing_diff_hunk(hunk).unwrap();
+                assert!(match (view, reference) {
+                    (TextDiffHunkView::Equal(a), TextDiffHunk::Equal(b))
+                    | (TextDiffHunkView::Delete(a), TextDiffHunk::Delete(b))
+                    | (TextDiffHunkView::Insert(a), TextDiffHunk::Insert(b)) => a == b,
+                    _ => false,
+                });
             }
+            assert_eq!(
+                host.invoke("std.testing.TextDiff.render", &[diff]).unwrap(),
+                RuntimeValue::String(kernel.render())
+            );
+            assert_eq!(host.next_value, 0);
+            assert!(host.values.is_empty());
+        }
+    }
+
+    #[test]
+    fn testing_text_diff_admission_and_reclamation_follow_the_original_owner() {
+        let mut host = BootstrapHost::default();
+        let small = VmMemoryBudget::new(128);
+        host.set_test_memory_budget(Some(small.clone()));
+        let arguments = [
+            RuntimeValue::String("old\n".repeat(128)),
+            RuntimeValue::String("new\n".repeat(128)),
+        ];
+        assert!(matches!(
+            host.invoke("std.testing.diffText", &arguments),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 128
+            })
         ));
-        assert_eq!(
-            host.invoke("std.testing.TextDiff.render", &[diff]).unwrap(),
-            RuntimeValue::String("--- expected\n+++ actual\n-old\n+new\n".into())
-        );
+        assert_eq!(host.next_value, 0);
+        assert!(host.values.is_empty());
+        assert_eq!(small.live_bytes(), 0);
+
+        let owner = VmMemoryBudget::new(65_536);
+        host.set_test_memory_budget(Some(owner.clone()));
+        let (diff, memory) = host
+            .testing_diff_record(&"old\n".repeat(128), &"new\n".repeat(128))
+            .unwrap();
+        let retained = owner.live_bytes();
+        assert_eq!(retained, 200 + 2 * 76 + 1024);
+        assert_eq!(diff.retained_bytes(), Some(retained));
+        let caller = VmMemoryBudget::new(32);
+        host.set_test_memory_budget(Some(caller.clone()));
+        assert!(matches!(
+            host.invoke("std.testing.TextDiff.render", std::slice::from_ref(&diff)),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 32
+            })
+        ));
+        assert_eq!(caller.live_bytes(), 0);
+        host.collect_host_values(&Default::default()).unwrap();
+        assert_eq!(owner.live_bytes(), retained);
+        drop(diff);
+        drop(memory);
+        assert_eq!(owner.live_bytes(), 0);
+        assert!(host.values.is_empty());
+        assert!(host.buffer_memory.is_empty());
+    }
+
+    #[test]
+    fn testing_text_diff_admits_overlapping_nominal_descriptors_before_conversion() {
+        for (expected, actual) in [("", ""), ("a", "b"), ("a\nb\n", "a\nc\n")] {
+            let kernel = tondo_stdlib::testing::diff_text(expected, actual);
+            let final_bytes = 200 + kernel.hunks.len() as u64 * 76 + kernel.retained_bytes()
+                - 32
+                - kernel.hunks.len() as u64 * 32;
+            let peak = TextDiffPlan::new(expected, actual, DiffLimits::default())
+                .memory_bytes()
+                .max(kernel.retained_bytes() + 200 + kernel.hunks.len() as u64 * 76);
+            for limit in [peak - 1, peak] {
+                let mut host = BootstrapHost::default();
+                let budget = VmMemoryBudget::new(limit);
+                host.set_test_memory_budget(Some(budget.clone()));
+                match host.testing_diff_record(expected, actual) {
+                    Ok((record, memory)) => {
+                        assert_eq!(limit, peak);
+                        assert_eq!(budget.live_bytes(), final_bytes);
+                        assert_eq!(record.retained_bytes(), Some(final_bytes));
+                        drop(record);
+                        drop(memory);
+                    }
+                    Err(error) => {
+                        assert_eq!(limit, peak - 1);
+                        assert!(
+                            matches!(error, VmError::ResourceLimit { resource: "memory", limit: actual } if actual == limit)
+                        );
+                    }
+                }
+                assert_eq!(budget.live_bytes(), 0);
+                assert_eq!(host.next_value, 0);
+                assert!(host.values.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn testing_text_diff_rendering_validates_nominal_shapes_and_admits_bounded_output() {
+        let hunk = |text: String| RuntimeValue::Variant {
+            name: "TextDiffHunk".into(),
+            variant: 2,
+            values: vec![RuntimeValue::String(text)],
+        };
+        let record = |hunks: Vec<RuntimeValue>| RuntimeValue::Record {
+            name: "TextDiff".into(),
+            values: vec![
+                RuntimeValue::Bool(false),
+                RuntimeValue::Array(hunks),
+                RuntimeValue::Integer(0),
+                RuntimeValue::Integer(-1),
+                RuntimeValue::Bool(false),
+            ],
+        };
+        let output = "--- expected\n+++ actual\n... truncated ...\n";
+        for diff in [
+            record(vec![hunk("é".repeat(1_048_576))]),
+            record((0..4097).map(|_| hunk(String::new())).collect()),
+        ] {
+            for limit in [32 + output.len() as u64 - 1, 32 + output.len() as u64] {
+                let mut host = BootstrapHost::default();
+                let budget = VmMemoryBudget::new(limit);
+                host.set_test_memory_budget(Some(budget.clone()));
+                let rendered = host.render_testing_diff(&diff);
+                if limit == 32 + output.len() as u64 {
+                    assert_eq!(rendered.unwrap(), RuntimeValue::String(output.into()));
+                } else {
+                    assert!(
+                        matches!(rendered.unwrap_err(), VmError::ResourceLimit { resource: "memory", limit: actual } if actual == limit)
+                    );
+                }
+                assert_eq!(budget.live_bytes(), 0);
+                assert_eq!(host.next_value, 0);
+            }
+        }
+        let mut malformed = vec![RuntimeValue::Unit, record(vec![RuntimeValue::Unit])];
+        for (name, variant, values) in [
+            ("OtherHunk", 0, vec![RuntimeValue::String("x".into())]),
+            ("TextDiffHunk", 3, vec![RuntimeValue::String("x".into())]),
+            ("TextDiffHunk", 0, vec![RuntimeValue::Integer(1)]),
+            ("TextDiffHunk", 0, vec![]),
+        ] {
+            malformed.push(record(vec![RuntimeValue::Variant {
+                name: name.into(),
+                variant,
+                values,
+            }]));
+        }
+        let RuntimeValue::Record { values, .. } = record(vec![]) else {
+            unreachable!()
+        };
+        malformed.push(RuntimeValue::Record {
+            name: "OtherDiff".into(),
+            values,
+        });
+        malformed.push(RuntimeValue::Record {
+            name: "TextDiff".into(),
+            values: vec![],
+        });
+        let mut host = BootstrapHost::default();
+        let budget = VmMemoryBudget::new(0);
+        host.set_test_memory_budget(Some(budget.clone()));
+        for diff in malformed {
+            assert!(matches!(
+                host.render_testing_diff(&diff),
+                Err(VmError::Host(_))
+            ));
+            assert_eq!(budget.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn testing_temp_errors_admit_exact_nominal_results_without_registry_entries() {
+        let mut host = BootstrapHost::default();
+        for (cause, variant) in [
+            (TempError::InvalidPrefix, 0),
+            (TempError::Unavailable, 1),
+            (TempError::PermissionDenied, 2),
+            (TempError::LimitExceeded, 3),
+            (TempError::IoError, 4),
+        ] {
+            for limit in [72, 73] {
+                let budget = VmMemoryBudget::new(limit);
+                host.set_test_memory_budget(Some(budget.clone()));
+                let result = host.temp_result_error(cause);
+                if limit == 72 {
+                    assert!(matches!(
+                        result,
+                        Err(VmError::ResourceLimit {
+                            resource: "memory",
+                            limit: 72
+                        })
+                    ));
+                } else {
+                    let value = result.unwrap();
+                    assert_eq!(
+                        value,
+                        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                            name: "TempError".into(),
+                            variant,
+                            values: Vec::new(),
+                        }))
+                    );
+                    assert_eq!(value.retained_bytes(), Some(73));
+                }
+                assert_eq!(budget.live_bytes(), 0);
+                assert_eq!(host.next_value, 0);
+                assert!(host.values.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn testing_temp_errors_distinguish_invalid_prefix_and_unavailable_provider() {
+        let mut host = BootstrapHost::default();
+        for (prefix, variant) in [
+            ("bad/prefix", 0),
+            ("bad\\prefix", 0),
+            ("nonasciié", 0),
+            ("012345678901234567890123456789012", 0),
+            ("valid", 1),
+            ("", 1),
+        ] {
+            let value = host
+                .invoke(
+                    "std.testing.tempDirectory",
+                    &[RuntimeValue::String(prefix.into())],
+                )
+                .unwrap();
+            assert_eq!(
+                value,
+                RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                    name: "TempError".into(),
+                    variant,
+                    values: Vec::new(),
+                }))
+            );
+        }
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        for invalid in [
+            PathBuf::from("relative-root"),
+            root.path().join("missing-provider"),
+        ] {
+            host.install_testing_temporary_root(invalid);
+            assert_eq!(
+                host.invoke(
+                    "std.testing.tempDirectory",
+                    &[RuntimeValue::String("valid".into())]
+                )
+                .unwrap(),
+                RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                    name: "TempError".into(),
+                    variant: 1,
+                    values: Vec::new(),
+                }))
+            );
+        }
+        assert_eq!(host.next_value, 0);
+        assert!(host.values.is_empty());
+        assert!(std::fs::read_dir(root.path()).unwrap().next().is_none());
+        root.cleanup().unwrap();
     }
 
     #[test]
     fn testing_temp_directory_is_prefix_validated_and_cleanup_is_bounded() {
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
         let mut host = BootstrapHost::default();
+        host.install_testing_temporary_root(root.path().to_owned());
         let invalid = host
             .invoke(
                 "std.testing.tempDirectory",
@@ -21637,10 +30639,8 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(
                     value.as_ref(),
-                    RuntimeValue::Host {
-                        kind: RuntimeHostValueKind::TempError,
-                        ..
-                    }
+                    RuntimeValue::Variant { name, variant: 0, values }
+                        if name == "TempError" && values.is_empty()
                 )
         ));
         let directory = match host
@@ -21665,6 +30665,370 @@ mod tests {
         host.invoke("std.testing.TempDirectory.cleanup", &[directory])
             .unwrap();
         assert!(!physical.exists());
+        root.cleanup().unwrap();
+        assert!(!root.path().exists());
+    }
+
+    #[test]
+    fn text_transform_admission_precedes_output_allocation() {
+        for (name, inputs, expected) in [
+            ("std.text.String.replace", vec!["a€a", "a", "🦀"], "🦀€🦀"),
+            ("std.text.String.replace", vec!["é", "", "x"], "xéx"),
+            ("std.text.String.replace", vec!["aaaa", "aa", "b"], "bb"),
+            ("std.text.String.replace", vec!["abc", "z", "large"], "abc"),
+            ("std.text.String.trim", vec![" \t€\n"], "€"),
+            ("std.text.String.toLowerAscii", vec!["AbÉ"], "abÉ"),
+            ("std.text.String.toUpperAscii", vec!["aBé"], "ABé"),
+        ] {
+            let arguments = inputs
+                .into_iter()
+                .map(|text| RuntimeValue::String(text.into()))
+                .collect::<Vec<_>>();
+            let required = tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + expected.len() as u64;
+            let mut host = BootstrapHost::default();
+            let rejected = VmMemoryBudget::new(required - 1);
+            host.set_test_memory_budget(Some(rejected.clone()));
+            assert!(
+                matches!(
+                    host.invoke(name, &arguments),
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        ..
+                    })
+                ),
+                "{name}: {arguments:?}"
+            );
+            assert_eq!(rejected.live_bytes(), 0);
+            let admitted = VmMemoryBudget::new(required);
+            host.set_test_memory_budget(Some(admitted.clone()));
+            assert_eq!(
+                host.invoke(name, &arguments).unwrap(),
+                RuntimeValue::String(expected.into())
+            );
+            // This checks construction admission. The general host transport
+            // lifetime is independently owned by the VM integration contract.
+            assert_eq!(admitted.live_bytes(), 0);
+            assert_eq!(host.next_value, 0);
+            assert!(host.values.is_empty());
+        }
+    }
+
+    #[test]
+    fn testing_temp_directory_admission_precedes_creation_and_keeps_original_owners() {
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_temporary_root(root.path().to_owned());
+        let small = VmMemoryBudget::new(1);
+        host.set_test_memory_budget(Some(small.clone()));
+        for prefix in ["valid", "bad/prefix"] {
+            assert!(matches!(
+                host.invoke(
+                    "std.testing.tempDirectory",
+                    &[RuntimeValue::String(prefix.into())]
+                ),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: 1
+                })
+            ));
+            assert_eq!(small.live_bytes(), 0);
+            assert_eq!(host.next_value, 0);
+            assert!(host.values.is_empty());
+            assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        }
+        let owner = VmMemoryBudget::new(16384);
+        host.set_test_memory_budget(Some(owner.clone()));
+        let RuntimeValue::ResultOk(directory) = host
+            .invoke(
+                "std.testing.tempDirectory",
+                &[RuntimeValue::String("owned".into())],
+            )
+            .unwrap()
+        else {
+            panic!("temporary directory was not created");
+        };
+        let retained = owner.live_bytes();
+        assert_eq!(
+            retained,
+            tondo_vm::runtime::TEST_HOST_BUFFER_BYTES
+                + host
+                    .temp_directory(&directory)
+                    .unwrap()
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .len() as u64
+        );
+        let next = host.next_value;
+        host.set_test_memory_budget(Some(small.clone()));
+        assert!(matches!(
+            host.invoke(
+                "std.testing.TempDirectory.path",
+                std::slice::from_ref(&directory)
+            ),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 1
+            })
+        ));
+        assert_eq!(host.next_value, next);
+        assert_eq!(small.live_bytes(), 0);
+        assert_eq!(owner.live_bytes(), retained);
+        let caller = VmMemoryBudget::new(16384);
+        host.set_test_memory_budget(Some(caller.clone()));
+        let path = host
+            .invoke(
+                "std.testing.TempDirectory.path",
+                std::slice::from_ref(&directory),
+            )
+            .unwrap();
+        let path_bytes = caller.live_bytes();
+        assert!(path_bytes > 32);
+        host.invoke(
+            "std.testing.TempDirectory.cleanup",
+            std::slice::from_ref(&directory),
+        )
+        .unwrap();
+        assert_eq!(owner.live_bytes(), 0);
+        assert_eq!(caller.live_bytes(), path_bytes);
+        assert!(
+            host.invoke("std.testing.TempDirectory.cleanup", &[*directory])
+                .is_err()
+        );
+        drop(path);
+        host.collect_host_values(&Default::default()).unwrap();
+        assert_eq!(caller.live_bytes(), 0);
+        root.cleanup().unwrap();
+    }
+
+    #[test]
+    fn testing_temp_directory_rejects_file_growth_before_writing() {
+        let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        )))
+        .unwrap();
+        let physical = root.path().join("payload");
+        let fixture = std::fs::File::create(&physical).unwrap();
+        fixture
+            .set_len(crate::test_temporaries::MAX_TEMP_BYTES)
+            .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_temporary_root(root.path().to_owned());
+        let path = host
+            .allocate_path(path::Path::from_string(physical.to_str().unwrap()).unwrap())
+            .unwrap();
+        let mode = host.invoke("std.fs.OpenMode.Append", &[]).unwrap();
+        let handle = ok(host.invoke("std.fs.open", &[path, mode]).unwrap());
+        let bytes = host.allocate_bytes(vec![1]).unwrap();
+        let result = host.invoke("std.fs.File.write", &[handle, bytes]).unwrap();
+        let observed = fixture.metadata().unwrap().len();
+        drop(host);
+        fixture.set_len(0).unwrap();
+        drop(fixture);
+        root.cleanup().unwrap();
+        assert!(
+            matches!(result, RuntimeValue::ResultErr(_)),
+            "write returned {result:?}; file grew to {observed}"
+        );
+        assert_eq!(observed, crate::test_temporaries::MAX_TEMP_BYTES);
+    }
+
+    #[test]
+    fn testing_temporary_open_files_keep_the_write_budget_after_rename_or_unlink() {
+        for unlink in [false, true] {
+            let mut root = crate::test_temporaries::TemporaryRoot::create(std::path::Path::new(
+                env!("CARGO_MANIFEST_DIR"),
+            ))
+            .unwrap();
+            let mut host = BootstrapHost::default();
+            host.install_testing_temporary_root(root.path().to_owned());
+            let path = host
+                .allocate_path(
+                    path::Path::from_string(root.path().join("file").to_str().unwrap()).unwrap(),
+                )
+                .unwrap();
+            let mode = host.invoke("std.fs.OpenMode.CreateNew", &[]).unwrap();
+            let handle = ok(host.invoke("std.fs.open", &[path.clone(), mode]).unwrap());
+            let bytes = host.allocate_bytes(vec![1]).unwrap();
+            host.temporary_write_bytes = crate::test_temporaries::MAX_TEMP_BYTES - 1;
+            assert_eq!(
+                host.invoke("std.fs.File.write", &[handle.clone(), bytes.clone()])
+                    .unwrap(),
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(1)))
+            );
+            if unlink {
+                ok(host.invoke("std.fs.remove", &[path]).unwrap());
+            } else {
+                let to = host
+                    .allocate_path(
+                        path::Path::from_string(root.path().join("renamed").to_str().unwrap())
+                            .unwrap(),
+                    )
+                    .unwrap();
+                ok(host.invoke("std.fs.rename", &[path, to]).unwrap());
+            }
+            assert!(matches!(
+                host.invoke("std.fs.File.write", &[handle.clone(), bytes])
+                    .unwrap(),
+                RuntimeValue::ResultErr(_)
+            ));
+            assert_eq!(
+                host.temporary_write_bytes,
+                crate::test_temporaries::MAX_TEMP_BYTES
+            );
+            let id = host.file_id(&handle).unwrap();
+            let HostValue::File { file, .. } = &host.values[&id] else {
+                panic!("file disappeared");
+            };
+            assert_eq!(file.metadata().unwrap().len(), 1);
+            drop(host);
+            root.cleanup().unwrap();
+        }
+    }
+
+    #[test]
+    fn testing_temp_directory_requires_an_explicit_provider() {
+        let mut host = BootstrapHost::default();
+        let budget = VmMemoryBudget::new(1024);
+        host.set_test_memory_budget(Some(budget.clone()));
+        let result = host
+            .invoke(
+                "std.testing.tempDirectory",
+                &[RuntimeValue::String("valid".into())],
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                name: "TempError".into(),
+                variant: 1,
+                values: Vec::new(),
+            }))
+        );
+        assert_eq!(result.retained_bytes(), Some(73));
+        assert_eq!(budget.live_bytes(), 0);
+        assert!(host.values.is_empty());
+        assert_eq!(host.next_value, 0);
+        host.collect_host_values(&Default::default()).unwrap();
+        assert_eq!(budget.live_bytes(), 0);
+    }
+
+    #[test]
+    fn testing_generation_errors_admit_typed_causes_before_constructing_results() {
+        let mut host = BootstrapHost::default();
+        let generator = host
+            .invoke("std.testing.Generator.new", &[RuntimeValue::Integer(7)])
+            .unwrap();
+        let before = *host.generator_mut(&generator).unwrap();
+        for (name, values, variant) in [
+            (
+                "std.testing.Generator.nextInt",
+                vec![RuntimeValue::Integer(2), RuntimeValue::Integer(1)],
+                0,
+            ),
+            (
+                "std.testing.Generator.nextBytes",
+                vec![RuntimeValue::Integer(-1)],
+                0,
+            ),
+            (
+                "std.testing.Generator.nextText",
+                vec![RuntimeValue::Integer(-1)],
+                0,
+            ),
+            (
+                "std.testing.Generator.nextBytes",
+                vec![RuntimeValue::Integer(i128::MAX)],
+                1,
+            ),
+            (
+                "std.testing.Generator.nextText",
+                vec![RuntimeValue::Integer(1_048_577)],
+                1,
+            ),
+        ] {
+            let arguments = std::iter::once(generator.clone())
+                .chain(values)
+                .collect::<Vec<_>>();
+            for limit in [78, 79] {
+                let budget = VmMemoryBudget::new(limit);
+                host.set_test_memory_budget(Some(budget.clone()));
+                let result = host.invoke(name, &arguments);
+                if limit == 78 {
+                    assert!(matches!(
+                        result,
+                        Err(VmError::ResourceLimit {
+                            resource: "memory",
+                            limit: 78
+                        })
+                    ));
+                } else {
+                    let value = result.unwrap();
+                    assert_eq!(
+                        value,
+                        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                            name: "GenerationError".into(),
+                            variant,
+                            values: Vec::new(),
+                        }))
+                    );
+                    assert_eq!(value.retained_bytes(), Some(79));
+                }
+                assert_eq!(*host.generator_mut(&generator).unwrap(), before);
+                assert_eq!(host.next_value, 1);
+                assert_eq!(host.values.len(), 1);
+                assert_eq!(budget.live_bytes(), 0);
+            }
+        }
+        // Exhaust the real kernel budget without changing its fixed limit.
+        let state = host.generator_mut(&generator).unwrap();
+        for _ in 0..tondo_stdlib::testing::MAX_GENERATOR_DRAWS {
+            state.next_u64().unwrap();
+        }
+        let exhausted = *state;
+        for name in [
+            "std.testing.Generator.nextUInt",
+            "std.testing.Generator.nextBool",
+        ] {
+            assert_eq!(
+                host.invoke(name, std::slice::from_ref(&generator)).unwrap(),
+                RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                    name: "GenerationError".into(),
+                    variant: 2,
+                    values: Vec::new(),
+                }))
+            );
+            assert_eq!(*host.generator_mut(&generator).unwrap(), exhausted);
+            assert_eq!(host.next_value, 1);
+        }
+    }
+
+    #[test]
+    fn testing_generator_constructors_reject_invalid_raw_uint64_without_returning_a_result() {
+        let mut host = BootstrapHost::default();
+        for (name, arguments) in [
+            ("std.testing.Generator.new", vec![RuntimeValue::Integer(-1)]),
+            (
+                "std.testing.Generator.new",
+                vec![RuntimeValue::Integer(i128::MAX)],
+            ),
+            (
+                "std.testing.Generator.forCase",
+                vec![RuntimeValue::Integer(7), RuntimeValue::Integer(-1)],
+            ),
+            (
+                "std.testing.Generator.forCase",
+                vec![RuntimeValue::Integer(i128::MAX), RuntimeValue::Integer(0)],
+            ),
+        ] {
+            assert!(
+                matches!(host.invoke(name, &arguments), Err(VmError::Host(message)) if message.contains("outside UInt64"))
+            );
+            assert!(host.values.is_empty());
+            assert_eq!(host.next_value, 0);
+        }
     }
 
     #[test]
@@ -21694,26 +31058,14 @@ mod tests {
         let right_id = host
             .invoke("std.testing.Generator.id", std::slice::from_ref(&right))
             .unwrap();
-        let (RuntimeValue::Host { id: left_id, .. }, RuntimeValue::Host { id: right_id, .. }) =
-            (&left_id, &right_id)
-        else {
-            panic!("generator id must be an opaque host value");
-        };
-        let Some(HostValue::GenerationId {
-            seed: left_seed,
-            case_index: left_case,
-        }) = host.values.get(left_id)
-        else {
-            panic!("left generator id payload is missing");
-        };
-        let Some(HostValue::GenerationId {
-            seed: right_seed,
-            case_index: right_case,
-        }) = host.values.get(right_id)
-        else {
-            panic!("right generator id payload is missing");
-        };
-        assert_eq!((left_seed, left_case), (right_seed, right_case));
+        assert_eq!(
+            left_id,
+            RuntimeValue::Record {
+                name: "GenerationId".into(),
+                values: vec![RuntimeValue::Integer(7), RuntimeValue::Integer(3)],
+            }
+        );
+        assert_eq!(left_id, right_id);
         let left_first = host
             .invoke(
                 "std.testing.Generator.nextUInt",
@@ -21742,10 +31094,8 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(
                     value.as_ref(),
-                    RuntimeValue::Host {
-                        kind: RuntimeHostValueKind::GenerationError,
-                        ..
-                    }
+                    RuntimeValue::Variant { name, variant: 0, values }
+                        if name == "GenerationError" && values.is_empty()
                 )
         ));
         let too_long = host
@@ -21759,12 +31109,149 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(
                     value.as_ref(),
-                    RuntimeValue::Host {
-                        kind: RuntimeHostValueKind::GenerationError,
-                        ..
-                    }
+                    RuntimeValue::Variant { name, variant: 1, values }
+                        if name == "GenerationError" && values.is_empty()
                 )
         ));
+    }
+
+    #[test]
+    fn testing_shrink_candidate_order_matches_the_independent_kernel() {
+        use tondo_stdlib::testing::Shrink;
+
+        for limit in [0, 1, 2, 3, 8, 64] {
+            for text in ["", "a", "é€🦀", "repeated repeated"] {
+                let text = text.to_owned();
+                let actual =
+                    shrink_runtime_value(&RuntimeValue::String(text.clone()), limit, 0, None)
+                        .unwrap()
+                        .values;
+                let expected = text
+                    .candidates(limit)
+                    .unwrap()
+                    .into_iter()
+                    .map(RuntimeValue::String)
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected);
+            }
+            let texts = vec!["".to_owned(), "é€".to_owned(), "a".to_owned()];
+            let convert = |values: Vec<String>| {
+                RuntimeValue::Array(values.into_iter().map(RuntimeValue::String).collect())
+            };
+            let expected = texts
+                .candidates(limit)
+                .unwrap()
+                .into_iter()
+                .map(convert)
+                .collect::<Vec<_>>();
+            let actual = shrink_runtime_value(&convert(texts), limit, 0, None)
+                .unwrap()
+                .values;
+            assert_eq!(actual, expected);
+
+            let values = vec![vec![8_i128, -13], vec![], vec![0, 4]];
+            let convert = |values: Vec<Vec<i128>>| {
+                RuntimeValue::Array(
+                    values
+                        .into_iter()
+                        .map(|values| {
+                            RuntimeValue::Array(
+                                values.into_iter().map(RuntimeValue::Integer).collect(),
+                            )
+                        })
+                        .collect(),
+                )
+            };
+            let expected = values
+                .candidates(limit)
+                .unwrap()
+                .into_iter()
+                .map(convert)
+                .collect::<Vec<_>>();
+            let actual = shrink_runtime_value(&convert(values), limit, 0, None)
+                .unwrap()
+                .values;
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn testing_shrink_accounts_temporary_candidates_and_moves_without_recharging() {
+        for (input, retained) in [
+            (
+                RuntimeValue::Array(vec![RuntimeValue::String(String::new()); 3]),
+                352,
+            ),
+            (RuntimeValue::Array(vec![RuntimeValue::Integer(8)]), 384),
+        ] {
+            for limit in [415, 416] {
+                let budget = VmMemoryBudget::new(limit);
+                let result = shrink_runtime_value(&input, MAX_SHRINK_CANDIDATES, 0, Some(&budget));
+                if limit == 415 {
+                    assert!(matches!(
+                        result,
+                        Err(ShrinkError::Memory(VmError::ResourceLimit {
+                            resource: "memory",
+                            limit: 415
+                        }))
+                    ));
+                } else {
+                    let candidates = result.unwrap();
+                    assert_eq!(budget.live_bytes(), retained);
+                    assert_eq!(
+                        budget.live_bytes(),
+                        32 + candidates
+                            .values
+                            .iter()
+                            .map(|value| value.retained_bytes().unwrap())
+                            .sum::<u64>()
+                    );
+                    drop(candidates);
+                }
+                assert_eq!(budget.live_bytes(), 0);
+            }
+        }
+        let mut nested = RuntimeValue::Integer(8);
+        for _ in 0..=MAX_SHRINK_DEPTH {
+            nested = RuntimeValue::Array(vec![nested]);
+        }
+        let budget = VmMemoryBudget::new(1);
+        assert!(matches!(
+            shrink_runtime_value(&nested, MAX_SHRINK_CANDIDATES, 0, Some(&budget)),
+            Err(ShrinkError::Generation(GenerationError::LimitExceeded))
+        ));
+        assert_eq!(budget.live_bytes(), 0);
+        assert!(matches!(
+            shrink_runtime_value(
+                &RuntimeValue::Array(vec![RuntimeValue::Bool(true)]),
+                MAX_SHRINK_CANDIDATES,
+                0,
+                Some(&budget)
+            ),
+            Err(ShrinkError::Generation(GenerationError::InvalidBounds))
+        ));
+    }
+
+    #[test]
+    fn testing_shrink_admits_candidates_before_copying_them() {
+        for input in [
+            RuntimeValue::String("€".repeat(100)),
+            RuntimeValue::Array(vec![RuntimeValue::String("prefix".repeat(16)); 8]),
+        ] {
+            let mut host = BootstrapHost::default();
+            let budget = VmMemoryBudget::new(128);
+            host.set_test_memory_budget(Some(budget.clone()));
+            assert!(matches!(
+                host.invoke("std.testing.shrink", std::slice::from_ref(&input)),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: 128
+                })
+            ));
+            assert_eq!(budget.live_bytes(), 0);
+            assert!(host.values.is_empty());
+            assert_eq!(host.next_value, 0);
+        }
     }
 
     #[test]
@@ -21802,7 +31289,7 @@ mod tests {
         };
         assert!(!candidates.is_empty());
         assert!(candidates.len() <= MAX_SHRINK_CANDIDATES);
-        assert!(shrink_runtime_value(&nested, MAX_SHRINK_CANDIDATES + 1, 0).is_err());
+        assert!(shrink_runtime_value(&nested, MAX_SHRINK_CANDIDATES + 1, 0, None).is_err());
 
         let unsupported = host
             .invoke("std.testing.shrink", &[RuntimeValue::Map(Vec::new())])
@@ -21812,17 +31299,233 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(
                     value.as_ref(),
-                    RuntimeValue::Host {
-                        kind: RuntimeHostValueKind::GenerationError,
-                        ..
-                    }
+                    RuntimeValue::Variant { name, variant: 0, values }
+                        if name == "GenerationError" && values.is_empty()
                 )
         ));
         assert!(
-            shrink_runtime_value(&RuntimeValue::Float(f64::NAN), 16, 0)
+            shrink_runtime_value(&RuntimeValue::Float(f64::NAN), 16, 0, None)
                 .unwrap()
+                .values
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn testing_generator_memory_rejection_preserves_draws_and_handle_ownership() {
+        let mut host = BootstrapHost::default();
+        let tiny = VmMemoryBudget::new(1);
+        host.set_test_memory_budget(Some(tiny.clone()));
+        assert!(matches!(
+            host.invoke("std.testing.Generator.new", &[RuntimeValue::Integer(7)]),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 1
+            })
+        ));
+        assert_eq!(host.next_value, 0);
+        assert!(host.values.is_empty());
+        assert_eq!(tiny.live_bytes(), 0);
+        let owner = VmMemoryBudget::new(4096);
+        host.set_test_memory_budget(Some(owner.clone()));
+        let generator = host
+            .invoke("std.testing.Generator.new", &[RuntimeValue::Integer(7)])
+            .unwrap();
+        let retained = owner.live_bytes();
+        assert_eq!(retained, tondo_vm::runtime::TEST_HOST_BUFFER_BYTES);
+        let before = *host.generator_mut(&generator).unwrap();
+        let rejected_id = VmMemoryBudget::new(107);
+        host.set_test_memory_budget(Some(rejected_id.clone()));
+        assert!(matches!(
+            host.invoke("std.testing.Generator.id", std::slice::from_ref(&generator)),
+            Err(VmError::ResourceLimit {
+                resource: "memory",
+                limit: 107
+            })
+        ));
+        assert_eq!(rejected_id.live_bytes(), 0);
+        assert_eq!(*host.generator_mut(&generator).unwrap(), before);
+        assert_eq!(host.next_value, 1);
+        let caller = VmMemoryBudget::new(128);
+        host.set_test_memory_budget(Some(caller.clone()));
+        host.max_bytes = 128;
+        for operation in [
+            "std.testing.Generator.nextBytes",
+            "std.testing.Generator.nextText",
+        ] {
+            assert!(matches!(
+                host.invoke(operation, &[generator.clone(), RuntimeValue::Integer(4096)]),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: 128
+                })
+            ));
+            assert_eq!(*host.generator_mut(&generator).unwrap(), before);
+            assert_eq!(caller.live_bytes(), 0);
+            assert_eq!(host.next_value, 1);
+        }
+        host.set_test_memory_budget(Some(owner.clone()));
+        let id = host
+            .invoke("std.testing.Generator.id", std::slice::from_ref(&generator))
+            .unwrap();
+        assert_eq!(owner.live_bytes(), retained);
+        assert_eq!(id.retained_bytes(), Some(108));
+        let mut roots = tondo_vm::runtime::VmHostRoots::new();
+        generator.trace_host_roots(&mut roots);
+        id.trace_host_roots(&mut roots);
+        host.collect_host_values(&roots).unwrap();
+        assert_eq!(owner.live_bytes(), retained);
+        let output_owner = VmMemoryBudget::new(8192);
+        host.set_test_memory_budget(Some(output_owner.clone()));
+        host.max_bytes = 8192;
+        let mut oracle = before;
+        let expected = oracle.next_bytes(4096).unwrap();
+        let RuntimeValue::ResultOk(bytes) = host
+            .invoke(
+                "std.testing.Generator.nextBytes",
+                &[generator.clone(), RuntimeValue::Integer(4096)],
+            )
+            .unwrap()
+        else {
+            panic!("admitted generated bytes did not return Ok");
+        };
+        assert_eq!(host.bytes(&bytes).unwrap(), expected);
+        assert_eq!(*host.generator_mut(&generator).unwrap(), oracle);
+        assert_eq!(
+            output_owner.live_bytes(),
+            expected.len() as u64 + tondo_vm::runtime::TEST_HOST_BUFFER_BYTES
+        );
+        bytes.trace_host_roots(&mut roots);
+        host.collect_host_values(&roots).unwrap();
+        assert_eq!(
+            output_owner.live_bytes(),
+            expected.len() as u64 + tondo_vm::runtime::TEST_HOST_BUFFER_BYTES
+        );
+        host.collect_host_values(&Default::default()).unwrap();
+        assert_eq!(owner.live_bytes(), 0);
+        assert_eq!(output_owner.live_bytes(), 0);
+        assert!(host.values.is_empty());
+    }
+
+    #[test]
+    fn testing_tolerance_errors_preflight_nominal_results_without_registry_entries() {
+        let mut host = BootstrapHost::default();
+        for (absolute, relative, variant) in [
+            (-1.0, 0.0, 0),
+            (f64::NAN, 0.0, 1),
+            (0.0, f64::INFINITY, 1),
+            (f64::MAX, f64::MAX, 2),
+        ] {
+            for limit in [82, 83] {
+                let budget = VmMemoryBudget::new(limit);
+                host.set_test_memory_budget(Some(budget.clone()));
+                let result = host.invoke(
+                    "std.testing.FloatTolerance.from",
+                    &[RuntimeValue::Float(absolute), RuntimeValue::Float(relative)],
+                );
+                if limit == 82 {
+                    assert!(matches!(
+                        result,
+                        Err(VmError::ResourceLimit {
+                            resource: "memory",
+                            limit: 82
+                        })
+                    ));
+                } else {
+                    let value = result.unwrap();
+                    assert_eq!(
+                        value,
+                        RuntimeValue::ResultErr(Box::new(RuntimeValue::Variant {
+                            name: "FloatToleranceError".into(),
+                            variant,
+                            values: Vec::new(),
+                        }))
+                    );
+                    assert_eq!(value.retained_bytes(), Some(83));
+                }
+                assert_eq!(budget.live_bytes(), 0);
+                assert_eq!(host.next_value, 0);
+                assert!(host.values.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn testing_tolerance_and_generation_errors_are_admitted_and_collected() {
+        let mut host = BootstrapHost::default();
+        let budget = VmMemoryBudget::new(1024);
+        host.set_test_memory_budget(Some(budget.clone()));
+        let valid = host
+            .invoke(
+                "std.testing.FloatTolerance.from",
+                &[RuntimeValue::Float(0.0), RuntimeValue::Float(0.0)],
+            )
+            .unwrap();
+        let invalid = host
+            .invoke(
+                "std.testing.FloatTolerance.from",
+                &[RuntimeValue::Float(-1.0), RuntimeValue::Float(0.0)],
+            )
+            .unwrap();
+        let generator = host
+            .invoke("std.testing.Generator.new", &[RuntimeValue::Integer(7)])
+            .unwrap();
+        let generation_error = host
+            .invoke(
+                "std.testing.Generator.nextInt",
+                &[
+                    generator.clone(),
+                    RuntimeValue::Integer(2),
+                    RuntimeValue::Integer(1),
+                ],
+            )
+            .unwrap();
+        assert!(matches!(valid, RuntimeValue::ResultOk(_)));
+        assert!(matches!(invalid, RuntimeValue::ResultErr(_)));
+        assert!(matches!(generation_error, RuntimeValue::ResultErr(_)));
+        let retained = budget.live_bytes();
+        assert_eq!(retained, 2 * tondo_vm::runtime::TEST_HOST_BUFFER_BYTES);
+        assert_eq!(host.values.len(), 2);
+        let mut roots = tondo_vm::runtime::VmHostRoots::new();
+        for value in [&valid, &invalid, &generation_error, &generator] {
+            value.trace_host_roots(&mut roots);
+        }
+        host.collect_host_values(&roots).unwrap();
+        assert_eq!(budget.live_bytes(), retained);
+        let before = host.next_value;
+        let tiny = VmMemoryBudget::new(1);
+        host.set_test_memory_budget(Some(tiny.clone()));
+        for (name, arguments) in [
+            (
+                "std.testing.FloatTolerance.from",
+                vec![RuntimeValue::Float(0.0), RuntimeValue::Float(0.0)],
+            ),
+            (
+                "std.testing.FloatTolerance.from",
+                vec![RuntimeValue::Float(-1.0), RuntimeValue::Float(0.0)],
+            ),
+            (
+                "std.testing.Generator.nextInt",
+                vec![
+                    generator,
+                    RuntimeValue::Integer(2),
+                    RuntimeValue::Integer(1),
+                ],
+            ),
+        ] {
+            assert!(matches!(
+                host.invoke(name, &arguments),
+                Err(VmError::ResourceLimit {
+                    resource: "memory",
+                    limit: 1
+                })
+            ));
+            assert_eq!(host.next_value, before);
+            assert_eq!(tiny.live_bytes(), 0);
+        }
+        host.collect_host_values(&Default::default()).unwrap();
+        assert_eq!(budget.live_bytes(), 0);
+        assert!(host.values.is_empty());
     }
 
     #[test]
@@ -21929,6 +31632,92 @@ mod tests {
                 .invoke("std.testing.log", &[RuntimeValue::String("outside".into())]),
             Err(VmError::Host(_))
         ));
+    }
+
+    #[test]
+    fn testing_assertion_diagnostics_keep_bounded_unicode_prefixes() {
+        for text in ["a", "é", "€", "🦀", "\n\t\0", "é€🦀"] {
+            for length in [0, 1, 1000, 1014, 1015, 1016, 1017, 1024, 2000] {
+                let value = RuntimeValue::String(text.repeat(length));
+                let complete = format!("{value:?}");
+                let boundary = complete.floor_char_boundary(
+                    crate::test_limits::ASSERTION_VALUE_BYTES.min(complete.len()),
+                );
+                let expected = if boundary < complete.len() {
+                    format!("{}...<truncated>", &complete[..boundary])
+                } else {
+                    complete
+                };
+                let rendered = TestingValueText(&value).to_string();
+                assert_eq!(rendered, expected, "{text:?} repeated {length} times");
+                assert!(rendered.len() <= 1024 + TESTING_TRUNCATION_MARKER.len());
+            }
+        }
+        let values = RuntimeValue::Array(vec![RuntimeValue::String("€".repeat(400)); 16]);
+        let rendered = TestingValueText(&values).to_string();
+        assert!(rendered.starts_with("Array([String(\""));
+        assert!(rendered.ends_with(TESTING_TRUNCATION_MARKER));
+        assert!(rendered.len() <= 1024 + TESTING_TRUNCATION_MARKER.len());
+
+        let mut text = String::new();
+        let mut prefix = TestingDiagnosticPrefix {
+            output: &mut text,
+            remaining: 1,
+            truncated: false,
+        };
+        assert!(prefix.write_str("€").is_err());
+        assert!(prefix.write_str("x").is_err());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn testing_assertion_diagnostics_admit_memory_before_publishing_a_terminal() {
+        let value = RuntimeValue::String("€".repeat(400));
+        let arguments = [value.clone(), RuntimeValue::String("different".into())];
+        let message = format!(
+            "assertion failed: expected {}, actual {}",
+            TestingValueText(&arguments[0]),
+            TestingValueText(&arguments[1])
+        );
+        let required = 32 + message.len() as u64;
+        for (limit, accepted) in [(required - 1, false), (required, true)] {
+            let envelope = EnvelopeHandle::new(
+                "assertions",
+                crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+            );
+            envelope
+                .set_phase(crate::test_control::ExecutionPhase::Body)
+                .unwrap();
+            let budget = VmMemoryBudget::new(limit);
+            let mut host = BootstrapHost::default();
+            host.install_testing_envelope(envelope.clone());
+            host.set_test_memory_budget(Some(budget.clone()));
+            let result = host.invoke("std.testing.assertEqual[String]", &arguments);
+            envelope.close().unwrap();
+            let report = envelope.report().unwrap();
+            if accepted {
+                assert_eq!(result.unwrap(), RuntimeValue::Unit);
+                assert_eq!(
+                    report.terminal(),
+                    Some(&crate::test_control::Terminal::FailNow {
+                        code: "P0007",
+                        message: message.clone(),
+                    })
+                );
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(VmError::ResourceLimit {
+                        resource: "memory",
+                        ..
+                    })
+                ));
+                assert_eq!(report.terminal(), None);
+                assert!(host.testing_control.is_none());
+            }
+            assert_eq!(budget.live_bytes(), 0);
+            assert!(host.values.is_empty());
+        }
     }
 
     #[test]

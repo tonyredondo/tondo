@@ -20,6 +20,7 @@ pub struct MetaDiagnosticEntry {
     message: String,
     primary: Option<Span>,
     related: Vec<(String, Span)>,
+    severity: Severity,
 }
 
 impl MetaDiagnosticEntry {
@@ -33,11 +34,17 @@ impl MetaDiagnosticEntry {
             message: message.into(),
             primary,
             related: Vec::new(),
+            severity: Severity::Error,
         }
     }
 
     pub fn with_related(mut self, message: impl Into<String>, span: Span) -> Self {
         self.related.push((message.into(), span));
+        self
+    }
+
+    pub(crate) fn with_severity(mut self, severity: Severity) -> Self {
+        self.severity = severity;
         self
     }
 
@@ -59,7 +66,7 @@ impl MetaDiagnosticEntry {
             PrimaryLocation::Source,
         );
         let mut diagnostic = Diagnostic::new(
-            Severity::Error,
+            self.severity,
             DiagnosticCode::new(self.code.as_str())?,
             self.message,
             location,
@@ -78,8 +85,34 @@ pub fn render_meta_diagnostics(
     target: SourceId,
     sources: &SourceDatabase,
 ) -> Result<DiagnosticReport, DiagnosticError> {
-    let mut bag = DiagnosticBag::new();
+    // The diagnostic protocol assigns one ID per code and location. Preserve
+    // every provider message before that protocol coalesces equal IDs.
+    let mut grouped = std::collections::BTreeMap::new();
     for entry in entries {
+        grouped
+            .entry((entry.code, entry.primary))
+            .or_insert_with(Vec::new)
+            .push(entry);
+    }
+    let mut bag = DiagnosticBag::new();
+    for mut entries in grouped.into_values() {
+        entries.sort_by(|a, b| (&a.severity, &a.message).cmp(&(&b.severity, &b.message)));
+        let mut entry = entries.remove(0);
+        if !entries.is_empty() {
+            let mut messages =
+                std::collections::BTreeSet::from([(entry.severity, entry.message.clone())]);
+            for additional in entries {
+                messages.insert((additional.severity, additional.message));
+                entry.related.extend(additional.related);
+            }
+            if messages.len() > 1 {
+                entry.message = messages
+                    .into_iter()
+                    .map(|(severity, message)| format!("{severity}: {message}"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+            }
+        }
         bag.push(entry.into_diagnostic(&target)?);
     }
     bag.resolve(crate::LANGUAGE_EDITION, sources)
@@ -132,12 +165,19 @@ pub fn dependency_cycle_entry(
 
 pub fn derive_execution_code(error: &DeriveExecutionError) -> MetaDiagnosticCode {
     match error {
+        DeriveExecutionError::Contract(crate::meta::MetaContractError::OutputLimit { .. }) => {
+            MetaDiagnosticCode::GeneratorResourceLimit
+        }
         DeriveExecutionError::MissingProvider(_) => MetaDiagnosticCode::MissingDeriveProvider,
         DeriveExecutionError::DuplicatePlanEntry { .. } => MetaDiagnosticCode::InvalidDeriveRequest,
         DeriveExecutionError::ProviderFailed { .. }
         | DeriveExecutionError::ProviderPanicked { .. } => {
             MetaDiagnosticCode::DeriveExpansionFailed
         }
+        DeriveExecutionError::ProviderVm {
+            source: MetaVmError::ProviderDiagnostics(_),
+            ..
+        } => MetaDiagnosticCode::DeriveExpansionFailed,
         DeriveExecutionError::ProviderVm { source, .. } => vm_code(source),
         DeriveExecutionError::InvalidProviderResult(_)
         | DeriveExecutionError::InvalidProviderBody
@@ -149,6 +189,9 @@ pub fn derive_execution_code(error: &DeriveExecutionError) -> MetaDiagnosticCode
 
 pub fn generator_execution_code(error: &GeneratorExecutionError) -> MetaDiagnosticCode {
     match error {
+        GeneratorExecutionError::Contract(crate::meta::MetaContractError::OutputLimit {
+            ..
+        }) => MetaDiagnosticCode::GeneratorResourceLimit,
         GeneratorExecutionError::ProviderVm { source, .. } => vm_code(source),
         GeneratorExecutionError::InvalidGeneratedSource
         | GeneratorExecutionError::InvalidProviderResult(_)
@@ -172,6 +215,15 @@ pub fn generator_execution_code(error: &GeneratorExecutionError) -> MetaDiagnost
 
 fn vm_code(error: &MetaVmError) -> MetaDiagnosticCode {
     match error {
+        MetaVmError::Compilation(_) | MetaVmError::ProviderPanic { .. } => {
+            MetaDiagnosticCode::InvalidGeneratedSource
+        }
+        MetaVmError::ProviderDiagnostics(_) => MetaDiagnosticCode::InvalidGeneratedSource,
+        MetaVmError::ReportedOutputLimit { .. }
+        | MetaVmError::ProviderContract(crate::meta::MetaContractError::OutputLimit { .. }) => {
+            MetaDiagnosticCode::GeneratorResourceLimit
+        }
+        MetaVmError::ProviderContract(_) => MetaDiagnosticCode::GeneratorContractViolation,
         MetaVmError::OutputLimit { .. } => MetaDiagnosticCode::GeneratorResourceLimit,
         MetaVmError::Vm(error) if error.is_resource_limit() => {
             MetaDiagnosticCode::GeneratorResourceLimit
@@ -336,6 +388,15 @@ mod tests {
 
     #[test]
     fn specific_vm_failures_take_precedence_over_invalid_output() {
+        let output_limit = crate::meta::MetaContractError::OutputLimit { limit: 16 };
+        assert_eq!(
+            derive_execution_code(&DeriveExecutionError::Contract(output_limit.clone())),
+            MetaDiagnosticCode::GeneratorResourceLimit
+        );
+        assert_eq!(
+            generator_execution_code(&GeneratorExecutionError::Contract(output_limit)),
+            MetaDiagnosticCode::GeneratorResourceLimit
+        );
         let limit = DeriveExecutionError::ProviderVm {
             provider: "p".into(),
             source: MetaVmError::Vm(VmError::ResourceLimit {
@@ -358,6 +419,35 @@ mod tests {
         assert_eq!(
             generator_execution_code(&GeneratorExecutionError::InvalidGeneratedSource),
             MetaDiagnosticCode::InvalidGeneratedSource
+        );
+    }
+
+    #[test]
+    fn meta_messages_with_one_protocol_id_merge_without_loss_or_order_dependence() {
+        let (sources, origin, _) = sources();
+        let entries = [
+            MetaDiagnosticEntry::new(
+                MetaDiagnosticCode::DeriveExpansionFailed,
+                "second",
+                Some(origin),
+            )
+            .with_severity(Severity::Note),
+            MetaDiagnosticEntry::new(
+                MetaDiagnosticCode::DeriveExpansionFailed,
+                "first",
+                Some(origin),
+            )
+            .with_severity(Severity::Warning),
+        ];
+        let target = SourceId::new("target:meta").unwrap();
+        let first = render_meta_diagnostics(entries.clone(), target.clone(), &sources).unwrap();
+        let second = render_meta_diagnostics(entries.into_iter().rev(), target, &sources).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.diagnostics().len(), 1);
+        assert_eq!(first.diagnostics()[0].severity(), Severity::Warning);
+        assert_eq!(
+            first.diagnostics()[0].message(),
+            "warning: first; note: second"
         );
     }
 

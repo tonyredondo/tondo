@@ -35,6 +35,15 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
             callable.closure,
         )
         .unwrap();
+        if let Some(display) = callable.assertion_display {
+            writeln!(
+                output,
+                "  assertion_display t{} callable={:?}",
+                display.value_type.index(),
+                display.callable.map(BytecodeCallableId::index)
+            )
+            .unwrap();
+        }
     }
     for (index, constant) in program.constants.iter().enumerate() {
         writeln!(
@@ -535,6 +544,7 @@ mod tests {
         );
 
         let program = BytecodeProgram {
+            reflection: Default::default(),
             types: vec![BytecodeType {
                 name: "Unit".into(),
                 kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Unit),
@@ -546,6 +556,7 @@ mod tests {
                 shape: BytecodeNominalShape::Newtype { underlying: ty },
             }],
             callables: vec![BytecodeCallable {
+                assertion_display: None,
                 name: "main".into(),
                 generic_arity: 0,
                 parameters: Vec::new(),

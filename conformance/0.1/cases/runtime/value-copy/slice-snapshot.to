@@ -48,5 +48,5 @@ fn main() {
     assert(reversedIdentities[1] == first)
     assert(reversedIdentities[0].value == [2])
 
-    console.print("slice-snapshot\n")
+    _ = console.print("slice-snapshot\n")
 }

@@ -23,5 +23,5 @@ fn main() {
     assert(original.identity.value == [42])
     assert(copied.identity.value == [42])
 
-    console.print("gc-pressure\n")
+    _ = console.print("gc-pressure\n")
 }

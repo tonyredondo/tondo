@@ -29,5 +29,5 @@ fn main() {
     replaceFirst(mut nested)
     assert(nested == [[7, 8, 9], [2, 3]])
 
-    console.print("array-mutation\n")
+    _ = console.print("array-mutation\n")
 }

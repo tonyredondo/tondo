@@ -52,4 +52,16 @@ TONDO_PUBLIC_API_MATRIX="$tmp/current-report.json" scripts/stdlib-public-api-aud
 jq -e 'first(.owners[] | select(.id == "std.core")) |
     .signature_count > 0 and .status == "verified"' "$tmp/current-report.json" >/dev/null
 
+# Bodyless trait operations are public callables, with their declaring generic
+# trait retained. They must not collapse into an empty build-only owner.
+jq -e '
+  [.rows[] | select(.owner == "std.serialization")] as $rows
+  | ($rows | length) == 26
+    and ([$rows[].declaring_trait] | unique | length) == 4
+    and all($rows[]; .signature | startswith("fn "))
+    and any($rows[]; .symbol == "std.serialization.Encoder.uint")
+    and any($rows[]; .symbol == "std.serialization.Decode.decode")
+    and all($rows[]; .status == "verified" and .evidence.public_case.kind == "runtime")
+' "$tmp/current-report.json" >/dev/null
+
 echo "stdlib public API audit tests: OK"

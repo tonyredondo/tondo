@@ -16,13 +16,13 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::validate_sha256;
+pub use crate::test_result::TEST_REPORT_FORMAT;
 use crate::test_result::{
     AggregateStatus, ResultModelError, ResultPolicy, ResultSummary, RetryUnit, TestAttempt,
     TestNode, TestResultTree,
 };
 
 pub const TEST_JSON_FORMAT: &str = "tondo-test-json-v1";
-pub const TEST_REPORT_FORMAT: &str = "tondo-test-report-0.1/7";
 pub const TEST_LIST_FORMAT: &str = "tondo-test-list-0.1/6";
 pub const TEST_ARTIFACT_FORMAT: &str = "tondo-test-artifacts-0.1/1";
 pub const TEST_SNAPSHOT_FORMAT: &str = "tondo-snapshot-store-0.1/1";

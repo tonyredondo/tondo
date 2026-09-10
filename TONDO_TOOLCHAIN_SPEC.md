@@ -206,6 +206,27 @@ manifiestos JSON de proyecto: genera los registros internos necesarios en
 memoria y los entrega a la frontera pura del compilador. Esa representación
 interna no es un archivo de configuración ni una API de usuario.
 
+The human meta extension uses `[meta.dependencies]`, `[[meta.inputs]]`,
+`[[meta.generators]]` and `[[meta.derive_providers]]`. It does not list source
+files. A local meta dependency has an exact `package` identity and a `path`;
+its sources follow the same directory-to-module convention as runtime code.
+The package's optional manifest admits `[package]` and `[dependencies]`, with
+the latter naming further local meta sources by the same package/path pair.
+All paths remain inside the selected project. Provider references resolve
+through meta aliases; traits and model roots resolve through runtime aliases.
+Generator outputs and positive step/memory/output limits are explicit. The
+model is the toolchain's supported `tondo-meta-model-0.1/1`.
+
+`tondo lock [--project <dir>]` creates or refreshes `tondo.lock.toml` for a local
+project and its explicit local meta graph. It compiles providers to fix their
+executable hashes, without running them. It validates the candidate before
+writing, preserves separately owned test records, and preserves the existing
+lock on failure. It does not resolve external runtime packages or registry
+versions. Normal project commands require the resulting lock when meta inputs,
+packages or producers are declared; they never refresh stale hashes implicitly.
+The complete human schema and executable examples are maintained in
+[`docs/contracts/project-discovery.md`](docs/contracts/project-discovery.md).
+
 ### 3.1 Manifiesto interno: forma completa
 
 La forma siguiente es una representación privada del compilador para hashes,
@@ -838,6 +859,21 @@ usan el mismo orden canónico que su equivalente runtime, pero no contienen
 
 ### 5.2 Correspondencia exacta
 
+The hosted bootstrap reader keeps optional `test.packages` records separate
+from the production lock graph. Each record contains `id`, `local_name`,
+`edition`, `content_hash`, `dependencies`, `sources` and a required `interface`.
+Source and interface fields use the ordinary locked package schema. The
+default test plan uses each locked `local_name` as its alias and carries every
+interface pin; an advanced plan may choose different aliases for the same
+closed package set. Test-only projects have no production lock records and may
+use a lockfile containing only `test`. The reader removes the `test` section before
+calculating the production lock identity and does not read its files for a
+normal build. Testing validates those records and all pinned source/interface
+bytes before selection, then compiles them only into test consumers. The
+production compilation is sealed first; its interface and artifact cannot
+depend on these records. See `docs/contracts/test-dependencies.md` for the
+executable integration boundary.
+
 `manifest_hash` es SHA-256 de los bytes exactos del manifiesto. Los conjuntos de
 paquetes runtime y meta, fuentes, dependencies, generator inputs, generators,
 derive providers y unidades privilegiadas del lockfile deben coincidir
@@ -1269,6 +1305,18 @@ tondo build [--project <dir>] [--output <path>]
 tondo run [--project <dir>] -- [argument ...]
 tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [opciones de test]
 ~~~
+
+For test targets declaring `process`, the Linux hosted CLI must receive
+`--process-cgroup <absolute-path>` pointing to an explicitly delegated cgroup-v2 domain.
+It creates and verifies a fresh child group before dispatch. The worker enters
+that group before receiving its sealed program; the coordinator uses
+`cgroup.kill` and verifies `cgroup.events` is unpopulated before removing it.
+The cleanup deadline is 5,000 ms. An ordinary directory, symlinked path, missing
+delegation, unsupported kernel control or unsupported host rejects execution
+with exit `3`. No environment variable implicitly selects this provider and
+there is no process-group fallback. This Linux provider does not promote native
+AOT execution or a provider on another operating system. Test targets without
+`process`, and compilation-only `--list`, need no delegated cgroup.
 
 Sin `--project` se usa el directorio actual. `check`, `build` y `run`
 materializan el grafo convencional descrito en la sección 3. `test` aplica las

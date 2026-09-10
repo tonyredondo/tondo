@@ -37,5 +37,5 @@ fn main() {
     assert(canonicalInt == 42)
     assert(canonicalFloat == 2.5)
 
-    console.print("numeric-intrinsics\n")
+    _ = console.print("numeric-intrinsics\n")
 }

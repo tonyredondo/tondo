@@ -95,6 +95,13 @@ extracted outside code fences. Each identity is derived from edition, stable
 section, heading, and ordinal. The record also pins the document hash, exact
 text hash, line range, anchor, phase, and risk.
 
+The extractor recognizes the Spanish obligation terms and the English words
+`must`, `shall` and `cannot`, including negative forms and case differences.
+Fenced code and identifiers such as `must_use` do not introduce requirements.
+Adding an obligation may shift later ordinals in the same section. Reviewers
+must match the unchanged paragraph hashes before moving authored evidence to
+those identities; a newly extracted paragraph starts without a coverage claim.
+
 Every requirement has exactly one status:
 
 - `covered`: explicit executable conformance evidence reaches a stable public
@@ -266,22 +273,23 @@ adds closed negative and boundary contracts for the CLI, canonical artifacts,
 manifest and adapter protocols, semantic snapshots, bytecode verification and
 disassembly, managed runtime values, and the reliability tooling itself.
 
-The current reviewed observation is 90.25% of lines (149,146/165,251), 86.43%
-of functions (10,326/11,947), and 88.47% of regions (212,388/240,061). The
-machine gate deliberately truncates those observations to exact non-regression
-floors of 9,025, 8,643, and 8,847 basis points. Its line floors by risk are:
+The historical measurement retained in `testing/quality-baseline.json` records
+208,307 of 229,884 lines, with truncated ratios of 9,061 basis points for lines,
+8,701 for functions and 8,891 for regions. These are observed results, not the
+current acceptance thresholds.
 
-- parser: 9,463 basis points;
-- checkers: 9,064;
-- HIR/MIR/bytecode verifiers: 8,891;
-- heap and managed values: 9,770;
-- lowering and execution: 8,916; and
-- untrusted artifacts, projects, conformance, adapters, and reliability
-  protocols: 9,110.
+The authorized policy uses `coverage.acceptance_floor_basis_points: 8000`:
+global lines, functions and regions must each reach 80%. Risk dimensions use
+the lower of 80% and their historical measured threshold. This preserves the
+existing requirements for dimensions that were already below 80%. The floor
+cannot combine with `maximum_drop_basis_points`; historical counts, reports,
+provenance and mutation requirements are retained. A fresh capture records the
+new observations and retains the explicit 80% policy.
 
-Function and region floors for every risk scope remain machine-readable in
-`testing/quality-baseline.json`. Every floor is the reviewed observed value; a
-decrease fails.
+Implementation batches run focused behavioral tests while code changes.
+Coverage runs once after the agreed batch is implemented, against its complete
+source identity. Current results are required before promotion; an old report
+cannot pass for a new source tree merely because the acceptance floor changed.
 
 The Rust 1.93.0 / LLVM 21.1.8 report exposes `branches` and `mcdc` fields but
 contains zero instrumented units for both. They are therefore recorded as

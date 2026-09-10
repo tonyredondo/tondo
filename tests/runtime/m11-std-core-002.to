@@ -125,5 +125,5 @@ fn main() {
     }
     assert(load(true).unwrapOr(8) == 40)
     assert(load(false).unwrapOr(8) == 8)
-    console.print("core-map-ok\n")
+    _ = console.print("core-map-ok\n")
 }

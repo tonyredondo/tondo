@@ -1,9 +1,13 @@
 import std.console
 
+fn emitCleanup(text: String) {
+    _ = console.print(text)
+}
+
 fn tick() suspends {}
 
 fn sibling() {
-    defer console.print("sibling-cleanup\n")
+    defer emitCleanup("sibling-cleanup\n")
 
     for {
         tick()

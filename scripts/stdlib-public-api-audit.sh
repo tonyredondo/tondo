@@ -142,27 +142,32 @@ extract_signatures() {
     local contract section
     contract="$(jq -r '.contract' <<< "$owner_json")"
     section="$(jq -r '.section' <<< "$owner_json")"
-    if [[ "$section" == "*" ]]; then
-        awk '
-            /^pub (unsafe )?fn / {
-                line=$0
-                sub(/[[:space:]]*\/\/.*$/, "", line)
-                sub(/[[:space:]]+$/, "", line)
-                print NR "\t" line
+    awk -v wanted="$section" '
+        BEGIN { in_section=(wanted == "*"); trait="-"; depth=0 }
+        /^## / { in_section=(wanted == "*" || index($0, wanted) > 0); trait="-"; depth=0 }
+        in_section {
+            line=$0
+            sub(/[[:space:]]*\/\/.*$/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line ~ /^pub trait /) {
+                trait=line
+                sub(/^pub trait /, "", trait)
+                sub(/[[:space:]]*\{.*$/, "", trait)
+                depth=0
+            } else if (line ~ /^pub (unsafe )?fn /) {
+                print NR "\t" line "\t-"
+            } else if (trait != "-" && depth == 1 && line ~ /^[[:space:]]+fn /) {
+                sub(/^[[:space:]]+/, "", line)
+                print NR "\t" line "\t" trait
             }
-        ' "$root/$contract"
-    else
-        awk -v wanted="$section" '
-            BEGIN { in_section=0 }
-            /^## / { in_section=(index($0, wanted) > 0) }
-            in_section && /^pub (unsafe )?fn / {
-                line=$0
-                sub(/[[:space:]]*\/\/.*$/, "", line)
-                sub(/[[:space:]]+$/, "", line)
-                print NR "\t" line
+            if (trait != "-") {
+                braces=line
+                depth += gsub(/\{/, "", braces)
+                depth -= gsub(/\}/, "", braces)
+                if (depth == 0) trait="-"
             }
-        ' "$root/$contract"
-    fi
+        }
+    ' "$root/$contract"
 }
 
 emit_owner_rows() {
@@ -195,9 +200,9 @@ emit_owner_rows() {
     fi
     path_exists "$case_path" || die "$owner public-case path is missing: $case_path"
 
-    local line signature name operation symbol canonical_call hir_needles lowering_needles runtime_needles
+    local line signature declaring_trait name operation symbol canonical_call hir_needles lowering_needles runtime_needles
     local -a missing
-    while IFS=$'\t' read -r line signature; do
+    while IFS=$'\t' read -r line signature declaring_trait; do
         [[ -n "$signature" ]] || continue
         name="${signature#pub }"
         name="${name#unsafe }"
@@ -207,6 +212,12 @@ emit_owner_rows() {
             name="${name%% *}"
         fi
         name="${name%%[*}"
+        if [[ "$declaring_trait" != "-" ]]; then
+            local trait_name="${declaring_trait%%[*}"
+            trait_name="${trait_name%%:*}"
+            trait_name="${trait_name%% *}"
+            name="$trait_name.$name"
+        fi
         if [[ "$(jq 'length' <<< "$include")" -gt 0 ]] && ! has_prefix "$name" "$include"; then
             continue
         fi
@@ -288,6 +299,7 @@ emit_owner_rows() {
             --arg contract "$contract" \
             --argjson line "$line" \
             --arg signature "$signature" \
+            --arg declaring_trait "$declaring_trait" \
             --arg symbol "$symbol" \
             --arg operation "$operation" \
             --arg case_path "$case_path" \
@@ -303,7 +315,7 @@ emit_owner_rows() {
             --argjson runtime_symbols "$runtime_needles" \
             --argjson missing "$missing_json" \
             --arg status "$status" \
-            '{id:($owner+":"+($line|tostring)), owner:$owner, contract:$contract, line:$line, signature:$signature, symbol:$symbol, operation:$operation, evidence:{hir:{paths:$hir,symbol:$operation,symbols:$hir_symbols},lowering:{paths:$lowering,symbol:$operation,symbols:$lowering_symbols},host_vm:{kind:$runtime_kind,paths:$runtime,reason:(if $runtime_reason == "" then null else $runtime_reason end),symbol:$symbol,symbols:$runtime_symbols},public_case:{path:$case_path,kind:$case_kind,call:$call,bootstrap_alias:false}},missing:$missing,status:$status}' \
+            '{id:($owner+":"+($line|tostring)), owner:$owner, contract:$contract, line:$line, signature:$signature, symbol:$symbol, operation:$operation, evidence:{hir:{paths:$hir,symbol:$operation,symbols:$hir_symbols},lowering:{paths:$lowering,symbol:$operation,symbols:$lowering_symbols},host_vm:{kind:$runtime_kind,paths:$runtime,reason:(if $runtime_reason == "" then null else $runtime_reason end),symbol:$symbol,symbols:$runtime_symbols},public_case:{path:$case_path,kind:$case_kind,call:$call,bootstrap_alias:false}},missing:$missing,status:$status} + (if $declaring_trait == "-" then {} else {declaring_trait:$declaring_trait} end)' \
             >> "$rows_ndjson"
     done < <(extract_signatures "$owner_json")
 }
@@ -381,7 +393,10 @@ validate_matrix() {
         and (.status == (if .summary.gaps > 0 then "open-gaps" else "verified" end))
         and all(.rows[];
             (.owner | startswith("std."))
-            and (.signature | startswith("pub "))
+            and (if has("declaring_trait") then
+                (.declaring_trait | type == "string" and test("^[A-Z][A-Za-z0-9_]*(\\[|$|:)"))
+                and (.signature | startswith("fn "))
+              else (.signature | test("^pub (unsafe )?fn ")) end)
             and (.symbol | startswith("std."))
             and (.evidence.hir.paths | length > 0)
             and (.evidence.lowering.paths | length > 0)

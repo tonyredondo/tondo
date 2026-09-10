@@ -17,8 +17,8 @@ fn main(): !sync.SyncError {
         sync.CompareExchange.Mismatch(_) => assert(false)
     }
     assert(atom.load(seq_cst) == 4)
-    console.println("atomic-orders:1:4")
-    console.println("compare-exchange:cas")
+    _ = console.println("atomic-orders:1:4")
+    _ = console.println("compare-exchange:cas")
 
     let mutex = sync.mutex(7)?
     var guard = mutex.lock()?
@@ -61,8 +61,8 @@ fn main(): !sync.SyncError {
         some(permit2) => permit2.release()
         none => assert(false)
     }
-    console.println("parking-wakeup:notify")
-    console.println("cleanup-no-poison:guards-permits")
+    _ = console.println("parking-wakeup:notify")
+    _ = console.println("cleanup-no-poison:guards-permits")
 
     let once = sync.once[Int, sync.SyncError]()
     if once.isReady() {
@@ -88,14 +88,14 @@ fn main(): !sync.SyncError {
         some(value) => assert(value.value == 41)
         none => assert(false)
     }
-    console.println("once-publication:41")
+    _ = console.println("once-publication:41")
 
     let barrier = sync.barrier(1)?
     _ = barrier.wait()?
     _ = barrier.wait()?
-    console.println("barrier-generations:2")
+    _ = console.println("barrier-generations:2")
 
-    console.println("threads-capability:static-rejection")
+    _ = console.println("threads-capability:static-rejection")
 
     let array: sync.Array[Int] = sync.Array[1, 2]
     let array_alias = array
@@ -106,6 +106,6 @@ fn main(): !sync.SyncError {
         ok(snapshot) => assert(snapshot.length() == 2)
         err(_) => assert(false)
     }
-    console.println("collection-conformance:delegated")
-    console.println("sync-conformance-ok")
+    _ = console.println("collection-conformance:delegated")
+    _ = console.println("sync-conformance-ok")
 }

@@ -97,9 +97,20 @@ pub struct DeclaredBuildInputs {
     generator_inputs: BTreeMap<String, String>,
     dependency_interfaces: BTreeMap<PackageId, CompiledInterface>,
     require_dependency_interfaces: bool,
+    generation: Vec<crate::toolchain::GenerationRecord>,
 }
 
 impl DeclaredBuildInputs {
+    pub(crate) fn with_generation(
+        mut self,
+        mut records: Vec<crate::toolchain::GenerationRecord>,
+    ) -> Result<Self, ArtifactError> {
+        records.sort_by(|a, b| (&a.kind, &a.id).cmp(&(&b.kind, &b.id)));
+        validate_generation(&records)?;
+        self.generation = records;
+        Ok(self)
+    }
+
     pub fn new(features: BTreeSet<FeatureName>, source_sets: BTreeSet<SourceSetId>) -> Self {
         Self {
             features,
@@ -164,6 +175,10 @@ impl DeclaredBuildInputs {
         &self.generator_inputs
     }
 
+    pub(crate) fn generation(&self) -> &[crate::toolchain::GenerationRecord] {
+        &self.generation
+    }
+
     pub fn dependency_interfaces(&self) -> &BTreeMap<PackageId, CompiledInterface> {
         &self.dependency_interfaces
     }
@@ -211,6 +226,8 @@ pub struct CompiledInterface {
     modules: Vec<String>,
     api_hash: String,
     dependencies: Vec<InterfaceDependency>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    generation: Vec<crate::toolchain::GenerationRecord>,
 }
 
 impl CompiledInterface {
@@ -241,6 +258,7 @@ impl CompiledInterface {
             modules,
             api_hash,
             dependencies,
+            generation: Vec::new(),
         };
         interface.validate()?;
         Ok(interface)
@@ -267,6 +285,10 @@ impl CompiledInterface {
 
     pub fn format(&self) -> &str {
         &self.format
+    }
+
+    pub fn generation(&self) -> &[crate::toolchain::GenerationRecord] {
+        &self.generation
     }
 
     pub fn compiler(&self) -> &str {
@@ -318,6 +340,7 @@ impl CompiledInterface {
     }
 
     fn validate(&self) -> Result<(), ArtifactError> {
+        validate_generation(&self.generation)?;
         if self.format != INTERFACE_FORMAT {
             return Err(ArtifactError::UnsupportedInterfaceFormat(
                 self.format.clone(),
@@ -422,9 +445,14 @@ pub struct BuildArtifact {
     interface_hash: String,
     build_hash: String,
     reproducible: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    generation: Vec<crate::toolchain::GenerationRecord>,
 }
 
 impl BuildArtifact {
+    pub fn generation(&self) -> &[crate::toolchain::GenerationRecord] {
+        &self.generation
+    }
     pub fn decode(bytes: &[u8]) -> Result<Self, ArtifactError> {
         let artifact: Self = serde_json::from_slice(bytes)
             .map_err(|error| ArtifactError::InvalidArtifact(error.to_string()))?;
@@ -588,6 +616,38 @@ impl BuildArtifact {
             validate_sha256(&source.sha256)?;
         }
         validate_sha256(&self.interface_hash)?;
+        validate_generation(&self.generation)?;
+        let generated = self
+            .generation
+            .iter()
+            .flat_map(|record| &record.outputs)
+            .map(|output| {
+                (
+                    &output.source_id,
+                    (&output.module, &output.path, &output.sha256),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        for source in &self.source_hashes {
+            if (source.source_id.starts_with("gen:") || source.source_id.starts_with("derive:"))
+                && generated.get(&source.source_id)
+                    != Some(&(&source.module, &source.path, &source.sha256))
+            {
+                return Err(ArtifactError::InvalidArtifact(
+                    "generated source lacks exact provenance".into(),
+                ));
+            }
+        }
+        if generated.keys().any(|id| {
+            !self
+                .source_hashes
+                .iter()
+                .any(|source| &source.source_id == *id)
+        }) {
+            return Err(ArtifactError::InvalidArtifact(
+                "generation record has an absent output".into(),
+            ));
+        }
         validate_sha256(&self.build_hash)?;
         let expected_build_hash = self.calculated_build_hash()?;
         if self.build_hash != expected_build_hash {
@@ -615,6 +675,7 @@ impl BuildArtifact {
             generator_inputs: &self.generator_inputs,
             source_hashes: &self.source_hashes,
             interface_hash: &self.interface_hash,
+            generation: &self.generation,
         };
         let bytes = serde_json::to_vec(&fingerprint)
             .map_err(|error| ArtifactError::Serialization(error.to_string()))?;
@@ -827,7 +888,7 @@ pub(crate) fn build_products(
         });
     }
 
-    let interface = CompiledInterface::new(
+    let mut interface = CompiledInterface::new(
         edition.to_owned(),
         root.to_string(),
         target.to_owned(),
@@ -839,6 +900,7 @@ pub(crate) fn build_products(
         api_hash,
         dependencies,
     )?;
+    interface.generation = inputs.generation.clone();
     let mut source_hashes = sources
         .iter()
         .map(|(_, source)| SourceHash {
@@ -880,6 +942,7 @@ pub(crate) fn build_products(
         interface_hash,
         build_hash: String::new(),
         reproducible: true,
+        generation: inputs.generation.clone(),
     };
     artifact.build_hash = artifact.calculated_build_hash()?;
     artifact.validate()?;
@@ -1554,6 +1617,52 @@ struct BuildFingerprint<'a> {
     generator_inputs: &'a BTreeMap<String, String>,
     source_hashes: &'a [SourceHash],
     interface_hash: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    generation: &'a Vec<crate::toolchain::GenerationRecord>,
+}
+
+fn validate_generation(
+    records: &[crate::toolchain::GenerationRecord],
+) -> Result<(), ArtifactError> {
+    if records
+        .windows(2)
+        .any(|pair| (&pair[0].kind, &pair[0].id) >= (&pair[1].kind, &pair[1].id))
+    {
+        return Err(ArtifactError::NonCanonicalList("generation records"));
+    }
+    let mut outputs = BTreeSet::new();
+    for record in records {
+        record
+            .validate()
+            .map_err(|error| ArtifactError::InvalidArtifact(error.to_string()))?;
+        let mut canonical_outputs = record.outputs.iter().collect::<Vec<_>>();
+        canonical_outputs.sort_by_key(|output| &output.path);
+        if record.kind == "derive"
+            && (record.outputs.len() != 1
+                || record.id != record.request_hash.replacen("sha256:", "derive:", 1)
+                || record.outputs[0].path
+                    != crate::meta_atomic::derive_output_path(&record.request_hash))
+        {
+            return Err(ArtifactError::InvalidArtifact(
+                "derive provenance identity differs".into(),
+            ));
+        }
+        for (index, output) in canonical_outputs.into_iter().enumerate() {
+            if output.source_id
+                != crate::meta_atomic::generated_source_id(
+                    &record.kind,
+                    &record.request_hash,
+                    index,
+                )
+                || !outputs.insert(&output.source_id)
+            {
+                return Err(ArtifactError::InvalidArtifact(
+                    "generated source identity differs from its request".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn sha256(bytes: &[u8]) -> String {
@@ -1731,9 +1840,71 @@ mod tests {
             interface_hash: sha256(b"interface"),
             build_hash: String::new(),
             reproducible: true,
+            generation: Vec::new(),
         };
         artifact.build_hash = artifact.calculated_build_hash().unwrap();
         artifact
+    }
+
+    #[test]
+    fn meta_artifact_provenance_rejects_inconsistent_outputs_after_outer_rehash() {
+        let mut artifact = valid_artifact();
+        let request = sha256(b"request");
+        let mut outputs = (0..12)
+            .map(|index| crate::toolchain::GenerationOutput {
+                source_id: format!("gen:{}:{index}", &request[7..]),
+                module: "generated".into(),
+                path: format!("generated/{index:02}.to"),
+                sha256: sha256(format!("source {index}").as_bytes()),
+            })
+            .collect::<Vec<_>>();
+        outputs.sort_by(|a, b| {
+            (&a.source_id, &a.module, &a.path).cmp(&(&b.source_id, &b.module, &b.path))
+        });
+        artifact
+            .source_hashes
+            .extend(outputs.iter().map(|output| SourceHash {
+                source_id: output.source_id.clone(),
+                module: output.module.clone(),
+                path: output.path.clone(),
+                sha256: output.sha256.clone(),
+            }));
+        artifact.source_hashes.sort_by(|a, b| {
+            (&a.source_id, &a.module, &a.path).cmp(&(&b.source_id, &b.module, &b.path))
+        });
+        artifact
+            .generation
+            .push(crate::toolchain::GenerationRecord {
+                kind: "generator".into(),
+                id: "write-schema".into(),
+                provider_package: "workspace:builder@1".into(),
+                provider_hash: sha256(b"provider"),
+                entry: "main.generate".into(),
+                model_roots: Vec::new(),
+                model_hash: sha256(b"model"),
+                request_hash: request,
+                outputs,
+            });
+        artifact.build_hash = artifact.calculated_build_hash().unwrap();
+        let encoded = serde_json::to_vec(&artifact).unwrap();
+        BuildArtifact::decode(&encoded).unwrap();
+        for change in 0..4 {
+            let mut changed = artifact.clone();
+            match change {
+                0 => changed.generation.clear(),
+                1 => changed.generation[0].request_hash = sha256(b"other request"),
+                2 => changed.generation[0].outputs[0].sha256 = sha256(b"other source"),
+                3 => {
+                    changed.source_hashes.remove(0);
+                }
+                _ => unreachable!(),
+            }
+            changed.build_hash = changed.calculated_build_hash().unwrap();
+            assert!(
+                BuildArtifact::decode(&serde_json::to_vec(&changed).unwrap()).is_err(),
+                "mutation {change}"
+            );
+        }
     }
 
     #[test]
@@ -2181,6 +2352,7 @@ mod tests {
             interface_hash: sha256(b"interface"),
             build_hash: String::new(),
             reproducible: true,
+            generation: Vec::new(),
         };
         artifact.build_hash = artifact.calculated_build_hash().unwrap();
         let bytes = artifact.encode().unwrap();

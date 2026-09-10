@@ -104,6 +104,7 @@ impl fmt::Display for ScalarType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntrinsicType {
+    Reflection(tondo_vm::reflection::ReflectionDescriptorKind),
     Array,
     Map,
     Set,
@@ -144,13 +145,8 @@ pub enum IntrinsicType {
     FsError,
     MathError,
     FloatTolerance,
-    FloatToleranceError,
-    TextDiff,
     TempDirectory,
-    TempError,
     Generator,
-    GenerationId,
-    GenerationError,
     Reader,
     Writer,
     IoLimits,
@@ -217,6 +213,7 @@ pub enum IntrinsicType {
 impl IntrinsicType {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Reflection(kind) => kind.name(),
             Self::Array => "Array",
             Self::Map => "Map",
             Self::Set => "Set",
@@ -257,15 +254,10 @@ impl IntrinsicType {
             Self::FsError => "FsError",
             Self::MathError => "MathError",
             Self::FloatTolerance => "FloatTolerance",
-            Self::FloatToleranceError => "FloatToleranceError",
-            Self::TextDiff => "TextDiff",
             Self::TempDirectory => "TempDirectory",
-            Self::TempError => "TempError",
             Self::Generator => "Generator",
-            Self::GenerationId => "GenerationId",
-            Self::GenerationError => "GenerationError",
-            Self::Reader => "Reader",
-            Self::Writer => "Writer",
+            Self::Reader => "Input",
+            Self::Writer => "Output",
             Self::IoLimits => "IoLimits",
             Self::IoError => "IoError",
             Self::ConsoleError => "ConsoleError",
@@ -335,6 +327,7 @@ impl IntrinsicType {
 
     pub fn arity(self) -> usize {
         match self {
+            Self::Reflection(_) => 0,
             Self::Map | Self::Join | Self::Group | Self::Once | Self::Waiter | Self::Completer => 2,
             Self::Array
             | Self::Set
@@ -366,13 +359,8 @@ impl IntrinsicType {
             | Self::FsError
             | Self::MathError
             | Self::FloatTolerance
-            | Self::FloatToleranceError
-            | Self::TextDiff
             | Self::TempDirectory
-            | Self::TempError
             | Self::Generator
-            | Self::GenerationId
-            | Self::GenerationError
             | Self::Reader
             | Self::Writer
             | Self::IoLimits
@@ -1339,6 +1327,45 @@ impl TypeInterner {
         Ok(Some(arguments))
     }
 
+    /// Compare a template using exactly the supplied binders. Query-side
+    /// parameters stay rigid, and unions keep unordered matching semantics.
+    pub(crate) fn matches_substitution(
+        &self,
+        template: TypeId,
+        actual: TypeId,
+        arguments: &[TypeId],
+    ) -> Result<bool, TypeError> {
+        self.validate_children(&[template, actual])?;
+        self.validate_children(arguments)?;
+        if arguments.len() > u32::MAX as usize {
+            return Err(TypeError::ResourceLimit { limit: self.limit });
+        }
+        let substitutions = arguments
+            .iter()
+            .enumerate()
+            .map(|(position, argument)| {
+                (
+                    ScopedGenericParameter {
+                        scope: TypePatternScope::Left,
+                        position: position as u32,
+                    },
+                    ScopedTypePattern::right(*argument),
+                )
+            })
+            .collect();
+        let result = ScopedTypeUnifier::solve(
+            self,
+            substitutions,
+            vec![ScopedUnificationTask::Pair(
+                ScopedTypePattern::left(template),
+                ScopedTypePattern::right(actual),
+            )],
+            ScopedSolverMode::MatchLeft,
+        )?;
+        // A successful match must not infer an undeclared extra binder.
+        Ok(result.is_some_and(|unifier| unifier.substitutions.len() == arguments.len()))
+    }
+
     fn unify_iterative(
         &self,
         left: TypeId,
@@ -1596,6 +1623,17 @@ impl TypeInterner {
         root: TypeId,
         _public_effects: bool,
     ) -> Result<String, TypeError> {
+        self.render_named(root, &mut canonical_type_name)
+    }
+
+    /// Render canonical type structure with caller-selected constructor names.
+    /// Non-source constructors also reach the callback, so a source renderer
+    /// can reject them without exposing internal spellings as valid Tondo.
+    pub(crate) fn render_named(
+        &self,
+        root: TypeId,
+        name: &mut impl FnMut(&TypeKind) -> String,
+    ) -> Result<String, TypeError> {
         self.kind(root)?;
         let mut output = String::new();
         let mut pending = vec![RenderTask::Type(root, Precedence::Union)];
@@ -1612,14 +1650,24 @@ impl TypeInterner {
                 output.push('(');
                 pending.push(RenderTask::Text(")".into()));
             }
+            let rendered_name = match &kind {
+                TypeKind::Nominal { .. }
+                | TypeKind::Intrinsic { .. }
+                | TypeKind::GenericParameter(_)
+                | TypeKind::OpaqueResult { .. }
+                | TypeKind::Generated { .. }
+                | TypeKind::Cursor { .. } => Some(name(&kind)),
+                _ => None,
+            };
             match kind {
                 TypeKind::Error => return Err(TypeError::RecoveryTypeHasNoCanonicalName),
                 TypeKind::Scalar(scalar) => output.push_str(scalar.as_str()),
-                TypeKind::Nominal {
-                    identity,
-                    arguments,
-                } => {
-                    output.push_str(&identity.canonical_name());
+                TypeKind::Nominal { arguments, .. } => {
+                    output.push_str(
+                        rendered_name
+                            .as_deref()
+                            .expect("nominal has a rendered name"),
+                    );
                     push_application(&mut output, &mut pending, &arguments);
                 }
                 TypeKind::Tuple(items) => {
@@ -1687,55 +1735,56 @@ impl TypeInterner {
                 TypeKind::Union(members) => {
                     push_render_sequence(&mut pending, &members, Precedence::Union, " | ");
                 }
-                TypeKind::Intrinsic {
-                    constructor,
-                    arguments,
-                } => {
-                    output.push_str(constructor.as_str());
+                TypeKind::Intrinsic { arguments, .. } => {
+                    output.push_str(
+                        rendered_name
+                            .as_deref()
+                            .expect("intrinsic has a rendered name"),
+                    );
                     push_application(&mut output, &mut pending, &arguments);
                 }
-                TypeKind::GenericParameter(position) => {
-                    output.push('$');
-                    output.push_str(&position.to_string());
+                TypeKind::GenericParameter(_) => {
+                    output.push_str(
+                        rendered_name
+                            .as_deref()
+                            .expect("binder has a rendered name"),
+                    );
                 }
                 TypeKind::Inference(inference) => {
                     return Err(TypeError::UnresolvedInference(inference));
                 }
-                TypeKind::OpaqueResult {
-                    identity,
-                    arguments,
-                } => {
-                    output.push_str(&identity.canonical_name());
-                    output.push_str("#result");
+                TypeKind::OpaqueResult { arguments, .. }
+                | TypeKind::Generated { arguments, .. } => {
+                    output.push_str(rendered_name.as_deref().expect("internal type has a name"));
                     push_application(&mut output, &mut pending, &arguments);
                 }
-                TypeKind::Generated {
-                    identity,
-                    arguments,
-                } => {
-                    output.push_str("generated[");
-                    output.push_str(&json_string(identity.kind.as_str()));
-                    output.push(',');
-                    output.push_str(&json_string(identity.source_id.as_str()));
-                    output.push(',');
-                    output.push_str(&json_string(identity.module.as_str()));
-                    output.push(',');
-                    output.push_str(&json_string(identity.file.as_str()));
-                    output.push(',');
-                    output.push_str(&identity.start_byte.to_string());
-                    output.push(']');
-                    push_application(&mut output, &mut pending, &arguments);
-                }
-                TypeKind::Cursor { mode, collection } => {
-                    output.push_str("cursor[");
-                    output.push_str(mode.as_str());
-                    output.push(',');
+                TypeKind::Cursor { collection, .. } => {
+                    output.push_str(rendered_name.as_deref().expect("cursor has a name"));
                     pending.push(RenderTask::Text("]".into()));
                     pending.push(RenderTask::Type(collection, Precedence::Union));
                 }
             }
         }
         Ok(output)
+    }
+}
+
+pub(crate) fn canonical_type_name(kind: &TypeKind) -> String {
+    match kind {
+        TypeKind::Nominal { identity, .. } => identity.canonical_name(),
+        TypeKind::Intrinsic { constructor, .. } => constructor.as_str().into(),
+        TypeKind::GenericParameter(position) => format!("${position}"),
+        TypeKind::OpaqueResult { identity, .. } => format!("{}#result", identity.canonical_name()),
+        TypeKind::Generated { identity, .. } => format!(
+            "generated[{},{},{},{},{}]",
+            json_string(identity.kind.as_str()),
+            json_string(identity.source_id.as_str()),
+            json_string(identity.module.as_str()),
+            json_string(identity.file.as_str()),
+            identity.start_byte,
+        ),
+        TypeKind::Cursor { mode, .. } => format!("cursor[{},", mode.as_str()),
+        _ => unreachable!("only named type constructors reach the renderer"),
     }
 }
 
@@ -3632,6 +3681,66 @@ mod tests {
             interner
                 .first_order_independent_unifiable(&[left_union], &[right_union])
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn supplied_substitution_preserves_binders_and_unordered_unions() {
+        let mut interner = TypeInterner::default();
+        let first = interner.generic_parameter(0).unwrap();
+        let second = interner.generic_parameter(1).unwrap();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let bool_ty = interner.scalar(ScalarType::Bool);
+        assert!(
+            interner
+                .matches_substitution(first, second, &[second, first])
+                .unwrap()
+        );
+        assert!(
+            !interner
+                .matches_substitution(first, int, &[second, int])
+                .unwrap()
+        );
+        assert!(!interner.matches_substitution(second, int, &[int]).unwrap());
+        assert!(!interner.matches_substitution(first, int, &[]).unwrap());
+        let repeated = interner.tuple(vec![first, first]).unwrap();
+        let pair = interner.tuple(vec![int, int]).unwrap();
+        let mixed = interner.tuple(vec![int, string]).unwrap();
+        assert!(
+            interner
+                .matches_substitution(repeated, pair, &[int])
+                .unwrap()
+        );
+        assert!(
+            !interner
+                .matches_substitution(repeated, mixed, &[int])
+                .unwrap()
+        );
+
+        let left = interner.tuple(vec![first, int]).unwrap();
+        let right = interner.tuple(vec![second, bool_ty]).unwrap();
+        let template = interner.union([left, right]).unwrap();
+        for arguments in [vec![int, string], vec![string, int]] {
+            let actual = TypeSubstitution::new(arguments.clone())
+                .apply(&mut interner, template)
+                .unwrap();
+            assert!(
+                interner
+                    .matches_substitution(template, actual, &arguments)
+                    .unwrap()
+            );
+            let reversed = [arguments[1], arguments[0]];
+            assert!(
+                !interner
+                    .matches_substitution(template, actual, &reversed)
+                    .unwrap()
+            );
+        }
+        assert!(
+            interner
+                .matches_substitution(TypeId(u32::MAX), int, &[])
+                .is_err()
         );
     }
 

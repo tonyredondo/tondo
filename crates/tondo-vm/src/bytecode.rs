@@ -12,8 +12,8 @@ pub use disassemble::disassemble;
 pub(crate) use verify::verify_bytecode_with_trace_metadata;
 pub use verify::{
     BytecodeVerificationError, BytecodeVerificationLimits, derive_copy_capabilities,
-    derive_discard_capabilities, derive_terminal_statuses, derive_trace_metadata, verify_bytecode,
-    verify_bytecode_with_limits,
+    derive_discard_capabilities, derive_reflection_capabilities, derive_terminal_statuses,
+    derive_trace_metadata, verify_bytecode, verify_bytecode_with_limits,
 };
 
 macro_rules! index_type {
@@ -92,6 +92,56 @@ pub fn normalize_array_slice_indices(
     step: Option<i128>,
     length: usize,
 ) -> Result<Vec<usize>, ArraySliceError> {
+    normalize_array_slice(start, end, step, length).map(Iterator::collect)
+}
+
+/// A normalized slice exposes its exact length before allocating index storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArraySliceIndices {
+    next: i128,
+    step: i128,
+    remaining: usize,
+}
+
+impl ArraySliceIndices {
+    /// Consumers can traverse UTF-8 from the matching end without an index table.
+    pub fn is_reversed(&self) -> bool {
+        self.step < 0
+    }
+}
+
+impl Iterator for ArraySliceIndices {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let index = self.next as usize;
+        self.remaining -= 1;
+        // The final step may be i128::MIN/MAX. Only advance when the
+        // normalized interval proves that another in-bounds index exists.
+        if self.remaining != 0 {
+            self.next += self.step;
+        }
+        Some(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for ArraySliceIndices {}
+impl std::iter::FusedIterator for ArraySliceIndices {}
+
+/// Normalize bounds without materializing indices or changing slice semantics.
+pub fn normalize_array_slice(
+    start: Option<i128>,
+    end: Option<i128>,
+    step: Option<i128>,
+    length: usize,
+) -> Result<ArraySliceIndices, ArraySliceError> {
     let step = step.unwrap_or(1);
     if step == 0 {
         return Err(ArraySliceError::ZeroStep);
@@ -104,30 +154,23 @@ pub fn normalize_array_slice_indices(
         offset.clamp(minimum, maximum)
     };
 
-    let mut output = Vec::new();
-    if step > 0 {
-        let mut index = start.map_or(0, |value| explicit_bound(value, 0, length));
+    let (next, distance) = if step > 0 {
+        let index = start.map_or(0, |value| explicit_bound(value, 0, length));
         let end = end.map_or(length, |value| explicit_bound(value, 0, length));
-        while index < end {
-            output.push(index as usize);
-            if step >= end - index {
-                break;
-            }
-            index += step;
-        }
+        (index, (end - index).max(0))
     } else {
         let maximum = length - 1;
-        let mut index = start.map_or(maximum, |value| explicit_bound(value, -1, maximum));
+        let index = start.map_or(maximum, |value| explicit_bound(value, -1, maximum));
         let end = end.map_or(-1, |value| explicit_bound(value, -1, maximum));
-        while index > end {
-            output.push(index as usize);
-            if step.unsigned_abs() >= (index - end) as u128 {
-                break;
-            }
-            index += step;
-        }
-    }
-    Ok(output)
+        (index, (index - end).max(0))
+    };
+    let remaining = usize::try_from((distance as u128).div_ceil(step.unsigned_abs()))
+        .map_err(|_| ArraySliceError::LengthNotRepresentable)?;
+    Ok(ArraySliceIndices {
+        next,
+        step,
+        remaining,
+    })
 }
 
 #[derive(
@@ -143,6 +186,11 @@ pub struct BytecodeSpan {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BytecodeProgram {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::reflection::ReflectionTable::is_empty"
+    )]
+    pub reflection: crate::reflection::ReflectionTable,
     pub types: Vec<BytecodeType>,
     pub nominals: Vec<BytecodeNominal>,
     pub callables: Vec<BytecodeCallable>,
@@ -253,6 +301,7 @@ pub enum BytecodeScalarType {
 )]
 #[serde(deny_unknown_fields)]
 pub enum BytecodeIntrinsicType {
+    Reflection(crate::reflection::ReflectionDescriptorKind),
     Array,
     Map,
     Set,
@@ -293,13 +342,8 @@ pub enum BytecodeIntrinsicType {
     FsError,
     MathError,
     FloatTolerance,
-    FloatToleranceError,
-    TextDiff,
     TempDirectory,
-    TempError,
     Generator,
-    GenerationId,
-    GenerationError,
     Reader,
     Writer,
     IoLimits,
@@ -479,6 +523,7 @@ pub struct BytecodeTerminalContract {
 impl BytecodeIntrinsicType {
     pub const fn arity(self) -> usize {
         match self {
+            Self::Reflection(_) => 0,
             Self::Map | Self::Join | Self::Group | Self::Once | Self::Waiter | Self::Completer => 2,
             Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
             Self::Array
@@ -510,13 +555,8 @@ impl BytecodeIntrinsicType {
             | Self::FsError
             | Self::MathError
             | Self::FloatTolerance
-            | Self::FloatToleranceError
-            | Self::TextDiff
             | Self::TempDirectory
-            | Self::TempError
             | Self::Generator
-            | Self::GenerationId
-            | Self::GenerationError
             | Self::Reader
             | Self::Writer
             | Self::IoLimits
@@ -589,6 +629,7 @@ impl BytecodeIntrinsicType {
     /// status is derived from the values they own.
     pub const fn terminal_contract(self) -> Option<BytecodeTerminalContract> {
         match self {
+            Self::Reflection(_) => None,
             Self::Join => Some(BytecodeTerminalContract {
                 operation: BytecodeTerminalOperation::JoinAwait,
                 unwind: BytecodeTerminalUnwindAction::JoinTeardown,
@@ -643,13 +684,8 @@ impl BytecodeIntrinsicType {
             | Self::FsError
             | Self::MathError
             | Self::FloatTolerance
-            | Self::FloatToleranceError
-            | Self::TextDiff
             | Self::TempDirectory
-            | Self::TempError
             | Self::Generator
-            | Self::GenerationId
-            | Self::GenerationError
             | Self::Reader
             | Self::Writer
             | Self::IoLimits
@@ -761,6 +797,45 @@ pub struct BytecodeNominal {
     pub shape: BytecodeNominalShape,
 }
 
+impl BytecodeNominal {
+    /// Intrinsic text is available only for the exact standard enum schema.
+    /// Same-named user types still need their own Display implementation.
+    pub(crate) fn intrinsic_display_variants(&self) -> Option<&'static [&'static str]> {
+        if self.generic_arity != 0 {
+            return None;
+        }
+        let names: &'static [&'static str] = match (self.name.as_str(), self.identity.as_str()) {
+            (
+                "FloatToleranceError",
+                "@27:toolchain:std:0.1-bootstrap::testing::type::FloatToleranceError",
+            ) => &["Negative", "NonFinite", "Overflow"],
+            (
+                "GenerationError",
+                "@27:toolchain:std:0.1-bootstrap::testing::type::GenerationError",
+            ) => &["InvalidBounds", "LimitExceeded", "Exhausted"],
+            ("TempError", "@27:toolchain:std:0.1-bootstrap::testing::type::TempError") => &[
+                "InvalidPrefix",
+                "Unavailable",
+                "PermissionDenied",
+                "LimitExceeded",
+                "IoError",
+            ],
+            _ => return None,
+        };
+        let BytecodeNominalShape::Enum { variants } = &self.shape else {
+            return None;
+        };
+        if variants.len() != names.len()
+            || variants
+                .iter()
+                .any(|variant| variant.payload != BytecodeVariantPayload::Unit)
+        {
+            return None;
+        }
+        Some(names)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum BytecodeNominalShape {
@@ -801,6 +876,17 @@ pub struct BytecodeCallable {
     pub function_type: BytecodeTypeId,
     pub implementation: Option<BytecodeFunctionId>,
     pub closure: Option<BytecodeClosure>,
+    /// Statically selected diagnostic dispatch for the public testing helpers.
+    /// The verifier binds it to the exact helper signature and Display ABI.
+    pub assertion_display: Option<BytecodeAssertionDisplay>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BytecodeAssertionDisplay {
+    pub value_type: BytecodeTypeId,
+    /// None selects the language's intrinsic Display implementation.
+    pub callable: Option<BytecodeCallableId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1696,6 +1782,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn standard_enum_display_requires_exact_identity_and_unit_variant_schema() {
+        for (name, names) in [
+            (
+                "FloatToleranceError",
+                &["Negative", "NonFinite", "Overflow"][..],
+            ),
+            (
+                "GenerationError",
+                &["InvalidBounds", "LimitExceeded", "Exhausted"][..],
+            ),
+            (
+                "TempError",
+                &[
+                    "InvalidPrefix",
+                    "Unavailable",
+                    "PermissionDenied",
+                    "LimitExceeded",
+                    "IoError",
+                ][..],
+            ),
+        ] {
+            let nominal = BytecodeNominal {
+                name: name.into(),
+                identity: format!("@27:toolchain:std:0.1-bootstrap::testing::type::{name}"),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Enum {
+                    variants: (7..7 + names.len() as u32)
+                        .map(|member| BytecodeVariant {
+                            member,
+                            payload: BytecodeVariantPayload::Unit,
+                        })
+                        .collect(),
+                },
+            };
+            assert_eq!(nominal.intrinsic_display_variants(), Some(names));
+            for field in ["name", "identity", "arity", "shape", "count", "payload"] {
+                let mut invalid = nominal.clone();
+                match field {
+                    "name" => invalid.name = "UserError".into(),
+                    "identity" => invalid.identity = format!("@4:user::testing::type::{name}"),
+                    "arity" => invalid.generic_arity = 1,
+                    "shape" => invalid.shape = BytecodeNominalShape::Record { fields: Vec::new() },
+                    "count" | "payload" => {
+                        let BytecodeNominalShape::Enum { variants } = &mut invalid.shape else {
+                            unreachable!()
+                        };
+                        if field == "count" {
+                            variants.pop();
+                        } else {
+                            variants[0].payload = BytecodeVariantPayload::Tuple(Vec::new());
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+                assert_eq!(invalid.intrinsic_display_variants(), None, "{field}");
+            }
+        }
+    }
+
+    #[test]
     fn worker_transport_preserves_exact_numeric_and_unicode_constants() {
         for kind in [
             BytecodeConstantValueKind::Integer(i128::MIN),
@@ -1791,6 +1937,29 @@ mod tests {
             normalize_array_slice_indices(None, None, None, usize::MAX),
             Err(ArraySliceError::LengthNotRepresentable)
         );
+    }
+
+    #[test]
+    fn array_slice_indices_expose_exact_capacity_before_materialization() {
+        for (start, end, step, expected) in [
+            (None, None, None, vec![0, 1, 2, 3, 4]),
+            (None, None, Some(-2), vec![4, 2, 0]),
+            (None, Some(-1), Some(-1), vec![]),
+            (Some(-100), Some(100), Some(3), vec![0, 3]),
+            (None, None, Some(i128::MIN), vec![4]),
+            (None, None, Some(i128::MAX), vec![0]),
+        ] {
+            let mut indices = super::normalize_array_slice(start, end, step, 5).unwrap();
+            assert_eq!(indices.len(), expected.len());
+            for (position, index) in expected.iter().enumerate() {
+                let remaining = expected.len() - position;
+                assert_eq!(indices.size_hint(), (remaining, Some(remaining)));
+                assert_eq!(indices.next(), Some(*index));
+            }
+            assert_eq!(indices.len(), 0);
+            assert_eq!(indices.next(), None);
+            assert_eq!(indices.next(), None);
+        }
     }
 
     #[test]

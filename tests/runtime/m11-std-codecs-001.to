@@ -216,7 +216,7 @@ fn protobuf_unknown_fields_surface(unknown: protobuf.UnknownFields): Unit {
 }
 
 fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.JsonError | messagepack.MessagePackError | protobuf.ProtoError) {
-    console.print("42\n")
+    _ = console.print("42\n")
     let json_input = bytes.Bytes(r"""{"z":1,"a":2}""")?
     json.validate(json_input, json_decode_options())?
     let json_canonical = json.canonicalize(json_input, json_decode_options())?
@@ -460,5 +460,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
         Byte(0x12u8), Byte(0x02u8), Byte(0x6fu8), Byte(0x6bu8)
     ])?
     protobuf.validate(protobuf_input, protobuf_decode_options())?
-    console.print("codecs-ok\n")
+    _ = console.print("codecs-ok\n")
 }

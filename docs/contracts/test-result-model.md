@@ -11,7 +11,7 @@ test bodies:
 
 ## Result tree
 
-The report format is `tondo-test-report-0.1/7`. Each suite/test node has a
+The report format is `tondo-test-report-0.1/8`. Each suite/test node has a
 stable ID, parent, source metadata, owners, an aggregate status and a non-empty
 ordered list of attempts. Attempts preserve iteration, retry round and retry
 unit, causal `blocked_by`, phase, failure/skip payloads, tags, logs,

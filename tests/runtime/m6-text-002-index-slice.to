@@ -33,5 +33,5 @@ fn main() {
     assert(text[::minimum] == "\u{301}")
     assert(empty[::-1] == empty)
 
-    console.print("text-index-slice\n")
+    _ = console.print("text-index-slice\n")
 }

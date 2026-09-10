@@ -16,5 +16,5 @@ fn main() {
         assert(await pending == 40)
     }
 
-    console.print("async-closure-ok\n")
+    _ = console.print("async-closure-ok\n")
 }

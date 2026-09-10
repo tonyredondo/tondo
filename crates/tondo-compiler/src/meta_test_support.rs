@@ -9,6 +9,40 @@ use tondo_vm::bytecode::{
 
 use crate::meta_vm::MetaVmArtifact;
 
+#[cfg(test)]
+pub(crate) fn source_request(source: &str) -> crate::driver::CompilationRequest {
+    use crate::driver::{
+        BuildTarget, CompilationRequest, DiagnosticFormat, HostProfile, Operation, ResourceLimits,
+        SourceForm,
+    };
+    use crate::package::{Edition, PackageGraph};
+    use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
+    let mut sources = SourceDatabase::new();
+    let root = sources
+        .add(SourceInput::virtual_file(
+            SourceId::new("root:source-provider").unwrap(),
+            ModulePath::new("provider").unwrap(),
+            LogicalPath::new("src/provider.to").unwrap(),
+            source.as_bytes(),
+        ))
+        .unwrap();
+    let packages = PackageGraph::loose(&sources, root).unwrap();
+    CompilationRequest::new(
+        Operation::Check,
+        Edition::V0_1,
+        BuildTarget::tondo_meta(),
+        HostProfile::Meta,
+        Default::default(),
+        DiagnosticFormat::Human,
+        SourceForm::Module,
+        ResourceLimits::default(),
+        packages,
+        sources,
+        root,
+    )
+    .unwrap()
+}
+
 pub(crate) fn string_artifact(value: &str) -> MetaVmArtifact {
     let string = BytecodeTypeId::new(0);
     let function_type = BytecodeTypeId::new(1);
@@ -24,6 +58,7 @@ pub(crate) fn string_artifact(value: &str) -> MetaVmArtifact {
         source_loan: None,
     };
     let program = BytecodeProgram {
+        reflection: Default::default(),
         types: vec![
             BytecodeType {
                 name: "String".into(),
@@ -43,6 +78,7 @@ pub(crate) fn string_artifact(value: &str) -> MetaVmArtifact {
         ],
         nominals: Vec::new(),
         callables: vec![BytecodeCallable {
+            assertion_display: None,
             name: "meta_provider".into(),
             generic_arity: 0,
             parameters: Vec::new(),

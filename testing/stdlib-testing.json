@@ -216,7 +216,7 @@
     "assertion": "tondo-test-assertion-0.1/1",
     "text_diff": "tondo-test-text-diff-0.1/1",
     "generation": "tondo-test-generation-0.1/1",
-    "report_reuse": ["tondo-test-report-0.1/7", "tondo-junit-report-0.1/4"],
+    "report_reuse": ["tondo-test-report-0.1/8", "tondo-junit-report-0.1/5"],
     "new_snapshot_store": false,
     "new_junit_schema": false
   },

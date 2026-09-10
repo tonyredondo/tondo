@@ -12,10 +12,11 @@ use crate::meta::{
     MetaContractError, MetaLimits, MetaOutputSpec, MetaRequest, MetaResponse, MetaSnapshot,
     MetaSourceMapEntry, ValidatedDerive,
 };
-use crate::meta_vm::{MetaVmArtifact, MetaVmError, MetaVmLimits};
+use crate::meta_vm::{MetaEntryKind, MetaVmArtifact, MetaVmError, MetaVmLimits};
 use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
 use crate::syntax::{
-    LexLimits, LexMode, ParseLimits, ParseMode, SyntaxKind, format_parsed, lex_with_limits, parse,
+    LexLimits, LexMode, MappedFormattedSource, ParseLimits, ParseMode, SyntaxKind, TokenKind,
+    format_parsed_with_mappings, lex_with_limits, parse,
 };
 
 #[derive(Debug, Clone)]
@@ -77,8 +78,13 @@ impl DeriveProviderRegistry {
         if identity.is_empty() || identity.chars().any(char::is_control) {
             return Err(DeriveExecutionError::InvalidProviderIdentity(identity));
         }
-        if self.providers.insert(identity.clone(), provider).is_some() {
-            return Err(DeriveExecutionError::DuplicateProvider(identity));
+        match self.providers.entry(identity.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(provider);
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {
+                return Err(DeriveExecutionError::DuplicateProvider(identity));
+            }
         }
         Ok(())
     }
@@ -92,9 +98,14 @@ impl DeriveProviderRegistry {
 pub struct DeriveExecution {
     response: MetaResponse,
     providers: Vec<String>,
+    baseline_headers: Vec<String>,
 }
 
 impl DeriveExecution {
+    pub(crate) fn baseline_headers(&self) -> &[String] {
+        &self.baseline_headers
+    }
+
     pub fn response(&self) -> &MetaResponse {
         &self.response
     }
@@ -114,6 +125,18 @@ pub fn execute_derive_plan(
     snapshot: MetaSnapshot,
     limits: MetaLimits,
     registry: &DeriveProviderRegistry,
+) -> Result<DeriveExecution, DeriveExecutionError> {
+    execute_derive_plan_with_limits(plan, snapshot, limits, registry, &BTreeMap::new())
+}
+
+/// Project providers retain their individual locked budgets. The outer limit
+/// also bounds the total source admitted by the surrounding compilation.
+pub(crate) fn execute_derive_plan_with_limits(
+    plan: &[ValidatedDerive],
+    snapshot: MetaSnapshot,
+    limits: MetaLimits,
+    registry: &DeriveProviderRegistry,
+    provider_limits: &BTreeMap<String, MetaLimits>,
 ) -> Result<DeriveExecution, DeriveExecutionError> {
     let mut keys = BTreeSet::new();
     let mut outputs = Vec::new();
@@ -148,8 +171,14 @@ pub fn execute_derive_plan(
     let snapshot = request.snapshot().clone();
     let mut builder = request.into_source_builder();
     let mut providers = Vec::with_capacity(outputs.len());
+    let mut baseline_headers = Vec::with_capacity(outputs.len());
+    let mut provider_diagnostics = Vec::new();
 
     for (derive, validated_trait, path) in outputs {
+        let limits = provider_limits
+            .get(validated_trait.provider())
+            .copied()
+            .unwrap_or(limits);
         let provider = registry.get(validated_trait.provider()).ok_or_else(|| {
             DeriveExecutionError::MissingProvider(validated_trait.provider().into())
         })?;
@@ -169,52 +198,111 @@ pub fn execute_derive_plan(
                 provider: validated_trait.provider().into(),
                 message,
             })?;
-        let execution = program
-            .load(MetaVmLimits::for_request(limits))
-            .map_err(|source| DeriveExecutionError::ProviderVm {
-                provider: validated_trait.provider().into(),
-                source,
-            })?
-            .run()
-            .map_err(|source| DeriveExecutionError::ProviderVm {
-                provider: validated_trait.provider().into(),
-                source,
-            })?;
-        let VmOutcome::Returned(RuntimeValue::String(body)) = execution.outcome else {
-            return Err(DeriveExecutionError::InvalidProviderResult(
-                validated_trait.provider().into(),
-            ));
-        };
-        let body = body.trim();
         let target_type = derive_target_type(derive.target());
-        let generic_header = derive_generic_header(
-            &snapshot,
-            derive.target().module(),
-            derive.target().identity(),
-            derive.target().generic_parameters(),
-            validated_trait,
+        let generic_header = derive_generic_header(&snapshot, derive, Some(validated_trait));
+        let baseline_header = format!(
+            "impl{} {} for {}",
+            derive_generic_header(&snapshot, derive, None),
+            validated_trait.identity(),
+            target_type
         );
-        let source = format!(
-            "impl{} {} for {} {}\n",
+        let header = format!(
+            "impl{} {} for {}",
             generic_header,
             validated_trait.identity(),
             target_type,
-            body
         );
-        let source = format_single_impl(source.into_bytes())?;
-        let mappings = generated_source_mappings(
-            &snapshot,
-            derive.target().module(),
-            derive.target().identity(),
-            source.len(),
-        )?;
+        let vm_error = |source| DeriveExecutionError::ProviderVm {
+            provider: validated_trait.provider().into(),
+            source,
+        };
+        let entry_kind = program.entry_kind();
+        let program = program
+            .load(MetaVmLimits::for_request(limits))
+            .map_err(vm_error)?;
+        let (source, mappings) = match entry_kind {
+            Some(MetaEntryKind::Derive) => {
+                use crate::std_meta::source_api;
+                let request_span = derive
+                    .request_span()
+                    .ok_or(DeriveExecutionError::InvalidProviderBody)?
+                    .into();
+                let request = source_api::derive_request(
+                    &snapshot,
+                    derive.target().identity(),
+                    derive.target().module(),
+                    validated_trait.identity(),
+                    &derive.written_bounds(),
+                    request_span,
+                    limits,
+                );
+                let execution = program
+                    .run_with_request(request, |outcome| {
+                        source_api::measure_derive_output(outcome, &snapshot, limits, request_span)
+                    })
+                    .map_err(vm_error)?;
+                let response = source_api::derive_response(
+                    &execution.outcome,
+                    &snapshot,
+                    limits,
+                    request_span,
+                )
+                .map_err(vm_error)?;
+                let imports = snapshot
+                    .declarations()
+                    .iter()
+                    .flat_map(|declaration| declaration.type_references())
+                    .filter_map(|ty| {
+                        crate::meta_type::render_type(ty, derive.target().module()).ok()
+                    })
+                    .flat_map(|(_, imports)| imports)
+                    .collect::<Vec<_>>();
+                let formatted =
+                    format_impl(response.source.as_bytes(), Some(&baseline_header), &imports)?;
+                let mappings = crate::meta_source_maps::compose(
+                    response.source.as_bytes(),
+                    &formatted,
+                    &response.mappings,
+                )
+                .map_err(|_| DeriveExecutionError::InvalidProviderBody)?;
+                provider_diagnostics.extend(response.diagnostics);
+                (formatted.source().bytes().to_vec(), mappings)
+            }
+            Some(MetaEntryKind::Generate) => {
+                return Err(DeriveExecutionError::InvalidProviderResult(
+                    validated_trait.provider().into(),
+                ));
+            }
+            None => {
+                let execution = program.run().map_err(vm_error)?;
+                let VmOutcome::Returned(RuntimeValue::String(body)) = execution.outcome else {
+                    return Err(DeriveExecutionError::InvalidProviderResult(
+                        validated_trait.provider().into(),
+                    ));
+                };
+                let source = format!("{header} {}\n", body.trim());
+                let source = format_impl(source.as_bytes(), None, &[])?
+                    .source()
+                    .bytes()
+                    .to_vec();
+                let mappings = generated_source_mappings(
+                    &snapshot,
+                    derive.target().module(),
+                    derive.target().identity(),
+                    source.len(),
+                )?;
+                (source, mappings)
+            }
+        };
         builder.add_mapped_source(path, derive.target().module(), source, mappings)?;
         providers.push(validated_trait.provider().to_owned());
+        baseline_headers.push(baseline_header);
     }
 
     Ok(DeriveExecution {
-        response: builder.finish()?,
+        response: builder.finish()?.with_diagnostics(provider_diagnostics)?,
         providers,
+        baseline_headers,
     })
 }
 
@@ -233,11 +321,11 @@ fn generated_source_mappings(
     };
     let generated_end =
         u32::try_from(generated_len).map_err(|_| DeriveExecutionError::InvalidProviderBody)?;
-    Ok(vec![MetaSourceMapEntry::new(
-        0,
-        generated_end,
-        declaration.span(),
-    )?])
+    let origin = declaration
+        .origin()
+        .source_span()
+        .ok_or(DeriveExecutionError::InvalidProviderBody)?;
+    Ok(vec![MetaSourceMapEntry::new(0, generated_end, origin)?])
 }
 
 fn derive_target_type(target: &crate::meta::DeriveTarget) -> String {
@@ -254,21 +342,21 @@ fn derive_target_type(target: &crate::meta::DeriveTarget) -> String {
 
 fn derive_generic_header(
     snapshot: &MetaSnapshot,
-    module: &str,
-    identity: &str,
-    parameters: &[String],
-    validated_trait: &crate::meta::ValidatedTrait,
+    derive: &ValidatedDerive,
+    validated_trait: Option<&crate::meta::ValidatedTrait>,
 ) -> String {
+    let parameters = derive.target().generic_parameters();
     if parameters.is_empty() {
         return String::new();
     }
-    let declaration = snapshot
-        .declarations()
-        .iter()
-        .find(|declaration| declaration.module() == module && declaration.identity() == identity);
+    let declaration = snapshot.declarations().iter().find(|declaration| {
+        declaration.module() == derive.target().module()
+            && declaration.identity() == derive.target().identity()
+    });
     let binders = parameters
         .iter()
-        .map(|parameter| {
+        .enumerate()
+        .map(|(index, parameter)| {
             let mut bounds = declaration
                 .and_then(|declaration| {
                     declaration
@@ -276,12 +364,21 @@ fn derive_generic_header(
                         .iter()
                         .find(|candidate| candidate.name() == parameter)
                 })
-                .map(|parameter| parameter.bounds().to_vec())
+                .map(|parameter| parameter.source_bounds().to_vec())
                 .unwrap_or_default();
-            if validated_trait
-                .introduced_bounds()
-                .iter()
-                .any(|bound| bound == parameter)
+            bounds.extend(
+                derive
+                    .generic_bounds()
+                    .get(index)
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+            if let Some(validated_trait) = validated_trait
+                && validated_trait
+                    .introduced_bounds()
+                    .iter()
+                    .any(|bound| bound == parameter)
             {
                 bounds.push(validated_trait.identity().to_owned());
                 if derive_requires_partial_value_cleanup(validated_trait.identity()) {
@@ -313,7 +410,11 @@ fn output_path(request_index: usize, trait_index: usize) -> String {
     format!("generated/derive/{request_index:08}-{trait_index:04}.to")
 }
 
-fn format_single_impl(bytes: Vec<u8>) -> Result<Vec<u8>, DeriveExecutionError> {
+fn format_impl(
+    bytes: &[u8],
+    expected_header: Option<&str>,
+    allowed_imports: &[String],
+) -> Result<MappedFormattedSource, DeriveExecutionError> {
     let mut sources = SourceDatabase::new();
     let file = sources
         .add(SourceInput::virtual_file(
@@ -340,11 +441,44 @@ fn format_single_impl(bytes: Vec<u8>) -> Result<Vec<u8>, DeriveExecutionError> {
         return Err(DeriveExecutionError::InvalidProviderBody);
     }
     let declarations = parsed.cst().root_node().child_nodes().collect::<Vec<_>>();
-    if declarations.len() != 1 || declarations[0].kind() != SyntaxKind::ImplDecl {
+    let Some(_implementation) = declarations
+        .last()
+        .filter(|node| node.kind() == SyntaxKind::ImplDecl)
+    else {
         return Err(DeriveExecutionError::InvalidProviderBody);
+    };
+    let normalize = |text: &str| {
+        text.chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+    };
+    let allowed = allowed_imports
+        .iter()
+        .map(|text| normalize(text))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut seen = std::collections::BTreeSet::new();
+    for node in &declarations[..declarations.len() - 1] {
+        if node.kind() != SyntaxKind::ImportDecl {
+            return Err(DeriveExecutionError::InvalidProviderBody);
+        }
+        let mut import = String::new();
+        for token in node
+            .descendant_tokens()
+            .filter(|token| !token.kind().is_trivia() && token.kind() != TokenKind::Nl)
+        {
+            let range = token.range();
+            let text = std::str::from_utf8(&bytes[range.start() as usize..range.end() as usize])
+                .map_err(|_| DeriveExecutionError::InvalidProviderBody)?;
+            import.push_str(token.token().normalized_identifier().unwrap_or(text));
+        }
+        if !allowed.contains(&import) || !seen.insert(import) {
+            return Err(DeriveExecutionError::InvalidProviderBody);
+        }
     }
-    format_parsed(&sources, file, &parsed)
-        .map(|source| source.into_bytes())
+    if let Some(expected) = expected_header {
+        crate::meta_derive_bounds::introduced(bytes, expected)?;
+    }
+    format_parsed_with_mappings(&sources, file, &parsed)
         .map_err(|_| DeriveExecutionError::InvalidProviderBody)
 }
 
@@ -406,10 +540,10 @@ impl fmt::Display for DeriveExecutionError {
             }
             Self::InvalidProviderResult(provider) => write!(
                 formatter,
-                "derive provider `{provider}` did not return an impl body string"
+                "derive provider `{provider}` did not return its declared result"
             ),
             Self::InvalidProviderBody => {
-                formatter.write_str("derive provider returned an invalid impl body")
+                formatter.write_str("derive provider returned an invalid or unauthorized impl")
             }
             Self::Contract(error) => error.fmt(formatter),
         }
@@ -491,7 +625,7 @@ mod tests {
             .unwrap();
         let execution = execute_derive_plan(
             &plan(),
-            MetaSnapshot::new([], [], []).unwrap(),
+            MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap(),
             MetaLimits::new(10_000, 1024, 1024).unwrap(),
             &registry,
         )
@@ -509,7 +643,8 @@ mod tests {
 
     #[test]
     fn failure_invalid_body_and_registry_drift_publish_nothing() {
-        let snapshot = || MetaSnapshot::new([], [], []).unwrap();
+        let snapshot =
+            || MetaSnapshot::new(crate::meta::MetaEnvironment::meta(), [], [], []).unwrap();
         let limits = MetaLimits::new(10_000, 1024, 1024).unwrap();
         let empty = DeriveProviderRegistry::default();
         assert!(matches!(
