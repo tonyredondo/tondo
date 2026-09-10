@@ -2,11 +2,12 @@
 
 **Development status:** Tondo 0.1 is not published. There is one current draft;
 the bootstrap corpus is only a regression suite for implemented behavior.
-The hosted frontend and VM have executable component evidence. The 2026-09-07
-audit reopened public testing integration, general metaprogramming, runtime
-reflection and native AOT promotion; T0, S1A and N1 remain pending in the
-[implementation tracker](TONDO_IMPLEMENTATION_TRACKER.md). The compact Tondo LLM Form transport
-is specified but its codec and CLI are not implemented yet.
+The public hosted testing pipeline has renewed T0 evidence. Ordinary compiled
+metaprogramming providers and hosted runtime reflection have public conformance
+coverage. S1A and native AOT gate N1 retain their open integration prerequisites
+in the [implementation tracker](TONDO_IMPLEMENTATION_TRACKER.md); portable
+probes do not promote additional product targets. The compact Tondo LLM Form
+transport is specified but its codec and CLI are not implemented yet.
 
 **Draft conformance target:** `tondo-vm-hosted` / `hosted` /
 `[console, environment, process]`

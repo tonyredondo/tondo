@@ -1,7 +1,7 @@
 # Static test-body contract
 
-**Status:** public integration under validation; `UTEST-CHECK-001` remains open
-until the testing gate is verified.
+**Status:** ordinary compiler checking and public hosted execution are verified
+through the testing gate. The independent model retains its separate scope.
 
 `tondo_compiler::test_check` is an independent bounded model of supplied test
 body facts. Its success alone does not establish the compiler's public path.

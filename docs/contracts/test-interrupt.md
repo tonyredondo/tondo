@@ -1,7 +1,8 @@
 # External test interruption transaction
 
-**Status:** deterministic coordinator model and executable hosted CLI route;
-the reopened testing promotion remains pending.
+**Status:** deterministic coordinator model and public hosted CLI lifecycle
+verified through the joint gate. Linux process containment, Unix signal
+execution and unsupported-provider refusal retain distinct boundaries.
 
 `tondo_compiler::test_interrupt` is the coordinator/worker transaction behind
 an external test cancellation. The CLI owns OS signal registration and injects
@@ -87,9 +88,11 @@ the second request reaches both endpoints before forced teardown can reap the
 worker; single-endpoint cases use ordinary asynchronous delivery. Signal
 delivery failures remain test failures and are reported after the coordinator
 has been reaped. The subprocess case also verifies
-closed stdin and process reaping. This campaign was observed on Linux
-x86_64. Windows console events and macOS signals still require target execution
-evidence. Declared worker inputs are revoked before result publication and the
+closed stdin and process reaping. The complete campaign was observed on Linux x86_64 and ARM64.
+The macOS Intel and Apple Silicon jobs execute the applicable signal cases
+and verify refusal for the unavailable process provider. Windows console-event
+delivery remains unmeasured; its job verifies the applicable public pipeline
+and process-provider refusal. Declared worker inputs are revoked before result publication and the
 coordinator removes its private temporary root after worker reaping. Linux
 process-capable targets require the explicit delegated cgroup-v2 provider in
 `tondo-cli/src/test_processes.rs`. Before delivering sealed input, the coordinator

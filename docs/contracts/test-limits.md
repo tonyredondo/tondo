@@ -1,10 +1,10 @@
 # Finite test limits and phase deadlines
 
-**Status:** public phase deadlines, instruction accounting, VM heap/frame
-ownership, hosted byte/path/environment/synchronization ownership and evidence budgets are implemented.
-Task, scope, select and cleanup storage is also charged. Other hosted payloads
-and remaining scheduler capacity accounting remain open under
-`UTEST-LIMIT-001`.
+**Status:** public hosted phase deadlines, finite resource profiles and the
+logical ownership units below are verified through the joint testing gate.
+The profile includes VM/frame/loan storage, hosted payloads and replies,
+scheduler capacities, cleanup and evidence publication. These units describe
+accounted logical storage, not process RSS or every host allocator operation.
 
 `tondo_compiler::test_limits` models a coordinator-side resource profile
 for leaves and suite phases. Defaults are finite for work, memory,
@@ -55,7 +55,7 @@ input or advancing the hosted reader. A memory rejection preserves the cursor
 and registry identity; the existing I/O size checks keep their error precedence.
 The returned `Bytes` retains the reservation until its last host root is collected.
 Owned I/O dispatch also prepays its closed response descriptors as described
-below; general host construction remains an open boundary.
+below. Operation-specific construction admission is described separately.
 
 VM heap memory counts the existing estimated object payload sizes. Frame
 storage is also admitted before allocating its local slots and loans: 128
@@ -151,9 +151,9 @@ measurement keeps one 64-byte cursor per active parent, reserved before extendin
 its workspace. Wide collections need no per-child pending table. The same lazy
 traversal traces every detached host edge without recursion or payload copies.
 Measurement workspace is released before reserving the measured payload.
-This admission
-measures an already constructed response: host construction preflight,
-remaining host-internal pending output, and general import workspace remain open boundaries.
+Response ownership alone does not prove construction admission. The typed
+import and operation-specific protocols below account for their own workspace,
+construction and retained pending output.
 
 Owned replies now preflight their complete typed VM heap graph before building
 any child. The borrowed walk validates the verified scalar, aggregate, nominal,
@@ -233,8 +233,8 @@ the host effect. Import still validates the declared type and every child,
 rejects any exceeded bound before heap construction, transfers only actual
 String bytes and releases unused capacity. This storage envelope does not
 restrict returned values to a whitelist. Ordinary previews retain their exact
-storage checks. These File guarantees do not establish admission for the other
-filesystem entry points or close the overall T0 resource gate.
+storage checks. These File guarantees cover the owned stream route; filesystem mutation and
+query contracts retain their separately defined admission rules.
 
 Blocking argument batches use the same graph admission and iterative
 construction. The complete batch validates its slot types and payloads and
@@ -385,14 +385,14 @@ actual worker-thread reply/disconnection/error paths, and complete release.
 A compiled public test preserves channel identities when its worker result
 cannot fit. Public CLI cases transfer nested generic values through bounded
 and unbounded worker channels, forks, borrowed receive previews and final
-receiver drain. Unconverted host operations remain separate admission
-boundaries. These verified routes do not establish complete channel or T0
-accounting.
+receiver drain. Other host operations retain their operation-specific
+admission rules; a channel test alone cannot prove them.
 
-General root/metadata scratch, inline function type-argument storage, and
-combined host-effect/import admission for other operations remain open
-boundaries. Invalid-index Array.set error replies and ordinary execution outside
-test participation retain their existing admission routes. This does not close T0.
+These logical units do not measure generic root/metadata scratch or immutable
+function type-argument storage. Invalid-index Array.set errors retain their
+ordinary failure route; operations with effects use the operation-specific
+joint admission below. Execution outside test participation retains its own
+resource contract.
 
 Owned console print calls and I/O Reader/Writer calls prepay their closed response
 descriptors before consuming input or emitting bytes. `Reader.read` reserves at
@@ -429,7 +429,8 @@ copying. An exhausted cursor reserves 32 bytes. Registry kind and generation
 count are validated even for empty/exhausted cursors. Iteration order, cutoff
 and reinsertion semantics are unchanged. The resource profile binds
 `prepaid-collection-reply-value32-walk64-literal32-cursor64-96-128/2` to this
-boundary. Other host construction and combined host/VM admission remain open.
+boundary. Joint typed VM admission for mutations is described above; other
+operation families retain their own construction rules.
 
 Mutex/RwLock acquisition replies prepay 64 bytes before taking a guard;
 Semaphore acquisition prepays 32. Try-acquisition reserves 64 bytes on success
@@ -475,7 +476,8 @@ storage. Raw-host Once views prepay their optional/reference framing and
 retained payload, empty value or reentrant error. Ordinary Once initializer
 execution remains a VM continuation. The profile binds
 `prepaid-sync-construct32-64-error73-atomic-payload-once-ref64/1` to these rules.
-Other host construction and combined host/VM admission remain open.
+The shared owned-return and typed-import protocols also apply; this paragraph
+specifies the synchronization constructor and atomic response units.
 
 Direct owned channel `receive` and `tryReceive` reserve their response before
 removing a buffered value or consuming a waiting sender. The framing is 32 bytes
@@ -520,9 +522,9 @@ entrypoints remain reference access rather than the VM's owning transport.
 Cancelling a ready response reuses 64 bytes of retired request metadata for the
 cancellation envelope. The old detached value is dropped before releasing its
 payload reservation; reusable bytes replenish the request reserve so repeated
-cancellation remains bounded. Unused payload bytes are released. Remaining
-host response construction and pending-operation admission still require their
-own preflight; this ownership route alone does not close `UTEST-LIMIT-001`.
+cancellation remains bounded. Unused payload bytes are released. Response
+construction and pending-operation admission have their own preflight; the
+request ownership charge does not replace those reservations.
 
 Managed `Copy + Discard` block locals and temporaries stop being VM roots after
 their scope's defer and task drains. This includes loop `break` and `continue`
@@ -567,8 +569,9 @@ it does not reserve a second argument copy. The profile binds
 the creating phase's account through pending and ready states. Polling uses that
 account and restores the caller's account afterward; completion or cancellation
 releases the reservation when no pending or ready record remains. These values
-are included in the resource-profile hash. Remaining host snapshots and payloads
-still require separate accounting; this reservation does not claim those bytes.
+are included in the resource-profile hash. Argument snapshots, queued payloads
+and returned values retain their separate reservations; job metadata does not
+claim those bytes.
 
 A channel reserves 256 descriptor bytes, 32 per configured queue slot and 32
 per endpoint before publishing any identity. An unbounded channel reserves no
@@ -602,7 +605,8 @@ hunk and its String descriptor. The old and new descriptor vectors overlap;
 hunk string payloads move without duplication. The profile binds these units
 and `moved-hunks-overlapping-descriptors/1`. The result then belongs to ordinary
 VM value storage, without a host registry token. The complete detached return
-lifetime remains open. Rendering and assertion-message construction admit
+lifetime follows the owned-return protocol through queueing and typed import.
+Rendering and assertion-message construction admit
 their exact output size before copying any bytes, including when a caller
 constructs oversized hunks directly.
 
@@ -616,8 +620,8 @@ The resource profile binds `static-display-utf8-prefix-1024-frame-64/1` alongsid
 the hosted `utf8-prefix-1024/1` formatter. Successful assertions skip Display;
 Result assertions move their successful payload without a detached snapshot.
 A quota failure leaves the assertion terminal unpublished; the runner records
-the memory limit. This admission covers message construction, not the still-open
-general detached-value transport boundary.
+the memory limit. Message construction and the general owned detached-value
+transport protocol retain their separate reservations.
 
 When a synchronous callback exhausts a phase, its VM frames retain a caller
 continuation until structural unwind reaches the test boundary. Every function
@@ -649,8 +653,9 @@ Replacement counts non-overlapping matches without materializing output; an
 empty needle matches scalar boundaries, preserving Unicode and CR/LF bytes.
 The profile binds `exact-utf8-text-output-32/1`. Exact-budget and one-byte-short
 host checks cover construction; the public CLI also verifies Unicode results,
-non-retryable expansion exhaustion and sibling continuation. General detached
-transport lifetimes and the other text constructors remain separate open work.
+non-retryable expansion exhaustion and sibling continuation. Returned values
+retain the shared owned-transport reservation through typed VM import. These
+formulas apply to the four named text constructors.
 
 Hosted generators and float tolerances each retain one 32-byte descriptor
 charge until their last live reference is reclaimed. `GenerationId` is an
@@ -686,9 +691,9 @@ from successive discarded buffers, which are reclaimed. Concurrent blocking
 jobs also retain their live and returned buffers while temporary ones are
 collected. Concurrent collection tests cover retained/discarded values, atomic
 growth rejection, removal, duplicate admission and cross-phase ownership.
-The shared account does not yet include other hosted payloads,
-transient host snapshots or all scheduler metadata. Their existing bounded
-checks do not discharge those remaining requirements.
+These regressions establish the stated payload ownership. Snapshot transport
+and scheduler metadata have the separate units and admission protocols
+described here; one payload test does not establish those other boundaries.
 
 Task publication reserves 512 logical bytes for the retained task record and
 its fixed ready/completion/parent entries, plus 32 per captured scheduler value.
@@ -785,5 +790,6 @@ and independent process for each selected retry unit.
 The hosted public regressions also exercise structural admission for scheduler
 metadata, collections, paths, environment names, binary streams and result
 publication. Their reviewed traces belong to the testing draft layer.
-`UTEST-LIMIT-001` and T0 remain open pending the current joint gate and portable
-validation. Native AOT cleanup remains a separate integration boundary.
+The current joint gate and applicable portable validation close
+`UTEST-LIMIT-001` and T0 for this hosted resource profile. Native AOT cleanup
+remains a separate integration boundary.

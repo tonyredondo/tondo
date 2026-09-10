@@ -253,8 +253,9 @@ Conventional TOML meta discovery and locked source loading are implemented in
 the public `lock`, `run` and `test` routes. The public conformance checker requires
 observations for the complete callable and requirement table in
 [`stdlib-meta-reflect-conformance.md`](stdlib-meta-reflect-conformance.md).
-Owner promotion remains pending until the current execution report and joint
-gate pass; the table alone does not close the tracker leaves.
+The current execution report and joint gate verify this public CONF scope as
+`ordinary-tondo-meta`. The table alone cannot renew that proof for changed
+inputs. Aggregate MODEL/TEST/FUZZ and S1A retain their separate open cells.
 The manifest groups these owners under
 `[meta.dependencies]`, `[[meta.inputs]]`, `[[meta.generators]]` and
 `[[meta.derive_providers]]`.

@@ -1,7 +1,8 @@
 # Test-input materialization and revocation
 
-**Status:** public hosted environment integration under validation;
-`UTEST-INPUTS-001` and T0 remain open pending joint promotion evidence.
+**Status:** public hosted environment integration, worker revocation and
+report identity are verified through the joint testing gate. The public
+provider boundary is the explicit environment route described below.
 
 `tondo_compiler::test_inputs::TestInputPlan` remains the value-free planning
 boundary. `tondo_compiler::test_input_runtime` is the worker boundary that

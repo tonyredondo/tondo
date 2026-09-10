@@ -1,8 +1,8 @@
 # Sealed unit-overlay contract
 
-**Status:** production semantic reuse is connected to the public VM test
-pipeline. `UTEST-OVERLAY-001` remains reopened until the full testing contract,
-generated evidence and promotion checks are reconciled.
+**Status:** production semantic reuse is verified through the public hosted
+test pipeline and its source-bound draft observations. `UTEST-OVERLAY-001`
+and T0 are closed at the scope recorded in the implementation tracker.
 
 `tondo_compiler::test_overlay` models the policy boundary for a unit companion
 (`src/math_test.to`) over its production module (`src/math.to`). The production

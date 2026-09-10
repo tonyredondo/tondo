@@ -98,8 +98,9 @@ normally under the phase limits and its returned String is then copied into the
 bounded prefix. Each prefix buffer and the complete assertion message are
 admitted to the calling phase before construction. A rejected admission
 publishes a resource failure instead of a partial assertion diagnostic. The
-profile binds `static-display-utf8-prefix-1024-frame-64/1`; complete diagnostic
-transport lifetime remains part of the open T0 accounting work. Bytecode
+profile binds `static-display-utf8-prefix-1024-frame-64/1`. Diagnostic ownership
+and publication follow the shared transport and evidence accounting in
+[`test-limits.md`](test-limits.md). Bytecode
 verification rejects missing or mismatched Display metadata and nonlocal,
 asynchronous, or incorrectly typed dispatch targets.
 
@@ -184,8 +185,9 @@ and adds the truncation marker when required without changing the source record'
 `truncated` field. The other fields remain ordinary caller-supplied metadata;
 rendering observes `hunks` and `truncated`. Admission measures exact UTF-8 output
 before allocating its string and never constructs an intermediate owned diff.
-These public API and construction checks do not close the remaining detached
-transport lifetime or the complete T0 resource boundary.
+The returned value retains the shared owned-transport reservation through typed
+VM import. Construction and transport use the distinct logical units recorded
+in [`test-limits.md`](test-limits.md).
 
 ## Floats y tolerancia
 
@@ -235,8 +237,8 @@ ordinary public enum. The bridge maps the kernel's typed cause directly to
 `Negative`, `NonFinite` or `Overflow`; it does not infer a cause from diagnostic
 text. Enum construction and exhaustive matching use the normal language rules.
 An error result admits 83 logical bytes before construction and allocates no
-host registry entry. Its complete detached-transport lifetime is subject to
-the open T0 resource work. The standard enum implements `Display` with the
+host registry entry. The shared owned-return protocol accounts for its detached
+lifetime through typed VM import. The standard enum implements `Display` with the
 qualified form `FloatToleranceError.Negative` (and the corresponding variant
 name for the other causes). Qualified calls, calls through a visible `Display`
 constraint and string interpolation use that implementation. A same-named user
@@ -344,8 +346,8 @@ I/O, so diagnostic wording cannot change the selected variant. The standard
 enum's `Display` implementation produces `TempError.<Variant>`.
 
 An error result admits 73 logical bytes before construction and uses no host
-registry entry. Complete detached-transport lifetime accounting remains open
-in T0; this construction guard alone does not close that resource contract.
+registry entry. The shared owned-return protocol accounts for its detached
+lifetime through typed VM import; construction retains its separate charge.
 
 The public CLI coordinator now owns a distinct physical root for each worker
 invocation, including retries and repetitions. It passes that root separately
@@ -427,8 +429,8 @@ and record updates use the ordinary nominal rules; an identity is not a host
 registry token. `Generator.id` admits 108 logical bytes before constructing its
 detached record (three value descriptors and its type name), without advancing
 the stream or allocating a registry entry. The VM materializes that record in
-its owning phase. Complete detached-transport lifetime accounting remains part
-of the open T0 resource work; this construction check does not close that gate.
+its owning phase. The shared owned-return protocol retains the record's charge
+through queueing and typed VM import, separately from construction admission.
 
 `GenerationError` is also an ordinary public enum. `InvalidBounds` denotes an
 inverted integer range or a negative buffer bound; `LimitExceeded` denotes a

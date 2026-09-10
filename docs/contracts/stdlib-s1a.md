@@ -158,8 +158,11 @@ The live conformance lineage is `conformance/draft/manifest.json`, backed by
 Local reports belong in the selected artifact directory through
 `CARGO_TARGET_DIR` and the campaign's documented evidence override.
 
-The reviewed global line-coverage floor is 9,061 basis points (90.61%) in
-`testing/quality-baseline.json`, with zero allowed drop. Coverage, mutation,
+The current acceptance floor is 8,000 basis points (80%) for global line,
+function and region coverage, as recorded in `testing/quality-baseline.json`.
+Historical measurements remain unchanged; risk dimensions retain the lower
+of 80% and their historical threshold. Mutation requirements remain separate.
+Coverage, mutation,
 conformance, current provenance and all reopened prerequisites must pass
 before sealing S1A again. Publication additionally requires the explicit
 human decisions and checklist in section 20 of

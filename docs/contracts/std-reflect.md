@@ -95,8 +95,9 @@ rejection and result admission with complete memory release. The public
 conformance checker requires a current draft execution report for the complete
 callable and requirement table, as defined in
 [`stdlib-meta-reflect-conformance.md`](stdlib-meta-reflect-conformance.md).
-Owner promotion remains pending until that report and the joint gate pass.
-Performance measurements retain their separate boundary.
+The current report and joint gate verify public CONF with scope
+`tondo-vm-hosted-metadata`. Aggregate MODEL/TEST/FUZZ, performance measurements
+and native AOT retain their separate boundaries.
 
 The owner contract is [`testing/stdlib-reflect.json`](../../testing/stdlib-reflect.json)
 and the current cell record is maintained in
