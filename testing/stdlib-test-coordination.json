@@ -3038,147 +3038,147 @@
       "contract": "testing/stdlib-testing.json",
       "public_api": [
         {
-          "id": "std.testing:203",
+          "id": "std.testing:205",
           "symbol": "std.testing.FloatTolerance.from",
           "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:204",
+          "id": "std.testing:206",
           "symbol": "std.testing.assertFloatNear",
           "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:205",
+          "id": "std.testing:207",
           "symbol": "std.testing.assertFloat32Near",
           "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:254",
+          "id": "std.testing:256",
           "symbol": "std.testing.assertSome",
           "signature": "pub fn assertSome[T](value: T?): T",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:255",
+          "id": "std.testing:257",
           "symbol": "std.testing.assertNone",
           "signature": "pub fn assertNone[T](value: T?): Unit",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:256",
+          "id": "std.testing:258",
           "symbol": "std.testing.assertOk",
           "signature": "pub fn assertOk[T, E: Display](value: T ! E): T",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:257",
+          "id": "std.testing:259",
           "symbol": "std.testing.assertErr",
           "signature": "pub fn assertErr[T: Display, E](value: T ! E): E",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:305",
+          "id": "std.testing:307",
           "symbol": "std.testing.tempDirectory",
           "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:306",
+          "id": "std.testing:308",
           "symbol": "std.testing.TempDirectory.path",
           "signature": "pub fn TempDirectory.path(ref self): Path",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:307",
+          "id": "std.testing:309",
           "symbol": "std.testing.TempDirectory.cleanup",
           "signature": "pub fn TempDirectory.cleanup(self)",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:402",
+          "id": "std.testing:404",
           "symbol": "std.testing.Generator.new",
           "signature": "pub fn Generator.new(seed: UInt64): Generator",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:403",
+          "id": "std.testing:405",
           "symbol": "std.testing.Generator.forCase",
           "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:404",
+          "id": "std.testing:406",
           "symbol": "std.testing.Generator.id",
           "signature": "pub fn Generator.id(ref self): GenerationId",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:405",
+          "id": "std.testing:407",
           "symbol": "std.testing.Generator.drawCount",
           "signature": "pub fn Generator.drawCount(ref self): UInt64",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:406",
+          "id": "std.testing:408",
           "symbol": "std.testing.Generator.nextUInt",
           "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:407",
+          "id": "std.testing:409",
           "symbol": "std.testing.Generator.nextBool",
           "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:408",
+          "id": "std.testing:410",
           "symbol": "std.testing.Generator.nextInt",
           "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:409",
+          "id": "std.testing:411",
           "symbol": "std.testing.Generator.nextBytes",
           "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:410",
+          "id": "std.testing:412",
           "symbol": "std.testing.Generator.nextText",
           "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:413",
+          "id": "std.testing:415",
           "symbol": "std.testing.Shrink.candidates",
           "signature": "fn candidates(self, limit: Int): Array[Self] ! GenerationError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.testing:416",
+          "id": "std.testing:418",
           "symbol": "std.testing.shrink",
           "signature": "pub fn shrink[T: Shrink + Equatable](value: ref T): Array[T] ! GenerationError",
           "implementation_status": "verified",

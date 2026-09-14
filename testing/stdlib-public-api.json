@@ -13431,10 +13431,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:203",
+      "id": "std.testing:205",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 203,
+      "line": 205,
       "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError",
       "symbol": "std.testing.FloatTolerance.from",
       "operation": "from",
@@ -13481,10 +13481,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:204",
+      "id": "std.testing:206",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 204,
+      "line": 206,
       "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)",
       "symbol": "std.testing.assertFloatNear",
       "operation": "assertFloatNear",
@@ -13531,10 +13531,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:205",
+      "id": "std.testing:207",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 205,
+      "line": 207,
       "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)",
       "symbol": "std.testing.assertFloat32Near",
       "operation": "assertFloat32Near",
@@ -13581,10 +13581,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:254",
+      "id": "std.testing:256",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 254,
+      "line": 256,
       "signature": "pub fn assertSome[T](value: T?): T",
       "symbol": "std.testing.assertSome",
       "operation": "assertSome",
@@ -13631,10 +13631,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:255",
+      "id": "std.testing:257",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 255,
+      "line": 257,
       "signature": "pub fn assertNone[T](value: T?): Unit",
       "symbol": "std.testing.assertNone",
       "operation": "assertNone",
@@ -13681,10 +13681,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:256",
+      "id": "std.testing:258",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 256,
+      "line": 258,
       "signature": "pub fn assertOk[T, E: Display](value: T ! E): T",
       "symbol": "std.testing.assertOk",
       "operation": "assertOk",
@@ -13731,10 +13731,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:257",
+      "id": "std.testing:259",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 257,
+      "line": 259,
       "signature": "pub fn assertErr[T: Display, E](value: T ! E): E",
       "symbol": "std.testing.assertErr",
       "operation": "assertErr",
@@ -13781,10 +13781,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:305",
+      "id": "std.testing:307",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 305,
+      "line": 307,
       "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError",
       "symbol": "std.testing.tempDirectory",
       "operation": "tempDirectory",
@@ -13831,10 +13831,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:306",
+      "id": "std.testing:308",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 306,
+      "line": 308,
       "signature": "pub fn TempDirectory.path(ref self): Path",
       "symbol": "std.testing.TempDirectory.path",
       "operation": "path",
@@ -13881,10 +13881,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:307",
+      "id": "std.testing:309",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 307,
+      "line": 309,
       "signature": "pub fn TempDirectory.cleanup(self)",
       "symbol": "std.testing.TempDirectory.cleanup",
       "operation": "cleanup",
@@ -13931,10 +13931,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:402",
+      "id": "std.testing:404",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 402,
+      "line": 404,
       "signature": "pub fn Generator.new(seed: UInt64): Generator",
       "symbol": "std.testing.Generator.new",
       "operation": "new",
@@ -13981,10 +13981,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:403",
+      "id": "std.testing:405",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 403,
+      "line": 405,
       "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator",
       "symbol": "std.testing.Generator.forCase",
       "operation": "forCase",
@@ -14031,10 +14031,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:404",
+      "id": "std.testing:406",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 404,
+      "line": 406,
       "signature": "pub fn Generator.id(ref self): GenerationId",
       "symbol": "std.testing.Generator.id",
       "operation": "id",
@@ -14081,10 +14081,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:405",
+      "id": "std.testing:407",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 405,
+      "line": 407,
       "signature": "pub fn Generator.drawCount(ref self): UInt64",
       "symbol": "std.testing.Generator.drawCount",
       "operation": "drawCount",
@@ -14131,10 +14131,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:406",
+      "id": "std.testing:408",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 406,
+      "line": 408,
       "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError",
       "symbol": "std.testing.Generator.nextUInt",
       "operation": "nextUInt",
@@ -14181,10 +14181,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:407",
+      "id": "std.testing:409",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 407,
+      "line": 409,
       "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError",
       "symbol": "std.testing.Generator.nextBool",
       "operation": "nextBool",
@@ -14231,10 +14231,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:408",
+      "id": "std.testing:410",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 408,
+      "line": 410,
       "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError",
       "symbol": "std.testing.Generator.nextInt",
       "operation": "nextInt",
@@ -14281,10 +14281,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:409",
+      "id": "std.testing:411",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 409,
+      "line": 411,
       "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError",
       "symbol": "std.testing.Generator.nextBytes",
       "operation": "nextBytes",
@@ -14331,10 +14331,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:410",
+      "id": "std.testing:412",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 410,
+      "line": 412,
       "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError",
       "symbol": "std.testing.Generator.nextText",
       "operation": "nextText",
@@ -14381,10 +14381,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:413",
+      "id": "std.testing:415",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 413,
+      "line": 415,
       "signature": "fn candidates(self, limit: Int): Array[Self] ! GenerationError",
       "symbol": "std.testing.Shrink.candidates",
       "operation": "candidates",
@@ -14432,10 +14432,10 @@
       "declaring_trait": "Shrink"
     },
     {
-      "id": "std.testing:416",
+      "id": "std.testing:418",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 416,
+      "line": 418,
       "signature": "pub fn shrink[T: Shrink + Equatable](value: ref T): Array[T] ! GenerationError",
       "symbol": "std.testing.shrink",
       "operation": "shrink",
