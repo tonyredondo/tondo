@@ -67,7 +67,25 @@ pub(super) fn run(
 
     let object = options.temp_dir.join("source-scalars.o");
     emit_cranelift_object(cranelift_isa()?, program, &object)?;
+    let llvm = if options.llvm.as_os_str().is_empty() {
+        None
+    } else {
+        compile_llvm(
+            &options.llvm,
+            &options.target,
+            &options.temp_dir,
+            fixture,
+            program,
+        )?;
+        Some((
+            options
+                .temp_dir
+                .join(format!("{}.o", safe_stem(&fixture.fixture))),
+            command_version(&options.llvm)?,
+        ))
+    };
     let mut observations = Vec::new();
+    let mut llvm_observations = Vec::new();
     for function in &program.functions {
         if function.return_type != "Int" || function.parameter_types.iter().any(|ty| ty != "Int") {
             continue;
@@ -97,37 +115,24 @@ pub(super) fn run(
                 _ => return Err("normalized MIR and hosted VM observations disagree".into()),
             };
             let stem = format!("source-{}-{case}", function.ordinal);
-            let harness = options.temp_dir.join(format!("{stem}.c"));
-            let binary = options.temp_dir.join(format!("{stem}.bin"));
-            fs::write(&harness, harness_source(function, &arguments))
-                .map_err(|error| format!("cannot write scalar entry harness: {error}"))?;
-            // Linking fails if code generation still needs any runtime symbol.
-            link_native_runner(cc, &harness, &object, &binary)?;
-            let (status, output) = execute_case(&binary)?;
-            let observed = if let Some(expected) = expected {
-                if !status.success() {
-                    return Err(format!(
-                        "source scalar case {stem} unexpectedly failed: {status}"
-                    ));
-                }
-                let value = std::str::from_utf8(&output)
-                    .ok()
-                    .and_then(|text| text.trim().parse::<i64>().ok())
-                    .ok_or("native scalar output is not an integer")?;
-                if value != expected {
-                    return Err(format!(
-                        "source scalar case {stem} differs: native {value}, VM {expected}"
-                    ));
-                }
-                Some(value)
-            } else {
-                if !is_arithmetic_trap(status) || !output.is_empty() {
-                    return Err(format!(
-                        "source scalar case {stem} did not produce the expected arithmetic trap: {status}"
-                    ));
-                }
-                None
-            };
+            let harness = harness_source(function, &arguments);
+            let observed = observe(options, cc, &object, &stem, &harness, expected)?;
+            if let Some((object, _)) = &llvm {
+                let result = observe(
+                    options,
+                    cc,
+                    object,
+                    &format!("{stem}-llvm"),
+                    &harness,
+                    expected,
+                )?;
+                llvm_observations.push(serde_json::json!({
+                    "function_ordinal": function.ordinal,
+                    "arguments": arguments,
+                    "native_status": if result.is_some() { "returned" } else { "trapped" },
+                    "native_result": result,
+                }));
+            }
             observations.push(serde_json::json!({
                 "function_ordinal": function.ordinal,
                 "arguments": arguments,
@@ -141,7 +146,7 @@ pub(super) fn run(
     if observations.is_empty() {
         return Err("source scalar execution observed no cases".into());
     }
-    let report = serde_json::json!({
+    let mut report = serde_json::json!({
         "format": "tondo-native-source-scalars/1",
         "backend": "cranelift",
         "cranelift_version": CRANELIFT_VERSION,
@@ -154,6 +159,12 @@ pub(super) fn run(
         "probe_sha256": sha256_bytes(probe_bytes),
         "observations": observations,
     });
+    if let Some((_, version)) = llvm {
+        report["llvm_comparison"] = serde_json::json!({
+            "version": version,
+            "observations": llvm_observations,
+        });
+    }
     fs::write(
         &options.output,
         format!(
@@ -162,6 +173,46 @@ pub(super) fn run(
         ),
     )
     .map_err(|error| format!("cannot write source scalar report: {error}"))
+}
+
+fn observe(
+    options: &Options,
+    cc: &Path,
+    object: &Path,
+    stem: &str,
+    harness_source: &str,
+    expected: Option<i64>,
+) -> Result<Option<i64>, String> {
+    let harness = options.temp_dir.join(format!("{stem}.c"));
+    let binary = options.temp_dir.join(format!("{stem}.bin"));
+    fs::write(&harness, harness_source)
+        .map_err(|error| format!("cannot write scalar entry harness: {error}"))?;
+    // Linking fails if code generation still needs any runtime symbol.
+    link_native_runner(cc, &harness, object, &binary)?;
+    let (status, output) = execute_case(&binary)?;
+    if let Some(expected) = expected {
+        if !status.success() {
+            return Err(format!(
+                "source scalar case {stem} unexpectedly failed: {status}"
+            ));
+        }
+        let value = std::str::from_utf8(&output)
+            .ok()
+            .and_then(|text| text.trim().parse::<i64>().ok())
+            .ok_or("native scalar output is not an integer")?;
+        if value != expected {
+            return Err(format!(
+                "source scalar case {stem} differs: native {value}, VM {expected}"
+            ));
+        }
+        Ok(Some(value))
+    } else if is_arithmetic_trap(status) && output.is_empty() {
+        Ok(None)
+    } else {
+        Err(format!(
+            "source scalar case {stem} did not produce the expected arithmetic trap: {status}"
+        ))
+    }
 }
 
 fn harness_source(function: &MirBackendFunction, arguments: &[i64]) -> String {

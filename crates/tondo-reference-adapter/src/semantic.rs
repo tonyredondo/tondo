@@ -2756,7 +2756,7 @@ fn mir_loan_kind_name(kind: MirLoanKind) -> &'static str {
 fn mir_local_kind_name(kind: MirLocalKind) -> String {
     match kind {
         MirLocalKind::Return => "return".into(),
-        MirLocalKind::Parameter { index, source } => format!(
+        MirLocalKind::Parameter { index, source, .. } => format!(
             "parameter:{index}:{}",
             if source.is_some() {
                 "source"
@@ -3051,6 +3051,7 @@ mod tests {
             mir_local_kind_name(MirLocalKind::Parameter {
                 index: 3,
                 source: None,
+                mode: ParameterMode::Value,
             }),
             "parameter:3:synthetic"
         );

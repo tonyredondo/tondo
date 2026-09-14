@@ -135,7 +135,28 @@ pub fn lower_to_mir(
         .lower(closure.body().root())?;
         functions.insert(MirFunctionId::Closure(closure.id()), function);
     }
-    let program = MirProgram { functions };
+    let record_fields = hir
+        .declarations()
+        .filter_map(|(_, declaration)| {
+            let crate::hir::HirTypeDeclarationKind::Nominal(nominal) = declaration.kind() else {
+                return None;
+            };
+            let HirNominalShape::Record { fields } = nominal.shape() else {
+                return None;
+            };
+            Some((
+                nominal.self_type(),
+                fields
+                    .iter()
+                    .map(|field| (field.member(), field.ty()))
+                    .collect(),
+            ))
+        })
+        .collect();
+    let program = MirProgram {
+        functions,
+        record_fields,
+    };
     let verification = if let Some(capability_analysis) = capability_analysis.as_ref() {
         verify_mir_with_capability_analysis(
             resolved,
@@ -319,6 +340,7 @@ impl<'a> FunctionBuilder<'a> {
                 MirLocalKind::Parameter {
                     index: index as u32,
                     source: parameter.local(),
+                    mode: parameter.mode(),
                 },
             )?;
             builder.parameters.push(local);
@@ -401,6 +423,7 @@ impl<'a> FunctionBuilder<'a> {
             MirLocalKind::Parameter {
                 index: 0,
                 source: None,
+                mode: ParameterMode::Value,
             },
         )?;
         builder.parameters.push(environment);
@@ -436,6 +459,7 @@ impl<'a> FunctionBuilder<'a> {
                 MirLocalKind::Parameter {
                     index: parameter_index,
                     source: parameter.local(),
+                    mode: parameter.mode(),
                 },
             )?;
             builder.parameters.push(local);
@@ -8743,7 +8767,8 @@ mod tests {
                     local.kind,
                     MirLocalKind::Parameter {
                         index: 0,
-                        source: Some(_)
+                        source: Some(_),
+                        ..
                     }
                 )
             })

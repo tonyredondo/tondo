@@ -6533,8 +6533,6 @@ fn main(): !env.EnvError {
             "fn inspectValue(): Int {\n let pair = (1.5, 2)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair: (Int8, Int8) = (1, 2)\n Int(pair.0)\n}",
             "fn inspectValue(): Int {\n let pair = ([1, 2], 3)\n pair.1\n}",
-            "fn inspectValue(pair: (Int, Int)): Int { pair.0 }",
-            "fn inspectValue(): (Int, Int) { (1, 2) }",
         ] {
             let source = format!("{source}\nfn main() {{}}\n");
             let output = execute(operation_request(
@@ -6709,14 +6707,15 @@ fn main() {
     }
 
     #[test]
-    fn native_records_reject_managed_fields_whole_value_operations_and_call_abi() {
+    fn native_records_reject_managed_fields_whole_value_operations_and_loans() {
         for source in [
-            "fn inspectValue(point: Point): Int { point.x }",
-            "fn inspectValue(): Point { Point { x: 1, y: 2 } }",
             "fn inspectValue(): Int {\n let point = Point { x: 1, y: 2 }\n if point == point { 1 } else { 0 }\n}",
             "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
             "type Narrow = { value: Int8 }\nfn inspectValue(): Int {\n let narrow = Narrow { value: 1 }\n Int(narrow.value)\n}",
             "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",
+            "fn inspectValue(point: ref Point): Int { point.x }",
+            "fn inspectValue(point: mut Point): Int { 1 }",
+            "fn inspectValue(point: var Point): Int {\n point = Point { x: 3, y: 4 }\n point.x\n}",
         ] {
             let source = format!("type Point = {{ x: Int, y: Int }}\n{source}\nfn main() {{}}\n");
             let output = execute(operation_request(
@@ -6751,6 +6750,141 @@ fn main() {
                 !function.supported,
                 "unimplemented record operation admitted: {source}"
             );
+        }
+    }
+
+    #[test]
+    fn native_aggregate_calls_preserve_nested_values_and_return_control_flow() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-aggregate-calls.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        assert!(
+            backend
+                .functions
+                .iter()
+                .any(|function| function.return_fields.len() == 4)
+        );
+        assert!(
+            backend
+                .functions
+                .iter()
+                .any(|function| function.parameter_types.len() < function.parameters.len())
+        );
+        for function in &backend.functions {
+            assert!(
+                function.supported,
+                "{}: {:?}",
+                function.ordinal, function.unsupported
+            );
+            for block in &function.blocks {
+                if let crate::mir::MirBackendTerminator::CallAggregate {
+                    function,
+                    arguments,
+                    destinations,
+                    target,
+                } = &block.terminator
+                {
+                    let callee = backend
+                        .functions
+                        .iter()
+                        .find(|callee| callee.ordinal == *function)
+                        .unwrap();
+                    assert_eq!(arguments.len(), callee.parameters.len());
+                    assert_eq!(destinations.len(), callee.return_fields.len());
+                    assert!(target.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_record_parameters_use_declared_layout_without_a_constructor() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"type Point = { x: Int, y: Int }\n\
+              fn read(point: Point): Int { point.x }\n\
+              fn identity(point: Point): Point { point }\n\
+              fn first(pair: (Int, Int)): Int { pair.0 }\n\
+              fn make(): (Int, Int) { (1, 2) }\n\
+              fn main() {}\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        for function in &output
+            .mir_summary()
+            .unwrap()
+            .backend
+            .as_ref()
+            .unwrap()
+            .functions
+        {
+            assert!(
+                function.supported,
+                "{}: {:?}",
+                function.ordinal, function.unsupported
+            );
+        }
+    }
+
+    #[test]
+    fn native_aggregate_calls_keep_generic_functions_and_async_storage_unadmitted() {
+        for source in [
+            "fn identity[T: Copy](pair: (T, T)): (T, T) { pair }\nfn inspectValue(): Int { identity((1, 2)).0 }",
+            "fn first(pair: (Int, Int)): Int suspends { pair.0 }\nfn inspectValue(): Int {\n scope {\n let work = spawn first((1, 2))\n await work\n}\n}",
+            "fn first(pair: (Int, Int)): Int suspends { pair.0 }\nfn inspectValue(): Int { first((1, 2)) }",
+        ] {
+            let source = format!("{source}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{source}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let ordinal = backend
+                .debug
+                .as_ref()
+                .unwrap()
+                .symbols
+                .iter()
+                .find(|symbol| symbol.name.ends_with("::value::inspectValue"))
+                .unwrap()
+                .function;
+            let function = backend
+                .functions
+                .iter()
+                .find(|function| function.ordinal == ordinal)
+                .unwrap();
+            assert!(
+                !function.supported,
+                "unsupported source was admitted: {source}"
+            );
+            assert!(!function.unsupported.is_empty());
         }
     }
 

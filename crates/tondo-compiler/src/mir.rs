@@ -82,6 +82,9 @@ impl From<MirInvariantError> for MirError {
 #[derive(Debug)]
 pub struct MirProgram {
     functions: BTreeMap<MirFunctionId, MirFunction>,
+    // Typed declaration facts, retained before HIR is discarded. Generic
+    // constructor instances supply their concrete field types separately.
+    record_fields: native_aggregates::RecordFields,
 }
 
 impl MirProgram {
@@ -629,13 +632,16 @@ pub struct MirBackendExecutionIdentity {
 pub struct MirBackendFunction {
     pub ordinal: u32,
     pub parameters: Vec<u32>,
-    /// Canonical source types for parameters.  Native lowering uses these
-    /// only to select the private ABI carrier; they are not a public layout
-    /// promise.
+    /// Canonical source parameter types before aggregate flattening. The
+    /// parameter locals enumerate scalar ABI carriers, not source arity.
     #[serde(default)]
     pub parameter_types: Vec<String>,
     pub return_local: u32,
     pub return_type: String,
+    /// Scalar locals returned through private caller-owned aggregate storage.
+    /// Empty for the existing single-carrier return convention.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub return_fields: Vec<u32>,
     pub blocks: Vec<MirBackendBlock>,
     pub supported: bool,
     pub unsupported: Vec<String>,
@@ -773,6 +779,14 @@ pub enum MirBackendConstant {
 #[serde(deny_unknown_fields)]
 pub enum MirBackendTerminator {
     Return,
+    /// A direct value-aggregate call. All result fields become available only
+    /// on the normal successor after the callee has completed.
+    CallAggregate {
+        function: u32,
+        arguments: Vec<MirBackendOperand>,
+        destinations: Vec<u32>,
+        target: Option<u32>,
+    },
     Goto {
         target: u32,
     },
@@ -869,29 +883,52 @@ fn backend_function(
     let mut unsupported = Vec::new();
     let function_values = backend_function_values(function, callable_ordinals);
     let normalized = match native_aggregates::lower(function, interner, records) {
-        Ok(blocks) => blocks,
+        Ok(lowered) => lowered,
         Err(reason) => {
             unsupported.push(reason.to_owned());
-            function.blocks.clone()
+            native_aggregates::LoweredFunction::unchanged(function)
         }
     };
     let blocks = normalized
+        .blocks
         .iter()
         .enumerate()
         .map(|(block_id, block)| {
-            backend_block(
+            let mut lowered = backend_block(
                 block_id as u32,
                 block,
                 interner,
                 &mut unsupported,
                 callable_ordinals,
                 &function_values,
-            )
+            );
+            if let Some(destinations) = normalized.call_destinations.get(&(block_id as u32)) {
+                if let MirBackendTerminator::Invoke {
+                    operation:
+                        MirBackendOperation::Call {
+                            function,
+                            arguments,
+                        },
+                    target,
+                    ..
+                } = lowered.terminator
+                {
+                    lowered.terminator = MirBackendTerminator::CallAggregate {
+                        function,
+                        arguments,
+                        destinations: destinations.clone(),
+                        target,
+                    };
+                } else {
+                    unsupported.push("aggregate:call-protocol".to_owned());
+                }
+            }
+            lowered
         })
         .collect::<Vec<_>>();
     validate_backend_control_flow(&blocks, &mut unsupported);
     let return_type = backend_type_name(interner, function.outcome());
-    if !is_native_carrier_type(&return_type) {
+    if normalized.return_fields.is_empty() && !is_native_carrier_type(&return_type) {
         unsupported.push(format!("return-type:{return_type}"));
     }
     let parameter_types = function
@@ -904,8 +941,10 @@ fn backend_function(
                 .unwrap_or_else(|| "missing".to_owned())
         })
         .collect::<Vec<_>>();
-    for parameter_type in &parameter_types {
-        if !is_native_carrier_type(parameter_type) {
+    for (parameter, parameter_type) in function.parameters().iter().zip(&parameter_types) {
+        if !normalized.aggregate_parameters.contains(&parameter.index())
+            && !is_native_carrier_type(parameter_type)
+        {
             unsupported.push(format!("parameter-type:{parameter_type}"));
         }
     }
@@ -913,10 +952,11 @@ fn backend_function(
     unsupported.dedup();
     MirBackendFunction {
         ordinal,
-        parameters: function.parameters().iter().map(|id| id.index()).collect(),
+        parameters: normalized.parameters,
         parameter_types,
         return_local: function.return_local().index(),
         return_type,
+        return_fields: normalized.return_fields,
         blocks,
         supported: unsupported.is_empty(),
         unsupported,
@@ -926,35 +966,54 @@ fn backend_function(
 fn validate_backend_call_targets(functions: &mut [MirBackendFunction]) {
     let targets = functions
         .iter()
-        .map(|function| (function.ordinal, function.parameters.len()))
+        .map(|function| {
+            (
+                function.ordinal,
+                (function.parameters.len(), function.return_fields.len()),
+            )
+        })
         .collect::<BTreeMap<_, _>>();
     let mut callers = BTreeMap::<u32, BTreeSet<usize>>::new();
     for (index, function) in functions.iter_mut().enumerate() {
         let mut reasons = Vec::new();
         for block in &function.blocks {
-            let MirBackendTerminator::Invoke { operation, .. } = &block.terminator else {
-                continue;
+            let (target, arguments, result_width) = match &block.terminator {
+                MirBackendTerminator::CallAggregate {
+                    function,
+                    arguments,
+                    destinations,
+                    ..
+                } => (function, arguments, destinations.len()),
+                MirBackendTerminator::Invoke { operation, .. } => {
+                    let mut operation = operation;
+                    while let MirBackendOperation::Spawn {
+                        operation: body, ..
+                    } = operation
+                    {
+                        operation = body;
+                    }
+                    let MirBackendOperation::Call {
+                        function,
+                        arguments,
+                    } = operation
+                    else {
+                        continue;
+                    };
+                    (function, arguments, 0)
+                }
+                _ => continue,
             };
-            let mut operation = operation;
-            while let MirBackendOperation::Spawn {
-                operation: body, ..
-            } = operation
-            {
-                operation = body;
-            }
-            let MirBackendOperation::Call {
-                function: target,
-                arguments,
-            } = operation
-            else {
-                continue;
-            };
-            let Some(arity) = targets.get(target).copied() else {
+            let Some((arity, returned_fields)) = targets.get(target).copied() else {
                 reasons.push(format!("call-target-missing:{target}"));
                 continue;
             };
             if arguments.len() != arity {
                 reasons.push(format!("call-arity:{target}:{}:{arity}", arguments.len()));
+            }
+            if result_width != returned_fields {
+                reasons.push(format!(
+                    "call-result-shape:{target}:{result_width}:{returned_fields}"
+                ));
             }
             callers.entry(*target).or_default().insert(index);
         }
@@ -1370,7 +1429,8 @@ fn validate_backend_control_flow(blocks: &[MirBackendBlock], unsupported: &mut V
                 .map(|(_, target)| *target)
                 .chain(std::iter::once(*otherwise))
                 .collect(),
-            MirBackendTerminator::Invoke { target, .. } => {
+            MirBackendTerminator::Invoke { target, .. }
+            | MirBackendTerminator::CallAggregate { target, .. } => {
                 if target.is_none() {
                     unsupported.push("control-flow:invoke-without-target".to_owned());
                 }
@@ -2398,7 +2458,11 @@ impl MirLocal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirLocalKind {
     Return,
-    Parameter { index: u32, source: Option<LocalId> },
+    Parameter {
+        index: u32,
+        source: Option<LocalId>,
+        mode: ParameterMode,
+    },
     User(LocalId),
     Temporary,
 }
@@ -3108,6 +3172,7 @@ mod tests {
     fn empty_mir_summary_is_deterministic_and_serializable() {
         let program = MirProgram {
             functions: BTreeMap::new(),
+            record_fields: BTreeMap::new(),
         };
         let summary = program.summary();
         assert_eq!(summary, MirSummary::default());
@@ -3146,6 +3211,7 @@ mod tests {
         };
         let program = MirProgram {
             functions: BTreeMap::from([(function.id, function)]),
+            record_fields: BTreeMap::new(),
         };
         let backend = program.backend_program(&interner);
         let debug = backend
@@ -3191,6 +3257,7 @@ mod tests {
             .unwrap();
         let program = MirProgram {
             functions: BTreeMap::new(),
+            record_fields: BTreeMap::new(),
         };
         let (inventory, ordinals) = backend_source_inventory(&program, Some(&sources));
         assert_eq!(inventory[0].module, "alpha");
@@ -3472,7 +3539,7 @@ mod tests {
             );
             assert!(!unsupported.is_empty());
         }
-        #[rustfmt::skip] let mut functions = vec![MirBackendFunction { ordinal: 0, parameters: Vec::new(), parameter_types: Vec::new(), return_local: 0, return_type: "Int".to_owned(), blocks: vec![MirBackendBlock { ordinal: 0, kind: "normal".to_owned(), statements: Vec::new(), terminator: MirBackendTerminator::Invoke { operation: MirBackendOperation::Call { function: 99, arguments: Vec::new() }, destination: None, target: Some(0) } }], supported: true, unsupported: Vec::new() }];
+        #[rustfmt::skip] let mut functions = vec![MirBackendFunction { ordinal: 0, parameters: Vec::new(), parameter_types: Vec::new(), return_local: 0, return_type: "Int".to_owned(), return_fields: Vec::new(), blocks: vec![MirBackendBlock { ordinal: 0, kind: "normal".to_owned(), statements: Vec::new(), terminator: MirBackendTerminator::Invoke { operation: MirBackendOperation::Call { function: 99, arguments: Vec::new() }, destination: None, target: Some(0) } }], supported: true, unsupported: Vec::new() }];
         validate_backend_call_targets(&mut functions);
         #[rustfmt::skip]
         assert_eq!(functions[0].unsupported, vec!["call-target-missing:99".to_owned()]);

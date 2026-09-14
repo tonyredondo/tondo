@@ -1004,7 +1004,7 @@ impl Verifier<'_> {
                     signature
                         .parameters()
                         .iter()
-                        .map(|parameter| (parameter.ty(), parameter.local()))
+                        .map(|parameter| (parameter.ty(), parameter.local(), parameter.mode()))
                         .collect::<Vec<_>>(),
                 )
             }
@@ -1024,12 +1024,12 @@ impl Verifier<'_> {
                     ));
                 };
                 let mut parameters = Vec::with_capacity(closure.parameters().len() + 1);
-                parameters.push((closure.ty(), None));
+                parameters.push((closure.ty(), None, ParameterMode::Value));
                 parameters.extend(
                     closure
                         .parameters()
                         .iter()
-                        .map(|parameter| (parameter.ty(), parameter.local())),
+                        .map(|parameter| (parameter.ty(), parameter.local(), parameter.mode())),
                 );
                 (signature.outcome(), parameters)
             }
@@ -1065,7 +1065,7 @@ impl Verifier<'_> {
             ));
         }
         let mut parameter_locals = BTreeSet::new();
-        for (index, (local_id, (expected_type, expected_source))) in function
+        for (index, (local_id, (expected_type, expected_source, expected_mode))) in function
             .parameters
             .iter()
             .zip(&expected_parameters)
@@ -1083,6 +1083,7 @@ impl Verifier<'_> {
                     != (MirLocalKind::Parameter {
                         index: index as u32,
                         source: *expected_source,
+                        mode: *expected_mode,
                     })
             {
                 return Err(MirInvariantError::new(
@@ -14488,6 +14489,7 @@ mod tests {
             function.locals[temporary].kind = MirLocalKind::Parameter {
                 index: 99,
                 source: None,
+                mode: ParameterMode::Value,
             };
         });
         assert!(
@@ -14497,6 +14499,23 @@ mod tests {
 
         const LOAN_SOURCE: &str = "fn observe(value: ref Int): Int { value }\n\
              fn use(value: Int): Int { observe(ref value) }\n";
+        let error = corrupted_mir(LOAN_SOURCE, |resolved, _hir, mir| {
+            let observe = MirFunctionId::Callable(callable_named(resolved, "observe"));
+            let function = mir.functions.get_mut(&observe).unwrap();
+            let parameter = function.parameters[0];
+            let MirLocalKind::Parameter { mode, .. } =
+                &mut function.locals[parameter.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            *mode = ParameterMode::Value;
+        });
+        assert!(
+            error
+                .message()
+                .contains("local metadata does not match typed HIR"),
+            "{error}"
+        );
         let error = corrupted_mir(LOAN_SOURCE, |resolved, _hir, mir| {
             let use_function = MirFunctionId::Callable(callable_named(resolved, "use"));
             mir.functions.get_mut(&use_function).unwrap().loans[0].mode = ParameterMode::Value;

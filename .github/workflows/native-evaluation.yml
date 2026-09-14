@@ -103,6 +103,7 @@ jobs:
             target/reliability/evidence/native-evaluation-runner.json
             target/reliability/evidence/native-source-scalars.json
             target/reliability/evidence/native-source-records.json
+            target/reliability/evidence/native-source-calls.json
             target/reliability/evidence/native-aot-quality.json
             target/reliability/evidence/native-aot-performance.json
             target/reliability/evidence/native-conf.json

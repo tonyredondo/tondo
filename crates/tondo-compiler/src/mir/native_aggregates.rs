@@ -1,4 +1,4 @@
-//! Scalar storage for local value aggregates, before backend serialization.
+//! Scalar storage and private call carriers for value aggregates.
 //! Only Int/Bool leaves are admitted. The verified source MIR is immutable;
 //! copies and projected replacements snapshot every RHS leaf before any write.
 
@@ -13,7 +13,7 @@ const MAX_LAYOUT_DEPTH: u32 = 64;
 pub(super) type RecordFields = BTreeMap<TypeId, Vec<(MemberId, TypeId)>>;
 
 pub(super) fn record_fields(program: &MirProgram) -> RecordFields {
-    let mut records = BTreeMap::new();
+    let mut records = program.record_fields.clone();
     for function in program.functions() {
         for block in &function.blocks {
             for statement in &block.statements {
@@ -139,6 +139,26 @@ struct NativeLocals {
 
 type LowerResult<T> = Result<T, &'static str>;
 
+pub(super) struct LoweredFunction {
+    pub blocks: Vec<MirBasicBlock>,
+    pub parameters: Vec<u32>,
+    pub aggregate_parameters: BTreeSet<u32>,
+    pub return_fields: Vec<u32>,
+    pub call_destinations: BTreeMap<u32, Vec<u32>>,
+}
+
+impl LoweredFunction {
+    pub fn unchanged(function: &MirFunction) -> Self {
+        Self {
+            blocks: function.blocks.clone(),
+            parameters: function.parameters.iter().map(|id| id.index()).collect(),
+            aggregate_parameters: BTreeSet::new(),
+            return_fields: Vec::new(),
+            call_destinations: BTreeMap::new(),
+        }
+    }
+}
+
 fn scalar_place(index: u32, ty: TypeId) -> MirPlace {
     MirPlace {
         local: MirLocalId(index),
@@ -152,7 +172,7 @@ pub(super) fn lower(
     function: &MirFunction,
     interner: &TypeInterner,
     records: &RecordFields,
-) -> LowerResult<Vec<MirBasicBlock>> {
+) -> LowerResult<LoweredFunction> {
     let next = u32::try_from(function.locals.len()).map_err(|_| "aggregate:local-limit")?;
     let mut locals = NativeLocals {
         storage: BTreeMap::new(),
@@ -170,11 +190,29 @@ pub(super) fn lower(
         let first = locals.allocate(layout.width)?;
         locals.storage.insert(index as u32, (first, layout));
     }
-    let mut blocks = function.blocks.clone();
-    if locals.storage.is_empty() {
-        return Ok(blocks);
+    let mut lowered = LoweredFunction::unchanged(function);
+    lowered.parameters.clear();
+    for parameter in &function.parameters {
+        if let Some((first, layout)) = locals.storage.get(&parameter.index()) {
+            if !matches!(
+                function.locals[parameter.index() as usize].kind,
+                MirLocalKind::Parameter {
+                    mode: ParameterMode::Value,
+                    ..
+                }
+            ) {
+                return Err("aggregate:parameter-mode");
+            }
+            lowered.parameters.extend(*first..*first + layout.width);
+            lowered.aggregate_parameters.insert(parameter.index());
+        } else {
+            lowered.parameters.push(parameter.index());
+        }
     }
-    for block in &mut blocks {
+    if let Some((first, layout)) = locals.storage.get(&function.return_local.index()) {
+        lowered.return_fields.extend(*first..*first + layout.width);
+    }
+    for (block_index, block) in lowered.blocks.iter_mut().enumerate() {
         let mut statements = Vec::new();
         for mut statement in std::mem::take(&mut block.statements) {
             if let MirStatementKind::Assign { destination, value } = &mut statement.kind {
@@ -214,9 +252,34 @@ pub(super) fn lower(
             statements.push(statement);
         }
         block.statements = statements;
+        if let MirTerminatorKind::Invoke {
+            operation,
+            destination,
+            ..
+        } = &mut block.terminator.kind
+            && matches!(operation.kind, MirOperationKind::Call { .. })
+            && let Some(layout) = Layout::build(operation.ty, interner, records, &mut cache, 0)
+            && !layout.children.is_empty()
+        {
+            let first = if let Some(place) = destination.as_ref() {
+                let (first, actual) = locals.resolve(place)?.ok_or("aggregate:call-destination")?;
+                if actual.ty != layout.ty {
+                    return Err("aggregate:call-result-type");
+                }
+                first
+            } else {
+                // Even a discarded result needs private storage until the
+                // callee completes. It never aliases any argument's fields.
+                locals.allocate(layout.width)?
+            };
+            lowered
+                .call_destinations
+                .insert(block_index as u32, (first..first + layout.width).collect());
+            *destination = None;
+        }
         locals.terminator(&mut block.terminator.kind)?;
     }
-    Ok(blocks)
+    Ok(lowered)
 }
 
 fn assign(span: Span, destination: u32, operand: MirOperand) -> MirStatement {
@@ -390,7 +453,7 @@ impl NativeLocals {
         Ok(())
     }
 
-    fn operation(&self, operation: &mut MirOperation) -> LowerResult<()> {
+    fn operation(&self, operation: &mut MirOperation, direct: bool) -> LowerResult<()> {
         match &mut operation.kind {
             MirOperationKind::CheckedPrefix { operand, .. }
             | MirOperationKind::ExplicitPanic { message: operand } => self.operand(operand)?,
@@ -427,8 +490,58 @@ impl NativeLocals {
                 callee, arguments, ..
             } => {
                 self.operand(callee)?;
-                for argument in arguments {
-                    self.operand(&mut argument.value)?;
+                let mut has_aggregate = false;
+                for argument in arguments.iter() {
+                    if let MirOperandKind::Copy(place)
+                    | MirOperandKind::Move(place)
+                    | MirOperandKind::Borrow(place) = &argument.value.kind
+                        && let Some((_, layout)) = self.resolve(place)?
+                        && !layout.children.is_empty()
+                    {
+                        has_aggregate = true;
+                        break;
+                    }
+                }
+                if has_aggregate {
+                    if !direct {
+                        return Err("aggregate:async-call-storage");
+                    }
+                    // MIR has already evaluated expressions in source order.
+                    // Assign the resulting carriers in declared parameter order.
+                    let mut ordered = BTreeMap::new();
+                    for argument in arguments.iter() {
+                        let HirCallArgumentTarget::Fixed(index) = argument.target else {
+                            return Err("aggregate:call-argument-target");
+                        };
+                        if argument.mode != ParameterMode::Value
+                            || matches!(argument.value.kind, MirOperandKind::Borrow(_))
+                        {
+                            return Err("aggregate:call-argument-mode");
+                        }
+                        if ordered.insert(index, argument).is_some() {
+                            return Err("aggregate:call-argument-duplicate");
+                        }
+                    }
+                    let mut flattened = Vec::new();
+                    for (expected, (index, argument)) in ordered.into_iter().enumerate() {
+                        if index as usize != expected {
+                            return Err("aggregate:call-argument-noncontiguous");
+                        }
+                        for value in self.values(&argument.value)? {
+                            let index = u32::try_from(flattened.len())
+                                .map_err(|_| "aggregate:call-argument-limit")?;
+                            flattened.push(MirCallArgument {
+                                mode: argument.mode,
+                                target: HirCallArgumentTarget::Fixed(index),
+                                value,
+                            });
+                        }
+                    }
+                    *arguments = flattened;
+                } else {
+                    for argument in arguments {
+                        self.operand(&mut argument.value)?;
+                    }
                 }
             }
             MirOperationKind::Assert {
@@ -478,7 +591,7 @@ impl NativeLocals {
                 destination,
                 ..
             } => {
-                self.operation(operation)?;
+                self.operation(operation, true)?;
                 if let Some(destination) = destination {
                     self.place(destination)?;
                 }
@@ -489,7 +602,7 @@ impl NativeLocals {
                 ..
             } => {
                 match awaitable {
-                    MirAwaitable::Call(operation) => self.operation(operation)?,
+                    MirAwaitable::Call(operation) => self.operation(operation, false)?,
                     MirAwaitable::Join(value) => self.operand(value)?,
                 }
                 self.place(destination)?;
@@ -499,7 +612,7 @@ impl NativeLocals {
                 destination,
                 ..
             } => {
-                self.operation(operation)?;
+                self.operation(operation, false)?;
                 self.place(destination)?;
             }
             MirTerminatorKind::ValidatePlaces {

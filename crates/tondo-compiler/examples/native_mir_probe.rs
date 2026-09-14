@@ -144,7 +144,11 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
             backend
                 .functions
                 .iter()
-                .filter(|function| function.supported && function.return_type == "Int")
+                .filter(|function| {
+                    function.supported
+                        && function.return_type == "Int"
+                        && function.parameter_types.iter().all(|ty| ty == "Int")
+                })
                 .flat_map(|function| {
                     scalar_case_arguments_for_function(function)
                         .into_iter()
@@ -495,7 +499,8 @@ fn backend_terminator_successors(
             .map(|(_, target)| *target)
             .chain(std::iter::once(*otherwise))
             .collect(),
-        tondo_compiler::mir::MirBackendTerminator::Invoke { target, .. } => {
+        tondo_compiler::mir::MirBackendTerminator::Invoke { target, .. }
+        | tondo_compiler::mir::MirBackendTerminator::CallAggregate { target, .. } => {
             target.iter().copied().collect()
         }
     }

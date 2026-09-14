@@ -18,7 +18,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use cranelift_codegen::ir::{
-    AbiParam, Block, FuncRef, Function, InstBuilder, Signature, TrapCode, UserFuncName, Value,
+    AbiParam, Block, FuncRef, Function, InstBuilder, MemFlags, Signature, StackSlotData,
+    StackSlotKind, TrapCode, UserFuncName, Value,
     condcodes::IntCC,
 };
 use cranelift_codegen::settings::{self, Configurable};
@@ -35,6 +36,7 @@ const REPETITIONS: usize = 3;
 const MAX_FUNCTIONS: u64 = 256;
 const MAX_ORACLE_STEPS: usize = 100_000;
 const MAX_ORACLE_CALL_DEPTH: usize = 256;
+const MAX_AGGREGATE_RETURN_FIELDS: usize = 65_536;
 const MAX_NATIVE_CASE_RUNTIME: Duration = Duration::from_secs(2);
 const AOT_PERF_WARMUPS: u32 = 3;
 const AOT_PERF_REPETITIONS: u32 = 9;
@@ -163,6 +165,8 @@ struct MirBackendFunction {
     return_local: u32,
     #[serde(default)]
     return_type: String,
+    #[serde(default)]
+    return_fields: Vec<u32>,
     supported: bool,
     blocks: Vec<MirBackendBlock>,
 }
@@ -257,6 +261,12 @@ enum MirBackendConstant {
 #[derive(Debug, Deserialize, Clone)]
 enum MirBackendTerminator {
     Return,
+    CallAggregate {
+        function: u32,
+        arguments: Vec<MirBackendOperand>,
+        destinations: Vec<u32>,
+        target: Option<u32>,
+    },
     Goto {
         target: u32,
     },
@@ -1020,7 +1030,7 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = Options::parse(env::args().skip(1))?;
-    if !options.source_scalars {
+    if !options.source_scalars || !options.llvm.as_os_str().is_empty() {
         if !options.llvm.is_absolute() {
             return Err("--llvm must be an absolute, explicitly selected executable".into());
         }
@@ -1030,6 +1040,8 @@ fn run() -> Result<(), String> {
                 options.llvm.display()
             ));
         }
+    }
+    if !options.source_scalars {
         for (name, tool) in [("--strip", &options.strip), ("--readelf", &options.readelf)] {
             if !tool.is_absolute() {
                 return Err(format!("{name} must be an absolute, explicitly selected executable"));
@@ -1482,6 +1494,14 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
         .map(|function| (function.ordinal, function.parameters.len()))
         .collect::<BTreeMap<_, _>>();
     for function in &program.functions {
+        if !function.return_fields.is_empty() {
+            aggregate_result_bytes(function.return_fields.len())?;
+            if function.return_fields.iter().collect::<BTreeSet<_>>().len()
+                != function.return_fields.len()
+            {
+                return Err("aggregate return locals are not unique".to_owned());
+            }
+        }
         let block_ordinals = function
             .blocks
             .iter()
@@ -1550,6 +1570,61 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
             }
             if let MirBackendTerminator::Invoke { operation, .. } = &block.terminator {
                 validate_backend_operation_calls(operation, &function_ordinals, &function_arities)?;
+                let mut operation = operation;
+                while let MirBackendOperation::Spawn {
+                    operation: body, ..
+                } = operation
+                {
+                    operation = body;
+                }
+                if let MirBackendOperation::Call {
+                    function: callee, ..
+                } = operation
+                    && function.supported
+                    && program.functions.iter().any(|candidate| {
+                        candidate.ordinal == *callee && !candidate.return_fields.is_empty()
+                    })
+                {
+                    return Err("aggregate result requires an aggregate call terminator".to_owned());
+                }
+            }
+            if let MirBackendTerminator::CallAggregate {
+                function: callee,
+                arguments,
+                destinations,
+                target,
+            } = &block.terminator
+                && function.supported
+            {
+                aggregate_result_bytes(destinations.len())?;
+                let callee = program
+                    .functions
+                    .iter()
+                    .find(|candidate| candidate.ordinal == *callee)
+                    .ok_or_else(|| format!("aggregate call target {callee} is missing"))?;
+                if !callee.supported
+                    || callee.parameters.len() != arguments.len()
+                    || callee.return_fields.len() != destinations.len()
+                    || destinations.iter().collect::<BTreeSet<_>>().len() != destinations.len()
+                    || !target.is_some_and(|target| {
+                        function
+                            .blocks
+                            .iter()
+                            .any(|block| block.ordinal == target && block.kind == "normal")
+                    })
+                {
+                    return Err(
+                        "aggregate call signature or successor does not match its callee"
+                            .to_owned(),
+                    );
+                }
+                for argument in arguments {
+                    validate_backend_operand_calls(
+                        argument,
+                        &function_ordinals,
+                        &function_arities,
+                    )?;
+                }
             }
         }
     }
@@ -1954,6 +2029,11 @@ fn validate_supported_block(
         } => validate_supported_operand(condition, function_ordinal)?,
         MirBackendTerminator::Invoke { operation, .. } => {
             validate_supported_operation(operation, function_ordinal)?;
+        }
+        MirBackendTerminator::CallAggregate { arguments, .. } => {
+            for argument in arguments {
+                validate_supported_operand(argument, function_ordinal)?;
+            }
         }
         MirBackendTerminator::Marker { kind } => {
             return Err(format!(
@@ -2735,7 +2815,8 @@ fn terminator_successors(terminator: &MirBackendTerminator) -> Vec<u32> {
             .map(|(_, target)| *target)
             .chain(std::iter::once(*otherwise))
             .collect(),
-        MirBackendTerminator::Invoke { target, .. } => target.iter().copied().collect(),
+        MirBackendTerminator::Invoke { target, .. }
+        | MirBackendTerminator::CallAggregate { target, .. } => target.iter().copied().collect(),
     }
 }
 
@@ -2770,6 +2851,7 @@ fn deferred_lowering_is_linear(function: &MirBackendFunction) -> bool {
             } => current = *target,
             MirBackendTerminator::SwitchBool { .. }
             | MirBackendTerminator::SwitchTag { .. }
+            | MirBackendTerminator::CallAggregate { .. }
             | MirBackendTerminator::Invoke { target: None, .. }
             | MirBackendTerminator::Marker { .. } => return false,
         }
@@ -2823,9 +2905,32 @@ fn block_live_in(function: &MirBackendFunction) -> BTreeMap<u32, BTreeSet<u32>> 
             }
             match &block.terminator {
                 MirBackendTerminator::Return => {
-                    if !definitions.contains(&function.return_local) {
-                        uses.insert(function.return_local);
+                    let returned = if function.return_fields.is_empty() {
+                        std::slice::from_ref(&function.return_local)
+                    } else {
+                        &function.return_fields
+                    };
+                    for local in returned {
+                        if !definitions.contains(local) {
+                            uses.insert(*local);
+                        }
                     }
+                }
+                MirBackendTerminator::CallAggregate {
+                    arguments,
+                    destinations,
+                    ..
+                } => {
+                    let mut call_uses = BTreeSet::new();
+                    for argument in arguments {
+                        operand_locals(argument, &mut call_uses);
+                    }
+                    uses.extend(
+                        call_uses
+                            .into_iter()
+                            .filter(|local| !definitions.contains(local)),
+                    );
+                    definitions.extend(destinations.iter().copied());
                 }
                 MirBackendTerminator::Goto { .. } => {}
                 MirBackendTerminator::SwitchBool { condition, .. } => {
@@ -3535,12 +3640,26 @@ fn compile_cranelift(
     })
 }
 
+fn aggregate_result_bytes(fields: usize) -> Result<u32, String> {
+    if fields == 0 || fields > MAX_AGGREGATE_RETURN_FIELDS {
+        return Err("aggregate result field count exceeds the private ABI limit".to_owned());
+    }
+    Ok((fields * 8) as u32)
+}
+
 fn cranelift_signature(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     function: &MirBackendFunction,
 ) -> Signature {
     let mut signature = Signature::new(isa.default_call_conv());
     for _ in &function.parameters {
+        signature
+            .params
+            .push(AbiParam::new(cranelift_codegen::ir::types::I64));
+    }
+    if !function.return_fields.is_empty() {
+        // Private final argument: caller-owned result storage. It is never
+        // exposed as a Tondo value or used as a managed runtime handle.
         signature
             .params
             .push(AbiParam::new(cranelift_codegen::ir::types::I64));
@@ -3685,6 +3804,24 @@ fn lower_cranelift_function(
                 }
                 match &block.terminator {
                     MirBackendTerminator::Return => {
+                        if !function.return_fields.is_empty() {
+                            let pointer = builder.block_params(entry)[function.parameters.len()];
+                            aggregate_result_bytes(function.return_fields.len())?;
+                            for (index, local) in function.return_fields.iter().enumerate() {
+                                let value = *locals.get(local).ok_or_else(|| {
+                                    format!("missing aggregate return local {local}")
+                                })?;
+                                builder.ins().store(
+                                    MemFlags::new(),
+                                    value,
+                                    pointer,
+                                    (index * 8) as i32,
+                                );
+                            }
+                            let status = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
+                            builder.ins().return_(&[status]);
+                            continue;
+                        }
                         let value =
                             locals
                                 .get(&function.return_local)
@@ -3813,6 +3950,56 @@ fn lower_cranelift_function(
                             }
                         }
                     }
+                    MirBackendTerminator::CallAggregate {
+                        function: callee,
+                        arguments,
+                        destinations,
+                        target: Some(target),
+                    } => {
+                        let bytes = aggregate_result_bytes(destinations.len())?;
+                        let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            bytes,
+                            3,
+                        ));
+                        let pointer =
+                            builder
+                                .ins()
+                                .stack_addr(cranelift_codegen::ir::types::I64, slot, 0);
+                        let mut values = arguments
+                            .iter()
+                            .map(|value| {
+                                lower_operand_cranelift_with_runtime(
+                                    &mut builder,
+                                    value,
+                                    &locals,
+                                    &runtime,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        values.push(pointer);
+                        let callee = *calls
+                            .get(callee)
+                            .ok_or_else(|| format!("missing aggregate call target {callee}"))?;
+                        builder.ins().call(callee, &values);
+                        // Publish fields only after the call returns normally.
+                        for (index, destination) in destinations.iter().enumerate() {
+                            let value = builder.ins().stack_load(
+                                cranelift_codegen::ir::types::I64,
+                                slot,
+                                (index * 8) as i32,
+                            );
+                            locals.insert(*destination, value);
+                        }
+                        let destination = *ir_blocks
+                            .get(target)
+                            .ok_or_else(|| format!("missing aggregate call successor {target}"))?;
+                        let arguments = cranelift_edge_args(*target, &locals, &live_in)?
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<_>>();
+                        builder.ins().jump(destination, &arguments);
+                    }
                     MirBackendTerminator::Invoke {
                         operation,
                         destination,
@@ -3841,7 +4028,8 @@ fn lower_cranelift_function(
                             .collect::<Vec<_>>();
                         builder.ins().jump(destination_block, &arguments);
                     }
-                    MirBackendTerminator::Invoke { target: None, .. } => {
+                    MirBackendTerminator::Invoke { target: None, .. }
+                    | MirBackendTerminator::CallAggregate { target: None, .. } => {
                         return Err("scalar invoke has no normal target".to_owned());
                     }
                     MirBackendTerminator::Marker { kind } if kind == "unreachable" => {
@@ -4750,6 +4938,7 @@ fn run_native_aot_lowering_probe(
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: false,
         blocks: vec![MirBackendBlock {
             ordinal: 0,
@@ -5425,7 +5614,7 @@ fn run_native_aot_vm_product(
                             .transpose()?
                             .and_then(|value| u64::try_from(value).ok()),
                         AotVmValue::Scalar(value) => u64::try_from(value).ok(),
-                        AotVmValue::Function(_) => None,
+                        AotVmValue::Function(_) | AotVmValue::Fields(_) => None,
                     };
                     if actual_payload != Some(expected_payload) {
                         return Err(format!(
@@ -5924,6 +6113,7 @@ fn unsupported_native_aot_function() -> MirBackendFunction {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: false,
         blocks: vec![MirBackendBlock {
             ordinal: 0,
@@ -6373,6 +6563,7 @@ enum AotVmValue {
     Scalar(i64),
     Function(u32),
     Aggregate { tag: u32, fields: Vec<AotVmValue> },
+    Fields(Vec<AotVmValue>),
 }
 
 fn aot_vm_oracle(
@@ -6448,6 +6639,18 @@ fn evaluate_aot_function(
         }
         match &block.terminator {
             MirBackendTerminator::Return => {
+                if !function.return_fields.is_empty() {
+                    return function
+                        .return_fields
+                        .iter()
+                        .map(|local| {
+                            locals.get(local).cloned().ok_or_else(|| {
+                                format!("AOT oracle aggregate return local {local} is missing")
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(AotVmValue::Fields);
+                }
                 return locals
                     .get(&function.return_local)
                     .cloned()
@@ -6476,6 +6679,27 @@ fn evaluate_aot_function(
                     .find_map(|(tag, target)| (value == *tag).then_some(*target))
                     .unwrap_or(*otherwise);
             }
+            MirBackendTerminator::CallAggregate {
+                function,
+                arguments,
+                destinations,
+                target: Some(target),
+            } => {
+                let arguments = arguments
+                    .iter()
+                    .map(|value| evaluate_aot_operand(value, &locals))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let AotVmValue::Fields(values) =
+                    evaluate_aot_function(program, *function, &arguments, call_depth + 1)?
+                else {
+                    return Err("AOT oracle aggregate call returned a scalar".to_owned());
+                };
+                if values.len() != destinations.len() {
+                    return Err("AOT oracle aggregate result shape mismatch".to_owned());
+                }
+                locals.extend(destinations.iter().copied().zip(values));
+                current = *target;
+            }
             MirBackendTerminator::Invoke {
                 operation,
                 destination,
@@ -6492,7 +6716,8 @@ fn evaluate_aot_function(
                 }
                 current = *target;
             }
-            MirBackendTerminator::Invoke { target: None, .. } => {
+            MirBackendTerminator::Invoke { target: None, .. }
+            | MirBackendTerminator::CallAggregate { target: None, .. } => {
                 return Err("AOT VM oracle invoke has no normal target".to_owned());
             }
             MirBackendTerminator::Marker { kind } if kind == "unreachable" => {
@@ -6853,6 +7078,9 @@ fn aot_tag_value(value: &AotVmValue) -> Result<u32, String> {
             u32::try_from(*value).map_err(|_| "AOT VM oracle tag value is out of range".to_owned())
         }
         AotVmValue::Function(_) => Err("AOT VM oracle function has no tag".to_owned()),
+        AotVmValue::Fields(_) => {
+            Err("private aggregate return fields have no runtime tag".to_owned())
+        }
     }
 }
 
@@ -6899,6 +7127,7 @@ fn native_aot_program() -> (MirBackendProgram, Vec<NativeAotCase>) {
             parameter_types: Vec::new(),
             return_local,
             return_type: "Int".to_owned(),
+            return_fields: Vec::new(),
             supported: true,
             blocks,
     };
@@ -7238,6 +7467,7 @@ fn native_deferred_program() -> (MirBackendProgram, u32, i64) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![MirBackendBlock {
             ordinal: 0,
@@ -7255,6 +7485,7 @@ fn native_deferred_program() -> (MirBackendProgram, u32, i64) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7406,6 +7637,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
                 parameter_types: Vec::new(),
                 return_local: 0,
                 return_type: "Int".to_owned(),
+                return_fields: Vec::new(),
                 supported: true,
                 blocks,
             }
@@ -7416,6 +7648,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7484,6 +7717,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7539,6 +7773,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int ! String".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7622,6 +7857,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7677,6 +7913,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7745,6 +7982,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7813,6 +8051,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -7881,6 +8120,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         parameter_types: Vec::new(),
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -8268,6 +8508,7 @@ fn native_diagnostic_program() -> (MirBackendProgram, Vec<NativeDiagnosticCase>)
         parameter_types: vec!["Int".to_owned()],
         return_local: 0,
         return_type: "Int".to_owned(),
+        return_fields: Vec::new(),
         supported: true,
         blocks: vec![
             MirBackendBlock {
@@ -8661,6 +8902,21 @@ fn evaluate_scalar_function_inner(
     arguments: &[i64],
     call_depth: usize,
 ) -> Result<i64, String> {
+    if !function.return_fields.is_empty() {
+        return Err("scalar oracle entry cannot return an aggregate".to_owned());
+    }
+    evaluate_value_function_inner(program, function, arguments, call_depth)?
+        .first()
+        .copied()
+        .ok_or_else(|| "scalar oracle function has no return".to_owned())
+}
+
+fn evaluate_value_function_inner(
+    program: Option<&MirBackendProgram>,
+    function: &MirBackendFunction,
+    arguments: &[i64],
+    call_depth: usize,
+) -> Result<Vec<i64>, String> {
     if arguments.len() != function.parameters.len() {
         return Err("scalar oracle argument count mismatch".to_owned());
     }
@@ -8697,10 +8953,52 @@ fn evaluate_scalar_function_inner(
         }
         match &block.terminator {
             MirBackendTerminator::Return => {
-                return locals
-                    .get(&function.return_local)
-                    .copied()
-                    .ok_or_else(|| "scalar oracle function has no return".to_owned());
+                let returned = if function.return_fields.is_empty() {
+                    std::slice::from_ref(&function.return_local)
+                } else {
+                    &function.return_fields
+                };
+                return returned
+                    .iter()
+                    .map(|local| {
+                        locals
+                            .get(local)
+                            .copied()
+                            .ok_or_else(|| format!("value oracle return local {local} is missing"))
+                    })
+                    .collect();
+            }
+            MirBackendTerminator::CallAggregate {
+                function: callee,
+                arguments,
+                destinations,
+                target: Some(target),
+            } => {
+                let program =
+                    program.ok_or_else(|| "aggregate call requires program context".to_owned())?;
+                let callee = program
+                    .functions
+                    .iter()
+                    .find(|function| function.ordinal == *callee)
+                    .ok_or_else(|| format!("value oracle call target {callee} is missing"))?;
+                if callee.return_fields.is_empty() {
+                    return Err("value oracle aggregate call targets a scalar function".to_owned());
+                }
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| evaluate_operand(argument, &locals))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let values = evaluate_value_function_inner(
+                    Some(program),
+                    callee,
+                    &arguments,
+                    call_depth + 1,
+                )?;
+                if values.len() != destinations.len() {
+                    return Err("value oracle aggregate result shape mismatch".to_owned());
+                }
+                locals.extend(destinations.iter().copied().zip(values));
+                current = *target;
             }
             MirBackendTerminator::Goto { target } => current = *target,
             MirBackendTerminator::SwitchBool {
@@ -8763,7 +9061,8 @@ fn evaluate_scalar_function_inner(
                 }
                 current = *target;
             }
-            MirBackendTerminator::Invoke { target: None, .. } => {
+            MirBackendTerminator::Invoke { target: None, .. }
+            | MirBackendTerminator::CallAggregate { target: None, .. } => {
                 return Err("scalar invoke has no normal target".to_owned());
             }
             MirBackendTerminator::Marker { kind } if kind == "unreachable" => {
@@ -10016,12 +10315,27 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
         .unwrap();
     }
     llvm_checked_helpers(&mut module);
+    // The checked conversion helper allocates a Result in the evaluation
+    // runtime. Scalar-only programs must not acquire that unused dependency.
+    if program.functions.iter().filter(|function| function.supported)
+        .flat_map(normal_blocks)
+        .flat_map(|block| &block.statements)
+        .any(|statement| matches!(statement,
+            MirBackendStatement::Assign { value: MirBackendRvalue::NumericConversion { conversion, .. }, .. }
+            if conversion == "checked"))
+    {
+        llvm_checked_conversion_helper(&mut module);
+    }
     for function in &program.functions {
-        let parameters = (0..function.parameters.len())
+        let mut parameters = (0..function.parameters.len())
             .enumerate()
             .map(|(position, _)| format!("i64 %arg{position}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
+        if !function.return_fields.is_empty() {
+            aggregate_result_bytes(function.return_fields.len())?;
+            parameters.push("ptr %aggregate_result".to_owned());
+        }
+        let parameters = parameters.join(", ");
         writeln!(
             module,
             "define i64 @tondo_probe_{}({parameters}) {{",
@@ -10055,6 +10369,20 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                 for slot in slots.values() {
                     writeln!(module, "  {slot} = alloca i64").unwrap();
                 }
+                for call_block in &function.blocks {
+                    if let MirBackendTerminator::CallAggregate { destinations, .. } =
+                        &call_block.terminator
+                    {
+                        aggregate_result_bytes(destinations.len())?;
+                        writeln!(
+                            module,
+                            "  %aggregate_call_{} = alloca [{} x i64], align 8",
+                            call_block.ordinal,
+                            destinations.len()
+                        )
+                        .unwrap();
+                    }
+                }
                 for (position, local) in function.parameters.iter().enumerate() {
                     let slot = slots
                         .get(local)
@@ -10087,6 +10415,22 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
             }
             match &block.terminator {
                 MirBackendTerminator::Return => {
+                    if !function.return_fields.is_empty() {
+                        for (index, local) in function.return_fields.iter().enumerate() {
+                            let slot = slots
+                                .get(local)
+                                .ok_or_else(|| format!("missing aggregate return slot {local}"))?;
+                            let value = format!("%v{value_index}");
+                            value_index += 1;
+                            let pointer = format!("%v{value_index}");
+                            value_index += 1;
+                            writeln!(module, "  {value} = load i64, ptr {slot}").unwrap();
+                            writeln!(module, "  {pointer} = getelementptr i64, ptr %aggregate_result, i64 {index}").unwrap();
+                            writeln!(module, "  store i64 {value}, ptr {pointer}").unwrap();
+                        }
+                        writeln!(module, "  ret i64 0").unwrap();
+                        continue;
+                    }
                     let slot = slots.get(&function.return_local).ok_or_else(|| {
                         format!("missing slot for return local {}", function.return_local)
                     })?;
@@ -10167,6 +10511,50 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                         }
                     }
                 }
+                MirBackendTerminator::CallAggregate {
+                    function: callee,
+                    arguments,
+                    destinations,
+                    target: Some(target),
+                } => {
+                    let mut values = arguments
+                        .iter()
+                        .map(|value| {
+                            llvm_operand(value, &slots, &mut module, &mut value_index)
+                                .map(|value| format!("i64 {value}"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    values.push(format!("ptr %aggregate_call_{}", block.ordinal));
+                    writeln!(
+                        module,
+                        "  call i64 @tondo_probe_{callee}({})",
+                        values.join(", ")
+                    )
+                    .unwrap();
+                    for (index, local) in destinations.iter().enumerate() {
+                        let pointer = format!("%v{value_index}");
+                        value_index += 1;
+                        let value = format!("%v{value_index}");
+                        value_index += 1;
+                        writeln!(
+                            module,
+                            "  {pointer} = getelementptr i64, ptr %aggregate_call_{}, i64 {index}",
+                            block.ordinal
+                        )
+                        .unwrap();
+                        writeln!(module, "  {value} = load i64, ptr {pointer}").unwrap();
+                        let slot = slots
+                            .get(local)
+                            .ok_or_else(|| format!("missing aggregate call destination {local}"))?;
+                        writeln!(module, "  store i64 {value}, ptr {slot}").unwrap();
+                    }
+                    writeln!(
+                        module,
+                        "  br label %{}",
+                        llvm_block_label(*target, entry_ordinal)
+                    )
+                    .unwrap();
+                }
                 MirBackendTerminator::Invoke {
                     operation,
                     destination,
@@ -10215,7 +10603,8 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                     )
                     .unwrap();
                 }
-                MirBackendTerminator::Invoke { target: None, .. } => {
+                MirBackendTerminator::Invoke { target: None, .. }
+                | MirBackendTerminator::CallAggregate { target: None, .. } => {
                     return Err("scalar invoke has no normal target".to_owned());
                 }
                 MirBackendTerminator::Marker { kind } if kind == "unreachable" => {
@@ -10242,6 +10631,7 @@ fn llvm_block_label(ordinal: u32, entry_ordinal: u32) -> String {
 
 fn scalar_local_ordinals(function: &MirBackendFunction) -> BTreeSet<u32> {
     let mut locals = BTreeSet::from([function.return_local]);
+    locals.extend(function.return_fields.iter().copied());
     locals.extend(function.parameters.iter().copied());
     for block in normal_blocks(function) {
         for statement in &block.statements {
@@ -10259,6 +10649,16 @@ fn scalar_local_ordinals(function: &MirBackendFunction) -> BTreeSet<u32> {
             }
         }
         match &block.terminator {
+            MirBackendTerminator::CallAggregate {
+                arguments,
+                destinations,
+                ..
+            } => {
+                for argument in arguments {
+                    operand_locals(argument, &mut locals);
+                }
+                locals.extend(destinations.iter().copied());
+            }
             MirBackendTerminator::SwitchBool { condition, .. } => {
                 operand_locals(condition, &mut locals);
             }
@@ -10412,7 +10812,6 @@ fn llvm_checked_helpers(module: &mut String) {
     llvm_checked_shift_helper(module, "shl");
     llvm_checked_shift_helper(module, "ashr");
     llvm_checked_bounds_helper(module);
-    llvm_checked_conversion_helper(module);
 }
 
 fn llvm_checked_conversion_helper(module: &mut String) {
@@ -11251,6 +11650,7 @@ mod tests {
                 parameter_types: Vec::new(),
                 return_local: 0,
                 return_type: "Int".to_owned(),
+                return_fields: Vec::new(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -11293,6 +11693,7 @@ mod tests {
                 parameter_types: Vec::new(),
                 return_local: 0,
                 return_type: "Int".to_owned(),
+                return_fields: Vec::new(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -11361,6 +11762,7 @@ mod tests {
                 parameter_types: Vec::new(),
                 return_local: 0,
                 return_type: "Int".to_owned(),
+                return_fields: Vec::new(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -11420,6 +11822,7 @@ mod tests {
                 parameter_types: Vec::new(),
                 return_local: 0,
                 return_type: "Int".to_owned(),
+                return_fields: Vec::new(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -11488,6 +11891,7 @@ mod tests {
             parameter_types: Vec::new(),
             return_local: 0,
             return_type: "Int".to_owned(),
+            return_fields: Vec::new(),
             supported: true,
             blocks: vec![MirBackendBlock {
                 ordinal: 0,
@@ -11511,6 +11915,7 @@ mod tests {
             parameter_types: Vec::new(),
             return_local: 0,
             return_type: "Int".to_owned(),
+            return_fields: Vec::new(),
             supported: true,
             blocks: vec![
                 MirBackendBlock {
@@ -11544,6 +11949,7 @@ mod tests {
                 parameter_types: Vec::new(),
                 return_local: 0,
                 return_type: "Int".to_owned(),
+                return_fields: Vec::new(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -11568,6 +11974,32 @@ mod tests {
             }])
     }
 
+    fn aggregate_call_backend() -> MirBackendProgram {
+        let mut program = call_backend();
+        program.functions[0].return_type = "(Int, Int)".to_owned();
+        program.functions[0].return_fields = vec![0, 1];
+        program.functions[1].blocks[0].terminator = MirBackendTerminator::CallAggregate {
+            function: 0,
+            arguments: vec![MirBackendOperand::Local { index: 1 }],
+            // Reusing an input local must not change the arguments already
+            // observed by the callee or publish a field before it returns.
+            destinations: vec![1, 2],
+            target: Some(1),
+        };
+        program.functions[1].blocks[1]
+            .statements
+            .push(MirBackendStatement::Assign {
+                destination: 0,
+                value: MirBackendRvalue::Binary {
+                    operator: "add".to_owned(),
+                    left: MirBackendOperand::Local { index: 1 },
+                    right: MirBackendOperand::Local { index: 2 },
+                },
+            });
+        program.debug = Some(synthetic_debug_info(&program.functions));
+        program
+    }
+
     fn assert_backend(condition: bool) -> MirBackendProgram {
         test_program(vec![MirBackendFunction {
                 ordinal: 0,
@@ -11575,6 +12007,7 @@ mod tests {
                 parameter_types: Vec::new(),
                 return_local: 0,
                 return_type: "Int".to_owned(),
+                return_fields: Vec::new(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -11805,6 +12238,7 @@ mod tests {
             parameter_types: Vec::new(),
             return_local: 0,
             return_type: "Int".to_owned(),
+            return_fields: Vec::new(),
             supported: true,
             blocks: vec![MirBackendBlock {
                 ordinal: 0,
@@ -12352,6 +12786,86 @@ mod tests {
         let isa = cranelift_isa().expect("native Cranelift ISA should be available");
         compile_cranelift(isa.as_ref(), &program)
             .expect("direct scalar calls should lower in Cranelift");
+    }
+
+    #[test]
+    fn aggregate_calls_publish_all_return_fields_after_normal_completion() {
+        let program = aggregate_call_backend();
+        validate_backend_program(&program).unwrap();
+        assert_eq!(evaluate_scalar_program(&program, 1, &[20]), Ok(41));
+        let result = evaluate_aot_function(&program, 1, &[AotVmValue::Scalar(20)], 0).unwrap();
+        assert_eq!(aot_scalar_value(&result), Ok(41));
+        assert!(evaluate_scalar_program(&program, 0, &[20]).is_err());
+        assert!(evaluate_scalar_program(&program, 1, &[i64::MAX]).is_err());
+        assert!(evaluate_aot_function(&program, 1, &[AotVmValue::Scalar(i64::MAX)], 0).is_err());
+        compile_cranelift(cranelift_isa().unwrap().as_ref(), &program).unwrap();
+        let module = llvm_module("x86_64-unknown-linux-gnu", &program).unwrap();
+        assert!(module.contains("ptr %aggregate_result"));
+        assert!(module.contains("alloca [2 x i64]"));
+        assert!(!module.contains("call i64 @tondo_rt_result_new"));
+        // The original parameter is also a return field and remains live.
+        assert!(scalar_local_ordinals(&program.functions[0]).contains(&1));
+    }
+
+    #[test]
+    fn aggregate_calls_reject_incomplete_signatures_and_result_protocols() {
+        for case in 0..9 {
+            let mut program = aggregate_call_backend();
+            match case {
+                0 => program.functions[0].return_fields = vec![0, 0],
+                1 => program.functions[0].return_fields = vec![0],
+                2 => program.functions[0].return_fields.clear(),
+                3 => program.functions[0].supported = false,
+                4..=7 => {
+                    let MirBackendTerminator::CallAggregate {
+                        function,
+                        arguments,
+                        destinations,
+                        target,
+                    } = &mut program.functions[1].blocks[0].terminator
+                    else {
+                        unreachable!()
+                    };
+                    match case {
+                        4 => destinations[1] = destinations[0],
+                        5 => arguments.clear(),
+                        6 => *target = None,
+                        _ => *function = 99,
+                    }
+                }
+                _ => {
+                    program.functions[1].blocks[0].terminator =
+                        call_backend().functions[1].blocks[0].terminator.clone()
+                }
+            }
+            assert!(
+                validate_backend_program(&program).is_err(),
+                "case {case} admitted an invalid aggregate call"
+            );
+        }
+        assert!(aggregate_result_bytes(0).is_err());
+        assert_eq!(
+            aggregate_result_bytes(MAX_AGGREGATE_RETURN_FIELDS),
+            Ok(524_288)
+        );
+        assert!(aggregate_result_bytes(MAX_AGGREGATE_RETURN_FIELDS + 1).is_err());
+        // Explicitly unadmitted functions still compile as trap stubs. They
+        // cannot grant native support to a caller through their signature.
+        let mut rejected = aggregate_call_backend();
+        for function in &mut rejected.functions {
+            function.supported = false;
+        }
+        validate_backend_program(&rejected).unwrap();
+        compile_cranelift(cranelift_isa().unwrap().as_ref(), &rejected).unwrap();
+    }
+
+    #[test]
+    fn aggregate_return_fields_must_be_initialized_on_the_returning_path() {
+        let mut program = aggregate_call_backend();
+        program.functions[0].return_fields[1] = 99;
+        assert!(evaluate_scalar_program(&program, 1, &[20]).is_err());
+        assert!(evaluate_aot_function(&program, 1, &[AotVmValue::Scalar(20)], 0).is_err());
+        assert!(compile_cranelift(cranelift_isa().unwrap().as_ref(), &program).is_err());
     }
 
     #[test]

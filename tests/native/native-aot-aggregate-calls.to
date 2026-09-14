@@ -1,0 +1,111 @@
+type Point = { x: Int, y: Int }
+type Frame = { point: Point, flags: (Bool, Int) }
+type Pair[T] = { first: T, second: T }
+
+fn makePoint(x: Int, y: Int): Point { Point { y: y, x: x } }
+fn origin(): Point { Point { x: 1, y: 2 } }
+fn sum(point: Point): Int { point.x + point.y }
+fn swap(pair: (Int, Int)): (Int, Int) { (pair.1, pair.0) }
+
+fn change(point: Point): Point {
+    var copy = point
+    copy.x = 9
+    copy
+}
+
+fn bump(point: Point): Point { Point { x: point.x + 1, y: point.y } }
+
+fn nested(frame: Frame): Frame {
+    frame with { point: change(frame.point), flags: (false, frame.flags.1 + 1) }
+}
+
+fn flip(pair: Pair[(Bool, Int)]): Pair[(Bool, Int)] {
+    Pair[(Bool, Int)] { first: pair.second, second: pair.first }
+}
+
+fn descend(point: Point, remaining: Int): Point {
+    if remaining <= 0 { point } else { descend(bump(point), remaining - 1) }
+}
+
+fn left(point: Point, remaining: Int): Point {
+    if remaining <= 0 { point } else { right(bump(point), remaining - 1) }
+}
+
+fn right(point: Point, remaining: Int): Point {
+    if remaining <= 0 { point } else { left(bump(point), remaining - 1) }
+}
+
+fn choose(flag: Bool, point: Point): Point {
+    if flag { change(point) } else { point }
+}
+
+fn combine(start: Int, pair: (Int, Int), end: Int): Int {
+    start * 1000 + pair.0 * 100 + pair.1 * 10 + end
+}
+
+fn tupleRoundtrip(): Int {
+    var pair = (2, 3)
+    pair = swap(pair)
+    pair.0 * 10 + pair.1
+}
+
+fn independentResults(): Int {
+    let original = makePoint(y: 7, x: 2)
+    var first = change(original)
+    let second = change(original)
+    first.y = 4
+    original.x * 1000 + original.y * 100 + first.y * 10 + second.y
+}
+
+fn nestedRoundtrip(): Int {
+    let original = Frame { point: makePoint(2, 3), flags: (true, 5) }
+    let changed = nested(original)
+    if original.flags.0 and not changed.flags.0 {
+        original.point.x * 1000 + changed.point.x * 100 + changed.flags.1
+    } else { 0 }
+}
+
+fn genericRoundtrip(): Int {
+    let original = Pair[(Bool, Int)] { first: (true, 7), second: (false, 9) }
+    let changed = flip(original)
+    if original.first.0 and not changed.first.0 {
+        changed.first.1 * 10 + changed.second.1
+    } else { 0 }
+}
+
+fn recursiveRoundtrip(): Int { sum(descend(makePoint(1, 2), 4)) }
+fn mutualRoundtrip(): Int { sum(left(makePoint(1, 2), 3)) }
+fn branchRoundtrip(): Int { sum(choose(true, makePoint(1, 2))) + sum(choose(false, makePoint(3, 4))) }
+fn namedArguments(): Int { combine(end: 9, pair: swap((3, 2)), start: 1) }
+
+fn loopResults(): Int {
+    var point = makePoint(1, 2)
+    var count = 0
+    for count < 32 {
+        point = bump(point)
+        count += 1
+    }
+    point.x
+}
+
+fn checkedReturn(value: Int): Int { bump(makePoint(value, 2)).x }
+
+fn discardedResult(): Int {
+    let point = origin()
+    _ = change(point)
+    sum(point)
+}
+
+fn main() {
+    assert(tupleRoundtrip() == 32)
+    assert(independentResults() == 2747)
+    assert(nestedRoundtrip() == 2906)
+    assert(genericRoundtrip() == 97)
+    assert(recursiveRoundtrip() == 7)
+    assert(mutualRoundtrip() == 6)
+    assert(branchRoundtrip() == 18)
+    assert(namedArguments() == 1239)
+    assert(loopResults() == 33)
+    assert(checkedReturn(41) == 42)
+    assert(discardedResult() == 3)
+}
