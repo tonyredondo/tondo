@@ -65,6 +65,9 @@ jobs:
       - name: Generate real-MIR evidence
         run: bash scripts/native-evaluation.sh
 
+      - name: Execute source scalar programs with Cranelift
+        run: bash scripts/native-source-scalars-test.sh
+
       - name: Validate fast candidate lane
         run: bash scripts/native-evaluation-fast-check.sh
 
@@ -98,6 +101,7 @@ jobs:
           path: |
             target/reliability/evidence/native-evaluation.json
             target/reliability/evidence/native-evaluation-runner.json
+            target/reliability/evidence/native-source-scalars.json
             target/reliability/evidence/native-aot-quality.json
             target/reliability/evidence/native-aot-performance.json
             target/reliability/evidence/native-conf.json

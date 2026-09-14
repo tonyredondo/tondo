@@ -28,6 +28,8 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod source_scalars;
+
 const CRANELIFT_VERSION: &str = "0.132.3";
 const REPETITIONS: usize = 3;
 const MAX_FUNCTIONS: u64 = 256;
@@ -997,6 +999,7 @@ enum RuntimeExpectation {
 #[derive(Debug)]
 struct Options {
     probe: PathBuf,
+    source_scalars: bool,
     std_core_probe: Option<PathBuf>,
     aot_performance_output: Option<PathBuf>,
     output: PathBuf,
@@ -1017,21 +1020,23 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = Options::parse(env::args().skip(1))?;
-    if !options.llvm.is_absolute() {
-        return Err("--llvm must be an absolute, explicitly selected executable".into());
-    }
-    if !options.llvm.is_file() {
-        return Err(format!(
-            "LLVM executable does not exist: {}",
-            options.llvm.display()
-        ));
-    }
-    for (name, tool) in [("--strip", &options.strip), ("--readelf", &options.readelf)] {
-        if !tool.is_absolute() {
-            return Err(format!("{name} must be an absolute, explicitly selected executable"));
+    if !options.source_scalars {
+        if !options.llvm.is_absolute() {
+            return Err("--llvm must be an absolute, explicitly selected executable".into());
         }
-        if !tool.is_file() {
-            return Err(format!("{name} executable does not exist: {}", tool.display()));
+        if !options.llvm.is_file() {
+            return Err(format!(
+                "LLVM executable does not exist: {}",
+                options.llvm.display()
+            ));
+        }
+        for (name, tool) in [("--strip", &options.strip), ("--readelf", &options.readelf)] {
+            if !tool.is_absolute() {
+                return Err(format!("{name} must be an absolute, explicitly selected executable"));
+            }
+            if !tool.is_file() {
+                return Err(format!("{name} executable does not exist: {}", tool.display()));
+            }
         }
     }
     if let Some(cc) = &options.cc {
@@ -1052,6 +1057,9 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("cannot read probe `{}`: {error}", options.probe.display()))?;
     let probe: ProbeReport = serde_json::from_slice(&probe_bytes)
         .map_err(|error| format!("invalid MIR probe: {error}"))?;
+    if options.source_scalars {
+        return source_scalars::run(&options, &probe, &probe_bytes);
+    }
     validate_probe(&probe)?;
 
     let isa = cranelift_isa()?;
@@ -11158,6 +11166,7 @@ fn safe_stem(path: &str) -> String {
 impl Options {
     fn parse(mut args: impl Iterator<Item = String>) -> Result<Self, String> {
         let mut probe = None;
+        let mut source_scalars = false;
         let mut std_core_probe = None;
         let mut aot_performance_output = None;
         let mut output = None;
@@ -11174,6 +11183,7 @@ impl Options {
             };
             match argument.as_str() {
                 "--probe" => probe = Some(PathBuf::from(value()?)),
+                "--source-scalars" => source_scalars = true,
                 "--std-core-probe" => std_core_probe = Some(PathBuf::from(value()?)),
                 "--aot-performance-output" => {
                     aot_performance_output = Some(PathBuf::from(value()?))
@@ -11187,7 +11197,7 @@ impl Options {
                 "--readelf" => readelf = Some(PathBuf::from(value()?)),
                 "--help" | "-h" => {
                     println!(
-                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE] [--strip ABSOLUTE] [--readelf ABSOLUTE] [--std-core-probe FILE] [--aot-performance-output FILE]"
+                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE] [--strip ABSOLUTE] [--readelf ABSOLUTE] [--std-core-probe FILE] [--aot-performance-output FILE] [--source-scalars]"
                     );
                     std::process::exit(0);
                 }
@@ -11196,10 +11206,15 @@ impl Options {
         }
         Ok(Self {
             probe: probe.ok_or("--probe is required")?,
+            source_scalars,
             std_core_probe,
             aot_performance_output,
             output: output.ok_or("--output is required")?,
-            llvm: llvm.ok_or("--llvm is required")?,
+            llvm: match llvm {
+                Some(llvm) => llvm,
+                None if source_scalars => PathBuf::new(),
+                None => return Err("--llvm is required".into()),
+            },
             target: target.ok_or("--target is required")?,
             temp_dir: temp_dir.ok_or("--temp-dir is required")?,
             cc,

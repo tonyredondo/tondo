@@ -1,5 +1,11 @@
 # Tondo continuation handoff
 
+**Historical transfer record:** the 2026-09-07 audit superseded the status and
+work order below. Gate N1 is pending; source-driven Cranelift integration comes
+before TOML performance. Consult `TONDO_IMPLEMENTATION_TRACKER.md`, section
+24.2, for the current order. Historical component reports do not establish
+production AOT or publication readiness.
+
 ## Task
 
 Take full ownership of the unfinished Tondo roadmap from this repository. Start

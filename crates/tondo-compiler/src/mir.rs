@@ -24,6 +24,7 @@ use crate::types::{
 };
 
 mod lower;
+mod native_tuples;
 mod regions;
 mod verify;
 
@@ -859,7 +860,7 @@ fn backend_function(
 ) -> MirBackendFunction {
     let mut unsupported = Vec::new();
     let function_values = backend_function_values(function, callable_ordinals);
-    let blocks = function
+    let mut blocks = function
         .blocks_with_ids()
         .map(|(block_id, block)| {
             backend_block(
@@ -872,6 +873,7 @@ fn backend_function(
             )
         })
         .collect::<Vec<_>>();
+    native_tuples::lower_local_tuples(function, interner, &mut blocks, &mut unsupported);
     validate_backend_control_flow(&blocks, &mut unsupported);
     let return_type = backend_type_name(interner, function.outcome());
     if !is_native_carrier_type(&return_type) {
@@ -909,19 +911,22 @@ fn backend_function(
 fn validate_backend_call_targets(functions: &mut [MirBackendFunction]) {
     let targets = functions
         .iter()
-        .map(|function| {
-            (
-                function.ordinal,
-                (function.parameters.len(), function.supported),
-            )
-        })
+        .map(|function| (function.ordinal, function.parameters.len()))
         .collect::<BTreeMap<_, _>>();
-    for function in functions {
+    let mut callers = BTreeMap::<u32, BTreeSet<usize>>::new();
+    for (index, function) in functions.iter_mut().enumerate() {
         let mut reasons = Vec::new();
         for block in &function.blocks {
             let MirBackendTerminator::Invoke { operation, .. } = &block.terminator else {
                 continue;
             };
+            let mut operation = operation;
+            while let MirBackendOperation::Spawn {
+                operation: body, ..
+            } = operation
+            {
+                operation = body;
+            }
             let MirBackendOperation::Call {
                 function: target,
                 arguments,
@@ -929,21 +934,43 @@ fn validate_backend_call_targets(functions: &mut [MirBackendFunction]) {
             else {
                 continue;
             };
-            let Some((arity, supported)) = targets.get(target).copied() else {
+            let Some(arity) = targets.get(target).copied() else {
                 reasons.push(format!("call-target-missing:{target}"));
                 continue;
             };
             if arguments.len() != arity {
                 reasons.push(format!("call-arity:{target}:{}:{arity}", arguments.len()));
             }
-            if !supported {
-                reasons.push(format!("call-target-unsupported:{target}"));
-            }
+            callers.entry(*target).or_default().insert(index);
         }
         function.unsupported.extend(reasons);
         function.unsupported.sort();
         function.unsupported.dedup();
         function.supported = function.unsupported.is_empty();
+    }
+    // A caller of a rejected function is rejected transitively, independently
+    // of source/ordinal order. Otherwise an admitted entry can reach a trap
+    // stub through an apparently supported intermediate function.
+    let mut pending = functions
+        .iter()
+        .filter(|function| !function.supported)
+        .map(|function| function.ordinal)
+        .collect::<std::collections::VecDeque<_>>();
+    while let Some(target) = pending.pop_front() {
+        for index in callers.get(&target).into_iter().flatten() {
+            let caller = &mut functions[*index];
+            caller
+                .unsupported
+                .push(format!("call-target-unsupported:{target}"));
+            if caller.supported {
+                caller.supported = false;
+                pending.push_back(caller.ordinal);
+            }
+        }
+    }
+    for function in functions {
+        function.unsupported.sort();
+        function.unsupported.dedup();
     }
 }
 
@@ -1623,15 +1650,19 @@ fn backend_place_operand(place: &MirPlace, unsupported: &mut Vec<String>) -> Mir
             .projections()
             .last()
             .expect("non-empty place has a projection");
-        let kind = backend_projection_kind_name(projection.kind()).to_owned();
-        let supported_core = place.projections().len() == 1
+        let kind = match projection.kind() {
+            MirProjectionKind::TupleField(index) => format!("tuple:{index}"),
+            kind => backend_projection_kind_name(kind).to_owned(),
+        };
+        let supported_read = place.projections().len() == 1
             && matches!(
                 projection.kind(),
                 MirProjectionKind::OptionValue
                     | MirProjectionKind::ResultOkValue
                     | MirProjectionKind::ResultErrValue
+                    | MirProjectionKind::TupleField(_)
             );
-        if !supported_core {
+        if !supported_read {
             unsupported.push("operand:projection".to_owned());
         }
         MirBackendOperand::Projection {
@@ -1669,14 +1700,15 @@ fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBa
                     .projections()
                     .last()
                     .expect("non-empty place has a projection");
-                let supported_core = place.projections().len() == 1
+                let supported_read = place.projections().len() == 1
                     && matches!(
                         projection.kind(),
                         MirProjectionKind::OptionValue
                             | MirProjectionKind::ResultOkValue
                             | MirProjectionKind::ResultErrValue
+                            | MirProjectionKind::TupleField(_)
                     );
-                if !supported_core {
+                if !supported_read {
                     unsupported.push("operand:borrow-projection".to_owned());
                 }
                 backend_place_operand(place, unsupported)
@@ -1722,13 +1754,17 @@ fn backend_rvalue(
             if backend_aggregate_discriminant(shape).is_none() {
                 unsupported.push("rvalue:aggregate-unknown-shape".to_owned());
             }
-            if !matches!(
-                shape,
-                MirAggregateKind::OptionNone
-                    | MirAggregateKind::OptionSome
-                    | MirAggregateKind::ResultOk
-                    | MirAggregateKind::ResultErr
-            ) {
+            let scalar_tuple = matches!(shape, MirAggregateKind::Tuple)
+                && native_tuples::scalar_tuple_fields(interner, value.ty()).is_some();
+            if !scalar_tuple
+                && !matches!(
+                    shape,
+                    MirAggregateKind::OptionNone
+                        | MirAggregateKind::OptionSome
+                        | MirAggregateKind::ResultOk
+                        | MirAggregateKind::ResultErr
+                )
+            {
                 unsupported.push(format!(
                     "rvalue:aggregate-storage:{}",
                     backend_aggregate_name(shape)

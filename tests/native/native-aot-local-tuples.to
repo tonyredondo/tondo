@@ -1,0 +1,67 @@
+fn tuple_read(): Int {
+    let point = (20, 22)
+    point.0 + point.1
+}
+
+fn tuple_copy(): Int {
+    let point = (7, 9)
+    let other = point
+    other.1 - point.0
+}
+
+fn tuple_reassign(): Int {
+    var point = (7, 9)
+    let original = point
+    point = (point.1, point.0)
+    original.0 * 100 + point.0 * 10 + point.1
+}
+
+fn tuple_branch(value: Int): Int {
+    var point = (2, 3)
+    if value > 0 {
+        point = (5, 7)
+    }
+    point.0 * 10 + point.1
+}
+
+fn tuple_loop(): Int {
+    var point = (1, 2)
+    var count = 0
+    for count < 4 {
+        point = (point.1, point.0 + point.1)
+        count += 1
+    }
+    point.0 * 100 + point.1
+}
+
+fn tuple_bool(): Int {
+    let pair = (true, 42)
+    if pair.0 { pair.1 } else { 0 }
+}
+
+fn tuple_overflow(value: Int): Int {
+    let pair = (value, 1)
+    pair.0 + pair.1
+}
+
+fn tuple_divide(value: Int): Int {
+    let pair = (42, value)
+    pair.0 / pair.1
+}
+
+fn tuple_call_chain(): Int {
+    tuple_reassign() + tuple_loop() + tuple_read()
+}
+
+fn main() {
+    assert(tuple_read() == 42)
+    assert(tuple_copy() == 2)
+    assert(tuple_reassign() == 797)
+    assert(tuple_branch(1) == 57)
+    assert(tuple_branch(0) == 23)
+    assert(tuple_loop() == 813)
+    assert(tuple_bool() == 42)
+    assert(tuple_overflow(41) == 42)
+    assert(tuple_divide(2) == 21)
+    assert(tuple_call_chain() == 1652)
+}

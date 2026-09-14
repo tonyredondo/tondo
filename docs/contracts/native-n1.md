@@ -69,10 +69,11 @@ or workspace state is covered by the negative suite in
 `scripts/native-n1-test.sh`.
 
 No N1 result promotes STD-0.1B, G5, S1, TLF, a release package or a public ABI.
-After N1, the hosted `STD-ASYNC-GROUP-IMPL-001` slice, its model/tests/fuzz
+Independently of the pending N1 gate, the hosted `STD-ASYNC-GROUP-IMPL-001` slice, its model/tests/fuzz
 (`STD-ASYNC-GROUP-TEST-001`) and its target-qualified performance budget
 (`STD-ASYNC-GROUP-PERF-001`) are closed. The critical path continues with the
-remaining STD-0.1B conformance/documentation leaves. Native ARC elimination, COW,
+source-driven AOT integration before the remaining STD-0.1B leaves, as recorded
+in tracker section 24.2. Native ARC elimination, COW,
 escape analysis, incremental compilation and LSP remain post-N1 optimization
 or tooling work.
 

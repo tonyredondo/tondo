@@ -1,6 +1,8 @@
 # Native target registry and smoke contract
 
-`NATIVE-TARGET-001` closes one admitted physical target at a time. The registry
+`NATIVE-TARGET-001` remains pending after the audit. The existing C fixture
+proves physical linker/tool availability, not the Tondo compiler product.
+The registry
 contains the canonical triple, object format, profile, capability set, backend
 candidates, fixture and artifact kind. The current 0.1 entry is
 `x86_64-unknown-linux-gnu`/ELF on Linux. It is deliberately an explicit
@@ -31,6 +33,6 @@ hashes. This is a physical target smoke, not a cross-compile claim; it remains
 candidate-only and does not promote that target in Gate N1
 (`promotion: pending-gate-n1`). The selected Cranelift path is recorded for the
 candidate, while LLVM remains outside this target-specific smoke until its
-complete native product lane is admitted. Gate N1 promotes Cranelift only for
-the primary x86_64 GNU target; ARM64 needs its own complete AOT corpus before
-publication.
+complete native product lane is admitted. Gate N1 remains pending for the
+primary x86_64 GNU target; ARM64 also needs its own complete source-driven AOT
+corpus before promotion. No product target has been published.

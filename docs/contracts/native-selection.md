@@ -13,8 +13,9 @@ fallback and it is not shipped as the default backend.
 The product scope is fixed by [`native-aot-scope.md`](native-aot-scope.md):
 native AOT is the primary 0.1 product, `tondo-vm-hosted` is the reference/oracle
 target, and JIT is out of scope. The selected backend is Cranelift. The
-`selected` status records the human decision; the separate compositional
-`native-n1` report now promotes it only for the published x86_64 GNU target.
+`selected` status records the human decision. N1 remains pending after the
+audit; the historical compositional report does not establish source-driven
+AOT with the production runtime. No target or release has been published.
 
 ## DEC-013 decision
 
@@ -23,10 +24,11 @@ The decision is deliberately scoped to the current target and product lane:
 * `selected_backend` is `cranelift` for native AOT on
   `x86_64-unknown-linux-gnu`.
 * Cranelift was chosen for its Rust-native embedded integration and lower
-  maintenance/distribution cost. The current AOT campaign also shows runtime
+  maintenance/distribution cost. The historical prototype campaign showed runtime
   dimensions within one percent of LLVM and a slightly smaller stripped
   product; LLVM's build-time advantage does not offset the additional
-  toolchain/FFI burden for the first backend.
+  toolchain/FFI burden for the first backend. Those measurements apply to the
+  bounded evaluation programs, not to the unfinished production pipeline.
 * LLVM remains available for experimental comparison and future reconsideration
   if a target or workload demonstrates a material need. There is no silent
   backend fallback.

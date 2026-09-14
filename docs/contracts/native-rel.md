@@ -1,7 +1,8 @@
 # Native reproducible package contract
 
-`NATIVE-REL-001` closes the candidate package boundary for the admitted target.
-The package contains an executable, the native runtime identity, STD-0.1A
+`NATIVE-REL-001` remains pending after the audit. The current C hello-world
+archive is a packaging prototype, not the Tondo compiler/runtime product.
+The prototype package contains an executable, the native runtime identity, STD-0.1A
 contract metadata and checksums in a deterministic `tondo-native-package/1`
 archive. It records the target, profile and toolchain contract versions, but
 never a physical workspace path, timestamp, host name or undeclared
@@ -14,6 +15,6 @@ bytes and all logical checksums. A changed binary/runtime/stdlib hash, target,
 metadata path or partial archive fails closed. A physical workspace path is never
 stored in the manifest. This is a reproducible package envelope for the
 selected Cranelift target, not the final STD 0.1.0 release. Its promotion field
-remains `pending-gate-n1` as a historical candidate-package state; the outer
-hash-bound Gate N1 report records backend promotion without turning this bundle
-into a shipped native product or a public ABI.
+remains `pending-gate-n1`; Gate N1 is also pending after the audit. Historical
+hash-bound reports do not turn this bundle into a shipped native product or
+a public ABI.

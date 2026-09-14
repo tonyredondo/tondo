@@ -19,8 +19,9 @@ runtime, stdlib, linker policy and workload identity. The contract includes
 Cranelift and LLVM and excludes the custom generator until it has a comparable
 machine-code adapter. `DEC-013` records Cranelift as the selected backend for
 the admitted target; this scope contract does not self-claim N1 or turn a
-bounded probe into a production benchmark. The independent N1 report consumes
-the closed campaign and promotes only the primary x86_64 GNU target.
+bounded probe into a production benchmark. N1 remains pending after the audit:
+promotion requires source-driven execution with the production runtime and
+current independent observations on the primary x86_64 GNU target.
 
 ## Memory boundary
 
@@ -51,6 +52,6 @@ samples in each of three fresh processes (at least 27 samples), monotonic
 clocks, hash-bound fixtures and deterministic toolchain inputs. The next block
 is `NATIVE-AOT-LOWER-001`; after lowering, `NATIVE-AOT-MEM-001` captures
 process-local ARC/allocation/cycle/weak/pause/RSS observations from the linked
-products, while the VM remains the semantic oracle. The required campaign
-blocks are closed and feed the recorded `DEC-013` decision and the independent
-Gate N1 promotion record.
+products, while the VM remains the semantic oracle. The historical prototype
+campaigns retain their bounded scope. The required production campaigns and
+Gate N1 remain pending; `DEC-013` still selects Cranelift.

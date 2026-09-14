@@ -55,15 +55,16 @@ comparison backend and the custom generator remains excluded from the ranking
 until it has a real machine-code adapter. The fast lane in
 [`tools/native-evaluation/`](../../tools/native-evaluation/) consumes the real
 MIR probe and measured both engines over the same normalized module shape. The
-AOT campaign closed the required evidence boundary: samples with trapped
-unsupported functions remain non-semantic evidence, while the complete linked
-product, memory, quality and performance reports are bound to the decision.
+AOT prototype campaign supplied bounded comparison evidence. Samples with
+trapped unsupported functions remain non-semantic evidence; historical linked
+product, memory, quality and performance reports do not establish the
+source-driven production pipeline.
 
-Selection was not promotion until the compositional Gate N1 record passed.
-`scripts/native-n1.sh` now promotes Cranelift only for
+Selection is not promotion. The 2026-09-07 audit reopened Gate N1 because the
+historical composition accepted synthesized programs, a generated C runtime
+and copied expected observations. N1 remains pending for
 `x86_64-unknown-linux-gnu`; no compiler path may silently fall back to LLVM or
-another backend. The selection remains target-scoped; a future target requires
-its own evidence and decision record.
+another backend. A future target requires its own evidence and decision record.
 
 This is intentionally bounded:
 
@@ -145,9 +146,9 @@ cleanup/ownership, structured async and selection. Checked-overflow and
 logical-operator behavior, conversions, explicit-panic traps, loop-carried
 locals and branch joins are covered for the executable slice. Collection
 iteration and concrete aggregate storage remain explicit fail-closed leaves,
-not approximations. The native target/artifact/link/publish schemas feed the
-closed N1 record but do not themselves promote a target. Production native
-lowering for the admitted target now proceeds through Cranelift; the LLVM
+not approximations. The native target/artifact/link/publish schemas specify
+prerequisites for the pending N1 gate; they do not promote a target. Production
+native lowering for the selected target proceeds through Cranelift; the LLVM
 adapter remains available for differential testing and experimental comparison.
 A future target or a materially different workload requires new evidence and
 may receive a separate ADR without changing this target's decision.

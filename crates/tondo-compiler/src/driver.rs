@@ -6485,6 +6485,158 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn native_local_tuples_preserve_source_value_semantics_and_control_flow() {
+        let output = execute(
+            operation_request(
+                Operation::Run,
+                include_bytes!("../../../tests/native/native-aot-local-tuples.to"),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            )
+            .with_bytecode_observation(),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        assert_eq!(backend.functions.len(), 10);
+        for function in &backend.functions {
+            assert!(
+                function.supported,
+                "function {}: {:?}",
+                function.ordinal, function.unsupported
+            );
+            for block in &function.blocks {
+                assert!(
+                    !block.statements.iter().any(|statement| matches!(
+                        statement,
+                        crate::mir::MirBackendStatement::Assign {
+                            value: crate::mir::MirBackendRvalue::Aggregate { .. },
+                            ..
+                        }
+                    )),
+                    "local tuples must not allocate native aggregate handles"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_local_tuples_reject_unimplemented_storage_consumers() {
+        for source in [
+            "fn inspectValue(): Int {\n let pair = (1, 2)\n if pair == (1, 2) { 1 } else { 0 }\n}",
+            "fn inspectValue(): Int {\n let pair = ((1, 2), 3)\n (pair.0).0\n}",
+            "fn inspectValue(): Int {\n let pair = (1.5, 2)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair: (Int8, Int8) = (1, 2)\n Int(pair.0)\n}",
+            "fn inspectValue(): Int {\n var pair = (1, 2)\n pair.0 = 3\n pair.0\n}",
+            "fn inspectValue(pair: (Int, Int)): Int { pair.0 }",
+            "fn inspectValue(): (Int, Int) { (1, 2) }",
+        ] {
+            let source = format!("{source}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{source}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let ordinal = backend
+                .debug
+                .as_ref()
+                .unwrap()
+                .symbols
+                .iter()
+                .find(|symbol| symbol.name.ends_with("::value::inspectValue"))
+                .unwrap()
+                .function;
+            let function = backend
+                .functions
+                .iter()
+                .find(|function| function.ordinal == ordinal)
+                .unwrap();
+            assert!(
+                !function.supported,
+                "unsupported source was admitted: {source}"
+            );
+            assert!(!function.unsupported.is_empty());
+        }
+    }
+
+    #[test]
+    fn native_admission_propagates_storage_rejection_through_call_chains() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"fn alpha(): Int { middle() }\n\
+              fn middle(): Int { if false { alpha() } else { omega() } }\n\
+              fn omega(): Int {\n let pair = ((1, 2), 3)\n (pair.0).0\n }\n\
+              fn main() {}\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in backend
+            .functions
+            .iter()
+            .filter(|function| function.return_type == "Int")
+        {
+            assert!(
+                !function.supported,
+                "function {} admitted a rejected transitive callee",
+                function.ordinal
+            );
+        }
+    }
+
+    #[test]
+    fn native_local_tuple_expansion_rejects_excessive_wide_copies() {
+        let fields = vec!["1"; 128].join(", ");
+        let mut source = format!("fn inspectValue(): Int {{\n let original = ({fields})\n");
+        for index in 0..512 {
+            source.push_str(&format!(" let copy{index} = original\n"));
+        }
+        source.push_str(" original.0\n}\nfn main() {}\n");
+        let output = execute(operation_request(
+            Operation::Run,
+            source.as_bytes(),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        let function = backend
+            .functions
+            .iter()
+            .find(|function| function.return_type == "Int")
+            .unwrap();
+        assert!(!function.supported);
+        assert!(
+            function
+                .unsupported
+                .iter()
+                .any(|reason| reason == "tuple:local-limit")
+        );
+    }
+
+    #[test]
     fn closure_protocols_and_invocation_cross_the_public_run_pipeline() {
         let output = execute(operation_request(
             Operation::Run,

@@ -362,6 +362,8 @@ run_step native-evaluation-contract \
     scripts/native-evaluation-check.sh
 run_step native-evaluation-tests \
     scripts/native-evaluation-test.sh
+run_step native-source-scalars-tests \
+    scripts/native-source-scalars-test.sh
 run_step native-evaluation-fast-contract-tests \
     scripts/native-evaluation-fast-test.sh
 run_step native-evaluation-runner-contract \

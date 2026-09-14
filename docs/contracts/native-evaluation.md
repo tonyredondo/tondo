@@ -265,12 +265,12 @@ Missing fixtures, changed hashes, unknown features, an early selected
 candidate, a premature N1/performance claim or a stale frontier is a hard
 failure.
 
-`DIAG-NATIVE-001` is closed by the native diagnostic section of the runner:
-eight bounded cases execute through Cranelift and LLVM subprocesses, and each
-backend must emit the same path-free envelope for race, leak/ARC and crash
-profiles. The hosted diagnostic contracts are the oracle; unsupported physical
-signal/register dimensions remain explicit target capabilities and are not
-silently treated as passed.
+`DIAG-NATIVE-001` remains pending. The runner's eight bounded diagnostic cases
+exercise envelope transport through Cranelift and LLVM subprocesses. Their
+mode-selected counters and preencoded reports do not establish runtime
+detectors. Closure requires independently observed events from the production
+runtime; physical signal/register dimensions remain explicit target
+capabilities.
 
 `NATIVE-BACKEND-ADAPTER-001` is closed by the common normalized lowering and
 its executable differential evidence. The report covers 118 scalar cases, 3
@@ -288,8 +288,9 @@ remain explicit follow-ups of the native stdlib/ABI boundaries; the bounded
 aggregate cases are counted only in `NATIVE-AOT-LOWER-001` and its linked
 product evidence. ARC/diagnostic work may now consume the coordinator
 contract. The selected backend is recorded separately; this evaluation contract
-does not self-promote. Its exact-revision report is now one input to the closed
-Gate N1 composition, which promotes Cranelift only for the primary target.
+does not self-promote. Its historical report retains its component scope;
+Gate N1 remains pending until the source-driven production pipeline supplies
+independent observations on the primary target.
 
 The static contract and negative cases run in the normal test gate. The
 evaluation runner is opt-in/manual because it compiles the real fixture corpus;
