@@ -379,7 +379,7 @@ impl Substitute<'_> {
             return Err("generic:record-depth");
         }
         match self.interner.kind(ty).map_err(|_| "generic:invalid-type")? {
-            TypeKind::Scalar(ScalarType::Int | ScalarType::Bool | ScalarType::Unit) => Ok(()),
+            TypeKind::Scalar(scalar) if native_integers::is_value_scalar(*scalar) => Ok(()),
             TypeKind::Tuple(fields) if !fields.is_empty() => {
                 for field in fields {
                     self.value_type(*field, depth + 1)?;

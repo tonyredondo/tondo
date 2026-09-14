@@ -26,6 +26,7 @@ use crate::types::{
 mod lower;
 mod native_aggregates;
 mod native_generics;
+mod native_integers;
 mod regions;
 mod verify;
 

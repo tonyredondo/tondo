@@ -8503,6 +8503,51 @@ mod tests {
     }
 
     #[test]
+    fn native_integer_normalization_preserves_verified_mir_and_type_identity() {
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-integer-aggregates.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let types = hir.interner().len();
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(types, hir.interner().len());
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn native_integer_guards_and_truncation_charge_the_shared_expansion_budget() {
+        let (resolved, hir) = checked(
+            "fn arithmetic(value: Int8): Int8 { value + 1i8 }\nfn shift(value: Int8): Int8 { value << 1 }\nfn main() {}\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        for name in ["arithmetic", "shift"] {
+            let function = mir
+                .functions()
+                .find(|function| {
+                    function.id() == MirFunctionId::Callable(function_id(&resolved, name))
+                })
+                .unwrap();
+            for budget in 0_u32..4 {
+                let mut blocks = function.blocks.clone();
+                let mut remaining = budget;
+                let result =
+                    crate::mir::native_integers::lower(&mut blocks, hir.interner(), &mut |width| {
+                        remaining = remaining
+                            .checked_sub(width)
+                            .ok_or("aggregate:local-limit")?;
+                        Ok(function.locals.len() as u32 + budget - remaining)
+                    });
+                assert_eq!(result, Err("aggregate:local-limit"), "{name}: {budget}");
+            }
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_unit_aggregates_leave_verified_types_and_empty_members_unchanged() {
         let (resolved, hir) = checked(include_str!(
             "../../../../tests/native/native-aot-unit-aggregates.to"

@@ -1,0 +1,150 @@
+type Box[T] = { value: T }
+type Numbers = { byte: Byte, signed: (Int8, Int16, Int32), unsigned: (UInt8, UInt16, UInt32) }
+
+fn identity[T: Copy](value: T): T { value }
+fn same[T: Copy + Equatable](left: T, right: T): Bool { left == right }
+fn swap[T: Copy](value: (T, T)): (T, T) { (value.1, value.0) }
+fn recur[T: Copy](value: T, count: Int): T {
+    if count == 0 { value } else { recur(value, count - 1) }
+}
+
+fn construction(): Int {
+    let original = Numbers {
+        unsigned: (255u8, 65535u16, 4294967295u32), byte: Byte(255u8),
+        signed: (-128i8, -32768i16, -2147483648i32)
+    }
+    var copy = identity(original)
+    copy.signed.0 = 127i8
+    copy.unsigned = (0u8, 0u16, 0u32)
+    copy.byte = Byte(0u8)
+    let updated = copy with { signed: original.signed, unsigned: original.unsigned, byte: original.byte }
+    if same(updated, original) and original != copy and Int(copy.signed.0) == 127 { 1 } else { 0 }
+}
+
+fn nestedCalls(): Int {
+    let original = Box[(Byte, Box[(Int8, UInt32)])] {
+        value: (Byte(255u8), Box[(Int8, UInt32)] { value: (-128i8, 4294967295u32) })
+    }
+    var copy = recur(identity(original), 3)
+    copy.value.1.value = (127i8, 0u32)
+    if original != copy and Int(original.value.1.value.1) == 4294967295
+        and Int(copy.value.1.value.0) == 127 { 1 } else { 0 }
+}
+
+fn signed8(): Int {
+    var pair = swap((127i8, -128i8))
+    let original = pair
+    pair.0 += 1i8
+    pair.1 -= 1i8
+    if pair == (-127i8, 126i8) and original == (-128i8, 127i8)
+        and (~pair.0) == 126i8 and pair.0 % -1i8 == 0i8
+        and pair.1 / 2i8 == 63i8 and -pair.1 == -126i8 { 1 } else { 0 }
+}
+
+fn signed16(): Int {
+    var value = Box[Int16] { value: identity(-32768i16) }
+    let original = value
+    value.value += 1i16
+    if Int32(value.value) == -32767i32 and original.value % -1i16 == 0i16
+        and 300i16 * 100i16 == 30000i16 and (~value.value) == 32766i16 { 1 } else { 0 }
+}
+
+fn signed32(): Int {
+    let pair = identity((-2147483648i32, 2147483647i32))
+    if pair.0 % -1i32 == 0i32 and pair.1 + pair.0 == -1i32
+        and (pair.1 << 1) == -2i32 and (pair.0 >> 31) == -1i32
+        and Int(~pair.1) == -2147483648 { 1 } else { 0 }
+}
+
+fn unsigned8(): Int {
+    var pair = identity((0u8, 255u8))
+    pair.0 = ~pair.0
+    pair.1 <<= 1
+    if pair == (255u8, 254u8) and pair.0 / 3u8 == 85u8
+        and UInt16(pair.0) == 255u16 and (pair.0 >> 7) == 1u8
+        and (pair.1 | 1u8) == 255u8 and (pair.0 & 3u8) == 3u8 { 1 } else { 0 }
+}
+
+fn unsigned16(): Int {
+    var value = Box[UInt16] { value: identity(0u16) }
+    value.value = ~value.value
+    value.value >>= 1
+    if value.value == 32767u16 and (~0u16) == 65535u16
+        and (65535u16 << 1) == 65534u16 and UInt32(value.value) == 32767u32 { 1 } else { 0 }
+}
+
+fn unsigned32(): Int {
+    let pair = swap((0u32, 4294967295u32))
+    if (~pair.1) == pair.0 and pair.0 / 65535u32 == 65537u32
+        and pair.0 % 2u32 == 1u32 and (pair.0 >> 31) == 1u32
+        and (pair.0 << 1) == 4294967294u32 and 65535u32 * 65535u32 == 4294836225u32 { 1 } else { 0 }
+}
+
+fn bytes(): Int {
+    var pair = swap((Byte(255u8), Byte(0u8)))
+    pair.0 = ~pair.0
+    pair.1 = pair.0 << 1
+    if pair == (Byte(255u8), Byte(254u8)) and (pair.0 >> 7) == Byte(1u8)
+        and (pair.0 ^ pair.1) == Byte(1u8) and UInt8(pair.0) == 255u8 { 1 } else { 0 }
+}
+
+fn repeated(): Int {
+    var pair = (0u16, -10i16)
+    var count = 0
+    for count < 5 {
+        pair = identity(pair)
+        pair.0 += 1u16
+        pair.1 += 2i16
+        count += 1
+    }
+    if pair == (5u16, 0i16) { 1 } else { 0 }
+}
+
+fn shiftSigned(count: Int): Int { Int(identity((127i8, false)).0 << count) }
+fn shiftUnsigned(count: Int): Int { Int(identity((65535u16, false)).0 << count) }
+fn shiftWide(count: Int): Int { Int(identity((4294967295u32, false)).0 << count) }
+fn shiftByte(count: Int): Int { Int(identity((Byte(255u8), false)).0 << count) }
+fn rightSigned(count: Int): Int { Int(identity((-32768i16, false)).0 >> count) }
+fn rightUnsigned(count: Int): Int { Int(identity((4294967295u32, false)).0 >> count) }
+
+fn overflowSigned8(): Int { Int(identity((127i8, 1i8)).0 + 1i8) }
+fn underflowSigned16(): Int { Int(identity((-32768i16, 1i16)).0 - 1i16) }
+fn overflowSigned32(): Int { Int(identity((2147483647i32, 2i32)).0 * 2i32) }
+fn negateMinimum(): Int { Int(-identity((-128i8, false)).0) }
+fn divideMinimum(): Int { Int(identity((-32768i16, false)).0 / -1i16) }
+fn remainderMinimum(): Int { Int(identity((-128i8, false)).0 % -1i8) }
+fn underflowUnsigned8(): Int { Int(identity((0u8, 1u8)).0 - 1u8) }
+fn overflowUnsigned16(): Int { Int(identity((65535u16, 1u16)).0 + 1u16) }
+fn overflowUnsigned32(): Int { Int(identity((4294967295u32, 2u32)).0 * 2u32) }
+fn carrierOverflow(): Int { Int(identity((4294967295u32, 2u32)).0 * 4294967295u32) }
+fn divideZero(): Int { Int(identity((1u32, 0u32)).0 / 0u32) }
+fn remainderZero(): Int { Int(identity((1i32, 0i32)).0 % 0i32) }
+fn wideDivideMinimum(): Int {
+    let pair = (-9223372036854775808, -1)
+    pair.0 / pair.1
+}
+fn wideRemainderMinimum(): Int {
+    let pair = (-9223372036854775808, -1)
+    pair.0 % pair.1
+}
+fn discardedOverflow(): Int {
+    _ = identity((127i8, false)).0 + 1i8
+    1
+}
+fn shiftWidth(): Int { Int(identity((1i8, false)).0 << 8) }
+fn shiftLastBit(): Int { Int(identity((1i8, false)).0 << 7u8) }
+fn rightWidth(): Int { Int(identity((65535u16, false)).0 >> 16) }
+fn rightLastBit(): Int { Int(identity((65535u16, false)).0 >> 15u32) }
+fn wideWidth(): Int { Int(identity((1u32, false)).0 << 32) }
+fn wideLastBit(): Int { Int(identity((1u32, false)).0 << 31u16) }
+
+fn main() {
+    assert(construction() == 1 and nestedCalls() == 1)
+    assert(signed8() == 1 and signed16() == 1 and signed32() == 1)
+    assert(unsigned8() == 1 and unsigned16() == 1 and unsigned32() == 1 and bytes() == 1)
+    assert(repeated() == 1 and remainderMinimum() == 0)
+    assert(wideRemainderMinimum() == 0)
+    assert(shiftSigned(1) == -2 and shiftUnsigned(1) == 65534 and shiftWide(1) == 4294967294)
+    assert(shiftByte(1) == 254 and rightSigned(1) == -16384 and rightUnsigned(1) == 2147483647)
+    assert(shiftLastBit() == -128 and rightLastBit() == 1 and wideLastBit() == 2147483648)
+}

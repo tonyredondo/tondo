@@ -1,5 +1,5 @@
 //! Scalar storage and private call carriers for value aggregates.
-//! Only Int/Bool/Unit leaves are admitted. The verified source MIR is immutable;
+//! Integer carrier, Bool and Unit leaves are admitted. Source MIR is immutable;
 //! copies and projected replacements snapshot every RHS leaf before any write.
 
 use std::rc::Rc;
@@ -69,7 +69,7 @@ impl Layout {
             return (depth + layout.height <= MAX_LAYOUT_DEPTH).then(|| Rc::clone(layout));
         }
         let fields = match interner.kind(ty).ok()? {
-            TypeKind::Scalar(ScalarType::Int | ScalarType::Bool | ScalarType::Unit) => Vec::new(),
+            TypeKind::Scalar(scalar) if native_integers::is_value_scalar(*scalar) => Vec::new(),
             TypeKind::Tuple(fields) if !fields.is_empty() => fields
                 .iter()
                 .enumerate()
@@ -290,6 +290,9 @@ pub(super) fn lower(
         }
         locals.terminator(&mut block.terminator.kind)?;
     }
+    native_integers::lower(&mut lowered.blocks, interner, &mut |width| {
+        locals.allocate(width)
+    })?;
     Ok(lowered)
 }
 
@@ -304,7 +307,7 @@ fn assign(span: Span, destination: u32, operand: MirOperand) -> MirStatement {
     )
 }
 
-fn assign_rvalue(span: Span, destination: u32, value: MirRvalue) -> MirStatement {
+pub(super) fn assign_rvalue(span: Span, destination: u32, value: MirRvalue) -> MirStatement {
     MirStatement {
         span,
         kind: MirStatementKind::Assign {
@@ -485,7 +488,7 @@ impl NativeLocals {
 
         // One scratch local per leaf charges code expansion to the existing
         // budget. Commit the result only after all reads: its destination can
-        // be a Bool field of either operand. Int/Bool leaf comparisons are pure.
+        // be a Bool field of either operand. Scalar leaf comparisons are pure.
         let first = self.allocate(width)?;
         let observed = |index| MirOperand {
             ty: value.ty,

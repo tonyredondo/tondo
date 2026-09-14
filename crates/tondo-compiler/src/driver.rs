@@ -6558,6 +6558,73 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn native_integer_aggregates_preserve_widths_and_value_calls() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-integer-aggregates.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "{}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
+        }
+        for scalar in [
+            "Byte", "Int8", "Int16", "Int32", "UInt8", "UInt16", "UInt32",
+        ] {
+            assert!(backend.functions.iter().any(|function| {
+                matches!(&function.generics,
+                    Some(crate::mir::MirBackendGenerics::Instance { arguments, .. })
+                    if arguments.iter().any(|argument| argument == scalar || argument.contains(scalar)))
+            }), "missing concrete instance for {scalar}");
+        }
+    }
+
+    #[test]
+    fn native_integer_storage_does_not_admit_implicit_numeric_conversions() {
+        for expression in [
+            "Byte(1u8) + Byte(2u8)",
+            "(1i8, false) == (1u8, false)",
+            "identity[Int8](1u8)",
+            "-1u8",
+        ] {
+            let source = format!(
+                "fn identity[T: Copy](value: T): T {{ value }}\nfn main() {{\n _ = {expression}\n}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{expression}");
+            assert!(
+                output.mir_summary().is_none(),
+                "ill-typed arithmetic reached native extraction"
+            );
+        }
+    }
+
+    #[test]
     fn native_unit_aggregates_preserve_values_and_empty_return_protocols() {
         let output = execute(operation_request(
             Operation::Run,
@@ -6672,7 +6739,7 @@ fn main(): !env.EnvError {
             "fn inspectValue(): Int {\n let pair = ([1, 2], true)\n if pair == pair { 1 } else { 0 }\n}",
             "fn inspectValue(): Int {\n let pair = ((1.5, 2), 3)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = (1.5, 2)\n pair.1\n}",
-            "fn inspectValue(): Int {\n let pair: (Int8, Int8) = (1, 2)\n Int(pair.0)\n}",
+            "fn inspectValue(): Int {\n let pair: (UInt64, Int) = (1, 2)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = ([1, 2], 3)\n pair.1\n}",
         ] {
             let source = format!("{source}\nfn main() {{}}\n");
@@ -6855,7 +6922,7 @@ fn main() {
             "type Empty = {}\nfn inspectValue(value: mut Empty): Int { 1 }",
             "type Empty = {}\nfn inspectValue(value: var Empty): Int {\n value = Empty {}\n 1\n}",
             "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
-            "type Narrow = { value: Int8 }\nfn inspectValue(): Int {\n let narrow = Narrow { value: 1 }\n Int(narrow.value)\n}",
+            "type Wide = { value: UInt64, result: Int }\nfn inspectValue(): Int {\n let wide = Wide { value: 1, result: 2 }\n wide.result\n}",
             "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",
             "fn inspectValue(point: ref Point): Int { point.x }",
             "fn inspectValue(point: mut Point): Int { 1 }",

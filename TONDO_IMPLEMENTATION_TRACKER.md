@@ -5685,7 +5685,8 @@ pueden retrasar el primer backend correcto.
   `NATIVE-AOT-PERF-001` remain pending, as does Gate N1.
 
 - [ ] **NATIVE-AOT-LOWER-001 — Lower actual verified frontend MIR across the required language corpus.**
-  Source-driven local tuples and records with `Int`/`Bool`/`Unit` leaves now lower
+  Source-driven local tuples and records with `Int`/`Bool`/`Unit`, `Byte`,
+  `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32` leaves now lower
   to scalar locals, including nested/generic records, field writes, independent
   copies, `with` updates, reassignment and control flow. Ordinary direct calls
   now pass flattened value arguments and return aggregate fields through
@@ -5703,12 +5704,15 @@ pueden retrasar el primer backend correcto.
   identity and the existing aggregate call/return protocol. Unit-producing calls
   and discarded empty results retain evaluation and checked errors. Their
   storage and comparisons count toward the same expansion limits.
-  The focused `scripts/native-source-scalars-test.sh` compares 178 Cranelift
-  observations with the hosted VM, including eight arithmetic traps, without an evaluation
+  Narrow integer normalization preserves source-width arithmetic, complement
+  and shifts before erasing types into signed 64-bit carriers. Range and shift
+  guards share the aggregate expansion limit; discarded operations still trap.
+  The focused `scripts/native-source-scalars-test.sh` compares 245 Cranelift
+  observations with the hosted VM, including 46 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 133 aggregate-call, generic-call, equality and Unit/empty-record cases.
-  Managed fields, generic closures and
+  the 200 aggregate-call, generic-call, equality, Unit/empty-record and integer cases.
+  Managed fields, checked-conversion Result storage, `UInt64`/float value layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

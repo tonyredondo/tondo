@@ -3589,8 +3589,20 @@ fn lower_checked_binary_cranelift(
             builder.ins().trapnz(overflow, TrapCode::INTEGER_OVERFLOW);
             value
         }
-        "divide" => builder.ins().sdiv(left, right),
-        "remainder" => builder.ins().srem(left, right),
+        "divide" | "remainder" => {
+            // A raw x86 division can raise SIGFPE. Source execution requires
+            // the explicit native trap protocol, including constant divisors.
+            builder.ins().trapz(right, TrapCode::INTEGER_DIVISION_BY_ZERO);
+            if operator == "divide" {
+                let minimum = builder.ins().icmp_imm(IntCC::Equal, left, i64::MIN);
+                let minus_one = builder.ins().icmp_imm(IntCC::Equal, right, -1);
+                let overflow = builder.ins().band(minimum, minus_one);
+                builder.ins().trapnz(overflow, TrapCode::INTEGER_OVERFLOW);
+                builder.ins().sdiv(left, right)
+            } else {
+                builder.ins().srem(left, right)
+            }
+        }
         "bitwise-and" => builder.ins().band(left, right),
         "bitwise-or" => builder.ins().bor(left, right),
         "bitwise-xor" => builder.ins().bxor(left, right),
