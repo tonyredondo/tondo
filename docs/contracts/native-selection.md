@@ -13,7 +13,7 @@ fallback and it is not shipped as the default backend.
 The product scope is fixed by [`native-aot-scope.md`](native-aot-scope.md):
 native AOT is the primary 0.1 product, `tondo-vm-hosted` is the reference/oracle
 target, and JIT is out of scope. The selected backend is Cranelift. The
-`selected` status records the human decision. N1 remains pending after the
+`selected` status records the human decision. [N1](native-n1.md) remains pending after the
 audit; the historical compositional report does not establish source-driven
 AOT with the production runtime. No target or release has been published.
 
