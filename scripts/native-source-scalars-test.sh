@@ -22,6 +22,10 @@ adapter="$target_dir/native-evaluation/debug/tondo-native-evaluation"
 args=(--source-scalars --target x86_64-unknown-linux-gnu --cc "$cc" --temp-dir "$tmp/native")
 "$adapter" "${args[@]}" --probe "$tmp/probe.json" --output "$tmp/report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-local-records.to > "$tmp/records-probe.json"
+"$adapter" "${args[@]}" --probe "$tmp/records-probe.json" --output "$tmp/records-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -38,6 +42,15 @@ cases = report['observations']
 assert len(cases) == 24 and len({case['function_ordinal'] for case in cases}) == 9
 assert sum(case['native_status'] == 'returned' for case in cases) == 22
 assert sum(case['native_status'] == 'trapped' for case in cases) == 2
+assert all(case['native_result'] == case['vm_result'] for case in cases)
+records = json.loads((root / 'records-report.json').read_text())
+assert records['format'] == report['format'] and records['backend'] == 'cranelift'
+assert records['boundary'] == report['boundary']
+assert records['n1_claim'] is False and records['production_runtime_linked'] is False
+cases = records['observations']
+assert len(cases) == 21 and len({case['function_ordinal'] for case in cases}) == 11
+assert sum(case['native_status'] == 'returned' for case in cases) == 20
+assert sum(case['native_status'] == 'trapped' for case in cases) == 1
 assert all(case['native_result'] == case['vm_result'] for case in cases)
 probe = json.loads((root / 'probe.json').read_text())
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
@@ -66,4 +79,5 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
 done
 cp "$tmp/report.json" "$target_dir/reliability/evidence/native-source-scalars.json"
-echo "native source scalars: OK (24 observed cases, 2 arithmetic traps, 5 rejected evidence changes)"
+cp "$tmp/records-report.json" "$target_dir/reliability/evidence/native-source-records.json"
+echo "native source scalars: OK (45 observed cases, 3 arithmetic traps, 5 rejected evidence changes)"

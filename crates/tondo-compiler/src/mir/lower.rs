@@ -761,15 +761,43 @@ impl<'a> FunctionBuilder<'a> {
             ),
             HirExpressionKind::Record { owner, fields } => {
                 let mut current = block;
-                let mut values = Vec::with_capacity(fields.len());
-                let mut members = Vec::with_capacity(fields.len());
+                let mut evaluated = BTreeMap::new();
                 for field in fields {
                     let Some((next, value)) = self.lower_value(field.value(), current)? else {
                         return Ok(None);
                     };
                     current = next;
-                    values.push(value);
+                    evaluated.insert(field.member(), value);
+                }
+                // Evaluate in textual order, then arrange the already evaluated
+                // operands in declaration order for MIR storage and projection.
+                let Some(crate::hir::HirTypeDeclarationKind::Nominal(nominal)) = self
+                    .hir
+                    .declaration(*owner)
+                    .map(|declaration| declaration.kind())
+                else {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "record declaration is missing".into(),
+                    });
+                };
+                let HirNominalShape::Record { fields: declared } = nominal.shape() else {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "record declaration has a non-record shape".into(),
+                    });
+                };
+                let mut members = Vec::with_capacity(declared.len());
+                let mut values = Vec::with_capacity(declared.len());
+                for field in declared {
+                    let value = evaluated.remove(&field.member()).ok_or_else(|| {
+                        MirError::Construction {
+                            span,
+                            message: "record initializer is missing a declared field".into(),
+                        }
+                    })?;
                     members.push(field.member());
+                    values.push(value);
                 }
                 self.assign(
                     current,

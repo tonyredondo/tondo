@@ -24,7 +24,7 @@ use crate::types::{
 };
 
 mod lower;
-mod native_tuples;
+mod native_aggregates;
 mod regions;
 mod verify;
 
@@ -204,11 +204,18 @@ impl MirProgram {
                 MirFunctionId::Closure(_) => None,
             })
             .collect::<BTreeMap<_, _>>();
+        let records = native_aggregates::record_fields(self);
         let mut functions = self
             .functions()
             .enumerate()
             .map(|(ordinal, function)| {
-                backend_function(ordinal as u32, function, interner, &callable_ordinals)
+                backend_function(
+                    ordinal as u32,
+                    function,
+                    interner,
+                    &callable_ordinals,
+                    &records,
+                )
             })
             .collect::<Vec<_>>();
         validate_backend_call_targets(&mut functions);
@@ -857,14 +864,23 @@ fn backend_function(
     function: &MirFunction,
     interner: &TypeInterner,
     callable_ordinals: &BTreeMap<HirCallableId, u32>,
+    records: &native_aggregates::RecordFields,
 ) -> MirBackendFunction {
     let mut unsupported = Vec::new();
     let function_values = backend_function_values(function, callable_ordinals);
-    let mut blocks = function
-        .blocks_with_ids()
+    let normalized = match native_aggregates::lower(function, interner, records) {
+        Ok(blocks) => blocks,
+        Err(reason) => {
+            unsupported.push(reason.to_owned());
+            function.blocks.clone()
+        }
+    };
+    let blocks = normalized
+        .iter()
+        .enumerate()
         .map(|(block_id, block)| {
             backend_block(
-                block_id.index(),
+                block_id as u32,
                 block,
                 interner,
                 &mut unsupported,
@@ -873,7 +889,6 @@ fn backend_function(
             )
         })
         .collect::<Vec<_>>();
-    native_tuples::lower_local_tuples(function, interner, &mut blocks, &mut unsupported);
     validate_backend_control_flow(&blocks, &mut unsupported);
     let return_type = backend_type_name(interner, function.outcome());
     if !is_native_carrier_type(&return_type) {
@@ -1650,17 +1665,13 @@ fn backend_place_operand(place: &MirPlace, unsupported: &mut Vec<String>) -> Mir
             .projections()
             .last()
             .expect("non-empty place has a projection");
-        let kind = match projection.kind() {
-            MirProjectionKind::TupleField(index) => format!("tuple:{index}"),
-            kind => backend_projection_kind_name(kind).to_owned(),
-        };
+        let kind = backend_projection_kind_name(projection.kind()).to_owned();
         let supported_read = place.projections().len() == 1
             && matches!(
                 projection.kind(),
                 MirProjectionKind::OptionValue
                     | MirProjectionKind::ResultOkValue
                     | MirProjectionKind::ResultErrValue
-                    | MirProjectionKind::TupleField(_)
             );
         if !supported_read {
             unsupported.push("operand:projection".to_owned());
@@ -1706,7 +1717,6 @@ fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBa
                         MirProjectionKind::OptionValue
                             | MirProjectionKind::ResultOkValue
                             | MirProjectionKind::ResultErrValue
-                            | MirProjectionKind::TupleField(_)
                     );
                 if !supported_read {
                     unsupported.push("operand:borrow-projection".to_owned());
@@ -1754,17 +1764,13 @@ fn backend_rvalue(
             if backend_aggregate_discriminant(shape).is_none() {
                 unsupported.push("rvalue:aggregate-unknown-shape".to_owned());
             }
-            let scalar_tuple = matches!(shape, MirAggregateKind::Tuple)
-                && native_tuples::scalar_tuple_fields(interner, value.ty()).is_some();
-            if !scalar_tuple
-                && !matches!(
-                    shape,
-                    MirAggregateKind::OptionNone
-                        | MirAggregateKind::OptionSome
-                        | MirAggregateKind::ResultOk
-                        | MirAggregateKind::ResultErr
-                )
-            {
+            if !matches!(
+                shape,
+                MirAggregateKind::OptionNone
+                    | MirAggregateKind::OptionSome
+                    | MirAggregateKind::ResultOk
+                    | MirAggregateKind::ResultErr
+            ) {
                 unsupported.push(format!(
                     "rvalue:aggregate-storage:{}",
                     backend_aggregate_name(shape)

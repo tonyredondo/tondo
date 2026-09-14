@@ -8,19 +8,32 @@ Both candidates consume one immutable `tondo-mir-backend/1` program, but
 synthetic storage cases do not prove that the frontend can produce those
 operations from Tondo source.
 
-## Source-driven local tuples
+## Source-driven local value aggregates
 
-The compiler now lowers local flat tuples of `Int` and `Bool` into independent
-scalar MIR locals. Construction, positional reads, copies, whole-tuple
-reassignment, branches and loop-carried values preserve value semantics.
+The compiler lowers local tuples and records whose leaves are `Int` and `Bool`
+into independent scalar locals. Nested tuples/records and instantiated generic
+records use the same route. Construction, field reads and writes, copies,
+whole-value and nested-field replacement, `with` updates, branches and
+loop-carried values preserve value semantics.
 Assignments snapshot the right-hand fields before writing their destinations.
 This route does not allocate aggregate handles or define a tuple calling
-convention. It leaves the verified source MIR and hosted bytecode unchanged.
+convention. The native normalization operates on a private copy of MIR blocks;
+it leaves verified source MIR and hosted bytecode unchanged. Record layouts
+come from instantiated, verified MIR constructors, with declaration-order
+member identities. Each generated local belongs to one scalar leaf; a copy
+never shares its mutable fields with its source.
 Expansion is bounded to 65,536 additional locals per function, including
 right-hand snapshots; wider repeated copies are rejected before exceeding
-that allocation budget.
+that allocation budget. Layout depth is bounded to 64 aggregate levels.
 
-`tests/native/native-aot-local-tuples.to` supplies real source to the compiler's
+Record initializers evaluate fields in source order and then place their
+evaluated operands in declaration order. A frontend regression previously
+rejected reordered fields with an internal MIR invariant error. This is fixed
+for both hosted and native compilation, with an independent hosted test using
+a mutable counter closure to observe evaluation order.
+
+`tests/native/native-aot-local-tuples.to` and
+`tests/native/native-aot-local-records.to` supply real source to the compiler's
 `native_mir_probe` and the selected Cranelift adapter. The dedicated
 `--source-scalars` mode captures native results and compares them with both the
 hosted VM observations and the normalized-MIR interpreter. A minimal C entry
@@ -30,18 +43,20 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 24 observations across nine
-scalar functions, including two arithmetic traps, and rejects source-identity
+`scripts/native-source-scalars-test.sh` verifies 45 observations across 20
+scalar functions: 24 tuple cases and 21 record/nested-value cases, including
+three arithmetic traps. It rejects source-identity
 drift, unsupported functions, missing VM observations, changed oracle results
-and an empty corpus. Its report is
-`$CARGO_TARGET_DIR/reliability/evidence/native-source-scalars.json` (the default
+and an empty corpus. Reports are `native-source-scalars.json` and
+`native-source-records.json` under `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
-Nested and managed tuples, other numeric representations, field writes, whole
-tuple equality, and tuples crossing calls/returns remain unsupported. Records,
-loan operations, production runtime integration and the public native build/run
+Managed fields, other numeric representations, empty records/tuples, whole
+aggregate equality, and aggregate values crossing calls/returns remain
+unsupported. Scalar fields may be passed to supported scalar functions.
+Loan operations, production runtime integration and the public native build/run
 path remain separate work. Admission rejection propagates through direct-call
 chains, including recursive components, so an admitted entry cannot reach an
 unsupported function through an intermediate caller.

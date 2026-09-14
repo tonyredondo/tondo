@@ -6529,10 +6529,10 @@ fn main(): !env.EnvError {
     fn native_local_tuples_reject_unimplemented_storage_consumers() {
         for source in [
             "fn inspectValue(): Int {\n let pair = (1, 2)\n if pair == (1, 2) { 1 } else { 0 }\n}",
-            "fn inspectValue(): Int {\n let pair = ((1, 2), 3)\n (pair.0).0\n}",
+            "fn inspectValue(): Int {\n let pair = ((1.5, 2), 3)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = (1.5, 2)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair: (Int8, Int8) = (1, 2)\n Int(pair.0)\n}",
-            "fn inspectValue(): Int {\n var pair = (1, 2)\n pair.0 = 3\n pair.0\n}",
+            "fn inspectValue(): Int {\n let pair = ([1, 2], 3)\n pair.1\n}",
             "fn inspectValue(pair: (Int, Int)): Int { pair.0 }",
             "fn inspectValue(): (Int, Int) { (1, 2) }",
         ] {
@@ -6579,7 +6579,7 @@ fn main(): !env.EnvError {
             Operation::Run,
             b"fn alpha(): Int { middle() }\n\
               fn middle(): Int { if false { alpha() } else { omega() } }\n\
-              fn omega(): Int {\n let pair = ((1, 2), 3)\n (pair.0).0\n }\n\
+              fn omega(): Int {\n let pair = ((1.5, 2), 3)\n pair.1\n }\n\
               fn main() {}\n",
             SourceForm::Script,
             ResourceLimits::default(),
@@ -6632,7 +6632,160 @@ fn main(): !env.EnvError {
             function
                 .unsupported
                 .iter()
-                .any(|reason| reason == "tuple:local-limit")
+                .any(|reason| reason == "aggregate:local-limit")
+        );
+    }
+
+    #[test]
+    fn native_local_records_preserve_nested_copies_and_projected_writes() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-local-records.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        for function in &output
+            .mir_summary()
+            .unwrap()
+            .backend
+            .as_ref()
+            .unwrap()
+            .functions
+        {
+            assert!(
+                function.supported,
+                "{}: {:?}",
+                function.ordinal, function.unsupported
+            );
+            assert!(
+                function
+                    .blocks
+                    .iter()
+                    .all(|block| block.statements.iter().all(|statement| !matches!(
+                        statement,
+                        crate::mir::MirBackendStatement::Assign {
+                            value: crate::mir::MirBackendRvalue::Aggregate { .. },
+                            ..
+                        }
+                    )))
+            );
+        }
+    }
+
+    #[test]
+    fn record_initializers_evaluate_in_source_order_and_store_in_declaration_order() {
+        let output = execute(operation_request(
+            Operation::Run,
+            br#"
+type Pair[T] = { first: T, second: T }
+fn main() {
+    var counter = 0
+    var next = (): Int {
+        counter += 1
+        counter
+    }
+    let pair = Pair[Int] { second: next(), first: next() }
+    assert(pair.first == 2)
+    assert(pair.second == 1)
+}
+"#,
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+    }
+
+    #[test]
+    fn native_records_reject_managed_fields_whole_value_operations_and_call_abi() {
+        for source in [
+            "fn inspectValue(point: Point): Int { point.x }",
+            "fn inspectValue(): Point { Point { x: 1, y: 2 } }",
+            "fn inspectValue(): Int {\n let point = Point { x: 1, y: 2 }\n if point == point { 1 } else { 0 }\n}",
+            "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
+            "type Narrow = { value: Int8 }\nfn inspectValue(): Int {\n let narrow = Narrow { value: 1 }\n Int(narrow.value)\n}",
+            "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",
+        ] {
+            let source = format!("type Point = {{ x: Int, y: Int }}\n{source}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{source}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let ordinal = backend
+                .debug
+                .as_ref()
+                .unwrap()
+                .symbols
+                .iter()
+                .find(|symbol| symbol.name.ends_with("::value::inspectValue"))
+                .unwrap()
+                .function;
+            let function = backend
+                .functions
+                .iter()
+                .find(|function| function.ordinal == ordinal)
+                .unwrap();
+            assert!(
+                !function.supported,
+                "unimplemented record operation admitted: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_aggregate_layout_depth_is_bounded() {
+        let mut source = "fn inspectValue(): Int {\n let nested0 = (1, 2)\n".to_owned();
+        for depth in 1..70 {
+            source.push_str(&format!(" let nested{depth} = (nested{}, 0)\n", depth - 1));
+        }
+        source.push_str(" 1\n}\nfn main() {}\n");
+        let output = execute(operation_request(
+            Operation::Run,
+            source.as_bytes(),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        let function = backend
+            .functions
+            .iter()
+            .find(|function| function.return_type == "Int")
+            .unwrap();
+        assert!(!function.supported);
+        assert!(
+            function
+                .unsupported
+                .iter()
+                .any(|reason| reason.contains("aggregate"))
         );
     }
 

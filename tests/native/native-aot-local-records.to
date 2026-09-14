@@ -1,0 +1,104 @@
+type Point = { x: Int, y: Int }
+type Frame = { point: Point, flags: (Bool, Int) }
+type Pair[T] = { first: T, second: T }
+
+fn record_read(): Int {
+    let point = Point { y: 22, x: 20 }
+    point.x + point.y
+}
+
+fn record_copy(): Int {
+    var point = Point { x: 7, y: 9 }
+    var other = point
+    other.x = 3
+    point.y = 5
+    point.x * 1000 + point.y * 100 + other.x * 10 + other.y
+}
+
+fn record_reassign(): Int {
+    var point = Point { x: 7, y: 9 }
+    let original = point
+    point = Point { y: point.x, x: point.y }
+    original.x * 100 + point.x * 10 + point.y
+}
+
+fn nested_copy(): Int {
+    var frame = Frame { point: Point { x: 2, y: 3 }, flags: (true, 5) }
+    let original = frame
+    frame.point.x = 7
+    frame.flags.1 = 9
+    if original.flags.0 {
+        original.point.x * 1000 + original.flags.1 * 100 + frame.point.x * 10 + frame.flags.1
+    } else { 0 }
+}
+
+fn nested_replace(): Int {
+    var pair = ((1, 2), (3, 4))
+    let original = pair
+    pair = (pair.1, pair.0)
+    pair.0 = pair.1
+    pair.1 = (8, (pair.1).1)
+    let result = (original.0).0 * 1000 + (pair.0).0 * 100 + (pair.0).1 * 10 + (pair.1).0
+    result
+}
+
+fn record_branch(value: Int): Int {
+    var point = Point { x: 2, y: 3 }
+    if value > 0 {
+        point.x = 5
+    } else {
+        point.y = 7
+    }
+    point.x * 10 + point.y
+}
+
+fn record_loop(): Int {
+    var point = Point { x: 1, y: 2 }
+    var count = 0
+    for count < 4 {
+        point = Point { x: point.y, y: point.x + point.y }
+        count += 1
+    }
+    point.x * 100 + point.y
+}
+
+fn record_checked_write(value: Int): Int {
+    var point = Point { x: value, y: 1 }
+    point.x += point.y
+    point.x
+}
+
+fn record_update(): Int {
+    let frame = Frame { point: Point { x: 2, y: 3 }, flags: (true, 5) }
+    let changed = frame with { flags: (false, 9), point: Point { y: 7, x: 4 } }
+    if changed.flags.0 { 0 } else {
+        frame.point.x * 1000 + changed.point.x * 100 + changed.point.y * 10 + changed.flags.1
+    }
+}
+
+fn generic_record(): Int {
+    var pair = Pair[(Bool, Int)] { second: (false, 9), first: (true, 7) }
+    let original = pair
+    pair.first = pair.second
+    if original.first.0 { original.first.1 * 10 + pair.first.1 } else { 0 }
+}
+
+fn record_projection_call(): Int {
+    let point = Point { x: 5, y: 7 }
+    record_branch(point.x)
+}
+
+fn main() {
+    assert(record_read() == 42)
+    assert(record_copy() == 7539)
+    assert(record_reassign() == 797)
+    assert(nested_copy() == 2579)
+    assert(nested_replace() == 1128)
+    assert(record_branch(1) == 53)
+    assert(record_branch(0) == 27)
+    assert(record_loop() == 813)
+    assert(record_checked_write(41) == 42)
+    assert(record_update() == 2479)
+    assert(generic_record() == 79)
+    assert(record_projection_call() == 53)
+}

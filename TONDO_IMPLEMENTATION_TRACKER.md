@@ -5685,12 +5685,14 @@ pueden retrasar el primer backend correcto.
   `NATIVE-AOT-PERF-001` remain pending, as does Gate N1.
 
 - [ ] **NATIVE-AOT-LOWER-001 — Lower actual verified frontend MIR across the required language corpus.**
-  Source-driven local `Int`/`Bool` tuple construction, reads, copies,
-  reassignment and control flow now lower to scalar locals. The focused
-  `scripts/native-source-scalars-test.sh` compares 24 Cranelift observations
-  with the hosted VM, including two arithmetic traps, without an evaluation
-  runtime. Records, nested/managed tuples, tuple calls/returns, projected
-  writes, loan operations and production runtime storage remain unsupported.
+  Source-driven local tuples and records with `Int`/`Bool` leaves now lower
+  to scalar locals, including nested/generic records, field writes, independent
+  copies, `with` updates, reassignment and control flow. The focused
+  `scripts/native-source-scalars-test.sh` compares 45 Cranelift observations
+  with the hosted VM, including three arithmetic traps, without an evaluation
+  runtime. Reordered record initializers also preserve source evaluation order
+  and declaration-order storage. Managed fields, aggregate calls/returns,
+  whole-value equality, loans and production runtime storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.
 
 - [ ] **NATIVE-AOT-BINARY-001 — Compare complete source-driven native artifacts.**
