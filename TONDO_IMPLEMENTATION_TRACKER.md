@@ -5695,12 +5695,16 @@ pueden retrasar el primer backend correcto.
   layouts, recursion and statically known named function values retain exact
   source/type identities. Templates remain unadmitted; expansion limits and
   unsupported protocols propagate rejection through callers.
-  The focused `scripts/native-source-scalars-test.sh` compares 99 Cranelift
-  observations with the hosted VM, including five arithmetic traps, without an evaluation
+  Structural `==` and `!=` now compare the supported tuple/record layouts,
+  including nested and generic values, without consuming or modifying either
+  operand. Results may overwrite a Boolean field of either operand only after
+  all comparison reads; scratch locals share the existing expansion budget.
+  The focused `scripts/native-source-scalars-test.sh` compares 135 Cranelift
+  observations with the hosted VM, including six arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 54 aggregate/generic-call cases. Managed fields, generic closures and
-  dynamic dispatch, aggregate async calls, whole-value equality, loans and production runtime
+  the 90 aggregate-call, generic-call and equality cases. Managed fields, generic closures and
+  dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.
 

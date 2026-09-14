@@ -8,7 +8,7 @@ Both candidates consume one immutable `tondo-mir-backend/1` program, but
 synthetic storage cases do not prove that the frontend can produce those
 operations from Tondo source.
 
-## Source-driven value aggregates and direct calls
+## Source-driven value aggregates, direct calls and equality
 
 The compiler lowers local tuples and records whose leaves are `Int` and `Bool`
 into independent scalar locals. Nested tuples/records and instantiated generic
@@ -24,8 +24,24 @@ with declaration-order member identities. Each generated local belongs to one
 scalar leaf; a copy
 never shares its mutable fields with its source.
 Expansion is bounded to 65,536 additional locals per function, including
-right-hand snapshots; wider repeated copies are rejected before exceeding
+right-hand snapshots and comparison results; wider repeated copies and
+comparisons are rejected before exceeding
 that allocation budget. Layout depth is bounded to 64 aggregate levels.
+
+Intrinsic `==` and `!=` compare these tuples and records structurally, including
+nested values, projected subaggregates and concrete generic instances. Equality
+combines equal leaves with Boolean conjunction; inequality combines unequal
+leaves with disjunction. All leaves are `Int` or `Bool`, so these reads and
+comparisons have no user code, suspension or side effects. Their order follows
+the existing tuple/declaration field order.
+
+The source operands remain immutable intrinsic observations. Native
+normalization reads their scalar storage without modifying either value and
+writes the result only after all field reads. A result destination may be a
+Boolean field of either operand, including a nested field. Comparison scratch
+locals count against the same per-function expansion budget, one per leaf;
+exhaustion rejects the function and propagates to its callers. This does not
+admit general `ref`/`mut`/`var` parameter or loan storage.
 
 Ordinary direct calls accept and return these aggregates by value. Arguments
 are evaluated in source order, then flattened into `Int`/`Bool` scalar carriers
@@ -69,9 +85,10 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 99 Cranelift observations across
-49 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
-16 aggregate-call cases and 38 generic-call cases, including five arithmetic
+`scripts/native-source-scalars-test.sh` verifies 135 Cranelift observations across
+65 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+16 aggregate-call cases, 38 generic-call cases and 36 aggregate-equality cases,
+including six arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -79,16 +96,20 @@ results, discarded results and zero-argument aggregate returns.
 It rejects source-identity
 drift, unsupported functions, missing VM observations, changed oracle results
 and an empty corpus, plus four malformed aggregate-call protocols and five
-invalid generic identities/call targets. Reports are
-`native-source-scalars.json`, `native-source-records.json` and
-`native-source-calls.json` and `native-source-generics.json` under
+invalid generic identities/call targets. An equality regression also replaces
+conjunction with disjunction in a lowered comparison and must be rejected by
+the independent source VM observations. Reports are
+`native-source-scalars.json`, `native-source-records.json`,
+`native-source-calls.json`, `native-source-generics.json` and
+`native-source-equality.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 54 aggregate/generic-call cases through LLVM. `llvm_comparison` retains its actual
+the 90 aggregate-call, generic-call and equality cases through LLVM.
+`llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
 emits the runtime-dependent checked-conversion helper only when a function
@@ -147,8 +168,15 @@ to the exact callable name, including canonical type arguments, rather than
 assuming native and bytecode function ordinals coincide. The separate bytecode
 monomorphization orders its own instances and remains the execution oracle.
 
-Managed fields, other numeric representations, empty records, whole
-aggregate equality and aggregate calls through suspension/spawn protocols
+`tests/native/native-aot-aggregate-equality.to` additionally checks both truth
+outcomes, unequal leaves at every position, nested tuples and generic records,
+projected comparisons, overlapping result fields, independent copies, ordinary
+and generic calls, recursion, loops and checked arithmetic in operands. Repeated
+probe generation must remain byte-identical. The compiler regressions retain
+source borrow observations and reject excessive comparison expansion.
+
+Managed fields, other numeric representations, empty records and
+aggregate calls through suspension/spawn protocols
 remain unsupported. Loan operations, production
 runtime integration and the public native build/run
 path remain separate work. Admission rejection propagates through direct-call

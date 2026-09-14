@@ -1,0 +1,123 @@
+type Pair[T] = { first: T, second: T }
+type Flagged = { number: Int, flag: Bool }
+type Box[T] = { value: T }
+
+fn same[T: Equatable + Copy](left: T, right: T): Bool { left == right }
+fn different[T: Equatable + Copy](left: T, right: T): Bool { left != right }
+fn make(value: Int): Pair[Int] { Pair[Int] { second: 7, first: value } }
+fn recurse[T: Equatable + Copy](left: T, right: T, depth: Int): Bool {
+    if depth <= 0 { left == right } else { recurse(left, right, depth - 1) }
+}
+
+fn tuples(value: Int): Int {
+    let left = (value, true, (-4, false))
+    if left == (20, true, (-4, false)) { 1 } else { 0 }
+}
+fn tupleDifference(value: Int): Int {
+    let left = (value, true, (-4, false))
+    if left != (20, true, (-4, false)) { 1 } else { 0 }
+}
+fn everyLeaf(): Int {
+    let value = (1, true, (2, false))
+    if value == value and not (value != value)
+        and value != (0, true, (2, false))
+        and value != (1, false, (2, false))
+        and value != (1, true, (0, false))
+        and value != (1, true, (2, true))
+        and not (value == (0, false, (0, true))) { 1 } else { 0 }
+}
+fn records(): Int {
+    let value = Pair[Int] { first: -4, second: 9 }
+    if value == Pair[Int] { second: 9, first: -4 }
+        and value != Pair[Int] { first: 9, second: -4 }
+        and value != Pair[Int] { first: -4, second: 8 }
+        and not (value != value) { 1 } else { 0 }
+}
+fn nested(): Int {
+    let left = Box[Pair[(Int, Bool)]] {
+        value: Pair[(Int, Bool)] { first: (3, true), second: (8, false) },
+    }
+    let equal = left
+    let changed = left with { value: left.value with { second: (8, true) } }
+    if left == equal and left != changed and left.value.first == (3, true) { 1 } else { 0 }
+}
+fn projected(): Int {
+    let left = (make(3), (true, 9))
+    let right = (make(8), (true, 9))
+    if left.1 == right.1 and left.0 != right.0 { 1 } else { 0 }
+}
+fn equalDestinationOverlaps(): Int {
+    var value = Flagged { number: 7, flag: false }
+    let other = value
+    value.flag = value == other
+    if value.flag and not other.flag and value != other { 1 } else { 0 }
+}
+fn unequalDestinationOverlaps(): Int {
+    var value = (7, true)
+    let other = value
+    value.1 = value != other
+    if not value.1 and other.1 and value != other { 1 } else { 0 }
+}
+fn rightDestinationOverlaps(): Int {
+    var value = Box[Flagged] { value: Flagged { number: 7, flag: false } }
+    let other = value
+    value.value.flag = other == value
+    if value.value.flag and not other.value.flag { 1 } else { 0 }
+}
+fn bindingsRemainIndependent(): Int {
+    let original = make(3)
+    var changed = original
+    let before = original == changed
+    changed.second = 8
+    if before and original != changed and original.second == 7 { 1 } else { 0 }
+}
+fn calls(value: Int): Int {
+    if make(value) == make(20) { 1 } else { 0 }
+}
+fn generics(): Int {
+    if same((4, true), (4, true))
+        and different(make(4), make(5))
+        and same[Pair[Bool]](Pair[Bool] { first: false, second: true },
+                            Pair[Bool] { second: true, first: false })
+        and not different((4, true), (4, true)) { 1 } else { 0 }
+}
+fn recursion(): Int {
+    if recurse(make(4), make(4), 3) and not recurse(make(4), make(5), 3) { 1 } else { 0 }
+}
+fn repeated(): Int {
+    var current = (0, true)
+    var matches = 0
+    for current.0 < 5 {
+        if current == (3, true) {
+            matches += 1
+        }
+        current.0 += 1
+    }
+    matches
+}
+fn wide(): Int {
+    let value = (1, 2, 3, 4, 5, 6, 7, 8, true, false, 9, 10, 11, 12, 13, 14)
+    if value == value and value != (1, 2, 3, 4, 5, 6, 7, 8, true, false, 9, 10, 11, 12, 13, 0) { 1 } else { 0 }
+}
+fn checked(value: Int): Int {
+    if (value + 1, true) == (value, true) { 1 } else { 0 }
+}
+
+fn main() {
+    assert(tuples(20) == 1 and tuples(0) == 0)
+    assert(tupleDifference(20) == 0 and tupleDifference(0) == 1)
+    assert(everyLeaf() == 1)
+    assert(records() == 1)
+    assert(nested() == 1)
+    assert(projected() == 1)
+    assert(equalDestinationOverlaps() == 1)
+    assert(unequalDestinationOverlaps() == 1)
+    assert(rightDestinationOverlaps() == 1)
+    assert(bindingsRemainIndependent() == 1)
+    assert(calls(20) == 1 and calls(0) == 0)
+    assert(generics() == 1)
+    assert(recursion() == 1)
+    assert(repeated() == 1)
+    assert(wide() == 1)
+    assert(checked(3) == 0)
+}

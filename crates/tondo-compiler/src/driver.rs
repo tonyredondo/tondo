@@ -6526,9 +6526,76 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn native_aggregate_equality_observes_all_fields_and_preserves_bindings() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-aggregate-equality.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "function {}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_aggregate_equality_rejects_excessive_comparison_expansion() {
+        let tuple = format!("({})", vec!["Int"; 128].join(", "));
+        let mut source = format!("fn inspectValue(value: {tuple}): Bool {{\n");
+        for _ in 0..512 {
+            source.push_str(" _ = value == value\n");
+        }
+        source.push_str(&format!(
+            " true\n}}\nfn caller(value: {tuple}): Bool {{ inspectValue(value) }}\nfn main() {{}}\n"
+        ));
+        let output = execute(operation_request(
+            Operation::Run,
+            source.as_bytes(),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in backend.functions.iter().filter(|f| f.return_type == "Bool") {
+            assert!(!function.supported, "{}", function.ordinal);
+        }
+        assert!(backend.functions.iter().any(|function| {
+            function
+                .unsupported
+                .iter()
+                .any(|reason| reason == "aggregate:local-limit")
+        }));
+    }
+
+    #[test]
     fn native_local_tuples_reject_unimplemented_storage_consumers() {
         for source in [
-            "fn inspectValue(): Int {\n let pair = (1, 2)\n if pair == (1, 2) { 1 } else { 0 }\n}",
+            "fn inspectValue(): Int {\n let pair = ([1, 2], true)\n if pair == pair { 1 } else { 0 }\n}",
             "fn inspectValue(): Int {\n let pair = ((1.5, 2), 3)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = (1.5, 2)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair: (Int8, Int8) = (1, 2)\n Int(pair.0)\n}",
@@ -6709,7 +6776,8 @@ fn main() {
     #[test]
     fn native_records_reject_managed_fields_whole_value_operations_and_loans() {
         for source in [
-            "fn inspectValue(): Int {\n let point = Point { x: 1, y: 2 }\n if point == point { 1 } else { 0 }\n}",
+            "type Text = { label: String }\nfn inspectValue(): Int {\n let text = Text { label: \"text\" }\n if text == text { 1 } else { 0 }\n}",
+            "type Empty = {}\nfn inspectValue(): Int { if Empty {} == Empty {} { 1 } else { 0 } }",
             "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
             "type Narrow = { value: Int8 }\nfn inspectValue(): Int {\n let narrow = Narrow { value: 1 }\n Int(narrow.value)\n}",
             "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",

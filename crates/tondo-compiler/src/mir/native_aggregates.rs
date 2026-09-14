@@ -247,6 +247,7 @@ pub(super) fn lower(
                     continue;
                 }
                 locals.place(destination)?;
+                locals.lower_equality(statement.span, value, &mut statements)?;
                 locals.rvalue(value)?;
             }
             statements.push(statement);
@@ -283,14 +284,22 @@ pub(super) fn lower(
 }
 
 fn assign(span: Span, destination: u32, operand: MirOperand) -> MirStatement {
+    assign_rvalue(
+        span,
+        destination,
+        MirRvalue {
+            ty: operand.ty,
+            kind: MirRvalueKind::Use(operand),
+        },
+    )
+}
+
+fn assign_rvalue(span: Span, destination: u32, value: MirRvalue) -> MirStatement {
     MirStatement {
         span,
         kind: MirStatementKind::Assign {
-            destination: scalar_place(destination, operand.ty),
-            value: MirRvalue {
-                ty: operand.ty,
-                kind: MirRvalueKind::Use(operand),
-            },
+            destination: scalar_place(destination, value.ty),
+            value,
         },
     }
 }
@@ -410,6 +419,90 @@ impl NativeLocals {
             }
             _ => Err("aggregate:assignment-storage"),
         }
+    }
+
+    fn lower_equality(
+        &mut self,
+        span: Span,
+        value: &mut MirRvalue,
+        statements: &mut Vec<MirStatement>,
+    ) -> LowerResult<()> {
+        let MirRvalueKind::Binary {
+            operator,
+            left,
+            right,
+        } = &value.kind
+        else {
+            return Ok(());
+        };
+        let combine = match operator {
+            HirBinaryOperator::Equal => HirBinaryOperator::LogicalAnd,
+            HirBinaryOperator::NotEqual => HirBinaryOperator::LogicalOr,
+            _ => return Ok(()),
+        };
+        let MirOperandKind::Borrow(left_place) = &left.kind else {
+            return Ok(());
+        };
+        let Some((left_first, layout)) = self.resolve(left_place)? else {
+            return Ok(());
+        };
+        if layout.children.is_empty() {
+            return Ok(());
+        }
+        let MirOperandKind::Borrow(right_place) = &right.kind else {
+            return Err("aggregate:comparison-observation");
+        };
+        let (right_first, right_layout) = self
+            .resolve(right_place)?
+            .ok_or("aggregate:comparison-storage")?;
+        if left.ty != right.ty || layout.ty != right_layout.ty {
+            return Err("aggregate:comparison-type");
+        }
+        let width = layout.width;
+        let mut left_values = Vec::with_capacity(width as usize);
+        let mut right_values = Vec::with_capacity(width as usize);
+        layout.operands(left_first, &mut left_values);
+        right_layout.operands(right_first, &mut right_values);
+
+        // One scratch local per leaf charges code expansion to the existing
+        // budget. Commit the result only after all reads: its destination can
+        // be a Bool field of either operand. Int/Bool leaf comparisons are pure.
+        let first = self.allocate(width)?;
+        let observed = |index| MirOperand {
+            ty: value.ty,
+            kind: MirOperandKind::Copy(scalar_place(index, value.ty)),
+        };
+        for (index, (left, right)) in left_values.into_iter().zip(right_values).enumerate() {
+            let comparison = first + index as u32;
+            statements.push(assign_rvalue(
+                span,
+                comparison,
+                MirRvalue {
+                    ty: value.ty,
+                    kind: MirRvalueKind::Binary {
+                        operator: *operator,
+                        left,
+                        right,
+                    },
+                },
+            ));
+            if index != 0 {
+                statements.push(assign_rvalue(
+                    span,
+                    first,
+                    MirRvalue {
+                        ty: value.ty,
+                        kind: MirRvalueKind::Binary {
+                            operator: combine,
+                            left: observed(first),
+                            right: observed(comparison),
+                        },
+                    },
+                ));
+            }
+        }
+        value.kind = MirRvalueKind::Use(observed(first));
+        Ok(())
     }
 
     fn rvalue(&self, value: &mut MirRvalue) -> LowerResult<()> {

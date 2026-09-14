@@ -41,6 +41,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/generics-probe.json" "$tmp/generics-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/generics-probe.json" --output "$tmp/generics-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-aggregate-equality.to > "$tmp/equality-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-aggregate-equality.to > "$tmp/equality-repeated.json"
+cmp "$tmp/equality-probe.json" "$tmp/equality-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/equality-probe.json" --output "$tmp/equality-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -94,6 +101,21 @@ assert sum(case['native_status'] == 'trapped' for case in cases) == 1
 assert all(case['native_result'] == case['vm_result'] for case in cases)
 if 'llvm_comparison' in generics:
     comparison = generics['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
+equality = json.loads((root / 'equality-report.json').read_text())
+assert equality['format'] == report['format'] and equality['backend'] == 'cranelift'
+assert equality['boundary'] == report['boundary']
+assert equality['n1_claim'] is False and equality['production_runtime_linked'] is False
+cases = equality['observations']
+assert len(cases) == 36 and len({case['function_ordinal'] for case in cases}) == 16
+assert sum(case['native_status'] == 'trapped' for case in cases) == 1
+assert all(case['native_result'] == case['vm_result'] for case in cases)
+if 'llvm_comparison' in equality:
+    comparison = equality['llvm_comparison']
     assert comparison['version']
     assert comparison['observations'] == [
         {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
@@ -154,11 +176,21 @@ for name in ['missing-template', 'template-admitted', 'duplicate-instance', 'inc
                     if 'Call' in block['terminator'].get('Invoke', {}).get('operation', {}))
         call['function'] = template['ordinal']
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+probe = json.loads((root / 'equality-probe.json').read_text())
+backend = probe['fixtures'][0]['mir']['backend']
+ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+               if symbol['name'].endswith('::value::tuples'))
+function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+reduction = next(statement['Assign']['value']['Binary']
+                 for block in function['blocks'] for statement in block['statements']
+                 if statement.get('Assign', {}).get('value', {}).get('Binary', {}).get('operator') == 'logical-and')
+reduction['operator'] = 'logical-or'
+(root / 'equality-reduction.json').write_text(json.dumps(probe) + '\n')
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
     result-width aliased-results scalar-result-protocol missing-successor \
-    missing-template template-admitted duplicate-instance incomplete-instance call-template; do
+    missing-template template-admitted duplicate-instance incomplete-instance call-template equality-reduction; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
@@ -170,7 +202,8 @@ cp "$tmp/report.json" "$target_dir/reliability/evidence/native-source-scalars.js
 cp "$tmp/records-report.json" "$target_dir/reliability/evidence/native-source-records.json"
 cp "$tmp/calls-report.json" "$target_dir/reliability/evidence/native-source-calls.json"
 cp "$tmp/generics-report.json" "$target_dir/reliability/evidence/native-source-generics.json"
-echo "native source scalars: OK (99 Cranelift cases, 5 arithmetic traps, 14 rejected evidence changes)"
+cp "$tmp/equality-report.json" "$target_dir/reliability/evidence/native-source-equality.json"
+echo "native source scalars: OK (135 Cranelift cases, 6 arithmetic traps, 15 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregate and generic calls: LLVM comparison OK (54 cases, 2 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (90 cases, 3 arithmetic traps)"
 fi

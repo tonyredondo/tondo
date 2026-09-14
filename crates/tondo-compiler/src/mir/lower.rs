@@ -8465,6 +8465,44 @@ mod tests {
     }
 
     #[test]
+    fn native_aggregate_equality_preserves_verified_borrow_observations() {
+        let (resolved, hir) = checked(
+            "type Point = { x: Int, flag: Bool }\n\
+             fn equal(left: Point, right: Point): Bool { left == right }\n\
+             fn different(left: (Int, Bool), right: (Int, Bool)): Bool { left != right }\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let backend = mir.backend_program(hir.interner());
+        assert!(backend.functions.iter().all(|function| function.supported));
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        let observations = mir
+            .functions()
+            .flat_map(|function| &function.blocks)
+            .flat_map(|block| &block.statements)
+            .filter_map(|statement| match &statement.kind {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind: MirRvalueKind::Binary { left, right, .. },
+                            ..
+                        },
+                    ..
+                } => Some((left, right)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(observations.len(), 2);
+        for (left, right) in observations {
+            assert!(matches!(left.kind, MirOperandKind::Borrow(_)));
+            assert!(matches!(right.kind, MirOperandKind::Borrow(_)));
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_generic_instances_are_concrete_reused_and_leave_verified_mir_unchanged() {
         use crate::mir::MirBackendGenerics;
         let (resolved, hir) = checked(include_str!(
