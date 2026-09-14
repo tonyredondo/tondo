@@ -1095,21 +1095,6 @@ fn backend_block(
         .statements()
         .iter()
         .map(|statement| match statement.kind() {
-            MirStatementKind::Assign {
-                destination: _,
-                value,
-            } if matches!(
-                value.kind(),
-                MirRvalueKind::Use(MirOperand {
-                    kind: MirOperandKind::Constant(MirConstant::Unit),
-                    ..
-                })
-            ) =>
-            {
-                MirBackendStatement::Marker {
-                    kind: "unit-assignment".to_owned(),
-                }
-            }
             MirStatementKind::Assign { destination, .. }
                 if destination.projections().is_empty()
                     && function_values.contains_key(&destination.local().index()) =>

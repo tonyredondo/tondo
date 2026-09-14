@@ -1,0 +1,119 @@
+type Empty = {}
+type Marker[T] = {}
+type Box[T] = { value: T }
+type Payload = { before: Unit, number: Int, empty: Empty, flag: Bool, after: Unit }
+
+fn identity[T: Copy](value: T): T { value }
+fn same[T: Copy + Equatable](left: T, right: T): Bool { left == right }
+fn checkedCompletion(value: Int) {
+    _ = value + 1
+}
+fn makeEmpty(value: Int): Empty {
+    checkedCompletion(value)
+    Empty {}
+}
+fn consumeEmpty(first: Empty, completion: Unit, value: Int, last: Empty): Int {
+    if first == last and completion == () { value } else { 0 }
+}
+fn recurse(value: Empty, depth: Int): Empty {
+    if depth <= 0 { value } else { recurse(identity(value), depth - 1) }
+}
+
+fn tuples(value: Int): Int {
+    let original = ((), value, Empty {}, ())
+    var copy = original
+    copy.0 = identity(())
+    copy.2 = makeEmpty(0)
+    copy.3 = ()
+    if copy == original and not (copy != original) { copy.1 } else { 0 }
+}
+fn records(value: Int): Int {
+    let original = Payload { after: (), flag: false, empty: Empty {}, number: value, before: () }
+    var copy = original with { before: identity(()), empty: identity(Empty {}) }
+    copy.after = ()
+    copy.flag = true
+    if original != copy and not original.flag and original.number == copy.number {
+        copy.number
+    } else { 0 }
+}
+fn emptyValues(): Int {
+    var first = Empty {}
+    let second = first
+    first = Empty {}
+    let wrapped = Box[Empty] { value: second }
+    if first == wrapped.value and not (first != second) { 1 } else { 0 }
+}
+fn onlyUnits(): Int {
+    var units = ((), ())
+    units.1 = identity(())
+    let boxed = Box[Unit] { value: units.0 }
+    if same(units, ((), ())) and boxed.value == () and not (units != units) { 1 } else { 0 }
+}
+fn nested(): Int {
+    let original = Box[(Empty, Box[Unit])] { value: (Empty {}, Box[Unit] { value: () }) }
+    var copy = original
+    copy.value.0 = identity(Empty {})
+    copy.value.1 = Box[Unit] { value: identity(()) }
+    if copy == original and copy.value.1.value == () { 1 } else { 0 }
+}
+fn overlapping(): Int {
+    var value = ((), false, Empty {})
+    let original = value
+    value.1 = value == original
+    if value.1 and not original.1 and value != original { 1 } else { 0 }
+}
+fn genericCalls(): Int {
+    let empty = identity[Empty](Empty {})
+    let marker = identity(Marker[Unit] {})
+    let other = identity(Marker[(Int, Bool)] {})
+    let boxed = identity(Box[Unit] { value: identity(()) })
+    if same(empty, Empty {}) and same(marker, Marker[Unit] {})
+        and same(other, Marker[(Int, Bool)] {}) and boxed.value == () { 1 } else { 0 }
+}
+fn recursion(): Int {
+    if recurse(Empty {}, 3) == Empty {} { 1 } else { 0 }
+}
+fn repeated(): Int {
+    var current = Empty {}
+    var count = 0
+    for count < 5 {
+        current = identity(current)
+        _ = makeEmpty(0)
+        if current == Empty {} {
+            count += 1
+        }
+    }
+    count
+}
+fn branches(value: Int): Int {
+    let empty = if value < 0 { makeEmpty(0) } else { identity(Empty {}) }
+    let units = if value == 20 { ((), Empty {}) } else { (identity(()), empty) }
+    if units == ((), empty) { value } else { 0 }
+}
+fn namedArguments(value: Int): Int {
+    consumeEmpty(last: Empty {}, value: value, completion: identity(()), first: Empty {})
+}
+fn checkedUnit(value: Int): Int {
+    let result = (checkedCompletion(value), value)
+    result.1
+}
+fn discardedEmpty(value: Int): Int {
+    _ = makeEmpty(value)
+    1
+}
+
+fn main() {
+    assert(tuples(20) == 20 and tuples(-3) == -3)
+    assert(records(20) == 20 and records(-3) == -3)
+    assert(emptyValues() == 1)
+    assert(onlyUnits() == 1)
+    assert(nested() == 1)
+    assert(overlapping() == 1)
+    assert(genericCalls() == 1)
+    assert(recursion() == 1)
+    assert(repeated() == 5)
+    assert(branches(20) == 20 and branches(-3) == -3)
+    assert(namedArguments(20) == 20)
+    assert(checkedUnit(20) == 20)
+    assert(discardedEmpty(20) == 1)
+}

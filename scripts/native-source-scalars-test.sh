@@ -48,6 +48,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/equality-probe.json" "$tmp/equality-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/equality-probe.json" --output "$tmp/equality-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-unit-aggregates.to > "$tmp/units-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-unit-aggregates.to > "$tmp/units-repeated.json"
+cmp "$tmp/units-probe.json" "$tmp/units-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/units-probe.json" --output "$tmp/units-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -121,6 +128,21 @@ if 'llvm_comparison' in equality:
         {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
         for case in cases
     ]
+units = json.loads((root / 'units-report.json').read_text())
+assert units['format'] == report['format'] and units['backend'] == 'cranelift'
+assert units['boundary'] == report['boundary']
+assert units['n1_claim'] is False and units['production_runtime_linked'] is False
+cases = units['observations']
+assert len(cases) == 43 and len({case['function_ordinal'] for case in cases}) == 13
+assert sum(case['native_status'] == 'trapped' for case in cases) == 2
+assert all(case['native_result'] == case['vm_result'] for case in cases)
+if 'llvm_comparison' in units:
+    comparison = units['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -186,24 +208,48 @@ reduction = next(statement['Assign']['value']['Binary']
                  if statement.get('Assign', {}).get('value', {}).get('Binary', {}).get('operator') == 'logical-and')
 reduction['operator'] = 'logical-or'
 (root / 'equality-reduction.json').write_text(json.dumps(probe) + '\n')
+probe = json.loads((root / 'units-probe.json').read_text())
+for name, function_name in [('omitted-unit-call', 'checkedUnit'), ('omitted-empty-call', 'discardedEmpty')]:
+    candidate = copy.deepcopy(probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    if name == 'omitted-unit-call':
+        block = next(block for block in function['blocks']
+                     if 'Call' in block['terminator'].get('Invoke', {}).get('operation', {}))
+        call = block['terminator']['Invoke']
+        if call['destination'] is not None:
+            block['statements'].append({'Assign': {'destination': call['destination'],
+                                                 'value': {'Use': {'Constant': 'Unit'}}}})
+    else:
+        block = next(block for block in function['blocks'] if 'CallAggregate' in block['terminator'])
+        call = block['terminator']['CallAggregate']
+    block['terminator'] = {'Goto': {'target': call['target']}}
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
     result-width aliased-results scalar-result-protocol missing-successor \
-    missing-template template-admitted duplicate-instance incomplete-instance call-template equality-reduction; do
+    missing-template template-admitted duplicate-instance incomplete-instance call-template equality-reduction \
+    omitted-unit-call omitted-empty-call; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
         exit 1
     fi
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
+    if [[ "$candidate" == omitted-*-call ]]; then
+        grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
+    fi
 done
 cp "$tmp/report.json" "$target_dir/reliability/evidence/native-source-scalars.json"
 cp "$tmp/records-report.json" "$target_dir/reliability/evidence/native-source-records.json"
 cp "$tmp/calls-report.json" "$target_dir/reliability/evidence/native-source-calls.json"
 cp "$tmp/generics-report.json" "$target_dir/reliability/evidence/native-source-generics.json"
 cp "$tmp/equality-report.json" "$target_dir/reliability/evidence/native-source-equality.json"
-echo "native source scalars: OK (135 Cranelift cases, 6 arithmetic traps, 15 rejected evidence changes)"
+cp "$tmp/units-report.json" "$target_dir/reliability/evidence/native-source-units.json"
+echo "native source scalars: OK (178 Cranelift cases, 8 arithmetic traps, 17 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregates and generic calls: LLVM comparison OK (90 cases, 3 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (133 cases, 5 arithmetic traps)"
 fi

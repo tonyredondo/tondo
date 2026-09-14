@@ -1,5 +1,5 @@
 //! Scalar storage and private call carriers for value aggregates.
-//! Only Int/Bool leaves are admitted. The verified source MIR is immutable;
+//! Only Int/Bool/Unit leaves are admitted. The verified source MIR is immutable;
 //! copies and projected replacements snapshot every RHS leaf before any write.
 
 use std::rc::Rc;
@@ -43,6 +43,8 @@ pub(super) fn record_fields(program: &MirProgram) -> RecordFields {
 enum Field {
     Tuple(u32),
     Record(MemberId),
+    // Private carrier only; never a source record member or projection.
+    EmptyRecord,
 }
 
 struct Layout {
@@ -67,17 +69,25 @@ impl Layout {
             return (depth + layout.height <= MAX_LAYOUT_DEPTH).then(|| Rc::clone(layout));
         }
         let fields = match interner.kind(ty).ok()? {
-            TypeKind::Scalar(ScalarType::Int | ScalarType::Bool) => Vec::new(),
+            TypeKind::Scalar(ScalarType::Int | ScalarType::Bool | ScalarType::Unit) => Vec::new(),
             TypeKind::Tuple(fields) if !fields.is_empty() => fields
                 .iter()
                 .enumerate()
                 .map(|(index, ty)| (Field::Tuple(index as u32), *ty))
                 .collect(),
-            TypeKind::Nominal { .. } => records
-                .get(&ty)?
-                .iter()
-                .map(|(member, ty)| (Field::Record(*member), *ty))
-                .collect(),
+            TypeKind::Nominal { .. } => {
+                let fields = records.get(&ty)?;
+                if fields.is_empty() {
+                    // Keep the existing nonempty private aggregate call protocol.
+                    // Nominal identity remains on this layout and the source MIR.
+                    vec![(Field::EmptyRecord, interner.scalar(ScalarType::Unit))]
+                } else {
+                    fields
+                        .iter()
+                        .map(|(member, ty)| (Field::Record(*member), *ty))
+                        .collect()
+                }
+            }
             _ => return None,
         };
         if fields.is_empty() && !matches!(interner.kind(ty), Ok(TypeKind::Scalar(_))) {
@@ -387,6 +397,15 @@ impl NativeLocals {
                             .iter()
                             .position(|field| field == member)
                             .ok_or("aggregate:field-shape")?,
+                        (MirAggregateKind::Record { fields, .. }, Field::EmptyRecord)
+                            if fields.is_empty() && values.is_empty() =>
+                        {
+                            leaves.push(MirOperand {
+                                ty: child.ty,
+                                kind: MirOperandKind::Constant(MirConstant::Unit),
+                            });
+                            continue;
+                        }
                         _ => return Err("aggregate:constructor-shape"),
                     };
                     let operand = values

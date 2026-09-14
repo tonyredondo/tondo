@@ -8503,6 +8503,32 @@ mod tests {
     }
 
     #[test]
+    fn native_unit_aggregates_leave_verified_types_and_empty_members_unchanged() {
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-unit-aggregates.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let types = hir.interner().len();
+        let empty_types = mir
+            .record_fields
+            .iter()
+            .filter(|(_, fields)| fields.is_empty())
+            .map(|(ty, _)| *ty)
+            .collect::<Vec<_>>();
+        assert!(!empty_types.is_empty());
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(types, hir.interner().len());
+        for ty in empty_types {
+            assert!(mir.record_fields[&ty].is_empty());
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_generic_instances_are_concrete_reused_and_leave_verified_mir_unchanged() {
         use crate::mir::MirBackendGenerics;
         let (resolved, hir) = checked(include_str!(

@@ -6558,18 +6558,10 @@ fn main(): !env.EnvError {
     }
 
     #[test]
-    fn native_aggregate_equality_rejects_excessive_comparison_expansion() {
-        let tuple = format!("({})", vec!["Int"; 128].join(", "));
-        let mut source = format!("fn inspectValue(value: {tuple}): Bool {{\n");
-        for _ in 0..512 {
-            source.push_str(" _ = value == value\n");
-        }
-        source.push_str(&format!(
-            " true\n}}\nfn caller(value: {tuple}): Bool {{ inspectValue(value) }}\nfn main() {{}}\n"
-        ));
+    fn native_unit_aggregates_preserve_values_and_empty_return_protocols() {
         let output = execute(operation_request(
             Operation::Run,
-            source.as_bytes(),
+            include_bytes!("../../../tests/native/native-aot-unit-aggregates.to"),
             SourceForm::Script,
             ResourceLimits::default(),
         ))
@@ -6581,15 +6573,97 @@ fn main(): !env.EnvError {
             output.diagnostics()
         );
         let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
-        for function in backend.functions.iter().filter(|f| f.return_type == "Bool") {
-            assert!(!function.supported, "{}", function.ordinal);
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "{}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
         }
-        assert!(backend.functions.iter().any(|function| {
-            function
-                .unsupported
+        let empty_returns = backend
+            .functions
+            .iter()
+            .filter(|function| {
+                function.supported && function.return_type.ends_with("::type::Empty")
+            })
+            .collect::<Vec<_>>();
+        assert!(!empty_returns.is_empty());
+        assert!(
+            empty_returns
                 .iter()
-                .any(|reason| reason == "aggregate:local-limit")
-        }));
+                .all(|function| function.return_fields.len() == 1)
+        );
+    }
+
+    #[test]
+    fn native_unit_aggregates_preserve_nominal_type_rejection() {
+        for expression in [
+            "Empty {} == Other {}",
+            "Empty {} == ()",
+            "Marker[Int] {} == Marker[Bool] {}",
+        ] {
+            let source = format!(
+                "type Empty = {{}}\ntype Other = {{}}\ntype Marker[T] = {{}}\nfn main() {{\n _ = {expression}\n}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{expression}");
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1102");
+            assert!(
+                output.mir_summary().is_none(),
+                "ill-typed equality reached native extraction"
+            );
+        }
+    }
+
+    #[test]
+    fn native_aggregate_equality_rejects_excessive_comparison_expansion() {
+        for leaf in ["Int", "Unit", "Empty"] {
+            let tuple = format!("({})", vec![leaf; 128].join(", "));
+            let mut source =
+                format!("type Empty = {{}}\nfn inspectValue(value: {tuple}): Bool {{\n");
+            for _ in 0..512 {
+                source.push_str(" _ = value == value\n");
+            }
+            source.push_str(&format!(
+                " true\n}}\nfn caller(value: {tuple}): Bool {{ inspectValue(value) }}\nfn main() {{}}\n"
+            ));
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            for function in backend.functions.iter().filter(|f| f.return_type == "Bool") {
+                assert!(!function.supported, "{}", function.ordinal);
+            }
+            assert!(backend.functions.iter().any(|function| {
+                function
+                    .unsupported
+                    .iter()
+                    .any(|reason| reason == "aggregate:local-limit")
+            }));
+        }
     }
 
     #[test]
@@ -6777,7 +6851,9 @@ fn main() {
     fn native_records_reject_managed_fields_whole_value_operations_and_loans() {
         for source in [
             "type Text = { label: String }\nfn inspectValue(): Int {\n let text = Text { label: \"text\" }\n if text == text { 1 } else { 0 }\n}",
-            "type Empty = {}\nfn inspectValue(): Int { if Empty {} == Empty {} { 1 } else { 0 } }",
+            "type Empty = {}\nfn inspectValue(value: ref Empty): Int { 1 }",
+            "type Empty = {}\nfn inspectValue(value: mut Empty): Int { 1 }",
+            "type Empty = {}\nfn inspectValue(value: var Empty): Int {\n value = Empty {}\n 1\n}",
             "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
             "type Narrow = { value: Int8 }\nfn inspectValue(): Int {\n let narrow = Narrow { value: 1 }\n Int(narrow.value)\n}",
             "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",

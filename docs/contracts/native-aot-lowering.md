@@ -10,7 +10,7 @@ operations from Tondo source.
 
 ## Source-driven value aggregates, direct calls and equality
 
-The compiler lowers local tuples and records whose leaves are `Int` and `Bool`
+The compiler lowers local tuples and records whose leaves are `Int`, `Bool` and `Unit`
 into independent scalar locals. Nested tuples/records and instantiated generic
 records use the same route. Construction, field reads and writes, copies,
 whole-value and nested-field replacement, `with` updates, branches and
@@ -23,6 +23,11 @@ come from verified HIR record declarations and instantiated MIR constructors,
 with declaration-order member identities. Each generated local belongs to one
 scalar leaf; a copy
 never shares its mutable fields with its source.
+An empty record uses one canonical `Unit` carrier in this private layout.
+It retains its nominal source type and has no added source member. This keeps
+the existing nonempty aggregate argument/result protocol; it is not a claim of
+zero-byte storage or a public record ABI. Unit fields and empty-record carriers
+count toward storage, snapshot and comparison limits like other leaves.
 Expansion is bounded to 65,536 additional locals per function, including
 right-hand snapshots and comparison results; wider repeated copies and
 comparisons are rejected before exceeding
@@ -31,7 +36,7 @@ that allocation budget. Layout depth is bounded to 64 aggregate levels.
 Intrinsic `==` and `!=` compare these tuples and records structurally, including
 nested values, projected subaggregates and concrete generic instances. Equality
 combines equal leaves with Boolean conjunction; inequality combines unequal
-leaves with disjunction. All leaves are `Int` or `Bool`, so these reads and
+leaves with disjunction. All leaves are `Int`, `Bool` or `Unit`, so these reads and
 comparisons have no user code, suspension or side effects. Their order follows
 the existing tuple/declaration field order.
 
@@ -44,7 +49,7 @@ exhaustion rejects the function and propagates to its callers. This does not
 admit general `ref`/`mut`/`var` parameter or loan storage.
 
 Ordinary direct calls accept and return these aggregates by value. Arguments
-are evaluated in source order, then flattened into `Int`/`Bool` scalar carriers
+are evaluated in source order, then flattened into `Int`/`Bool`/`Unit` scalar carriers
 in parameter declaration order. Nested values keep their field order and
 independent storage. The source parameter types remain in the normalized
 function metadata; flattened carrier count is not source arity.
@@ -58,6 +63,9 @@ The callee writes all fields on normal return; the caller then copies them into
 independent locals. A discarded result still receives private storage. Checked
 arithmetic traps do not publish partial results. This is an internal compiler
 protocol, without a public layout, FFI or runtime ABI promise.
+An empty record return still uses one eight-byte carrier. Calls producing
+`Unit` or an empty record remain evaluated, including discarded results; a
+checked error before completion must still trap.
 
 `return_fields` identifies the callee's result locals. `CallAggregate` records
 the direct callee, flattened arguments, all destination locals and the normal
@@ -85,10 +93,10 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 135 Cranelift observations across
-65 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
-16 aggregate-call cases, 38 generic-call cases and 36 aggregate-equality cases,
-including six arithmetic
+`scripts/native-source-scalars-test.sh` verifies 178 Cranelift observations across
+78 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases and
+43 Unit/empty-record cases, including eight arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -98,17 +106,19 @@ drift, unsupported functions, missing VM observations, changed oracle results
 and an empty corpus, plus four malformed aggregate-call protocols and five
 invalid generic identities/call targets. An equality regression also replaces
 conjunction with disjunction in a lowered comparison and must be rejected by
-the independent source VM observations. Reports are
+the independent source VM observations. Two further regressions remove calls
+producing `Unit` or a discarded empty record; both must fail specifically on
+disagreement with the source VM, without publishing a partial report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
-`native-source-calls.json`, `native-source-generics.json` and
-`native-source-equality.json` under
+`native-source-calls.json`, `native-source-generics.json`,
+`native-source-equality.json` and `native-source-units.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 90 aggregate-call, generic-call and equality cases through LLVM.
+the 133 aggregate-call, generic-call, equality and Unit/empty-record cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -134,8 +144,9 @@ instantiated from verified declarations with their own binder arguments, so
 nested records do not require a concrete source constructor. The source MIR,
 source interner and hosted bytecode lowering remain unchanged.
 
-The admitted signatures contain `Int`, `Bool`, `Unit` and the existing nonempty
-tuple/record value layouts. Aggregate leaves retain the `Int`/`Bool` restriction.
+The admitted signatures contain `Int`, `Bool`, `Unit` and the existing
+tuple/record value layouts, including empty nominal records. Aggregate leaves
+retain the `Int`/`Bool`/`Unit` restriction.
 Managed values, loans, generic closures, suspension, dynamic trait dispatch and
 other MIR protocols outside this ordinary value-call slice remain unadmitted.
 A stored named function value can resolve to a direct call only when its local
@@ -175,7 +186,15 @@ and generic calls, recursion, loops and checked arithmetic in operands. Repeated
 probe generation must remain byte-identical. The compiler regressions retain
 source borrow observations and reject excessive comparison expansion.
 
-Managed fields, other numeric representations, empty records and
+`tests/native/native-aot-unit-aggregates.to` covers Unit-only and mixed tuples,
+empty and generic records, nested copies and projected writes, structural
+equality, named arguments, recursion, loops and branch results. Distinct nominal
+empty types remain incompatible at the frontend. Compiler tests preserve the
+verified empty field lists and source types, retain loan-parameter rejection,
+and reject excessive comparison expansion for Unit and empty-record leaves.
+Independent probe processes must produce identical output.
+
+Managed fields, other numeric representations and
 aggregate calls through suspension/spawn protocols
 remain unsupported. Loan operations, production
 runtime integration and the public native build/run

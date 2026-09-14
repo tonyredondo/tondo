@@ -5685,7 +5685,7 @@ pueden retrasar el primer backend correcto.
   `NATIVE-AOT-PERF-001` remain pending, as does Gate N1.
 
 - [ ] **NATIVE-AOT-LOWER-001 — Lower actual verified frontend MIR across the required language corpus.**
-  Source-driven local tuples and records with `Int`/`Bool` leaves now lower
+  Source-driven local tuples and records with `Int`/`Bool`/`Unit` leaves now lower
   to scalar locals, including nested/generic records, field writes, independent
   copies, `with` updates, reassignment and control flow. Ordinary direct calls
   now pass flattened value arguments and return aggregate fields through
@@ -5699,11 +5699,16 @@ pueden retrasar el primer backend correcto.
   including nested and generic values, without consuming or modifying either
   operand. Results may overwrite a Boolean field of either operand only after
   all comparison reads; scratch locals share the existing expansion budget.
-  The focused `scripts/native-source-scalars-test.sh` compares 135 Cranelift
-  observations with the hosted VM, including six arithmetic traps, without an evaluation
+  Empty nominal records use one private Unit carrier, preserving their source
+  identity and the existing aggregate call/return protocol. Unit-producing calls
+  and discarded empty results retain evaluation and checked errors. Their
+  storage and comparisons count toward the same expansion limits.
+  The focused `scripts/native-source-scalars-test.sh` compares 178 Cranelift
+  observations with the hosted VM, including eight arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 90 aggregate-call, generic-call and equality cases. Managed fields, generic closures and
+  the 133 aggregate-call, generic-call, equality and Unit/empty-record cases.
+  Managed fields, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

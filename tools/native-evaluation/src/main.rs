@@ -3391,6 +3391,9 @@ fn lower_operand_cranelift(
     locals: &BTreeMap<u32, Value>,
 ) -> Result<Value, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Unit) => {
+            Ok(builder.ins().iconst(cranelift_codegen::ir::types::I64, 0))
+        }
         MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
             parse_integer_literal(value)
             .map(|value| {
@@ -3427,10 +3430,10 @@ fn lower_operand_cranelift(
         )),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
-                MirBackendConstant::Unit => "unit".to_owned(),
                 MirBackendConstant::Float(value) | MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
-                MirBackendConstant::Integer(_)
+                MirBackendConstant::Unit
+                | MirBackendConstant::Integer(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };
@@ -9434,6 +9437,7 @@ fn evaluate_operand(
     locals: &BTreeMap<u32, i64>,
 ) -> Result<i64, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok(0),
         MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
             parse_integer_literal(value)
         }
@@ -11508,6 +11512,7 @@ fn llvm_operand(
     value_index: &mut usize,
 ) -> Result<String, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok("0".to_owned()),
         MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
             parse_integer_literal(value).map(|value| value.to_string())
         }
@@ -11574,10 +11579,10 @@ fn llvm_operand(
             .unwrap_or_else(|| string_payload(kind).to_string())),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
-                MirBackendConstant::Unit => "unit".to_owned(),
                 MirBackendConstant::Float(value) | MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
-                MirBackendConstant::Integer(_)
+                MirBackendConstant::Unit
+                | MirBackendConstant::Integer(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };
@@ -12879,6 +12884,52 @@ mod tests {
         assert!(!module.contains("call i64 @tondo_rt_result_new"));
         // The original parameter is also a return field and remains live.
         assert!(scalar_local_ordinals(&program.functions[0]).contains(&1));
+    }
+
+    #[test]
+    fn unit_and_empty_returns_initialize_carriers_after_checked_calls() {
+        for empty_record in [false, true] {
+            let mut program = aggregate_call_backend();
+            program.functions[0].return_type =
+                if empty_record { "Empty" } else { "Unit" }.to_owned();
+            program.functions[0].return_fields = if empty_record { vec![0] } else { Vec::new() };
+            program.functions[0].blocks[0]
+                .statements
+                .push(MirBackendStatement::Assign {
+                    destination: 0,
+                    value: MirBackendRvalue::Use(MirBackendOperand::Constant(
+                        MirBackendConstant::Unit,
+                    )),
+                });
+            let arguments = vec![MirBackendOperand::Local { index: 1 }];
+            program.functions[1].blocks[0].terminator = if empty_record {
+                MirBackendTerminator::CallAggregate {
+                    function: 0,
+                    arguments,
+                    destinations: vec![2],
+                    target: Some(1),
+                }
+            } else {
+                MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Call {
+                        function: 0,
+                        arguments,
+                    },
+                    destination: Some(2),
+                    target: Some(1),
+                }
+            };
+            validate_backend_program(&program).unwrap();
+            assert_eq!(evaluate_scalar_program(&program, 1, &[20]), Ok(20));
+            let result = evaluate_aot_function(&program, 1, &[AotVmValue::Scalar(20)], 0).unwrap();
+            assert_eq!(aot_scalar_value(&result), Ok(20));
+            assert!(evaluate_scalar_program(&program, 1, &[i64::MAX]).is_err());
+            assert!(
+                evaluate_aot_function(&program, 1, &[AotVmValue::Scalar(i64::MAX)], 0).is_err()
+            );
+            compile_cranelift(cranelift_isa().unwrap().as_ref(), &program).unwrap();
+            llvm_module("x86_64-unknown-linux-gnu", &program).unwrap();
+        }
     }
 
     #[test]

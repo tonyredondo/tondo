@@ -387,11 +387,7 @@ impl Substitute<'_> {
                 Ok(())
             }
             TypeKind::Nominal { .. } => {
-                let fields = self
-                    .records
-                    .get(&ty)
-                    .filter(|fields| !fields.is_empty())
-                    .ok_or("generic:value-storage")?;
+                let fields = self.records.get(&ty).ok_or("generic:value-storage")?;
                 for (_, field) in fields {
                     self.value_type(*field, depth + 1)?;
                 }
