@@ -69,23 +69,26 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 61 Cranelift observations across
-31 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases
-and 16 aggregate-call cases, including four arithmetic traps. The call corpus
+`scripts/native-source-scalars-test.sh` verifies 99 Cranelift observations across
+49 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+16 aggregate-call cases and 38 generic-call cases, including five arithmetic
+traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
 results, discarded results and zero-argument aggregate returns.
 It rejects source-identity
 drift, unsupported functions, missing VM observations, changed oracle results
-and an empty corpus, plus four malformed aggregate-call protocols. Reports are
+and an empty corpus, plus four malformed aggregate-call protocols and five
+invalid generic identities/call targets. Reports are
 `native-source-scalars.json`, `native-source-records.json` and
-`native-source-calls.json` under `$CARGO_TARGET_DIR/reliability/evidence/` (the default
+`native-source-calls.json` and `native-source-generics.json` under
+`$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 16 aggregate-call cases through LLVM. `llvm_comparison` retains its actual
+the 54 aggregate/generic-call cases through LLVM. `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
 emits the runtime-dependent checked-conversion helper only when a function
@@ -93,11 +96,60 @@ actually needs it, allowing this scalar-only corpus to link without the
 evaluation runtime. The native evaluation workflow supplies the pinned LLVM
 tool; the standard strict gate requires Cranelift and has no LLVM dependency.
 
+## Concrete generic function instances
+
+Native normalization specializes ordinary generic function bodies before
+flattening aggregates. Each key contains the verified callable and its complete,
+ordered type argument list. Explicit and inferred uses of the same key share
+one instance. The key is registered before visiting the body, so self and mutual
+recursion reuse existing instances. Multiple binders and unused binders retain
+their identity. This is code generation for existing generic semantics, not
+trait implementation specialization or dynamic trait dispatch.
+
+Specialization copies only instantiated bodies and lazily copies the type
+interner. It substitutes local, operand, result, projection and call-signature
+types with the existing compiler type substitution. Generic record fields are
+instantiated from verified declarations with their own binder arguments, so
+nested records do not require a concrete source constructor. The source MIR,
+source interner and hosted bytecode lowering remain unchanged.
+
+The admitted signatures contain `Int`, `Bool`, `Unit` and the existing nonempty
+tuple/record value layouts. Aggregate leaves retain the `Int`/`Bool` restriction.
+Managed values, loans, generic closures, suspension, dynamic trait dispatch and
+other MIR protocols outside this ordinary value-call slice remain unadmitted.
+A stored named function value can resolve to a direct call only when its local
+and every copied source have one static definition. Reassigned or selected
+function values require later dynamic dispatch support.
+
+The private `generics` metadata distinguishes `Template { arity }` inventory
+entries from `Instance { template, arguments }` executable bodies. Original
+ordinals remain stable; instances append in deterministic discovery order.
+Instance debug names include canonical type arguments and source maps point
+back to the declaration. Templates stay unadmitted even when their binders are
+unused. Both adapters validate template ownership, argument arity, concrete
+names, unique instance keys and the prohibition on calling templates.
+
+Each extraction permits at most 1,024 additional instances and 1,000,000 copied
+body nodes (locals, statements and terminators). Concrete type shapes have a
+64-level depth limit and at most 4,096 expanded nodes; this also bounds repeated
+tuple children whose interned representation is small. Additional interned
+types are limited to 65,536, within the existing interner capacity. Recursive
+record expansion retains the 64-level limit. Budget or protocol rejection marks
+the requesting function unadmitted and propagates to its callers; it never
+publishes a truncated admitted body.
+
+`tests/native/native-aot-generic-calls.to` exercises multiple concrete scalar
+and aggregate instances, nested generic records, independent copies, named and
+inferred arguments, stored named function values, unused binders, recursion,
+branches, loops and overflow. The source campaign repeats probe generation in
+independent processes and requires byte-identical output. VM observations bind
+to the exact callable name, including canonical type arguments, rather than
+assuming native and bytecode function ordinals coincide. The separate bytecode
+monomorphization orders its own instances and remains the execution oracle.
+
 Managed fields, other numeric representations, empty records, whole
-aggregate equality, generic-function specialization, and aggregate calls through
-suspension/spawn protocols remain unsupported. Generic record layouts come from
-the verified declarations or concrete constructors available in the program;
-this does not specialize a generic function body. Loan operations, production
+aggregate equality and aggregate calls through suspension/spawn protocols
+remain unsupported. Loan operations, production
 runtime integration and the public native build/run
 path remain separate work. Admission rejection propagates through direct-call
 chains, including recursive components, so an admitted entry cannot reach an

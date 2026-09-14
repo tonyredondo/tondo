@@ -516,6 +516,12 @@ impl<'a> FunctionBuilder<'a> {
         }
         let mut function = MirFunction {
             id: self.id,
+            generic_arity: match self.id {
+                MirFunctionId::Callable(id) => {
+                    self.hir.callable(id).map_or(0, |f| f.generic_arity())
+                }
+                MirFunctionId::Closure(id) => self.hir.closure(id).map_or(0, |f| f.generic_arity()),
+            },
             span: self.span,
             outcome: self.outcome,
             locals: self.locals,
@@ -8456,6 +8462,110 @@ mod tests {
                 .map(MirTerminator::kind),
             Some(MirTerminatorKind::DrainUnwind { target }) if *target == function.unwind()
         )
+    }
+
+    #[test]
+    fn native_generic_instances_are_concrete_reused_and_leave_verified_mir_unchanged() {
+        use crate::mir::MirBackendGenerics;
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-generic-calls.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let before = format!("{mir:?}");
+        let type_count = hir.interner().len();
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(type_count, hir.interner().len());
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let mut identities = BTreeSet::new();
+        for function in &backend.functions {
+            match &function.generics {
+                Some(MirBackendGenerics::Template { .. }) => assert!(!function.supported),
+                generic => {
+                    assert!(
+                        function.supported,
+                        "{}: {:?}",
+                        function.ordinal, function.unsupported
+                    );
+                    assert!(!function.return_type.contains('$'));
+                    assert!(function.parameter_types.iter().all(|ty| !ty.contains('$')));
+                    if let Some(MirBackendGenerics::Instance {
+                        template,
+                        arguments,
+                    }) = generic
+                    {
+                        assert!(identities.insert((*template, arguments.clone())));
+                    }
+                }
+            }
+        }
+        let identity = mir
+            .functions()
+            .position(|f| f.id() == MirFunctionId::Callable(function_id(&resolved, "identity")))
+            .unwrap() as u32;
+        assert_eq!(
+            identities
+                .iter()
+                .filter(|(owner, args)| *owner == identity && args == &["Int"])
+                .count(),
+            1
+        );
+        assert!(identities.contains(&(identity, vec!["Bool".to_owned()])));
+        let mut malformed = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        malformed
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "identity")))
+            .unwrap()
+            .generic_arity = 0;
+        assert!(
+            verify_mir(&resolved, &hir, &malformed)
+                .unwrap_err()
+                .message()
+                .contains("generic arity")
+        );
+    }
+
+    #[test]
+    fn native_generic_expansion_limits_reject_the_requesting_callers() {
+        use crate::mir::native_generics::specialize_with_limits;
+        let (resolved, hir) = checked(
+            "fn identity[T: Copy](value: T): T { value }\nfn main() {\n _ = identity(1)\n }\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        for (instances, nodes, reason) in [
+            (0, 100, "generic:instance-limit"),
+            (100, 0, "generic:body-limit"),
+        ] {
+            let native = specialize_with_limits(&mir, hir.interner(), instances, nodes);
+            assert_eq!(native.instances.len(), mir.functions().len());
+            assert!(
+                native
+                    .instances
+                    .iter()
+                    .any(|instance| instance.rejection == Some(reason))
+            );
+        }
+    }
+
+    #[test]
+    fn native_polymorphic_recursion_stops_at_the_expanded_type_budget() {
+        let (resolved, hir) = checked(
+            "fn grow[T: Copy](value: T): Int {\n if false { grow((value, value)) } else { 1 }\n}\nfn main() {\n _ = grow(1)\n }\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let backend = mir.backend_program(hir.interner());
+        assert!(backend.functions.len() < 30);
+        assert!(backend.functions.iter().any(|f| {
+            f.unsupported
+                .iter()
+                .any(|reason| reason == "generic:type-size")
+        }));
+        let entry = mir
+            .functions()
+            .position(|f| f.id() == MirFunctionId::Callable(function_id(&resolved, "main")))
+            .unwrap();
+        assert!(!backend.functions[entry].supported);
     }
 
     #[test]

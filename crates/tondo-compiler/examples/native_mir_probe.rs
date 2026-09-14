@@ -14,7 +14,6 @@ use tondo_compiler::driver::{
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
-use tondo_vm::bytecode::BytecodeFunctionId;
 use tondo_vm::runtime::{RejectingHost, RuntimeValue, VmOutcome, execute_with_arguments};
 
 #[derive(Debug, Serialize)]
@@ -136,6 +135,43 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
         .iter()
         .map(|diagnostic| diagnostic.code().to_owned())
         .collect::<Vec<_>>();
+    let mut vm_functions = BTreeMap::new();
+    if let Some((backend, bytecode)) = output
+        .mir_summary()
+        .and_then(|summary| summary.backend.as_ref())
+        .zip(output.bytecode())
+    {
+        let debug = backend
+            .debug
+            .as_ref()
+            .ok_or("native probe lacks source identities")?;
+        let source_id = format!("native-evaluation:{path_text}");
+        for function in backend
+            .functions
+            .iter()
+            .filter(|function| function.supported)
+        {
+            let symbol = debug
+                .symbols
+                .iter()
+                .find(|symbol| symbol.function == function.ordinal)
+                .ok_or("native function lacks a source symbol")?;
+            let qualified = format!("@{}:{source_id}::{}", source_id.len(), symbol.name);
+            let matches = bytecode
+                .callables
+                .iter()
+                .filter(|callable| callable.name == qualified || callable.name == symbol.name)
+                .filter_map(|callable| callable.implementation)
+                .collect::<Vec<_>>();
+            let [implementation] = matches.as_slice() else {
+                return Err(format!(
+                    "native function `{}` lacks one exact VM implementation",
+                    symbol.name
+                ));
+            };
+            vm_functions.insert(function.ordinal, *implementation);
+        }
+    }
     let vm_scalar = output
         .mir_summary()
         .and_then(|summary| summary.backend.as_ref())
@@ -161,7 +197,7 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
                             let mut host = RejectingHost;
                             let execution = execute_with_arguments(
                                 bytecode,
-                                BytecodeFunctionId::new(function.ordinal),
+                                vm_functions[&function.ordinal],
                                 runtime_arguments,
                                 &mut host,
                             );
@@ -246,7 +282,7 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
                             let mut host = RejectingHost;
                             let execution = execute_with_arguments(
                                 bytecode,
-                                BytecodeFunctionId::new(function.ordinal),
+                                vm_functions[&function.ordinal],
                                 runtime_arguments,
                                 &mut host,
                             );

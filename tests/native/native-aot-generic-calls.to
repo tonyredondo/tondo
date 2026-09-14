@@ -1,0 +1,88 @@
+type Pair[T] = { first: T, second: T }
+type Box[T] = { value: T }
+
+fn identity[T: Copy](value: T): T { value }
+fn swap[T: Copy, U: Copy](value: (T, U)): (U, T) { (value.1, value.0) }
+fn flip[T: Copy](pair: Pair[T]): Pair[T] {
+    Pair[T] { second: pair.first, first: pair.second }
+}
+fn first[T: Copy](pair: Pair[T]): T { pair.first }
+fn boxed[T: Copy](value: T): Box[Pair[T]] {
+    Box[Pair[T]] { value: flip(Pair[T] { first: value, second: value }) }
+}
+fn choose[T: Copy](flag: Bool, left: T, right: T): T {
+    if flag { identity(left) } else { identity(right) }
+}
+fn descend[T: Copy](value: T, count: Int): T {
+    if count <= 0 { value } else { descend[T](value, count - 1) }
+}
+fn bounceLeft[T: Copy](value: T, count: Int): T {
+    if count <= 0 { value } else { bounceRight(value, count - 1) }
+}
+fn bounceRight[T: Copy](value: T, count: Int): T {
+    if count <= 0 { value } else { bounceLeft(value, count - 1) }
+}
+fn phantom[T](): Int { 7 }
+
+fn scalar(value: Int): Int { identity(value) }
+fn booleans(): Int { if identity(true) and not identity(false) { 1 } else { 0 } }
+fn tuples(): Int {
+    let value = identity((2, (true, 3)))
+    let inner = value.1
+    inner.1
+}
+fn records(): Int {
+    let original = Pair[Int] { first: 2, second: 9 }
+    var changed = flip(original)
+    changed.first = 4
+    first(original) * 100 + changed.first * 10 + changed.second
+}
+fn nested(): Int {
+    let value = boxed((true, 6))
+    if value.value.first.0 { value.value.second.1 } else { 0 }
+}
+fn recursive(): Int { descend((5, true), 4).0 }
+fn mutual(): Int { bounceLeft(Pair[Int] { first: 8, second: 3 }, 4).first }
+fn branches(flag: Int): Int { choose(flag > 0, (2, 3), (5, 7)).0 }
+fn repeated(): Int {
+    var pair = Pair[Int] { first: 2, second: 9 }
+    var count = 0
+    for count < 31 {
+        pair = flip(pair)
+        count += 1
+    }
+    pair.first * 10 + pair.second
+}
+fn explicitAndInferred(): Int { identity[Int](3) + identity(4) }
+fn unusedBinders(): Int { phantom[Int]() + phantom[Bool]() }
+fn namedArguments(): Int { choose(right: 8, left: 3, flag: false) }
+fn namedFunctionValue(): Int {
+    let operation: fn(Int): Int = identity[Int]
+    let copy = operation
+    copy(12)
+}
+fn multipleBinders(): Int {
+    let one = swap((true, 6))
+    let two = swap((7, false))
+    if one.1 and not two.0 { one.0 * 10 + two.1 } else { 0 }
+}
+fn checked(value: Int): Int { identity(value) + 1 }
+
+fn main() {
+    assert(scalar(11) == 11)
+    assert(booleans() == 1)
+    assert(tuples() == 3)
+    assert(records() == 242)
+    assert(nested() == 6)
+    assert(recursive() == 5)
+    assert(mutual() == 8)
+    assert(branches(0) == 5)
+    assert(branches(1) == 2)
+    assert(repeated() == 92)
+    assert(explicitAndInferred() == 7)
+    assert(unusedBinders() == 14)
+    assert(namedArguments() == 8)
+    assert(namedFunctionValue() == 12)
+    assert(multipleBinders() == 67)
+    assert(checked(41) == 42)
+}

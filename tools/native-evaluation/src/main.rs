@@ -159,6 +159,8 @@ struct MirBackendExecutionIdentity {
 #[derive(Debug, Deserialize, Clone)]
 struct MirBackendFunction {
     ordinal: u32,
+    #[serde(default)]
+    generics: Option<MirBackendGenerics>,
     parameters: Vec<u32>,
     #[serde(default)]
     parameter_types: Vec<String>,
@@ -169,6 +171,17 @@ struct MirBackendFunction {
     return_fields: Vec<u32>,
     supported: bool,
     blocks: Vec<MirBackendBlock>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+enum MirBackendGenerics {
+    Template {
+        arity: u32,
+    },
+    Instance {
+        template: u32,
+        arguments: Vec<String>,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1493,6 +1506,7 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
         .iter()
         .map(|function| (function.ordinal, function.parameters.len()))
         .collect::<BTreeMap<_, _>>();
+    validate_generic_instances(program)?;
     for function in &program.functions {
         if !function.return_fields.is_empty() {
             aggregate_result_bytes(function.return_fields.len())?;
@@ -1626,6 +1640,42 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
                     )?;
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_generic_instances(program: &MirBackendProgram) -> Result<(), String> {
+    let mut identities = BTreeSet::new();
+    for function in &program.functions {
+        match &function.generics {
+            Some(MirBackendGenerics::Template { arity }) => {
+                if *arity == 0 || function.supported {
+                    return Err("generic template must have binders and remain unadmitted".into());
+                }
+            }
+            Some(MirBackendGenerics::Instance {
+                template,
+                arguments,
+            }) => {
+                let owner = program.functions.iter().find(|f| f.ordinal == *template);
+                let Some(MirBackendGenerics::Template { arity }) =
+                    owner.and_then(|f| f.generics.as_ref())
+                else {
+                    return Err("generic instance has no source template".into());
+                };
+                if arguments.len() != *arity as usize
+                    || arguments
+                        .iter()
+                        .any(|name| name.is_empty() || name.contains('$') || name == "unknown")
+                {
+                    return Err("generic instance has incomplete type arguments".into());
+                }
+                if !identities.insert((*template, arguments)) {
+                    return Err("generic instance identity is duplicated".into());
+                }
+            }
+            None => {}
         }
     }
     Ok(())
@@ -4934,6 +4984,7 @@ fn run_native_aot_lowering_probe(
     let (mut program, cases) = native_aot_program();
     let unsupported = MirBackendFunction {
         ordinal: 900,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -6109,6 +6160,7 @@ fn native_aot_product_program() -> (MirBackendProgram, Vec<NativeAotBinaryCase>)
 fn unsupported_native_aot_function() -> MirBackendFunction {
     MirBackendFunction {
         ordinal: 900,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7123,6 +7175,7 @@ fn native_aot_program() -> (MirBackendProgram, Vec<NativeAotCase>) {
     let function =
         |ordinal: u32, parameters: Vec<u32>, return_local: u32, blocks| MirBackendFunction {
             ordinal,
+            generics: None,
             parameters,
             parameter_types: Vec::new(),
             return_local,
@@ -7463,6 +7516,7 @@ fn native_deferred_program() -> (MirBackendProgram, u32, i64) {
     let local = |index| MirBackendOperand::Local { index };
     let body = MirBackendFunction {
         ordinal: 0,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7481,6 +7535,7 @@ fn native_deferred_program() -> (MirBackendProgram, u32, i64) {
     };
     let caller = MirBackendFunction {
         ordinal: 1,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7633,6 +7688,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
             });
             MirBackendFunction {
                 ordinal,
+                generics: None,
                 parameters: Vec::new(),
                 parameter_types: Vec::new(),
                 return_local: 0,
@@ -7644,6 +7700,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         };
     let cleanup_function = MirBackendFunction {
         ordinal: 100,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7713,6 +7770,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     };
     let abort_function = MirBackendFunction {
         ordinal: 101,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7769,6 +7827,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     };
     let ownership_function = MirBackendFunction {
         ordinal: 102,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7853,6 +7912,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     };
     let async_await_function = MirBackendFunction {
         ordinal: 103,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7909,6 +7969,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     };
     let structured_join_function = MirBackendFunction {
         ordinal: 104,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -7978,6 +8039,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     };
     let async_cancel_function = MirBackendFunction {
         ordinal: 105,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -8047,6 +8109,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     };
     let task_progress_function = MirBackendFunction {
         ordinal: 106,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -8116,6 +8179,7 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     };
     let async_cancel_wake_function = MirBackendFunction {
         ordinal: 107,
+        generics: None,
         parameters: Vec::new(),
         parameter_types: Vec::new(),
         return_local: 0,
@@ -8504,6 +8568,7 @@ fn runtime_contract_c_runner_source(function_ordinal: u32, expected: i64) -> Str
 fn native_diagnostic_program() -> (MirBackendProgram, Vec<NativeDiagnosticCase>) {
     let function = |ordinal: u32, kind: &str| MirBackendFunction {
         ordinal,
+        generics: None,
         parameters: vec![1],
         parameter_types: vec!["Int".to_owned()],
         return_local: 0,
@@ -11646,6 +11711,7 @@ mod tests {
     fn simple_backend() -> MirBackendProgram {
         test_program(vec![MirBackendFunction {
                 ordinal: 0,
+                generics: None,
                 parameters: vec![1, 2],
                 parameter_types: Vec::new(),
                 return_local: 0,
@@ -11689,6 +11755,7 @@ mod tests {
     fn branch_backend() -> MirBackendProgram {
         test_program(vec![MirBackendFunction {
                 ordinal: 0,
+                generics: None,
                 parameters: vec![1],
                 parameter_types: Vec::new(),
                 return_local: 0,
@@ -11758,6 +11825,7 @@ mod tests {
     fn tag_backend() -> MirBackendProgram {
         test_program(vec![MirBackendFunction {
                 ordinal: 0,
+                generics: None,
                 parameters: vec![],
                 parameter_types: Vec::new(),
                 return_local: 0,
@@ -11818,6 +11886,7 @@ mod tests {
     fn loop_backend() -> MirBackendProgram {
         test_program(vec![MirBackendFunction {
                 ordinal: 0,
+                generics: None,
                 parameters: vec![1],
                 parameter_types: Vec::new(),
                 return_local: 0,
@@ -11887,6 +11956,7 @@ mod tests {
     fn call_backend() -> MirBackendProgram {
         let callee = MirBackendFunction {
             ordinal: 0,
+            generics: None,
             parameters: vec![1],
             parameter_types: Vec::new(),
             return_local: 0,
@@ -11911,6 +11981,7 @@ mod tests {
         };
         let caller = MirBackendFunction {
             ordinal: 1,
+            generics: None,
             parameters: vec![1],
             parameter_types: Vec::new(),
             return_local: 0,
@@ -11945,6 +12016,7 @@ mod tests {
     fn trap_backend() -> MirBackendProgram {
         test_program(vec![MirBackendFunction {
                 ordinal: 0,
+                generics: None,
                 parameters: vec![],
                 parameter_types: Vec::new(),
                 return_local: 0,
@@ -12003,6 +12075,7 @@ mod tests {
     fn assert_backend(condition: bool) -> MirBackendProgram {
         test_program(vec![MirBackendFunction {
                 ordinal: 0,
+                generics: None,
                 parameters: vec![],
                 parameter_types: Vec::new(),
                 return_local: 0,
@@ -12234,6 +12307,7 @@ mod tests {
         let mut program = simple_backend();
         program.functions.push(MirBackendFunction {
             ordinal: 1,
+            generics: None,
             parameters: Vec::new(),
             parameter_types: Vec::new(),
             return_local: 0,

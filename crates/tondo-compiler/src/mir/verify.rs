@@ -994,6 +994,16 @@ impl Verifier<'_> {
     fn verify_function(&self, function: &MirFunction) -> Result<(), MirInvariantError> {
         let context = function_context(function.id);
         self.verify_span(function, function.span, &context)?;
+        let generic_arity = match function.id {
+            MirFunctionId::Callable(id) => self.hir.callable(id).map(|f| f.generic_arity()),
+            MirFunctionId::Closure(id) => self.hir.closure(id).map(|f| f.generic_arity()),
+        };
+        if generic_arity != Some(function.generic_arity) {
+            return Err(MirInvariantError::new(
+                &context,
+                "function generic arity differs from typed HIR",
+            ));
+        }
         let (expected_outcome, expected_parameters) = match function.id {
             MirFunctionId::Callable(id) => {
                 let signature = self.hir.callable(id).ok_or_else(|| {

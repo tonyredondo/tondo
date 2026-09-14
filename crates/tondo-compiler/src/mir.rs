@@ -25,6 +25,7 @@ use crate::types::{
 
 mod lower;
 mod native_aggregates;
+mod native_generics;
 mod regions;
 mod verify;
 
@@ -198,33 +199,41 @@ impl MirProgram {
         resolved: Option<&ResolvedProgram>,
         sources: Option<&SourceDatabase>,
     ) -> MirBackendProgram {
-        let callable_ordinals = self
-            .functions
-            .keys()
+        let native = native_generics::specialize(self, interner);
+        let mut functions = native
+            .instances
+            .iter()
             .enumerate()
-            .filter_map(|(ordinal, id)| match id {
-                MirFunctionId::Callable(callable) => Some((*callable, ordinal as u32)),
-                MirFunctionId::Closure(_) => None,
-            })
-            .collect::<BTreeMap<_, _>>();
-        let records = native_aggregates::record_fields(self);
-        let mut functions = self
-            .functions()
-            .enumerate()
-            .map(|(ordinal, function)| {
-                backend_function(
+            .map(|(ordinal, instance)| {
+                let mut lowered = backend_function(
                     ordinal as u32,
-                    function,
-                    interner,
-                    &callable_ordinals,
-                    &records,
-                )
+                    &instance.function,
+                    &native.interner,
+                    &native.ordinals,
+                    &native.records,
+                );
+                lowered.generics = instance.generics.clone();
+                if matches!(instance.generics, Some(MirBackendGenerics::Template { .. })) {
+                    lowered.unsupported.push("generic:template".to_owned());
+                }
+                if let Some(reason) = instance.rejection {
+                    lowered.unsupported.push(reason.to_owned());
+                }
+                lowered.unsupported.sort();
+                lowered.unsupported.dedup();
+                lowered.supported = lowered.unsupported.is_empty();
+                lowered
             })
             .collect::<Vec<_>>();
         validate_backend_call_targets(&mut functions);
         MirBackendProgram {
             format: "tondo-mir-backend/1".to_owned(),
-            debug: Some(backend_debug_info(self, resolved, sources)),
+            debug: Some(backend_debug_info(
+                self,
+                &native.instances,
+                resolved,
+                sources,
+            )),
             functions,
         }
     }
@@ -232,6 +241,7 @@ impl MirProgram {
 
 fn backend_debug_info(
     program: &MirProgram,
+    instances: &[native_generics::Instance<'_>],
     resolved: Option<&ResolvedProgram>,
     sources: Option<&SourceDatabase>,
 ) -> MirBackendDebugInfo {
@@ -240,9 +250,13 @@ fn backend_debug_info(
     let mut source_maps = Vec::new();
     let mut executions = Vec::new();
 
-    for (function_ordinal, function) in program.functions().enumerate() {
+    for (function_ordinal, instance) in instances.iter().enumerate() {
+        let function = &instance.function;
         let function_ordinal = function_ordinal as u32;
-        let symbol = debug_symbol_name(resolved, function.id());
+        let mut symbol = debug_symbol_name(resolved, function.id());
+        if let Some(MirBackendGenerics::Instance { arguments, .. }) = &instance.generics {
+            symbol.push_str(&format!("[{}]", arguments.join(", ")));
+        }
         let function_span = backend_span(function.span(), sources, &file_ordinals);
         symbols.push(MirBackendDebugSymbol {
             function: function_ordinal,
@@ -631,6 +645,9 @@ pub struct MirBackendExecutionIdentity {
 #[serde(deny_unknown_fields)]
 pub struct MirBackendFunction {
     pub ordinal: u32,
+    /// Generic templates are inventory only; instances retain their source owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generics: Option<MirBackendGenerics>,
     pub parameters: Vec<u32>,
     /// Canonical source parameter types before aggregate flattening. The
     /// parameter locals enumerate scalar ABI carriers, not source arity.
@@ -645,6 +662,18 @@ pub struct MirBackendFunction {
     pub blocks: Vec<MirBackendBlock>,
     pub supported: bool,
     pub unsupported: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum MirBackendGenerics {
+    Template {
+        arity: u32,
+    },
+    Instance {
+        template: u32,
+        arguments: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -877,7 +906,7 @@ fn backend_function(
     ordinal: u32,
     function: &MirFunction,
     interner: &TypeInterner,
-    callable_ordinals: &BTreeMap<HirCallableId, u32>,
+    callable_ordinals: &native_generics::CallableOrdinals,
     records: &native_aggregates::RecordFields,
 ) -> MirBackendFunction {
     let mut unsupported = Vec::new();
@@ -952,6 +981,7 @@ fn backend_function(
     unsupported.dedup();
     MirBackendFunction {
         ordinal,
+        generics: None,
         parameters: normalized.parameters,
         parameter_types,
         return_local: function.return_local().index(),
@@ -1053,7 +1083,7 @@ fn backend_block(
     block: &MirBasicBlock,
     interner: &TypeInterner,
     unsupported: &mut Vec<String>,
-    callable_ordinals: &BTreeMap<HirCallableId, u32>,
+    callable_ordinals: &native_generics::CallableOrdinals,
     function_values: &BTreeMap<u32, u32>,
 ) -> MirBackendBlock {
     let kind = match block.kind() {
@@ -1465,7 +1495,7 @@ fn validate_backend_control_flow(blocks: &[MirBackendBlock], unsupported: &mut V
 fn backend_operation(
     operation: &MirOperation,
     unsupported: &mut Vec<String>,
-    callable_ordinals: &BTreeMap<HirCallableId, u32>,
+    callable_ordinals: &native_generics::CallableOrdinals,
     function_values: &BTreeMap<u32, u32>,
 ) -> MirBackendOperation {
     match operation.kind() {
@@ -1531,8 +1561,11 @@ fn backend_operation(
                 };
                 return MirBackendOperation::HostCall { kind, arguments };
             }
-            let callable = match callee.kind() {
-                MirOperandKind::Function { callable, .. } => callable,
+            let (callable, type_arguments) = match callee.kind() {
+                MirOperandKind::Function {
+                    callable,
+                    arguments,
+                } => (callable, arguments),
                 _ => {
                     if let Some(function) = backend_function_value(callee, function_values) {
                         let Some(arguments) = backend_call_arguments(arguments, unsupported, true)
@@ -1561,7 +1594,11 @@ fn backend_operation(
                     };
                 }
             };
-            let Some(function) = callable_ordinals.get(callable).copied() else {
+            let Some(function) = callable_ordinals
+                .get(callable)
+                .and_then(|instances| instances.get(type_arguments))
+                .copied()
+            else {
                 unsupported.push("call:unknown-target".to_owned());
                 return MirBackendOperation::Marker {
                     kind: "call".to_owned(),
@@ -1609,36 +1646,66 @@ fn backend_operation(
 /// adapters. Copies of a known function value remain known as well.
 fn backend_function_values(
     function: &MirFunction,
-    callable_ordinals: &BTreeMap<HirCallableId, u32>,
+    callable_ordinals: &native_generics::CallableOrdinals,
 ) -> BTreeMap<u32, u32> {
-    let mut values = BTreeMap::new();
+    // Only one assignment may establish a static target. A function value
+    // selected or reassigned across branches needs dynamic dispatch.
+    let mut definitions = BTreeMap::new();
+    let mut repeated = BTreeSet::new();
     for block in function.blocks() {
         for statement in block.statements() {
-            let MirStatementKind::Assign { destination, value } = statement.kind() else {
-                continue;
-            };
-            if !destination.projections().is_empty() {
+            if let MirStatementKind::Assign { destination, value } = statement.kind() {
+                let local = destination.local().index();
+                if !destination.projections().is_empty()
+                    || definitions.insert(local, value).is_some()
+                {
+                    repeated.insert(local);
+                }
+            }
+        }
+        // Invoke destinations are definitions too, even if there is also an
+        // assignment to that local elsewhere in the control-flow graph.
+        if let MirTerminatorKind::Invoke {
+            destination: Some(place),
+            ..
+        } = block.terminator().kind()
+        {
+            repeated.insert(place.local().index());
+        }
+    }
+    let mut values = BTreeMap::new();
+    loop {
+        let before = values.len();
+        for (local, value) in &definitions {
+            if repeated.contains(local) || values.contains_key(local) {
                 continue;
             }
-            let ordinal = match value.kind() {
-                MirRvalueKind::Use(operand) => match operand.kind() {
-                    MirOperandKind::Function { callable, .. } => {
-                        callable_ordinals.get(callable).copied()
-                    }
-                    MirOperandKind::Copy(place) | MirOperandKind::Move(place)
-                        if place.projections().is_empty() =>
-                    {
-                        values.get(&place.local().index()).copied()
-                    }
-                    _ => None,
-                },
+            let MirRvalueKind::Use(operand) = value.kind() else {
+                continue;
+            };
+            let ordinal = match operand.kind() {
+                MirOperandKind::Function {
+                    callable,
+                    arguments,
+                } => callable_ordinals
+                    .get(callable)
+                    .and_then(|instances| instances.get(arguments))
+                    .copied(),
+                MirOperandKind::Copy(place)
+                | MirOperandKind::Move(place)
+                | MirOperandKind::Borrow(place)
+                    if place.projections().is_empty() =>
+                {
+                    values.get(&place.local().index()).copied()
+                }
                 _ => None,
             };
             if let Some(ordinal) = ordinal {
-                values.insert(destination.local().index(), ordinal);
-            } else {
-                values.remove(&destination.local().index());
+                values.insert(*local, ordinal);
             }
+        }
+        if values.len() == before {
+            break;
         }
     }
     values
@@ -1649,7 +1716,9 @@ fn backend_function_value(
     function_values: &BTreeMap<u32, u32>,
 ) -> Option<u32> {
     let place = match callee.kind() {
-        MirOperandKind::Copy(place) | MirOperandKind::Move(place)
+        MirOperandKind::Copy(place)
+        | MirOperandKind::Move(place)
+        | MirOperandKind::Borrow(place)
             if place.projections().is_empty() =>
         {
             place
@@ -2312,9 +2381,10 @@ pub enum MirFunctionId {
     Closure(HirClosureId),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirFunction {
     id: MirFunctionId,
+    generic_arity: u32,
     span: Span,
     outcome: TypeId,
     locals: Vec<MirLocal>,
@@ -3192,6 +3262,7 @@ mod tests {
             id: MirFunctionId::Callable(HirCallableId::Host(
                 crate::hir::HirBootstrapHostFunction::ConsolePrint,
             )),
+            generic_arity: 0,
             span,
             outcome: int,
             locals: Vec::new(),
@@ -3539,7 +3610,7 @@ mod tests {
             );
             assert!(!unsupported.is_empty());
         }
-        #[rustfmt::skip] let mut functions = vec![MirBackendFunction { ordinal: 0, parameters: Vec::new(), parameter_types: Vec::new(), return_local: 0, return_type: "Int".to_owned(), return_fields: Vec::new(), blocks: vec![MirBackendBlock { ordinal: 0, kind: "normal".to_owned(), statements: Vec::new(), terminator: MirBackendTerminator::Invoke { operation: MirBackendOperation::Call { function: 99, arguments: Vec::new() }, destination: None, target: Some(0) } }], supported: true, unsupported: Vec::new() }];
+        #[rustfmt::skip] let mut functions = vec![MirBackendFunction { ordinal: 0, generics: None, parameters: Vec::new(), parameter_types: Vec::new(), return_local: 0, return_type: "Int".to_owned(), return_fields: Vec::new(), blocks: vec![MirBackendBlock { ordinal: 0, kind: "normal".to_owned(), statements: Vec::new(), terminator: MirBackendTerminator::Invoke { operation: MirBackendOperation::Call { function: 99, arguments: Vec::new() }, destination: None, target: Some(0) } }], supported: true, unsupported: Vec::new() }];
         validate_backend_call_targets(&mut functions);
         #[rustfmt::skip]
         assert_eq!(functions[0].unsupported, vec!["call-target-missing:99".to_owned()]);

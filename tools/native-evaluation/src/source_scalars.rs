@@ -34,9 +34,15 @@ pub(super) fn run(
         .and_then(|mir| mir.backend.as_ref())
         .ok_or("source scalar fixture has no MIR")?;
     validate_backend_program(program)?;
-    if fixture.status != "passed" || program.functions.iter().any(|function| !function.supported) {
+    if fixture.status != "passed"
+        || program.functions.iter().any(|function| {
+            !function.supported
+                && !matches!(function.generics, Some(MirBackendGenerics::Template { .. }))
+        })
+    {
         return Err(
-            "source scalar execution requires every fixture function to be supported".into(),
+            "source scalar execution requires every concrete fixture function to be supported"
+                .into(),
         );
     }
     let source_path = Path::new(&fixture.fixture);
@@ -87,6 +93,9 @@ pub(super) fn run(
     let mut observations = Vec::new();
     let mut llvm_observations = Vec::new();
     for function in &program.functions {
+        if matches!(function.generics, Some(MirBackendGenerics::Template { .. })) {
+            continue;
+        }
         if function.return_type != "Int" || function.parameter_types.iter().any(|ty| ty != "Int") {
             continue;
         }
@@ -112,7 +121,10 @@ pub(super) fn run(
                     Some(value)
                 }
                 Err(_) if vm.status == "panicked" && vm.result.is_none() => None,
-                _ => return Err("normalized MIR and hosted VM observations disagree".into()),
+                observed => return Err(format!(
+                    "normalized MIR and hosted VM observations disagree for function {} with {:?}: MIR {:?}, VM {} {:?}",
+                    function.ordinal, arguments, observed, vm.status, vm.result,
+                )),
             };
             let stem = format!("source-{}-{case}", function.ordinal);
             let harness = harness_source(function, &arguments);

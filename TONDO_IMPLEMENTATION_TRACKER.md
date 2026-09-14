@@ -5690,12 +5690,17 @@ pueden retrasar el primer backend correcto.
   copies, `with` updates, reassignment and control flow. Ordinary direct calls
   now pass flattened value arguments and return aggregate fields through
   caller-owned private result buffers, including recursive calls and loops.
-  The focused `scripts/native-source-scalars-test.sh` compares 61 Cranelift
-  observations with the hosted VM, including four arithmetic traps, without an evaluation
+  Ordinary generic functions now specialize into bounded, reusable concrete
+  instances before aggregate lowering. Multiple binders, nested generic record
+  layouts, recursion and statically known named function values retain exact
+  source/type identities. Templates remain unadmitted; expansion limits and
+  unsupported protocols propagate rejection through callers.
+  The focused `scripts/native-source-scalars-test.sh` compares 99 Cranelift
+  observations with the hosted VM, including five arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 16 aggregate-call cases. Managed fields, generic-function specialization,
-  aggregate async calls, whole-value equality, loans and production runtime
+  the 54 aggregate/generic-call cases. Managed fields, generic closures and
+  dynamic dispatch, aggregate async calls, whole-value equality, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.
 

@@ -6845,9 +6845,8 @@ fn main() {
     }
 
     #[test]
-    fn native_aggregate_calls_keep_generic_functions_and_async_storage_unadmitted() {
+    fn native_aggregate_calls_keep_async_storage_unadmitted() {
         for source in [
-            "fn identity[T: Copy](pair: (T, T)): (T, T) { pair }\nfn inspectValue(): Int { identity((1, 2)).0 }",
             "fn first(pair: (Int, Int)): Int suspends { pair.0 }\nfn inspectValue(): Int {\n scope {\n let work = spawn first((1, 2))\n await work\n}\n}",
             "fn first(pair: (Int, Int)): Int suspends { pair.0 }\nfn inspectValue(): Int { first((1, 2)) }",
         ] {
@@ -6885,6 +6884,49 @@ fn main() {
                 "unsupported source was admitted: {source}"
             );
             assert!(!function.unsupported.is_empty());
+        }
+    }
+
+    #[test]
+    fn native_generic_calls_reject_managed_values_loans_and_dynamic_function_selection() {
+        for source in [
+            "fn identity[T](value: T): T { value }\nfn inspectValue(): String { identity(\"text\") }",
+            "fn identity[T: Copy](value: ref T): T { value }\nfn inspectValue(): Int {\n let value = 1\n identity(ref value)\n}",
+            "fn identity[T: Copy](value: T): T { value }\nfn increment[T](value: Int): Int { value + 1 }\nfn inspectValue(): Int {\n var operation: fn(Int): Int = identity[Int]\n if false {\n operation = increment[Int]\n }\n operation(3)\n}",
+        ] {
+            let source = format!("{source}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{source}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let ordinal = backend
+                .debug
+                .as_ref()
+                .unwrap()
+                .symbols
+                .iter()
+                .find(|symbol| symbol.name.ends_with("::value::inspectValue"))
+                .unwrap()
+                .function;
+            assert!(
+                !backend
+                    .functions
+                    .iter()
+                    .find(|function| function.ordinal == ordinal)
+                    .unwrap()
+                    .supported,
+                "{source}"
+            );
         }
     }
 
