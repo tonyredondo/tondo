@@ -17720,7 +17720,7 @@
       "requirements": [],
       "oracle": "panic+resource-limit+invariant",
       "repetitions": 1,
-      "source_sha256": "aa74b0dacd10dcf4ff27fca59649bc19b3277ab8435338a7a694ca6d72998368",
+      "source_sha256": "d90fe90bbce399384a44e5f0a14cf62031b7cdf314c308b61e4b978bdac87882",
       "target": "host-rust",
       "document": null,
       "edition": "host",

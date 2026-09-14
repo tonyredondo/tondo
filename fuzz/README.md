@@ -35,3 +35,11 @@ cargo +nightly fuzz run stdlib_async_group -- -runs=1000 -seed=4101 -max_len=409
 
 Nightly campaigns increase `-runs` or use a bounded `-max_total_time`; every
 failure report must retain target, seed and minimized input.
+
+The default `compiler-targets` feature keeps all targets available. Targets
+that use the compiler, VM or reliability harness require that feature.
+The bounded TOML campaign uses `scripts/stdlib-toml-fuzz.sh` from the repository
+root; it selects `--no-default-features` and compiles only the stdlib kernel
+and the canonical independent TOML model. This avoids rebuilding the compiler
+and VM under the fuzz toolchain for a kernel-only test. Its 128 runs, seed 4113,
+assertions and instrumentation remain unchanged.

@@ -58,7 +58,7 @@
       "scripts/stdlib-toml-test-check.sh",
       "cargo test -p tondo-reliability --test toml_models --locked",
       "cargo test -p tondo-stdlib toml::tests --locked",
-      "cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_toml --locked",
+      "cargo check --manifest-path fuzz/Cargo.toml --bin stdlib_toml --no-default-features --locked",
       "TONDO_TOML_FUZZ_RUNS=128 scripts/stdlib-toml-fuzz.sh"
     ],
     "cases": [
@@ -94,7 +94,7 @@
     },
     "oracle": "panic-free deterministic replay, independent canonical bytes, production parse/re-encode stability and explicit bounds",
     "command": "TONDO_TOML_FUZZ_RUNS=128 scripts/stdlib-toml-fuzz.sh",
-    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_toml fuzz/corpus/stdlib_toml -- -runs=0 -max_len=4096"
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run --no-default-features stdlib_toml fuzz/corpus/stdlib_toml -- -runs=0 -max_len=4096"
   },
   "sanitization": {
     "status": "bounded-safe-rust-no-unsafe-boundary",

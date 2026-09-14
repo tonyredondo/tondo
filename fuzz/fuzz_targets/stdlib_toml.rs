@@ -5,11 +5,17 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use libfuzzer_sys::fuzz_target;
-use tondo_reliability::toml_model::{
+use tondo_stdlib::toml::{self, TomlLimits, TomlMember, TomlOptions, TomlValue};
+
+// Compile the canonical independent model without the reliability CLI's
+// compiler/VM dependencies, as the other standalone model targets do.
+#[path = "../../crates/tondo-reliability/src/toml_model.rs"]
+mod toml_model;
+
+use toml_model::{
     MAX_REFERENCE_NODES, MAX_TOML_FUZZ_INPUT_BYTES, MAX_TOML_FUZZ_STEPS, ReferenceValue,
     TomlFuzzSummary, render_canonical, run_toml_fuzz_case, value_from_seed,
 };
-use tondo_stdlib::toml::{self, TomlLimits, TomlMember, TomlOptions, TomlValue};
 
 fn to_toml(value: &ReferenceValue) -> TomlValue {
     match value {

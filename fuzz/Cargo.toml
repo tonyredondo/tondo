@@ -7,18 +7,28 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+[features]
+default = ["compiler-targets"]
+compiler-targets = [
+    "dep:tondo-compiler",
+    "dep:tondo-conformance",
+    "dep:tondo-reliability",
+    "dep:tondo-vm",
+]
+
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1.0.151"
-tondo-compiler = { path = "../crates/tondo-compiler" }
-tondo-conformance = { path = "../crates/tondo-conformance" }
-tondo-reliability = { path = "../crates/tondo-reliability" }
+tondo-compiler = { path = "../crates/tondo-compiler", optional = true }
+tondo-conformance = { path = "../crates/tondo-conformance", optional = true }
+tondo-reliability = { path = "../crates/tondo-reliability", optional = true }
 tondo-stdlib = { path = "../crates/tondo-stdlib" }
-tondo-vm = { path = "../crates/tondo-vm" }
+tondo-vm = { path = "../crates/tondo-vm", optional = true }
 
 [[bin]]
 name = "frontend"
 path = "fuzz_targets/frontend.rs"
+required-features = ["compiler-targets"]
 test = false
 doc = false
 bench = false
@@ -26,6 +36,7 @@ bench = false
 [[bin]]
 name = "protocols"
 path = "fuzz_targets/protocols.rs"
+required-features = ["compiler-targets"]
 test = false
 doc = false
 bench = false
@@ -33,6 +44,7 @@ bench = false
 [[bin]]
 name = "admission"
 path = "fuzz_targets/admission.rs"
+required-features = ["compiler-targets"]
 test = false
 doc = false
 bench = false
@@ -47,6 +59,7 @@ bench = false
 [[bin]]
 name = "stdlib_owners"
 path = "fuzz_targets/stdlib_owners.rs"
+required-features = ["compiler-targets"]
 test = false
 doc = false
 bench = false
@@ -89,6 +102,7 @@ bench = false
 [[bin]]
 name = "stdlib_encoding"
 path = "fuzz_targets/stdlib_encoding.rs"
+required-features = ["compiler-targets"]
 test = false
 doc = false
 bench = false
@@ -96,6 +110,7 @@ bench = false
 [[bin]]
 name = "stdlib_yaml"
 path = "fuzz_targets/stdlib_yaml.rs"
+required-features = ["compiler-targets"]
 test = false
 doc = false
 bench = false
@@ -110,6 +125,7 @@ bench = false
 [[bin]]
 name = "diagnostics"
 path = "fuzz_targets/diagnostics.rs"
+required-features = ["compiler-targets"]
 test = false
 doc = false
 bench = false

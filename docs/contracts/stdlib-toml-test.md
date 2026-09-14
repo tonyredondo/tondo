@@ -47,6 +47,15 @@ nightly-2026-07-28, timeout de 10 segundos y límite RSS de 4 GiB. El comando
 reproducible está en el JSON y en
 [scripts/stdlib-toml-fuzz.sh](../../scripts/stdlib-toml-fuzz.sh).
 
+The TOML runner disables the fuzz workspace's default `compiler-targets`
+feature. It includes the same `toml_model.rs` directly, without copying the
+model or compiling the reliability CLI, compiler, conformance runner or VM.
+The kernel, assertions, seed, sanitizer settings and run limits are unchanged.
+The focused test script checks Cargo's resolved host dependency graph and
+builds all default fuzz targets, so this build separation cannot silently
+remove another target. Ordinary fuzz commands retain the full default feature
+set.
+
 ## Frontera de promoción
 
 Este bloque promueve sólo modelo, tests hosted scalar, corpus y fuzz bounded.

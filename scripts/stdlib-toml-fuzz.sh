@@ -26,7 +26,7 @@ export CARGO_TARGET_DIR="$target_dir"
 
 rm -rf "$output_corpus"
 mkdir -p "$output_corpus"
-cargo "+$nightly" fuzz run stdlib_toml "$output_corpus" \
+cargo "+$nightly" fuzz run --no-default-features stdlib_toml "$output_corpus" \
     corpus/stdlib_toml -- \
     "-runs=$runs" \
     "-seed=$seed" \

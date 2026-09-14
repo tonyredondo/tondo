@@ -42,6 +42,38 @@ scripts/stdlib-toml-test-check.sh >/dev/null
 target_dir="${CARGO_TARGET_DIR:-$root/target}"
 CARGO_TARGET_DIR="$target_dir" cargo test -q -p tondo-reliability --test toml_models --locked
 CARGO_TARGET_DIR="$target_dir" cargo test -q -p tondo-stdlib toml::tests --locked
-CARGO_TARGET_DIR="$target_dir" cargo check -q --manifest-path fuzz/Cargo.toml --bin stdlib_toml --locked
+CARGO_TARGET_DIR="$target_dir" cargo check -q --manifest-path fuzz/Cargo.toml \
+    --bin stdlib_toml --no-default-features --locked
 
-echo "std.toml tests: OK (negative testing contract; independent model; hosted regressions; fuzz harness)"
+# Inspect Cargo's actual host dependency closure, including transitive edges.
+# A direct dependency check alone would miss a compiler pulled in by a model.
+host="$(rustc -vV | sed -n 's/^host: //p')"
+cargo metadata --manifest-path fuzz/Cargo.toml --format-version 1 --locked \
+    --no-default-features --filter-platform "$host" > "$tmp_dir/minimal.json"
+jq -e '
+    [.resolve.nodes[].id] as $active
+    | [.packages[] | select(.id as $id | $active | index($id)) | .name] as $names
+    | ($names | index("tondo-stdlib")) != null
+      and all($names[];
+          . != "tondo-compiler" and . != "tondo-vm"
+          and . != "tondo-conformance" and . != "tondo-reliability")
+' "$tmp_dir/minimal.json" >/dev/null || {
+    echo "std.toml tests: minimal harness pulls in compiler or runtime dependencies" >&2
+    exit 1
+}
+
+# All existing targets must still build with the default feature set.
+cargo metadata --manifest-path fuzz/Cargo.toml --format-version 1 --locked \
+    --filter-platform "$host" > "$tmp_dir/default.json"
+jq -e '
+    .resolve.root as $root
+    | (.resolve.nodes[] | select(.id == $root) | .features) as $enabled
+    | all(.packages[] | select(.id == $root) | .targets[];
+        all(."required-features"[]?; . as $feature | $enabled | index($feature)))
+' "$tmp_dir/default.json" >/dev/null || {
+    echo "std.toml tests: default features skip a declared fuzz target" >&2
+    exit 1
+}
+CARGO_TARGET_DIR="$target_dir" cargo check -q --manifest-path fuzz/Cargo.toml --bins --locked
+
+echo "std.toml tests: OK (negative testing contract; independent model; hosted regressions; minimal harness; all default fuzz targets)"
