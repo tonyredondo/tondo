@@ -8503,6 +8503,54 @@ mod tests {
     }
 
     #[test]
+    fn native_sum_normalization_preserves_verified_mir_and_type_identity() {
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-sum-values.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let types = hir.interner().len();
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(types, hir.interner().len());
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn native_sum_storage_branches_and_conversions_share_the_expansion_budget() {
+        let (resolved, hir) = checked(
+            "fn converted(value: Int): Int8 ! NumericConversionError { Int8(value)? }\nfn optional(value: Int?): Int? { value? }\nfn main() {}\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let records = crate::mir::native_aggregates::record_fields(&mir);
+        for name in ["converted", "optional"] {
+            let function = mir.function(function_id(&resolved, name)).unwrap();
+            let mut minimum = None;
+            for limit in 0..128 {
+                match crate::mir::native_aggregates::lower_with_limit(
+                    function,
+                    hir.interner(),
+                    &records,
+                    limit,
+                ) {
+                    Ok(_) => {
+                        minimum = Some(limit);
+                        break;
+                    }
+                    Err(error) => assert_eq!(error, "aggregate:local-limit", "{name}: {limit}"),
+                }
+            }
+            assert!(
+                minimum.is_some_and(|limit| limit > 8),
+                "{name}: {minimum:?}"
+            );
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_integer_normalization_preserves_verified_mir_and_type_identity() {
         let (resolved, hir) = checked(include_str!(
             "../../../../tests/native/native-aot-integer-aggregates.to"

@@ -8,12 +8,13 @@ Both candidates consume one immutable `tondo-mir-backend/1` program, but
 synthetic storage cases do not prove that the frontend can produce those
 operations from Tondo source.
 
-## Source-driven value aggregates, direct calls and equality
+## Source-driven value aggregates, sums, direct calls and equality
 
 The compiler lowers local tuples and records whose leaves are `Int`, `Bool`, `Unit`,
 `Byte`, `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32`
 into independent scalar locals. Nested tuples/records and instantiated generic
-records use the same route. Construction, field reads and writes, copies,
+records use the same route. `T?` and `T ! E` recursively admit these value
+layouts, including the closed `NumericConversionError` type. Construction, field reads and writes, copies,
 whole-value and nested-field replacement, `with` updates, branches and
 loop-carried values preserve value semantics.
 Assignments snapshot the right-hand fields before writing their destinations.
@@ -30,7 +31,7 @@ the existing nonempty aggregate argument/result protocol; it is not a claim of
 zero-byte storage or a public record ABI. Unit fields and empty-record carriers
 count toward storage, snapshot and comparison limits like other leaves.
 Expansion is bounded to 65,536 additional locals per function, including
-right-hand snapshots, comparison results and integer guards; wider repeated copies and
+right-hand snapshots, comparison results, sum tags and integer guards; wider repeated copies and
 comparisons are rejected before exceeding
 that allocation budget. Layout depth is bounded to 64 aggregate levels.
 
@@ -67,6 +68,32 @@ protocol, without a public layout, FFI or runtime ABI promise.
 An empty record return still uses one eight-byte carrier. Calls producing
 `Unit` or an empty record remain evaluated, including discarded results; a
 checked error before completion must still trap.
+
+Core sums use a private integer tag followed by disjoint payload carriers:
+`Option` stores its possible value, and `Result` stores both success and error
+layouts. Construction initializes every carrier, including inactive payloads,
+to canonical zero, false or Unit values before inserting the active payload.
+Replacing a variant clears the previous payload. Nested inactive tags are
+padding and are never projected as active values. This invariant makes complete
+field copies and structural comparisons independent of previous local contents.
+There is no payload overlap, handle table, heap allocation or public ABI claim.
+
+`some`/`none`, `ok`/`err`, implicit Option lifting, success returns and `fail`
+use this layout. Tag tests become integer comparisons and ordinary Boolean
+branches; payload projections resolve to their own scalar fields. Source `?`
+retains its existing control flow, including returning absence or an error
+before subsequent expressions execute. Direct and generic calls use the same
+flattened arguments and caller-owned result buffers as records. Numeric error
+variants retain the ordinals defined by `NumericConversionErrorVariant`.
+
+Checked conversions between the admitted integer types snapshot their input,
+test it against the destination bounds and write a complete success or error
+value. Failures produce `OutOfRange`; they do not truncate or trap. A later
+checked arithmetic operation can still trap normally. Each conversion charges
+four scratch locals and adds three blocks; each tested tag charges one local
+and at most one block. Storage, copies, comparisons and these control-flow
+expansions share the existing per-function budget. `UInt64` and floating-point
+conversion paths remain outside this representation.
 
 Narrow integers retain their mathematical value in an eight-byte signed carrier;
 signed values are sign-extended and unsigned values are zero-extended. `Byte`
@@ -113,10 +140,11 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 245 Cranelift observations across
-115 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
-16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases and
-43 Unit/empty-record cases and 67 fixed-width integer cases, including 46 arithmetic
+`scripts/native-source-scalars-test.sh` verifies 316 Cranelift observations across
+141 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
+43 Unit/empty-record cases, 67 fixed-width integer cases and 71 sum-value cases,
+including 49 arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -130,17 +158,21 @@ the independent source VM observations. Two further regressions remove calls
 producing `Unit` or a discarded empty record; both must fail specifically on
 disagreement with the source VM, without publishing a partial report. Three integer
 regressions remove the range check, corrupt signed shift reconstruction and widen
-Byte complement; each must likewise disagree with the VM. Reports are
+Byte complement; each must likewise disagree with the VM. Four sum regressions
+change a tag, leave an inactive payload nonzero, bypass error propagation and
+remove a conversion range decision. Each must disagree with the VM without
+publishing a report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
-`native-source-equality.json`, `native-source-units.json` and `native-source-integers.json` under
+`native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`
+and `native-source-sums.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 200 aggregate-call, generic-call, equality, Unit/empty-record and integer cases through LLVM.
+the 271 aggregate-call, generic-call, equality, Unit/empty-record, integer and sum cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -167,7 +199,8 @@ nested records do not require a concrete source constructor. The source MIR,
 source interner and hosted bytecode lowering remain unchanged.
 
 The admitted signatures contain the scalar types listed above and the existing
-tuple/record value layouts, including empty nominal records. Generic instances
+tuple/record value layouts, including empty nominal records, nested Option/Result
+and `NumericConversionError`. Generic instances
 preserve concrete integer widths before arithmetic normalization and flattening.
 Managed values, loans, generic closures, suspension, dynamic trait dispatch and
 other MIR protocols outside this ordinary value-call slice remain unadmitted.
@@ -224,13 +257,26 @@ arithmetic, signed minimum remainder, carrier overflow, discarded overflow,
 negative/oversized shift counts, last-bit shifts, complement and total explicit
 numeric conversions. Compiler regressions retain rejection of implicit mixed
 numeric operations and Byte arithmetic, verify unchanged source MIR/types and
-exercise the shared normalization limit. Conversion paths producing a managed
-`Result` remain outside this runtime-free source campaign; historical adapter
-conversion tests do not establish production Result storage.
+exercise the shared normalization limit. The sum-value corpus below adds
+checked integer conversions using private scalar Result storage; historical
+adapter conversion tests do not establish production runtime storage.
 Cranelift explicitly checks division/remainder by zero and signed carrier
 division overflow before issuing the machine operation, so hardware `SIGFPE`
 cannot substitute for the required terminal trap. The corpus checks the
 minimum signed carrier's division and remainder by `-1` separately.
+
+`tests/native/native-aot-sum-values.to` supplies 26 scalar entry functions and
+71 observations, including three traps. It covers nested options and results,
+record and Unit payloads, independent copies, variant replacement, structural
+equality with overlapping result destinations, generic propagation and matching,
+recursive calls and repeated loop calls. Early absence and failure skip a later
+division by zero; successful and discarded expressions retain required traps.
+Integer conversion cases cover every admitted narrow destination, both bounds
+and adjacent failures, signed/unsigned source crossings, carrier extrema,
+projected destinations and arithmetic after conversion. Explicit expected
+outcomes supplement the VM/native comparison. Compiler tests also check
+immutable source MIR and types, shared expansion limits and rejection of
+unsupported widths, float representations and loan parameters.
 
 Managed fields, `UInt64`, floating-point representations and
 aggregate calls through suspension/spawn protocols

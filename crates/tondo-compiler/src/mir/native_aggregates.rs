@@ -7,6 +7,8 @@ use std::rc::Rc;
 use super::*;
 use crate::types::TypeKind;
 
+mod sums;
+
 const MAX_ADDITIONAL_LOCALS: u32 = 65_536;
 const MAX_LAYOUT_DEPTH: u32 = 64;
 
@@ -45,6 +47,11 @@ enum Field {
     Record(MemberId),
     // Private carrier only; never a source record member or projection.
     EmptyRecord,
+    Tag,
+    OptionValue,
+    ResultOk,
+    ResultErr,
+    NumericError,
 }
 
 struct Layout {
@@ -75,6 +82,21 @@ impl Layout {
                 .enumerate()
                 .map(|(index, ty)| (Field::Tuple(index as u32), *ty))
                 .collect(),
+            TypeKind::Option(item) => vec![
+                (Field::Tag, interner.scalar(ScalarType::Int)),
+                (Field::OptionValue, *item),
+            ],
+            TypeKind::Result { success, error } => vec![
+                (Field::Tag, interner.scalar(ScalarType::Int)),
+                (Field::ResultOk, *success),
+                (Field::ResultErr, *error),
+            ],
+            TypeKind::Intrinsic {
+                constructor: crate::types::IntrinsicType::NumericConversionError,
+                arguments,
+            } if arguments.is_empty() => {
+                vec![(Field::NumericError, interner.scalar(ScalarType::Int))]
+            }
             TypeKind::Nominal { .. } => {
                 let fields = records.get(&ty)?;
                 if fields.is_empty() {
@@ -183,11 +205,20 @@ pub(super) fn lower(
     interner: &TypeInterner,
     records: &RecordFields,
 ) -> LowerResult<LoweredFunction> {
+    lower_with_limit(function, interner, records, MAX_ADDITIONAL_LOCALS)
+}
+
+pub(super) fn lower_with_limit(
+    function: &MirFunction,
+    interner: &TypeInterner,
+    records: &RecordFields,
+    additional_locals: u32,
+) -> LowerResult<LoweredFunction> {
     let next = u32::try_from(function.locals.len()).map_err(|_| "aggregate:local-limit")?;
     let mut locals = NativeLocals {
         storage: BTreeMap::new(),
         next,
-        limit: next.saturating_add(MAX_ADDITIONAL_LOCALS),
+        limit: next.saturating_add(additional_locals.min(MAX_ADDITIONAL_LOCALS)),
     };
     let mut cache = BTreeMap::new();
     for (index, local) in function.locals.iter().enumerate() {
@@ -222,6 +253,8 @@ pub(super) fn lower(
     if let Some((first, layout)) = locals.storage.get(&function.return_local.index()) {
         lowered.return_fields.extend(*first..*first + layout.width);
     }
+    locals.lower_checked_conversions(&mut lowered.blocks, interner)?;
+    locals.lower_tags(&mut lowered.blocks, interner)?;
     for (block_index, block) in lowered.blocks.iter_mut().enumerate() {
         let mut statements = Vec::new();
         for mut statement in std::mem::take(&mut block.statements) {
@@ -230,7 +263,7 @@ pub(super) fn lower(
                     && !layout.children.is_empty()
                 {
                     let width = layout.width;
-                    let values = locals.assignment_values(value, layout)?;
+                    let values = locals.assignment_values(value, layout, interner)?;
                     if values.len() != width as usize {
                         return Err("aggregate:assignment-shape");
                     }
@@ -340,6 +373,9 @@ impl NativeLocals {
             let key = match projection.kind {
                 MirProjectionKind::TupleField(index) => Field::Tuple(index),
                 MirProjectionKind::Field(member) => Field::Record(member),
+                MirProjectionKind::OptionValue => Field::OptionValue,
+                MirProjectionKind::ResultOkValue => Field::ResultOk,
+                MirProjectionKind::ResultErrValue => Field::ResultErr,
                 _ => return Err("aggregate:projection-storage"),
             };
             let (offset, child) = layout.child(key).ok_or("aggregate:projection-shape")?;
@@ -388,10 +424,25 @@ impl NativeLocals {
         &self,
         value: &MirRvalue,
         layout: &Layout,
+        interner: &TypeInterner,
     ) -> LowerResult<Vec<MirOperand>> {
         match &value.kind {
             MirRvalueKind::Use(operand) => self.values(operand),
+            MirRvalueKind::Coerce {
+                kind: Assignability::OptionLift,
+                value,
+            } => self
+                .sum_values(
+                    &MirAggregateKind::OptionSome,
+                    std::slice::from_ref(value),
+                    layout,
+                    interner,
+                )?
+                .ok_or("sum:option-lift-layout"),
             MirRvalueKind::Aggregate { shape, values } => {
+                if let Some(leaves) = self.sum_values(shape, values, layout, interner)? {
+                    return Ok(leaves);
+                }
                 let mut leaves = Vec::with_capacity(layout.width as usize);
                 for (key, child) in &layout.children {
                     let index = match (shape, key) {

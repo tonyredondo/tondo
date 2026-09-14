@@ -1,0 +1,283 @@
+type Payload = { number: Int, flag: Bool }
+type Failure = { code: Int8, stage: UInt16 }
+type Empty = {}
+type Box[T] = { value: T }
+
+fn identity[T: Copy](value: T): T { value }
+fn same[T: Copy + Equatable](left: T, right: T): Bool { left == right }
+fn optionalIdentity[T: Copy](value: T?): T? { value? }
+fn resultIdentity[T: Copy, E: Copy](value: T ! E): T ! E { value? }
+fn unwrapOr[T: Copy](value: T?, fallback: T): T {
+    match value {
+        some(payload) => payload
+        none => fallback
+    }
+}
+fn maybe(present: Bool, value: Int): Payload? {
+    if present { Payload { number: value, flag: true } } else { none }
+}
+fn attempt(success: Bool, value: Int): Payload ! Failure {
+    if not success {
+        fail Failure { code: -7i8, stage: 300u16 }
+    }
+    Payload { number: value, flag: true }
+}
+fn forward(success: Bool, value: Int): Payload ! Failure {
+    let payload = attempt(success, value)?
+    identity(payload)
+}
+fn optionCase(value: Int): Int {
+    match identity(maybe(value > 0, 42)) {
+        some(payload) => payload.number
+        none => -1
+    }
+}
+fn resultCase(value: Int): Int {
+    match forward(value > 0, 42) {
+        ok(payload) => payload.number
+        err(error) => Int(error.code) + Int(error.stage)
+    }
+}
+fn narrow(value: Int): Int8 ! NumericConversionError { Int8(value)? }
+fn conversionCase(value: Int): Int {
+    match narrow(value) {
+        ok(number) => Int(number)
+        err(error) => match error {
+            NumericConversionError.OutOfRange => -1000
+            NumericConversionError.NotFinite => -2000
+            NumericConversionError.NotIntegral => -3000
+        }
+    }
+}
+
+fn nestedOptions(): Int {
+    let absent: (Int?)? = none
+    let empty: (Int?)? = some(none)
+    let full: (Int?)? = some(some(42))
+    if absent != empty and empty != full and absent != full {
+        match optionalIdentity(full) {
+            some(some(number)) => number
+            _ => -1
+        }
+    } else { -2 }
+}
+fn optionPropagation(value: Int): Payload? {
+    let payload = maybe(value > 0, 42)?
+    _ = 1 / value
+    payload
+}
+fn earlyNone(): Int {
+    match optionPropagation(0) {
+        some(_) => -1
+        none => 1
+    }
+}
+fn failBeforeDivision(success: Bool, divisor: Int): Int ! Failure {
+    _ = attempt(success, 1)?
+    10 / divisor
+}
+fn earlyError(): Int {
+    match failBeforeDivision(false, 0) {
+        ok(_) => -1
+        err(error) => Int(error.code)
+    }
+}
+fn successStillTraps(): Int {
+    match failBeforeDivision(true, 0) {
+        ok(number) => number
+        err(_) => -1
+    }
+}
+fn nestedResults(value: Int): Int {
+    let inner: Int ! UInt16 = if value > 0 { ok(42) } else { err(500u16) }
+    let outer: (Int ! UInt16) ! Bool = ok(inner)
+    match identity(outer) {
+        ok(ok(number)) => number
+        ok(err(error)) => Int(error)
+        err(_) => -1
+    }
+}
+fn resultInOption(value: Int): Int {
+    let nested: (Payload ! Failure)? = some(forward(value > 0, 42))
+    match identity(nested) {
+        some(ok(payload)) => payload.number
+        some(err(error)) => Int(error.stage)
+        none => -1
+    }
+}
+fn optionInResult(value: Int): Int {
+    let nested: Payload? ! Failure = ok(maybe(value > 0, 42))
+    match identity(nested) {
+        ok(some(payload)) => payload.number
+        ok(none) => 0
+        err(_) => -1
+    }
+}
+fn variantCopies(): Int {
+    var value: Payload ! Failure = ok(Payload { number: 42, flag: true })
+    let original = value
+    value = err(Failure { code: -3i8, stage: 900u16 })
+    let failed = value
+    value = original
+    let errorAgain: Payload ! Failure = err(Failure { code: -3i8, stage: 900u16 })
+    if same(value, original) and same(failed, errorAgain) and value != failed {
+        match value {
+            ok(payload) => payload.number
+            err(_) => -1
+        }
+    } else { -2 }
+}
+fn clearedOption(): Int {
+    var value: (Int, Bool)? = some((42, true))
+    let copy = value
+    value = none
+    let empty: (Int, Bool)? = none
+    if same(value, empty) and copy != value { 1 } else { -1 }
+}
+fn nestedCopies(): Int {
+    let original = Box[(Payload?, Int ! Failure)] { value: (maybe(true, 42), ok(7)) }
+    var copy = original
+    copy.value.0 = none
+    copy.value.1 = err(Failure { code: -1i8, stage: 11u16 })
+    let restored = copy with { value: original.value }
+    if restored == original and copy != original {
+        unwrapOr(original.value.0, Payload { number: -1, flag: false }).number
+    } else { -2 }
+}
+fn overlappingEquality(): Int {
+    var value = Box[(Payload?, Bool)] { value: (maybe(true, 42), false) }
+    let original = value
+    value.value.1 = value == original
+    if value.value.1 and not original.value.1 and value != original { 1 } else { -1 }
+}
+fn unitValues(): Int {
+    let present: Unit? = some(())
+    let absent: Unit? = none
+    let success: Unit ! Empty = ok(())
+    let failure: Unit ! Empty = err(Empty {})
+    if same(identity(present), present) and present != absent
+        and same(resultIdentity(success), success) and success != failure {
+        match identity(failure) {
+            err(empty) => if empty == Empty {} { 1 } else { -1 }
+            ok(_) => -2
+        }
+    } else { -3 }
+}
+fn genericValues(): Int {
+    let record = Box[Payload?] { value: maybe(true, 42) }
+    let success: Box[Payload?] ! Failure = ok(record)
+    match resultIdentity(success) {
+        ok(boxed) => unwrapOr(boxed.value, Payload { number: -1, flag: false }).number
+        err(_) => -2
+    }
+}
+fn recurseOption(value: Payload?, depth: Int): Payload? {
+    if depth <= 0 { value } else { recurseOption(optionalIdentity(value), depth - 1) }
+}
+fn recurseResult(value: Payload ! Failure, depth: Int): Payload ! Failure {
+    let payload = value?
+    if depth <= 0 { payload } else { recurseResult(ok(payload), depth - 1)? }
+}
+fn recursion(value: Int): Int {
+    let optional = recurseOption(maybe(value > 0, 42), 4)
+    let result = recurseResult(attempt(value > 0, 42), 4)
+    match (optional, result) {
+        (some(payload), ok(other)) => payload.number + other.number
+        (none, err(error)) => Int(error.code)
+        _ => -1
+    }
+}
+fn repeatedCalls(): Int {
+    var value: Int ! UInt16 = ok(0)
+    var index = 0
+    for index < 7 {
+        value = identity(if index % 2 == 0 { ok(index) } else { err(500u16) })
+        index += 1
+    }
+    match value {
+        ok(number) => number
+        err(error) => Int(error)
+    }
+}
+fn discardedTraps(): Int {
+    _ = maybe(true, 1 / 0)
+    0
+}
+fn numericErrorTags(): Int {
+    let range = identity(NumericConversionError.OutOfRange)
+    let finite = identity(NumericConversionError.NotFinite)
+    let integral = identity(NumericConversionError.NotIntegral)
+    if same(range, NumericConversionError.OutOfRange) and range != finite and finite != integral {
+        match integral {
+            NumericConversionError.OutOfRange => -1
+            NumericConversionError.NotFinite => -2
+            NumericConversionError.NotIntegral => 1
+        }
+    } else { -3 }
+}
+fn integerLimits(): Int {
+    let low8 = Int8(-128)
+    let high8 = Int8(127)
+    let low16 = Int16(-32768)
+    let high16 = Int16(32767)
+    let low32 = Int32(-2147483648)
+    let high32 = Int32(2147483647)
+    let u8 = UInt8(255)
+    let u16 = UInt16(65535)
+    let u32 = UInt32(4294967295)
+    let byte = Byte(255)
+    if low8 == ok(-128i8) and high8 == ok(127i8)
+        and low16 == ok(-32768i16) and high16 == ok(32767i16)
+        and low32 == ok(-2147483648i32) and high32 == ok(2147483647i32)
+        and u8 == ok(255u8) and u16 == ok(65535u16) and u32 == ok(4294967295u32)
+        and byte == ok(Byte(255u8)) { 1 } else { -1 }
+}
+fn integerFailures(): Int {
+    let error = NumericConversionError.OutOfRange
+    if Int8(-129) == err(error) and Int8(128) == err(error)
+        and Int16(-32769) == err(error) and Int16(32768) == err(error)
+        and Int32(-2147483649) == err(error) and Int32(2147483648) == err(error)
+        and UInt8(-1) == err(error) and UInt8(256) == err(error)
+        and UInt16(-1) == err(error) and UInt16(65536) == err(error)
+        and UInt32(-1) == err(error) and UInt32(4294967296) == err(error)
+        and Byte(-1) == err(error) and Byte(256) == err(error) { 1 } else { -1 }
+}
+fn narrowSources(): Int {
+    if Int8(255u8) == err(NumericConversionError.OutOfRange)
+        and UInt8(-1i8) == err(NumericConversionError.OutOfRange)
+        and Int16(65535u16) == err(NumericConversionError.OutOfRange)
+        and UInt16(-1i16) == err(NumericConversionError.OutOfRange)
+        and Int32(4294967295u32) == err(NumericConversionError.OutOfRange)
+        and UInt32(-1i32) == err(NumericConversionError.OutOfRange)
+        and Int8(127u16) == ok(127i8)
+        and UInt16(32767i32) == ok(32767u16) { 1 } else { -1 }
+}
+fn projectedConversion(value: Int): Int {
+    var record = Box[Int8 ! NumericConversionError] { value: ok(12i8) }
+    let original = record
+    record.value = Int8(value)
+    if original.value != ok(12i8) { -1 } else {
+        match record.value {
+            ok(number) => Int(number)
+            err(_) => -1000
+        }
+    }
+}
+fn conversionThenArithmetic(value: Int): Int8 ! NumericConversionError {
+    let number = Int8(value)?
+    number + 1i8
+}
+fn arithmeticAfterConversion(value: Int): Int {
+    match conversionThenArithmetic(value) {
+        ok(number) => Int(number)
+        err(_) => -1000
+    }
+}
+fn convertedOverflow(): Int {
+    match conversionThenArithmetic(127) {
+        ok(number) => Int(number)
+        err(_) => -1000
+    }
+}
+
+fn main() {}

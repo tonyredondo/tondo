@@ -62,6 +62,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/integers-probe.json" "$tmp/integers-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/integers-probe.json" --output "$tmp/integers-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-sum-values.to > "$tmp/sums-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-sum-values.to > "$tmp/sums-repeated.json"
+cmp "$tmp/sums-probe.json" "$tmp/sums-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/sums-probe.json" --output "$tmp/sums-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -165,6 +172,48 @@ if 'llvm_comparison' in integers:
         {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
         for case in cases
     ]
+sums = json.loads((root / 'sums-report.json').read_text())
+assert sums['format'] == report['format'] and sums['backend'] == 'cranelift'
+assert sums['boundary'] == report['boundary']
+assert sums['n1_claim'] is False and sums['production_runtime_linked'] is False
+cases = sums['observations']
+assert len(cases) == 71 and len({case['function_ordinal'] for case in cases}) == 26
+assert sum(case['native_status'] == 'trapped' for case in cases) == 3
+assert all(case['native_result'] == case['vm_result'] for case in cases)
+if 'llvm_comparison' in sums:
+    comparison = sums['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
+sum_probe = json.loads((root / 'sums-probe.json').read_text())
+names = {symbol['function']: symbol['name'].split('::value::')[-1]
+         for symbol in sum_probe['fixtures'][0]['mir']['backend']['debug']['symbols']}
+expected = {
+    'clearedOption': 1, 'earlyError': -7, 'earlyNone': 1, 'genericValues': 42,
+    'integerFailures': 1, 'integerLimits': 1, 'narrowSources': 1, 'nestedCopies': 42,
+    'nestedOptions': 42, 'numericErrorTags': 1, 'overlappingEquality': 1,
+    'repeatedCalls': 6, 'unitValues': 1, 'variantCopies': 42,
+}
+for case in cases:
+    name = names[case['function_ordinal']]
+    if name in expected:
+        assert case['arguments'] == [] and case['native_result'] == expected[name], name
+    elif case['arguments']:
+        value, = case['arguments']
+        if name in ['conversionCase', 'projectedConversion', 'arithmeticAfterConversion']:
+            result = value + (name == 'arithmeticAfterConversion') if -128 <= value <= 127 else -1000
+        else:
+            positive, negative = {
+                'optionCase': (42, -1), 'resultCase': (42, 293), 'nestedResults': (42, 500),
+                'optionInResult': (42, 0), 'resultInOption': (42, 300), 'recursion': (84, -7),
+            }[name]
+            result = positive if value > 0 else negative
+        assert case['native_result'] == result, (name, value)
+    else:
+        assert name in ['convertedOverflow', 'discardedTraps', 'successStillTraps']
+        assert case['native_status'] == 'trapped'
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -273,19 +322,42 @@ for name, function_name in [('integer-range', 'overflowSigned8'),
         else:
             operation['right'] = {'Constant': {'Integer': '-1'}}
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+for name, function_name in [('sum-tag', 'maybe'), ('sum-inactive', 'clearedOption'),
+                            ('sum-propagation', 'forward'), ('sum-conversion', 'narrow')]:
+    candidate = copy.deepcopy(sum_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    if name == 'sum-tag':
+        assignment = next(statement['Assign'] for block in function['blocks']
+                          for statement in block['statements']
+                          if statement.get('Assign', {}).get('destination') == function['return_fields'][0])
+        assignment['value'] = {'Use': {'Constant': {'Integer': '0'}}}
+    elif name == 'sum-inactive':
+        assignment = next(statement['Assign'] for block in function['blocks']
+                          for statement in block['statements']
+                          if statement.get('Assign', {}).get('value') == {'Use': {'Constant': {'Bool': False}}})
+        assignment['value'] = {'Use': {'Constant': {'Bool': True}}}
+    else:
+        branch = next(block['terminator']['SwitchBool'] for block in function['blocks']
+                      if 'SwitchBool' in block['terminator'])
+        branch['condition'] = {'Constant': {'Bool': name == 'sum-propagation'}}
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
     result-width aliased-results scalar-result-protocol missing-successor \
     missing-template template-admitted duplicate-instance incomplete-instance call-template equality-reduction \
-    omitted-unit-call omitted-empty-call integer-range integer-shift integer-complement; do
+    omitted-unit-call omitted-empty-call integer-range integer-shift integer-complement \
+    sum-tag sum-inactive sum-propagation sum-conversion; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
         exit 1
     fi
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
-    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* ]]; then
+    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -296,7 +368,8 @@ cp "$tmp/generics-report.json" "$target_dir/reliability/evidence/native-source-g
 cp "$tmp/equality-report.json" "$target_dir/reliability/evidence/native-source-equality.json"
 cp "$tmp/units-report.json" "$target_dir/reliability/evidence/native-source-units.json"
 cp "$tmp/integers-report.json" "$target_dir/reliability/evidence/native-source-integers.json"
-echo "native source scalars: OK (245 Cranelift cases, 46 arithmetic traps, 20 rejected evidence changes)"
+cp "$tmp/sums-report.json" "$target_dir/reliability/evidence/native-source-sums.json"
+echo "native source scalars: OK (316 Cranelift cases, 49 arithmetic traps, 24 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregates and generic calls: LLVM comparison OK (200 cases, 43 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (271 cases, 46 arithmetic traps)"
 fi

@@ -6558,6 +6558,91 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn native_sum_values_preserve_construction_propagation_and_generic_calls() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-sum-values.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+                continue;
+            }
+            assert!(
+                function.supported,
+                "{}: {:?}",
+                function.ordinal, function.unsupported
+            );
+            for block in &function.blocks {
+                assert!(!matches!(
+                    block.terminator,
+                    crate::mir::MirBackendTerminator::SwitchTag { .. }
+                ));
+                for statement in &block.statements {
+                    assert!(!matches!(
+                        statement,
+                        crate::mir::MirBackendStatement::Assign {
+                            value: crate::mir::MirBackendRvalue::Aggregate { .. },
+                            ..
+                        }
+                    ));
+                    assert!(
+                        !matches!(statement, crate::mir::MirBackendStatement::Assign {
+                        value: crate::mir::MirBackendRvalue::NumericConversion { conversion, .. }, ..
+                    } if conversion == "checked")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_sum_values_reject_unadmitted_payloads_and_parameter_modes() {
+        for declaration in [
+            "fn source(value: UInt64): UInt64? { some(value) }",
+            "fn source(value: Float): Float ! Int { value }",
+            "fn source(value: ref Int?): Int? { value }",
+            "fn source(value: UInt64): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: Float): Int8 ! NumericConversionError { Int8(value)? }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let function = backend
+                .functions
+                .iter()
+                .find(|function| !function.parameters.is_empty())
+                .unwrap();
+            assert!(!function.supported, "{declaration}");
+        }
+    }
+
+    #[test]
     fn native_integer_aggregates_preserve_widths_and_value_calls() {
         let output = execute(operation_request(
             Operation::Run,

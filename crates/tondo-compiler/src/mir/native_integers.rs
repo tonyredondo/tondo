@@ -22,13 +22,20 @@ struct NarrowInteger {
 
 impl NarrowInteger {
     fn of(ty: TypeId, interner: &TypeInterner) -> Option<Self> {
-        let (bits, signed) = match interner.kind(ty).ok()? {
-            TypeKind::Scalar(ScalarType::Byte | ScalarType::UInt8) => (8, false),
-            TypeKind::Scalar(ScalarType::UInt16) => (16, false),
-            TypeKind::Scalar(ScalarType::UInt32) => (32, false),
-            TypeKind::Scalar(ScalarType::Int8) => (8, true),
-            TypeKind::Scalar(ScalarType::Int16) => (16, true),
-            TypeKind::Scalar(ScalarType::Int32) => (32, true),
+        let TypeKind::Scalar(scalar) = interner.kind(ty).ok()? else {
+            return None;
+        };
+        Self::scalar(*scalar)
+    }
+
+    fn scalar(scalar: ScalarType) -> Option<Self> {
+        let (bits, signed) = match scalar {
+            ScalarType::Byte | ScalarType::UInt8 => (8, false),
+            ScalarType::UInt16 => (16, false),
+            ScalarType::UInt32 => (32, false),
+            ScalarType::Int8 => (8, true),
+            ScalarType::Int16 => (16, true),
+            ScalarType::Int32 => (32, true),
             _ => return None,
         };
         Some(Self { bits, signed })
@@ -45,6 +52,14 @@ impl NarrowInteger {
         } else {
             (0, self.mask())
         }
+    }
+}
+
+pub(super) fn value_bounds(scalar: ScalarType) -> Option<(i64, i64)> {
+    if scalar == ScalarType::Int {
+        Some((i64::MIN, i64::MAX))
+    } else {
+        NarrowInteger::scalar(scalar).map(NarrowInteger::bounds)
     }
 }
 

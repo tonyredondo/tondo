@@ -5707,12 +5707,19 @@ pueden retrasar el primer backend correcto.
   Narrow integer normalization preserves source-width arithmetic, complement
   and shifts before erasing types into signed 64-bit carriers. Range and shift
   guards share the aggregate expansion limit; discarded operations still trap.
-  The focused `scripts/native-source-scalars-test.sh` compares 245 Cranelift
-  observations with the hosted VM, including 46 arithmetic traps, without an evaluation
+  Native `T?` and `T ! E` now use tagged, initialized scalar value layouts,
+  including nested sums, tuple/record payloads, Unit and `NumericConversionError`.
+  Construction, independent copies, variant replacement, equality, `match`, `?`
+  and ordinary/generic value calls preserve the source control flow. Checked
+  conversions between admitted integers return `OutOfRange` on failure; they
+  no longer require the evaluation runtime. Tag tests and conversion guards
+  share the existing storage expansion budget and leave verified MIR unchanged.
+  The focused `scripts/native-source-scalars-test.sh` compares 316 Cranelift
+  observations with the hosted VM, including 49 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 200 aggregate-call, generic-call, equality, Unit/empty-record and integer cases.
-  Managed fields, checked-conversion Result storage, `UInt64`/float value layouts, generic closures and
+  the 271 aggregate-call, generic-call, equality, Unit/empty-record, integer and sum cases.
+  Managed fields, `UInt64`/float value layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

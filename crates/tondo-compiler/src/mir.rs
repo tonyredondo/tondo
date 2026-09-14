@@ -715,9 +715,10 @@ pub enum MirBackendRvalue {
     Tag {
         value: u32,
     },
-    /// An aggregate carrier. Core `Option`/`Result` values use the runtime
-    /// result table; other shapes retain their stable kind and operands until
-    /// the owning runtime/stdlib ABI is selected.
+    /// An aggregate carrier for the bounded runtime adapter. Value-only core
+    /// sums are flattened before this boundary; remaining `Option`/`Result`
+    /// values use the evaluation result table. Other shapes retain their kind
+    /// and operands until the owning runtime/stdlib ABI is selected.
     Aggregate {
         kind: String,
         values: Vec<MirBackendOperand>,

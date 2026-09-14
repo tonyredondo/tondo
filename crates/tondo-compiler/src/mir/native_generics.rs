@@ -301,6 +301,11 @@ impl Substitute<'_> {
                     self.record(field, depth + 1)?;
                 }
             }
+            TypeKind::Option(item) => self.record(item, depth + 1)?,
+            TypeKind::Result { success, error } => {
+                self.record(success, depth + 1)?;
+                self.record(error, depth + 1)?;
+            }
             _ => {}
         }
         Ok(())
@@ -356,7 +361,10 @@ impl Substitute<'_> {
                 | MirTerminatorKind::DrainUnwind { .. }
                 | MirTerminatorKind::DrainDefers { .. }
                 | MirTerminatorKind::DrainScopes { .. } => {}
-                MirTerminatorKind::SwitchBool { condition, .. } => self.operand(condition)?,
+                MirTerminatorKind::SwitchBool { condition, .. }
+                | MirTerminatorKind::SwitchTag {
+                    value: condition, ..
+                } => self.operand(condition)?,
                 MirTerminatorKind::Invoke {
                     operation,
                     destination,
@@ -380,6 +388,15 @@ impl Substitute<'_> {
         }
         match self.interner.kind(ty).map_err(|_| "generic:invalid-type")? {
             TypeKind::Scalar(scalar) if native_integers::is_value_scalar(*scalar) => Ok(()),
+            TypeKind::Option(item) => self.value_type(*item, depth + 1),
+            TypeKind::Result { success, error } => {
+                self.value_type(*success, depth + 1)?;
+                self.value_type(*error, depth + 1)
+            }
+            TypeKind::Intrinsic {
+                constructor: crate::types::IntrinsicType::NumericConversionError,
+                arguments,
+            } if arguments.is_empty() => Ok(()),
             TypeKind::Tuple(fields) if !fields.is_empty() => {
                 for field in fields {
                     self.value_type(*field, depth + 1)?;
@@ -438,7 +455,14 @@ impl Substitute<'_> {
                 self.operand(right)
             }
             MirRvalueKind::Aggregate {
-                shape: MirAggregateKind::Tuple | MirAggregateKind::Record { .. },
+                shape:
+                    MirAggregateKind::Tuple
+                    | MirAggregateKind::Record { .. }
+                    | MirAggregateKind::OptionNone
+                    | MirAggregateKind::OptionSome
+                    | MirAggregateKind::ResultOk
+                    | MirAggregateKind::ResultErr
+                    | MirAggregateKind::NumericConversionError(_),
                 values,
             } => {
                 for value in values {
