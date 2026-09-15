@@ -1,0 +1,589 @@
+type Box[T] = {
+    value: T
+}
+
+type Wide = {
+    value: UInt64
+    result: Int
+}
+
+type Empty = {
+}
+
+enum Choice {
+    Empty
+    Value(UInt64)
+}
+
+fn identity[T: Copy](value: T): T {
+    value
+}
+
+fn same[T: Copy + Equatable](left: T, right: T): Bool {
+    left == right
+}
+
+fn maximum(): UInt64 {
+    18446744073709551615u64
+}
+
+fn highBit(): UInt64 {
+    9223372036854775808u64
+}
+
+fn recurse(value: UInt64, depth: Int): UInt64 {
+    if depth == 0 {
+        value
+    } else {
+        recurse(value, depth - 1)
+    }
+}
+
+fn add(left: UInt64, right: UInt64): UInt64 {
+    left + right
+}
+
+fn subtract(left: UInt64, right: UInt64): UInt64 {
+    left - right
+}
+
+fn multiply(left: UInt64, right: UInt64): UInt64 {
+    left * right
+}
+
+fn divide(left: UInt64, right: UInt64): UInt64 {
+    left / right
+}
+
+fn remainder(left: UInt64, right: UInt64): UInt64 {
+    left % right
+}
+
+fn leftShift(value: UInt64, count: Int): UInt64 {
+    value << count
+}
+
+fn rightShift(value: UInt64, count: Int): UInt64 {
+    value >> count
+}
+
+fn literals(): Int {
+    let decimal: UInt64 = 18446744073709551615
+    let hex = 0xffff_ffff_ffff_ffffu64
+    let octal = 0o1777777777777777777777u64
+    let binary = 0b1000000000000000000000000000000000000000000000000000000000000000u64
+    if decimal == maximum() and decimal == hex and hex == octal and binary == highBit() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn unsignedOrder(): Int {
+    let high = highBit()
+    let top = maximum()
+    if 0u64 < high and
+        high > 9223372036854775807u64 and
+        top >= high and
+        high <= top and
+        top > 0u64 and
+        not (high < 0u64) and
+        not (top <= high) and
+        not (high >= top) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn equalHigh(): Int {
+    if same(identity(maximum()), maximum()) and highBit() != maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn addAcrossSign(): Int {
+    if add(9223372036854775807u64, 1u64) == highBit() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn addToMaximum(): Int {
+    if add(highBit(), 9223372036854775807u64) == maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn subtractAcrossSign(): Int {
+    if subtract(highBit(), 1u64) == 9223372036854775807u64 and
+        subtract(maximum(), highBit()) == 9223372036854775807u64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn multiplyAcrossSign(): Int {
+    if multiply(4611686018427387904u64, 2u64) == highBit() and
+        multiply(4294967295u64, 4294967297u64) == maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn multiplyByZero(): Int {
+    if multiply(maximum(), 0u64) == 0u64 and multiply(maximum(), 1u64) == maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn unsignedDivision(): Int {
+    if divide(maximum(), 2u64) == 9223372036854775807u64 and
+        divide(maximum(), highBit()) == 1u64 and
+        divide(highBit(), maximum()) == 0u64 and
+        divide(highBit(), 1u64) == highBit() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn unsignedRemainder(): Int {
+    if remainder(maximum(), 2u64) == 1u64 and
+        remainder(maximum(), highBit()) == 9223372036854775807u64 and
+        remainder(highBit(), maximum()) == highBit() and
+        remainder(maximum(), maximum()) == 0u64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn bitwiseValues(): Int {
+    if (~0u64) == maximum() and
+        (~maximum()) == 0u64 and
+        (maximum() & highBit()) == highBit() and
+        (highBit() | 9223372036854775807u64) == maximum() and
+        (maximum() ^ highBit()) == 9223372036854775807u64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn logicalShift(): Int {
+    if rightShift(maximum(), 1) == 9223372036854775807u64 and
+        rightShift(highBit(), 63) == 1u64 and
+        rightShift(maximum(), 0) == maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn leftShiftBits(): Int {
+    if leftShift(1u64, 63) == highBit() and
+        leftShift(maximum(), 1) == 18446744073709551614u64 and
+        leftShift(highBit(), 1) == 0u64 and
+        leftShift(maximum(), 0) == maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn copiesAndWrites(): Int {
+    let original = Wide { value: maximum(), result: 42 }
+    var copy = identity(original)
+    copy.value = highBit()
+    let changed = copy with { value: maximum() }
+    if same(changed, original) and original != copy and copy.value == highBit() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn nestedCalls(): Int {
+    let original = Box[(UInt64, Wide)] { value: (maximum(), Wide { value: highBit(), result: 42 }) }
+    var copy = identity(original)
+    copy.value.0 = 0u64
+    copy.value.1.value = maximum()
+    if original.value.0 == maximum() and
+        original.value.1.value == highBit() and
+        copy != original and
+        recurse(copy.value.1.value, 3) == maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn compoundLoop(): Int {
+    var value = 9223372036854775806u64
+    var count = 0
+    for count < 3 {
+        value += 1u64
+        count += 1
+    }
+    value -= 1u64
+    value >>= 63
+    value <<= 63
+    if value == highBit() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn optional(value: UInt64): UInt64? {
+    some(value)
+}
+
+fn optionPayload(): Int {
+    var value = optional(maximum())
+    let original = value
+    value = none
+    if original == some(maximum()) and value == none {
+        42
+    } else {
+        -1
+    }
+}
+
+fn choose(value: UInt64): Choice {
+    Choice.Value(value)
+}
+
+fn enumPayload(): Int {
+    var value = choose(maximum())
+    let original = value
+    value = Choice.Empty
+    match original {
+        Choice.Value(number) =>
+            if number == maximum() and value == Choice.Empty {
+                42
+            } else {
+                -1
+            }
+        Choice.Empty => -1
+    }
+}
+
+fn widen(value: UInt64 | Bool): Empty | UInt64 | Bool {
+    value
+}
+
+fn unionPayload(): Int {
+    let value: UInt64 | Bool = maximum()
+    let original = identity(value)
+    match widen(original) {
+        UInt64(number) =>
+            if number == maximum() {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn genericMember[T: Copy](value: Box[T] | Bool, fallback: T): T {
+    match value {
+        Box[T] { value: item } => item
+        Bool(_) => fallback
+    }
+}
+
+fn genericUnion(): Int {
+    if genericMember[UInt64](Box[UInt64] { value: maximum() }, 0u64) == maximum() {
+        42
+    } else {
+        -1
+    }
+}
+
+fn unsignedFailure(value: UInt64): Int ! UInt64 {
+    fail value
+}
+
+fn resultError(): Int {
+    match unsignedFailure(maximum()) {
+        ok(_) => -1
+        err(error) =>
+            if error == maximum() {
+                42
+            } else {
+                -1
+            }
+    }
+}
+
+fn toSigned(value: UInt64): Int ! NumericConversionError {
+    Int(value)?
+}
+
+fn toUnsigned(value: Int): UInt64 ! NumericConversionError {
+    UInt64(value)?
+}
+
+fn checkedSigned(): Int {
+    match toSigned(9223372036854775807u64) {
+        ok(number) =>
+            if number == 9223372036854775807 {
+                42
+            } else {
+                -1
+            }
+        err(_) => -1
+    }
+}
+
+fn rejectHighSigned(): Int {
+    match toSigned(highBit()) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn rejectMaximumSigned(): Int {
+    match toSigned(maximum()) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn checkedUnsigned(): Int {
+    match toUnsigned(9223372036854775807) {
+        ok(number) =>
+            if number == 9223372036854775807u64 {
+                42
+            } else {
+                -1
+            }
+        err(_) => -1
+    }
+}
+
+fn rejectNegativeUnsigned(): Int {
+    match toUnsigned(-1) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn rejectMinimumUnsigned(): Int {
+    match toUnsigned(-9223372036854775808) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn totalUnsigned(): Int {
+    if UInt64(255u8) == 255u64 and
+        UInt64(65535u16) == 65535u64 and
+        UInt64(4294967295u32) == 4294967295u64 and
+        UInt64(Byte(255u8)) == 255u64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn allNarrowDestinations(): Int {
+    if Int8(127u64) == ok(127i8) and
+        Int16(32767u64) == ok(32767i16) and
+        Int32(2147483647u64) == ok(2147483647i32) and
+        UInt8(255u64) == ok(255u8) and
+        UInt16(65535u64) == ok(65535u16) and
+        UInt32(4294967295u64) == ok(4294967295u32) and
+        Byte(255u64) == ok(Byte(255u8)) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn allNarrowFailures(): Int {
+    let error = NumericConversionError.OutOfRange
+    if Int8(128u64) == err(error) and
+        Int16(32768u64) == err(error) and
+        Int32(2147483648u64) == err(error) and
+        UInt8(256u64) == err(error) and
+        UInt16(65536u64) == err(error) and
+        UInt32(4294967296u64) == err(error) and
+        Byte(256u64) == err(error) and
+        UInt64(-1i8) == err(error) and
+        UInt64(-1i16) == err(error) and
+        UInt64(-1i32) == err(error) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn allSignedSources(): Int {
+    if UInt64(127i8) == ok(127u64) and
+        UInt64(32767i16) == ok(32767u64) and
+        UInt64(2147483647i32) == ok(2147483647u64) and
+        UInt64(0) == ok(0u64) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn narrowSuccess(): Int {
+    match UInt8(255u64) {
+        ok(number) =>
+            if number == 255u8 {
+                42
+            } else {
+                -1
+            }
+        err(_) => -1
+    }
+}
+
+fn narrowFailure(): Int {
+    match UInt32(highBit()) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn byteFailure(): Int {
+    match Byte(maximum()) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn convertResult(original: UInt64 ! NumericConversionError): UInt64 ! NumericConversionError {
+    var value = original
+    value =
+        match value {
+            ok(number) => UInt64(Int(number)?)
+            err(error) => err(error)
+        }
+    value
+}
+
+fn conversionOverlap(): Int {
+    let original: UInt64 ! NumericConversionError = ok(maximum())
+    let value = convertResult(original)
+    match value {
+        err(NumericConversionError.OutOfRange) =>
+            if original == ok(maximum()) {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn earlyReturn(value: UInt64): Int ! NumericConversionError {
+    let converted = Int(value)?
+    converted / 0
+}
+
+fn earlyConversionError(): Int {
+    match earlyReturn(maximum()) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn dynamicRoundTrip(value: Int): Int {
+    match toUnsigned(value) {
+        ok(number) =>
+            match toSigned(number) {
+                ok(original) =>
+                    if original == value {
+                        42
+                    } else {
+                        -1
+                    }
+                err(_) => -1
+            }
+        err(NumericConversionError.OutOfRange) =>
+            if value < 0 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn overflowAdd(): Int {
+    _ = add(maximum(), 1u64)
+    42
+}
+
+fn overflowSubtract(): Int {
+    _ = subtract(0u64, 1u64)
+    42
+}
+
+fn overflowMultiply(): Int {
+    _ = multiply(highBit(), 2u64)
+    42
+}
+
+fn overflowMaximumProduct(): Int {
+    _ = multiply(maximum(), maximum())
+    42
+}
+
+fn divideByZero(): Int {
+    _ = divide(maximum(), 0u64)
+    42
+}
+
+fn remainderByZero(): Int {
+    _ = remainder(maximum(), 0u64)
+    42
+}
+
+fn negativeLeftShift(): Int {
+    _ = leftShift(maximum(), -1)
+    42
+}
+
+fn oversizedLeftShift(): Int {
+    _ = leftShift(maximum(), 64)
+    42
+}
+
+fn hugeLeftShift(): Int {
+    _ = leftShift(maximum(), 4294967296)
+    42
+}
+
+fn negativeRightShift(): Int {
+    _ = rightShift(maximum(), -1)
+    42
+}
+
+fn oversizedRightShift(): Int {
+    _ = rightShift(maximum(), 64)
+    42
+}
+
+fn hugeRightShift(): Int {
+    _ = rightShift(maximum(), 4294967296)
+    42
+}
+
+fn main() {}

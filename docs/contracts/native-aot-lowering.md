@@ -11,7 +11,7 @@ operations from Tondo source.
 ## Source-driven value aggregates, enums, unions, sums, direct calls and equality
 
 The compiler lowers local tuples and records whose leaves are `Int`, `Bool`, `Unit`,
-`Byte`, `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32`
+`Byte`, `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32`/`UInt64`
 into independent scalar locals. Nested tuples/records and instantiated generic
 records use the same route. Nominal enums, structural unions, `T?` and `T ! E` recursively admit these value
 layouts, including the closed `NumericConversionError` type. Construction, field reads and writes, copies,
@@ -127,8 +127,31 @@ value. Failures produce `OutOfRange`; they do not truncate or trap. A later
 checked arithmetic operation can still trap normally. Each conversion charges
 four scratch locals and adds three blocks; each tested tag charges one local
 and at most one block. Storage, copies, comparisons and these control-flow
-expansions share the existing per-function budget. `UInt64` and floating-point
-conversion paths remain outside this representation.
+expansions share the existing per-function budget. Bounds are intersected with
+the source range and compared in the source domain. `UInt64` sources therefore
+use unsigned comparisons, while a signed source never needs to represent
+`UInt64.max`. Total conversions preserve the value; checked failures still
+return `OutOfRange`. Floating-point conversions remain outside this route.
+
+`UInt64` occupies one eight-byte carrier with all bits preserved. The private
+`UnsignedInteger` constant retains its source spelling and is validated over
+`0..=2^64-1`; signed `Integer` constants retain their signed range validation.
+Native consumers may spell the raw bits as a signed host integer, which is not
+a source-level numeric conversion. The compiler emits `unsigned-` operators for
+addition, subtraction, multiplication, division, remainder, ordering and right
+shift. Cranelift uses unsigned instructions and checked overflow; LLVM uses
+unsigned overflow intrinsics, `udiv`/`urem`, unsigned comparisons and `lshr`.
+Equality, complement, bitwise operations and left shift share the same raw-bit
+operations. A count outside `0..63`, including counts above 32 bits, traps before
+shifting. Division by zero, overflow and underflow use the existing trap protocol,
+including discarded results. No source arithmetic or conversion rule changes.
+
+`UInt64` values use the existing tuple, record, enum, union, Option/Result and
+ordinary/generic call layouts, including inactive payload initialization and
+independent copies. Checked conversions must be normalized before reaching the
+adapter; a residual checked conversion involving `UInt64` is rejected instead
+of using the historical evaluation-runtime conversion helper. Neither that
+runtime nor the production runtime is required by the source corpus.
 
 Narrow integers retain their mathematical value in an eight-byte signed carrier;
 signed values are sign-extended and unsigned values are zero-extended. `Byte`
@@ -175,11 +198,11 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 404 Cranelift observations across
-209 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+`scripts/native-source-scalars-test.sh` verifies 458 Cranelift observations across
+258 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
 16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
 43 Unit/empty-record cases, 67 fixed-width integer cases, 71 sum-value cases and
-38 nominal-enum cases and 50 structural-union cases, including 55 arithmetic
+38 nominal-enum cases, 50 structural-union cases and 54 UInt64 cases, including 67 arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -201,19 +224,21 @@ inactive payload, alter a named payload field and bypass custom-error propagatio
 each must disagree with the VM without publishing a partial report. Five union
 regressions cover an altered injection tag, incorrect widened payload mapping,
 uncleared inactive storage, an incorrect generic member tag and bypassed error
-propagation. Each must disagree with the VM before a report is
-published. Reports are
+propagation. Five UInt64 regressions substitute signed addition, ordering,
+division or right shift, or bypass the conversion range decision. Each must
+disagree with the VM before a report is published. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
 `native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`,
-`native-source-sums.json`, `native-source-enums.json` and `native-source-unions.json` under
+`native-source-sums.json`, `native-source-enums.json`, `native-source-unions.json`
+and `native-source-uint64.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 359 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum and union cases through LLVM.
+the 413 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union and UInt64 cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -347,7 +372,20 @@ unconstructed generic record members and reject inactive unsupported or
 over-depth members and loan parameters. These are source-driven scalar-value
 observations on the admitted x86_64 GNU Linux target.
 
-Managed fields, recursive value layouts, `UInt64`, floating-point representations and
+`tests/native/native-aot-uint64-values.to` supplies 49 scalar entry functions and
+54 observations, including twelve arithmetic traps. Int-returning entry functions
+observe source UInt64 values and calls through explicit value checks; no harness
+reinterpretation substitutes for the source oracle. Decimal and radix literals,
+`Int.max`, the high bit and `UInt64.max` exercise arithmetic, comparisons,
+logical shifts, copies, replacement, recursion and generic nested values.
+Every smaller signed/unsigned integer and Byte participates in conversion checks;
+negative sources, out-of-range unsigned values and early error propagation retain
+their required Result behavior. Compiler tests preserve immutable source MIR and
+bounded storage, admit previously rejected inactive UInt64 members and keep
+source numeric restrictions. Adapter tests retain literal range rejection and
+large-count shift checks. Repeated compiler probes must have identical bytes.
+
+Managed fields, recursive value layouts, floating-point representations and
 aggregate calls through suspension/spawn protocols
 remain unsupported. Loan operations, production
 runtime integration and the public native build/run

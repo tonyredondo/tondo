@@ -5686,7 +5686,7 @@ pueden retrasar el primer backend correcto.
 
 - [ ] **NATIVE-AOT-LOWER-001 — Lower actual verified frontend MIR across the required language corpus.**
   Source-driven local tuples and records with `Int`/`Bool`/`Unit`, `Byte`,
-  `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32` leaves now lower
+  `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32`/`UInt64` leaves now lower
   to scalar locals, including nested/generic records, field writes, independent
   copies, `with` updates, reassignment and control flow. Ordinary direct calls
   now pass flattened value arguments and return aggregate fields through
@@ -5728,12 +5728,17 @@ pueden retrasar el primer backend correcto.
   use the same bounded route. Generic projection and branch tags are substituted;
   unconstructed record members still require complete admitted layouts.
   Source normalization and restrictions on generic union members remain unchanged.
-  The focused `scripts/native-source-scalars-test.sh` compares 404 Cranelift
-  observations with the hosted VM, including 55 arithmetic traps, without an evaluation
+  UInt64 now preserves all 64 bits in scalar/value-aggregate storage, with
+  explicit unsigned constants, arithmetic, ordering, division and logical shifts
+  in both native candidates. Integer conversions compare in the source domain,
+  preserve total conversions and return OutOfRange on checked failures. Source
+  rules, immutable MIR and the shared expansion budget remain unchanged.
+  The focused `scripts/native-source-scalars-test.sh` compares 458 Cranelift
+  observations with the hosted VM, including 67 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 359 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum and union cases.
-  Managed fields, recursive value layouts, `UInt64`/float layouts, generic closures and
+  the 413 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union and UInt64 cases.
+  Managed fields, recursive value layouts, float layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

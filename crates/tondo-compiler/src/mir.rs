@@ -802,6 +802,8 @@ pub enum MirBackendConstant {
     Unit,
     Bool(bool),
     Integer(String),
+    /// UInt64 spelling; native consumers preserve its raw 64-bit value.
+    UnsignedInteger(String),
     Float(String),
     Char(String),
     String(String),
@@ -1140,6 +1142,7 @@ fn backend_block(
                 let mut arguments = Vec::new();
                 if let Some(guard) = guard {
                     arguments.push(backend_operand(
+                        interner,
                         &MirOperand {
                             ty: guard.ty(),
                             kind: MirOperandKind::Copy(guard.clone()),
@@ -1155,6 +1158,7 @@ fn backend_block(
             MirStatementKind::RegisterFallback { scope, owner } => {
                 unsupported.push("statement:register-fallback".to_owned());
                 let arguments = vec![backend_operand(
+                    interner,
                     &MirOperand {
                         ty: owner.ty(),
                         kind: MirOperandKind::Move(owner.clone()),
@@ -1231,7 +1235,7 @@ fn backend_block(
             if_true,
             if_false,
         } => MirBackendTerminator::SwitchBool {
-            condition: backend_operand(condition, unsupported),
+            condition: backend_operand(interner, condition, unsupported),
             if_true: if_true.index(),
             if_false: if_false.index(),
         },
@@ -1256,7 +1260,7 @@ fn backend_block(
                     unsupported.push("switch-tag:duplicate-tag".to_owned());
                 }
                 MirBackendTerminator::SwitchTag {
-                    value: backend_operand(value, unsupported),
+                    value: backend_operand(interner, value, unsupported),
                     cases: normalized,
                     otherwise: otherwise.index(),
                 }
@@ -1289,6 +1293,7 @@ fn backend_block(
             ..
         } => MirBackendTerminator::Invoke {
             operation: backend_operation(
+                interner,
                 operation,
                 unsupported,
                 callable_ordinals,
@@ -1309,6 +1314,7 @@ fn backend_block(
             ..
         } => MirBackendTerminator::Invoke {
             operation: backend_operation(
+                interner,
                 operation,
                 unsupported,
                 callable_ordinals,
@@ -1327,7 +1333,7 @@ fn backend_block(
             ..
         } => MirBackendTerminator::Invoke {
             operation: MirBackendOperation::JoinValue {
-                operand: backend_operand(operand, unsupported),
+                operand: backend_operand(interner, operand, unsupported),
             },
             destination: Some(backend_place(destination, unsupported)),
             target: Some(target.index()),
@@ -1341,6 +1347,7 @@ fn backend_block(
         } => MirBackendTerminator::Invoke {
             operation: MirBackendOperation::Spawn {
                 operation: Box::new(backend_operation(
+                    interner,
                     operation,
                     unsupported,
                     callable_ordinals,
@@ -1483,6 +1490,7 @@ fn validate_backend_control_flow(blocks: &[MirBackendBlock], unsupported: &mut V
 }
 
 fn backend_operation(
+    interner: &TypeInterner,
     operation: &MirOperation,
     unsupported: &mut Vec<String>,
     callable_ordinals: &native_generics::CallableOrdinals,
@@ -1495,7 +1503,7 @@ fn backend_operation(
             }
             MirBackendOperation::CheckedPrefix {
                 operator: prefix_operator_name(*operator).to_owned(),
-                operand: backend_operand(operand, unsupported),
+                operand: backend_operand(interner, operand, unsupported),
             }
         }
         MirOperationKind::CheckedBinary {
@@ -1507,9 +1515,9 @@ fn backend_operation(
                 unsupported.push(format!("operator:{}", binary_operator_name(*operator)));
             }
             MirBackendOperation::CheckedBinary {
-                operator: binary_operator_name(*operator).to_owned(),
-                left: backend_operand(left, unsupported),
-                right: backend_operand(right, unsupported),
+                operator: native_binary_operator_name(*operator, left.ty, interner),
+                left: backend_operand(interner, left, unsupported),
+                right: backend_operand(interner, right, unsupported),
             }
         }
         MirOperationKind::Call {
@@ -1544,7 +1552,9 @@ fn backend_operation(
                 _ => None,
             };
             if let Some(kind) = host_kind {
-                let Some(arguments) = backend_call_arguments(arguments, unsupported, true) else {
+                let Some(arguments) =
+                    backend_call_arguments(interner, arguments, unsupported, true)
+                else {
                     return MirBackendOperation::Marker {
                         kind: "call".to_owned(),
                     };
@@ -1558,7 +1568,8 @@ fn backend_operation(
                 } => (callable, arguments),
                 _ => {
                     if let Some(function) = backend_function_value(callee, function_values) {
-                        let Some(arguments) = backend_call_arguments(arguments, unsupported, true)
+                        let Some(arguments) =
+                            backend_call_arguments(interner, arguments, unsupported, true)
                         else {
                             return MirBackendOperation::Marker {
                                 kind: "call".to_owned(),
@@ -1570,13 +1581,14 @@ fn backend_operation(
                         };
                     }
                     unsupported.push("call:indirect".to_owned());
-                    let Some(call_arguments) = backend_call_arguments(arguments, unsupported, true)
+                    let Some(call_arguments) =
+                        backend_call_arguments(interner, arguments, unsupported, true)
                     else {
                         return MirBackendOperation::Marker {
                             kind: "call".to_owned(),
                         };
                     };
-                    let mut arguments = vec![backend_operand(callee, unsupported)];
+                    let mut arguments = vec![backend_operand(interner, callee, unsupported)];
                     arguments.extend(call_arguments);
                     return MirBackendOperation::HostCall {
                         kind: "indirect-call".to_owned(),
@@ -1594,7 +1606,8 @@ fn backend_operation(
                     kind: "call".to_owned(),
                 };
             };
-            let Some(arguments) = backend_call_arguments(arguments, unsupported, false) else {
+            let Some(arguments) = backend_call_arguments(interner, arguments, unsupported, false)
+            else {
                 return MirBackendOperation::Marker {
                     kind: "call".to_owned(),
                 };
@@ -1611,7 +1624,7 @@ fn backend_operation(
             let kind = backend_host_function_name(*function).to_owned();
             let arguments = arguments
                 .iter()
-                .map(|argument| backend_operand(argument, unsupported))
+                .map(|argument| backend_operand(interner, argument, unsupported))
                 .collect::<Vec<_>>();
             MirBackendOperation::HostCall { kind, arguments }
         }
@@ -1619,7 +1632,7 @@ fn backend_operation(
             kind: "explicit-panic".to_owned(),
         },
         MirOperationKind::Assert { condition, .. } => MirBackendOperation::Assert {
-            condition: backend_operand(condition, unsupported),
+            condition: backend_operand(interner, condition, unsupported),
         },
         other => {
             let kind = operation_kind_name(other).to_owned();
@@ -1719,6 +1732,7 @@ fn backend_function_value(
 }
 
 fn backend_call_arguments(
+    interner: &TypeInterner,
     arguments: &[MirCallArgument],
     unsupported: &mut Vec<String>,
     allow_implicit_targets: bool,
@@ -1746,7 +1760,10 @@ fn backend_call_arguments(
             }
         };
         if positional
-            .insert(index, backend_operand(argument.value(), unsupported))
+            .insert(
+                index,
+                backend_operand(interner, argument.value(), unsupported),
+            )
             .is_some()
         {
             unsupported.push(format!("call-argument-duplicate:{index}"));
@@ -1803,12 +1820,22 @@ fn backend_place_operand(place: &MirPlace, unsupported: &mut Vec<String>) -> Mir
     }
 }
 
-fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBackendOperand {
+fn backend_operand(
+    interner: &TypeInterner,
+    operand: &MirOperand,
+    unsupported: &mut Vec<String>,
+) -> MirBackendOperand {
     match operand.kind() {
         MirOperandKind::Constant(constant) => MirBackendOperand::Constant(match constant {
             MirConstant::Unit => MirBackendConstant::Unit,
             MirConstant::Bool(value) => MirBackendConstant::Bool(*value),
-            MirConstant::Integer(value) => MirBackendConstant::Integer(value.clone()),
+            MirConstant::Integer(value) => {
+                if operand.ty == interner.scalar(ScalarType::UInt64) {
+                    MirBackendConstant::UnsignedInteger(value.clone())
+                } else {
+                    MirBackendConstant::Integer(value.clone())
+                }
+            }
             MirConstant::Float(value) => MirBackendConstant::Float(value.clone()),
             MirConstant::Char(value) => MirBackendConstant::Char(value.clone()),
             MirConstant::String(value) => MirBackendConstant::String(value.clone()),
@@ -1878,7 +1905,9 @@ fn backend_rvalue(
     unsupported: &mut Vec<String>,
 ) -> MirBackendRvalue {
     match value.kind() {
-        MirRvalueKind::Use(operand) => MirBackendRvalue::Use(backend_operand(operand, unsupported)),
+        MirRvalueKind::Use(operand) => {
+            MirBackendRvalue::Use(backend_operand(interner, operand, unsupported))
+        }
         MirRvalueKind::Aggregate { shape, values } => {
             if backend_aggregate_discriminant(shape).is_none() {
                 unsupported.push("rvalue:aggregate-unknown-shape".to_owned());
@@ -1897,7 +1926,7 @@ fn backend_rvalue(
             }
             let values = values
                 .iter()
-                .map(|value| backend_operand(value, unsupported))
+                .map(|value| backend_operand(interner, value, unsupported))
                 .collect::<Vec<_>>();
             MirBackendRvalue::Aggregate {
                 kind: backend_aggregate_name(shape).to_owned(),
@@ -1910,7 +1939,7 @@ fn backend_rvalue(
             }
             MirBackendRvalue::Prefix {
                 operator: prefix_operator_name(*operator).to_owned(),
-                operand: backend_operand(operand, unsupported),
+                operand: backend_operand(interner, operand, unsupported),
             }
         }
         MirRvalueKind::Binary {
@@ -1922,9 +1951,9 @@ fn backend_rvalue(
                 unsupported.push(format!("operator:{}", binary_operator_name(*operator)));
             }
             MirBackendRvalue::Binary {
-                operator: binary_operator_name(*operator).to_owned(),
-                left: backend_operand(left, unsupported),
-                right: backend_operand(right, unsupported),
+                operator: native_binary_operator_name(*operator, left.ty, interner),
+                left: backend_operand(interner, left, unsupported),
+                right: backend_operand(interner, right, unsupported),
             }
         }
         MirRvalueKind::NumericConversion {
@@ -1947,7 +1976,7 @@ fn backend_rvalue(
                 source,
                 target,
                 conversion,
-                operand: backend_operand(value, unsupported),
+                operand: backend_operand(interner, value, unsupported),
             }
         }
         MirRvalueKind::Coerce { kind, value } => {
@@ -1957,7 +1986,7 @@ fn backend_rvalue(
             }
             MirBackendRvalue::Coerce {
                 kind: kind_name,
-                operand: backend_operand(value, unsupported),
+                operand: backend_operand(interner, value, unsupported),
             }
         }
         MirRvalueKind::Range { kind, start, end } => {
@@ -1965,8 +1994,8 @@ fn backend_rvalue(
             MirBackendRvalue::HostCall {
                 kind: format!("range:{kind:?}"),
                 arguments: vec![
-                    backend_operand(start, unsupported),
-                    backend_operand(end, unsupported),
+                    backend_operand(interner, start, unsupported),
+                    backend_operand(interner, end, unsupported),
                 ],
             }
         }
@@ -1979,8 +2008,8 @@ fn backend_rvalue(
             MirBackendRvalue::HostCall {
                 kind: format!("contains:{kind:?}"),
                 arguments: vec![
-                    backend_operand(item, unsupported),
-                    backend_operand(container, unsupported),
+                    backend_operand(interner, item, unsupported),
+                    backend_operand(interner, container, unsupported),
                 ],
             }
         }
@@ -1990,7 +2019,7 @@ fn backend_rvalue(
                 kind: "map-remove".to_owned(),
                 arguments: vec![
                     backend_place_operand(map, unsupported),
-                    backend_operand(key, unsupported),
+                    backend_operand(interner, key, unsupported),
                 ],
             }
         }
@@ -2000,7 +2029,7 @@ fn backend_rvalue(
                 kind: "interpolate".to_owned(),
                 arguments: values
                     .iter()
-                    .map(|value| backend_operand(value, unsupported))
+                    .map(|value| backend_operand(interner, value, unsupported))
                     .collect(),
             }
         }
@@ -2008,25 +2037,25 @@ fn backend_rvalue(
             unsupported.push("rvalue:length-storage".to_owned());
             MirBackendRvalue::HostCall {
                 kind: "length".to_owned(),
-                arguments: vec![backend_operand(value, unsupported)],
+                arguments: vec![backend_operand(interner, value, unsupported)],
             }
         }
         MirRvalueKind::IteratorState { source } => {
             unsupported.push("rvalue:iterator-state-storage".to_owned());
             MirBackendRvalue::HostCall {
                 kind: "iterator-state".to_owned(),
-                arguments: vec![backend_operand(source, unsupported)],
+                arguments: vec![backend_operand(interner, source, unsupported)],
             }
         }
         MirRvalueKind::RecordUpdate { base, fields } => {
             unsupported.push("rvalue:record-update-storage".to_owned());
             MirBackendRvalue::HostCall {
                 kind: "record-update".to_owned(),
-                arguments: std::iter::once(backend_operand(base, unsupported))
+                arguments: std::iter::once(backend_operand(interner, base, unsupported))
                     .chain(
                         fields
                             .iter()
-                            .map(|(_, value)| backend_operand(value, unsupported)),
+                            .map(|(_, value)| backend_operand(interner, value, unsupported)),
                     )
                     .collect(),
             }
@@ -2041,7 +2070,7 @@ fn backend_type_name(interner: &TypeInterner, ty: TypeId) -> String {
 }
 
 fn is_native_carrier_type(name: &str) -> bool {
-    if name.contains("Float") || name.contains("UInt64") {
+    if name.contains("Float") {
         return false;
     }
     matches!(name, "Int" | "Bool" | "Unit" | "String" | "Bytes")
@@ -2063,13 +2092,12 @@ fn is_native_carrier_type(name: &str) -> bool {
         || name.starts_with("Queue[")
 }
 
-/// The first native adapter represents scalar values in one signed 64-bit
-/// carrier.  These integer widths can therefore be range-checked without
-/// pretending to implement an IEEE or full `UInt64` representation.
+/// Integer carriers preserve all 64 bits. UInt64 operations retain explicit
+/// unsigned semantics in the private native program; floats need another route.
 fn is_native_integer_scalar(name: &str) -> bool {
     matches!(
         name,
-        "Byte" | "Int8" | "Int16" | "Int32" | "Int" | "UInt8" | "UInt16" | "UInt32"
+        "Byte" | "Int8" | "Int16" | "Int32" | "Int" | "UInt8" | "UInt16" | "UInt32" | "UInt64"
     )
 }
 
@@ -2192,6 +2220,33 @@ fn is_supported_binary_operator(operator: HirBinaryOperator) -> bool {
             | HirBinaryOperator::LogicalAnd
             | HirBinaryOperator::LogicalOr
     )
+}
+
+fn native_binary_operator_name(
+    operator: HirBinaryOperator,
+    left: TypeId,
+    interner: &TypeInterner,
+) -> String {
+    let name = binary_operator_name(operator);
+    if left == interner.scalar(ScalarType::UInt64)
+        && matches!(
+            operator,
+            HirBinaryOperator::Add
+                | HirBinaryOperator::Subtract
+                | HirBinaryOperator::Multiply
+                | HirBinaryOperator::Divide
+                | HirBinaryOperator::Remainder
+                | HirBinaryOperator::ShiftRight
+                | HirBinaryOperator::Less
+                | HirBinaryOperator::LessEqual
+                | HirBinaryOperator::Greater
+                | HirBinaryOperator::GreaterEqual
+        )
+    {
+        format!("unsigned-{name}")
+    } else {
+        name.to_owned()
+    }
 }
 
 fn scalar_type_name(scalar: ScalarType) -> &'static str {
@@ -3475,7 +3530,7 @@ mod tests {
         let operand = backend_int_operand(ty);
         #[rustfmt::skip] let binary = MirOperationKind::CheckedBinary { operator: HirBinaryOperator::LogicalAnd, left: operand.clone(), right: operand.clone() };
         let mut unsupported = Vec::new();
-        #[rustfmt::skip] let lowered = backend_operation(&MirOperation { ty, kind: binary.clone() }, &mut unsupported, &BTreeMap::new(), &BTreeMap::new());
+        #[rustfmt::skip] let lowered = backend_operation(&TypeInterner::default(), &MirOperation { ty, kind: binary.clone() }, &mut unsupported, &BTreeMap::new(), &BTreeMap::new());
         assert!(matches!(lowered, MirBackendOperation::CheckedBinary { .. }));
         assert!(unsupported.is_empty());
         assert_eq!(operation_kind_name(&binary), "checked-binary");

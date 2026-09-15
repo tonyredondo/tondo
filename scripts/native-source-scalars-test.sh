@@ -83,6 +83,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/unions-probe.json" "$tmp/unions-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/unions-probe.json" --output "$tmp/unions-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-uint64-values.to > "$tmp/uint64-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-uint64-values.to > "$tmp/uint64-repeated.json"
+cmp "$tmp/uint64-probe.json" "$tmp/uint64-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/uint64-probe.json" --output "$tmp/uint64-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -294,6 +301,35 @@ for case in cases:
         assert case['arguments'] == [], name
         expected = 4294967295 if name == 'narrowMember' else 42
     assert case['native_status'] == 'returned' and case['native_result'] == expected, name
+uint64 = json.loads((root / 'uint64-report.json').read_text())
+assert uint64['format'] == report['format'] and uint64['backend'] == 'cranelift'
+assert uint64['boundary'] == report['boundary']
+assert uint64['n1_claim'] is False and uint64['production_runtime_linked'] is False
+cases = uint64['observations']
+assert len(cases) == 54 and len({case['function_ordinal'] for case in cases}) == 49
+assert sum(case['native_status'] == 'trapped' for case in cases) == 12
+assert all(case['native_result'] == case['vm_result'] for case in cases)
+if 'llvm_comparison' in uint64:
+    comparison = uint64['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
+uint64_probe = json.loads((root / 'uint64-probe.json').read_text())
+names = {symbol['function']: symbol['name'].split('::value::')[-1]
+         for symbol in uint64_probe['fixtures'][0]['mir']['backend']['debug']['symbols']}
+traps = {'overflowAdd', 'overflowSubtract', 'overflowMultiply', 'overflowMaximumProduct',
+         'divideByZero', 'remainderByZero', 'negativeLeftShift', 'oversizedLeftShift', 'hugeLeftShift',
+         'negativeRightShift', 'oversizedRightShift', 'hugeRightShift'}
+assert {names[case['function_ordinal']] for case in cases if case['native_status'] == 'trapped'} == traps
+for case in cases:
+    name = names[case['function_ordinal']]
+    if name in traps:
+        assert case['arguments'] == [] and case['native_status'] == 'trapped', name
+    else:
+        assert case['arguments'] == [] or (name == 'dynamicRoundTrip' and len(case['arguments']) == 1)
+        assert case['native_status'] == 'returned' and case['native_result'] == 42, (name, case)
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -478,6 +514,32 @@ for name, function_name in [('union-tag', 'injection'), ('union-widening', 'wide
                       if 'SwitchBool' in block['terminator'])
         branch['condition'] = {'Constant': {'Bool': True}}
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+for name, function_name, operator in [
+    ('uint64-add', 'add', 'unsigned-add'),
+    ('uint64-order', 'unsignedOrder', 'unsigned-less'),
+    ('uint64-division', 'divide', 'unsigned-divide'),
+    ('uint64-shift', 'rightShift', 'unsigned-shift-right'),
+    ('uint64-conversion', 'toSigned', None),
+]:
+    candidate = copy.deepcopy(uint64_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    if operator is None:
+        branch = next(block['terminator']['SwitchBool'] for block in function['blocks']
+                      if 'SwitchBool' in block['terminator'])
+        branch['condition'] = {'Constant': {'Bool': False}}
+    else:
+        operations = [statement['Assign']['value'].get('Binary', {})
+                      for block in function['blocks'] for statement in block['statements']
+                      if 'Assign' in statement]
+        operations += [block['terminator'].get('Invoke', {}).get('operation', {}).get('CheckedBinary', {})
+                       for block in function['blocks'] if isinstance(block['terminator'], dict)]
+        operation = next(operation for operation in operations if operation.get('operator') == operator)
+        operation['operator'] = operator.removeprefix('unsigned-')
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
@@ -486,14 +548,15 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     omitted-unit-call omitted-empty-call integer-range integer-shift integer-complement \
     sum-tag sum-inactive sum-propagation sum-conversion \
     enum-tag enum-inactive enum-field enum-propagation \
-    union-tag union-widening union-inactive union-generic-tag union-propagation; do
+    union-tag union-widening union-inactive union-generic-tag union-propagation \
+    uint64-add uint64-order uint64-division uint64-shift uint64-conversion; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
         exit 1
     fi
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
-    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* ]]; then
+    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* || "$candidate" == uint64-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -507,7 +570,8 @@ cp "$tmp/integers-report.json" "$target_dir/reliability/evidence/native-source-i
 cp "$tmp/sums-report.json" "$target_dir/reliability/evidence/native-source-sums.json"
 cp "$tmp/enums-report.json" "$target_dir/reliability/evidence/native-source-enums.json"
 cp "$tmp/unions-report.json" "$target_dir/reliability/evidence/native-source-unions.json"
-echo "native source scalars: OK (404 Cranelift cases, 55 arithmetic traps, 33 rejected evidence changes)"
+cp "$tmp/uint64-report.json" "$target_dir/reliability/evidence/native-source-uint64.json"
+echo "native source scalars: OK (458 Cranelift cases, 67 arithmetic traps, 38 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregates and generic calls: LLVM comparison OK (359 cases, 52 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (413 cases, 64 arithmetic traps)"
 fi

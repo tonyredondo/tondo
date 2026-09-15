@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod source_scalars;
+mod unsigned;
 
 const CRANELIFT_VERSION: &str = "0.132.3";
 const REPETITIONS: usize = 3;
@@ -265,6 +266,7 @@ enum MirBackendConstant {
     Unit,
     Bool(bool),
     Integer(String),
+    UnsignedInteger(String),
     Float(String),
     Char(String),
     String(String),
@@ -2203,6 +2205,11 @@ fn validate_supported_rvalue(
             ));
         }
     }
+    if matches!(value, MirBackendRvalue::NumericConversion { source, target, conversion, .. }
+        if conversion == "checked" && (source == "UInt64" || target == "UInt64"))
+    {
+        return Err("checked UInt64 conversion requires source normalization".to_owned());
+    }
     if let MirBackendRvalue::Coerce { kind, .. } = value
         && kind != "EffectWeakening"
     {
@@ -3394,6 +3401,9 @@ fn lower_operand_cranelift(
         MirBackendOperand::Constant(MirBackendConstant::Unit) => {
             Ok(builder.ins().iconst(cranelift_codegen::ir::types::I64, 0))
         }
+        MirBackendOperand::Constant(MirBackendConstant::UnsignedInteger(value)) => {
+            Ok(builder.ins().iconst(cranelift_codegen::ir::types::I64, unsigned::parse_literal(value)?))
+        }
         MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
             parse_integer_literal(value)
             .map(|value| {
@@ -3434,6 +3444,7 @@ fn lower_operand_cranelift(
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Unit
                 | MirBackendConstant::Integer(_)
+                | MirBackendConstant::UnsignedInteger(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };
@@ -3446,6 +3457,11 @@ fn lower_operand_cranelift(
 }
 
 fn parse_integer_literal(spelling: &str) -> Result<i64, String> {
+    i64::try_from(parse_integer_value(spelling)?)
+        .map_err(|_| format!("scalar integer {spelling} is out of range"))
+}
+
+fn parse_integer_value(spelling: &str) -> Result<i128, String> {
     const SUFFIXES: [&str; 8] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"];
     let value = spelling.replace('_', "");
     let (negative, body) = if let Some(rest) = value.strip_prefix('-') {
@@ -3484,25 +3500,15 @@ fn parse_integer_literal(spelling: &str) -> Result<i64, String> {
     }
     let magnitude = u128::from_str_radix(digits, radix)
         .map_err(|error| format!("invalid scalar integer {spelling}: {error}"))?;
-    if negative {
-        if magnitude == 1_u128 << 63 {
-            Ok(i64::MIN)
-        } else {
-            i64::try_from(magnitude)
-                .ok()
-                .and_then(|value| value.checked_neg())
-                .ok_or_else(|| format!("scalar integer {spelling} is out of range"))
-        }
-    } else {
-        i64::try_from(magnitude)
-            .map_err(|_| format!("scalar integer {spelling} is out of range"))
-    }
+    let magnitude = i128::try_from(magnitude)
+        .map_err(|_| format!("scalar integer {spelling} is out of range"))?;
+    Ok(if negative { -magnitude } else { magnitude })
 }
 
 fn is_native_integer_scalar(name: &str) -> bool {
     matches!(
         name,
-        "Byte" | "Int8" | "Int16" | "Int32" | "Int" | "UInt8" | "UInt16" | "UInt32"
+        "Byte" | "Int8" | "Int16" | "Int32" | "Int" | "UInt8" | "UInt16" | "UInt32" | "UInt64"
     )
 }
 
@@ -3573,6 +3579,9 @@ fn lower_checked_binary_cranelift(
 ) -> Result<Value, String> {
     let left = lower_operand_cranelift(builder, left, locals)?;
     let right = lower_operand_cranelift(builder, right, locals)?;
+    if let Some(operator) = operator.strip_prefix("unsigned-") {
+        return unsigned::cranelift(builder, operator, left, right);
+    }
     Ok(match operator {
         "add" => {
             let (value, overflow) = builder.ins().sadd_overflow(left, right);
@@ -4180,6 +4189,7 @@ fn deferred_capture_operand(operand: &MirBackendOperand) -> bool {
         MirBackendOperand::Constant(
             MirBackendConstant::Bool(_)
                 | MirBackendConstant::Integer(_)
+                | MirBackendConstant::UnsignedInteger(_)
                 | MirBackendConstant::String(_)
         )
     )
@@ -6854,6 +6864,9 @@ fn evaluate_aot_operand(
     locals: &BTreeMap<u32, AotVmValue>,
 ) -> Result<AotVmValue, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::UnsignedInteger(value)) => {
+            Ok(AotVmValue::Scalar(unsigned::parse_literal(value)?))
+        }
         MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
             Ok(AotVmValue::Scalar(parse_integer_literal(value)?))
         }
@@ -7152,6 +7165,9 @@ fn aot_tag_value(value: &AotVmValue) -> Result<u32, String> {
 }
 
 fn evaluate_aot_binary(operator: &str, left: i64, right: i64) -> Result<i64, String> {
+    if let Some(operator) = operator.strip_prefix("unsigned-") {
+        return unsigned::evaluate(operator, left, right);
+    }
     match operator {
         "add" => left
             .checked_add(right)
@@ -9450,6 +9466,9 @@ fn evaluate_operand(
 ) -> Result<i64, String> {
     match operand {
         MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok(0),
+        MirBackendOperand::Constant(MirBackendConstant::UnsignedInteger(value)) => {
+            unsigned::parse_literal(value)
+        }
         MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
             parse_integer_literal(value)
         }
@@ -9513,6 +9532,9 @@ fn evaluate_binary(
 ) -> Result<i64, String> {
     let left = evaluate_operand(left, locals)?;
     let right = evaluate_operand(right, locals)?;
+    if let Some(operator) = operator.strip_prefix("unsigned-") {
+        return unsigned::evaluate(operator, left, right);
+    }
     let result = match operator {
         "add" => left.checked_add(right),
         "subtract" => left.checked_sub(right),
@@ -9538,8 +9560,8 @@ fn evaluate_binary(
         "greater-equal" => Some(i64::from(left >= right)),
         "equal" => Some(i64::from(left == right)),
         "not-equal" => Some(i64::from(left != right)),
-        "shift-left" => (0..64).contains(&(right as u32)).then(|| left << right),
-        "shift-right" => (0..64).contains(&(right as u32)).then(|| left >> right),
+        "shift-left" => (0..64).contains(&right).then(|| left << right),
+        "shift-right" => (0..64).contains(&right).then(|| left >> right),
         other => return Err(format!("scalar oracle binary is not supported: {other}")),
     };
     result.ok_or_else(|| format!("scalar oracle failed for `{operator}`"))
@@ -10765,6 +10787,7 @@ fn scalar_local_ordinals(function: &MirBackendFunction) -> BTreeSet<u32> {
 }
 
 fn llvm_checked_helpers(module: &mut String) {
+    unsigned::llvm_helpers(module);
     writeln!(module, "declare void @llvm.trap()").unwrap();
     for declaration in [
         "declare i64 @tondo_rt_result_new(i64, i64, i64)",
@@ -11035,7 +11058,7 @@ fn llvm_checked_remainder_helper(module: &mut String) {
 }
 
 fn llvm_checked_shift_helper(module: &mut String, instruction: &str) {
-    let name = if instruction == "shl" { "shl" } else { "ashr" };
+    let name = instruction;
     writeln!(
         module,
         "define internal i64 @tondo_checked_{name}(i64 %left, i64 %right) {{"
@@ -11358,6 +11381,9 @@ fn llvm_binary(
 ) -> Result<String, String> {
     let left = llvm_operand(left, slots, module, value_index)?;
     let right = llvm_operand(right, slots, module, value_index)?;
+    if let Some(operator) = operator.strip_prefix("unsigned-") {
+        return unsigned::llvm_binary(operator, &left, &right, module, value_index);
+    }
     let helper = match operator {
         "add" => "tondo_checked_add",
         "subtract" => "tondo_checked_sub",
@@ -11525,6 +11551,9 @@ fn llvm_operand(
 ) -> Result<String, String> {
     match operand {
         MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok("0".to_owned()),
+        MirBackendOperand::Constant(MirBackendConstant::UnsignedInteger(value)) => {
+            unsigned::parse_literal(value).map(|value| value.to_string())
+        }
         MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
             parse_integer_literal(value).map(|value| value.to_string())
         }
@@ -11595,6 +11624,7 @@ fn llvm_operand(
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Unit
                 | MirBackendConstant::Integer(_)
+                | MirBackendConstant::UnsignedInteger(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };

@@ -55,11 +55,15 @@ impl NarrowInteger {
     }
 }
 
-pub(super) fn value_bounds(scalar: ScalarType) -> Option<(i64, i64)> {
-    if scalar == ScalarType::Int {
-        Some((i64::MIN, i64::MAX))
+pub(super) fn value_bounds(scalar: ScalarType) -> Option<(i128, i128)> {
+    if scalar == ScalarType::UInt64 {
+        Some((0, i128::from(u64::MAX)))
+    } else if scalar == ScalarType::Int {
+        Some((i128::from(i64::MIN), i128::from(i64::MAX)))
     } else {
-        NarrowInteger::scalar(scalar).map(NarrowInteger::bounds)
+        NarrowInteger::scalar(scalar)
+            .map(NarrowInteger::bounds)
+            .map(|(minimum, maximum)| (i128::from(minimum), i128::from(maximum)))
     }
 }
 

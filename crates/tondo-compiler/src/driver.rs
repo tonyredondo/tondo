@@ -6702,7 +6702,7 @@ fn main(): !env.EnvError {
         for declaration in [
             "fn source(value: Bool): Bool | String { value }",
             "fn source(value: Bool): Bool | Float { value }",
-            "fn source(value: Bool): Bool | UInt64 { value }",
+            "fn source(value: Bool): Bool | Float32 { value }",
             "fn source(value: ref (Int | Bool)): Int | Bool { value }",
             "type Box[T] = { item: T }\nfn source(value: Bool): Box[String] | Bool { value }",
             "type Node = { next: Node | Int }\nfn source(value: Int): Node | Int { value }",
@@ -6785,7 +6785,7 @@ fn main(): !env.EnvError {
         for declaration in [
             "enum Value { Empty\n Item(String) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Float) }\nfn source(value: Int): Value { Value.Empty }",
-            "enum Value { Empty\n Item(UInt64) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Float32) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Int | String) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Next(Value) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Int) }\nfn source(value: ref Value): Value { value }",
@@ -6822,10 +6822,10 @@ fn main(): !env.EnvError {
     #[test]
     fn native_sum_values_reject_unadmitted_payloads_and_parameter_modes() {
         for declaration in [
-            "fn source(value: UInt64): UInt64? { some(value) }",
+            "fn source(value: Float32): Float32? { some(value) }",
             "fn source(value: Float): Float ! Int { value }",
             "fn source(value: ref Int?): Int? { value }",
-            "fn source(value: UInt64): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: Float32): Int8 ! NumericConversionError { Int8(value)? }",
             "fn source(value: Float): Int8 ! NumericConversionError { Int8(value)? }",
         ] {
             let source = format!("{declaration}\nfn main() {{}}\n");
@@ -6849,6 +6849,123 @@ fn main(): !env.EnvError {
                 .find(|function| !function.parameters.is_empty())
                 .unwrap();
             assert!(!function.supported, "{declaration}");
+        }
+    }
+
+    #[test]
+    fn native_uint64_values_preserve_unsigned_operations_and_generic_calls() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-uint64-values.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "{}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
+        }
+        let json = serde_json::to_string(backend).unwrap();
+        for operation in [
+            "unsigned-add",
+            "unsigned-subtract",
+            "unsigned-multiply",
+            "unsigned-divide",
+            "unsigned-remainder",
+            "unsigned-shift-right",
+            "unsigned-less",
+            "unsigned-less-equal",
+            "unsigned-greater",
+            "unsigned-greater-equal",
+            "UnsignedInteger",
+        ] {
+            assert!(json.contains(operation), "missing {operation}");
+        }
+        assert!(
+            backend
+                .functions
+                .iter()
+                .any(|function| matches!(&function.generics,
+            Some(crate::mir::MirBackendGenerics::Instance { arguments, .. })
+            if arguments.iter().any(|argument| argument == "UInt64")))
+        );
+    }
+
+    #[test]
+    fn native_uint64_admits_inactive_members_and_checked_conversions() {
+        for declaration in [
+            "fn source(value: Bool): Bool | UInt64 { value }",
+            "enum Value { Empty\n Item(UInt64) }\nfn source(value: Int): Value { Value.Empty }",
+            "fn source(value: UInt64): UInt64? { some(value) }",
+            "fn source(value: UInt64): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: UInt64): (UInt64, Int) { (value, 42) }",
+            "type Wide = { value: UInt64, result: Int }\nfn source(value: Int): Wide { Wide { value: 1, result: value } }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let functions = backend
+                .functions
+                .iter()
+                .filter(|function| !function.parameters.is_empty())
+                .collect::<Vec<_>>();
+            assert!(!functions.is_empty());
+            assert!(
+                functions.iter().all(|function| function.supported),
+                "{declaration}: {functions:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_uint64_preserves_source_numeric_restrictions() {
+        for expression in [
+            "18446744073709551616u64",
+            "-1u64",
+            "1u64 + 1i64",
+            "identity[UInt64](1i64)",
+        ] {
+            let source = format!(
+                "fn identity[T: Copy](value: T): T {{ value }}\nfn main() {{\n _ = {expression}\n}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{expression}");
+            assert!(output.mir_summary().is_none());
         }
     }
 
@@ -7034,7 +7151,7 @@ fn main(): !env.EnvError {
             "fn inspectValue(): Int {\n let pair = ([1, 2], true)\n if pair == pair { 1 } else { 0 }\n}",
             "fn inspectValue(): Int {\n let pair = ((1.5, 2), 3)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = (1.5, 2)\n pair.1\n}",
-            "fn inspectValue(): Int {\n let pair: (UInt64, Int) = (1, 2)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair: (Float32, Int) = (1.0, 2)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = ([1, 2], 3)\n pair.1\n}",
         ] {
             let source = format!("{source}\nfn main() {{}}\n");
@@ -7255,7 +7372,7 @@ fn main() {
             "type Empty = {}\nfn inspectValue(value: mut Empty): Int { 1 }",
             "type Empty = {}\nfn inspectValue(value: var Empty): Int {\n value = Empty {}\n 1\n}",
             "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
-            "type Wide = { value: UInt64, result: Int }\nfn inspectValue(): Int {\n let wide = Wide { value: 1, result: 2 }\n wide.result\n}",
+            "type Wide = { value: Float32, result: Int }\nfn inspectValue(): Int {\n let wide = Wide { value: 1.0, result: 2 }\n wide.result\n}",
             "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",
             "fn inspectValue(point: ref Point): Int { point.x }",
             "fn inspectValue(point: mut Point): Int { 1 }",

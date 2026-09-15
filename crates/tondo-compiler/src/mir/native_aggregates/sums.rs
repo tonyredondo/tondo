@@ -342,10 +342,20 @@ impl NativeLocals {
             let Some((minimum, maximum)) = native_integers::value_bounds(target) else {
                 return Err("sum:conversion-representation");
             };
-            if !matches!(interner.kind(source.ty), Ok(TypeKind::Scalar(scalar)) if native_integers::value_bounds(*scalar).is_some())
-            {
+            let Ok(TypeKind::Scalar(source_scalar)) = interner.kind(source.ty) else {
                 return Err("sum:conversion-representation");
-            }
+            };
+            let (source_minimum, source_maximum) = native_integers::value_bounds(*source_scalar)
+                .ok_or("sum:conversion-representation")?;
+            // Compare in the source domain. UInt64 uses unsigned comparisons;
+            // signed sources never need an unrepresentable unsigned maximum.
+            let source_type = source.ty;
+            let bound = |value: i128| MirOperand {
+                ty: source_type,
+                kind: MirOperandKind::Constant(MirConstant::Integer(value.to_string())),
+            };
+            let minimum = minimum.max(source_minimum);
+            let maximum = maximum.min(source_maximum);
             let (first, layout) = self
                 .resolve(&destination)?
                 .ok_or("sum:conversion-storage")?;
@@ -383,14 +393,14 @@ impl NativeLocals {
                 (
                     temporary + 1,
                     HirBinaryOperator::Less,
-                    read(temporary, int),
-                    integer(int, minimum),
+                    read(temporary, source_type),
+                    bound(minimum),
                 ),
                 (
                     temporary + 2,
                     HirBinaryOperator::Greater,
-                    read(temporary, int),
-                    integer(int, maximum),
+                    read(temporary, source_type),
+                    bound(maximum),
                 ),
                 (
                     temporary + 3,

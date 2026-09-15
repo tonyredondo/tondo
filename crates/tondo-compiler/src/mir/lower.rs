@@ -8709,6 +8709,49 @@ mod tests {
     }
 
     #[test]
+    fn native_uint64_normalization_preserves_source_mir_and_bounded_storage() {
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-uint64-values.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let types = hir.interner().len();
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(types, hir.interner().len());
+        let records = crate::mir::native_aggregates::record_fields(&mir);
+        for name in ["toSigned", "toUnsigned", "convertResult"] {
+            let function = mir
+                .functions()
+                .find(|function| {
+                    function.id() == MirFunctionId::Callable(function_id(&resolved, name))
+                })
+                .unwrap();
+            let mut admitted = false;
+            for limit in 0..128 {
+                match crate::mir::native_aggregates::lower_with_limit(
+                    function,
+                    hir.interner(),
+                    &records,
+                    &mir.enum_variants,
+                    limit,
+                ) {
+                    Ok(_) => {
+                        assert!(limit > 4);
+                        admitted = true;
+                        break;
+                    }
+                    Err(error) => assert_eq!(error, "aggregate:local-limit", "{name}: {limit}"),
+                }
+            }
+            assert!(admitted, "{name} never admitted");
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_integer_normalization_preserves_verified_mir_and_type_identity() {
         let (resolved, hir) = checked(include_str!(
             "../../../../tests/native/native-aot-integer-aggregates.to"
