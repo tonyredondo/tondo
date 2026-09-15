@@ -76,6 +76,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/enums-probe.json" "$tmp/enums-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/enums-probe.json" --output "$tmp/enums-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-union-values.to > "$tmp/unions-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-union-values.to > "$tmp/unions-repeated.json"
+cmp "$tmp/unions-probe.json" "$tmp/unions-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/unions-probe.json" --output "$tmp/unions-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -254,6 +261,39 @@ for case in cases:
         assert case['arguments'] == [], name
         expected = {'positional': 293, 'narrowPayloads': 4294967167}.get(name, 42)
     assert case['native_status'] == 'returned' and case['native_result'] == expected, name
+unions = json.loads((root / 'unions-report.json').read_text())
+assert unions['format'] == report['format'] and unions['backend'] == 'cranelift'
+assert unions['boundary'] == report['boundary']
+assert unions['n1_claim'] is False and unions['production_runtime_linked'] is False
+cases = unions['observations']
+assert len(cases) == 50 and len({case['function_ordinal'] for case in cases}) == 40
+assert sum(case['native_status'] == 'trapped' for case in cases) == 3
+assert all(case['native_result'] == case['vm_result'] for case in cases)
+if 'llvm_comparison' in unions:
+    comparison = unions['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
+union_probe = json.loads((root / 'unions-probe.json').read_text())
+names = {symbol['function']: symbol['name'].split('::value::')[-1]
+         for symbol in union_probe['fixtures'][0]['mir']['backend']['debug']['symbols']}
+for case in cases:
+    name = names[case['function_ordinal']]
+    if name in ['discardedTrap', 'overflowMember', 'narrowOverflow']:
+        assert case['arguments'] == [] and case['native_status'] == 'trapped', name
+        continue
+    if name == 'unionCase':
+        value, = case['arguments']
+        expected = value if value > 0 else -1
+    elif name == 'errorCase':
+        value, = case['arguments']
+        expected = 42 if value > 0 else 41 if value == 0 else -1
+    else:
+        assert case['arguments'] == [], name
+        expected = 4294967295 if name == 'narrowMember' else 42
+    assert case['native_status'] == 'returned' and case['native_result'] == expected, name
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -409,6 +449,35 @@ for name, function_name in [('enum-tag', 'choose'), ('enum-inactive', 'clearInac
                       if 'SwitchBool' in block['terminator'])
         branch['condition'] = {'Constant': {'Bool': True}}
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+for name, function_name in [('union-tag', 'injection'), ('union-widening', 'widen'),
+                            ('union-inactive', 'clearInactive'), ('union-generic-tag', 'boxed[Int]'),
+                            ('union-propagation', 'forwardFailure')]:
+    candidate = copy.deepcopy(union_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    assignments = [statement['Assign'] for block in function['blocks']
+                   for statement in block['statements'] if 'Assign' in statement]
+    if name == 'union-tag':
+        assignment = next(row for row in assignments
+                          if row['value'].get('Use', {}).get('Constant', {}).get('Integer') not in [None, '42'])
+        assignment['value'] = {'Use': {'Constant': {'Integer': '-1'}}}
+    elif name == 'union-widening':
+        assignment = next(row for row in assignments if row['destination'] == function['return_fields'][-1])
+        assignment['value'] = {'Use': {'Constant': {'Integer': '0'}}}
+    elif name == 'union-inactive':
+        assignment = next(row for row in assignments
+                          if row['value'] == {'Use': {'Constant': {'Integer': '0'}}})
+        assignment['value'] = {'Use': {'Constant': {'Integer': '1'}}}
+    elif name == 'union-generic-tag':
+        comparison = next(row['value']['Binary'] for row in assignments if 'Binary' in row['value'])
+        comparison['right'] = {'Constant': {'Integer': '-1'}}
+    else:
+        branch = next(block['terminator']['SwitchBool'] for block in function['blocks']
+                      if 'SwitchBool' in block['terminator'])
+        branch['condition'] = {'Constant': {'Bool': True}}
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
@@ -416,14 +485,15 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     missing-template template-admitted duplicate-instance incomplete-instance call-template equality-reduction \
     omitted-unit-call omitted-empty-call integer-range integer-shift integer-complement \
     sum-tag sum-inactive sum-propagation sum-conversion \
-    enum-tag enum-inactive enum-field enum-propagation; do
+    enum-tag enum-inactive enum-field enum-propagation \
+    union-tag union-widening union-inactive union-generic-tag union-propagation; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
         exit 1
     fi
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
-    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* ]]; then
+    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -436,7 +506,8 @@ cp "$tmp/units-report.json" "$target_dir/reliability/evidence/native-source-unit
 cp "$tmp/integers-report.json" "$target_dir/reliability/evidence/native-source-integers.json"
 cp "$tmp/sums-report.json" "$target_dir/reliability/evidence/native-source-sums.json"
 cp "$tmp/enums-report.json" "$target_dir/reliability/evidence/native-source-enums.json"
-echo "native source scalars: OK (354 Cranelift cases, 52 arithmetic traps, 28 rejected evidence changes)"
+cp "$tmp/unions-report.json" "$target_dir/reliability/evidence/native-source-unions.json"
+echo "native source scalars: OK (404 Cranelift cases, 55 arithmetic traps, 33 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregates and generic calls: LLVM comparison OK (309 cases, 49 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (359 cases, 52 arithmetic traps)"
 fi

@@ -61,6 +61,7 @@ enum Field {
     NumericError,
     VariantTuple(MemberId, u32),
     VariantRecord(MemberId, MemberId),
+    UnionValue(TypeId),
 }
 
 struct Layout {
@@ -102,6 +103,15 @@ impl Layout {
                 (Field::ResultOk, *success),
                 (Field::ResultErr, *error),
             ],
+            TypeKind::Union(members) => {
+                std::iter::once((Field::Tag, interner.scalar(ScalarType::Int)))
+                    .chain(
+                        members
+                            .iter()
+                            .map(|member| (Field::UnionValue(*member), *member)),
+                    )
+                    .collect()
+            }
             TypeKind::Intrinsic {
                 constructor: crate::types::IntrinsicType::NumericConversionError,
                 arguments,
@@ -407,6 +417,7 @@ impl NativeLocals {
                 MirProjectionKind::OptionValue => Field::OptionValue,
                 MirProjectionKind::ResultOkValue => Field::ResultOk,
                 MirProjectionKind::ResultErrValue => Field::ResultErr,
+                MirProjectionKind::UnionValue(member) => Field::UnionValue(member),
                 MirProjectionKind::VariantTuple { variant, index } => {
                     Field::VariantTuple(variant, index)
                 }
@@ -465,6 +476,10 @@ impl NativeLocals {
     ) -> LowerResult<Vec<MirOperand>> {
         match &value.kind {
             MirRvalueKind::Use(operand) => self.values(operand),
+            MirRvalueKind::Coerce {
+                kind: kind @ (Assignability::UnionInjection | Assignability::UnionWidening),
+                value,
+            } => self.union_values(*kind, value, layout, interner),
             MirRvalueKind::Coerce {
                 kind: Assignability::OptionLift,
                 value,

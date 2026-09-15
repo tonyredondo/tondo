@@ -829,8 +829,8 @@ pub enum MirBackendTerminator {
         if_false: u32,
     },
     /// Dispatches on a core `Option`/`Result` runtime discriminant. Admitted
-    /// source value sums and nominal enums become scalar comparisons before
-    /// this representation; structural union storage remains unsupported.
+    /// source value sums, nominal enums and structural unions become scalar
+    /// comparisons before this representation.
     SwitchTag {
         value: MirBackendOperand,
         cases: Vec<(u32, u32)>,

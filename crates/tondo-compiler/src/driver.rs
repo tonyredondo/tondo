@@ -6610,6 +6610,132 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn native_union_values_preserve_widening_generic_members_and_errors() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-union-values.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+                continue;
+            }
+            assert!(
+                function.supported,
+                "{}: {:?}",
+                function.ordinal, function.unsupported
+            );
+            for block in &function.blocks {
+                assert!(!matches!(
+                    block.terminator,
+                    crate::mir::MirBackendTerminator::SwitchTag { .. }
+                ));
+                assert!(block.statements.iter().all(|statement| !matches!(
+                    statement,
+                    crate::mir::MirBackendStatement::Assign {
+                        value: crate::mir::MirBackendRvalue::Aggregate { .. }
+                            | crate::mir::MirBackendRvalue::Coerce { .. },
+                        ..
+                    }
+                )));
+            }
+        }
+    }
+
+    #[test]
+    fn native_union_inactive_members_require_complete_bounded_layouts() {
+        let mut cases = vec![(
+            "type Box[T] = { item: T }\nfn source(value: Bool): Bool | Box[Int] { value }\nfn main() {}\n".to_owned(),
+            true,
+        )];
+        let mut deep = "type Layer0 = { value: Int }\n".to_owned();
+        for index in 1..=66 {
+            deep.push_str(&format!(
+                "type Layer{index} = {{ value: Layer{} }}\n",
+                index - 1
+            ));
+        }
+        deep.push_str("fn source(value: Int): Int | Layer66 { value }\nfn main() {}\n");
+        cases.push((deep, false));
+        for (source, expected) in cases {
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let function = backend
+                .functions
+                .iter()
+                .find(|function| !function.parameters.is_empty())
+                .unwrap();
+            assert_eq!(function.supported, expected, "{:?}", function.unsupported);
+            if expected {
+                assert_eq!(function.return_fields.len(), 3);
+            }
+        }
+    }
+
+    #[test]
+    fn native_union_values_reject_inactive_unsupported_members_and_loans() {
+        for declaration in [
+            "fn source(value: Bool): Bool | String { value }",
+            "fn source(value: Bool): Bool | Float { value }",
+            "fn source(value: Bool): Bool | UInt64 { value }",
+            "fn source(value: ref (Int | Bool)): Int | Bool { value }",
+            "type Box[T] = { item: T }\nfn source(value: Bool): Box[String] | Bool { value }",
+            "type Node = { next: Node | Int }\nfn source(value: Int): Node | Int { value }",
+            "fn source(value: Bool): Bool | String { value }\nfn caller(value: Bool): Bool | String { source(value) }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let functions = backend
+                .functions
+                .iter()
+                .filter(|function| !function.parameters.is_empty())
+                .collect::<Vec<_>>();
+            assert!(!functions.is_empty(), "{declaration}");
+            for function in functions {
+                assert!(!function.supported, "{declaration}: {}", function.ordinal);
+            }
+        }
+    }
+
+    #[test]
     fn native_enum_values_preserve_variants_custom_errors_and_generic_calls() {
         let output = execute(operation_request(
             Operation::Run,
@@ -6660,7 +6786,7 @@ fn main(): !env.EnvError {
             "enum Value { Empty\n Item(String) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Float) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(UInt64) }\nfn source(value: Int): Value { Value.Empty }",
-            "enum Value { Empty\n Item(Int | Bool) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Int | String) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Next(Value) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Int) }\nfn source(value: ref Value): Value { value }",
             "enum Value[T] { Empty\n Item(T) }\nfn identity[T: Copy](value: Value[T]): Value[T] { value }\nfn source(value: Int): Value[String] { identity(Value[String].Empty) }",

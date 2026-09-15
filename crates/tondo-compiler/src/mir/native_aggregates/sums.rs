@@ -12,6 +12,14 @@ fn integer(ty: TypeId, value: i64) -> MirOperand {
 }
 
 impl Layout {
+    fn union_tag(&self, member: TypeId) -> LowerResult<u32> {
+        self.child(Field::UnionValue(member))
+            .ok_or("union:member-identity")?;
+        // A member keeps its identity across distinct union layouts in this
+        // native program. This private tag is not a cross-program type ABI.
+        Ok(member.index())
+    }
+
     fn variant_tag(&self, member: MemberId) -> LowerResult<u32> {
         self.variants
             .iter()
@@ -40,6 +48,62 @@ impl Layout {
 }
 
 impl NativeLocals {
+    pub(super) fn union_values(
+        &self,
+        kind: Assignability,
+        value: &MirOperand,
+        layout: &Layout,
+        interner: &TypeInterner,
+    ) -> LowerResult<Vec<MirOperand>> {
+        if !matches!(interner.kind(layout.ty), Ok(TypeKind::Union(_))) {
+            return Err("union:destination-layout");
+        }
+        let mut values = Vec::with_capacity(layout.width as usize);
+        layout.defaults(interner, &mut values);
+        match kind {
+            Assignability::UnionInjection => {
+                let tag = layout.union_tag(value.ty)?;
+                let (tag_offset, tag_layout) = layout.child(Field::Tag).ok_or("union:tag")?;
+                values[tag_offset as usize] = integer(tag_layout.ty, i64::from(tag));
+                let (offset, child) = layout
+                    .child(Field::UnionValue(value.ty))
+                    .ok_or("union:member-layout")?;
+                let payload = self.values(value)?;
+                if payload.len() != child.width as usize {
+                    return Err("union:payload-shape");
+                }
+                values.splice(offset as usize..(offset + child.width) as usize, payload);
+            }
+            Assignability::UnionWidening => {
+                let (MirOperandKind::Copy(place) | MirOperandKind::Move(place)) = &value.kind
+                else {
+                    return Err("union:widening-operand");
+                };
+                let (first, source) = self.resolve(place)?.ok_or("union:widening-storage")?;
+                if !matches!(interner.kind(source.ty), Ok(TypeKind::Union(_))) {
+                    return Err("union:widening-source");
+                }
+                // Copy the unchanged tag and every existing member by type,
+                // not by offset. New members remain zero; inactive source
+                // members are already canonical. The caller snapshots these
+                // operands before writing a potentially overlapping destination.
+                let mut source_offset = first;
+                for (field, child) in &source.children {
+                    let (offset, target) = layout.child(*field).ok_or("union:widening-member")?;
+                    if target.ty != child.ty || target.width != child.width {
+                        return Err("union:widening-shape");
+                    }
+                    let mut payload = Vec::with_capacity(child.width as usize);
+                    child.operands(source_offset, &mut payload);
+                    values.splice(offset as usize..(offset + child.width) as usize, payload);
+                    source_offset += child.width;
+                }
+            }
+            _ => return Err("union:coercion"),
+        }
+        Ok(values)
+    }
+
     pub(super) fn sum_values(
         &self,
         shape: &MirAggregateKind,
@@ -170,7 +234,13 @@ impl NativeLocals {
                         MirTag::Variant(member) if field == Field::Tag => {
                             layout.variant_tag(*member)?
                         }
-                        _ if field == Field::Tag && layout.variants.is_empty() => {
+                        MirTag::Union(member) if field == Field::Tag => {
+                            layout.union_tag(*member)?
+                        }
+                        _ if field == Field::Tag
+                            && layout.variants.is_empty()
+                            && !matches!(interner.kind(layout.ty), Ok(TypeKind::Union(_))) =>
+                        {
                             backend_tag_discriminant(*case).ok_or("sum:switch-tag")?
                         }
                         _ => return Err("sum:switch-tag"),

@@ -8561,6 +8561,55 @@ mod tests {
     }
 
     #[test]
+    fn native_union_normalization_preserves_verified_mir_and_member_identity() {
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-union-values.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let types = hir.interner().len();
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(types, hir.interner().len());
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn native_union_storage_widening_and_tag_tests_share_the_expansion_budget() {
+        let (resolved, hir) = checked(
+            "type Empty = {}\nfn widened(value: Int | Bool): Int | Empty | Bool { value }\nfn classify(value: Int | Bool): Int { match value {\n Int(number) => number\n Bool(_) => 0\n } }\nfn main() {}\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let records = crate::mir::native_aggregates::record_fields(&mir);
+        for name in ["widened", "classify"] {
+            let function = mir.function(function_id(&resolved, name)).unwrap();
+            let mut minimum = None;
+            for limit in 0..128 {
+                match crate::mir::native_aggregates::lower_with_limit(
+                    function,
+                    hir.interner(),
+                    &records,
+                    &mir.enum_variants,
+                    limit,
+                ) {
+                    Ok(_) => {
+                        minimum = Some(limit);
+                        break;
+                    }
+                    Err(error) => assert_eq!(error, "aggregate:local-limit", "{name}: {limit}"),
+                }
+            }
+            assert!(
+                minimum.is_some_and(|limit| limit > 3),
+                "{name}: {minimum:?}"
+            );
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_enum_normalization_preserves_all_declarations_and_source_mir() {
         let (resolved, hir) = checked(include_str!(
             "../../../../tests/native/native-aot-enum-values.to"

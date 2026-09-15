@@ -5721,12 +5721,19 @@ pueden retrasar el primer backend correcto.
   Unsupported inactive payloads reject the whole enum layout. Enum record
   initializers now preserve textual evaluation and declaration-order storage;
   the hosted regression also verifies the order with stateful calls.
-  The focused `scripts/native-source-scalars-test.sh` compares 354 Cranelift
-  observations with the hosted VM, including 52 arithmetic traps, without an evaluation
+  Structural unions now retain concrete member tags and initialized disjoint
+  payloads. Exact injection and widening preserve member identity across layouts,
+  with snapshots before writes and canonical inactive carriers. Matching,
+  copies, equality, ordinary/generic calls, nested sums and union-error propagation
+  use the same bounded route. Generic projection and branch tags are substituted;
+  unconstructed record members still require complete admitted layouts.
+  Source normalization and restrictions on generic union members remain unchanged.
+  The focused `scripts/native-source-scalars-test.sh` compares 404 Cranelift
+  observations with the hosted VM, including 55 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 309 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum and enum cases.
-  Managed fields, structural unions, recursive value layouts, `UInt64`/float layouts, generic closures and
+  the 359 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum and union cases.
+  Managed fields, recursive value layouts, `UInt64`/float layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

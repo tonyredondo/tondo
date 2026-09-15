@@ -159,9 +159,9 @@ pub(super) fn specialize_with_limits<'a>(
         }
         cursor += 1;
     }
-    if !program.enum_variants.is_empty() {
-        // Ordinary functions may use generic enums without constructing every
-        // variant. Populate their complete declarations before storage lowering.
+    if !program.enum_variants.is_empty() || !program.record_fields.is_empty() {
+        // Ordinary functions may use generic records or enums inside unions
+        // without constructing every member. Populate all payload declarations.
         let mut substitution = Substitute {
             arguments: TypeSubstitution::new(Vec::new()),
             interner: native.interner.to_mut(),
@@ -375,7 +375,7 @@ impl Substitute<'_> {
                     self.records.insert(ty, fields);
                 }
             }
-            TypeKind::Tuple(fields) => {
+            TypeKind::Tuple(fields) | TypeKind::Union(fields) => {
                 for field in fields {
                     self.record(field, depth + 1)?;
                 }
@@ -440,10 +440,15 @@ impl Substitute<'_> {
                 | MirTerminatorKind::DrainUnwind { .. }
                 | MirTerminatorKind::DrainDefers { .. }
                 | MirTerminatorKind::DrainScopes { .. } => {}
-                MirTerminatorKind::SwitchBool { condition, .. }
-                | MirTerminatorKind::SwitchTag {
-                    value: condition, ..
-                } => self.operand(condition)?,
+                MirTerminatorKind::SwitchBool { condition, .. } => self.operand(condition)?,
+                MirTerminatorKind::SwitchTag { value, cases, .. } => {
+                    self.operand(value)?;
+                    for (tag, _) in cases {
+                        if let MirTag::Union(member) = tag {
+                            self.ty(member)?;
+                        }
+                    }
+                }
                 MirTerminatorKind::Invoke {
                     operation,
                     destination,
@@ -476,7 +481,7 @@ impl Substitute<'_> {
                 constructor: crate::types::IntrinsicType::NumericConversionError,
                 arguments,
             } if arguments.is_empty() => Ok(()),
-            TypeKind::Tuple(fields) if !fields.is_empty() => {
+            TypeKind::Tuple(fields) | TypeKind::Union(fields) if !fields.is_empty() => {
                 for field in fields {
                     self.value_type(*field, depth + 1)?;
                 }

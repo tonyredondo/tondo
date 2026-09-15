@@ -110,6 +110,7 @@ jobs:
             target/reliability/evidence/native-source-integers.json
             target/reliability/evidence/native-source-sums.json
             target/reliability/evidence/native-source-enums.json
+            target/reliability/evidence/native-source-unions.json
             target/reliability/evidence/native-aot-quality.json
             target/reliability/evidence/native-aot-performance.json
             target/reliability/evidence/native-conf.json

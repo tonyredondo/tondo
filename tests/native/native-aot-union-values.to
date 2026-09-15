@@ -1,0 +1,274 @@
+type Payload = { number: Int, valid: Bool }
+type Small = { number: Int8 }
+type Empty = {}
+type Box[T] = { item: T }
+type Missing = {}
+type Invalid = { code: Int }
+enum Mark {
+    Off
+    On(Int)
+}
+
+fn identity[T: Copy](value: T): T { value }
+fn same[T: Copy + Equatable](left: T, right: T): Bool { left == right }
+fn classify(value: Int | Bool): Int {
+    match value {
+        Int(number) => number
+        Bool(flag) => if flag { 42 } else { -1 }
+    }
+}
+fn widen(value: Int | Bool): Empty | Bool | Int { value }
+fn readWide(value: Empty | Bool | Int): Int {
+    match value {
+        Int(number) => number
+        Bool(flag) => if flag { 42 } else { -1 }
+        Empty {} => 0
+    }
+}
+fn injection(): Int { classify(42) }
+fn booleanMember(): Int { classify(true) }
+fn widening(): Int { readWide(widen(42)) }
+fn wideningBool(): Int { readWide(widen(true)) }
+fn canonicalOrder(): Int {
+    let first: Int | Bool = 42
+    let second: Bool | Int | Int = first
+    if same(first, second) { classify(second) } else { -1 }
+}
+fn copyAndReplace(): Int {
+    var value: Int | Bool = 123
+    let copied = identity(value)
+    value = true
+    let expected: Int | Bool = true
+    if same(value, expected) and copied != value { 42 } else { -1 }
+}
+fn boxed[T: Copy](value: Box[T] | Bool, fallback: T): T {
+    match value {
+        Box[T] { item } => item
+        Bool(_) => fallback
+    }
+}
+fn genericMember(): Int { boxed[Int](Box[Int] { item: 42 }, 0) }
+fn genericFallback(): Int { boxed[Int](true, 42) }
+
+fn genericWide[T: Copy](value: Box[T] | Bool): Box[T] | Empty | Bool { value }
+fn readGenericWide[T: Copy](value: Box[T] | Empty | Bool, fallback: T): T {
+    match value {
+        Box[T] { item } => item
+        Empty {} => fallback
+        Bool(_) => fallback
+    }
+}
+fn genericWidening(): Int {
+    readGenericWide[Int](genericWide[Int](Box[Int] { item: 42 }), 0)
+}
+fn genericWideningBool(): Int { readGenericWide[Int](genericWide[Int](true), 42) }
+fn genericNested(): Int {
+    let inner: Int | Bool = 42
+    classify(boxed[Int | Bool](Box[Int | Bool] { item: inner }, false))
+}
+fn secondInstantiation(): Int {
+    if boxed[Bool](Box[Bool] { item: true }, false) { 42 } else { -1 }
+}
+fn widenRecord(value: Payload | Small): Empty | Small | Payload { value }
+fn readRecord(value: Payload | Empty | Small): Int {
+    match value {
+        Payload { number, valid: true } => number
+        Small { number } => Int(number)
+        _ => -1
+    }
+}
+fn recordMember(): Int {
+    readRecord(widenRecord(Payload { valid: true, number: 42 }))
+}
+fn smallMember(): Int { readRecord(widenRecord(Small { number: 42i8 })) }
+fn emptyMember(): Int {
+    let value: Empty | Bool = Empty {}
+    let copy = identity(value)
+    if same(value, copy) {
+        match copy {
+            Empty {} => 42
+            _ => -1
+        }
+    } else { -2 }
+}
+fn unitMember(): Int {
+    let value: Unit | Bool = ()
+    match identity(value) {
+        Unit(_) => 42
+        _ => -1
+    }
+}
+fn enumMember(): Int {
+    let value: Mark | Bool = Mark.On(42)
+    match identity(value) {
+        Mark(Mark.On(number)) => number
+        _ => -1
+    }
+}
+enum Envelope {
+    Empty
+    Item(Int | Bool)
+}
+fn unionInEnum(): Int {
+    match identity(Envelope.Item(42)) {
+        Envelope.Item(value) => classify(value)
+        _ => -1
+    }
+}
+fn optionalUnion(): Int {
+    let value: (Int | Bool)? = some(42)
+    match identity(value) {
+        some(Int(number)) => number
+        _ => -1
+    }
+}
+fn unionOfOptions(): Int {
+    let value: Int | Int? = some(42)
+    match identity(value) {
+        Option[Int](some(number)) => number
+        _ => -1
+    }
+}
+fn exactMember(): Int {
+    let value: Int | Int? = 42
+    match identity(value) {
+        Int(number) => number
+        _ => -1
+    }
+}
+fn absentMember(): Int {
+    let optional: Int? = none
+    let value: Int | Int? = optional
+    match identity(value) {
+        Option[Int](none) => 42
+        _ => -1
+    }
+}
+type Holder = { narrow: Int | Bool, wide: Int | Bool | Empty, valid: Bool }
+fn projectedWidening(): Int {
+    var holder = Holder { narrow: 42, wide: Empty {}, valid: true }
+    holder.wide = holder.narrow
+    holder.narrow = false
+    readWide(holder.wide)
+}
+fn overlapEquality(): Int {
+    var holder = Holder { narrow: 42, wide: true, valid: true }
+    let copy = identity(holder)
+    holder.valid = holder == copy
+    if holder.valid { classify(holder.narrow) } else { -1 }
+}
+fn widenedEquality(): Int {
+    let narrow: Payload | Bool = Payload { number: 42, valid: true }
+    let wide: Payload | Empty | Bool = narrow
+    let direct: Bool | Empty | Payload = Payload { valid: true, number: 42 }
+    if same(wide, direct) { 42 } else { -1 }
+}
+fn clearInactive(): Int {
+    var value: Payload | Bool = Payload { number: 123, valid: true }
+    value = false
+    let wide: Payload | Empty | Bool = value
+    let expected: Payload | Empty | Bool = false
+    if same(wide, expected) { 42 } else { -1 }
+}
+fn recursive(value: Int | Bool, depth: Int): Int | Bool {
+    if depth == 0 { value } else { recursive(value, depth - 1) }
+}
+fn recursion(): Int { classify(recursive(42, 3)) }
+fn loopValues(): Int {
+    var value: Int | Bool = false
+    var index = 0
+    for index < 4 {
+        value = index
+        value = true
+        index += 1
+    }
+    classify(value)
+}
+fn unionCase(value: Int): Int {
+    let item: Int | Bool = if value > 0 { value } else { false }
+    readWide(widen(item))
+}
+fn narrowFailure(value: Int): Int ! (Missing | Invalid) {
+    if value < 0 {
+        fail Missing {}
+    }
+    if value == 0 {
+        fail Invalid { code: 41 }
+    }
+    42
+}
+fn forwardFailure(value: Int): Int ! (Missing | Invalid | Empty) {
+    let result = narrowFailure(value)?
+    _ = 1 / value
+    result
+}
+fn errorCase(value: Int): Int {
+    match forwardFailure(value) {
+        ok(number) => number
+        err(Missing {}) => -1
+        err(Invalid { code }) => code
+        err(Empty {}) => -2
+    }
+}
+fn earlyError(): Int { errorCase(0) + 1 }
+fn resultUnion(): Int {
+    let result: (Int | Bool) ! (Missing | Invalid) = ok(42)
+    match identity(result) {
+        ok(value) => classify(value)
+        err(_) => -1
+    }
+}
+fn resultMember(): Int {
+    let result: Int ! Missing = ok(42)
+    let value: Bool | Result[Int, Missing] = result
+    match identity(value) {
+        Result[Int, Missing](ok(number)) => number
+        _ => -1
+    }
+}
+fn numericErrorMember(): Int {
+    let value: Bool | NumericConversionError = NumericConversionError.OutOfRange
+    match identity(value) {
+        NumericConversionError(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+fn narrowMember(): Int {
+    let value: Int8 | UInt32 | Byte | Bool = 4294967295u32
+    match identity(value) {
+        UInt32(number) => Int(number)
+        _ => -1
+    }
+}
+fn differentWidths(): Int {
+    let signed: Int8 | UInt8 = 42i8
+    let unsigned: Int8 | UInt8 = 42u8
+    if signed != unsigned { 42 } else { -1 }
+}
+fn narrowOverflow(): Int {
+    let number: UInt8 = 255u8 + 1u8
+    let value: UInt8 | Bool = number
+    match value {
+        UInt8(item) => Int(item)
+        _ => -1
+    }
+}
+alias Normalized = Int | Never | Int
+fn normalizedAlias(): Int {
+    let value: Normalized = 42
+    value
+}
+fn trapUnion(): Int | Bool {
+    let number: Int = 1 / 0
+    number
+}
+fn discardedTrap(): Int {
+    _ = trapUnion()
+    42
+}
+fn overflowMember(): Int {
+    let number: Int = 9223372036854775807 + 1
+    let value: Int | Bool = number
+    classify(value)
+}
+fn main() {}
