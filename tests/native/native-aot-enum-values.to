@@ -1,0 +1,286 @@
+enum AppError {
+    Missing
+    Invalid(Int)
+}
+
+enum Answer[T] {
+    Empty
+    Value(T)
+    Named { value: T, valid: Bool }
+}
+
+fn choose(value: Int): Answer[Int] {
+    if value < 0 { Answer[Int].Empty } else { Answer[Int].Value(value) }
+}
+
+fn read(value: Answer[Int]): Int ! AppError {
+    match value {
+        Answer[Int].Empty => fail AppError.Missing
+        Answer[Int].Value(item) => item
+        Answer[Int].Named { value: item, valid } => {
+            if valid { item } else {
+                fail AppError.Invalid(item)
+            }
+        }
+    }
+}
+
+fn enumValue(value: Int): Int {
+    match read(choose(value)) {
+        ok(item) => item
+        err(AppError.Missing) => -1
+        err(AppError.Invalid(item)) => item - 1
+    }
+}
+
+type Payload = { number: Int, flag: Bool }
+type Empty = {}
+type Box[T] = { item: T }
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+enum Only { Present }
+enum Mixed {
+    Missing
+    Pair(Int8, UInt16, Bool)
+    Record { payload: Payload, small: Int32 }
+    Empty(Empty, Unit)
+}
+enum Either[A, B] {
+    First(A)
+    Second { value: B }
+    Neither
+}
+enum Nested {
+    Empty
+    Value(Answer[Payload]?, Payload ! AppError)
+}
+enum Phantom[T] {
+    Empty
+    Value(Int)
+}
+
+fn identity[T: Copy](value: T): T { value }
+fn same[T: Copy + Equatable](left: T, right: T): Bool { left == right }
+fn answerIdentity[T: Copy](value: Answer[T]): Answer[T] { value }
+fn first[A: Copy, B: Copy](value: Either[A, B], fallback: A): A {
+    match value {
+        Either[A, B].First(item) => item
+        Either[A, B].Second { value: _ } => fallback
+        Either[A, B].Neither => fallback
+    }
+}
+fn propagate[T: Copy, E: Copy](value: T ! E): T ! E { value? }
+
+fn unitVariants(): Int {
+    let copied = identity(Color.Blue)
+    if copied != Color.Red and copied != Color.Green and same(copied, Color.Blue) {
+        match copied {
+            Color.Blue => 42
+            _ => -1
+        }
+    } else { -2 }
+}
+fn singleVariant(): Int {
+    match identity(Only.Present) {
+        Only.Present => 42
+    }
+}
+fn positional(): Int {
+    match identity(Mixed.Pair(-7i8, 300u16, true)) {
+        Mixed.Pair(small, wide, true) => Int(small) + Int(wide)
+        _ => -1
+    }
+}
+fn recordVariant(): Int {
+    let item = Mixed.Record { small: 9i32, payload: Payload { number: 33, flag: true } }
+    match identity(item) {
+        Mixed.Record { payload: data, small } if data.flag => data.number + Int(small)
+        _ => -1
+    }
+}
+fn emptyPayloads(): Int {
+    let item = identity(Mixed.Empty(Empty {}, ()))
+    if same(item, Mixed.Empty(Empty {}, ())) {
+        match item {
+            Mixed.Empty(_, _) => 42
+            _ => -1
+        }
+    } else { -2 }
+}
+fn copyAndReplace(): Int {
+    var original = Mixed.Pair(-7i8, 300u16, true)
+    let copy = identity(original)
+    original = Mixed.Record { payload: Payload { number: 42, flag: true }, small: 8i32 }
+    original = Mixed.Missing
+    if copy == Mixed.Pair(-7i8, 300u16, true) and same(original, Mixed.Missing) {
+        42
+    } else { -1 }
+}
+fn clearInactivePayloads(): Int {
+    var value = Mixed.Record { payload: Payload { number: 123, flag: true }, small: 90i32 }
+    value = Mixed.Pair(-7i8, 300u16, false)
+    let pairEqual = same(value, Mixed.Pair(-7i8, 300u16, false))
+    value = Mixed.Empty(Empty {}, ())
+    let emptyEqual = same(value, Mixed.Empty(Empty {}, ()))
+    value = Mixed.Missing
+    if pairEqual and emptyEqual and same(value, Mixed.Missing) { 42 } else { -1 }
+}
+fn enumInRecord(): Int {
+    var box = Box[Answer[Int]] { item: Answer[Int].Value(10) }
+    let old = box
+    box.item = Answer[Int].Named { valid: true, value: 32 }
+    match (old.item, box.item) {
+        (Answer[Int].Value(a), Answer[Int].Named { value: b, valid: true }) => a + b
+        _ => -1
+    }
+}
+fn enumInUpdatedRecord(): Int {
+    let original = Box[Mixed] { item: Mixed.Pair(-7i8, 300u16, true) }
+    let copy = original with { item: Mixed.Missing }
+    if original.item != copy.item and copy.item == Mixed.Missing { 42 } else { -1 }
+}
+fn equalityOverlap(): Int {
+    var state = (true, Answer[Int].Value(42))
+    state.0 = same(state.1, Answer[Int].Value(42))
+    if state.0 { 42 } else { -1 }
+}
+fn unequalFields(): Int {
+    let base = Mixed.Record { payload: Payload { number: 42, flag: true }, small: 8i32 }
+    if base != Mixed.Record { payload: Payload { number: 41, flag: true }, small: 8i32 }
+        and base != Mixed.Record { payload: Payload { number: 42, flag: false }, small: 8i32 }
+        and base != Mixed.Record { payload: Payload { number: 42, flag: true }, small: 9i32 }
+        and base != Mixed.Pair(8i8, 42u16, true) { 42 } else { -1 }
+}
+fn nestedValues(): Int {
+    let value = Nested.Value(
+        some(Answer[Payload].Named { valid: true, value: Payload { number: 20, flag: true } }),
+        ok(Payload { number: 22, flag: false })
+    )
+    match identity(value) {
+        Nested.Value(some(Answer[Payload].Named { value: a, valid: true }), ok(b)) => a.number + b.number
+        _ => -1
+    }
+}
+fn nestedInactive(): Int {
+    var item = Nested.Value(some(Answer[Payload].Empty), err(AppError.Invalid(37)))
+    item = Nested.Empty
+    if same(item, Nested.Empty) { 42 } else { -1 }
+}
+fn genericEnums(): Int {
+    let a = answerIdentity(Answer[Int].Value(42))
+    let b = answerIdentity(Answer[Bool].Named { value: true, valid: true })
+    let c = identity(Either[Answer[Int], Mixed].First(a))
+    match (first(c, Answer[Int].Empty), b) {
+        (Answer[Int].Value(number), Answer[Bool].Named { value: true, valid: true }) => number
+        _ => -1
+    }
+}
+fn multipleTypeArguments(): Int {
+    let a = first(Either[Int, Bool].First(20), 0)
+    let b = first(Either[Int, Bool].Second { value: true }, 22)
+    let c = first(Either[Int, Bool].Neither, 0)
+    a + b + c
+}
+fn unusedTypeArguments(): Int {
+    let a = identity(Phantom[Int].Value(20))
+    let b = identity(Phantom[Bool].Value(22))
+    match (a, b) {
+        (Phantom[Int].Value(x), Phantom[Bool].Value(y)) => x + y
+        _ => -1
+    }
+}
+fn customFailure(value: Int): Payload ! AppError {
+    if value <= 0 {
+        fail AppError.Invalid(41)
+    }
+    Payload { number: 42, flag: true }
+}
+fn forwardFailure(value: Int): Payload ! AppError {
+    let result = propagate(customFailure(value))?
+    _ = 1 / value
+    result
+}
+fn customErrorCase(value: Int): Int {
+    match forwardFailure(value) {
+        ok(payload) => payload.number
+        err(AppError.Invalid(number)) => number
+        err(AppError.Missing) => -1
+    }
+}
+fn returnedError(): Int {
+    match read(Answer[Int].Named { value: 43, valid: false }) {
+        err(AppError.Invalid(value)) => value - 1
+        _ => -1
+    }
+}
+fn maybe(value: Answer[Int]?): Answer[Int]? { identity(value?) }
+fn optionalEnum(): Int {
+    match maybe(some(Answer[Int].Value(42))) {
+        some(Answer[Int].Value(number)) => number
+        _ => -1
+    }
+}
+fn absentEnum(): Int {
+    match maybe(none) {
+        none => 42
+        _ => -1
+    }
+}
+fn recurse(value: Answer[Int], depth: Int): Answer[Int] {
+    if depth <= 0 { value } else { recurse(value, depth - 1) }
+}
+fn recursiveCalls(): Int {
+    match recurse(Answer[Int].Value(42), 7) {
+        Answer[Int].Value(number) => number
+        _ => -1
+    }
+}
+fn loopCalls(): Int {
+    var value = Answer[Int].Empty
+    var count = 0
+    for count < 5 {
+        value = answerIdentity(Answer[Int].Named { valid: true, value: count })
+        count += 1
+    }
+    match value {
+        Answer[Int].Named { value: 4, valid: true } => 42
+        _ => -1
+    }
+}
+fn discardedCall(): Int {
+    _ = answerIdentity(Answer[Int].Value(42))
+    _ = identity(Only.Present)
+    42
+}
+fn narrowPayloads(): Int {
+    let a = Answer[Int8].Value(-128i8)
+    let b = Answer[UInt32].Named { value: 4294967295u32, valid: true }
+    match (answerIdentity(a), answerIdentity(b)) {
+        (Answer[Int8].Value(small), Answer[UInt32].Named { value: large, valid: true }) => Int(small) + Int(large)
+        _ => -1
+    }
+}
+fn overflowPayload(): Int {
+    let value = Answer[Int8].Value(127i8 + 1i8)
+    match value {
+        Answer[Int8].Value(number) => Int(number)
+        _ => -1
+    }
+}
+fn trappedReturn(value: Int): Answer[Int] { Answer[Int].Value(1 / value) }
+fn discardedTrap(): Int {
+    _ = trappedReturn(0)
+    42
+}
+fn propagatedTrap(): Int {
+    match propagate(read(trappedReturn(0))) {
+        ok(value) => value
+        _ => -1
+    }
+}
+
+fn main() {}

@@ -6610,6 +6610,90 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn native_enum_values_preserve_variants_custom_errors_and_generic_calls() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-enum-values.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+                continue;
+            }
+            assert!(
+                function.supported,
+                "{}: {:?}",
+                function.ordinal, function.unsupported
+            );
+            for block in &function.blocks {
+                assert!(!matches!(
+                    block.terminator,
+                    crate::mir::MirBackendTerminator::SwitchTag { .. }
+                ));
+                assert!(block.statements.iter().all(|statement| !matches!(
+                    statement,
+                    crate::mir::MirBackendStatement::Assign {
+                        value: crate::mir::MirBackendRvalue::Aggregate { .. },
+                        ..
+                    }
+                )));
+            }
+        }
+    }
+
+    #[test]
+    fn native_enum_values_reject_unsupported_inactive_variants_and_loans() {
+        for declaration in [
+            "enum Value { Empty\n Item(String) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Float) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(UInt64) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Int | Bool) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Next(Value) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Int) }\nfn source(value: ref Value): Value { value }",
+            "enum Value[T] { Empty\n Item(T) }\nfn identity[T: Copy](value: Value[T]): Value[T] { value }\nfn source(value: Int): Value[String] { identity(Value[String].Empty) }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let mut rejected = 0;
+            for function in backend
+                .functions
+                .iter()
+                .filter(|function| !function.parameters.is_empty())
+            {
+                assert!(!function.supported, "{declaration}: {}", function.ordinal);
+                rejected += 1;
+            }
+            assert!(rejected > 0, "{declaration}: no callable was checked");
+        }
+    }
+
+    #[test]
     fn native_sum_values_reject_unadmitted_payloads_and_parameter_modes() {
         for declaration in [
             "fn source(value: UInt64): UInt64? { some(value) }",
@@ -6968,6 +7052,44 @@ fn main(): !env.EnvError {
                     )))
             );
         }
+    }
+
+    #[test]
+    fn enum_record_initializers_evaluate_in_source_order_and_store_in_declaration_order() {
+        let output = execute(operation_request(
+            Operation::Run,
+            br#"
+enum Pair[T] {
+    Empty
+    Named { first: T, second: T }
+}
+fn main() {
+    var counter = 0
+    var next = (): Int {
+        counter += 1
+        counter
+    }
+    let pair = Pair[Int].Named { second: next(), first: next() }
+    match pair {
+        Pair[Int].Named { first, second } => {
+            assert(first == 2)
+            assert(second == 1)
+        }
+        Pair[Int].Empty => assert(false)
+    }
+    assert(next() == 3)
+}
+"#,
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
     }
 
     #[test]

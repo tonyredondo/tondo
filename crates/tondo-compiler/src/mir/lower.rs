@@ -153,9 +153,40 @@ pub fn lower_to_mir(
             ))
         })
         .collect();
+    let enum_variants = hir
+        .declarations()
+        .filter_map(|(_, declaration)| {
+            let crate::hir::HirTypeDeclarationKind::Nominal(nominal) = declaration.kind() else {
+                return None;
+            };
+            let HirNominalShape::Enum { variants } = nominal.shape() else {
+                return None;
+            };
+            Some((
+                nominal.self_type(),
+                variants
+                    .iter()
+                    .map(|variant| crate::mir::native_aggregates::EnumVariant {
+                        member: variant.member(),
+                        fields: match variant.payload() {
+                            HirVariantPayload::Unit => Vec::new(),
+                            HirVariantPayload::Tuple(types) => {
+                                types.iter().map(|ty| (None, *ty)).collect()
+                            }
+                            HirVariantPayload::Record(fields) => fields
+                                .iter()
+                                .map(|field| (Some(field.member()), field.ty()))
+                                .collect(),
+                        },
+                    })
+                    .collect(),
+            ))
+        })
+        .collect();
     let program = MirProgram {
         functions,
         record_fields,
+        enum_variants,
     };
     let verification = if let Some(capability_analysis) = capability_analysis.as_ref() {
         verify_mir_with_capability_analysis(
@@ -862,15 +893,36 @@ impl<'a> FunctionBuilder<'a> {
                         vec![None; items.len()]
                     }
                     HirVariantValue::Record(items) => {
-                        let mut members = Vec::with_capacity(items.len());
+                        let mut evaluated = BTreeMap::new();
                         for item in items {
                             let Some((next, value)) = self.lower_value(item.value(), current)?
                             else {
                                 return Ok(None);
                             };
                             current = next;
+                            evaluated.insert(item.member(), value);
+                        }
+                        // Keep textual evaluation order while giving every
+                        // constructor the declaration's field storage order.
+                        let HirVariantPayload::Record(declared) =
+                            self.variant_payload(*variant, span)?
+                        else {
+                            return Err(MirError::Construction {
+                                span,
+                                message: "variant initializer has a non-record payload".into(),
+                            });
+                        };
+                        let mut members = Vec::with_capacity(declared.len());
+                        for field in declared {
+                            let value = evaluated.remove(&field.member()).ok_or_else(|| {
+                                MirError::Construction {
+                                    span,
+                                    message: "variant initializer is missing a declared field"
+                                        .into(),
+                                }
+                            })?;
+                            members.push(Some(field.member()));
                             values.push(value);
-                            members.push(Some(item.member()));
                         }
                         members
                     }
@@ -5856,14 +5908,12 @@ impl<'a> FunctionBuilder<'a> {
         Ok(())
     }
 
-    fn variant_pattern_projections(
+    fn variant_payload(
         &self,
         member: crate::resolve::MemberId,
-        fields: &[HirPatternId],
         span: Span,
-    ) -> Result<Vec<MirProjectionKind>, MirError> {
-        let payload = self
-            .hir
+    ) -> Result<&HirVariantPayload, MirError> {
+        self.hir
             .declarations()
             .find_map(|(_, declaration)| {
                 let crate::hir::HirTypeDeclarationKind::Nominal(nominal) = declaration.kind()
@@ -5881,8 +5931,16 @@ impl<'a> FunctionBuilder<'a> {
             .ok_or_else(|| MirError::Construction {
                 span,
                 message: format!("variant member#{} has no HIR payload", member.index()),
-            })?;
-        match payload {
+            })
+    }
+
+    fn variant_pattern_projections(
+        &self,
+        member: crate::resolve::MemberId,
+        fields: &[HirPatternId],
+        span: Span,
+    ) -> Result<Vec<MirProjectionKind>, MirError> {
+        match self.variant_payload(member, span)? {
             HirVariantPayload::Unit if fields.is_empty() => Ok(Vec::new()),
             HirVariantPayload::Tuple(types) if types.len() == fields.len() => Ok((0..fields.len())
                 .map(|index| MirProjectionKind::VariantTuple {
@@ -8503,6 +8561,56 @@ mod tests {
     }
 
     #[test]
+    fn native_enum_normalization_preserves_all_declarations_and_source_mir() {
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-enum-values.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let types = hir.interner().len();
+        assert_eq!(mir.enum_variants.len(), 8);
+        assert!(
+            mir.enum_variants
+                .values()
+                .any(|variants| variants.len() == 4)
+        );
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(types, hir.interner().len());
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn native_enum_storage_and_tag_branches_share_the_expansion_budget() {
+        let (resolved, hir) = checked(
+            "enum Choice { Empty\n Pair(Int, Int) }\nfn classify(value: Choice): Int { match value {\n Choice.Empty => 0\n Choice.Pair(a, b) => a + b\n } }\nfn main() {}\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = mir.function(function_id(&resolved, "classify")).unwrap();
+        let records = crate::mir::native_aggregates::record_fields(&mir);
+        let mut minimum = None;
+        for limit in 0..128 {
+            match crate::mir::native_aggregates::lower_with_limit(
+                function,
+                hir.interner(),
+                &records,
+                &mir.enum_variants,
+                limit,
+            ) {
+                Ok(_) => {
+                    minimum = Some(limit);
+                    break;
+                }
+                Err(error) => assert_eq!(error, "aggregate:local-limit", "limit {limit}"),
+            }
+        }
+        assert!(minimum.is_some_and(|limit| limit > 3));
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_sum_normalization_preserves_verified_mir_and_type_identity() {
         let (resolved, hir) = checked(include_str!(
             "../../../../tests/native/native-aot-sum-values.to"
@@ -8533,6 +8641,7 @@ mod tests {
                     function,
                     hir.interner(),
                     &records,
+                    &mir.enum_variants,
                     limit,
                 ) {
                     Ok(_) => {

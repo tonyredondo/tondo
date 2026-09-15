@@ -13,6 +13,13 @@ const MAX_ADDITIONAL_LOCALS: u32 = 65_536;
 const MAX_LAYOUT_DEPTH: u32 = 64;
 
 pub(super) type RecordFields = BTreeMap<TypeId, Vec<(MemberId, TypeId)>>;
+pub(super) type EnumVariants = BTreeMap<TypeId, Vec<EnumVariant>>;
+
+#[derive(Debug, Clone)]
+pub(super) struct EnumVariant {
+    pub member: MemberId,
+    pub fields: Vec<(Option<MemberId>, TypeId)>,
+}
 
 pub(super) fn record_fields(program: &MirProgram) -> RecordFields {
     let mut records = program.record_fields.clone();
@@ -52,6 +59,8 @@ enum Field {
     ResultOk,
     ResultErr,
     NumericError,
+    VariantTuple(MemberId, u32),
+    VariantRecord(MemberId, MemberId),
 }
 
 struct Layout {
@@ -59,6 +68,7 @@ struct Layout {
     width: u32,
     height: u32,
     children: Vec<(Field, Rc<Layout>)>,
+    variants: Vec<MemberId>,
 }
 
 impl Layout {
@@ -66,6 +76,7 @@ impl Layout {
         ty: TypeId,
         interner: &TypeInterner,
         records: &RecordFields,
+        enums: &EnumVariants,
         cache: &mut BTreeMap<TypeId, Rc<Self>>,
         depth: u32,
     ) -> Option<Rc<Self>> {
@@ -97,6 +108,19 @@ impl Layout {
             } if arguments.is_empty() => {
                 vec![(Field::NumericError, interner.scalar(ScalarType::Int))]
             }
+            TypeKind::Nominal { .. } if enums.contains_key(&ty) => {
+                let mut fields = vec![(Field::Tag, interner.scalar(ScalarType::Int))];
+                for variant in &enums[&ty] {
+                    for (index, (member, ty)) in variant.fields.iter().enumerate() {
+                        let field = match member {
+                            Some(member) => Field::VariantRecord(variant.member, *member),
+                            None => Field::VariantTuple(variant.member, index as u32),
+                        };
+                        fields.push((field, *ty));
+                    }
+                }
+                fields
+            }
             TypeKind::Nominal { .. } => {
                 let fields = records.get(&ty)?;
                 if fields.is_empty() {
@@ -119,7 +143,7 @@ impl Layout {
         let mut width = u32::from(fields.is_empty());
         let mut height = 0;
         for (field, ty) in fields {
-            let child = Self::build(ty, interner, records, cache, depth + 1)?;
+            let child = Self::build(ty, interner, records, enums, cache, depth + 1)?;
             width = width
                 .checked_add(child.width)
                 .filter(|width| *width <= MAX_ADDITIONAL_LOCALS)?;
@@ -131,6 +155,10 @@ impl Layout {
             width,
             height,
             children,
+            variants: enums
+                .get(&ty)
+                .map(|variants| variants.iter().map(|variant| variant.member).collect())
+                .unwrap_or_default(),
         });
         cache.insert(ty, Rc::clone(&layout));
         Some(layout)
@@ -204,14 +232,16 @@ pub(super) fn lower(
     function: &MirFunction,
     interner: &TypeInterner,
     records: &RecordFields,
+    enums: &EnumVariants,
 ) -> LowerResult<LoweredFunction> {
-    lower_with_limit(function, interner, records, MAX_ADDITIONAL_LOCALS)
+    lower_with_limit(function, interner, records, enums, MAX_ADDITIONAL_LOCALS)
 }
 
 pub(super) fn lower_with_limit(
     function: &MirFunction,
     interner: &TypeInterner,
     records: &RecordFields,
+    enums: &EnumVariants,
     additional_locals: u32,
 ) -> LowerResult<LoweredFunction> {
     let next = u32::try_from(function.locals.len()).map_err(|_| "aggregate:local-limit")?;
@@ -222,7 +252,7 @@ pub(super) fn lower_with_limit(
     };
     let mut cache = BTreeMap::new();
     for (index, local) in function.locals.iter().enumerate() {
-        let Some(layout) = Layout::build(local.ty, interner, records, &mut cache, 0) else {
+        let Some(layout) = Layout::build(local.ty, interner, records, enums, &mut cache, 0) else {
             continue;
         };
         if layout.children.is_empty() {
@@ -302,7 +332,8 @@ pub(super) fn lower_with_limit(
             ..
         } = &mut block.terminator.kind
             && matches!(operation.kind, MirOperationKind::Call { .. })
-            && let Some(layout) = Layout::build(operation.ty, interner, records, &mut cache, 0)
+            && let Some(layout) =
+                Layout::build(operation.ty, interner, records, enums, &mut cache, 0)
             && !layout.children.is_empty()
         {
             let first = if let Some(place) = destination.as_ref() {
@@ -376,6 +407,12 @@ impl NativeLocals {
                 MirProjectionKind::OptionValue => Field::OptionValue,
                 MirProjectionKind::ResultOkValue => Field::ResultOk,
                 MirProjectionKind::ResultErrValue => Field::ResultErr,
+                MirProjectionKind::VariantTuple { variant, index } => {
+                    Field::VariantTuple(variant, index)
+                }
+                MirProjectionKind::VariantField { variant, field } => {
+                    Field::VariantRecord(variant, field)
+                }
                 _ => return Err("aggregate:projection-storage"),
             };
             let (offset, child) = layout.child(key).ok_or("aggregate:projection-shape")?;

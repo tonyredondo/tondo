@@ -69,6 +69,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/sums-probe.json" "$tmp/sums-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/sums-probe.json" --output "$tmp/sums-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-enum-values.to > "$tmp/enums-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-enum-values.to > "$tmp/enums-repeated.json"
+cmp "$tmp/enums-probe.json" "$tmp/enums-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/enums-probe.json" --output "$tmp/enums-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -214,6 +221,39 @@ for case in cases:
     else:
         assert name in ['convertedOverflow', 'discardedTraps', 'successStillTraps']
         assert case['native_status'] == 'trapped'
+enums = json.loads((root / 'enums-report.json').read_text())
+assert enums['format'] == report['format'] and enums['backend'] == 'cranelift'
+assert enums['boundary'] == report['boundary']
+assert enums['n1_claim'] is False and enums['production_runtime_linked'] is False
+cases = enums['observations']
+assert len(cases) == 38 and len({case['function_ordinal'] for case in cases}) == 28
+assert sum(case['native_status'] == 'trapped' for case in cases) == 3
+assert all(case['native_result'] == case['vm_result'] for case in cases)
+if 'llvm_comparison' in enums:
+    comparison = enums['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
+enum_probe = json.loads((root / 'enums-probe.json').read_text())
+names = {symbol['function']: symbol['name'].split('::value::')[-1]
+         for symbol in enum_probe['fixtures'][0]['mir']['backend']['debug']['symbols']}
+for case in cases:
+    name = names[case['function_ordinal']]
+    if name in ['discardedTrap', 'overflowPayload', 'propagatedTrap']:
+        assert case['arguments'] == [] and case['native_status'] == 'trapped', name
+        continue
+    if name == 'enumValue':
+        value, = case['arguments']
+        expected = value if value >= 0 else -1
+    elif name == 'customErrorCase':
+        value, = case['arguments']
+        expected = 42 if value > 0 else 41
+    else:
+        assert case['arguments'] == [], name
+        expected = {'positional': 293, 'narrowPayloads': 4294967167}.get(name, 42)
+    assert case['native_status'] == 'returned' and case['native_result'] == expected, name
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -344,20 +384,46 @@ for name, function_name in [('sum-tag', 'maybe'), ('sum-inactive', 'clearedOptio
                       if 'SwitchBool' in block['terminator'])
         branch['condition'] = {'Constant': {'Bool': name == 'sum-propagation'}}
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+for name, function_name in [('enum-tag', 'choose'), ('enum-inactive', 'clearInactivePayloads'),
+                            ('enum-field', 'recordVariant'), ('enum-propagation', 'forwardFailure')]:
+    candidate = copy.deepcopy(enum_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    assignments = [statement['Assign'] for block in function['blocks']
+                   for statement in block['statements'] if 'Assign' in statement]
+    if name == 'enum-tag':
+        assignment = next(row for row in assignments if row['destination'] == function['return_fields'][0])
+        assignment['value'] = {'Use': {'Constant': {'Integer': '1'}}}
+    elif name == 'enum-inactive':
+        assignment = next(row for row in reversed(assignments)
+                          if row['value'] == {'Use': {'Constant': {'Bool': False}}})
+        assignment['value'] = {'Use': {'Constant': {'Bool': True}}}
+    elif name == 'enum-field':
+        assignment = next(row for row in assignments
+                          if row['value'] == {'Use': {'Constant': {'Integer': '9i32'}}})
+        assignment['value'] = {'Use': {'Constant': {'Integer': '10i32'}}}
+    else:
+        branch = next(block['terminator']['SwitchBool'] for block in function['blocks']
+                      if 'SwitchBool' in block['terminator'])
+        branch['condition'] = {'Constant': {'Bool': True}}
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
     result-width aliased-results scalar-result-protocol missing-successor \
     missing-template template-admitted duplicate-instance incomplete-instance call-template equality-reduction \
     omitted-unit-call omitted-empty-call integer-range integer-shift integer-complement \
-    sum-tag sum-inactive sum-propagation sum-conversion; do
+    sum-tag sum-inactive sum-propagation sum-conversion \
+    enum-tag enum-inactive enum-field enum-propagation; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
         exit 1
     fi
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
-    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* ]]; then
+    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -369,7 +435,8 @@ cp "$tmp/equality-report.json" "$target_dir/reliability/evidence/native-source-e
 cp "$tmp/units-report.json" "$target_dir/reliability/evidence/native-source-units.json"
 cp "$tmp/integers-report.json" "$target_dir/reliability/evidence/native-source-integers.json"
 cp "$tmp/sums-report.json" "$target_dir/reliability/evidence/native-source-sums.json"
-echo "native source scalars: OK (316 Cranelift cases, 49 arithmetic traps, 24 rejected evidence changes)"
+cp "$tmp/enums-report.json" "$target_dir/reliability/evidence/native-source-enums.json"
+echo "native source scalars: OK (354 Cranelift cases, 52 arithmetic traps, 28 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregates and generic calls: LLVM comparison OK (271 cases, 46 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (309 cases, 49 arithmetic traps)"
 fi

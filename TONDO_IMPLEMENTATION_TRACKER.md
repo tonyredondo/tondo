@@ -5714,12 +5714,19 @@ pueden retrasar el primer backend correcto.
   conversions between admitted integers return `OutOfRange` on failure; they
   no longer require the evaluation runtime. Tag tests and conversion guards
   share the existing storage expansion budget and leave verified MIR unchanged.
-  The focused `scripts/native-source-scalars-test.sh` compares 316 Cranelift
-  observations with the hosted VM, including 49 arithmetic traps, without an evaluation
+  Nominal enums now retain every declared variant and lower unit, positional and
+  named payloads into tagged scalar value storage. Nested and generic enums,
+  unused type arguments, custom Result errors, matching, copies, equality,
+  variant replacement and ordinary/generic calls use the same bounded route.
+  Unsupported inactive payloads reject the whole enum layout. Enum record
+  initializers now preserve textual evaluation and declaration-order storage;
+  the hosted regression also verifies the order with stateful calls.
+  The focused `scripts/native-source-scalars-test.sh` compares 354 Cranelift
+  observations with the hosted VM, including 52 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 271 aggregate-call, generic-call, equality, Unit/empty-record, integer and sum cases.
-  Managed fields, `UInt64`/float value layouts, generic closures and
+  the 309 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum and enum cases.
+  Managed fields, structural unions, recursive value layouts, `UInt64`/float layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

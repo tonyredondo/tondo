@@ -25,6 +25,7 @@ pub(super) struct NativeProgram<'a> {
     pub instances: Vec<Instance<'a>>,
     pub interner: Cow<'a, TypeInterner>,
     pub records: native_aggregates::RecordFields,
+    pub enums: native_aggregates::EnumVariants,
     pub ordinals: CallableOrdinals,
 }
 
@@ -45,6 +46,7 @@ pub(super) fn specialize_with_limits<'a>(
         instances: Vec::new(),
         interner: Cow::Borrowed(interner),
         records: native_aggregates::record_fields(program),
+        enums: program.enum_variants.clone(),
         ordinals: BTreeMap::new(),
     };
     let templates = program
@@ -139,6 +141,10 @@ pub(super) fn specialize_with_limits<'a>(
                 cache: BTreeMap::new(),
                 records: &mut native.records,
                 declarations: &program.record_fields,
+                enums: &mut native.enums,
+                enum_declarations: &program.enum_variants,
+                visiting: BTreeSet::new(),
+                expanded: BTreeSet::new(),
                 type_limit: interner.len().saturating_add(MAX_NEW_TYPES),
             };
             let rejection = substitution.function(&mut body).err();
@@ -152,6 +158,34 @@ pub(super) fn specialize_with_limits<'a>(
             });
         }
         cursor += 1;
+    }
+    if !program.enum_variants.is_empty() {
+        // Ordinary functions may use generic enums without constructing every
+        // variant. Populate their complete declarations before storage lowering.
+        let mut substitution = Substitute {
+            arguments: TypeSubstitution::new(Vec::new()),
+            interner: native.interner.to_mut(),
+            cache: BTreeMap::new(),
+            records: &mut native.records,
+            declarations: &program.record_fields,
+            enums: &mut native.enums,
+            enum_declarations: &program.enum_variants,
+            visiting: BTreeSet::new(),
+            expanded: BTreeSet::new(),
+            type_limit: interner.len().saturating_add(MAX_NEW_TYPES),
+        };
+        for instance in &mut native.instances {
+            if instance.rejection.is_some()
+                || matches!(instance.generics, Some(MirBackendGenerics::Template { .. }))
+            {
+                continue;
+            }
+            instance.rejection = instance
+                .function
+                .locals
+                .iter()
+                .find_map(|local| substitution.record(local.ty, 0).err());
+        }
     }
     native
 }
@@ -228,6 +262,10 @@ struct Substitute<'a> {
     cache: BTreeMap<TypeId, TypeId>,
     records: &'a mut native_aggregates::RecordFields,
     declarations: &'a native_aggregates::RecordFields,
+    enums: &'a mut native_aggregates::EnumVariants,
+    enum_declarations: &'a native_aggregates::EnumVariants,
+    visiting: BTreeSet<TypeId>,
+    expanded: BTreeSet<TypeId>,
     type_limit: usize,
 }
 
@@ -261,6 +299,18 @@ impl Substitute<'_> {
         if depth > MAX_TYPE_DEPTH {
             return Err("generic:record-depth");
         }
+        if self.expanded.contains(&ty) || !self.visiting.insert(ty) {
+            return Ok(());
+        }
+        let result = self.record_inner(ty, depth);
+        self.visiting.remove(&ty);
+        if result.is_ok() {
+            self.expanded.insert(ty);
+        }
+        result
+    }
+
+    fn record_inner(&mut self, ty: TypeId, depth: usize) -> Result<()> {
         let kind = self
             .interner
             .kind(ty)
@@ -271,7 +321,36 @@ impl Substitute<'_> {
                 identity,
                 arguments,
             } => {
-                if self.records.contains_key(&ty) {
+                if let Some(fields) = self.records.get(&ty).cloned() {
+                    for (_, field) in fields {
+                        self.record(field, depth + 1)?;
+                    }
+                    return Ok(());
+                }
+                let variants = self.enums.get(&ty).cloned().or_else(|| {
+                    self.enum_declarations.iter().find_map(|(key, variants)| {
+                        match self.interner.kind(*key).ok()? {
+                            TypeKind::Nominal {
+                                identity: candidate,
+                                ..
+                            } if *candidate == identity => Some(variants.clone()),
+                            _ => None,
+                        }
+                    })
+                });
+                if let Some(mut variants) = variants {
+                    let substitution = TypeSubstitution::new(arguments);
+                    for variant in &mut variants {
+                        for (_, field) in &mut variant.fields {
+                            *field = substitution
+                                .apply(self.interner, *field)
+                                .map_err(|_| "generic:enum-substitution")?;
+                            concrete_type(self.interner, *field, 0)?;
+                            self.check_type_limit()?;
+                            self.record(*field, depth + 1)?;
+                        }
+                    }
+                    self.enums.insert(ty, variants);
                     return Ok(());
                 }
                 let declaration = self.declarations.iter().find_map(|(key, fields)| {
@@ -404,6 +483,14 @@ impl Substitute<'_> {
                 Ok(())
             }
             TypeKind::Nominal { .. } => {
+                if let Some(variants) = self.enums.get(&ty) {
+                    for variant in variants {
+                        for (_, field) in &variant.fields {
+                            self.value_type(*field, depth + 1)?;
+                        }
+                    }
+                    return Ok(());
+                }
                 let fields = self.records.get(&ty).ok_or("generic:value-storage")?;
                 for (_, field) in fields {
                     self.value_type(*field, depth + 1)?;
@@ -458,6 +545,7 @@ impl Substitute<'_> {
                 shape:
                     MirAggregateKind::Tuple
                     | MirAggregateKind::Record { .. }
+                    | MirAggregateKind::Variant { .. }
                     | MirAggregateKind::OptionNone
                     | MirAggregateKind::OptionSome
                     | MirAggregateKind::ResultOk

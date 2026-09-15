@@ -1,4 +1,4 @@
-//! Core sums use a tag and disjoint, initialized payload carriers. Inactive
+//! Sums use a tag and disjoint, initialized payload carriers. Inactive
 //! carriers are canonical zero values, so existing copies and structural
 //! equality can observe the full layout without reading uninitialized data.
 
@@ -12,6 +12,14 @@ fn integer(ty: TypeId, value: i64) -> MirOperand {
 }
 
 impl Layout {
+    fn variant_tag(&self, member: MemberId) -> LowerResult<u32> {
+        self.variants
+            .iter()
+            .position(|candidate| *candidate == member)
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or("enum:variant-identity")
+    }
+
     fn defaults(&self, interner: &TypeInterner, values: &mut Vec<MirOperand>) {
         if self.children.is_empty() {
             let kind = match interner.kind(self.ty) {
@@ -39,6 +47,11 @@ impl NativeLocals {
         layout: &Layout,
         interner: &TypeInterner,
     ) -> LowerResult<Option<Vec<MirOperand>>> {
+        if let MirAggregateKind::Variant { variant, fields } = shape {
+            return self
+                .enum_values(*variant, fields, payloads, layout, interner)
+                .map(Some);
+        }
         let (tag_field, tag, payload_field) = match shape {
             MirAggregateKind::OptionNone => (Field::Tag, 0, None),
             MirAggregateKind::OptionSome => (Field::Tag, 1, Some(Field::OptionValue)),
@@ -72,6 +85,43 @@ impl NativeLocals {
             return Err("sum:constructor-arity");
         }
         Ok(Some(values))
+    }
+
+    fn enum_values(
+        &self,
+        variant: MemberId,
+        fields: &[Option<MemberId>],
+        payloads: &[MirOperand],
+        layout: &Layout,
+        interner: &TypeInterner,
+    ) -> LowerResult<Vec<MirOperand>> {
+        let tag = layout.variant_tag(variant)?;
+        let expected = layout.children.iter().filter(|(field, _)| {
+            matches!(field, Field::VariantTuple(member, _) | Field::VariantRecord(member, _) if *member == variant)
+        }).count();
+        if fields.len() != expected || payloads.len() != expected {
+            return Err("enum:constructor-arity");
+        }
+        let mut values = Vec::with_capacity(layout.width as usize);
+        layout.defaults(interner, &mut values);
+        let (offset, tag_layout) = layout.child(Field::Tag).ok_or("enum:constructor-tag")?;
+        values[offset as usize] = integer(tag_layout.ty, i64::from(tag));
+        for (index, (field, payload)) in fields.iter().zip(payloads).enumerate() {
+            let key = match field {
+                Some(field) => Field::VariantRecord(variant, *field),
+                None => Field::VariantTuple(variant, index as u32),
+            };
+            let (offset, child) = layout.child(key).ok_or("enum:constructor-field")?;
+            let replacement = self.values(payload)?;
+            if payload.ty != child.ty || replacement.len() != child.width as usize {
+                return Err("enum:constructor-type");
+            }
+            values.splice(
+                offset as usize..(offset + child.width) as usize,
+                replacement,
+            );
+        }
+        Ok(values)
     }
 
     pub(super) fn lower_tags(
@@ -110,19 +160,27 @@ impl NativeLocals {
                 ty: tag_layout.ty,
                 kind: MirOperandKind::Copy(scalar_place(first + offset, tag_layout.ty)),
             };
-            let cases = cases.clone();
+            let cases = cases
+                .iter()
+                .map(|(case, target)| {
+                    let discriminant = match case {
+                        MirTag::NumericConversionError(variant) if field == Field::NumericError => {
+                            variant.index()
+                        }
+                        MirTag::Variant(member) if field == Field::Tag => {
+                            layout.variant_tag(*member)?
+                        }
+                        _ if field == Field::Tag && layout.variants.is_empty() => {
+                            backend_tag_discriminant(*case).ok_or("sum:switch-tag")?
+                        }
+                        _ => return Err("sum:switch-tag"),
+                    };
+                    Ok((discriminant, *target))
+                })
+                .collect::<LowerResult<Vec<_>>>()?;
             let mut otherwise = *otherwise;
             let span = block.terminator.span;
-            for (index, (case, target)) in cases.iter().enumerate().rev() {
-                let discriminant = match case {
-                    MirTag::NumericConversionError(variant) if field == Field::NumericError => {
-                        variant.index()
-                    }
-                    _ if field == Field::Tag => {
-                        backend_tag_discriminant(*case).ok_or("sum:switch-tag")?
-                    }
-                    _ => return Err("sum:switch-tag"),
-                };
+            for (index, (discriminant, target)) in cases.iter().enumerate().rev() {
                 let condition = self.allocate(1)?;
                 let test = assign_rvalue(
                     span,
@@ -132,7 +190,7 @@ impl NativeLocals {
                         kind: MirRvalueKind::Binary {
                             operator: HirBinaryOperator::Equal,
                             left: tag.clone(),
-                            right: integer(tag.ty, i64::from(discriminant)),
+                            right: integer(tag.ty, i64::from(*discriminant)),
                         },
                     },
                 );

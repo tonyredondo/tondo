@@ -5,7 +5,7 @@
   "state": "open",
   "suite": {
     "path": "conformance/0.1/manifest.json",
-    "sha256": "5cac7116bf489c741c185b7eda3ab8072ab81529eb430f7cebf22572fe92941a"
+    "sha256": "77bbaf9cf14d52b394d5c44f7af0a43e2a484a857791c523eaca81d48f4d0ad4"
   },
   "specifications": [
     {

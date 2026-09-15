@@ -8,12 +8,12 @@ Both candidates consume one immutable `tondo-mir-backend/1` program, but
 synthetic storage cases do not prove that the frontend can produce those
 operations from Tondo source.
 
-## Source-driven value aggregates, sums, direct calls and equality
+## Source-driven value aggregates, enums, sums, direct calls and equality
 
 The compiler lowers local tuples and records whose leaves are `Int`, `Bool`, `Unit`,
 `Byte`, `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32`
 into independent scalar locals. Nested tuples/records and instantiated generic
-records use the same route. `T?` and `T ! E` recursively admit these value
+records use the same route. Nominal enums, `T?` and `T ! E` recursively admit these value
 layouts, including the closed `NumericConversionError` type. Construction, field reads and writes, copies,
 whole-value and nested-field replacement, `with` updates, branches and
 loop-carried values preserve value semantics.
@@ -78,6 +78,23 @@ padding and are never projected as active values. This invariant makes complete
 field copies and structural comparisons independent of previous local contents.
 There is no payload overlap, handle table, heap allocation or public ABI claim.
 
+Nominal enums retain every variant and its payload fields from verified HIR,
+including variants that a function never constructs. Their private integer tag
+is the declaration-order variant ordinal. Unit variants contribute no payload
+fields; every value still reserves the full layout, including inactive carriers.
+Positional and named payloads occupy disjoint carriers in declaration order.
+Variant and field identities remain tied to their source declarations. Record
+initializers evaluate in textual order before their operands are arranged in
+declaration order, for both ordinary records and enum variants.
+
+Concrete generic enums substitute every declared payload type, including nested
+records, enums and core sums. Unused type arguments retain nominal identity.
+Declaration traversal memoizes completed types and bounds recursive expansion;
+finite scalar storage must still satisfy the shared layout and local limits.
+An unsupported payload in any variant rejects the whole enum layout, even when
+the program constructs only a unit variant. Recursive value layouts remain
+outside this finite storage route.
+
 `some`/`none`, `ok`/`err`, implicit Option lifting, success returns and `fail`
 use this layout. Tag tests become integer comparisons and ordinary Boolean
 branches; payload projections resolve to their own scalar fields. Source `?`
@@ -140,11 +157,11 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 316 Cranelift observations across
-141 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+`scripts/native-source-scalars-test.sh` verifies 354 Cranelift observations across
+169 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
 16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
-43 Unit/empty-record cases, 67 fixed-width integer cases and 71 sum-value cases,
-including 49 arithmetic
+43 Unit/empty-record cases, 67 fixed-width integer cases, 71 sum-value cases and
+38 nominal-enum cases, including 52 arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -161,18 +178,20 @@ regressions remove the range check, corrupt signed shift reconstruction and wide
 Byte complement; each must likewise disagree with the VM. Four sum regressions
 change a tag, leave an inactive payload nonzero, bypass error propagation and
 remove a conversion range decision. Each must disagree with the VM without
-publishing a report. Reports are
+publishing a report. Four enum regressions change a variant tag, retain an
+inactive payload, alter a named payload field and bypass custom-error propagation;
+each must disagree with the VM without publishing a partial report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
-`native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`
-and `native-source-sums.json` under
+`native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`,
+`native-source-sums.json` and `native-source-enums.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 271 aggregate-call, generic-call, equality, Unit/empty-record, integer and sum cases through LLVM.
+the 309 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum and enum cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -199,7 +218,7 @@ nested records do not require a concrete source constructor. The source MIR,
 source interner and hosted bytecode lowering remain unchanged.
 
 The admitted signatures contain the scalar types listed above and the existing
-tuple/record value layouts, including empty nominal records, nested Option/Result
+tuple/record value layouts, including empty nominal records, nominal enums, nested Option/Result
 and `NumericConversionError`. Generic instances
 preserve concrete integer widths before arithmetic normalization and flattening.
 Managed values, loans, generic closures, suspension, dynamic trait dispatch and
@@ -278,7 +297,20 @@ outcomes supplement the VM/native comparison. Compiler tests also check
 immutable source MIR and types, shared expansion limits and rejection of
 unsupported widths, float representations and loan parameters.
 
-Managed fields, `UInt64`, floating-point representations and
+`tests/native/native-aot-enum-values.to` supplies 28 scalar entry functions and
+38 observations, including three traps. Unit, positional and named variants
+cover nested records/enums/options/results, independent copies, variant changes,
+inactive-carrier clearing, equality and overlapping comparison destinations.
+Ordinary and generic calls include multiple and unused type arguments, custom
+error propagation, recursion, loops and discarded results. Named fields appear
+in a different order from their declaration. Explicit results supplement the
+VM comparison; repeated probe processes must emit identical bytes. Compiler
+tests preserve complete declarations and source MIR, enforce the shared storage
+budget and reject inactive unsupported payloads and loan parameters. A hosted
+regression with a stateful closure verifies textual evaluation order and
+declaration-order field storage independently of native admission.
+
+Managed fields, structural unions, recursive value layouts, `UInt64`, floating-point representations and
 aggregate calls through suspension/spawn protocols
 remain unsupported. Loan operations, production
 runtime integration and the public native build/run

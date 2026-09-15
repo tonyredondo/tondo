@@ -87,6 +87,7 @@ pub struct MirProgram {
     // Typed declaration facts, retained before HIR is discarded. Generic
     // constructor instances supply their concrete field types separately.
     record_fields: native_aggregates::RecordFields,
+    enum_variants: native_aggregates::EnumVariants,
 }
 
 impl MirProgram {
@@ -212,6 +213,7 @@ impl MirProgram {
                     &native.interner,
                     &native.ordinals,
                     &native.records,
+                    &native.enums,
                 );
                 lowered.generics = instance.generics.clone();
                 if matches!(instance.generics, Some(MirBackendGenerics::Template { .. })) {
@@ -826,9 +828,9 @@ pub enum MirBackendTerminator {
         if_true: u32,
         if_false: u32,
     },
-    /// Dispatches on a core `Option`/`Result` discriminant. Other enum and
-    /// union tags remain outside the scalar adapter until their payload ABI
-    /// is lowered.
+    /// Dispatches on a core `Option`/`Result` runtime discriminant. Admitted
+    /// source value sums and nominal enums become scalar comparisons before
+    /// this representation; structural union storage remains unsupported.
     SwitchTag {
         value: MirBackendOperand,
         cases: Vec<(u32, u32)>,
@@ -910,10 +912,11 @@ fn backend_function(
     interner: &TypeInterner,
     callable_ordinals: &native_generics::CallableOrdinals,
     records: &native_aggregates::RecordFields,
+    enums: &native_aggregates::EnumVariants,
 ) -> MirBackendFunction {
     let mut unsupported = Vec::new();
     let function_values = backend_function_values(function, callable_ordinals);
-    let normalized = match native_aggregates::lower(function, interner, records) {
+    let normalized = match native_aggregates::lower(function, interner, records, enums) {
         Ok(lowered) => lowered,
         Err(reason) => {
             unsupported.push(reason.to_owned());
@@ -3230,6 +3233,7 @@ mod tests {
         let program = MirProgram {
             functions: BTreeMap::new(),
             record_fields: BTreeMap::new(),
+            enum_variants: BTreeMap::new(),
         };
         let summary = program.summary();
         assert_eq!(summary, MirSummary::default());
@@ -3270,6 +3274,7 @@ mod tests {
         let program = MirProgram {
             functions: BTreeMap::from([(function.id, function)]),
             record_fields: BTreeMap::new(),
+            enum_variants: BTreeMap::new(),
         };
         let backend = program.backend_program(&interner);
         let debug = backend
@@ -3316,6 +3321,7 @@ mod tests {
         let program = MirProgram {
             functions: BTreeMap::new(),
             record_fields: BTreeMap::new(),
+            enum_variants: BTreeMap::new(),
         };
         let (inventory, ordinals) = backend_source_inventory(&program, Some(&sources));
         assert_eq!(inventory[0].module, "alpha");
