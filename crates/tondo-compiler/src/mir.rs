@@ -804,6 +804,7 @@ pub enum MirBackendConstant {
     Integer(String),
     /// UInt64 spelling; native consumers preserve its raw 64-bit value.
     UnsignedInteger(String),
+    Float32(String),
     Float(String),
     Char(String),
     String(String),
@@ -1502,7 +1503,7 @@ fn backend_operation(
                 unsupported.push(format!("operator:{}", prefix_operator_name(*operator)));
             }
             MirBackendOperation::CheckedPrefix {
-                operator: prefix_operator_name(*operator).to_owned(),
+                operator: native_prefix_operator_name(*operator, operand.ty, interner),
                 operand: backend_operand(interner, operand, unsupported),
             }
         }
@@ -1836,7 +1837,13 @@ fn backend_operand(
                     MirBackendConstant::Integer(value.clone())
                 }
             }
-            MirConstant::Float(value) => MirBackendConstant::Float(value.clone()),
+            MirConstant::Float(value) => {
+                if operand.ty == interner.scalar(ScalarType::Float32) {
+                    MirBackendConstant::Float32(value.clone())
+                } else {
+                    MirBackendConstant::Float(value.clone())
+                }
+            }
             MirConstant::Char(value) => MirBackendConstant::Char(value.clone()),
             MirConstant::String(value) => MirBackendConstant::String(value.clone()),
             MirConstant::Named(_) => {
@@ -1938,7 +1945,7 @@ fn backend_rvalue(
                 unsupported.push(format!("operator:{}", prefix_operator_name(*operator)));
             }
             MirBackendRvalue::Prefix {
-                operator: prefix_operator_name(*operator).to_owned(),
+                operator: native_prefix_operator_name(*operator, operand.ty, interner),
                 operand: backend_operand(interner, operand, unsupported),
             }
         }
@@ -1966,7 +1973,7 @@ fn backend_rvalue(
             let conversion_kind = *conversion;
             let conversion = numeric_conversion_name(conversion_kind).to_owned();
             if !matches!(conversion_kind, NumericConversion::Identity)
-                && (!is_native_integer_scalar(&source) || !is_native_integer_scalar(&target))
+                && (!is_native_numeric_scalar(&source) || !is_native_numeric_scalar(&target))
             {
                 unsupported.push(format!(
                     "numeric-conversion:unsupported-representation:{source}->{target}"
@@ -2070,11 +2077,13 @@ fn backend_type_name(interner: &TypeInterner, ty: TypeId) -> String {
 }
 
 fn is_native_carrier_type(name: &str) -> bool {
-    if name.contains("Float") {
+    // Value aggregates have already been flattened. The historical managed
+    // evaluation bridge still has no floating-point payload representation.
+    if name.contains("Float") && !matches!(name, "Float" | "Float32") {
         return false;
     }
     matches!(name, "Int" | "Bool" | "Unit" | "String" | "Bytes")
-        || is_native_integer_scalar(name)
+        || is_native_numeric_scalar(name)
         || name.starts_with("Option[")
         || name.starts_with("Result[")
         || name.starts_with("Int?")
@@ -2093,12 +2102,16 @@ fn is_native_carrier_type(name: &str) -> bool {
 }
 
 /// Integer carriers preserve all 64 bits. UInt64 operations retain explicit
-/// unsigned semantics in the private native program; floats need another route.
+/// unsigned semantics in the private native program.
 fn is_native_integer_scalar(name: &str) -> bool {
     matches!(
         name,
         "Byte" | "Int8" | "Int16" | "Int32" | "Int" | "UInt8" | "UInt16" | "UInt32" | "UInt64"
     )
+}
+
+fn is_native_numeric_scalar(name: &str) -> bool {
+    is_native_integer_scalar(name) || matches!(name, "Float" | "Float32")
 }
 
 fn backend_aggregate_name(shape: &MirAggregateKind) -> &'static str {
@@ -2228,6 +2241,9 @@ fn native_binary_operator_name(
     interner: &TypeInterner,
 ) -> String {
     let name = binary_operator_name(operator);
+    if let Some(width) = native_float_width(left, interner) {
+        return format!("float{width}-{name}");
+    }
     if left == interner.scalar(ScalarType::UInt64)
         && matches!(
             operator,
@@ -2246,6 +2262,28 @@ fn native_binary_operator_name(
         format!("unsigned-{name}")
     } else {
         name.to_owned()
+    }
+}
+
+fn native_float_width(ty: TypeId, interner: &TypeInterner) -> Option<u32> {
+    if ty == interner.scalar(ScalarType::Float32) {
+        Some(32)
+    } else if ty == interner.scalar(ScalarType::Float) {
+        Some(64)
+    } else {
+        None
+    }
+}
+
+fn native_prefix_operator_name(
+    operator: HirPrefixOperator,
+    ty: TypeId,
+    interner: &TypeInterner,
+) -> String {
+    let name = prefix_operator_name(operator);
+    match native_float_width(ty, interner) {
+        Some(width) => format!("float{width}-{name}"),
+        None => name.to_owned(),
     }
 }
 

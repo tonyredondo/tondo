@@ -28,11 +28,14 @@ impl Layout {
             .ok_or("enum:variant-identity")
     }
 
-    fn defaults(&self, interner: &TypeInterner, values: &mut Vec<MirOperand>) {
+    pub(super) fn defaults(&self, interner: &TypeInterner, values: &mut Vec<MirOperand>) {
         if self.children.is_empty() {
             let kind = match interner.kind(self.ty) {
                 Ok(TypeKind::Scalar(ScalarType::Bool)) => MirConstant::Bool(false),
                 Ok(TypeKind::Scalar(ScalarType::Unit)) => MirConstant::Unit,
+                Ok(TypeKind::Scalar(ScalarType::Float | ScalarType::Float32)) => {
+                    MirConstant::Float("0.0".to_owned())
+                }
                 _ => MirConstant::Integer("0".to_owned()),
             };
             values.push(MirOperand {
@@ -339,6 +342,21 @@ impl NativeLocals {
                 cursor += 1;
                 continue;
             };
+            if native_float_width(source.ty, interner).is_some() {
+                self.lower_float_conversion(
+                    blocks,
+                    floats::CheckedConversion {
+                        block: cursor,
+                        statement: index,
+                        destination,
+                        target,
+                        source,
+                    },
+                    interner,
+                )?;
+                cursor += 1;
+                continue;
+            }
             let Some((minimum, maximum)) = native_integers::value_bounds(target) else {
                 return Err("sum:conversion-representation");
             };

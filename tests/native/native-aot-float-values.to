@@ -1,0 +1,996 @@
+type Box[T] = {
+    value: T
+}
+
+fn identity[T: Copy](value: T): T {
+    value
+}
+
+fn same[T: Copy + Equatable](left: T, right: T): Bool {
+    left == right
+}
+
+fn add32(a: Float32, b: Float32): Float32 {
+    a + b
+}
+
+fn subtract32(a: Float32, b: Float32): Float32 {
+    a - b
+}
+
+fn multiply32(a: Float32, b: Float32): Float32 {
+    a * b
+}
+
+fn divide32(a: Float32, b: Float32): Float32 {
+    a / b
+}
+
+fn negate32(value: Float32): Float32 {
+    -value
+}
+
+fn multiplyAdd32(a: Float32, b: Float32, c: Float32): Float32 {
+    let product = a * b
+    product + c
+}
+
+fn integer32(value: Float32): Int ! NumericConversionError {
+    Int(value)?
+}
+
+fn unsigned32(value: Float32): UInt64 ! NumericConversionError {
+    UInt64(value)?
+}
+
+enum Choice32 {
+    Empty
+    Value(Float32)
+}
+
+fn arithmetic32(): Int {
+    if add32(40.0f32, 2.0f32) == 42.0f32 and
+        subtract32(45.0f32, 3.0f32) == 42.0f32 and
+        multiply32(6.0f32, 7.0f32) == 42.0f32 and
+        divide32(84.0f32, 2.0f32) == 42.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn roundToEven32(): Int {
+    if add32(16777216.0f32, 1.0f32) == 16777216.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn separateRounding32(): Int {
+    if multiplyAdd32(1.00000011920928955078125f32, 0.99999988079071044921875f32, -1.0f32) == 0.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn signedZero32(): Int {
+    let zero = negate32(0.0f32)
+    if zero == 0.0f32 and
+        divide32(1.0f32, zero) < 0.0f32 and
+        divide32(1.0f32, negate32(zero)) > 0.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn nanRelations32(): Int {
+    let value = divide32(0.0f32, 0.0f32)
+    if value != value and
+        not (value == value) and
+        not (value < 1.0f32) and
+        not (value <= 1.0f32) and
+        not (value > 1.0f32) and
+        not (value >= 1.0f32) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn infinities32(): Int {
+    let value = multiply32(3.4028234663852886e38f32, 2.0f32)
+    let nan = subtract32(value, value)
+    if value > 3.4028234663852886e38f32 and
+        negate32(value) < -3.4028234663852886e38f32 and
+        nan != nan {
+        42
+    } else {
+        -1
+    }
+}
+
+fn subnormal32(): Int {
+    if add32(1.401298464324817e-45f32, 1.401298464324817e-45f32) > 1.401298464324817e-45f32 and
+        1.401298464324817e-45f32 > 0.0f32 and
+        multiply32(-1.401298464324817e-45f32, 0.5f32) == 0.0f32 and
+        divide32(1.0f32, multiply32(-1.401298464324817e-45f32, 0.5f32)) < 0.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn finiteOrder32(): Int {
+    let value = identity(42.0f32)
+    if value < 43.0f32 and
+        value <= 42.0f32 and
+        value >= 42.0f32 and
+        value > 41.0f32 and
+        value != 0.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn aggregateCopy32(): Int {
+    var value = Box[Float32] { value: 42.0f32 }
+    let copy = identity(value)
+    value.value = 1.0f32
+    if copy.value == 42.0f32 and
+        value.value == 1.0f32 and
+        same(copy, Box[Float32] { value: 42.0f32 }) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn aggregateNaN32(): Int {
+    let nan = divide32(0.0f32, 0.0f32)
+    let value = Box[Float32] { value: nan }
+    if not same(value, value) and
+        same(Box[Float32] { value: 0.0f32 }, Box[Float32] { value: -0.0f32 }) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn inactivePayload32(): Int {
+    var value = Choice32.Value(divide32(0.0f32, 0.0f32))
+    value = Choice32.Empty
+    if value == Choice32.Empty {
+        42
+    } else {
+        -1
+    }
+}
+
+fn notFinite32(): Int {
+    match integer32(divide32(1.0f32, 0.0f32)) {
+        err(NumericConversionError.NotFinite) => 42
+        _ => -1
+    }
+}
+
+fn nanConversion32(): Int {
+    match integer32(divide32(0.0f32, 0.0f32)) {
+        err(NumericConversionError.NotFinite) => 42
+        _ => -1
+    }
+}
+
+fn notIntegral32(): Int {
+    match integer32(42.5f32) {
+        err(NumericConversionError.NotIntegral) => 42
+        _ => -1
+    }
+}
+
+fn signedOutOfRange32(): Int {
+    match integer32(9223372036854775808.0f32) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn negativeFraction32(): Int {
+    match unsigned32(-0.5f32) {
+        err(NumericConversionError.NotIntegral) => 42
+        _ => -1
+    }
+}
+
+fn negativeInteger32(): Int {
+    match unsigned32(-1.0f32) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn unsignedOutOfRange32(): Int {
+    match unsigned32(18446744073709551616.0f32) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn signedMinimum32(): Int {
+    match integer32(-9223372036854775808.0f32) {
+        ok(value) =>
+            if value == -9223372036854775808 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn negativeZeroToUnsigned32(): Int {
+    match unsigned32(negate32(0.0f32)) {
+        ok(value) =>
+            if value == 0u64 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn add64(a: Float, b: Float): Float {
+    a + b
+}
+
+fn subtract64(a: Float, b: Float): Float {
+    a - b
+}
+
+fn multiply64(a: Float, b: Float): Float {
+    a * b
+}
+
+fn divide64(a: Float, b: Float): Float {
+    a / b
+}
+
+fn negate64(value: Float): Float {
+    -value
+}
+
+fn multiplyAdd64(a: Float, b: Float, c: Float): Float {
+    let product = a * b
+    product + c
+}
+
+fn integer64(value: Float): Int ! NumericConversionError {
+    Int(value)?
+}
+
+fn unsigned64(value: Float): UInt64 ! NumericConversionError {
+    UInt64(value)?
+}
+
+enum Choice64 {
+    Empty
+    Value(Float)
+}
+
+fn arithmetic64(): Int {
+    if add64(40.0f64, 2.0f64) == 42.0f64 and
+        subtract64(45.0f64, 3.0f64) == 42.0f64 and
+        multiply64(6.0f64, 7.0f64) == 42.0f64 and
+        divide64(84.0f64, 2.0f64) == 42.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn roundToEven64(): Int {
+    if add64(9007199254740992.0f64, 1.0f64) == 9007199254740992.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn separateRounding64(): Int {
+    if multiplyAdd64(
+            1.000000000000000222044604925031308f64,
+            0.9999999999999997779553950749686919f64,
+            -1.0f64,
+        ) ==
+        0.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn signedZero64(): Int {
+    let zero = negate64(0.0f64)
+    if zero == 0.0f64 and
+        divide64(1.0f64, zero) < 0.0f64 and
+        divide64(1.0f64, negate64(zero)) > 0.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn nanRelations64(): Int {
+    let value = divide64(0.0f64, 0.0f64)
+    if value != value and
+        not (value == value) and
+        not (value < 1.0f64) and
+        not (value <= 1.0f64) and
+        not (value > 1.0f64) and
+        not (value >= 1.0f64) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn infinities64(): Int {
+    let value = multiply64(1.7976931348623157e308f64, 2.0f64)
+    let nan = subtract64(value, value)
+    if value > 1.7976931348623157e308f64 and
+        negate64(value) < -1.7976931348623157e308f64 and
+        nan != nan {
+        42
+    } else {
+        -1
+    }
+}
+
+fn subnormal64(): Int {
+    if add64(5e-324f64, 5e-324f64) > 5e-324f64 and
+        5e-324f64 > 0.0f64 and
+        multiply64(-5e-324f64, 0.5f64) == 0.0f64 and
+        divide64(1.0f64, multiply64(-5e-324f64, 0.5f64)) < 0.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn finiteOrder64(): Int {
+    let value = identity(42.0f64)
+    if value < 43.0f64 and
+        value <= 42.0f64 and
+        value >= 42.0f64 and
+        value > 41.0f64 and
+        value != 0.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn aggregateCopy64(): Int {
+    var value = Box[Float] { value: 42.0f64 }
+    let copy = identity(value)
+    value.value = 1.0f64
+    if copy.value == 42.0f64 and value.value == 1.0f64 and same(copy, Box[Float] { value: 42.0f64 }) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn aggregateNaN64(): Int {
+    let nan = divide64(0.0f64, 0.0f64)
+    let value = Box[Float] { value: nan }
+    if not same(value, value) and same(Box[Float] { value: 0.0f64 }, Box[Float] { value: -0.0f64 }) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn inactivePayload64(): Int {
+    var value = Choice64.Value(divide64(0.0f64, 0.0f64))
+    value = Choice64.Empty
+    if value == Choice64.Empty {
+        42
+    } else {
+        -1
+    }
+}
+
+fn notFinite64(): Int {
+    match integer64(divide64(1.0f64, 0.0f64)) {
+        err(NumericConversionError.NotFinite) => 42
+        _ => -1
+    }
+}
+
+fn nanConversion64(): Int {
+    match integer64(divide64(0.0f64, 0.0f64)) {
+        err(NumericConversionError.NotFinite) => 42
+        _ => -1
+    }
+}
+
+fn notIntegral64(): Int {
+    match integer64(42.5f64) {
+        err(NumericConversionError.NotIntegral) => 42
+        _ => -1
+    }
+}
+
+fn signedOutOfRange64(): Int {
+    match integer64(9223372036854775808.0f64) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn negativeFraction64(): Int {
+    match unsigned64(-0.5f64) {
+        err(NumericConversionError.NotIntegral) => 42
+        _ => -1
+    }
+}
+
+fn negativeInteger64(): Int {
+    match unsigned64(-1.0f64) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn unsignedOutOfRange64(): Int {
+    match unsigned64(18446744073709551616.0f64) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn signedMinimum64(): Int {
+    match integer64(-9223372036854775808.0f64) {
+        ok(value) =>
+            if value == -9223372036854775808 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn negativeZeroToUnsigned64(): Int {
+    match unsigned64(negate64(0.0f64)) {
+        ok(value) =>
+            if value == 0u64 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn narrow(value: Float): Float32 ! NumericConversionError {
+    Float32(value)?
+}
+
+fn narrowOverflow(): Int {
+    match narrow(3.4028236e38) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn narrowNonfinite(): Int {
+    let inf = divide64(1.0, 0.0)
+    match narrow(inf) {
+        ok(value) =>
+            if value > 3.4028234663852886e38f32 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn fromSigned32(value: Int): Float32 {
+    Float32(value)
+}
+
+fn fromUnsigned32(value: UInt64): Float32 {
+    Float32(value)
+}
+
+fn recurse32(value: Float32, count: Int): Float32 {
+    if count == 0 {
+        value
+    } else {
+        recurse32(value, count - 1)
+    }
+}
+
+fn fullWidthSources32(): Int {
+    if fromUnsigned32(18446744073709551615u64) == 18446744073709551616.0f32 and
+        fromSigned32(9223372036854775807) == 9223372036854775808.0f32 and
+        fromSigned32(-9223372036854775808) == -9223372036854775808.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn unsignedLastValue32(): Int {
+    match unsigned32(18446742974197923840.0f32) {
+        ok(value) =>
+            if value == 18446742974197923840u64 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn fractionBeforeRange32(): Int {
+    match Int8(identity(128.5f32)) {
+        err(NumericConversionError.NotIntegral) => 42
+        _ => -1
+    }
+}
+
+fn largeIntegral32(): Int {
+    let positive = match integer32(1e30f32) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    let negative = match integer32(-1e30f32) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    if positive and negative {
+        42
+    } else {
+        -1
+    }
+}
+
+fn loopAndRecursion32(): Int {
+    var value = 0.0f32
+    var count = 0
+    for count < 6 {
+        value = add32(value, 7.0f32)
+        count = count + 1
+    }
+    if recurse32(value, 5) == 42.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn optionPayload32(): Int {
+    var value: Float32? = some(negate32(0.0f32))
+    let copy = identity(value)
+    value = none
+    match copy {
+        some(number) =>
+            if divide32(1.0f32, number) < 0.0f32 and value == none {
+                42
+            } else {
+                -1
+            }
+        none => -1
+    }
+}
+
+fn unionPayload32(): Int {
+    let value: Float32 | Bool = 42.0f32
+    match identity(value) {
+        Float32(number) =>
+            if number == 42.0f32 {
+                42
+            } else {
+                -1
+            }
+        Bool(_) => -1
+    }
+}
+
+fn integerMatrix32(): Int {
+    let value = identity(42.0f32)
+    let integer0 = match Int8(value) {
+        ok(number) => number == 42i8
+        err(_) => false
+    }
+    let integer1 = match Int16(value) {
+        ok(number) => number == 42i16
+        err(_) => false
+    }
+    let integer2 = match Int32(value) {
+        ok(number) => number == 42i32
+        err(_) => false
+    }
+    let integer3 = match Int(value) {
+        ok(number) => number == 42
+        err(_) => false
+    }
+    let integer4 = match UInt8(value) {
+        ok(number) => number == 42u8
+        err(_) => false
+    }
+    let integer5 = match UInt16(value) {
+        ok(number) => number == 42u16
+        err(_) => false
+    }
+    let integer6 = match UInt32(value) {
+        ok(number) => number == 42u32
+        err(_) => false
+    }
+    let integer7 = match UInt64(value) {
+        ok(number) => number == 42u64
+        err(_) => false
+    }
+    let integer8 = match Byte(value) {
+        ok(number) => number == Byte(42u8)
+        err(_) => false
+    }
+    let group0 = integer0 and
+        Float32(42i8) == 42.0f32 and
+        integer1 and
+        Float32(42i16) == 42.0f32 and
+        integer2 and
+        Float32(42i32) == 42.0f32
+    let group1 = integer3 and
+        Float32(42) == 42.0f32 and
+        integer4 and
+        Float32(42u8) == 42.0f32 and
+        integer5 and
+        Float32(42u16) == 42.0f32
+    let group2 = integer6 and
+        Float32(42u32) == 42.0f32 and
+        integer7 and
+        Float32(42u64) == 42.0f32 and
+        integer8 and
+        Float32(Byte(42u8)) == 42.0f32
+    if group0 and group1 and group2 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn narrowIntegerBounds32(): Int {
+    let below = match Int8(identity(-129.0f32)) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    let above = match UInt32(identity(4294967296.0f32)) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    let byte = match Byte(identity(256.0f32)) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    if below and above and byte {
+        42
+    } else {
+        -1
+    }
+}
+
+fn fromSigned64(value: Int): Float {
+    Float(value)
+}
+
+fn fromUnsigned64(value: UInt64): Float {
+    Float(value)
+}
+
+fn recurse64(value: Float, count: Int): Float {
+    if count == 0 {
+        value
+    } else {
+        recurse64(value, count - 1)
+    }
+}
+
+fn fullWidthSources64(): Int {
+    if fromUnsigned64(18446744073709551615u64) == 18446744073709551616.0f64 and
+        fromSigned64(9223372036854775807) == 9223372036854775808.0f64 and
+        fromSigned64(-9223372036854775808) == -9223372036854775808.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn unsignedLastValue64(): Int {
+    match unsigned64(18446744073709549568.0f64) {
+        ok(value) =>
+            if value == 18446744073709549568u64 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn fractionBeforeRange64(): Int {
+    match Int8(identity(128.5f64)) {
+        err(NumericConversionError.NotIntegral) => 42
+        _ => -1
+    }
+}
+
+fn largeIntegral64(): Int {
+    let positive = match integer64(1e30f64) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    let negative = match integer64(-1e30f64) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    if positive and negative {
+        42
+    } else {
+        -1
+    }
+}
+
+fn loopAndRecursion64(): Int {
+    var value = 0.0f64
+    var count = 0
+    for count < 6 {
+        value = add64(value, 7.0f64)
+        count = count + 1
+    }
+    if recurse64(value, 5) == 42.0f64 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn optionPayload64(): Int {
+    var value: Float? = some(negate64(0.0f64))
+    let copy = identity(value)
+    value = none
+    match copy {
+        some(number) =>
+            if divide64(1.0f64, number) < 0.0f64 and value == none {
+                42
+            } else {
+                -1
+            }
+        none => -1
+    }
+}
+
+fn unionPayload64(): Int {
+    let value: Float | Bool = 42.0f64
+    match identity(value) {
+        Float(number) =>
+            if number == 42.0f64 {
+                42
+            } else {
+                -1
+            }
+        Bool(_) => -1
+    }
+}
+
+fn integerMatrix64(): Int {
+    let value = identity(42.0f64)
+    let integer0 = match Int8(value) {
+        ok(number) => number == 42i8
+        err(_) => false
+    }
+    let integer1 = match Int16(value) {
+        ok(number) => number == 42i16
+        err(_) => false
+    }
+    let integer2 = match Int32(value) {
+        ok(number) => number == 42i32
+        err(_) => false
+    }
+    let integer3 = match Int(value) {
+        ok(number) => number == 42
+        err(_) => false
+    }
+    let integer4 = match UInt8(value) {
+        ok(number) => number == 42u8
+        err(_) => false
+    }
+    let integer5 = match UInt16(value) {
+        ok(number) => number == 42u16
+        err(_) => false
+    }
+    let integer6 = match UInt32(value) {
+        ok(number) => number == 42u32
+        err(_) => false
+    }
+    let integer7 = match UInt64(value) {
+        ok(number) => number == 42u64
+        err(_) => false
+    }
+    let integer8 = match Byte(value) {
+        ok(number) => number == Byte(42u8)
+        err(_) => false
+    }
+    let group0 = integer0 and
+        Float(42i8) == 42.0f64 and
+        integer1 and
+        Float(42i16) == 42.0f64 and
+        integer2 and
+        Float(42i32) == 42.0f64
+    let group1 = integer3 and
+        Float(42) == 42.0f64 and
+        integer4 and
+        Float(42u8) == 42.0f64 and
+        integer5 and
+        Float(42u16) == 42.0f64
+    let group2 = integer6 and
+        Float(42u32) == 42.0f64 and
+        integer7 and
+        Float(42u64) == 42.0f64 and
+        integer8 and
+        Float(Byte(42u8)) == 42.0f64
+    if group0 and group1 and group2 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn narrowIntegerBounds64(): Int {
+    let below = match Int8(identity(-129.0f64)) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    let above = match UInt32(identity(4294967296.0f64)) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    let byte = match Byte(identity(256.0f64)) {
+        err(NumericConversionError.OutOfRange) => true
+        _ => false
+    }
+    if below and above and byte {
+        42
+    } else {
+        -1
+    }
+}
+
+type Mixed = {
+    single: Float32
+    double: Float
+}
+
+fn pair(single: Float32, double: Float): (Float32, Float) {
+    (single, double)
+}
+
+fn mixedAggregate(): Int {
+    var value = Mixed { double: -0.0, single: 42.0 }
+    let copy = identity(value)
+    value.single = 1.0
+    let tuple = pair(copy.single, copy.double)
+    if tuple.0 == 42.0f32 and divide64(1.0, tuple.1) < 0.0 and value.single == 1.0f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn floatUnionIdentity(): Int {
+    var value: Float32 | Float | Bool = divide32(0.0f32, 0.0f32)
+    value = false
+    let equal = value == false
+    let wide: Float32 | Float | Bool = 42.0f64
+    match wide {
+        Float(number) =>
+            if equal and number == 42.0 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn directSingleLiteral(): Int {
+    let value: Float32 = 1.0000000596046448
+    if identity(value) == 1.00000011920928955078125f32 {
+        42
+    } else {
+        -1
+    }
+}
+
+fn narrowTies(): Int {
+    let even = match narrow(1.000000059604644775390625) {
+        ok(value) => value == 1.0f32
+        _ => false
+    }
+    let next = match narrow(1.000000178813934326171875) {
+        ok(value) => value == 1.0000002384185791015625f32
+        _ => false
+    }
+    if even and next {
+        42
+    } else {
+        -1
+    }
+}
+
+fn narrowSubnormal(): Int {
+    match narrow(-1e-50) {
+        ok(value) =>
+            if value == 0.0f32 and divide32(1.0f32, value) < 0.0f32 {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn narrowNaN(): Int {
+    match narrow(divide64(0.0, 0.0)) {
+        ok(value) =>
+            if value != value {
+                42
+            } else {
+                -1
+            }
+        _ => -1
+    }
+}
+
+fn promotedValues(): Int {
+    let zero = Float(negate32(0.0f32))
+    let tiny = Float(identity(1.401298464324817e-45f32))
+    let nan = Float(divide32(0.0f32, 0.0f32))
+    if divide64(1.0, zero) < 0.0 and tiny == 1.401298464324817e-45 and nan != nan {
+        42
+    } else {
+        -1
+    }
+}
+
+fn replaceResult(): Int {
+    var result: Float32 ! NumericConversionError = ok(divide32(0.0f32, 0.0f32))
+    result = narrow(1e100)
+    if result == err(NumericConversionError.OutOfRange) {
+        42
+    } else {
+        -1
+    }
+}
+
+fn propagatedNarrow(value: Float): Float32 ! NumericConversionError {
+    let converted = narrow(value)?
+    ok(converted)
+}
+
+fn propagation(): Int {
+    match propagatedNarrow(1e100) {
+        err(NumericConversionError.OutOfRange) => 42
+        _ => -1
+    }
+}
+
+fn main() {}

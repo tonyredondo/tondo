@@ -1,5 +1,5 @@
 //! Scalar storage and private call carriers for value aggregates.
-//! Integer carrier, Bool and Unit leaves are admitted. Source MIR is immutable;
+//! Numeric, Bool and Unit leaves are admitted. Source MIR is immutable;
 //! copies and projected replacements snapshot every RHS leaf before any write.
 
 use std::rc::Rc;
@@ -7,6 +7,7 @@ use std::rc::Rc;
 use super::*;
 use crate::types::TypeKind;
 
+mod floats;
 mod sums;
 
 const MAX_ADDITIONAL_LOCALS: u32 = 65_536;
@@ -274,6 +275,18 @@ pub(super) fn lower_with_limit(
     let mut lowered = LoweredFunction::unchanged(function);
     lowered.parameters.clear();
     for parameter in &function.parameters {
+        let local = &function.locals[parameter.index() as usize];
+        if native_float_width(local.ty, interner).is_some()
+            && !matches!(
+                local.kind,
+                MirLocalKind::Parameter {
+                    mode: ParameterMode::Value,
+                    ..
+                }
+            )
+        {
+            return Err("float:parameter-mode");
+        }
         if let Some((first, layout)) = locals.storage.get(&parameter.index()) {
             if !matches!(
                 function.locals[parameter.index() as usize].kind,

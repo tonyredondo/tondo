@@ -6701,8 +6701,8 @@ fn main(): !env.EnvError {
     fn native_union_values_reject_inactive_unsupported_members_and_loans() {
         for declaration in [
             "fn source(value: Bool): Bool | String { value }",
-            "fn source(value: Bool): Bool | Float { value }",
-            "fn source(value: Bool): Bool | Float32 { value }",
+            "fn source(value: Bool): Bool | Char { value }",
+            "fn source(value: Bool): Bool | Array[Float32] { value }",
             "fn source(value: ref (Int | Bool)): Int | Bool { value }",
             "type Box[T] = { item: T }\nfn source(value: Bool): Box[String] | Bool { value }",
             "type Node = { next: Node | Int }\nfn source(value: Int): Node | Int { value }",
@@ -6784,8 +6784,8 @@ fn main(): !env.EnvError {
     fn native_enum_values_reject_unsupported_inactive_variants_and_loans() {
         for declaration in [
             "enum Value { Empty\n Item(String) }\nfn source(value: Int): Value { Value.Empty }",
-            "enum Value { Empty\n Item(Float) }\nfn source(value: Int): Value { Value.Empty }",
-            "enum Value { Empty\n Item(Float32) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Char) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Array[Float32]) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Int | String) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Next(Value) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Int) }\nfn source(value: ref Value): Value { value }",
@@ -6822,11 +6822,12 @@ fn main(): !env.EnvError {
     #[test]
     fn native_sum_values_reject_unadmitted_payloads_and_parameter_modes() {
         for declaration in [
-            "fn source(value: Float32): Float32? { some(value) }",
-            "fn source(value: Float): Float ! Int { value }",
+            "fn source(value: Char): Char? { some(value) }",
+            "fn source(value: Array[Float]): Array[Float] ! Int { value }",
             "fn source(value: ref Int?): Int? { value }",
-            "fn source(value: Float32): Int8 ! NumericConversionError { Int8(value)? }",
-            "fn source(value: Float): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: ref Float32): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: mut Float): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: var Float32): Int { 42 }",
         ] {
             let source = format!("{declaration}\nfn main() {{}}\n");
             let output = execute(operation_request(
@@ -6849,6 +6850,124 @@ fn main(): !env.EnvError {
                 .find(|function| !function.parameters.is_empty())
                 .unwrap();
             assert!(!function.supported, "{declaration}");
+        }
+    }
+
+    #[test]
+    fn native_float_values_preserve_ieee_operations_and_generic_calls() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-float-values.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "{}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
+        }
+        let json = serde_json::to_string(backend).unwrap();
+        for bits in [32, 64] {
+            for operation in [
+                "add",
+                "subtract",
+                "multiply",
+                "divide",
+                "negate",
+                "equal",
+                "not-equal",
+                "less",
+                "less-equal",
+                "greater",
+                "greater-equal",
+            ] {
+                assert!(
+                    json.contains(&format!("float{bits}-{operation}")),
+                    "{bits}: {operation}"
+                );
+            }
+        }
+        assert!(!json.contains("\"conversion\":\"checked\""));
+        assert!(json.contains("Float32"));
+    }
+
+    #[test]
+    fn native_floats_admit_inactive_members_and_checked_conversions() {
+        for declaration in [
+            "fn source(value: Bool): Bool | Float { value }",
+            "fn source(value: Bool): Bool | Float32 { value }",
+            "enum Value { Empty\n Item(Float) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Float32) }\nfn source(value: Int): Value { Value.Empty }",
+            "fn source(value: Float32): Float32? { some(value) }",
+            "fn source(value: Float): Float ! Int { value }",
+            "fn source(value: Float32): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: Float): Int8 ! NumericConversionError { Int8(value)? }",
+            "fn source(value: Float): Float32 ! NumericConversionError { Float32(value)? }",
+            "fn source(value: Float): ((Float, Int), Float32) { ((value, 42), 1.0) }",
+            "type Wide = { value: Float32, result: Int }\nfn source(value: Int): Wide { Wide { value: 1.0, result: value } }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            assert!(
+                backend.functions.iter().all(|function| function.supported),
+                "{declaration}: {backend:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_floats_preserve_source_numeric_restrictions() {
+        for expression in [
+            "1.0f32 + 1.0f64",
+            "1.0 + 1i64",
+            "1.0 % 2.0",
+            "1.0 << 2",
+            "~1.0",
+            "3.5e38f32",
+            "1e309",
+            "identity[Float32](1.0f64)",
+        ] {
+            let source = format!(
+                "fn identity[T: Copy](value: T): T {{ value }}\nfn main() {{\n _ = {expression}\n}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_ne!(output.status(), CompilationStatus::Success, "{expression}");
         }
     }
 
@@ -7149,9 +7268,9 @@ fn main(): !env.EnvError {
     fn native_local_tuples_reject_unimplemented_storage_consumers() {
         for source in [
             "fn inspectValue(): Int {\n let pair = ([1, 2], true)\n if pair == pair { 1 } else { 0 }\n}",
-            "fn inspectValue(): Int {\n let pair = ((1.5, 2), 3)\n pair.1\n}",
-            "fn inspectValue(): Int {\n let pair = (1.5, 2)\n pair.1\n}",
-            "fn inspectValue(): Int {\n let pair: (Float32, Int) = (1.0, 2)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair = (('x', 2), 3)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair = ('x', 2)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair: (Char, Int) = ('x', 2)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = ([1, 2], 3)\n pair.1\n}",
         ] {
             let source = format!("{source}\nfn main() {{}}\n");
@@ -7197,7 +7316,7 @@ fn main(): !env.EnvError {
             Operation::Run,
             b"fn alpha(): Int { middle() }\n\
               fn middle(): Int { if false { alpha() } else { omega() } }\n\
-              fn omega(): Int {\n let pair = ((1.5, 2), 3)\n pair.1\n }\n\
+              fn omega(): Int {\n let pair = (('x', 2), 3)\n pair.1\n }\n\
               fn main() {}\n",
             SourceForm::Script,
             ResourceLimits::default(),
@@ -7372,7 +7491,7 @@ fn main() {
             "type Empty = {}\nfn inspectValue(value: mut Empty): Int { 1 }",
             "type Empty = {}\nfn inspectValue(value: var Empty): Int {\n value = Empty {}\n 1\n}",
             "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
-            "type Wide = { value: Float32, result: Int }\nfn inspectValue(): Int {\n let wide = Wide { value: 1.0, result: 2 }\n wide.result\n}",
+            "type Wide = { value: Char, result: Int }\nfn inspectValue(): Int {\n let wide = Wide { value: 'x', result: 2 }\n wide.result\n}",
             "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",
             "fn inspectValue(point: ref Point): Int { point.x }",
             "fn inspectValue(point: mut Point): Int { 1 }",

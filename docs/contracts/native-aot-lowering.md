@@ -11,7 +11,7 @@ operations from Tondo source.
 ## Source-driven value aggregates, enums, unions, sums, direct calls and equality
 
 The compiler lowers local tuples and records whose leaves are `Int`, `Bool`, `Unit`,
-`Byte`, `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32`/`UInt64`
+`Byte`, `Int8`/`Int16`/`Int32`, `UInt8`/`UInt16`/`UInt32`/`UInt64` and `Float32`/`Float64`
 into independent scalar locals. Nested tuples/records and instantiated generic
 records use the same route. Nominal enums, structural unions, `T?` and `T ! E` recursively admit these value
 layouts, including the closed `NumericConversionError` type. Construction, field reads and writes, copies,
@@ -31,7 +31,7 @@ the existing nonempty aggregate argument/result protocol; it is not a claim of
 zero-byte storage or a public record ABI. Unit fields and empty-record carriers
 count toward storage, snapshot and comparison limits like other leaves.
 Expansion is bounded to 65,536 additional locals per function, including
-right-hand snapshots, comparison results, sum tags and integer guards; wider repeated copies and
+right-hand snapshots, comparison results, sum tags and numeric guards; wider repeated copies and
 comparisons are rejected before exceeding
 that allocation budget. Layout depth is bounded to 64 aggregate levels.
 
@@ -131,7 +131,37 @@ expansions share the existing per-function budget. Bounds are intersected with
 the source range and compared in the source domain. `UInt64` sources therefore
 use unsigned comparisons, while a signed source never needs to represent
 `UInt64.max`. Total conversions preserve the value; checked failures still
-return `OutOfRange`. Floating-point conversions remain outside this route.
+return `OutOfRange`.
+
+`Float32` and `Float` (`Float64`) use one private eight-byte carrier each:
+binary32 bits occupy the low 32 bits with a zero upper half; binary64 uses all
+64 bits. Constants retain their format and round directly to that format.
+Typed private operators decode these bits into native floating-point values for
+addition, subtraction, multiplication, division and IEEE comparisons. Negation
+flips the sign bit, preserving signed zero. Both candidates preserve subnormal
+values, infinities and NaN comparison behavior. Arithmetic rounds to the source
+format, without fast-math flags or automatic multiply-add contraction. The
+private carrier convention is not a public floating-point ABI.
+
+Integer/Byte-to-float conversions round directly to the destination format;
+UInt64 sources use unsigned conversion instructions. Float32-to-Float64 is
+total. Checked Float64-to-Float32 returns `OutOfRange` only when a finite source
+becomes infinite; NaNs, infinities and gradual underflow remain admitted.
+Float-to-integer/Byte conversions test `NotFinite`, `NotIntegral`, then
+`OutOfRange`, in that order. Range checks use exact lower bounds and exclusive
+power-of-two upper bounds, avoiding rounded Int64/UInt64 maxima. Integrality
+uses an exact integer round trip below the format's fractional range; larger
+finite values are already integral.
+
+The private conversion expansion evaluates saturating machine conversion
+candidates before branching. These internal operations cannot trap or produce
+LLVM poison; source code still receives a checked Result, never a saturating
+conversion. Source storage is snapshotted first, and every success/error branch
+initializes all Result carriers before publishing its payload. Narrowing adds
+three blocks; float-to-integer conversion adds seven. Every predicate and
+candidate local counts against the shared expansion budget. Float value
+aggregates use the existing copy/call protocol and canonical positive-zero
+inactive payloads. General float `ref`/`mut`/`var` parameters remain unadmitted.
 
 `UInt64` occupies one eight-byte carrier with all bits preserved. The private
 `UnsignedInteger` constant retains its source spelling and is validated over
@@ -198,11 +228,11 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 458 Cranelift observations across
-258 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+`scripts/native-source-scalars-test.sh` verifies 527 Cranelift observations across
+327 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
 16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
 43 Unit/empty-record cases, 67 fixed-width integer cases, 71 sum-value cases and
-38 nominal-enum cases, 50 structural-union cases and 54 UInt64 cases, including 67 arithmetic
+38 nominal-enum cases, 50 structural-union cases, 54 UInt64 cases and 69 float cases, including 67 arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -226,19 +256,22 @@ regressions cover an altered injection tag, incorrect widened payload mapping,
 uncleared inactive storage, an incorrect generic member tag and bypassed error
 propagation. Five UInt64 regressions substitute signed addition, ordering,
 division or right shift, or bypass the conversion range decision. Each must
-disagree with the VM before a report is published. Reports are
+disagree with the VM before a report is published. Six float regressions change
+the arithmetic width, signed-zero negation, NaN inequality, unsigned conversion,
+narrowing range decision or conversion error priority. All 44 negative evidence
+cases must be rejected without publishing a partial report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
 `native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`,
 `native-source-sums.json`, `native-source-enums.json`, `native-source-unions.json`
-and `native-source-uint64.json` under
+`native-source-uint64.json` and `native-source-floats.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 413 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union and UInt64 cases through LLVM.
+the 482 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64 and float cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -342,7 +375,7 @@ and adjacent failures, signed/unsigned source crossings, carrier extrema,
 projected destinations and arithmetic after conversion. Explicit expected
 outcomes supplement the VM/native comparison. Compiler tests also check
 immutable source MIR and types, shared expansion limits and rejection of
-unsupported widths, float representations and loan parameters.
+unsupported managed payloads and loan parameters.
 
 `tests/native/native-aot-enum-values.to` supplies 28 scalar entry functions and
 38 observations, including three traps. Unit, positional and named variants
@@ -385,7 +418,21 @@ bounded storage, admit previously rejected inactive UInt64 members and keep
 source numeric restrictions. Adapter tests retain literal range rejection and
 large-count shift checks. Repeated compiler probes must have identical bytes.
 
-Managed fields, recursive value layouts, floating-point representations and
+`tests/native/native-aot-float-values.to` supplies 69 scalar entry functions and
+69 observations. Both formats exercise arithmetic, ties-to-even rounding,
+separate multiply/add, signed zero, subnormals, infinities and all NaN comparison
+operators through source calls. Every integer/Byte type participates in numeric
+conversions, including full-width boundaries, fractional error priority and
+Float64-to-Float32 narrowing. Nested tuples, records, enums, unions and sums
+cover independent copies, equality, inactive clearing, propagation, generic
+calls, recursion and loops. Int-returning entry functions check exact source
+outcomes against 42; raw carrier bits are not substituted for the hosted oracle.
+Compiler regressions preserve immutable source MIR/types, deterministic probes,
+bounded normalization and source restrictions on mixed formats and Byte
+arithmetic. Named `std.math` operations and managed float collections remain
+outside this increment.
+
+Managed fields, recursive value layouts and
 aggregate calls through suspension/spawn protocols
 remain unsupported. Loan operations, production
 runtime integration and the public native build/run

@@ -29,6 +29,7 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod floating;
 mod source_scalars;
 mod unsigned;
 
@@ -267,6 +268,7 @@ enum MirBackendConstant {
     Bool(bool),
     Integer(String),
     UnsignedInteger(String),
+    Float32(String),
     Float(String),
     Char(String),
     String(String),
@@ -2195,20 +2197,18 @@ fn validate_supported_rvalue(
         conversion,
         ..
     } = value
+        && (!(is_native_integer_scalar(source) || floating::width(source).is_some())
+            || !(is_native_integer_scalar(target) || floating::width(target).is_some())
+            || !matches!(conversion.as_str(), "identity" | "total" | "checked"))
     {
-        if !is_native_integer_scalar(source)
-            || !is_native_integer_scalar(target)
-            || !matches!(conversion.as_str(), "identity" | "total" | "checked")
-        {
-            return Err(format!(
-                "supported normalized MIR function {function_ordinal} has invalid numeric conversion {source}->{target} ({conversion})"
-            ));
-        }
+        return Err(format!(
+            "supported normalized MIR function {function_ordinal} has invalid numeric conversion {source}->{target} ({conversion})"
+        ));
     }
     if matches!(value, MirBackendRvalue::NumericConversion { source, target, conversion, .. }
-        if conversion == "checked" && (source == "UInt64" || target == "UInt64"))
+        if conversion == "checked" && (source == "UInt64" || target == "UInt64" || floating::involved(source, target)))
     {
-        return Err("checked UInt64 conversion requires source normalization".to_owned());
+        return Err("checked UInt64/float conversion requires source normalization".to_owned());
     }
     if let MirBackendRvalue::Coerce { kind, .. } = value
         && kind != "EffectWeakening"
@@ -3144,6 +3144,9 @@ fn lower_rvalue_cranelift(
         }
         MirBackendRvalue::Prefix { operator, operand } => {
             let operand = lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)?;
+            if let Some((width, op)) = floating::operation(operator) {
+                return floating::cranelift_prefix(builder, width, op, operand);
+            }
             match operator.as_str() {
                 "negate" => {
                     let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
@@ -3398,6 +3401,16 @@ fn lower_operand_cranelift(
     locals: &BTreeMap<u32, Value>,
 ) -> Result<Value, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Float32(value)) => {
+            Ok(builder.ins().iconst(
+                cranelift_codegen::ir::types::I64,
+                floating::parse_literal(floating::Width::Single, value)?,
+            ))
+        }
+        MirBackendOperand::Constant(MirBackendConstant::Float(value)) => Ok(builder.ins().iconst(
+            cranelift_codegen::ir::types::I64,
+            floating::parse_literal(floating::Width::Double, value)?,
+        )),
         MirBackendOperand::Constant(MirBackendConstant::Unit) => {
             Ok(builder.ins().iconst(cranelift_codegen::ir::types::I64, 0))
         }
@@ -3440,11 +3453,13 @@ fn lower_operand_cranelift(
         )),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
-                MirBackendConstant::Float(value) | MirBackendConstant::Char(value) => value.clone(),
+                MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Unit
                 | MirBackendConstant::Integer(_)
                 | MirBackendConstant::UnsignedInteger(_)
+                | MirBackendConstant::Float32(_)
+                | MirBackendConstant::Float(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };
@@ -3522,6 +3537,9 @@ fn lower_numeric_conversion_cranelift(
     runtime: &RuntimeRefs,
 ) -> Result<Value, String> {
     let value = lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)?;
+    if floating::involved(source, target) {
+        return floating::cranelift_convert(builder, source, target, conversion, value);
+    }
     if !is_native_integer_scalar(source) || !is_native_integer_scalar(target) {
         return Err(format!(
             "Cranelift numeric conversion is not supported for {source}->{target}"
@@ -3579,6 +3597,9 @@ fn lower_checked_binary_cranelift(
 ) -> Result<Value, String> {
     let left = lower_operand_cranelift(builder, left, locals)?;
     let right = lower_operand_cranelift(builder, right, locals)?;
+    if let Some((width, op)) = floating::operation(operator) {
+        return floating::cranelift_binary(builder, width, op, left, right);
+    }
     if let Some(operator) = operator.strip_prefix("unsigned-") {
         return unsigned::cranelift(builder, operator, left, right);
     }
@@ -6823,6 +6844,9 @@ fn evaluate_aot_rvalue(
         }),
         MirBackendRvalue::Prefix { operator, operand } => {
             let value = aot_scalar_value(&evaluate_aot_operand(operand, locals)?)?;
+            if let Some((width, op)) = floating::operation(operator) {
+                return Ok(AotVmValue::Scalar(floating::negate(width, op, value)?));
+            }
             let value = match operator.as_str() {
                 "negate" => value
                     .checked_neg()
@@ -6842,8 +6866,24 @@ fn evaluate_aot_rvalue(
             let right = aot_scalar_value(&evaluate_aot_operand(right, locals)?)?;
             Ok(AotVmValue::Scalar(evaluate_aot_binary(operator, left, right)?))
         }
-        MirBackendRvalue::NumericConversion { operand, .. }
-        | MirBackendRvalue::Coerce { operand, .. } => evaluate_aot_operand(operand, locals),
+        MirBackendRvalue::NumericConversion {
+            source,
+            target,
+            conversion,
+            operand,
+        } => {
+            let value = evaluate_aot_operand(operand, locals)?;
+            if floating::involved(source, target) {
+                return Ok(AotVmValue::Scalar(floating::convert(
+                    source,
+                    target,
+                    conversion,
+                    aot_scalar_value(&value)?,
+                )?));
+            }
+            Ok(value)
+        }
+        MirBackendRvalue::Coerce { operand, .. } => evaluate_aot_operand(operand, locals),
         MirBackendRvalue::HostCall { arguments, .. } => Ok(AotVmValue::Aggregate {
             tag: 2,
             fields: arguments
@@ -6864,6 +6904,12 @@ fn evaluate_aot_operand(
     locals: &BTreeMap<u32, AotVmValue>,
 ) -> Result<AotVmValue, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Float32(value)) => Ok(AotVmValue::Scalar(
+            floating::parse_literal(floating::Width::Single, value)?,
+        )),
+        MirBackendOperand::Constant(MirBackendConstant::Float(value)) => Ok(AotVmValue::Scalar(
+            floating::parse_literal(floating::Width::Double, value)?,
+        )),
         MirBackendOperand::Constant(MirBackendConstant::UnsignedInteger(value)) => {
             Ok(AotVmValue::Scalar(unsigned::parse_literal(value)?))
         }
@@ -6917,8 +6963,7 @@ fn evaluate_aot_operand(
             }
         }
         MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok(AotVmValue::Scalar(0)),
-        MirBackendOperand::Constant(MirBackendConstant::Float(value))
-        | MirBackendOperand::Constant(MirBackendConstant::Char(value)) => Err(format!(
+        MirBackendOperand::Constant(MirBackendConstant::Char(value)) => Err(format!(
             "AOT VM oracle non-integer constant is not supported: {value}"
         )),
         MirBackendOperand::Constant(MirBackendConstant::Named)
@@ -7165,6 +7210,9 @@ fn aot_tag_value(value: &AotVmValue) -> Result<u32, String> {
 }
 
 fn evaluate_aot_binary(operator: &str, left: i64, right: i64) -> Result<i64, String> {
+    if let Some((width, op)) = floating::operation(operator) {
+        return floating::evaluate(width, op, left, right);
+    }
     if let Some(operator) = operator.strip_prefix("unsigned-") {
         return unsigned::evaluate(operator, left, right);
     }
@@ -9282,6 +9330,9 @@ fn evaluate_rvalue(value: &MirBackendRvalue, locals: &BTreeMap<u32, i64>) -> Res
         }
         MirBackendRvalue::Prefix { operator, operand } => {
             let value = evaluate_operand(operand, locals)?;
+            if let Some((width, op)) = floating::operation(operator) {
+                return floating::negate(width, op, value);
+            }
             match operator.as_str() {
                 "negate" => value
                     .checked_neg()
@@ -9302,6 +9353,14 @@ fn evaluate_rvalue(value: &MirBackendRvalue, locals: &BTreeMap<u32, i64>) -> Res
             conversion,
             operand,
         } => {
+            if floating::involved(source, target) {
+                return floating::convert(
+                    source,
+                    target,
+                    conversion,
+                    evaluate_operand(operand, locals)?,
+                );
+            }
             if !is_native_integer_scalar(source) || !is_native_integer_scalar(target) {
                 return Err(format!(
                     "scalar oracle numeric conversion is not supported for {source}->{target}"
@@ -9465,6 +9524,12 @@ fn evaluate_operand(
     locals: &BTreeMap<u32, i64>,
 ) -> Result<i64, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Float32(value)) => {
+            floating::parse_literal(floating::Width::Single, value)
+        }
+        MirBackendOperand::Constant(MirBackendConstant::Float(value)) => {
+            floating::parse_literal(floating::Width::Double, value)
+        }
         MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok(0),
         MirBackendOperand::Constant(MirBackendConstant::UnsignedInteger(value)) => {
             unsigned::parse_literal(value)
@@ -9532,6 +9597,9 @@ fn evaluate_binary(
 ) -> Result<i64, String> {
     let left = evaluate_operand(left, locals)?;
     let right = evaluate_operand(right, locals)?;
+    if let Some((width, op)) = floating::operation(operator) {
+        return floating::evaluate(width, op, left, right);
+    }
     if let Some(operator) = operator.strip_prefix("unsigned-") {
         return unsigned::evaluate(operator, left, right);
     }
@@ -10788,6 +10856,7 @@ fn scalar_local_ordinals(function: &MirBackendFunction) -> BTreeSet<u32> {
 
 fn llvm_checked_helpers(module: &mut String) {
     unsigned::llvm_helpers(module);
+    floating::llvm_helpers(module);
     writeln!(module, "declare void @llvm.trap()").unwrap();
     for declaration in [
         "declare i64 @tondo_rt_result_new(i64, i64, i64)",
@@ -11149,6 +11218,9 @@ fn llvm_rvalue(
             let operand = llvm_operand(operand, slots, module, value_index)?;
             let name = format!("%v{value_index}");
             *value_index += 1;
+            if let Some((width, op)) = floating::operation(operator) {
+                return floating::llvm_prefix(width, op, &operand, module, value_index);
+            }
             match operator.as_str() {
                 "negate" => writeln!(
                     module,
@@ -11182,6 +11254,16 @@ fn llvm_rvalue(
             operand,
         } => {
             let operand = llvm_operand(operand, slots, module, value_index)?;
+            if floating::involved(source, target) {
+                return floating::llvm_convert(
+                    source,
+                    target,
+                    conversion,
+                    &operand,
+                    module,
+                    value_index,
+                );
+            }
             if !is_native_integer_scalar(source) || !is_native_integer_scalar(target) {
                 return Err(format!(
                     "LLVM numeric conversion is not supported for {source}->{target}"
@@ -11381,6 +11463,9 @@ fn llvm_binary(
 ) -> Result<String, String> {
     let left = llvm_operand(left, slots, module, value_index)?;
     let right = llvm_operand(right, slots, module, value_index)?;
+    if let Some((width, op)) = floating::operation(operator) {
+        return floating::llvm_binary(width, op, &left, &right, module, value_index);
+    }
     if let Some(operator) = operator.strip_prefix("unsigned-") {
         return unsigned::llvm_binary(operator, &left, &right, module, value_index);
     }
@@ -11550,6 +11635,12 @@ fn llvm_operand(
     value_index: &mut usize,
 ) -> Result<String, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Float32(value)) => {
+            floating::parse_literal(floating::Width::Single, value).map(|value| value.to_string())
+        }
+        MirBackendOperand::Constant(MirBackendConstant::Float(value)) => {
+            floating::parse_literal(floating::Width::Double, value).map(|value| value.to_string())
+        }
         MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok("0".to_owned()),
         MirBackendOperand::Constant(MirBackendConstant::UnsignedInteger(value)) => {
             unsigned::parse_literal(value).map(|value| value.to_string())
@@ -11620,11 +11711,13 @@ fn llvm_operand(
             .unwrap_or_else(|| string_payload(kind).to_string())),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
-                MirBackendConstant::Float(value) | MirBackendConstant::Char(value) => value.clone(),
+                MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Unit
                 | MirBackendConstant::Integer(_)
                 | MirBackendConstant::UnsignedInteger(_)
+                | MirBackendConstant::Float32(_)
+                | MirBackendConstant::Float(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };

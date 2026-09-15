@@ -5686,7 +5686,7 @@ pueden retrasar el primer backend correcto.
 
 - [ ] **NATIVE-AOT-LOWER-001 — Lower actual verified frontend MIR across the required language corpus.**
   Source-driven local tuples and records with `Int`/`Bool`/`Unit`, `Byte`,
-  `Int8`/`Int16`/`Int32` and `UInt8`/`UInt16`/`UInt32`/`UInt64` leaves now lower
+  `Int8`/`Int16`/`Int32`, `UInt8`/`UInt16`/`UInt32`/`UInt64` and `Float32`/`Float64` leaves now lower
   to scalar locals, including nested/generic records, field writes, independent
   copies, `with` updates, reassignment and control flow. Ordinary direct calls
   now pass flattened value arguments and return aggregate fields through
@@ -5733,12 +5733,18 @@ pueden retrasar el primer backend correcto.
   in both native candidates. Integer conversions compare in the source domain,
   preserve total conversions and return OutOfRange on checked failures. Source
   rules, immutable MIR and the shared expansion budget remain unchanged.
-  The focused `scripts/native-source-scalars-test.sh` compares 458 Cranelift
+  Float32/Float64 now use format-specific constants, native IEEE arithmetic
+  and comparisons, preserving signed zero, subnormals, infinities and NaNs.
+  Conversions round directly to the destination format; checked conversions
+  preserve NotFinite/NotIntegral/OutOfRange priority and initialized Result
+  storage. No automatic multiply-add contraction is enabled. Float value
+  aggregates, equality and ordinary/generic calls share the bounded layout.
+  The focused `scripts/native-source-scalars-test.sh` compares 527 Cranelift
   observations with the hosted VM, including 67 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 413 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union and UInt64 cases.
-  Managed fields, recursive value layouts, float layouts, generic closures and
+  the 482 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64 and float cases.
+  Managed fields and float collections, named std.math operations, recursive value layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.
