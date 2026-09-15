@@ -1,5 +1,5 @@
 //! Scalar storage and private call carriers for value aggregates.
-//! Numeric, Bool and Unit leaves are admitted. Source MIR is immutable;
+//! Numeric, Bool, Char and Unit leaves are admitted. Source MIR is immutable;
 //! copies and projected replacements snapshot every RHS leaf before any write.
 
 use std::rc::Rc;
@@ -276,7 +276,8 @@ pub(super) fn lower_with_limit(
     lowered.parameters.clear();
     for parameter in &function.parameters {
         let local = &function.locals[parameter.index() as usize];
-        if native_float_width(local.ty, interner).is_some()
+        if (native_float_width(local.ty, interner).is_some()
+            || local.ty == interner.scalar(ScalarType::Char))
             && !matches!(
                 local.kind,
                 MirLocalKind::Parameter {
@@ -285,7 +286,11 @@ pub(super) fn lower_with_limit(
                 }
             )
         {
-            return Err("float:parameter-mode");
+            return Err(if local.ty == interner.scalar(ScalarType::Char) {
+                "char:parameter-mode"
+            } else {
+                "float:parameter-mode"
+            });
         }
         if let Some((first, layout)) = locals.storage.get(&parameter.index()) {
             if !matches!(

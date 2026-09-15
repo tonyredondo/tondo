@@ -2078,11 +2078,13 @@ fn backend_type_name(interner: &TypeInterner, ty: TypeId) -> String {
 
 fn is_native_carrier_type(name: &str) -> bool {
     // Value aggregates have already been flattened. The historical managed
-    // evaluation bridge still has no floating-point payload representation.
-    if name.contains("Float") && !matches!(name, "Float" | "Float32") {
+    // evaluation bridge does not establish float/Char collection semantics.
+    if (name.contains("Float") && !matches!(name, "Float" | "Float32"))
+        || (name.contains("Char") && name != "Char")
+    {
         return false;
     }
-    matches!(name, "Int" | "Bool" | "Unit" | "String" | "Bytes")
+    matches!(name, "Int" | "Bool" | "Unit" | "Char" | "String" | "Bytes")
         || is_native_numeric_scalar(name)
         || name.starts_with("Option[")
         || name.starts_with("Result[")

@@ -33,6 +33,7 @@ impl Layout {
             let kind = match interner.kind(self.ty) {
                 Ok(TypeKind::Scalar(ScalarType::Bool)) => MirConstant::Bool(false),
                 Ok(TypeKind::Scalar(ScalarType::Unit)) => MirConstant::Unit,
+                Ok(TypeKind::Scalar(ScalarType::Char)) => MirConstant::Char("'\\0'".to_owned()),
                 Ok(TypeKind::Scalar(ScalarType::Float | ScalarType::Float32)) => {
                     MirConstant::Float("0.0".to_owned())
                 }

@@ -97,6 +97,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/floats-probe.json" "$tmp/floats-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/floats-probe.json" --output "$tmp/floats-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-char-values.to > "$tmp/chars-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-char-values.to > "$tmp/chars-repeated.json"
+cmp "$tmp/chars-probe.json" "$tmp/chars-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/chars-probe.json" --output "$tmp/chars-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -353,6 +360,30 @@ if 'llvm_comparison' in floats:
         for case in cases
     ]
 float_probe = json.loads((root / 'floats-probe.json').read_text())
+char_probe = json.loads((root / 'chars-probe.json').read_text())
+chars = json.loads((root / 'chars-report.json').read_text())
+assert chars['format'] == report['format'] and chars['backend'] == 'cranelift'
+assert chars['boundary'] == report['boundary']
+assert chars['n1_claim'] is False and chars['production_runtime_linked'] is False
+cases = chars['observations']
+assert len(cases) == 33 and len({case['function_ordinal'] for case in cases}) == 33
+symbols = char_probe['fixtures'][0]['mir']['backend']['debug']['symbols']
+trapped_char = next(symbol['function'] for symbol in symbols
+                    if symbol['name'].endswith('::value::discardedCharTrap'))
+for case in cases:
+    assert case['arguments'] == []
+    if case['function_ordinal'] == trapped_char:
+        assert case['native_status'] == 'trapped' and case['native_result'] is None
+    else:
+        assert case['native_status'] == 'returned' and case['native_result'] == case['vm_result'] == 42
+assert sum(case['native_status'] == 'trapped' for case in cases) == 1
+if 'llvm_comparison' in chars:
+    comparison = chars['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -597,6 +628,46 @@ for name, function_name, operator in [
                                      'float-nan': 'float64-equal'}[name]
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 
+def char_constants(node):
+    if isinstance(node, dict):
+        if 'Char' in node:
+            yield node
+        for value in node.values():
+            yield from char_constants(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from char_constants(value)
+
+for name, function_name in [
+    ('char-width', 'emoji'), ('char-escape', 'zero'), ('char-order', 'order'),
+    ('char-inactive', 'variantReplacement'), ('char-omitted-call', 'discardedCharTrap'),
+    ('char-invalid-literal', 'emoji'),
+]:
+    candidate = copy.deepcopy(char_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    if name == 'char-order':
+        operation = next(statement['Assign']['value']['Binary']
+                         for block in function['blocks'] for statement in block['statements']
+                         if statement.get('Assign', {}).get('value', {}).get('Binary', {}).get('operator') == 'less')
+        operation['operator'] = 'greater'
+    elif name == 'char-omitted-call':
+        block = next(block for block in function['blocks']
+                     if 'Call' in block['terminator'].get('Invoke', {}).get('operation', {}))
+        call = block['terminator']['Invoke']
+        if call['destination'] is not None:
+            block['statements'].append({'Assign': {'destination': call['destination'],
+                                                 'value': {'Use': {'Constant': {'Char': "'λ'"}}}}})
+        block['terminator'] = {'Goto': {'target': call['target']}}
+    else:
+        values = char_constants(function)
+        value = next(value for value in values if name != 'char-inactive' or value['Char'] == "'\\0'")
+        value['Char'] = {'char-width': "'\\u{F642}'", 'char-escape': "'0'",
+                         'char-inactive': "'a'", 'char-invalid-literal': "'\\u{D800}'"}[name]
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
@@ -607,14 +678,17 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     enum-tag enum-inactive enum-field enum-propagation \
     union-tag union-widening union-inactive union-generic-tag union-propagation \
     uint64-add uint64-order uint64-division uint64-shift uint64-conversion \
-    float-width float-zero float-nan float-unsigned float-range float-error-order; do
+    float-width float-zero float-nan float-unsigned float-range float-error-order \
+    char-width char-escape char-order char-inactive char-omitted-call char-invalid-literal; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
         exit 1
     fi
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
-    if [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* || "$candidate" == uint64-* || "$candidate" == float-* ]]; then
+    if [[ "$candidate" == char-invalid-literal ]]; then
+        grep -q 'invalid native Char literal' "$tmp/$candidate.log"
+    elif [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* || "$candidate" == uint64-* || "$candidate" == float-* || "$candidate" == char-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -630,7 +704,8 @@ cp "$tmp/enums-report.json" "$target_dir/reliability/evidence/native-source-enum
 cp "$tmp/unions-report.json" "$target_dir/reliability/evidence/native-source-unions.json"
 cp "$tmp/uint64-report.json" "$target_dir/reliability/evidence/native-source-uint64.json"
 cp "$tmp/floats-report.json" "$target_dir/reliability/evidence/native-source-floats.json"
-echo "native source scalars: OK (527 Cranelift cases, 67 arithmetic traps, 44 rejected evidence changes)"
+cp "$tmp/chars-report.json" "$target_dir/reliability/evidence/native-source-chars.json"
+echo "native source scalars: OK (560 Cranelift cases, 68 arithmetic traps, 50 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregates and generic calls: LLVM comparison OK (482 cases, 64 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (515 cases, 65 arithmetic traps)"
 fi

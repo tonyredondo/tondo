@@ -6701,7 +6701,7 @@ fn main(): !env.EnvError {
     fn native_union_values_reject_inactive_unsupported_members_and_loans() {
         for declaration in [
             "fn source(value: Bool): Bool | String { value }",
-            "fn source(value: Bool): Bool | Char { value }",
+            "fn source(value: Bool): Bool | Array[Char] { value }",
             "fn source(value: Bool): Bool | Array[Float32] { value }",
             "fn source(value: ref (Int | Bool)): Int | Bool { value }",
             "type Box[T] = { item: T }\nfn source(value: Bool): Box[String] | Bool { value }",
@@ -6784,7 +6784,7 @@ fn main(): !env.EnvError {
     fn native_enum_values_reject_unsupported_inactive_variants_and_loans() {
         for declaration in [
             "enum Value { Empty\n Item(String) }\nfn source(value: Int): Value { Value.Empty }",
-            "enum Value { Empty\n Item(Char) }\nfn source(value: Int): Value { Value.Empty }",
+            "enum Value { Empty\n Item(Array[Char]) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Array[Float32]) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Item(Int | String) }\nfn source(value: Int): Value { Value.Empty }",
             "enum Value { Empty\n Next(Value) }\nfn source(value: Int): Value { Value.Empty }",
@@ -6822,12 +6822,156 @@ fn main(): !env.EnvError {
     #[test]
     fn native_sum_values_reject_unadmitted_payloads_and_parameter_modes() {
         for declaration in [
-            "fn source(value: Char): Char? { some(value) }",
+            "fn source(value: Array[Char]): Array[Char]? { some(value) }",
             "fn source(value: Array[Float]): Array[Float] ! Int { value }",
             "fn source(value: ref Int?): Int? { value }",
             "fn source(value: ref Float32): Int8 ! NumericConversionError { Int8(value)? }",
             "fn source(value: mut Float): Int8 ! NumericConversionError { Int8(value)? }",
             "fn source(value: var Float32): Int { 42 }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let function = backend
+                .functions
+                .iter()
+                .find(|function| !function.parameters.is_empty())
+                .unwrap();
+            assert!(!function.supported, "{declaration}");
+        }
+    }
+
+    #[test]
+    fn native_char_values_preserve_unicode_and_generic_calls() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-char-values.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "{}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
+        }
+        for declaration in [
+            "fn source(value: Bool): Bool | Char { value }",
+            "enum Value { Empty\n Item(Char) }\nfn source(value: Int): Value { Value.Empty }",
+            "fn source(value: Char): Char? { some(value) }",
+            "fn source(value: Char): Char ! Int { value }",
+            "fn source(value: Char): ((Char, Int), Char) { ((value, 42), '\\0') }",
+            "type Wide = { value: Char, result: Int }\nfn source(value: Int): Wide { Wide { value: 'x', result: value } }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            assert!(
+                output
+                    .mir_summary()
+                    .unwrap()
+                    .backend
+                    .as_ref()
+                    .unwrap()
+                    .functions
+                    .iter()
+                    .all(|function| function.supported),
+                "{declaration}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_chars_preserve_unicode_and_source_type_restrictions() {
+        for expression in [
+            "''",
+            "'ab'",
+            "'e\u{301}'",
+            "'\\u{D800}'",
+            "'\\u{DFFF}'",
+            "'\\u{110000}'",
+            "'\\u{0000061}'",
+            "'\\u{6_1}'",
+            "'\\x61'",
+            "'\\b'",
+            "'\n'",
+            "'\u{7f}'",
+            "'a' + 'b'",
+            "'a' - 'b'",
+            "'a' << 1",
+            "~'a'",
+            "'a' == 97",
+            "'a' == \"a\"",
+            "Char(97)",
+            "Int('a')",
+            "Float('a')",
+            "Byte('a')",
+        ] {
+            let source = format!("fn main() {{\n _ = {expression}\n}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_ne!(
+                output.status(),
+                CompilationStatus::Success,
+                "{expression:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_chars_reject_collection_range_and_loan_protocols() {
+        for declaration in [
+            "fn source(value: Array[Char]): Array[Char] { value }",
+            "fn source(value: Range[Char]): Int { 42 }",
+            "fn source(value: Char): Range[Char] { value..='z' }",
+            "fn source(value: ref Char): Char { value }",
+            "fn source(value: mut Char): Char { value }",
+            "fn source(value: var Char): Int { 42 }",
+            "type Box = { item: Char }\nfn source(value: ref Box): Char { value.item }",
         ] {
             let source = format!("{declaration}\nfn main() {{}}\n");
             let output = execute(operation_request(
@@ -7268,9 +7412,9 @@ fn main(): !env.EnvError {
     fn native_local_tuples_reject_unimplemented_storage_consumers() {
         for source in [
             "fn inspectValue(): Int {\n let pair = ([1, 2], true)\n if pair == pair { 1 } else { 0 }\n}",
-            "fn inspectValue(): Int {\n let pair = (('x', 2), 3)\n pair.1\n}",
-            "fn inspectValue(): Int {\n let pair = ('x', 2)\n pair.1\n}",
-            "fn inspectValue(): Int {\n let pair: (Char, Int) = ('x', 2)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair = ((['x'], 2), 3)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair = (['x'], 2)\n pair.1\n}",
+            "fn inspectValue(): Int {\n let pair: (Array[Char], Int) = (['x'], 2)\n pair.1\n}",
             "fn inspectValue(): Int {\n let pair = ([1, 2], 3)\n pair.1\n}",
         ] {
             let source = format!("{source}\nfn main() {{}}\n");
@@ -7316,7 +7460,7 @@ fn main(): !env.EnvError {
             Operation::Run,
             b"fn alpha(): Int { middle() }\n\
               fn middle(): Int { if false { alpha() } else { omega() } }\n\
-              fn omega(): Int {\n let pair = (('x', 2), 3)\n pair.1\n }\n\
+              fn omega(): Int {\n let pair = ((['x'], 2), 3)\n pair.1\n }\n\
               fn main() {}\n",
             SourceForm::Script,
             ResourceLimits::default(),
@@ -7491,7 +7635,7 @@ fn main() {
             "type Empty = {}\nfn inspectValue(value: mut Empty): Int { 1 }",
             "type Empty = {}\nfn inspectValue(value: var Empty): Int {\n value = Empty {}\n 1\n}",
             "type Text = { point: Point, label: String }\nfn inspectValue(): Int {\n let text = Text { point: Point { x: 1, y: 2 }, label: \"text\" }\n text.point.x\n}",
-            "type Wide = { value: Char, result: Int }\nfn inspectValue(): Int {\n let wide = Wide { value: 'x', result: 2 }\n wide.result\n}",
+            "type Wide = { value: Array[Char], result: Int }\nfn inspectValue(): Int {\n let wide = Wide { value: ['x'], result: 2 }\n wide.result\n}",
             "fn inspectValue(point: mut Point): Int {\n point.x = 3\n point.x\n}",
             "fn inspectValue(point: ref Point): Int { point.x }",
             "fn inspectValue(point: mut Point): Int { 1 }",

@@ -5685,7 +5685,7 @@ pueden retrasar el primer backend correcto.
   `NATIVE-AOT-PERF-001` remain pending, as does Gate N1.
 
 - [ ] **NATIVE-AOT-LOWER-001 — Lower actual verified frontend MIR across the required language corpus.**
-  Source-driven local tuples and records with `Int`/`Bool`/`Unit`, `Byte`,
+  Source-driven local tuples and records with `Int`/`Bool`/`Char`/`Unit`, `Byte`,
   `Int8`/`Int16`/`Int32`, `UInt8`/`UInt16`/`UInt32`/`UInt64` and `Float32`/`Float64` leaves now lower
   to scalar locals, including nested/generic records, field writes, independent
   copies, `with` updates, reassignment and control flow. Ordinary direct calls
@@ -5739,11 +5739,16 @@ pueden retrasar el primer backend correcto.
   preserve NotFinite/NotIntegral/OutOfRange priority and initialized Result
   storage. No automatic multiply-add contraction is enabled. Float value
   aggregates, equality and ordinary/generic calls share the bounded layout.
-  The focused `scripts/native-source-scalars-test.sh` compares 527 Cranelift
-  observations with the hosted VM, including 67 arithmetic traps, without an evaluation
+  Char now preserves the complete Unicode scalar value, including NUL,
+  supplementary planes and exact escapes. Native equality, ordering, match,
+  aggregate copies and ordinary/generic calls share the bounded value route;
+  inactive fields contain NUL. Invalid literals, source numeric operations,
+  managed Char collections, ranges and loan parameters remain rejected.
+  The focused `scripts/native-source-scalars-test.sh` compares 560 Cranelift
+  observations with the hosted VM, including 68 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 482 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64 and float cases.
+  the 515 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64, float and Char cases.
   Managed fields and float collections, named std.math operations, recursive value layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.

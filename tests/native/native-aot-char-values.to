@@ -1,0 +1,307 @@
+alias Letter = Char
+
+type Box[T] = {
+    item: T
+}
+
+type Mark = {
+    value: Letter
+    valid: Bool
+}
+
+enum Choice {
+    Empty
+    Letter(Char)
+    Pair {
+        left: Char
+        right: Char
+    }
+}
+
+fn identity[T: Copy](value: T): T {
+    value
+}
+
+fn same[T: Copy + Equatable](left: T, right: T): Bool {
+    left == right
+}
+
+fn echo(value: Char): Char {
+    value
+}
+
+fn emoji(): Char {
+    '🙂'
+}
+
+fn zero(): Char {
+    '\0'
+}
+
+fn checked(value: Bool): Int {
+    if value {
+        42
+    } else {
+        -1
+    }
+}
+
+fn order(left: Char, right: Char): Int {
+    if left < right and left <= right and left != right {
+        1
+    } else if left > right and left >= right and left != right {
+        2
+    } else if left == right and left <= right and left >= right {
+        3
+    } else {
+        -1
+    }
+}
+
+fn classify(value: Char): Int {
+    match value {
+        '\0' => 1
+        'λ' => 2
+        '\u{1F642}' => 3
+        '\u{10FFFF}' => 4
+        _ => 0
+    }
+}
+
+fn recurse(value: Char, count: Int): Char {
+    if count == 0 {
+        value
+    } else {
+        recurse(value, count - 1)
+    }
+}
+
+fn widen(value: Char | Bool): Char | Bool | Int {
+    value
+}
+
+fn optional(value: Char?): Char? {
+    some(value?)
+}
+
+fn result(value: Char ! Char): Char ! Char {
+    value?
+}
+
+fn absent(value: Char?): Char? {
+    let answer = value?
+    _ = 1 / 0
+    some(answer)
+}
+
+fn failed(value: Char ! Char): Char ! Char {
+    let answer = value?
+    _ = 1 / 0
+    answer
+}
+
+fn trappedChar(divisor: Int): Char {
+    _ = 1 / divisor
+    'λ'
+}
+
+fn ascii(): Int {
+    checked(echo('a') == 'a')
+}
+
+fn unicode(): Int {
+    checked(echo('ñ') == '\u{F1}' and echo('λ') == '\u{3BB}')
+}
+
+fn supplementary(): Int {
+    checked(emoji() == '\u{1F642}')
+}
+
+fn maximum(): Int {
+    checked(echo('\u{10FFFF}') > echo('\u{FFFF}'))
+}
+
+fn nul(): Int {
+    checked(zero() == '\u{0}' and zero() < ' ')
+}
+
+fn escapes(): Int {
+    let controls = echo('\n') == '\u{A}' and echo('\r') == '\u{D}' and echo('\t') == '\u{9}'
+    let punctuation = echo('\\') == '\u{5C}' and echo('\'') == '\u{27}' and echo('"') == '\u{22}'
+    checked(controls and punctuation)
+}
+
+fn unicodeEscapes(): Int {
+    checked(echo('\u{000061}') == 'a' and echo('\u{7f}') == '\u{7F}')
+}
+
+fn scalarBoundaries(): Int {
+    let gap = echo('\u{D7FF}') < echo('\u{E000}')
+    let planes = echo('\u{FFFF}') < echo('\u{10000}')
+    checked(gap and planes and echo('\u{7F}') < echo('\u{80}'))
+}
+
+fn notNormalized(): Int {
+    checked(echo('K') != 'K' and echo('\u{301}') != 'é')
+}
+
+fn orderLess(): Int {
+    checked(order('\u{D7FF}', '\u{E000}') == 1)
+}
+
+fn orderEqual(): Int {
+    checked(order('🙂', '\u{1F642}') == 3)
+}
+
+fn orderGreater(): Int {
+    checked(order('\u{10FFFF}', '🙂') == 2)
+}
+
+fn literalPatterns(): Int {
+    let first = classify(zero()) == 1 and classify(echo('λ')) == 2
+    let last = classify(emoji()) == 3 and classify(echo('\u{10FFFF}')) == 4
+    checked(first and last and classify('a') == 0)
+}
+
+fn guardPatterns(): Int {
+    match echo('λ') {
+        value if value > 'a' => checked(value == 'λ')
+        _ => -1
+    }
+}
+
+fn tupleCopy(): Int {
+    var value = ('λ', 42)
+    let copy = identity(value)
+    value.0 = '🙂'
+    checked(copy.0 == 'λ' and value.0 == '🙂' and copy.1 == 42)
+}
+
+fn recordCopy(): Int {
+    var value = Mark { valid: false, value: 'λ' }
+    let copy = identity(value)
+    value.value = '🙂'
+    checked(copy.value == 'λ' and value.value == '🙂' and not copy.valid)
+}
+
+fn nestedCopy(): Int {
+    var value = Box[(Char, Box[Char])] { item: ('λ', Box[Char] { item: '🙂' }) }
+    let copy = identity(value)
+    value.item.1.item = '\0'
+    checked(copy.item.1.item == '🙂' and value.item.1.item == '\0' and copy.item.0 == 'λ')
+}
+
+fn withUpdate(): Int {
+    let value = Mark { value: 'λ', valid: true }
+    let copy = value with { value: '🙂' }
+    checked(value.value == 'λ' and copy.value == '🙂' and copy.valid)
+}
+
+fn overlappingEquality(): Int {
+    var value = Mark { value: 'λ', valid: false }
+    let copy = value
+    value.valid = value == copy
+    checked(value.valid and not copy.valid and value != copy)
+}
+
+fn variantReplacement(): Int {
+    var value = Choice.Letter('🙂')
+    let copy = identity(value)
+    value = Choice.Empty
+    checked(same(value, Choice.Empty) and same(copy, Choice.Letter('🙂')))
+}
+
+fn namedVariant(): Int {
+    let value = Choice.Pair { right: '🙂', left: 'λ' }
+    match identity(value) {
+        Choice.Pair { left, right } => checked(left == 'λ' and right == '🙂')
+        _ => -1
+    }
+}
+
+fn optionalValue(): Int {
+    var value: Char? = some('\0')
+    let copy = optional(value)
+    value = none
+    match copy {
+        some(character) => checked(character == '\0' and value == none)
+        none => -1
+    }
+}
+
+fn resultValue(): Int {
+    match result(ok('🙂')) {
+        ok(character) => checked(character == '🙂')
+        err(_) => -1
+    }
+}
+
+fn resultError(): Int {
+    var value: Char ! Char = ok('🙂')
+    value = err('λ')
+    checked(value == err('λ'))
+}
+
+fn unionValue(): Int {
+    let value: Char | Bool = '🙂'
+    match identity(value) {
+        Char(character) => checked(character == '🙂')
+        Bool(_) => -1
+    }
+}
+
+fn unionWidening(): Int {
+    var value: Char | Bool | Int = widen('🙂')
+    let copy = identity(value)
+    value = 42
+    match copy {
+        Char(character) => checked(character == '🙂' and value == 42)
+        _ => -1
+    }
+}
+
+fn genericAggregate(): Int {
+    let value = Box[Char] { item: '🙂' }
+    checked(same(identity(value), value) and not same(value, Box[Char] { item: '\0' }))
+}
+
+fn recursiveCalls(): Int {
+    checked(recurse('🙂', 8) == '🙂')
+}
+
+fn loopCalls(): Int {
+    var value = 'λ'
+    var count = 0
+    for count < 4 {
+        value =
+            echo(
+                    if value == 'λ' {
+                        '🙂'
+                    } else {
+                        'λ'
+                    },
+                )
+        count = count + 1
+    }
+    checked(value == 'λ' and count == 4)
+}
+
+fn functionValue(): Int {
+    let callback = echo
+    checked(callback('🙂') == '🙂')
+}
+
+fn earlyAbsence(): Int {
+    checked(absent(none) == none)
+}
+
+fn earlyError(): Int {
+    checked(failed(err('λ')) == err('λ'))
+}
+
+fn discardedCharTrap(): Int {
+    _ = trappedChar(0)
+    42
+}
+
+fn main() {}

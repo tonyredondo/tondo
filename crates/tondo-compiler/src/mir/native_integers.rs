@@ -10,8 +10,10 @@ use crate::types::TypeKind;
 type Result<T> = std::result::Result<T, &'static str>;
 
 pub(super) fn is_value_scalar(scalar: ScalarType) -> bool {
-    matches!(scalar, ScalarType::Bool | ScalarType::Unit)
-        || is_native_numeric_scalar(scalar.as_str())
+    matches!(
+        scalar,
+        ScalarType::Bool | ScalarType::Unit | ScalarType::Char
+    ) || is_native_numeric_scalar(scalar.as_str())
 }
 
 #[derive(Clone, Copy)]

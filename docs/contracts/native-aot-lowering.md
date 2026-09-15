@@ -10,7 +10,7 @@ operations from Tondo source.
 
 ## Source-driven value aggregates, enums, unions, sums, direct calls and equality
 
-The compiler lowers local tuples and records whose leaves are `Int`, `Bool`, `Unit`,
+The compiler lowers local tuples and records whose leaves are `Int`, `Bool`, `Char`, `Unit`,
 `Byte`, `Int8`/`Int16`/`Int32`, `UInt8`/`UInt16`/`UInt32`/`UInt64` and `Float32`/`Float64`
 into independent scalar locals. Nested tuples/records and instantiated generic
 records use the same route. Nominal enums, structural unions, `T?` and `T ! E` recursively admit these value
@@ -163,6 +163,26 @@ candidate local counts against the shared expansion budget. Float value
 aggregates use the existing copy/call protocol and canonical positive-zero
 inactive payloads. General float `ref`/`mut`/`var` parameters remain unadmitted.
 
+`Char` uses one private eight-byte carrier containing a nonnegative Unicode
+scalar value. Its domain is `0..=0x10FFFF` excluding `0xD800..=0xDFFF`. Literal
+spelling remains typed as `Char` in the private program; the adapter independently
+decodes one scalar or a specified escape before native code generation.
+Empty/multiple-scalar literals, unescaped ASCII controls, unknown escapes,
+invalid hex syntax, surrogates and out-of-range values are rejected. This
+validation also visits constants in unused functions and inactive paths.
+
+Scalar equality, inequality and order use the complete scalar value, with no
+UTF-16 truncation, locale ordering, normalization or case folding. Literal and
+guarded `match` retain the verified source branches. Transparent aliases preserve
+the same representation; Char remains distinct from integers, Byte and String.
+The source arithmetic and numeric-conversion restrictions remain unchanged.
+Records, tuples, enums, unions and Option/Result use the existing copy and call
+protocol, including ordinary/generic functions and initialized inactive storage.
+Inactive Char fields contain the valid NUL scalar, not an invalid sentinel.
+Storage and comparison temporaries use the existing expansion budget. This
+value route does not establish general Char loans, ranges, managed collections,
+string APIs or a public character ABI.
+
 `UInt64` occupies one eight-byte carrier with all bits preserved. The private
 `UnsignedInteger` constant retains its source spelling and is validated over
 `0..=2^64-1`; signed `Integer` constants retain their signed range validation.
@@ -228,11 +248,12 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 527 Cranelift observations across
-327 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+`scripts/native-source-scalars-test.sh` verifies 560 Cranelift observations across
+360 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
 16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
 43 Unit/empty-record cases, 67 fixed-width integer cases, 71 sum-value cases and
-38 nominal-enum cases, 50 structural-union cases, 54 UInt64 cases and 69 float cases, including 67 arithmetic
+38 nominal-enum cases, 50 structural-union cases, 54 UInt64 cases, 69 float cases
+and 33 Char cases, including 68 arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -258,20 +279,25 @@ propagation. Five UInt64 regressions substitute signed addition, ordering,
 division or right shift, or bypass the conversion range decision. Each must
 disagree with the VM before a report is published. Six float regressions change
 the arithmetic width, signed-zero negation, NaN inequality, unsigned conversion,
-narrowing range decision or conversion error priority. All 44 negative evidence
+narrowing range decision or conversion error priority. Six Char regressions
+truncate a supplementary scalar, change an escape, reverse ordering, corrupt an
+inactive field, omit a discarded call or insert an invalid surrogate literal.
+The five semantic changes must disagree with the hosted VM; the invalid literal
+must fail scalar validation. All 50 negative evidence
 cases must be rejected without publishing a partial report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
 `native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`,
 `native-source-sums.json`, `native-source-enums.json`, `native-source-unions.json`
-`native-source-uint64.json` and `native-source-floats.json` under
+`native-source-uint64.json`, `native-source-floats.json` and `native-source-chars.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 482 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64 and float cases through LLVM.
+the 515 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum,
+enum, union, UInt64, float and Char cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -431,6 +457,19 @@ Compiler regressions preserve immutable source MIR/types, deterministic probes,
 bounded normalization and source restrictions on mixed formats and Byte
 arithmetic. Named `std.math` operations and managed float collections remain
 outside this increment.
+
+`tests/native/native-aot-char-values.to` supplies 33 scalar entry functions and
+33 observations, including one required arithmetic trap in a discarded
+Char-returning call. ASCII, NUL, escapes, combining scalars, supplementary-plane
+values and both sides of the surrogate gap retain exact Unicode identity.
+Comparisons, literal/guarded matches, copies, projected writes, `with` updates,
+overlapping equality destinations and inactive fields use actual source code.
+Ordinary/generic calls, named function values, recursion, loops, Option/Result
+propagation and union widening use the admitted value protocol. The 32 normal
+observations return 42 after explicit source checks. The hosted VM and both
+native candidates must agree; independent compiler probes must be identical.
+Compiler tests retain source MIR/types, enforce storage limits and reject invalid
+literals, numeric operations, managed Char collections, ranges and loan protocols.
 
 Managed fields, recursive value layouts and
 aggregate calls through suspension/spawn protocols

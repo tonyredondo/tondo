@@ -29,6 +29,7 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod character;
 mod floating;
 mod source_scalars;
 mod unsigned;
@@ -2103,6 +2104,9 @@ fn validate_supported_operand(
     function_ordinal: u32,
 ) -> Result<(), String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Char(value)) => {
+            character::parse_literal(value).map(|_| ())
+        }
         MirBackendOperand::Constant(MirBackendConstant::Named)
         | MirBackendOperand::Unsupported { .. } => Err(format!(
             "supported normalized MIR function {function_ordinal} contains an opaque or unsupported operand"
@@ -3401,6 +3405,10 @@ fn lower_operand_cranelift(
     locals: &BTreeMap<u32, Value>,
 ) -> Result<Value, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Char(value)) => Ok(builder.ins().iconst(
+            cranelift_codegen::ir::types::I64,
+            character::parse_literal(value)?,
+        )),
         MirBackendOperand::Constant(MirBackendConstant::Float32(value)) => {
             Ok(builder.ins().iconst(
                 cranelift_codegen::ir::types::I64,
@@ -3453,13 +3461,13 @@ fn lower_operand_cranelift(
         )),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
-                MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Unit
                 | MirBackendConstant::Integer(_)
                 | MirBackendConstant::UnsignedInteger(_)
                 | MirBackendConstant::Float32(_)
                 | MirBackendConstant::Float(_)
+                | MirBackendConstant::Char(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };
@@ -6963,9 +6971,9 @@ fn evaluate_aot_operand(
             }
         }
         MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok(AotVmValue::Scalar(0)),
-        MirBackendOperand::Constant(MirBackendConstant::Char(value)) => Err(format!(
-            "AOT VM oracle non-integer constant is not supported: {value}"
-        )),
+        MirBackendOperand::Constant(MirBackendConstant::Char(value)) => {
+            Ok(AotVmValue::Scalar(character::parse_literal(value)?))
+        }
         MirBackendOperand::Constant(MirBackendConstant::Named)
         | MirBackendOperand::Unsupported { .. } => {
             Err("AOT VM oracle operand is opaque or unsupported".to_owned())
@@ -9524,6 +9532,7 @@ fn evaluate_operand(
     locals: &BTreeMap<u32, i64>,
 ) -> Result<i64, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Char(value)) => character::parse_literal(value),
         MirBackendOperand::Constant(MirBackendConstant::Float32(value)) => {
             floating::parse_literal(floating::Width::Single, value)
         }
@@ -11635,6 +11644,9 @@ fn llvm_operand(
     value_index: &mut usize,
 ) -> Result<String, String> {
     match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Char(value)) => {
+            character::parse_literal(value).map(|value| value.to_string())
+        }
         MirBackendOperand::Constant(MirBackendConstant::Float32(value)) => {
             floating::parse_literal(floating::Width::Single, value).map(|value| value.to_string())
         }
@@ -11711,13 +11723,13 @@ fn llvm_operand(
             .unwrap_or_else(|| string_payload(kind).to_string())),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
-                MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Unit
                 | MirBackendConstant::Integer(_)
                 | MirBackendConstant::UnsignedInteger(_)
                 | MirBackendConstant::Float32(_)
                 | MirBackendConstant::Float(_)
+                | MirBackendConstant::Char(_)
                 | MirBackendConstant::Bool(_)
                 | MirBackendConstant::String(_) => unreachable!(),
             };
