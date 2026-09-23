@@ -5748,13 +5748,17 @@ pueden retrasar el primer backend correcto.
   now use private start/end/inclusive scalar fields. Construction, independent
   copies, nested fields, ordinary/generic calls and `in` membership preserve
   exclusive/inclusive ends, empty reversed ranges, unsigned extrema and Unicode
-  scalar ordering. Native iteration/cursors, custom steps and production runtime
-  storage remain pending.
-  The focused `scripts/native-source-scalars-test.sh` compares 572 Cranelift
-  observations with the hosted VM, including 69 arithmetic traps, without an evaluation
+  scalar ordering. Owned `for` now lowers its intrinsic range cursor into bounded
+  private scalar storage and branches. Exclusive/inclusive ends, empty ranges,
+  integer extrema, the Char surrogate gap, nested loops, `break`/`continue`,
+  ordinary calls and concrete generic instances retain VM behavior. Borrowed
+  cursors, other collections, custom steps and production runtime storage remain
+  pending.
+  The focused `scripts/native-source-scalars-test.sh` compares 590 Cranelift
+  observations with the hosted VM, including 70 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 527 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64, float, Char and range cases.
+  the 545 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64, float, Char, range-value and range-iteration cases.
   Managed fields and float collections, named std.math operations, recursive value layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.

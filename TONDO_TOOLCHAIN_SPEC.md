@@ -1613,9 +1613,11 @@ vectorización, tablas y multiversioning siguen
 permitidos si conservan oracle escalar y fallback portable.
 
 El corpus source-driven actual incluye valores `Range[T]` discretos de enteros
-y `Char`, con construcción y pertenencia `in` observadas frente a la VM. Ese
-lowering usa almacenamiento escalar privado y no acredita iteración nativa,
-enlace con el runtime de producción ni Gate N1.
+y `Char`, con construcción, pertenencia `in` e iteración por valor mediante
+`for` observadas frente a la VM. El cursor intrínseco propio usa almacenamiento
+escalar privado y ramas acotadas; los extremos exclusivos e inclusivos, los
+límites enteros y el salto Unicode conservan las observaciones fuente. Esto no
+acredita cursores prestados, enlace con el runtime de producción ni Gate N1.
 
 `PERF-001` cierra el diseño y sus validaciones negativas, no la captura de
 números. La baseline debe capturarse antes de `NATIVE-001`, `NATIVE-ABI-001` o

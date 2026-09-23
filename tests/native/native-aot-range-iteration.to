@@ -1,0 +1,170 @@
+fn checked(value: Bool): Int {
+    if value {
+        42
+    } else {
+        -1
+    }
+}
+
+fn exclusive(): Int {
+    var sum = 0
+    for value in 2 .. 5 {
+        sum += value
+    }
+    checked(sum == 9)
+}
+
+fn inclusive(): Int {
+    var sum = 0
+    for value in 2 ..= 5 {
+        sum += value
+    }
+    checked(sum == 14)
+}
+
+fn empty(): Int {
+    var count = 0
+    for _ in 5 .. 5 {
+        count += 1
+    }
+    for _ in 5 ..= 2 {
+        count += 1
+    }
+    checked(count == 0)
+}
+
+fn signedMaximum(): Int {
+    var count = 0
+    var last = 0
+    for value in 9223372036854775806 ..= 9223372036854775807 {
+        count += 1
+        last = value
+    }
+    checked(count == 2 and last == 9223372036854775807)
+}
+
+fn signedMinimum(): Int {
+    var count = 0
+    var last = 0
+    for value in -9223372036854775808 ..= -9223372036854775807 {
+        count += 1
+        last = value
+    }
+    checked(count == 2 and last == -9223372036854775807)
+}
+
+fn unsignedMaximum(): Int {
+    var count = 0
+    var last: UInt64 = 0u64
+    for value in 18446744073709551614u64 ..= 18446744073709551615u64 {
+        count += 1
+        last = value
+    }
+    checked(count == 2 and last == 18446744073709551615u64)
+}
+
+fn narrowBounds(): Int {
+    let signed: Range[Int8] = 126i8 ..= 127i8
+    let unsigned: Range[UInt8] = 254u8 ..= 255u8
+    var count = 0
+    var signedLast: Int8 = 0i8
+    var unsignedLast: UInt8 = 0u8
+    for value in signed {
+        count += 1
+        signedLast = value
+    }
+    for value in unsigned {
+        count += 1
+        unsignedLast = value
+    }
+    checked(count == 4 and signedLast == 127i8 and unsignedLast == 255u8)
+}
+
+fn unicodeGap(): Int {
+    var count = 0
+    var last = '\0'
+    for value in '\u{d7ff}' ..= '\u{e000}' {
+        count += 1
+        last = value
+    }
+    checked(count == 2 and last == '\u{e000}')
+}
+
+fn unicodeMaximum(): Int {
+    var count = 0
+    var last = '\0'
+    for value in '\u{10fffe}' ..= '\u{10ffff}' {
+        count += 1
+        last = value
+    }
+    checked(count == 2 and last == '\u{10ffff}')
+}
+
+fn breakAndContinue(): Int {
+    var sum = 0
+    for value in 0 ..= 8 {
+        if value == 1 {
+            continue
+        }
+        if value == 6 {
+            break
+        }
+        sum += value
+    }
+    checked(sum == 14)
+}
+
+fn nested(): Int {
+    var sum = 0
+    for left in 2 .. 4 {
+        for right in 0 .. 3 {
+            sum += left + right
+        }
+    }
+    checked(sum == 21)
+}
+
+fn independentCopies(): Int {
+    let original = 2 ..= 4
+    let copy = original
+    var sum = 0
+    for value in copy {
+        sum += value
+    }
+    for value in original {
+        sum += value
+    }
+    checked(sum == 18)
+}
+
+fn genericLoop[T: Copy](value: T): Int {
+    _ = value
+    var sum = 0
+    for item in 1 ..= 3 {
+        sum += item
+    }
+    checked(sum == 6)
+}
+
+fn callGeneric(): Int {
+    genericLoop(42)
+}
+
+fn checkedSource(divisor: Int): Range[Int] {
+    (1 / divisor) ..= 3
+}
+
+fn sourceCall(): Int {
+    var sum = 0
+    for value in checkedSource(1) {
+        sum += value
+    }
+    checked(sum == 6)
+}
+
+fn sourceTrap(): Int {
+    for _ in checkedSource(0) {}
+    42
+}
+
+fn main() {}

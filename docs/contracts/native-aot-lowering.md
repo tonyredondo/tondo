@@ -184,7 +184,7 @@ value route does not establish general Char loans, managed collections,
 string APIs or a public character ABI. Discrete `Range[Char]` values use the
 separate private range layout below.
 
-### Discrete range values and membership
+### Discrete range values, membership and owned iteration
 
 `Range[T]` for the intrinsic signed and unsigned integer types and `Char` uses
 three private scalar carriers: start, end and an inclusive-end Boolean. `Byte`,
@@ -203,9 +203,29 @@ per-function expansion budget as aggregate copies. The source MIR and hosted
 bytecode remain unchanged. The comparison inputs are pure scalar values, so
 evaluating both bound predicates does not duplicate source effects.
 
-This slice admits value construction and membership only. Native range
-iteration/cursors, custom steps, general loans and production runtime storage
-remain pending. The three carriers are not a public layout or FFI ABI.
+An owned `for` over one of these ranges creates a private cursor with five
+scalar carriers: the three source-range fields, the next element and an active
+flag. The source expression is evaluated once; cursor initialization snapshots
+its value before the loop. Each `IteratorNext` becomes bounded Boolean tests
+and normal control-flow blocks on the private MIR copy. The current element is
+emitted before advancing. An exclusive end is not emitted; an inclusive end is
+emitted once without calculating a successor past the element type's maximum.
+Equal exclusive and reversed ranges yield no elements. `UInt64` order remains
+unsigned across the high bit. The private `Char` successor views its native
+carrier as an integer only for a guarded increment, jumps from U+D7FF to
+U+E000, and never creates a surrogate or a value above U+10FFFF. This does not
+introduce source-level Char arithmetic.
+
+Five Boolean temporaries per static `IteratorNext` site, plus one for the Char surrogate
+guard, share the existing per-function local limit with cursor storage and
+assignment snapshots. The lowering leaves source MIR, its types and hosted
+bytecode unchanged. Concrete generic instances containing an owned range loop
+use the same route; generic templates remain unadmitted. `break`, `continue`,
+nested loops and ordinary calls keep their verified source control flow.
+Borrowed/mutable cursors, other intrinsic collections, user `Iterator`
+implementations, custom steps, general loans and production runtime storage
+remain pending. Neither the three range carriers nor the five cursor carriers
+are a public layout or FFI ABI.
 
 `UInt64` occupies one eight-byte carrier with all bits preserved. The private
 `UnsignedInteger` constant retains its source spelling and is validated over
@@ -272,12 +292,13 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 572 Cranelift observations across
-372 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+`scripts/native-source-scalars-test.sh` verifies 590 Cranelift observations across
+388 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
 16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
 43 Unit/empty-record cases, 67 fixed-width integer cases, 71 sum-value cases and
 38 nominal-enum cases, 50 structural-union cases, 54 UInt64 cases, 69 float cases,
-33 Char cases and 12 discrete-range cases, including 69 arithmetic
+33 Char cases, 12 discrete-range value cases and 18 owned-range iteration cases,
+including 70 arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -309,22 +330,24 @@ inactive field, omit a discarded call or insert an invalid surrogate literal.
 The five semantic changes must disagree with the hosted VM; the invalid literal
 must fail scalar validation. Five range regressions reverse exclusive or
 inclusive end policy, the lower-bound predicate, unsigned high-bit order or
-Unicode scalar order. They must disagree with the hosted VM. All 55 negative evidence
+Unicode scalar order. Three owned-iteration regressions change the exclusive
+end predicate, successor step or Char surrogate jump. They must disagree with
+the hosted VM. All 58 negative evidence
 cases must be rejected without publishing a partial report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
 `native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`,
 `native-source-sums.json`, `native-source-enums.json`, `native-source-unions.json`
 `native-source-uint64.json`, `native-source-floats.json`, `native-source-chars.json`
-and `native-source-ranges.json` under
+`native-source-ranges.json` and `native-source-range-iteration.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 527 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum,
-enum, union, UInt64, float, Char and range cases through LLVM.
+the 545 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum,
+enum, union, UInt64, float, Char, range-value and range-iteration cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -507,7 +530,20 @@ discarded range result exercise independent value storage and evaluation.
 The VM, Cranelift and explicitly selected LLVM candidate compare exact
 observations; separate compiler processes must produce identical probes.
 Compiler regressions retain the source MIR and types, charge membership to
-the shared expansion budget and keep iteration and loan modes unsupported.
+the shared expansion budget and keep loan modes unsupported.
+
+`tests/native/native-aot-range-iteration.to` supplies 18 observations from 16
+scalar entry functions, including one checked-division trap before the loop
+starts. Exclusive/inclusive and empty ranges, signed/unsigned and narrow
+integer maxima, the Unicode surrogate gap and maximum scalar, independent
+source copies, nested loops, `break`/`continue`, ordinary calls and one concrete
+generic instance return the VM's exact outcomes. The 17 normal observations
+return 42 after source assertions. The VM, Cranelift and explicitly selected
+LLVM candidate compare the same source-driven probe; a repeated compiler
+process produces identical bytes. Separate compiler tests confirm that cursor
+normalization does not mutate verified MIR/types, that generated cursor work
+consumes the shared local budget, and that borrowed parameter modes remain
+unadmitted.
 
 Managed fields, recursive value layouts and
 aggregate calls through suspension/spawn protocols

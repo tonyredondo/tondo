@@ -8805,6 +8805,78 @@ mod tests {
     }
 
     #[test]
+    fn native_range_iteration_preserves_source_mir_and_bounds_cursor_expansion() {
+        let (resolved, hir) = checked(include_str!(
+            "../../../../tests/native/native-aot-range-iteration.to"
+        ));
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let before = format!("{mir:?}");
+        let types = hir.interner().len();
+        let backend = mir.backend_program(hir.interner());
+        assert_eq!(backend, mir.backend_program(hir.interner()));
+        assert_eq!(before, format!("{mir:?}"));
+        assert_eq!(types, hir.interner().len());
+        let records = crate::mir::native_aggregates::record_fields(&mir);
+        for name in [
+            "exclusive",
+            "narrowBounds",
+            "unicodeGap",
+            "nested",
+            "sourceCall",
+        ] {
+            let function = mir
+                .functions()
+                .find(|function| {
+                    function.id() == MirFunctionId::Callable(function_id(&resolved, name))
+                })
+                .unwrap();
+            assert!(function.blocks.iter().any(|block| {
+                matches!(
+                    block.terminator().kind(),
+                    MirTerminatorKind::IteratorNext { .. }
+                )
+            }));
+            let mut admitted = false;
+            for limit in 0..256 {
+                match crate::mir::native_aggregates::lower_with_limit(
+                    function,
+                    hir.interner(),
+                    &records,
+                    &mir.enum_variants,
+                    limit,
+                ) {
+                    Ok(lowered) => {
+                        assert!(limit > 12, "{name}: {limit}");
+                        assert!(lowered.blocks.iter().all(|block| {
+                            !matches!(
+                                block.terminator().kind(),
+                                MirTerminatorKind::IteratorNext { .. }
+                            ) && block.statements().iter().all(|statement| {
+                                !matches!(
+                                    statement.kind(),
+                                    MirStatementKind::Assign {
+                                        value: MirRvalue {
+                                            kind: MirRvalueKind::IteratorState { .. },
+                                            ..
+                                        },
+                                        ..
+                                    }
+                                )
+                            })
+                        }));
+                        admitted = true;
+                        break;
+                    }
+                    Err(error) => assert_eq!(error, "aggregate:local-limit", "{name}: {limit}"),
+                }
+            }
+            assert!(admitted, "{name} never admitted");
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn native_float_normalization_preserves_source_mir_and_bounded_storage() {
         let (resolved, hir) = checked(include_str!(
             "../../../../tests/native/native-aot-float-values.to"

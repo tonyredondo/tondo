@@ -7033,9 +7033,46 @@ fn main(): !env.EnvError {
     }
 
     #[test]
-    fn native_ranges_retain_iteration_and_loan_boundaries() {
+    fn native_ranges_admit_owned_iteration_and_retain_loan_boundaries() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-range-iteration.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "{}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
+        }
+        for function in backend
+            .functions
+            .iter()
+            .filter(|function| function.supported)
+        {
+            let json = serde_json::to_string(function).unwrap();
+            assert!(!json.contains("iterator-next"));
+            assert!(!json.contains("iterator-state"));
+        }
+
         for declaration in [
-            "fn source(value: Range[Char]): Int {\n var count = 0\n for _ in value {\n  count += 1\n }\n count\n}",
             "fn source(value: ref Range[Char]): Int { 42 }",
             "fn source(value: mut Range[Char]): Int { 42 }",
             "fn source(value: var Range[Char]): Int { 42 }",

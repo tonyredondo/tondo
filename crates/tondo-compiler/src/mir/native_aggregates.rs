@@ -69,6 +69,9 @@ enum Field {
     RangeStart,
     RangeEnd,
     RangeInclusive,
+    CursorSource,
+    CursorCurrent,
+    CursorActive,
 }
 
 struct Layout {
@@ -120,6 +123,29 @@ impl Layout {
                     (Field::RangeStart, arguments[0]),
                     (Field::RangeEnd, arguments[0]),
                     (Field::RangeInclusive, interner.scalar(ScalarType::Bool)),
+                ]
+            }
+            TypeKind::Cursor {
+                mode: crate::types::CursorMode::Own,
+                collection,
+            } => {
+                let TypeKind::Intrinsic {
+                    constructor: crate::types::IntrinsicType::Range,
+                    arguments,
+                } = interner.kind(*collection).ok()?
+                else {
+                    return None;
+                };
+                let [element] = arguments.as_slice() else {
+                    return None;
+                };
+                if !ranges::is_native_range_element(*element, interner) {
+                    return None;
+                }
+                vec![
+                    (Field::CursorSource, *collection),
+                    (Field::CursorCurrent, *element),
+                    (Field::CursorActive, interner.scalar(ScalarType::Bool)),
                 ]
             }
             TypeKind::Union(members) => {
@@ -331,6 +357,9 @@ pub(super) fn lower_with_limit(
     }
     locals.lower_checked_conversions(&mut lowered.blocks, interner)?;
     locals.lower_tags(&mut lowered.blocks, interner)?;
+    let original_blocks =
+        u32::try_from(lowered.blocks.len()).map_err(|_| "range:iterator-block-limit")?;
+    let mut added_blocks = Vec::new();
     for (block_index, block) in lowered.blocks.iter_mut().enumerate() {
         let mut statements = Vec::new();
         for mut statement in std::mem::take(&mut block.statements) {
@@ -399,8 +428,10 @@ pub(super) fn lower_with_limit(
                 .insert(block_index as u32, (first..first + layout.width).collect());
             *destination = None;
         }
+        locals.lower_range_iterator_next(block, interner, original_blocks, &mut added_blocks)?;
         locals.terminator(&mut block.terminator.kind)?;
     }
+    lowered.blocks.extend(added_blocks);
     native_integers::lower(&mut lowered.blocks, interner, &mut |width| {
         locals.allocate(width)
     })?;
@@ -515,6 +546,9 @@ impl NativeLocals {
             MirRvalueKind::Use(operand) => self.values(operand),
             MirRvalueKind::Range { kind, start, end } => {
                 self.range_values(*kind, start, end, layout, interner)
+            }
+            MirRvalueKind::IteratorState { source } => {
+                self.range_cursor_values(source, layout, interner)
             }
             MirRvalueKind::Coerce {
                 kind: kind @ (Assignability::UnionInjection | Assignability::UnionWidening),

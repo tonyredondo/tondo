@@ -449,6 +449,36 @@ impl Substitute<'_> {
                         }
                     }
                 }
+                MirTerminatorKind::IteratorNext {
+                    state,
+                    destination,
+                    borrowed_source,
+                    exhaustion_guard,
+                    ..
+                } => {
+                    if borrowed_source.is_some() || exhaustion_guard.is_some() {
+                        return Err("generic:iterator-protocol");
+                    }
+                    self.place(state)?;
+                    self.value_type(state.ty, 0)?;
+                    self.place(destination)?;
+                }
+                MirTerminatorKind::ValidatePlaces {
+                    places,
+                    replacements,
+                    against,
+                    ..
+                } => {
+                    if against.iter().any(|loans| !loans.is_empty()) {
+                        return Err("generic:loan");
+                    }
+                    for place in places {
+                        self.place(place)?;
+                    }
+                    for replacement in replacements.iter_mut().flatten() {
+                        self.operand(replacement)?;
+                    }
+                }
                 MirTerminatorKind::Invoke {
                     operation,
                     destination,
@@ -489,6 +519,10 @@ impl Substitute<'_> {
             {
                 Ok(())
             }
+            TypeKind::Cursor {
+                mode: crate::types::CursorMode::Own,
+                collection,
+            } => self.value_type(*collection, depth + 1),
             TypeKind::Tuple(fields) | TypeKind::Union(fields) if !fields.is_empty() => {
                 for field in fields {
                     self.value_type(*field, depth + 1)?;
@@ -549,8 +583,14 @@ impl Substitute<'_> {
             MirRvalueKind::Use(operand)
             | MirRvalueKind::Prefix { operand, .. }
             | MirRvalueKind::Coerce { value: operand, .. }
-            | MirRvalueKind::NumericConversion { value: operand, .. } => self.operand(operand),
-            MirRvalueKind::Binary { left, right, .. } => {
+            | MirRvalueKind::NumericConversion { value: operand, .. }
+            | MirRvalueKind::IteratorState { source: operand } => self.operand(operand),
+            MirRvalueKind::Binary { left, right, .. }
+            | MirRvalueKind::Range {
+                start: left,
+                end: right,
+                ..
+            } => {
                 self.operand(left)?;
                 self.operand(right)
             }
