@@ -8,7 +8,10 @@ use super::*;
 use crate::types::TypeKind;
 
 mod floats;
+mod ranges;
 mod sums;
+
+pub(super) use ranges::is_native_range_element;
 
 const MAX_ADDITIONAL_LOCALS: u32 = 65_536;
 const MAX_LAYOUT_DEPTH: u32 = 64;
@@ -63,6 +66,9 @@ enum Field {
     VariantTuple(MemberId, u32),
     VariantRecord(MemberId, MemberId),
     UnionValue(TypeId),
+    RangeStart,
+    RangeEnd,
+    RangeInclusive,
 }
 
 struct Layout {
@@ -104,6 +110,18 @@ impl Layout {
                 (Field::ResultOk, *success),
                 (Field::ResultErr, *error),
             ],
+            TypeKind::Intrinsic {
+                constructor: crate::types::IntrinsicType::Range,
+                arguments,
+            } if arguments.len() == 1
+                && ranges::is_native_range_element(arguments[0], interner) =>
+            {
+                vec![
+                    (Field::RangeStart, arguments[0]),
+                    (Field::RangeEnd, arguments[0]),
+                    (Field::RangeInclusive, interner.scalar(ScalarType::Bool)),
+                ]
+            }
             TypeKind::Union(members) => {
                 std::iter::once((Field::Tag, interner.scalar(ScalarType::Int)))
                     .chain(
@@ -349,6 +367,7 @@ pub(super) fn lower_with_limit(
                 }
                 locals.place(destination)?;
                 locals.lower_equality(statement.span, value, &mut statements)?;
+                locals.lower_contains(statement.span, value, &mut statements, interner)?;
                 locals.rvalue(value)?;
             }
             statements.push(statement);
@@ -494,6 +513,9 @@ impl NativeLocals {
     ) -> LowerResult<Vec<MirOperand>> {
         match &value.kind {
             MirRvalueKind::Use(operand) => self.values(operand),
+            MirRvalueKind::Range { kind, start, end } => {
+                self.range_values(*kind, start, end, layout, interner)
+            }
             MirRvalueKind::Coerce {
                 kind: kind @ (Assignability::UnionInjection | Assignability::UnionWidening),
                 value,

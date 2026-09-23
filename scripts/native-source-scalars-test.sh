@@ -104,6 +104,13 @@ CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_
 cmp "$tmp/chars-probe.json" "$tmp/chars-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/chars-probe.json" --output "$tmp/chars-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-range-values.to > "$tmp/ranges-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-range-values.to > "$tmp/ranges-repeated.json"
+cmp "$tmp/ranges-probe.json" "$tmp/ranges-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" --probe "$tmp/ranges-probe.json" --output "$tmp/ranges-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -379,6 +386,30 @@ for case in cases:
 assert sum(case['native_status'] == 'trapped' for case in cases) == 1
 if 'llvm_comparison' in chars:
     comparison = chars['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
+ranges_probe = json.loads((root / 'ranges-probe.json').read_text())
+ranges = json.loads((root / 'ranges-report.json').read_text())
+assert ranges['format'] == report['format'] and ranges['backend'] == 'cranelift'
+assert ranges['boundary'] == report['boundary']
+assert ranges['n1_claim'] is False and ranges['production_runtime_linked'] is False
+cases = ranges['observations']
+assert len(cases) == 12 and len({case['function_ordinal'] for case in cases}) == 12
+symbols = ranges_probe['fixtures'][0]['mir']['backend']['debug']['symbols']
+trapped_range = next(symbol['function'] for symbol in symbols
+                     if symbol['name'].endswith('::value::discardedTrap'))
+for case in cases:
+    assert case['arguments'] == []
+    if case['function_ordinal'] == trapped_range:
+        assert case['native_status'] == 'trapped' and case['native_result'] is None
+    else:
+        assert case['native_status'] == 'returned' and case['native_result'] == case['vm_result'] == 42
+assert sum(case['native_status'] == 'trapped' for case in cases) == 1
+if 'llvm_comparison' in ranges:
+    comparison = ranges['llvm_comparison']
     assert comparison['version']
     assert comparison['observations'] == [
         {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
@@ -668,6 +699,39 @@ for name, function_name in [
                          'char-inactive': "'a'", 'char-invalid-literal': "'\\u{D800}'"}[name]
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 
+for name, function_name, operator in [
+    ('range-exclusive', 'exclusive', None),
+    ('range-inclusive', 'inclusive', None),
+    ('range-start', 'exclusive', 'greater-equal'),
+    ('range-unsigned', 'unsignedBounds', 'unsigned-greater-equal'),
+    ('range-char', 'unicodeBounds', 'less'),
+]:
+    candidate = copy.deepcopy(ranges_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    values = [statement['Assign']['value']
+              for block in function['blocks'] for statement in block['statements']
+              if 'Assign' in statement]
+    if operator is None:
+        inclusive = next(value['Use']['Constant'] for value in values
+                         if isinstance(value.get('Use'), dict)
+                         and 'Bool' in value['Use'].get('Constant', {}))
+        inclusive['Bool'] = not inclusive['Bool']
+    else:
+        operations = [value['Binary'] for value in values
+                      if value.get('Binary', {}).get('operator') == operator]
+        assert operations
+        replacement = {
+            'greater-equal': 'less-equal',
+            'unsigned-greater-equal': 'greater-equal',
+            'less': 'greater',
+        }[operator]
+        for operation in operations:
+            operation['operator'] = replacement
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+
 PY
 
 for candidate in source-drift unsupported missing-observation oracle-drift empty \
@@ -679,7 +743,8 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     union-tag union-widening union-inactive union-generic-tag union-propagation \
     uint64-add uint64-order uint64-division uint64-shift uint64-conversion \
     float-width float-zero float-nan float-unsigned float-range float-error-order \
-    char-width char-escape char-order char-inactive char-omitted-call char-invalid-literal; do
+    char-width char-escape char-order char-inactive char-omitted-call char-invalid-literal \
+    range-exclusive range-inclusive range-start range-unsigned range-char; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
@@ -688,7 +753,7 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     [[ ! -e "$tmp/rejected.json" ]] || { echo "native source scalars: partial report escaped" >&2; exit 1; }
     if [[ "$candidate" == char-invalid-literal ]]; then
         grep -q 'invalid native Char literal' "$tmp/$candidate.log"
-    elif [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* || "$candidate" == uint64-* || "$candidate" == float-* || "$candidate" == char-* ]]; then
+    elif [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* || "$candidate" == uint64-* || "$candidate" == float-* || "$candidate" == char-* || "$candidate" == range-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -705,7 +770,8 @@ cp "$tmp/unions-report.json" "$target_dir/reliability/evidence/native-source-uni
 cp "$tmp/uint64-report.json" "$target_dir/reliability/evidence/native-source-uint64.json"
 cp "$tmp/floats-report.json" "$target_dir/reliability/evidence/native-source-floats.json"
 cp "$tmp/chars-report.json" "$target_dir/reliability/evidence/native-source-chars.json"
-echo "native source scalars: OK (560 Cranelift cases, 68 arithmetic traps, 50 rejected evidence changes)"
+cp "$tmp/ranges-report.json" "$target_dir/reliability/evidence/native-source-ranges.json"
+echo "native source scalars: OK (572 Cranelift cases, 69 arithmetic traps, 55 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native aggregates and generic calls: LLVM comparison OK (515 cases, 65 arithmetic traps)"
+    echo "native aggregates and generic calls: LLVM comparison OK (527 cases, 66 arithmetic traps)"
 fi

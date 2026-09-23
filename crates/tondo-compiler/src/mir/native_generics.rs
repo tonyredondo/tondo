@@ -481,6 +481,14 @@ impl Substitute<'_> {
                 constructor: crate::types::IntrinsicType::NumericConversionError,
                 arguments,
             } if arguments.is_empty() => Ok(()),
+            TypeKind::Intrinsic {
+                constructor: crate::types::IntrinsicType::Range,
+                arguments,
+            } if arguments.len() == 1
+                && native_aggregates::is_native_range_element(arguments[0], self.interner) =>
+            {
+                Ok(())
+            }
             TypeKind::Tuple(fields) | TypeKind::Union(fields) if !fields.is_empty() => {
                 for field in fields {
                     self.value_type(*field, depth + 1)?;

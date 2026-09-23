@@ -180,8 +180,32 @@ Records, tuples, enums, unions and Option/Result use the existing copy and call
 protocol, including ordinary/generic functions and initialized inactive storage.
 Inactive Char fields contain the valid NUL scalar, not an invalid sentinel.
 Storage and comparison temporaries use the existing expansion budget. This
-value route does not establish general Char loans, ranges, managed collections,
-string APIs or a public character ABI.
+value route does not establish general Char loans, managed collections,
+string APIs or a public character ABI. Discrete `Range[Char]` values use the
+separate private range layout below.
+
+### Discrete range values and membership
+
+`Range[T]` for the intrinsic signed and unsigned integer types and `Char` uses
+three private scalar carriers: start, end and an inclusive-end Boolean. `Byte`,
+floating-point and managed element types are not admitted. Construction
+evaluates both bounds in source order, then snapshots them into independent
+storage. Copies, nested value fields, ordinary calls and concrete generic
+instances use the existing aggregate protocol. An unused return still
+evaluates the bounds and propagates checked arithmetic traps.
+
+The `in` operator compares the item with the stored start and end. It includes
+the end only when the stored flag is true. Reversed and equal exclusive bounds
+are empty. `UInt64` comparisons remain unsigned across the high bit; `Char`
+compares Unicode scalar values across the surrogate gap. The private lowering
+uses six Boolean temporaries per membership test and charges them to the same
+per-function expansion budget as aggregate copies. The source MIR and hosted
+bytecode remain unchanged. The comparison inputs are pure scalar values, so
+evaluating both bound predicates does not duplicate source effects.
+
+This slice admits value construction and membership only. Native range
+iteration/cursors, custom steps, general loans and production runtime storage
+remain pending. The three carriers are not a public layout or FFI ABI.
 
 `UInt64` occupies one eight-byte carrier with all bits preserved. The private
 `UnsignedInteger` constant retains its source spelling and is validated over
@@ -248,12 +272,12 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 560 Cranelift observations across
-360 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+`scripts/native-source-scalars-test.sh` verifies 572 Cranelift observations across
+372 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
 16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
 43 Unit/empty-record cases, 67 fixed-width integer cases, 71 sum-value cases and
-38 nominal-enum cases, 50 structural-union cases, 54 UInt64 cases, 69 float cases
-and 33 Char cases, including 68 arithmetic
+38 nominal-enum cases, 50 structural-union cases, 54 UInt64 cases, 69 float cases,
+33 Char cases and 12 discrete-range cases, including 69 arithmetic
 traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
@@ -283,21 +307,24 @@ narrowing range decision or conversion error priority. Six Char regressions
 truncate a supplementary scalar, change an escape, reverse ordering, corrupt an
 inactive field, omit a discarded call or insert an invalid surrogate literal.
 The five semantic changes must disagree with the hosted VM; the invalid literal
-must fail scalar validation. All 50 negative evidence
+must fail scalar validation. Five range regressions reverse exclusive or
+inclusive end policy, the lower-bound predicate, unsigned high-bit order or
+Unicode scalar order. They must disagree with the hosted VM. All 55 negative evidence
 cases must be rejected without publishing a partial report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
 `native-source-equality.json`, `native-source-units.json`, `native-source-integers.json`,
 `native-source-sums.json`, `native-source-enums.json`, `native-source-unions.json`
-`native-source-uint64.json`, `native-source-floats.json` and `native-source-chars.json` under
+`native-source-uint64.json`, `native-source-floats.json`, `native-source-chars.json`
+and `native-source-ranges.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 515 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum,
-enum, union, UInt64, float and Char cases through LLVM.
+the 527 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum,
+enum, union, UInt64, float, Char and range cases through LLVM.
 `llvm_comparison` retains its actual
 version and observations only when requested and successfully executed. Both
 candidates use the same source, normalized MIR and hosted observations. LLVM
@@ -469,7 +496,18 @@ propagation and union widening use the admitted value protocol. The 32 normal
 observations return 42 after explicit source checks. The hosted VM and both
 native candidates must agree; independent compiler probes must be identical.
 Compiler tests retain source MIR/types, enforce storage limits and reject invalid
-literals, numeric operations, managed Char collections, ranges and loan protocols.
+literals, numeric operations, managed Char collections and loan protocols.
+
+`tests/native/native-aot-range-values.to` supplies twelve Int-returning entry
+functions and twelve source-driven observations, including one arithmetic trap.
+Exclusive/inclusive, equal/reversed and signed/unsigned extrema cover both
+bound predicates. The Unicode cases cross the surrogate gap and reach the
+maximum scalar. Calls, generic copies, nested fields, reassignment and a
+discarded range result exercise independent value storage and evaluation.
+The VM, Cranelift and explicitly selected LLVM candidate compare exact
+observations; separate compiler processes must produce identical probes.
+Compiler regressions retain the source MIR and types, charge membership to
+the shared expansion budget and keep iteration and loan modes unsupported.
 
 Managed fields, recursive value layouts and
 aggregate calls through suspension/spawn protocols

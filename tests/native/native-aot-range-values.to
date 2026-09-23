@@ -1,0 +1,93 @@
+type Box[T] = {
+    value: T
+}
+
+fn checked(value: Bool): Int {
+    if value { 42 } else { -1 }
+}
+
+fn identity[T: Copy](value: T): T {
+    value
+}
+
+fn pass(value: Range[Char]): Range[Char] {
+    value
+}
+
+fn exclusive(): Int {
+    let interval = 2 .. 5
+    checked(2 in interval and 4 in interval and not (1 in interval) and not (5 in interval))
+}
+
+fn inclusive(): Int {
+    let interval = 2 ..= 5
+    checked(2 in interval and 5 in interval and not (6 in interval))
+}
+
+fn emptyExclusive(): Int {
+    let equal = 5 .. 5
+    let reversed = 5 .. 2
+    checked(not (5 in equal) and not (2 in reversed) and not (5 in reversed))
+}
+
+fn emptyInclusive(): Int {
+    let reversed = 5 ..= 2
+    let one = 5 ..= 5
+    checked(not (5 in reversed) and not (2 in reversed) and 5 in one)
+}
+
+fn signedBounds(): Int {
+    let interval = -9223372036854775808 ..= 9223372036854775807
+    checked(-9223372036854775808 in interval and 9223372036854775807 in interval)
+}
+
+fn unsignedBounds(): Int {
+    let interval = 9223372036854775808u64 ..= 18446744073709551615u64
+    checked(9223372036854775808u64 in interval and
+        18446744073709551615u64 in interval and
+        not (9223372036854775807u64 in interval))
+}
+
+fn narrowBounds(): Int {
+    let signed: Range[Int8] = -128i8 ..= 127i8
+    let unsigned: Range[UInt32] = 4294967294u32 .. 4294967295u32
+    checked(-128i8 in signed and 127i8 in signed and
+        4294967294u32 in unsigned and not (4294967295u32 in unsigned))
+}
+
+fn unicodeBounds(): Int {
+    let interval = '\u{D7FF}' ..= '\u{E000}'
+    checked('\u{D7FF}' in interval and '\u{E000}' in interval and
+        not ('\u{D7FE}' in interval) and not ('\u{E001}' in interval))
+}
+
+fn unicodeMaximum(): Int {
+    let interval = '\u{10FFFE}' ..= '\u{10FFFF}'
+    checked('\u{10FFFE}' in interval and '\u{10FFFF}' in interval and
+        not ('\u{FFFF}' in interval))
+}
+
+fn copiesAndCalls(): Int {
+    let original = '\0' ..= '🙂'
+    let copy = pass(original)
+    let nested = Box[Range[Char]] { value: identity(copy) }
+    checked('🙂' in original and '🙂' in nested.value and not ('\u{10FFFF}' in nested.value))
+}
+
+fn replacement(): Int {
+    var interval = 2 ..= 5
+    let saved = interval
+    interval = 7 .. 9
+    checked(5 in saved and not (5 in interval) and 7 in interval and not (9 in interval))
+}
+
+fn trapped(divisor: Int): Range[Int] {
+    (1 / divisor) ..= 3
+}
+
+fn discardedTrap(): Int {
+    _ = trapped(0)
+    42
+}
+
+fn main() {}

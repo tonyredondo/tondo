@@ -5743,12 +5743,18 @@ pueden retrasar el primer backend correcto.
   supplementary planes and exact escapes. Native equality, ordering, match,
   aggregate copies and ordinary/generic calls share the bounded value route;
   inactive fields contain NUL. Invalid literals, source numeric operations,
-  managed Char collections, ranges and loan parameters remain rejected.
-  The focused `scripts/native-source-scalars-test.sh` compares 560 Cranelift
-  observations with the hosted VM, including 68 arithmetic traps, without an evaluation
+  managed Char collections and loan parameters remain rejected.
+  Discrete `Range[T]` values for intrinsic signed/unsigned integers and `Char`
+  now use private start/end/inclusive scalar fields. Construction, independent
+  copies, nested fields, ordinary/generic calls and `in` membership preserve
+  exclusive/inclusive ends, empty reversed ranges, unsigned extrema and Unicode
+  scalar ordering. Native iteration/cursors, custom steps and production runtime
+  storage remain pending.
+  The focused `scripts/native-source-scalars-test.sh` compares 572 Cranelift
+  observations with the hosted VM, including 69 arithmetic traps, without an evaluation
   runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 515 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64, float and Char cases.
+  the 527 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum, enum, union, UInt64, float, Char and range cases.
   Managed fields and float collections, named std.math operations, recursive value layouts, generic closures and
   dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.

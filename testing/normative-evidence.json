@@ -12,7 +12,7 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "c7a6090383da27cf1b737f4315b87549bf8c54e3f36b3d186af97730e58bf738"
+      "sha256": "8a51a7dba4928094cb4f8b5435e19dbb2d1239244aebcc0834b565ff09157147"
     }
   ],
   "target": "tondo-vm-hosted",

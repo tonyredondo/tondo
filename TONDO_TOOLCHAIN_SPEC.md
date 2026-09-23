@@ -1612,6 +1612,11 @@ status con la VM. LLVM queda como ruta experimental de comparación. SIMD,
 vectorización, tablas y multiversioning siguen
 permitidos si conservan oracle escalar y fallback portable.
 
+El corpus source-driven actual incluye valores `Range[T]` discretos de enteros
+y `Char`, con construcción y pertenencia `in` observadas frente a la VM. Ese
+lowering usa almacenamiento escalar privado y no acredita iteración nativa,
+enlace con el runtime de producción ni Gate N1.
+
 `PERF-001` cierra el diseño y sus validaciones negativas, no la captura de
 números. La baseline debe capturarse antes de `NATIVE-001`, `NATIVE-ABI-001` o
 promover una optimización, y las gates de captura, comparación y promoción

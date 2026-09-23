@@ -6963,15 +6963,82 @@ fn main(): !env.EnvError {
     }
 
     #[test]
-    fn native_chars_reject_collection_range_and_loan_protocols() {
+    fn native_chars_reject_collection_and_loan_protocols() {
         for declaration in [
             "fn source(value: Array[Char]): Array[Char] { value }",
-            "fn source(value: Range[Char]): Int { 42 }",
-            "fn source(value: Char): Range[Char] { value..='z' }",
             "fn source(value: ref Char): Char { value }",
             "fn source(value: mut Char): Char { value }",
             "fn source(value: var Char): Int { 42 }",
             "type Box = { item: Char }\nfn source(value: ref Box): Char { value.item }",
+        ] {
+            let source = format!("{declaration}\nfn main() {{}}\n");
+            let output = execute(operation_request(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{declaration}: {:?}",
+                output.diagnostics()
+            );
+            let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+            let function = backend
+                .functions
+                .iter()
+                .find(|function| !function.parameters.is_empty())
+                .unwrap();
+            assert!(!function.supported, "{declaration}");
+        }
+    }
+
+    #[test]
+    fn native_ranges_admit_discrete_values_and_membership() {
+        let output = execute(operation_request(
+            Operation::Run,
+            include_bytes!("../../../tests/native/native-aot-range-values.to"),
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:?}",
+            output.diagnostics()
+        );
+        let backend = output.mir_summary().unwrap().backend.as_ref().unwrap();
+        for function in &backend.functions {
+            if matches!(
+                function.generics,
+                Some(crate::mir::MirBackendGenerics::Template { .. })
+            ) {
+                assert!(!function.supported);
+            } else {
+                assert!(
+                    function.supported,
+                    "{}: {:?}",
+                    function.ordinal, function.unsupported
+                );
+            }
+        }
+        let json = serde_json::to_string(backend).unwrap();
+        assert!(json.contains("unsigned-greater-equal"));
+        assert!(json.contains("unsigned-less"));
+        assert!(!json.contains("range-storage"));
+        assert!(!json.contains("contains-storage"));
+    }
+
+    #[test]
+    fn native_ranges_retain_iteration_and_loan_boundaries() {
+        for declaration in [
+            "fn source(value: Range[Char]): Int {\n var count = 0\n for _ in value {\n  count += 1\n }\n count\n}",
+            "fn source(value: ref Range[Char]): Int { 42 }",
+            "fn source(value: mut Range[Char]): Int { 42 }",
+            "fn source(value: var Range[Char]): Int { 42 }",
         ] {
             let source = format!("{declaration}\nfn main() {{}}\n");
             let output = execute(operation_request(
