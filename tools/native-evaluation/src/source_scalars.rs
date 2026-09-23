@@ -199,8 +199,9 @@ fn observe(
     let binary = options.temp_dir.join(format!("{stem}.bin"));
     fs::write(&harness, harness_source)
         .map_err(|error| format!("cannot write scalar entry harness: {error}"))?;
-    // Linking fails if code generation still needs any runtime symbol.
-    link_native_runner(cc, &harness, object, &binary)?;
+    // Scalar math intrinsics may lower to system libm. Other Tondo runtime
+    // symbols remain unresolved and cannot satisfy this source route.
+    link_native_runner_with_libraries(cc, &harness, object, &binary, &["-lm"])?;
     let (status, output) = execute_case(&binary)?;
     if let Some(expected) = expected {
         if !status.success() {

@@ -14,7 +14,32 @@ use tondo_compiler::driver::{
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
-use tondo_vm::runtime::{RejectingHost, RuntimeValue, VmOutcome, execute_with_arguments};
+use tondo_vm::runtime::{
+    RejectingHost, RuntimeValue, VmError, VmHost, VmOutcome, execute_with_arguments,
+};
+
+/// Admit only deterministic scalar math while observing native candidate
+/// functions. Other host imports retain the probe's rejecting boundary.
+struct ScalarMathHost;
+
+impl VmHost for ScalarMathHost {
+    fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+        let value = match (name, arguments) {
+            ("std.math.floor", [RuntimeValue::Float(value)]) => tondo_stdlib::math::floor(*value),
+            ("std.math.ceil", [RuntimeValue::Float(value)]) => tondo_stdlib::math::ceil(*value),
+            ("std.math.round", [RuntimeValue::Float(value)]) => tondo_stdlib::math::round(*value),
+            ("std.math.roundTiesAway", [RuntimeValue::Float(value)]) => {
+                tondo_stdlib::math::round_ties_away(*value)
+            }
+            ("std.math.truncate", [RuntimeValue::Float(value)]) => {
+                tondo_stdlib::math::truncate(*value)
+            }
+            ("std.math.abs", [RuntimeValue::Float(value)]) => tondo_stdlib::math::abs(*value),
+            _ => return RejectingHost.invoke(name, arguments),
+        };
+        Ok(RuntimeValue::Float(value))
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -194,7 +219,7 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
                                 .copied()
                                 .map(|value| RuntimeValue::Integer(i128::from(value)))
                                 .collect::<Vec<_>>();
-                            let mut host = RejectingHost;
+                            let mut host = ScalarMathHost;
                             let execution = execute_with_arguments(
                                 bytecode,
                                 vm_functions[&function.ordinal],

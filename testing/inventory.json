@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "2197db103197ae2e12564160e5eae9c42901581b988e946b169e9dbc5c5fb4df"
+      "sha256": "f4b492383bda6ce663a705ee3a65d3afd3ffac809c44d2f65dfec775dff7fbbe"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -24,25 +24,25 @@
       "path": "TONDO_TOOLCHAIN_SPEC.md",
       "edition": "0.1",
       "status": "draft-normative",
-      "sha256": "097c774ab8149ffb321d4cc7963793e3cf5877d171bedd96a0cc7549f66b84bb"
+      "sha256": "bdb82215eecaa8fbfc1307de24aa7c88cdadedba9374e05514f04d25697b8420"
     },
     {
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "7c2c6b8539122224615006ccd0692457ee541b01db929b0787c9dd97f47f5d8c"
+      "sha256": "4b9b1431750db604049d2188b3d2bfe2c6469fdd41062552dfd9b1250e87db2e"
     }
   ],
   "summary": {
-    "logical_tests": 3389,
-    "repetitions": 3701,
-    "physical_sources": 624,
-    "unique_source_hashes": 976,
+    "logical_tests": 3390,
+    "repetitions": 3702,
+    "physical_sources": 625,
+    "unique_source_hashes": 977,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 73,
       "draft-contract": 38,
-      "fixture": 214,
+      "fixture": 215,
       "fuzz-target": 14,
       "rust-test": 2525,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 14,
       "draft-pending": 38,
-      "executable": 3315,
+      "executable": 3316,
       "non-executable": 22
     },
     "by_phase": {
@@ -72,7 +72,7 @@
       "reliability": 171,
       "resolution": 31,
       "runtime": 434,
-      "semantic": 1190,
+      "semantic": 1191,
       "testing": 38,
       "tooling": 4
     }
@@ -14895,6 +14895,24 @@
       "oracle": "fixture-sidecars",
       "repetitions": 1,
       "source_sha256": "7731d5fb4378775a1866786fa50734ccfdfa8e6b216eebd75d784a446c30b128",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "fixture:native/native-aot-math-unary",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "semantic",
+      "source": "tests/native/native-aot-math-unary.to",
+      "fixture": "native/native-aot-math-unary",
+      "group": "native",
+      "requirements": [],
+      "oracle": "fixture-sidecars",
+      "repetitions": 1,
+      "source_sha256": "1add526fb5fe30f10124f0a58d66f0982801b733ced71ab46ebdbdb9951443fb",
       "target": "tondo-vm-hosted",
       "document": null,
       "edition": "0.1",

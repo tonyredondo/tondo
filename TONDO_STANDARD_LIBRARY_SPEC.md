@@ -1205,7 +1205,11 @@ equivalence before promotion. `HOST` is `not-applicable`.
 cover both representable neighbors of positive and negative ties, signed zero,
 subnormals, large integral values, infinities and NaN. The public
 `tests/runtime/m11-std-math-001.to` fixture exercises the compiler/hosted VM route;
-these checks do not establish native AOT conformance.
+these checks do not establish native AOT conformance. The separate private
+source-driven scalar comparison covers only `floor`, `ceil`, `round`,
+`roundTiesAway`, `truncate` and `abs` against hosted VM observations on the
+admitted x86_64 GNU Linux target. It does not establish public native AOT
+conformance for the ten-function `std.math` surface.
 
 `STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
 `testing/stdlib-fuzz.json`. Performance and public conformance remain separate.

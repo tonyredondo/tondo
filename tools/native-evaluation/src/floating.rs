@@ -39,6 +39,106 @@ pub(super) fn operation(name: &str) -> Option<(Width, &str)> {
         .or_else(|| name.strip_prefix("float64-").map(|op| (Width::Double, op)))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UnaryMath {
+    Floor,
+    Ceil,
+    Round,
+    RoundTiesAway,
+    Truncate,
+    Abs,
+}
+
+pub(super) fn unary_math(kind: &str) -> Option<UnaryMath> {
+    Some(match kind {
+        "host:std.math.floor" => UnaryMath::Floor,
+        "host:std.math.ceil" => UnaryMath::Ceil,
+        "host:std.math.round" => UnaryMath::Round,
+        "host:std.math.roundTiesAway" => UnaryMath::RoundTiesAway,
+        "host:std.math.truncate" => UnaryMath::Truncate,
+        "host:std.math.abs" => UnaryMath::Abs,
+        _ => return None,
+    })
+}
+
+pub(super) fn unary_math_argument<'a, T>(
+    kind: &str,
+    arguments: &'a [T],
+) -> Result<Option<(UnaryMath, &'a T)>, String> {
+    let Some(operation) = unary_math(kind) else {
+        return Ok(None);
+    };
+    let [argument] = arguments else {
+        return Err(format!("scalar math call `{kind}` requires one argument"));
+    };
+    Ok(Some((operation, argument)))
+}
+
+pub(super) fn evaluate_unary_math(operation: UnaryMath, bits: i64) -> i64 {
+    let value = f64::from_bits(bits as u64);
+    let result = match operation {
+        UnaryMath::Floor => value.floor(),
+        UnaryMath::Ceil => value.ceil(),
+        UnaryMath::Round => value.round_ties_even(),
+        UnaryMath::RoundTiesAway => value.round(),
+        UnaryMath::Truncate => value.trunc(),
+        UnaryMath::Abs => value.abs(),
+    };
+    result.to_bits() as i64
+}
+
+pub(super) fn cranelift_unary_math(
+    builder: &mut FunctionBuilder<'_>,
+    operation: UnaryMath,
+    bits: Value,
+) -> Value {
+    let value = decode(builder, Width::Double, bits);
+    let result = match operation {
+        UnaryMath::Floor => builder.ins().floor(value),
+        UnaryMath::Ceil => builder.ins().ceil(value),
+        UnaryMath::Round => builder.ins().nearest(value),
+        UnaryMath::Truncate => builder.ins().trunc(value),
+        UnaryMath::Abs => builder.ins().fabs(value),
+        UnaryMath::RoundTiesAway => {
+            let nearest = builder.ins().nearest(value);
+            let truncated = builder.ins().trunc(value);
+            let difference = builder.ins().fsub(value, truncated);
+            let magnitude = builder.ins().fabs(difference);
+            let half = builder
+                .ins()
+                .f64const(cranelift_codegen::ir::immediates::Ieee64::with_float(0.5));
+            let tie = builder.ins().fcmp(FloatCC::Equal, magnitude, half);
+            let one = builder
+                .ins()
+                .f64const(cranelift_codegen::ir::immediates::Ieee64::with_float(1.0));
+            let direction = builder.ins().fcopysign(one, value);
+            let away = builder.ins().fadd(truncated, direction);
+            builder.ins().select(tie, away, nearest)
+        }
+    };
+    encode(builder, Width::Double, result)
+}
+
+pub(super) fn llvm_unary_math(
+    operation: UnaryMath,
+    bits: &str,
+    module: &mut String,
+    index: &mut usize,
+) -> String {
+    let mut ir = Llvm { module, index };
+    let value = ir.decode(Width::Double, bits);
+    let function = match operation {
+        UnaryMath::Floor => "floor",
+        UnaryMath::Ceil => "ceil",
+        UnaryMath::Round => "roundeven",
+        UnaryMath::RoundTiesAway => "round",
+        UnaryMath::Truncate => "trunc",
+        UnaryMath::Abs => "fabs",
+    };
+    let result = ir.instruction(format!("call double @llvm.{function}.f64(double {value})"));
+    ir.encode(Width::Double, &result)
+}
+
 pub(super) fn involved(source: &str, target: &str) -> bool {
     width(source).is_some() || width(target).is_some()
 }
@@ -376,6 +476,9 @@ pub(super) fn llvm_convert(
 }
 
 pub(super) fn llvm_helpers(module: &mut String) {
+    for name in ["floor", "ceil", "roundeven", "round", "trunc", "fabs"] {
+        writeln!(module, "declare double @llvm.{name}.f64(double)").unwrap();
+    }
     for (bits, ty) in [(32, "float"), (64, "double")] {
         for sign in ["si", "ui"] {
             writeln!(module, "declare i64 @llvm.fpto{sign}.sat.i64.f{bits}({ty})").unwrap();

@@ -3189,6 +3189,11 @@ fn lower_rvalue_cranelift(
             lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)
         }
         MirBackendRvalue::HostCall { kind, arguments } => {
+            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
+                let bits =
+                    lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)?;
+                return Ok(floating::cranelift_unary_math(builder, operation, bits));
+            }
             let kind_id = host_call_kind(kind)?;
             let argument = arguments
                 .first()
@@ -3307,6 +3312,11 @@ fn lower_operation_cranelift(
                 .ok_or_else(|| "Cranelift await did not return a value".to_owned())
         }
         MirBackendOperation::HostCall { kind, arguments } => {
+            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
+                let bits =
+                    lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)?;
+                return Ok(floating::cranelift_unary_math(builder, operation, bits));
+            }
             let kind_id = host_call_kind(kind)?;
             let argument = arguments
                 .first()
@@ -9400,6 +9410,10 @@ fn evaluate_rvalue(value: &MirBackendRvalue, locals: &BTreeMap<u32, i64>) -> Res
             evaluate_operand(operand, locals)
         }
         MirBackendRvalue::HostCall { kind, arguments } => {
+            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
+                let bits = evaluate_operand(argument, locals)?;
+                return Ok(floating::evaluate_unary_math(operation, bits));
+            }
             let payload = arguments
                 .first()
                 .map(|argument| evaluate_operand(argument, locals))
@@ -9450,6 +9464,10 @@ fn evaluate_operation(
         MirBackendOperation::Spawn { operation, .. } => evaluate_operation(operation, locals),
         MirBackendOperation::JoinValue { operand } => evaluate_operand(operand, locals),
         MirBackendOperation::HostCall { kind, arguments } => {
+            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
+                let bits = evaluate_operand(argument, locals)?;
+                return Ok(floating::evaluate_unary_math(operation, bits));
+            }
             let payload = arguments
                 .first()
                 .map(|argument| evaluate_operand(argument, locals))
@@ -10274,12 +10292,23 @@ fn link_native_runner(
     object: &Path,
     binary: &Path,
 ) -> Result<(), String> {
+    link_native_runner_with_libraries(cc, source, object, binary, &[])
+}
+
+fn link_native_runner_with_libraries(
+    cc: &Path,
+    source: &Path,
+    object: &Path,
+    binary: &Path,
+    libraries: &[&str],
+) -> Result<(), String> {
     let result = Command::new(cc)
         .arg("-std=c11")
         .arg("-O2")
         .arg("-pthread")
         .arg(source)
         .arg(object)
+        .args(libraries)
         .arg("-o")
         .arg(binary)
         .output()
@@ -11306,6 +11335,15 @@ fn llvm_rvalue(
             llvm_operand(operand, slots, module, value_index)
         }
         MirBackendRvalue::HostCall { kind, arguments } => {
+            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
+                let bits = llvm_operand(argument, slots, module, value_index)?;
+                return Ok(floating::llvm_unary_math(
+                    operation,
+                    &bits,
+                    module,
+                    value_index,
+                ));
+            }
             let argument = arguments
                 .first()
                 .map(|argument| llvm_operand(argument, slots, module, value_index))
@@ -11417,6 +11455,15 @@ fn llvm_operation(
             Ok(name)
         }
         MirBackendOperation::HostCall { kind, arguments } => {
+            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
+                let bits = llvm_operand(argument, slots, module, value_index)?;
+                return Ok(floating::llvm_unary_math(
+                    operation,
+                    &bits,
+                    module,
+                    value_index,
+                ));
+            }
             let argument = arguments
                 .first()
                 .map(|argument| llvm_operand(argument, slots, module, value_index))
