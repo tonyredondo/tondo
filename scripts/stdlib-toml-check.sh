@@ -138,7 +138,7 @@ jq -e '
   and .implementation.fixture == null
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-toml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-TOML-DOC-001"]
+  and .implementation.required_follow_ups == []
   and .performance.task == "STD-TOML-PERF-001"
   and .performance.contract == "testing/stdlib-toml-performance.json"
   and .performance.status == "verified-stdlib-kernel-baseline"
@@ -156,7 +156,11 @@ jq -e '
   and .conformance.native_abi == "not-implemented"
   and .conformance.native_aot == "not-claimed"
   and .conformance.report == "target/reliability/evidence/stdlib-toml-conformance.json"
-  and .promotion.next_blocks == ["STD-TOML-DOC-001"]
+  and .documentation.task == "STD-TOML-DOC-001"
+  and .documentation.status == "verified-rust-kernel-usage"
+  and .documentation.public_tondo_api == "not-implemented"
+  and .documentation.native_aot == "not-claimed"
+  and .promotion.next_blocks == ["STD-CBOR-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.toml contract"
 
 for path in \

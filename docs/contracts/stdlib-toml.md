@@ -1,8 +1,9 @@
 # Contrato de `std.toml`
 
-**Estado:** contrato `contract-locked` para STD-0.1B, cerrado por
-`STD-TOML-001`. La implementación de VM/host y el backend nativo permanecen
-pendientes de sus leaves posteriores a `NATIVE-001`.
+**Status:** `contract-locked` Tondo 0.1 design (`STD-TOML-001`), with a verified Rust stdlib
+kernel, bounded conformance adapters, and executable kernel usage. The public
+Tondo `std.toml` API, production host registration, native ABI, and native AOT
+lowering are not implemented.
 
 `std.toml` implementa el perfil de datos de TOML v1.1.0 con una frontera
 lossless y determinista para Tondo. Es un codec de datos: no es el parser del
@@ -39,7 +40,9 @@ se integra desde [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY
 
 ## Superficie pública canónica
 
-Estas declaraciones son la única superficie pública de `std.toml` en 0.1.
+These declarations specify the intended Tondo 0.1 surface; they are not yet
+callable from Tondo source. The current executable Rust kernel is described in
+the usage guide below.
 
 ```tondo
 pub type Toml
@@ -261,9 +264,9 @@ añadirle una dotted key o una tabla posterior produce `InlineTableExtension`.
 
 Las comments se descartan del valor. No se preservan lexical spelling,
 indentación, orden global de declaraciones, delimitadores de string ni
-underscores numéricos; `TomlValueView` es un view inmutable prestado para una
-operación y deja de ser válido al avanzar el reader o retornar de la operación
-que lo creó.
+underscores numéricos. The designed Tondo `TomlValueView` has an operation-bound
+borrow; the current Rust `TomlValueView` borrows the input slice until its Rust
+lifetime ends and is not tied to a reader advance.
 
 ## Fecha/hora y precisión
 
@@ -316,7 +319,9 @@ producen `UnknownField`, `DuplicateKey` o `TypeMismatch` con path estable.
 de inicio y fin. `path` contiene `Key`/`Index` semánticamente estables; los
 errores de límites, configuración o estado usan span cero y path vacío. No se
 publica un resultado parcial. Tras un error estructural, I/O, límite o estado,
-reader/writer quedan terminales y toda operación posterior devuelve `Closed`.
+reader/writer quedan terminales. The designed Tondo interface returns `Closed`
+after a terminal error; the current Rust kernel may repeat the stored error,
+as recorded in the executable guide.
 
 ## Streaming, eventos y ownership
 
@@ -331,9 +336,11 @@ unicidad de paths y la regla de inline tables antes de escribir.
 `fromReader`, `next`, `finish`, `toWriter`, `write` y `finish` son las únicas
 operaciones suspendibles. `fromBytes` es pura. `TomlReader` y `TomlWriter` son
 handles afines: no son `Copy`, `Share` ni `Clone`, pueden transferirse cuando
-son `Send` y deben terminar con `finish`. Un input no se retiene después de
-`fromBytes`; el streaming mantiene solo frames, la tabla de paths acotada y el
-token actual.
+son `Send` y deben terminar con `finish`. The designed Tondo `fromBytes` does
+not retain the caller's input and its streaming interface is specified to keep
+bounded frames, paths, and the current token. The current Rust reader instead
+buffers the whole input and event list; the Rust writer buffers events until
+`finish`.
 
 Dividir el input en chunks arbitrarios (incluido el corpus `one-byte-chunks`),
 incluso dentro de UTF-8, escapes,
@@ -377,8 +384,10 @@ El parser debe usar frames/worklists explícitos para arrays, tablas, dotted
 keys y arrays-of-tables. No puede usar recursión del host para inputs anidados,
 ni una tabla global entre documentos (TOML solo tiene una raíz). Los baselines
 medirán throughput, tail latency, allocations, bytes copiados, memoria,
-profundidad, número de tablas/filas y coste de rechazo adversarial. No se
-publican claims de rendimiento antes de `STD-TOML-PERF-001`.
+profundidad, número de tablas/filas y coste de rechazo adversarial. Do not
+publish unqualified performance claims. `STD-TOML-PERF-001` records only the
+target-qualified Rust scalar kernel baseline; it does not establish SIMD, VM,
+or AOT performance.
 
 ## Separación del toolchain
 
@@ -436,7 +445,7 @@ rechazo atómico por límite. La frontera exacta, el corpus y el reporte están
 en [testing/stdlib-toml-conformance.json](../../testing/stdlib-toml-conformance.json)
 y [stdlib-toml-conformance.md](./stdlib-toml-conformance.md). Esta prueba
 no registra `std.toml` como API pública en el compilador ni establece ABI o
-lowering AOT. El siguiente bloque es STD-TOML-DOC-001.
+lowering AOT.
 
 ## Exclusiones deliberadas y leaves posteriores
 
@@ -447,8 +456,96 @@ segundos intercalares, offsets fuera de `std.time`, fracciones de más de nueve
 dígitos, futures duplicadas ni `selectable`.
 
 La API pública compiler/host, el ABI nativo y el lowering AOT continúan sin
-implementarse. La documentación de uso pendiente es:
+implementarse.
 
-```text
-STD-TOML-DOC-001
+## Executable usage guide for `std.toml`
+
+`STD-TOML-DOC-001` documents the current Rust kernel. Run the example from the
+repository root:
+
+```sh
+CARGO_TARGET_DIR=target-fast cargo run -q -p tondo-stdlib --example toml_usage --locked
 ```
+
+It prints exactly `toml-doc-ok` after checking materialized and typed values,
+a borrowed source view, buffered events, duplicate-key spans, finite limits,
+and terminal reader/writer behavior. The source is
+[`crates/tondo-stdlib/examples/toml_usage.rs`](../../crates/tondo-stdlib/examples/toml_usage.rs).
+The checker [`scripts/stdlib-toml-doc-check.sh`](../../scripts/stdlib-toml-doc-check.sh)
+and its negative tests verify the example and documentation record.
+
+### Data versus project manifest
+
+Use this codec for application TOML data. `tondo.toml`, `tondo.test.toml`, and
+`tondo.lock.toml` are toolchain inputs with separate schema and validation.
+Parsing their bytes as generic TOML does not validate a project, change a
+package graph, select capabilities, or load dependencies. Do not route project
+manifests through `std.toml` automatically.
+
+### Policies and limits
+
+Pass `TomlOptions` explicitly. `TomlLimits::defaults()` is finite but permits
+up to 64 MiB of input and one million nodes; choose smaller limits for a
+bounded input contract. `TomlLimits` also bounds depth, tables, array elements,
+key/path/scalar/string bytes, and array-of-table rows. A zero or internally
+inconsistent limit is rejected. No environment, filesystem, locale, clock, or
+time-zone lookup changes parsing. TOML 1.1.0 has one UTF-8 document, rejects
+duplicate definitions and inline-table extension, and does not have a wire
+`null` or binary value. A `TomlValue::Null` from the common adapter cannot be
+encoded as TOML. Civil dates and local times stay civil; fixed offsets are not
+converted through a host time zone. More than nine fractional second digits
+are rejected.
+
+### Errors and ownership
+
+`parse` either returns one complete `TomlValue` or a `TomlError`; it never
+returns a partial tree. `TomlError` carries a kind, a half-open UTF-8 byte
+span, one-based line/column coordinates, and a `Key`/`Index` path where
+available. For example, a repeated `first` key on line two reports
+`DuplicateKey` at byte offset 10 with path `first`. Callers own returned
+values and encoded bytes. A `TomlValueView` borrows the original input; keep
+that input alive while using `bytes()` or `clone_value()`.
+
+`TomlReader::from_bytes`, `TomlReader::from_reader`, and
+`TomlReader::from_chunks` buffer and
+materialize the complete document before exposing events. Consume events
+through `StreamEnd`, then call `finish()`; calling `next()` once more first
+marks end-of-stream and makes `finish()` return `Closed`. `TomlWriter::to_writer`
+buffers events and returns complete bytes from `finish()`, or an error without
+partial output. A successful finish closes each handle. After a writer or
+reader error, the current Rust kernel can repeat the original terminal error;
+callers should discard that handle. The designed Tondo `std.io` streaming
+interface is not an executable public language API yet.
+
+### Costs and performance
+
+`parse` materializes the full value. `parse_view` validates by parsing and
+dropping a full value before returning a borrowed byte view, and
+`clone_value()` parses again; this is not a zero-allocation validation path.
+`TomlReader` stores the complete event list, and `TomlWriter` stores events
+until finish. `encode` emits insertion order; `encode_canonical` sorts keys
+deterministically and discards comments, original whitespace, and numeric
+spelling. Canonical encoding is a normalized output form, not a source-editing
+round trip. The measured 13-workload, 27-sample hosted Rust scalar baseline is
+target-qualified to `x86_64-unknown-linux-gnu` in
+[`stdlib-toml-performance.md`](./stdlib-toml-performance.md). Its logical
+allocation and memory counters are not OS allocations or RSS. No SIMD, native
+ABI, or native AOT performance claim follows from it.
+
+### Executable kernel example
+
+The four functions in `toml_usage.rs` demonstrate `materialized-and-typed`,
+`borrowed-view-and-costs`, `buffered-events-and-lifecycle`, and
+`errors-and-limits`. They execute the Rust stdlib kernel, including an
+incomplete writer stream that fails without publishing bytes. A future `.to`
+example would need the missing compiler API and production host bridge;
+inventing one here would make a false execution claim.
+
+### Promotion boundary
+
+The guide proves usage of the Rust kernel only. The six-case VM/native
+conformance corpus calls the same kernel through private test adapters; it
+does not expose `std.toml` to Tondo source. Public compiler API, production
+host registration, native ABI, native AOT lowering, and SIMD dispatch remain
+unclaimed. After this owner guide, the next STD-0.1B owner leaf is
+`STD-CBOR-IMPL-001`.

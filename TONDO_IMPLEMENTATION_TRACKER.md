@@ -33,7 +33,8 @@ discharge a missing integration task.
 `std.toml` implementation and model/test/fuzz evidence cover the Rust scalar
 kernel. `STD-TOML-PERF-001` now fixes a target-qualified kernel baseline;
 `STD-TOML-CONF-001` verifies the private VM host adapter against a native
-stdlib process. `STD-TOML-DOC-001` is the next owner block. This evidence does
+stdlib process. `STD-TOML-DOC-001` now verifies executable Rust-kernel usage.
+The next owner leaf is `STD-CBOR-IMPL-001`. This evidence does
 not imply a public compiler API, production host registration, native ABI or
 AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6693,10 +6694,15 @@ estas leaves.
   y la frontera está en
   [`docs/contracts/stdlib-toml-conformance.md`](./docs/contracts/stdlib-toml-conformance.md).
   Esta equivalencia de adapters no promociona la API `std.toml` del compilador,
-  registro hosted de producción, ABI nativo, SIMD ni AOT. Sigue
-  `STD-TOML-DOC-001`.
-- [ ] **STD-TOML-DOC-001 — Documentar TOML.** Separar data format y
-  `tondo.toml`, fijar policies, costes y ejemplos ejecutables.
+  registro hosted de producción, ABI nativo, SIMD ni AOT.
+- [x] **STD-TOML-DOC-001 — Document TOML.** The executable Rust-kernel guide
+  in [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md) separates
+  application TOML from `tondo.toml`, records policies, limits, ownership,
+  errors and buffering costs, and runs the materialized, typed, borrowed-view
+  and event examples in `crates/tondo-stdlib/examples/toml_usage.rs` through
+  `scripts/stdlib-toml-doc-check.sh`. This does not promote a public Tondo API,
+  production host registration, native ABI, native AOT or SIMD. Next:
+  `STD-CBOR-IMPL-001`.
 
 #### 21.3.9 `std.cbor`
 

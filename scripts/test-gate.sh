@@ -324,6 +324,10 @@ run_step stdlib-toml-conformance-contract-tests \
     scripts/stdlib-toml-conformance-test.sh
 run_step stdlib-toml-conformance \
     scripts/stdlib-toml-conformance.sh
+run_step stdlib-toml-documentation-contract \
+    scripts/stdlib-toml-doc-check.sh
+run_step stdlib-toml-documentation-contract-tests \
+    scripts/stdlib-toml-doc-test.sh
 run_step stdlib-cbor-contract \
     scripts/stdlib-cbor-check.sh
 run_step stdlib-cbor-contract-tests \

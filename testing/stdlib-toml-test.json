@@ -109,11 +109,7 @@
       "hosted-runtime-registration",
       "native-aot-lowering"
     ],
-    "next_blocks": [
-      "STD-TOML-DOC-001"
-    ],
-    "remaining": [
-      "STD-TOML-DOC-001"
-    ]
+    "next_blocks": ["STD-CBOR-IMPL-001"],
+    "remaining": []
   }
 }

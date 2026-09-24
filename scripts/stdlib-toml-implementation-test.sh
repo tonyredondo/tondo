@@ -40,8 +40,8 @@ jq -e '
   and .implementation.host == "not-claimed-until-compiler-toml-abi"
   and .implementation.native_aot_lowering == "not-claimed"
   and .implementation.fixture == null
-  and .implementation.required_follow_ups == ["STD-TOML-DOC-001"]
-  and .promotion.next_blocks == ["STD-TOML-DOC-001"]
+  and .implementation.required_follow_ups == []
+  and .promotion.next_blocks == ["STD-CBOR-IMPL-001"]
 ' testing/stdlib-toml.json >/dev/null
 
 for marker in \

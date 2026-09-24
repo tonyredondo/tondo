@@ -4100,7 +4100,14 @@ y el límite en
 [`docs/contracts/stdlib-toml-conformance.md`](./docs/contracts/stdlib-toml-conformance.md).
 El callable es solo de prueba: todavía no existe una API `std.toml` ejecutable
 desde Tondo, registro hosted de producción, ABI TOML nativo ni lowering AOT.
-Sigue `STD-TOML-DOC-001`.
+`STD-TOML-DOC-001` closes an executable usage guide for the Rust stdlib kernel
+in [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md), backed
+by `crates/tondo-stdlib/examples/toml_usage.rs` and
+`scripts/stdlib-toml-doc-check.sh`. It separates application TOML from the
+toolchain's `tondo.toml`, fixes explicit limits, ownership, error and
+buffering costs, and shows materialized, typed, view and event usage. The
+example does not claim a source-level Tondo API. The next owner leaf is
+`STD-CBOR-IMPL-001`.
 
 El contrato machine-readable, la documentación y los checks negativos son
 [testing/stdlib-toml.json](./testing/stdlib-toml.json),
@@ -4112,7 +4119,7 @@ El contrato machine-readable, la documentación y los checks negativos son
 [scripts/stdlib-toml-check.sh](./scripts/stdlib-toml-check.sh) y
 [scripts/stdlib-toml-test.sh](./scripts/stdlib-toml-test.sh). El contrato
 queda cerrado como diseño B0 y la conformance acotada está verificada. La
-documentación de uso permanece pendiente en STD-TOML-DOC-001; la API pública
+guía de uso del kernel queda cerrada por `STD-TOML-DOC-001`; la API pública
 compiler/host y el ABI/AOT nativo siguen fuera de esta promoción.
 
 ### 14.15 `std.cbor`
