@@ -68,9 +68,9 @@ done
 for fixture in $(jq -r '.fixtures.files[]' "$contract"); do
     path="testing/stdlib-toml-conformance-fixtures/$fixture"
     [[ -f "$path" ]] || die "missing shared fixture $path"
-    rg -Fq "$fixture" crates/tondo-reliability/examples/toml_conformance_vm.rs \
+    grep -Fq "$fixture" crates/tondo-reliability/examples/toml_conformance_vm.rs \
         || die "VM probe does not include $fixture"
-    rg -Fq "$fixture" crates/tondo-native-runtime/examples/toml_conformance.rs \
+    grep -Fq "$fixture" crates/tondo-native-runtime/examples/toml_conformance.rs \
         || die "native probe does not include $fixture"
 done
 
