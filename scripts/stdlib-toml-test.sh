@@ -102,8 +102,8 @@ jq -e '
   and .implementation.fixture == null
   and .testing_contract == "testing/stdlib-toml-test.json"
   and .testing_document == "docs/contracts/stdlib-toml-test.md"
-  and .implementation.required_follow_ups == ["STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
-  and .promotion.next_blocks == ["STD-TOML-PERF-001"]
+  and .implementation.required_follow_ups == ["STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .promotion.next_blocks == ["STD-TOML-CONF-001"]
 ' testing/stdlib-toml.json >/dev/null
 
 echo "std.toml tests: OK (TOML 1.1.0; dates; tables; duplicates; spans; streaming; toolchain boundary)"

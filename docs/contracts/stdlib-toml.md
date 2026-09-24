@@ -423,7 +423,11 @@ tondo.toml. El contrato de tests y su evidencia independiente están en
 [testing/stdlib-toml-test.json](../../testing/stdlib-toml-test.json) y
 [stdlib-toml-test.md](./stdlib-toml-test.md). STD-TOML-TEST-001 queda cerrado
 por el modelo canónico, corpus, chunking, límites, spans y fuzz bounded; no
-mueve esta frontera. El siguiente bloque es STD-TOML-PERF-001.
+mueve esta frontera. STD-TOML-PERF-001 mide el kernel Rust en un target concreto,
+con la misma separación de ejecución. Su registro y límites de interpretación
+están en [testing/stdlib-toml-performance.json](../../testing/stdlib-toml-performance.json)
+y [stdlib-toml-performance.md](./stdlib-toml-performance.md). El siguiente
+bloque es STD-TOML-CONF-001.
 
 ## Exclusiones deliberadas y leaves posteriores
 
@@ -433,11 +437,9 @@ preservados, edición round-trip, schema discovery, valores binarios implícitos
 segundos intercalares, offsets fuera de `std.time`, fracciones de más de nueve
 dígitos, futures duplicadas ni `selectable`.
 
-El host/compiler, corpus ampliado de tests/fuzzing, rendimiento, conformance y
-documentación de uso permanecen pendientes de:
+El host/compiler, conformance y documentación de uso permanecen pendientes de:
 
 ```text
-STD-TOML-PERF-001
 STD-TOML-CONF-001
 STD-TOML-DOC-001
 ```

@@ -1,0 +1,84 @@
+{
+  "format": "tondo-stdlib-toml-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-TOML-PERF-001",
+  "owner": "std.toml",
+  "status": "verified-stdlib-kernel-baseline",
+  "target": "x86_64-unknown-linux-gnu",
+  "backend": "rust-stdlib-kernel",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-stdlib/tests/toml_performance.rs",
+    "test": "toml_performance_probe",
+    "sha256": "36a8182989784d9d1e552159185fb288de42250cd05823ef3233574bebd500f1"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 16,
+    "deterministic_seed": "tondo-stdlib-toml-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-timed-latency; included-in-logical-allocation-and-memory-model"
+  },
+  "identity_fields": [
+    "suite", "workload_id", "probe_sha256", "target", "backend", "profile",
+    "toolchain", "flags", "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment", "cpu_frequency", "path", "pid", "timestamp"
+  ],
+  "metrics": [
+    "latency", "tail_latency", "throughput", "bytes_copied", "allocations",
+    "logical_memory_bytes", "depth", "nodes", "tables", "array_table_rows",
+    "event_count", "adversarial_rejection", "live_handles", "dispatch"
+  ],
+  "workloads": [
+    {"id":"parse-core-small","operation":"materialized-parse","size_class":"small","payload_bytes":54,"depth":2,"nodes":5,"tables":1,"array_table_rows":0,"event_count":10,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-nested-medium","operation":"materialized-parse","size_class":"medium","payload_bytes":215,"depth":4,"nodes":18,"tables":4,"array_table_rows":0,"event_count":32,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-rows-large","operation":"materialized-parse","size_class":"large","payload_bytes":2103,"depth":5,"nodes":227,"tables":33,"array_table_rows":32,"event_count":388,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-temporal-rows","operation":"materialized-parse","size_class":"medium","payload_bytes":194,"depth":5,"nodes":15,"tables":3,"array_table_rows":2,"event_count":27,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"parse-view-nested","operation":"borrowed-parse-view","size_class":"medium","payload_bytes":215,"depth":4,"nodes":18,"tables":4,"array_table_rows":0,"event_count":32,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"encode-nested","operation":"materialized-encode","size_class":"medium","payload_bytes":215,"depth":4,"nodes":18,"tables":4,"array_table_rows":0,"event_count":32,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"encode-canonical","operation":"canonical-encode","size_class":"small","payload_bytes":12,"depth":2,"nodes":3,"tables":1,"array_table_rows":0,"event_count":6,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"reader-temporal-events","operation":"stream-reader-events","size_class":"medium","payload_bytes":194,"depth":5,"nodes":15,"tables":3,"array_table_rows":2,"event_count":27,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"writer-temporal-events","operation":"stream-writer-events","size_class":"medium","payload_bytes":194,"depth":5,"nodes":15,"tables":3,"array_table_rows":2,"event_count":27,"expected_error":null,"dispatch":"scalar-fixed-target"},
+    {"id":"reject-depth","operation":"adversarial-reject","size_class":"small","payload_bytes":8,"depth":3,"nodes":3,"tables":1,"array_table_rows":0,"event_count":0,"expected_error":"DepthLimit","dispatch":"scalar-fixed-target"},
+    {"id":"reject-nodes","operation":"adversarial-reject","size_class":"small","payload_bytes":8,"depth":3,"nodes":3,"tables":1,"array_table_rows":0,"event_count":0,"expected_error":"NodeLimit","dispatch":"scalar-fixed-target"},
+    {"id":"reject-scalar","operation":"adversarial-reject","size_class":"small","payload_bytes":15,"depth":2,"nodes":2,"tables":1,"array_table_rows":0,"event_count":0,"expected_error":"ScalarLimit","dispatch":"scalar-fixed-target"},
+    {"id":"reject-duplicate-table","operation":"adversarial-reject","size_class":"small","payload_bytes":20,"depth":1,"nodes":0,"tables":0,"array_table_rows":0,"event_count":0,"expected_error":"DuplicateTable","dispatch":"scalar-fixed-target"}
+  ],
+  "strategy": {
+    "stdlib_kernel": "direct-rust-scalar-kernel-baseline",
+    "compiler_api": "not-claimed",
+    "hosted_vm": "not-claimed-no-toml-bridge",
+    "native_runtime_abi": "not-measured",
+    "native_aot": "not-claimed",
+    "simd": "not-measured-no-optimized-route",
+    "multiversion_dispatch": "not-claimed",
+    "selection": "scalar-only"
+  },
+  "invariants": {
+    "operations": "16-per-sample-for-every-workload",
+    "bytes_copied": "logical-payload-bytes-materialized-or-emitted-per-batch; not-physical-memcpy-calls",
+    "allocations": "logical-input-value-event-and-output-identities-including-fixture; not-allocator-calls",
+    "logical_memory": "modeled-retained-input-value-event-output-and-operation-payload-bytes; not-RSS-or-allocator-peak",
+    "live_handles": "zero-reader-and-writer-handles-after-each-operation",
+    "rejections": "exact-error-kind-and-full-error-oracle-before-timing; 16-errors-without-partial-result-per-sample",
+    "dispatch": "every-sample-reports-scalar-fixed-target",
+    "target_isolation": "one-rustc-host-target-per-report",
+    "oracle": "independent-bounded-TOML-model-suite-plus-exact-kernel-values-encodings-events-errors-and-lifecycle"
+  },
+  "oracle": {
+    "kind": "independent-bounded-toml-model-and-exact-kernel-invariants",
+    "sources": [
+      "crates/tondo-reliability/src/toml_model.rs",
+      "crates/tondo-reliability/tests/toml_models.rs",
+      "crates/tondo-stdlib/tests/toml_performance.rs"
+    ]
+  },
+  "report": "target/reliability/evidence/stdlib-toml-performance.json"
+}

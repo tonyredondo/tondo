@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "7f42e2d986ee9b650ee032cd77b9c2fc56798f1cc798754fc4e0bac57b6e6c3d"
+      "sha256": "5dcd47386f9ebf9d7dd5b525fd7b6d5032ab5d5b4b82b512d637c2147bf00f43"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,23 +34,23 @@
     }
   ],
   "summary": {
-    "logical_tests": 3392,
-    "repetitions": 3704,
-    "physical_sources": 627,
-    "unique_source_hashes": 979,
+    "logical_tests": 3394,
+    "repetitions": 3706,
+    "physical_sources": 628,
+    "unique_source_hashes": 980,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 73,
       "draft-contract": 38,
       "fixture": 217,
       "fuzz-target": 14,
-      "rust-test": 2525,
+      "rust-test": 2527,
       "spec-fence": 319
     },
     "by_status": {
       "campaign": 14,
       "draft-pending": 38,
-      "executable": 3318,
+      "executable": 3320,
       "non-executable": 22
     },
     "by_phase": {
@@ -72,7 +72,7 @@
       "reliability": 171,
       "resolution": 31,
       "runtime": 434,
-      "semantic": 1193,
+      "semantic": 1195,
       "testing": 38,
       "tooling": 4
     }
@@ -59571,6 +59571,42 @@
       "oracle": "rust-assertions",
       "repetitions": 1,
       "source_sha256": "ce1b5e232e4f38e611cce4cc963dcba66fe510d5d1886f2be561f2922ebfc171",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "rust:tondo-stdlib:tests::toml_performance:fixture_oracles_are_exact",
+      "kind": "rust-test",
+      "crate_name": "tondo-stdlib",
+      "phase": "semantic",
+      "source": "crates/tondo-stdlib/tests/toml_performance.rs",
+      "fixture": null,
+      "group": "integration",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "36a8182989784d9d1e552159185fb288de42250cd05823ef3233574bebd500f1",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "rust:tondo-stdlib:tests::toml_performance:toml_performance_probe",
+      "kind": "rust-test",
+      "crate_name": "tondo-stdlib",
+      "phase": "semantic",
+      "source": "crates/tondo-stdlib/tests/toml_performance.rs",
+      "fixture": null,
+      "group": "integration",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "36a8182989784d9d1e552159185fb288de42250cd05823ef3233574bebd500f1",
       "target": "host-rust",
       "document": null,
       "edition": "host",

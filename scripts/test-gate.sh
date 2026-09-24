@@ -312,6 +312,12 @@ run_step stdlib-toml-testing-contract-tests \
     scripts/stdlib-toml-test-test.sh
 run_step stdlib-toml-fuzz \
     scripts/stdlib-toml-fuzz.sh
+run_step stdlib-toml-performance-contract \
+    scripts/stdlib-toml-performance-check.sh
+run_step stdlib-toml-performance-contract-tests \
+    scripts/stdlib-toml-performance-test.sh
+run_step stdlib-toml-performance \
+    scripts/stdlib-toml-performance.sh
 run_step stdlib-cbor-contract \
     scripts/stdlib-cbor-check.sh
 run_step stdlib-cbor-contract-tests \

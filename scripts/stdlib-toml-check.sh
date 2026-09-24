@@ -138,8 +138,13 @@ jq -e '
   and .implementation.fixture == null
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-toml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-TOML-PERF-001", "STD-TOML-CONF-001", "STD-TOML-DOC-001"]
-  and .promotion.next_blocks == ["STD-TOML-PERF-001"]
+  and .implementation.required_follow_ups == ["STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .performance.task == "STD-TOML-PERF-001"
+  and .performance.contract == "testing/stdlib-toml-performance.json"
+  and .performance.status == "verified-stdlib-kernel-baseline"
+  and .performance.hosted_vm == "not-claimed-no-toml-bridge"
+  and .performance.native_aot == "not-claimed"
+  and .promotion.next_blocks == ["STD-TOML-CONF-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.toml contract"
 
 for path in \

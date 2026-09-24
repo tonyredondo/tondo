@@ -30,9 +30,10 @@ verified remediation blocks and remaining order. The global public API audit
 still includes the unindexed std.bytes owner. A checked component task cannot
 discharge a missing integration task.
 
-`std.toml` implementation and model/test/fuzz evidence cover the hosted scalar
-kernel. `STD-TOML-PERF-001` remains the next owner block after the remediation
-prerequisites; it must not silently imply compiler API or native AOT coverage.
+`std.toml` implementation and model/test/fuzz evidence cover the Rust scalar
+kernel. `STD-TOML-PERF-001` now fixes a target-qualified kernel baseline;
+`STD-TOML-CONF-001` is the next owner block. Neither the kernel benchmark nor
+the test corpus implies compiler API, hosted VM, or native AOT coverage.
 Project manifests remain a separate TOML owner.
 
 T0 now verifies full-target compilation, sealed production sources, isolated
@@ -6666,8 +6667,21 @@ estas leaves.
   registro y el contrato son testing/stdlib-toml-test.json y
   docs/contracts/stdlib-toml-test.md; no se promueve compiler/VM/AOT ni
   rendimiento. El siguiente bloque es STD-TOML-PERF-001.
-- [ ] **STD-TOML-PERF-001 — Medir TOML.** Fijar parsing/encoding, tail, memoria,
-  allocations y documentos adversarios.
+- [x] **STD-TOML-PERF-001 — Medir TOML.** La campaña escalar del kernel Rust
+  fija trece workloads TOML 1.1.0: parse materializado y view, encoding normal
+  y canónico, reader/writer de eventos, tablas anidadas y arrays-of-tables,
+  Unicode, números, fechas civiles y rechazos de depth/nodes/scalar/duplicados.
+  En `x86_64-unknown-linux-gnu` retiene 27 muestras monotónicas por workload
+  en tres procesos, con warmups y lotes de dieciséis operaciones. Reporta
+  mediana/P95/P99, throughput, bytes lógicos transportados, asignaciones y
+  memoria lógica modelada, profundidad, nodos, tablas/filas, eventos y
+  rechazos. El modelo independiente y las salidas/errores exactos se verifican
+  antes de medir. `TomlValueView` hoy valida materializando y descartando una
+  copia; reader/writer son buffered. No se atribuyen allocator/RSS físicos,
+  hosted VM, ABI, SIMD ni AOT. Contrato y reporte:
+  [`testing/stdlib-toml-performance.json`](./testing/stdlib-toml-performance.json),
+  [`docs/contracts/stdlib-toml-performance.md`](./docs/contracts/stdlib-toml-performance.md).
+  El siguiente bloque es `STD-TOML-CONF-001`.
 - [ ] **STD-TOML-CONF-001 — Conformar TOML.** Verificar interoperabilidad,
   typed/dynamic, errores/spans y equivalencia VM/nativo.
 - [ ] **STD-TOML-DOC-001 — Documentar TOML.** Separar data format y

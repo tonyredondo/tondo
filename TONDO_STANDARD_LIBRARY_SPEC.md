@@ -4082,8 +4082,15 @@ matriz hosted, el corpus negativo, el reader common con fragmentos de un byte y
 el fuzz bounded. La evidencia está en
 [testing/stdlib-toml-test.json](./testing/stdlib-toml-test.json) y
 [docs/contracts/stdlib-toml-test.md](./docs/contracts/stdlib-toml-test.md);
-no promueve compiler/VM/AOT ni claims de rendimiento. El siguiente bloque es
-STD-TOML-PERF-001.
+no promueve compiler/VM/AOT ni claims de rendimiento. La campaña posterior
+STD-TOML-PERF-001 fija un baseline reproducible del kernel Rust en
+`x86_64-unknown-linux-gnu` cubre trece cargas con 27 muestras cada una,
+parse/view, encode normal/canónico, eventos y rechazos acotados. El contrato
+[`testing/stdlib-toml-performance.json`](./testing/stdlib-toml-performance.json)
+y la guía [`docs/contracts/stdlib-toml-performance.md`](./docs/contracts/stdlib-toml-performance.md)
+definen latencia, throughput y contadores lógicos. La medición no promociona
+un bridge VM, ABI nativo, SIMD ni AOT; `parseView` todavía materializa y
+descarta el valor durante la validación. Sigue `STD-TOML-CONF-001`.
 
 El contrato machine-readable, la documentación y los checks negativos son
 [testing/stdlib-toml.json](./testing/stdlib-toml.json),
@@ -4092,9 +4099,9 @@ El contrato machine-readable, la documentación y los checks negativos son
 [docs/contracts/stdlib-toml-test.md](./docs/contracts/stdlib-toml-test.md),
 [scripts/stdlib-toml-check.sh](./scripts/stdlib-toml-check.sh) y
 [scripts/stdlib-toml-test.sh](./scripts/stdlib-toml-test.sh). El contrato
-queda cerrado como diseño B0; host/compiler, rendimiento, conformance y
-documentación de uso permanecen pendientes de las leaves
-STD-TOML-PERF-001, STD-TOML-CONF-001 y STD-TOML-DOC-001.
+queda cerrado como diseño B0; host/compiler, conformance y documentación de
+uso permanecen pendientes de las leaves
+STD-TOML-CONF-001 y STD-TOML-DOC-001.
 
 ### 14.15 `std.cbor`
 
