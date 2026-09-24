@@ -15,15 +15,32 @@ use tondo_compiler::driver::{
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
 use tondo_vm::runtime::{
-    RejectingHost, RuntimeValue, VmError, VmHost, VmOutcome, execute_with_arguments,
+    RejectingHost, RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmOutcome,
+    execute_with_arguments,
 };
 
 /// Admit only deterministic scalar math while observing native candidate
 /// functions. Other host imports retain the probe's rejecting boundary.
-struct ScalarMathHost;
+struct ScalarMathHost {
+    next_error_id: u64,
+}
 
 impl VmHost for ScalarMathHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+        if let ("std.math.sqrt", [RuntimeValue::Float(value)]) = (name, arguments) {
+            return Ok(match tondo_stdlib::math::sqrt(*value) {
+                Ok(value) => RuntimeValue::ResultOk(Box::new(RuntimeValue::Float(value))),
+                Err(_) => {
+                    self.next_error_id = self.next_error_id.checked_add(1).ok_or_else(|| {
+                        VmError::Invariant("scalar math error IDs exhausted".into())
+                    })?;
+                    RuntimeValue::ResultErr(Box::new(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::MathError,
+                        id: self.next_error_id,
+                    }))
+                }
+            });
+        }
         let value = match (name, arguments) {
             ("std.math.floor", [RuntimeValue::Float(value)]) => tondo_stdlib::math::floor(*value),
             ("std.math.ceil", [RuntimeValue::Float(value)]) => tondo_stdlib::math::ceil(*value),
@@ -233,7 +250,7 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
                                 .copied()
                                 .map(|value| RuntimeValue::Integer(i128::from(value)))
                                 .collect::<Vec<_>>();
-                            let mut host = ScalarMathHost;
+                            let mut host = ScalarMathHost { next_error_id: 0 };
                             let execution = execute_with_arguments(
                                 bytecode,
                                 vm_functions[&function.ordinal],

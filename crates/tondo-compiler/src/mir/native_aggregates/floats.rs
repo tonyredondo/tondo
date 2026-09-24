@@ -268,3 +268,209 @@ impl NativeLocals {
         Ok(())
     }
 }
+
+impl NativeLocals {
+    pub(super) fn lower_math_sqrt_calls(
+        &mut self,
+        blocks: &mut Vec<MirBasicBlock>,
+        interner: &TypeInterner,
+        records: &RecordFields,
+        enums: &EnumVariants,
+        cache: &mut BTreeMap<TypeId, Rc<Layout>>,
+    ) -> LowerResult<()> {
+        let float_type = interner.scalar(ScalarType::Float);
+        let int_type = interner.scalar(ScalarType::Int);
+        let mut cursor = 0;
+        while cursor < blocks.len() {
+            let MirTerminatorKind::Invoke {
+                operation,
+                destination,
+                target: Some(target),
+                unwind,
+            } = &blocks[cursor].terminator.kind
+            else {
+                cursor += 1;
+                continue;
+            };
+            let MirOperationKind::Call {
+                callee,
+                arguments,
+                protocol: HirCallProtocol::Call | HirCallProtocol::CallOnce,
+                unsafe_call: false,
+                ..
+            } = &operation.kind
+            else {
+                cursor += 1;
+                continue;
+            };
+            if !matches!(
+                callee.kind,
+                MirOperandKind::Function {
+                    callable: HirCallableId::Host(crate::hir::HirBootstrapHostFunction::MathSqrt),
+                    ..
+                }
+            ) {
+                cursor += 1;
+                continue;
+            }
+            let [argument] = arguments.as_slice() else {
+                return Err("math:sqrt-arity");
+            };
+            if argument.mode != ParameterMode::Value
+                || argument.target != HirCallArgumentTarget::Fixed(0)
+                || argument.value.ty != float_type
+            {
+                return Err("math:sqrt-argument");
+            }
+            let Ok(TypeKind::Result { success, error }) = interner.kind(operation.ty) else {
+                return Err("math:sqrt-result");
+            };
+            if *success != float_type
+                || !matches!(
+                    interner.kind(*error),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: crate::types::IntrinsicType::MathError,
+                        arguments,
+                    }) if arguments.is_empty()
+                )
+            {
+                return Err("math:sqrt-result");
+            }
+            let layout = Layout::build(operation.ty, interner, records, enums, cache, 0)
+                .ok_or("math:sqrt-layout")?;
+            let (tag_offset, tag) = layout.child(Field::Tag).ok_or("math:sqrt-layout")?;
+            let (ok_offset, ok) = layout.child(Field::ResultOk).ok_or("math:sqrt-layout")?;
+            let (err_offset, err) = layout.child(Field::ResultErr).ok_or("math:sqrt-layout")?;
+            if tag_offset != 0
+                || tag.width != 1
+                || ok.width != 1
+                || ok.ty != float_type
+                || err.width != 1
+                || err.child(Field::MathError).is_none()
+            {
+                return Err("math:sqrt-layout");
+            }
+            let first = if let Some(destination) = destination {
+                let (first, actual) = self.resolve(destination)?.ok_or("math:sqrt-storage")?;
+                if actual.ty != layout.ty {
+                    return Err("math:sqrt-storage");
+                }
+                first
+            } else {
+                self.allocate(layout.width)?
+            };
+            let mut source = argument.value.clone();
+            self.operand(&mut source)?;
+            let target = *target;
+            let unwind = *unwind;
+            let span = blocks[cursor].terminator.span;
+            let kind = blocks[cursor].kind;
+            let input = self.allocate(1)?;
+            let read = |index: u32, ty: TypeId| MirOperand {
+                ty,
+                kind: MirOperandKind::Copy(scalar_place(index, ty)),
+            };
+            let mut builder = Builder {
+                locals: self,
+                interner,
+                span,
+                statements: Vec::new(),
+            };
+            // Only negative infinity is non-finite and rejected. NaN and
+            // positive infinity follow IEEE sqrt; finite negatives are Domain.
+            let negative_infinity = builder.compare(
+                HirBinaryOperator::Less,
+                read(input, float_type),
+                float(float_type, -f64::MAX),
+            )?;
+            let negative = builder.compare(
+                HirBinaryOperator::Less,
+                read(input, float_type),
+                float(float_type, 0.0),
+            )?;
+            let comparison_statements = builder.statements;
+            let mut defaults = Vec::with_capacity(layout.width as usize);
+            layout.defaults(interner, &mut defaults);
+            let raw = self.allocate(1)?;
+            let check_domain = block_id(blocks.len())?;
+            let nonfinite = block_id(blocks.len() + 1)?;
+            let domain = block_id(blocks.len() + 2)?;
+            let compute = block_id(blocks.len() + 3)?;
+            let success = block_id(blocks.len() + 4)?;
+            let block = &mut blocks[cursor];
+            block.statements.push(assign(span, input, source));
+            block.statements.extend(comparison_statements);
+            block.terminator.kind = MirTerminatorKind::SwitchBool {
+                condition: negative_infinity,
+                if_true: nonfinite,
+                if_false: check_domain,
+            };
+            blocks.push(MirBasicBlock {
+                kind,
+                statements: Vec::new(),
+                terminator: MirTerminator {
+                    span,
+                    kind: MirTerminatorKind::SwitchBool {
+                        condition: negative,
+                        if_true: domain,
+                        if_false: compute,
+                    },
+                },
+            });
+            for (error_block, code) in [(nonfinite, 1), (domain, 0)] {
+                let mut values = defaults.clone();
+                values[tag_offset as usize] = integer(int_type, 3);
+                values[err_offset as usize] = integer(int_type, code);
+                debug_assert_eq!(error_block.index() as usize, blocks.len());
+                blocks.push(MirBasicBlock {
+                    kind,
+                    statements: values
+                        .into_iter()
+                        .enumerate()
+                        .map(|(offset, value)| assign(span, first + offset as u32, value))
+                        .collect(),
+                    terminator: MirTerminator {
+                        span,
+                        kind: MirTerminatorKind::Goto { target },
+                    },
+                });
+            }
+            blocks.push(MirBasicBlock {
+                kind,
+                statements: Vec::new(),
+                terminator: MirTerminator {
+                    span,
+                    kind: MirTerminatorKind::Invoke {
+                        operation: MirOperation {
+                            ty: float_type,
+                            kind: MirOperationKind::BootstrapHostCall {
+                                function: MirBootstrapHostFunction::NativeMathSqrtUnchecked,
+                                arguments: vec![read(input, float_type)],
+                            },
+                        },
+                        destination: Some(scalar_place(raw, float_type)),
+                        target: Some(success),
+                        unwind,
+                    },
+                },
+            });
+            let mut values = defaults;
+            values[tag_offset as usize] = integer(int_type, 2);
+            values[ok_offset as usize] = read(raw, float_type);
+            blocks.push(MirBasicBlock {
+                kind,
+                statements: values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, value)| assign(span, first + offset as u32, value))
+                    .collect(),
+                terminator: MirTerminator {
+                    span,
+                    kind: MirTerminatorKind::Goto { target },
+                },
+            });
+            cursor += 1;
+        }
+        Ok(())
+    }
+}

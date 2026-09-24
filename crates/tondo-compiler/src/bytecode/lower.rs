@@ -4091,6 +4091,12 @@ fn lower_operation(
                 crate::mir::MirBootstrapHostFunction::TestingBeginSuiteCleanup => {
                     bc::BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup
                 }
+                crate::mir::MirBootstrapHostFunction::NativeMathSqrtUnchecked => {
+                    return Err(BytecodeError::construction(
+                        "private native sqrt",
+                        "unchecked sqrt cannot enter bytecode lowering",
+                    ));
+                }
             },
             arguments: arguments
                 .iter()

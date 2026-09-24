@@ -292,13 +292,13 @@ calls, copies, reassignments, branches, loops, checked overflow and division by
 zero. On the admitted x86_64 GNU Linux host, arithmetic traps must be SIGILL;
 ordinary nonzero exits or unrelated process signals do not count as agreement.
 
-`scripts/native-source-scalars-test.sh` verifies 612 Cranelift observations across
-410 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
+`scripts/native-source-scalars-test.sh` verifies 630 Cranelift observations across
+428 scalar entry functions: 24 tuple cases, 21 local record/nested-value cases,
 16 aggregate-call cases, 38 generic-call cases, 36 aggregate-equality cases,
 43 Unit/empty-record cases, 67 fixed-width integer cases, 71 sum-value cases and
 38 nominal-enum cases, 50 structural-union cases, 54 UInt64 cases, 69 float cases,
 33 Char cases, 12 discrete-range value cases, 18 owned-range iteration cases
-and 22 scalar math cases, including 70 arithmetic traps. The call corpus
+and 40 scalar math cases, including 70 arithmetic traps. The call corpus
 includes nested and concrete generic records, reordered named arguments,
 recursion, mutual recursion, branch results, repeated loop calls, independent
 results, discarded results and zero-argument aggregate returns.
@@ -335,7 +335,7 @@ the hosted VM. Six unary math regressions substitute a different operation;
 one removes its required operand. Three fused/extrema regressions change the
 fused argument order or choose the wrong extrema operation; two remove an
 operand. Semantic changes must disagree with the VM, while missing operands
-must fail arity validation. All 70 negative evidence cases must be
+must fail arity validation. All 75 negative evidence cases must be
 rejected without publishing a partial report. Reports are
 `native-source-scalars.json`, `native-source-records.json`,
 `native-source-calls.json`, `native-source-generics.json`,
@@ -343,14 +343,15 @@ rejected without publishing a partial report. Reports are
 `native-source-sums.json`, `native-source-enums.json`, `native-source-unions.json`
 `native-source-uint64.json`, `native-source-floats.json`, `native-source-chars.json`
 `native-source-ranges.json`, `native-source-range-iteration.json` and
-`native-source-math-unary.json` and `native-source-math-fused-extrema.json` under
+`native-source-math-unary.json`, `native-source-math-fused-extrema.json` and
+`native-source-math-sqrt.json` under
 `$CARGO_TARGET_DIR/reliability/evidence/` (the default
 target directory is `target`). The standard strict gate and native evaluation
 workflow run this source test. This is functional evidence, not a performance
 campaign or N1 promotion.
 
 With an explicit `TONDO_LLVM_LLC`, the script also passes `--llvm` to compare
-the 567 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum,
+the 585 aggregate-call, generic-call, equality, Unit/empty-record, integer, sum,
 enum, union, UInt64, float, Char, range-value, range-iteration and scalar math
 cases through LLVM.
 `llvm_comparison` retains its actual
@@ -559,12 +560,29 @@ Cranelift and explicitly selected LLVM comparison. Independent compiler probes
 must be byte-identical. `tests/native/native-aot-math-fused-extrema.to` adds ten
 Int-returning entries for fused rounding, signed zero, NaN, infinities,
 subnormals, finite extrema and an ordinary call. The VM probe delegates only
-these nine pure calls to the stdlib scalar kernel; it continues to reject every
-other host import. Cranelift's native `fmin/fmax` propagate NaN, so the private
-lowering selects the numeric operand explicitly and pins the signed-zero rule.
+these nine pure calls and the bounded `sqrt` Result to the stdlib scalar kernel;
+it continues to reject every other host import. Cranelift's native `fmin/fmax`
+propagate NaN, so the private lowering selects the numeric operand explicitly
+and pins the signed-zero rule.
 LLVM math intrinsics may lower to system `libm`, which the private scalar
 harness links explicitly. This does not link the Tondo production runtime,
-establish a public ABI, or admit `sqrt` or managed float collections.
+establish a public ABI, or admit managed float collections.
+
+`tests/native/native-aot-math-sqrt.to` adds eighteen Int-returning observations
+for `Float ! MathError`. The compiler normalizes the verified source call into
+three initialized private scalar carriers: `ok`/`err` tag, Float payload and
+MathError code. A finite negative argument selects `Domain`; negative infinity
+selects `NonFinite`; NaN and positive infinity retain IEEE success behavior.
+The raw square root executes only after those checks. The corpus includes
+both signed zeros, subnormals, the largest finite boundary, nested Results,
+copies, discarded calls and propagation through an ordinary function. Every
+entry returns 42 in the hosted VM, normalized-MIR oracle, Cranelift and the
+explicitly selected LLVM candidate. The hosted source oracle observes the
+`ok`/`err` tag; kernel tests and normalized carrier checks distinguish the two
+error codes. Five negative probes alter the raw operation, remove its operand,
+bypass each rejection branch or corrupt the result tag. These bring the script
+to 75 rejected evidence changes. The private code is neither a source-visible
+MathError variant ABI nor a native runtime registration.
 
 Managed fields, recursive value layouts and
 aggregate calls through suspension/spawn protocols

@@ -1206,9 +1206,11 @@ cover both representable neighbors of positive and negative ties, signed zero,
 subnormals, large integral values, infinities and NaN. The public
 `tests/runtime/m11-std-math-001.to` fixture exercises the compiler/hosted VM route;
 these checks do not establish native AOT conformance. The separate private
-source-driven scalar comparison covers only `floor`, `ceil`, `round`,
-`roundTiesAway`, `truncate`, `abs`, `fma`, `min` and `max` against hosted VM
-observations on the admitted x86_64 GNU Linux target. `fma` must round once;
+source-driven scalar comparison covers `floor`, `ceil`, `round`,
+`roundTiesAway`, `truncate`, `abs`, `fma`, `min`, `max` and `sqrt` against hosted VM
+observations on the admitted x86_64 GNU Linux target. `sqrt` retains a private
+`Float ! MathError` carrier and checks `ok`/`err` and propagation; its source
+corpus does not inspect `MathError` variants. `fma` must round once;
 `min` and `max` ignore one NaN and select negative/positive zero respectively
 independent of operand order. It does not establish public native AOT
 conformance for the ten-function `std.math` surface.

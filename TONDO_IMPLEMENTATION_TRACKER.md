@@ -5755,21 +5755,25 @@ pueden retrasar el primer backend correcto.
   Array/Map/Set cursors, other collections, custom steps and production runtime
   storage remain pending; borrowed `Range` iteration is outside the language
   contract.
-  Nine pure `std.math` operations now lower from source: `floor`, `ceil`,
+  All ten named `std.math` operations now lower from source: `floor`, `ceil`,
   ties-even `round`, `roundTiesAway`, `truncate`, `abs`, fused `fma`, `min` and
-  `max`. The private scalar route compares fused rounding, finite boundaries,
-  signed zero, subnormals, infinities, NaN, large integral values and ordinary
-  calls with the hosted VM. LLVM may use system `libm`; neither candidate links
-  the Tondo production runtime.
-  The focused `scripts/native-source-scalars-test.sh` compares 612 Cranelift
+  `max`, plus `sqrt` with its `Float ! MathError` result. The latter uses private
+  initialized tag/value/error carriers and separates finite negative `Domain`
+  from negative-infinity `NonFinite`; NaN and positive infinity follow the
+  scalar kernel. The source corpus compares fused rounding, finite boundaries,
+  signed zero, subnormals, infinities, NaN, ordinary calls, result copies and
+  error propagation with the hosted VM. LLVM may use system `libm`; neither
+  candidate links the Tondo production runtime. The source observations prove
+  `ok`/`err` behavior; they do not expose `MathError` variant payloads or a
+  public error ABI.
+  The focused `scripts/native-source-scalars-test.sh` compares 630 Cranelift
   observations with the hosted VM, including 70 arithmetic traps, without an
   evaluation runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 567 aggregate-call, generic-call, equality, Unit/empty-record, integer,
+  the 585 aggregate-call, generic-call, equality, Unit/empty-record, integer,
   sum, enum, union, UInt64, float, Char, range-value, range-iteration and
   scalar-math cases.
-  Managed fields and float collections, the remaining named `std.math`
-  operation (`sqrt`), recursive value layouts, generic
+  Managed fields and float collections, recursive value layouts, generic
   closures and dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

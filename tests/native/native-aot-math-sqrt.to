@@ -1,0 +1,137 @@
+import std.math
+
+fn sqrtFinite(): Int {
+    match math.sqrt(9.0) {
+        ok(value) => if value == 3.0 { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtFraction(): Int {
+    match math.sqrt(2.25) {
+        ok(value) => if value == 1.5 { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtNegativeZero(): Int {
+    match math.sqrt(-0.0) {
+        ok(value) => if 1.0 / value == 1.0 / -0.0 { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtPositiveZero(): Int {
+    match math.sqrt(0.0) {
+        ok(value) => if 1.0 / value == 1.0 / 0.0 { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtSubnormal(): Int {
+    match math.sqrt(1e-320) {
+        ok(value) => if value > 0.0 and value < 1e-150 { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtLargestFinite(): Int {
+    let largest = 1.7976931348623157e308
+    match math.sqrt(largest) {
+        ok(value) => if value > 0.0 and value < largest { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtNaN(): Int {
+    match math.sqrt(0.0 / 0.0) {
+        ok(value) => if value != value { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtPositiveInfinity(): Int {
+    let infinity = 1.0 / 0.0
+    match math.sqrt(infinity) {
+        ok(value) => if value == infinity { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtDomain(): Int {
+    match math.sqrt(-1.0) {
+        ok(_) => -1
+        err(_) => 42
+    }
+}
+
+fn sqrtNegativeInfinity(): Int {
+    match math.sqrt(-1.0 / 0.0) {
+        ok(_) => -1
+        err(_) => 42
+    }
+}
+
+fn sqrtNegativeSubnormal(): Int {
+    match math.sqrt(-1e-320) {
+        ok(_) => -1
+        err(_) => 42
+    }
+}
+
+fn sqrtLargestNegativeFinite(): Int {
+    match math.sqrt(-1.7976931348623157e308) {
+        ok(_) => -1
+        err(_) => 42
+    }
+}
+
+fn sqrtCopy(): Int {
+    let original = math.sqrt(1764.0)
+    let copy = original
+    match copy {
+        ok(value) => if value == 42.0 { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn forwarded(value: Float): Float ! math.MathError {
+    let root = math.sqrt(value)?
+    root
+}
+
+fn sqrtForwardSuccess(): Int {
+    match forwarded(1764.0) {
+        ok(value) => if value == 42.0 { 42 } else { -1 }
+        err(_) => -2
+    }
+}
+
+fn sqrtForwardDomain(): Int {
+    match forwarded(-1.0) {
+        ok(_) => -1
+        err(_) => 42
+    }
+}
+
+fn sqrtForwardNonFinite(): Int {
+    match forwarded(-1.0 / 0.0) {
+        ok(_) => -1
+        err(_) => 42
+    }
+}
+
+fn sqrtNested(): Int {
+    let pair = (math.sqrt(4.0), math.sqrt(-4.0))
+    match pair {
+        (ok(value), err(_)) => if value == 2.0 { 42 } else { -1 }
+        _ => -2
+    }
+}
+
+fn sqrtDiscarded(): Int {
+    _ = math.sqrt(-1.0)
+    42
+}
+
+fn main() {}

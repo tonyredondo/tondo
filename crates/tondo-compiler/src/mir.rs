@@ -2167,6 +2167,7 @@ fn backend_host_function_name(function: MirBootstrapHostFunction) -> &'static st
         MirBootstrapHostFunction::TestingRunLeaf => "testing-run-leaf",
         MirBootstrapHostFunction::TestingRunSuite => "testing-run-suite",
         MirBootstrapHostFunction::TestingBeginSuiteCleanup => "testing-begin-suite-cleanup",
+        MirBootstrapHostFunction::NativeMathSqrtUnchecked => "native-math-sqrt-unchecked",
     }
 }
 
@@ -3143,6 +3144,8 @@ pub enum MirBootstrapHostFunction {
     TestingRunLeaf,
     TestingRunSuite,
     TestingBeginSuiteCleanup,
+    /// Generated only by private native MIR normalization after the domain checks.
+    NativeMathSqrtUnchecked,
 }
 
 #[derive(Debug, Clone)]

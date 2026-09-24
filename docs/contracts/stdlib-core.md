@@ -419,6 +419,11 @@ NaN and signed zero according to their individual contracts. `sqrt`
 distinguishes `Domain` from `NonFinite` without publishing a partial value.
 HIR lowering and `process_host` dispatch each operation statically and preserve
 the nominal `MathError` boundary.
+The private source-driven Cranelift/LLVM comparison now covers `sqrt` through
+initialized `Float ! MathError` carriers as well as the nine pure functions.
+Its source cases observe the `ok`/`err` boundary and error propagation; they do
+not establish source-visible error variant introspection, a native runtime ABI
+or public AOT conformance.
 The scalar `min` and `max` kernels pin the sign of equal zeros explicitly;
 plain floating-point equality would not test that property.
 

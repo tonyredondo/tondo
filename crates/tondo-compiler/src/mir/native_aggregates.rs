@@ -63,6 +63,7 @@ enum Field {
     ResultOk,
     ResultErr,
     NumericError,
+    MathError,
     VariantTuple(MemberId, u32),
     VariantRecord(MemberId, MemberId),
     UnionValue(TypeId),
@@ -162,6 +163,12 @@ impl Layout {
                 arguments,
             } if arguments.is_empty() => {
                 vec![(Field::NumericError, interner.scalar(ScalarType::Int))]
+            }
+            TypeKind::Intrinsic {
+                constructor: crate::types::IntrinsicType::MathError,
+                arguments,
+            } if arguments.is_empty() => {
+                vec![(Field::MathError, interner.scalar(ScalarType::Int))]
             }
             TypeKind::Nominal { .. } if enums.contains_key(&ty) => {
                 let mut fields = vec![(Field::Tag, interner.scalar(ScalarType::Int))];
@@ -357,6 +364,7 @@ pub(super) fn lower_with_limit(
     }
     locals.lower_checked_conversions(&mut lowered.blocks, interner)?;
     locals.lower_tags(&mut lowered.blocks, interner)?;
+    locals.lower_math_sqrt_calls(&mut lowered.blocks, interner, records, enums, &mut cache)?;
     let original_blocks =
         u32::try_from(lowered.blocks.len()).map_err(|_| "range:iterator-block-limit")?;
     let mut added_blocks = Vec::new();
@@ -747,6 +755,19 @@ impl NativeLocals {
 
     fn operation(&self, operation: &mut MirOperation, direct: bool) -> LowerResult<()> {
         match &mut operation.kind {
+            MirOperationKind::Call { callee, .. }
+                if matches!(
+                    callee.kind,
+                    MirOperandKind::Function {
+                        callable: HirCallableId::Host(
+                            crate::hir::HirBootstrapHostFunction::MathSqrt
+                        ),
+                        ..
+                    }
+                ) =>
+            {
+                return Err("math:sqrt-unlowered");
+            }
             MirOperationKind::CheckedPrefix { operand, .. }
             | MirOperationKind::ExplicitPanic { message: operand } => self.operand(operand)?,
             MirOperationKind::CheckedBinary { left, right, .. }

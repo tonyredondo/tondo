@@ -64,6 +64,7 @@ pub(super) fn unary_math(kind: &str) -> Option<UnaryMath> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ScalarMath {
     Unary(UnaryMath),
+    SqrtUnchecked,
     Fma,
     Min,
     Max,
@@ -74,6 +75,7 @@ pub(super) fn math_arguments<'a, T>(
     arguments: &'a [T],
 ) -> Result<Option<(ScalarMath, &'a [T])>, String> {
     let operation = match kind {
+        "native-math-sqrt-unchecked" => ScalarMath::SqrtUnchecked,
         "host:std.math.fma" => ScalarMath::Fma,
         "host:std.math.min" => ScalarMath::Min,
         "host:std.math.max" => ScalarMath::Max,
@@ -83,7 +85,7 @@ pub(super) fn math_arguments<'a, T>(
         },
     };
     let (arity, description) = match operation {
-        ScalarMath::Unary(_) => (1, "one argument"),
+        ScalarMath::Unary(_) | ScalarMath::SqrtUnchecked => (1, "one argument"),
         ScalarMath::Fma => (3, "three arguments"),
         ScalarMath::Min | ScalarMath::Max => (2, "two arguments"),
     };
@@ -98,6 +100,9 @@ pub(super) fn evaluate_math(operation: ScalarMath, bits: &[i64]) -> i64 {
         return evaluate_unary_math(operation, bits[0]);
     }
     let first = f64::from_bits(bits[0] as u64);
+    if operation == ScalarMath::SqrtUnchecked {
+        return first.sqrt().to_bits() as i64;
+    }
     let second = f64::from_bits(bits[1] as u64);
     match operation {
         ScalarMath::Fma => first
@@ -112,7 +117,7 @@ pub(super) fn evaluate_math(operation: ScalarMath, bits: &[i64]) -> i64 {
         }
         ScalarMath::Min => first.min(second).to_bits() as i64,
         ScalarMath::Max => first.max(second).to_bits() as i64,
-        ScalarMath::Unary(_) => unreachable!(),
+        ScalarMath::Unary(_) | ScalarMath::SqrtUnchecked => unreachable!(),
     }
 }
 
@@ -125,6 +130,10 @@ pub(super) fn cranelift_math(
         return cranelift_unary_math(builder, operation, bits[0]);
     }
     let first = decode(builder, Width::Double, bits[0]);
+    if operation == ScalarMath::SqrtUnchecked {
+        let result = builder.ins().sqrt(first);
+        return encode(builder, Width::Double, result);
+    }
     let second = decode(builder, Width::Double, bits[1]);
     if operation == ScalarMath::Fma {
         let third = decode(builder, Width::Double, bits[2]);
@@ -166,6 +175,10 @@ pub(super) fn llvm_math(
     }
     let mut ir = Llvm { module, index };
     let first = ir.decode(Width::Double, &bits[0]);
+    if operation == ScalarMath::SqrtUnchecked {
+        let result = ir.instruction(format!("call double @llvm.sqrt.f64(double {first})"));
+        return ir.encode(Width::Double, &result);
+    }
     let second = ir.decode(Width::Double, &bits[1]);
     if operation == ScalarMath::Fma {
         let third = ir.decode(Width::Double, &bits[2]);
@@ -609,6 +622,7 @@ pub(super) fn llvm_convert(
 }
 
 pub(super) fn llvm_helpers(module: &mut String) {
+    writeln!(module, "declare double @llvm.sqrt.f64(double)").unwrap();
     writeln!(
         module,
         "declare double @llvm.fma.f64(double, double, double)"

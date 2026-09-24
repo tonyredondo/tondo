@@ -3326,6 +3326,7 @@ impl Verifier<'_> {
                         arguments.is_empty()
                             && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
                     }
+                    super::MirBootstrapHostFunction::NativeMathSqrtUnchecked => false,
                 };
                 if !valid {
                     return Err(MirInvariantError::new(

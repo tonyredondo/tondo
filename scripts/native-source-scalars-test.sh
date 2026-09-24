@@ -135,6 +135,14 @@ cmp "$tmp/math-fused-extrema-probe.json" "$tmp/math-fused-extrema-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" \
     --probe "$tmp/math-fused-extrema-probe.json" --output "$tmp/math-fused-extrema-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-math-sqrt.to > "$tmp/math-sqrt-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-math-sqrt.to > "$tmp/math-sqrt-repeated.json"
+cmp "$tmp/math-sqrt-probe.json" "$tmp/math-sqrt-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" \
+    --probe "$tmp/math-sqrt-probe.json" --output "$tmp/math-sqrt-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -495,6 +503,44 @@ if 'llvm_comparison' in math_fused_extrema:
         {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
         for case in cases
     ]
+math_sqrt_probe = json.loads((root / 'math-sqrt-probe.json').read_text())
+math_sqrt = json.loads((root / 'math-sqrt-report.json').read_text())
+assert math_sqrt['format'] == report['format'] and math_sqrt['backend'] == 'cranelift'
+assert math_sqrt['boundary'] == report['boundary']
+assert math_sqrt['n1_claim'] is False and math_sqrt['production_runtime_linked'] is False
+cases = math_sqrt['observations']
+assert len(cases) == 18 and len({case['function_ordinal'] for case in cases}) == 18
+assert all(case['arguments'] == [] and case['native_status'] == 'returned'
+           and case['native_result'] == case['vm_result'] == 42 for case in cases)
+if 'llvm_comparison' in math_sqrt:
+    comparison = math_sqrt['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
+sqrt_backend = math_sqrt_probe['fixtures'][0]['mir']['backend']
+sqrt_names = {symbol['name'].split('::value::')[-1]: symbol['function']
+              for symbol in sqrt_backend['debug']['symbols']}
+for name, error_code in [('sqrtDomain', '0'), ('sqrtNegativeInfinity', '1'),
+                         ('sqrtLargestNegativeFinite', '0')]:
+    function = next(function for function in sqrt_backend['functions']
+                    if function['ordinal'] == sqrt_names[name])
+    raw = next(block for block in function['blocks']
+               if isinstance(block['terminator'], dict)
+               and block['terminator'].get('Invoke', {}).get('operation', {}).get('HostCall', {}).get('kind')
+                   == 'native-math-sqrt-unchecked')
+    if name == 'sqrtNegativeInfinity':
+        error_ordinal = function['blocks'][0]['terminator']['SwitchBool']['if_true']
+    else:
+        domain = next(block for block in function['blocks']
+                      if isinstance(block['terminator'], dict)
+                      and block['terminator'].get('SwitchBool', {}).get('if_false') == raw['ordinal'])
+        error_ordinal = domain['terminator']['SwitchBool']['if_true']
+    error_block = next(block for block in function['blocks'] if block['ordinal'] == error_ordinal)
+    assigned = [statement['Assign']['value']['Use']['Constant']
+                for statement in error_block['statements']]
+    assert assigned == [{'Integer': '3'}, {'Float': '0.0'}, {'Integer': error_code}], name
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -785,6 +831,40 @@ for name, function_name, original, replacement in [
         call['kind'] = 'host:std.math.' + replacement
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 
+for name, function_name in [
+    ('math-sqrt-kind', 'sqrtFinite'),
+    ('math-sqrt-arity', 'sqrtFinite'),
+    ('math-sqrt-domain', 'sqrtDomain'),
+    ('math-sqrt-nonfinite', 'sqrtNegativeInfinity'),
+    ('math-sqrt-tag', 'sqrtDomain'),
+]:
+    candidate = copy.deepcopy(math_sqrt_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    raw = next(block for block in function['blocks']
+               if isinstance(block['terminator'], dict)
+               and block['terminator'].get('Invoke', {}).get('operation', {}).get('HostCall', {}).get('kind')
+                   == 'native-math-sqrt-unchecked')
+    call = raw['terminator']['Invoke']['operation']['HostCall']
+    if name == 'math-sqrt-kind':
+        call['kind'] = 'host:std.math.floor'
+    elif name == 'math-sqrt-arity':
+        call['arguments'] = []
+    elif name == 'math-sqrt-nonfinite':
+        function['blocks'][0]['terminator']['SwitchBool']['if_true'] = raw['ordinal']
+    else:
+        domain = next(block for block in function['blocks']
+                      if isinstance(block['terminator'], dict)
+                      and block['terminator'].get('SwitchBool', {}).get('if_false') == raw['ordinal'])
+        if name == 'math-sqrt-domain':
+            domain['terminator']['SwitchBool']['if_true'] = raw['ordinal']
+        else:
+            error_block = function['blocks'][domain['terminator']['SwitchBool']['if_true']]
+            error_block['statements'][0]['Assign']['value']['Use']['Constant']['Integer'] = '2'
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+
 for name, function_name, operator in [
     ('float-width', 'multiply32', 'float32-multiply'),
     ('float-zero', 'negate64', 'float64-negate'),
@@ -908,7 +988,8 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     range-iteration-end range-iteration-step range-iteration-char \
     math-unary-floor math-unary-ceil math-unary-round math-unary-away \
     math-unary-truncate math-unary-abs math-unary-arity \
-    math-fused-order math-fused-arity math-min-kind math-max-kind math-min-arity; do
+    math-fused-order math-fused-arity math-min-kind math-max-kind math-min-arity \
+    math-sqrt-kind math-sqrt-arity math-sqrt-domain math-sqrt-nonfinite math-sqrt-tag; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
@@ -923,9 +1004,11 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
         grep -q 'requires three arguments' "$tmp/$candidate.log"
     elif [[ "$candidate" == math-min-arity ]]; then
         grep -q 'requires two arguments' "$tmp/$candidate.log"
+    elif [[ "$candidate" == math-sqrt-arity ]]; then
+        grep -q 'requires one argument' "$tmp/$candidate.log"
     elif [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* || "$candidate" == uint64-* || "$candidate" == float-* || "$candidate" == char-* || "$candidate" == range-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
-    elif [[ "$candidate" == math-unary-* || "$candidate" == math-fused-* || "$candidate" == math-min-* || "$candidate" == math-max-* ]]; then
+    elif [[ "$candidate" == math-unary-* || "$candidate" == math-fused-* || "$candidate" == math-min-* || "$candidate" == math-max-* || "$candidate" == math-sqrt-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -946,7 +1029,8 @@ cp "$tmp/ranges-report.json" "$target_dir/reliability/evidence/native-source-ran
 cp "$tmp/range-iteration-report.json" "$target_dir/reliability/evidence/native-source-range-iteration.json"
 cp "$tmp/math-unary-report.json" "$target_dir/reliability/evidence/native-source-math-unary.json"
 cp "$tmp/math-fused-extrema-report.json" "$target_dir/reliability/evidence/native-source-math-fused-extrema.json"
-echo "native source scalars: OK (612 Cranelift cases, 70 arithmetic traps, 70 rejected evidence changes)"
+cp "$tmp/math-sqrt-report.json" "$target_dir/reliability/evidence/native-source-math-sqrt.json"
+echo "native source scalars: OK (630 Cranelift cases, 70 arithmetic traps, 75 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native source scalars: LLVM comparison OK (567 cases, 67 arithmetic traps)"
+    echo "native source scalars: LLVM comparison OK (585 cases, 67 arithmetic traps)"
 fi
