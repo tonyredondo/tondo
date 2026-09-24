@@ -5,7 +5,7 @@
   "state": "open",
   "suite": {
     "path": "conformance/0.1/manifest.json",
-    "sha256": "6fe62193f3cb1c71af00c16b1d3ee197dbf2fce96eb3218af147512c624e2809"
+    "sha256": "395154ece2ea5cc6f9dd450ec4eed22ebe9741a4a576eb5fdd72c455258a0cb7"
   },
   "specifications": [
     {
@@ -18,7 +18,7 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "bdb82215eecaa8fbfc1307de24aa7c88cdadedba9374e05514f04d25697b8420"
+      "sha256": "b4ec3d915303958db7874138f86d23c1bbb5cac1c4fd3c09d1cd85f3808babd0"
     }
   ],
   "case_layers": [

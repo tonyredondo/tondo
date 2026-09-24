@@ -127,6 +127,14 @@ cmp "$tmp/math-unary-probe.json" "$tmp/math-unary-repeated.json"
 "$adapter" "${args[@]}" "${comparison[@]}" \
     --probe "$tmp/math-unary-probe.json" --output "$tmp/math-unary-report.json"
 
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-math-fused-extrema.to > "$tmp/math-fused-extrema-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-aot-math-fused-extrema.to > "$tmp/math-fused-extrema-repeated.json"
+cmp "$tmp/math-fused-extrema-probe.json" "$tmp/math-fused-extrema-repeated.json"
+"$adapter" "${args[@]}" "${comparison[@]}" \
+    --probe "$tmp/math-fused-extrema-probe.json" --output "$tmp/math-fused-extrema-report.json"
+
 python3 - "$tmp" <<'PY'
 import copy
 import json
@@ -470,6 +478,23 @@ if 'llvm_comparison' in math_unary:
         {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
         for case in cases
     ]
+math_fused_extrema = json.loads((root / 'math-fused-extrema-report.json').read_text())
+assert math_fused_extrema['format'] == report['format']
+assert math_fused_extrema['backend'] == 'cranelift'
+assert math_fused_extrema['boundary'] == report['boundary']
+assert math_fused_extrema['n1_claim'] is False
+assert math_fused_extrema['production_runtime_linked'] is False
+cases = math_fused_extrema['observations']
+assert len(cases) == 10 and len({case['function_ordinal'] for case in cases}) == 10
+assert all(case['arguments'] == [] and case['native_status'] == 'returned'
+           and case['native_result'] == case['vm_result'] == 42 for case in cases)
+if 'llvm_comparison' in math_fused_extrema:
+    comparison = math_fused_extrema['llvm_comparison']
+    assert comparison['version']
+    assert comparison['observations'] == [
+        {key: case[key] for key in ['function_ordinal', 'arguments', 'native_status', 'native_result']}
+        for case in cases
+    ]
 for name in ['source-drift', 'unsupported', 'missing-observation', 'oracle-drift', 'empty']:
     candidate = copy.deepcopy(probe)
     fixture = candidate['fixtures'][0]
@@ -735,6 +760,31 @@ for name, function_name, original, replacement in [
         call['kind'] = 'host:std.math.' + replacement
     (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
 
+math_fused_probe = json.loads((root / 'math-fused-extrema-probe.json').read_text())
+for name, function_name, original, replacement in [
+    ('math-fused-order', 'fusedRounding', 'fma', 'swap'),
+    ('math-fused-arity', 'fusedRounding', 'fma', None),
+    ('math-min-kind', 'minimumFinite', 'min', 'max'),
+    ('math-max-kind', 'maximumFinite', 'max', 'min'),
+    ('math-min-arity', 'minimumFinite', 'min', None),
+]:
+    candidate = copy.deepcopy(math_fused_probe)
+    backend = candidate['fixtures'][0]['mir']['backend']
+    ordinal = next(symbol['function'] for symbol in backend['debug']['symbols']
+                   if symbol['name'].endswith('::value::' + function_name))
+    function = next(function for function in backend['functions'] if function['ordinal'] == ordinal)
+    calls = [block['terminator'].get('Invoke', {}).get('operation', {}).get('HostCall')
+             for block in function['blocks'] if isinstance(block['terminator'], dict)]
+    call = next(call for call in calls if call is not None
+                and call['kind'] == 'host:std.math.' + original)
+    if replacement is None:
+        call['arguments'] = call['arguments'][:-1]
+    elif replacement == 'swap':
+        call['arguments'][0], call['arguments'][2] = call['arguments'][2], call['arguments'][0]
+    else:
+        call['kind'] = 'host:std.math.' + replacement
+    (root / f'{name}.json').write_text(json.dumps(candidate) + '\n')
+
 for name, function_name, operator in [
     ('float-width', 'multiply32', 'float32-multiply'),
     ('float-zero', 'negate64', 'float64-negate'),
@@ -857,7 +907,8 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
     range-exclusive range-inclusive range-start range-unsigned range-char \
     range-iteration-end range-iteration-step range-iteration-char \
     math-unary-floor math-unary-ceil math-unary-round math-unary-away \
-    math-unary-truncate math-unary-abs math-unary-arity; do
+    math-unary-truncate math-unary-abs math-unary-arity \
+    math-fused-order math-fused-arity math-min-kind math-max-kind math-min-arity; do
     if "$adapter" "${args[@]}" --probe "$tmp/$candidate.json" --output "$tmp/rejected.json" \
         > "$tmp/$candidate.log" 2>&1; then
         echo "native source scalars: $candidate unexpectedly passed" >&2
@@ -868,9 +919,13 @@ for candidate in source-drift unsupported missing-observation oracle-drift empty
         grep -q 'invalid native Char literal' "$tmp/$candidate.log"
     elif [[ "$candidate" == math-unary-arity ]]; then
         grep -q 'requires one argument' "$tmp/$candidate.log"
+    elif [[ "$candidate" == math-fused-arity ]]; then
+        grep -q 'requires three arguments' "$tmp/$candidate.log"
+    elif [[ "$candidate" == math-min-arity ]]; then
+        grep -q 'requires two arguments' "$tmp/$candidate.log"
     elif [[ "$candidate" == omitted-*-call || "$candidate" == integer-* || "$candidate" == sum-* || "$candidate" == enum-* || "$candidate" == union-* || "$candidate" == uint64-* || "$candidate" == float-* || "$candidate" == char-* || "$candidate" == range-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
-    elif [[ "$candidate" == math-unary-* ]]; then
+    elif [[ "$candidate" == math-unary-* || "$candidate" == math-fused-* || "$candidate" == math-min-* || "$candidate" == math-max-* ]]; then
         grep -q 'normalized MIR and hosted VM observations disagree' "$tmp/$candidate.log"
     fi
 done
@@ -890,7 +945,8 @@ cp "$tmp/chars-report.json" "$target_dir/reliability/evidence/native-source-char
 cp "$tmp/ranges-report.json" "$target_dir/reliability/evidence/native-source-ranges.json"
 cp "$tmp/range-iteration-report.json" "$target_dir/reliability/evidence/native-source-range-iteration.json"
 cp "$tmp/math-unary-report.json" "$target_dir/reliability/evidence/native-source-math-unary.json"
-echo "native source scalars: OK (602 Cranelift cases, 70 arithmetic traps, 65 rejected evidence changes)"
+cp "$tmp/math-fused-extrema-report.json" "$target_dir/reliability/evidence/native-source-math-fused-extrema.json"
+echo "native source scalars: OK (612 Cranelift cases, 70 arithmetic traps, 70 rejected evidence changes)"
 if [[ ${#comparison[@]} -gt 0 ]]; then
-    echo "native source scalars: LLVM comparison OK (557 cases, 67 arithmetic traps)"
+    echo "native source scalars: LLVM comparison OK (567 cases, 67 arithmetic traps)"
 fi

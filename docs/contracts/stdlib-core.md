@@ -236,6 +236,12 @@ and `-0.5 -> -1.0`. Both functions agree away from ties, including `2.1 -> 2.0`
 and `-2.1 -> -2.0`. Signed zero, infinities and NaN follow the same rules as
 `round`; negative inputs whose nearest integer is zero produce negative zero.
 
+`fma` rounds the product and sum once. `min` and `max` return the numeric
+operand when exactly one input is NaN; two NaNs produce NaN. For equal zeros,
+`min` returns negative zero if either input is negative, while `max` returns
+positive zero if either input is positive. The result is independent of operand
+order and the host floating-point instruction.
+
 ```tondo
 pub fn floor(value: Float): Float
 pub fn ceil(value: Float): Float
@@ -413,6 +419,8 @@ NaN and signed zero according to their individual contracts. `sqrt`
 distinguishes `Domain` from `NonFinite` without publishing a partial value.
 HIR lowering and `process_host` dispatch each operation statically and preserve
 the nominal `MathError` boundary.
+The scalar `min` and `max` kernels pin the sign of equal zeros explicitly;
+plain floating-point equality would not test that property.
 
 Las pruebas del owner combinan la matriz de límites del kernel, el fixture
 `m11-std-math-001.to`, el corpus IEEE de `m6-num-004-ieee.to`, las properties

@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "f4b492383bda6ce663a705ee3a65d3afd3ffac809c44d2f65dfec775dff7fbbe"
+      "sha256": "bdd868448d31efa59e4fd178643de68cd9110287c22be2147980418f1f76ef6b"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -24,25 +24,25 @@
       "path": "TONDO_TOOLCHAIN_SPEC.md",
       "edition": "0.1",
       "status": "draft-normative",
-      "sha256": "bdb82215eecaa8fbfc1307de24aa7c88cdadedba9374e05514f04d25697b8420"
+      "sha256": "b4ec3d915303958db7874138f86d23c1bbb5cac1c4fd3c09d1cd85f3808babd0"
     },
     {
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "4b9b1431750db604049d2188b3d2bfe2c6469fdd41062552dfd9b1250e87db2e"
+      "sha256": "865558a4c412ebb0e3735758c00363fc692ebed4d924f775f6c70e92e2e78162"
     }
   ],
   "summary": {
-    "logical_tests": 3390,
-    "repetitions": 3702,
-    "physical_sources": 625,
-    "unique_source_hashes": 977,
+    "logical_tests": 3391,
+    "repetitions": 3703,
+    "physical_sources": 626,
+    "unique_source_hashes": 978,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 73,
       "draft-contract": 38,
-      "fixture": 215,
+      "fixture": 216,
       "fuzz-target": 14,
       "rust-test": 2525,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 14,
       "draft-pending": 38,
-      "executable": 3316,
+      "executable": 3317,
       "non-executable": 22
     },
     "by_phase": {
@@ -72,7 +72,7 @@
       "reliability": 171,
       "resolution": 31,
       "runtime": 434,
-      "semantic": 1191,
+      "semantic": 1192,
       "testing": 38,
       "tooling": 4
     }
@@ -3115,7 +3115,7 @@
       ],
       "oracle": "exact-observation",
       "repetitions": 3,
-      "source_sha256": "902ea089f5cde8ab26a3a879df5bce5fa07c9bdfa8c0a26b62d135fa23070065",
+      "source_sha256": "f40ca92c736932c74e766c29a60b95fdd6135e2001b748a4c0a8841c2e2ad77d",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
@@ -14895,6 +14895,24 @@
       "oracle": "fixture-sidecars",
       "repetitions": 1,
       "source_sha256": "7731d5fb4378775a1866786fa50734ccfdfa8e6b216eebd75d784a446c30b128",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "fixture:native/native-aot-math-fused-extrema",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "semantic",
+      "source": "tests/native/native-aot-math-fused-extrema.to",
+      "fixture": "native/native-aot-math-fused-extrema",
+      "group": "native",
+      "requirements": [],
+      "oracle": "fixture-sidecars",
+      "repetitions": 1,
+      "source_sha256": "fc2af49b76b5c721ded793bd6243a546a7255396a8b1e7ba75d877e759212267",
       "target": "tondo-vm-hosted",
       "document": null,
       "edition": "0.1",
@@ -57536,7 +57554,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bb523900588d18d415f8d182dc2ddcb5370f0b673343bae8f52771b268c05634",
+      "source_sha256": "38b0bf82181995721d562e8da1bcdd4e3df4653b6fbd3db765fbb060bc7c591a",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -57554,7 +57572,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bb523900588d18d415f8d182dc2ddcb5370f0b673343bae8f52771b268c05634",
+      "source_sha256": "38b0bf82181995721d562e8da1bcdd4e3df4653b6fbd3db765fbb060bc7c591a",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -57572,7 +57590,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bb523900588d18d415f8d182dc2ddcb5370f0b673343bae8f52771b268c05634",
+      "source_sha256": "38b0bf82181995721d562e8da1bcdd4e3df4653b6fbd3db765fbb060bc7c591a",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -57590,7 +57608,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bb523900588d18d415f8d182dc2ddcb5370f0b673343bae8f52771b268c05634",
+      "source_sha256": "38b0bf82181995721d562e8da1bcdd4e3df4653b6fbd3db765fbb060bc7c591a",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -57608,7 +57626,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bb523900588d18d415f8d182dc2ddcb5370f0b673343bae8f52771b268c05634",
+      "source_sha256": "38b0bf82181995721d562e8da1bcdd4e3df4653b6fbd3db765fbb060bc7c591a",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -57626,7 +57644,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bb523900588d18d415f8d182dc2ddcb5370f0b673343bae8f52771b268c05634",
+      "source_sha256": "38b0bf82181995721d562e8da1bcdd4e3df4653b6fbd3db765fbb060bc7c591a",
       "target": "host-rust",
       "document": null,
       "edition": "host",

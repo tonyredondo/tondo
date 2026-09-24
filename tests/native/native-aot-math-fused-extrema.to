@@ -1,0 +1,84 @@
+import std.math
+
+fn fusedRounding(): Int {
+    let small = 1.0 / 134217728.0
+    assert(math.fma(1.0 + small, 1.0 - small, -1.0) == -1.0 / 18014398509481984.0)
+    42
+}
+
+fn fusedSpecial(): Int {
+    let nan = math.fma(1.0 / 0.0, 0.0, 1.0)
+    assert(nan != nan)
+    assert(math.fma(2.0, 3.0, 4.0) == 10.0)
+    42
+}
+
+fn fusedSignedZero(): Int {
+    assert(1.0 / math.fma(-0.0, 1.0, -0.0) == 1.0 / -0.0)
+    assert(1.0 / math.fma(0.0, 1.0, 0.0) == 1.0 / 0.0)
+    42
+}
+
+fn minimumFinite(): Int {
+    assert(math.min(-4.0, 3.0) == -4.0)
+    assert(math.min(3.0, -4.0) == -4.0)
+    assert(math.min(2.0, 2.0) == 2.0)
+    42
+}
+
+fn maximumFinite(): Int {
+    assert(math.max(-4.0, 3.0) == 3.0)
+    assert(math.max(3.0, -4.0) == 3.0)
+    assert(math.max(2.0, 2.0) == 2.0)
+    42
+}
+
+fn extremaSignedZero(): Int {
+    let positive = 1.0 / 0.0
+    let negative = 1.0 / -0.0
+    assert(1.0 / math.min(-0.0, 0.0) == negative)
+    assert(1.0 / math.min(0.0, -0.0) == negative)
+    assert(1.0 / math.max(-0.0, 0.0) == positive)
+    assert(1.0 / math.max(0.0, -0.0) == positive)
+    42
+}
+
+fn extremaNaN(): Int {
+    let nan = 0.0 / 0.0
+    assert(math.min(nan, 3.0) == 3.0)
+    assert(math.min(3.0, nan) == 3.0)
+    assert(math.max(nan, 3.0) == 3.0)
+    assert(math.max(3.0, nan) == 3.0)
+    assert(math.min(nan, nan) != math.min(nan, nan))
+    assert(math.max(nan, nan) != math.max(nan, nan))
+    42
+}
+
+fn extremaInfinities(): Int {
+    let positive = 1.0 / 0.0
+    let negative = 1.0 / -0.0
+    assert(math.min(positive, negative) == negative)
+    assert(math.max(positive, negative) == positive)
+    assert(math.min(positive, 2.0) == 2.0)
+    assert(math.max(negative, 2.0) == 2.0)
+    42
+}
+
+fn extremaSubnormal(): Int {
+    let tiny = 1e-320
+    assert(math.min(tiny, -tiny) == -tiny)
+    assert(math.max(tiny, -tiny) == tiny)
+    42
+}
+
+fn choose(value: Float): Float {
+    math.max(math.min(value, 42.0), -42.0)
+}
+
+fn ordinaryCall(): Int {
+    assert(choose(50.0) == 42.0)
+    assert(choose(-50.0) == -42.0)
+    42
+}
+
+fn main() {}

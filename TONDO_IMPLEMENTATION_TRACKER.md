@@ -5755,20 +5755,21 @@ pueden retrasar el primer backend correcto.
   Array/Map/Set cursors, other collections, custom steps and production runtime
   storage remain pending; borrowed `Range` iteration is outside the language
   contract.
-  Six pure `std.math` unary operations now lower from source: `floor`, `ceil`,
-  ties-even `round`, `roundTiesAway`, `truncate` and `abs`. The private scalar
-  route compares finite boundaries, signed zero, subnormals, infinities, NaN,
-  large integral values and an ordinary call with the hosted VM. LLVM may use
-  system `libm`; neither candidate links the Tondo production runtime.
-  The focused `scripts/native-source-scalars-test.sh` compares 602 Cranelift
+  Nine pure `std.math` operations now lower from source: `floor`, `ceil`,
+  ties-even `round`, `roundTiesAway`, `truncate`, `abs`, fused `fma`, `min` and
+  `max`. The private scalar route compares fused rounding, finite boundaries,
+  signed zero, subnormals, infinities, NaN, large integral values and ordinary
+  calls with the hosted VM. LLVM may use system `libm`; neither candidate links
+  the Tondo production runtime.
+  The focused `scripts/native-source-scalars-test.sh` compares 612 Cranelift
   observations with the hosted VM, including 70 arithmetic traps, without an
   evaluation runtime. Reordered record initializers also preserve source evaluation order
   and declaration-order storage. An explicitly selected LLVM tool also checks
-  the 557 aggregate-call, generic-call, equality, Unit/empty-record, integer,
+  the 567 aggregate-call, generic-call, equality, Unit/empty-record, integer,
   sum, enum, union, UInt64, float, Char, range-value, range-iteration and
-  unary-math cases.
+  scalar-math cases.
   Managed fields and float collections, the remaining named `std.math`
-  operations (`sqrt`, `fma`, `min`, `max`), recursive value layouts, generic
+  operation (`sqrt`), recursive value layouts, generic
   closures and dynamic dispatch, aggregate async calls, loans and production runtime
   storage remain unsupported.
   This verified increment does not close the complete language corpus or N1.

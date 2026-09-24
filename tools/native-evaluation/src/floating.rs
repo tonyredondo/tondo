@@ -61,17 +61,150 @@ pub(super) fn unary_math(kind: &str) -> Option<UnaryMath> {
     })
 }
 
-pub(super) fn unary_math_argument<'a, T>(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScalarMath {
+    Unary(UnaryMath),
+    Fma,
+    Min,
+    Max,
+}
+
+pub(super) fn math_arguments<'a, T>(
     kind: &str,
     arguments: &'a [T],
-) -> Result<Option<(UnaryMath, &'a T)>, String> {
-    let Some(operation) = unary_math(kind) else {
-        return Ok(None);
+) -> Result<Option<(ScalarMath, &'a [T])>, String> {
+    let operation = match kind {
+        "host:std.math.fma" => ScalarMath::Fma,
+        "host:std.math.min" => ScalarMath::Min,
+        "host:std.math.max" => ScalarMath::Max,
+        _ => match unary_math(kind) {
+            Some(operation) => ScalarMath::Unary(operation),
+            None => return Ok(None),
+        },
     };
-    let [argument] = arguments else {
-        return Err(format!("scalar math call `{kind}` requires one argument"));
+    let (arity, description) = match operation {
+        ScalarMath::Unary(_) => (1, "one argument"),
+        ScalarMath::Fma => (3, "three arguments"),
+        ScalarMath::Min | ScalarMath::Max => (2, "two arguments"),
     };
-    Ok(Some((operation, argument)))
+    if arguments.len() != arity {
+        return Err(format!("scalar math call `{kind}` requires {description}"));
+    }
+    Ok(Some((operation, arguments)))
+}
+
+pub(super) fn evaluate_math(operation: ScalarMath, bits: &[i64]) -> i64 {
+    if let ScalarMath::Unary(operation) = operation {
+        return evaluate_unary_math(operation, bits[0]);
+    }
+    let first = f64::from_bits(bits[0] as u64);
+    let second = f64::from_bits(bits[1] as u64);
+    match operation {
+        ScalarMath::Fma => first
+            .mul_add(second, f64::from_bits(bits[2] as u64))
+            .to_bits() as i64,
+        ScalarMath::Min | ScalarMath::Max if first == 0.0 && second == 0.0 => {
+            if operation == ScalarMath::Min {
+                bits[0] | bits[1]
+            } else {
+                bits[0] & bits[1]
+            }
+        }
+        ScalarMath::Min => first.min(second).to_bits() as i64,
+        ScalarMath::Max => first.max(second).to_bits() as i64,
+        ScalarMath::Unary(_) => unreachable!(),
+    }
+}
+
+pub(super) fn cranelift_math(
+    builder: &mut FunctionBuilder<'_>,
+    operation: ScalarMath,
+    bits: &[Value],
+) -> Value {
+    if let ScalarMath::Unary(operation) = operation {
+        return cranelift_unary_math(builder, operation, bits[0]);
+    }
+    let first = decode(builder, Width::Double, bits[0]);
+    let second = decode(builder, Width::Double, bits[1]);
+    if operation == ScalarMath::Fma {
+        let third = decode(builder, Width::Double, bits[2]);
+        let result = builder.ins().fma(first, second, third);
+        return encode(builder, Width::Double, result);
+    }
+    // Cranelift fmin/fmax propagate NaNs. Tondo chooses the numeric operand
+    // and specifies the sign of zero independently of the host instruction.
+    let first_nan = builder.ins().fcmp(FloatCC::Unordered, first, first);
+    let second_nan = builder.ins().fcmp(FloatCC::Unordered, second, second);
+    let preference = if operation == ScalarMath::Min {
+        FloatCC::LessThan
+    } else {
+        FloatCC::GreaterThan
+    };
+    let first_preferred = builder.ins().fcmp(preference, first, second);
+    let second_preferred = builder.ins().fcmp(preference, second, first);
+    let equal_bits = if operation == ScalarMath::Min {
+        builder.ins().bor(bits[0], bits[1])
+    } else {
+        builder.ins().band(bits[0], bits[1])
+    };
+    let second_or_equal = builder.ins().select(second_preferred, bits[1], equal_bits);
+    let ordered = builder
+        .ins()
+        .select(first_preferred, bits[0], second_or_equal);
+    let second_checked = builder.ins().select(second_nan, bits[0], ordered);
+    builder.ins().select(first_nan, bits[1], second_checked)
+}
+
+pub(super) fn llvm_math(
+    operation: ScalarMath,
+    bits: &[String],
+    module: &mut String,
+    index: &mut usize,
+) -> String {
+    if let ScalarMath::Unary(operation) = operation {
+        return llvm_unary_math(operation, &bits[0], module, index);
+    }
+    let mut ir = Llvm { module, index };
+    let first = ir.decode(Width::Double, &bits[0]);
+    let second = ir.decode(Width::Double, &bits[1]);
+    if operation == ScalarMath::Fma {
+        let third = ir.decode(Width::Double, &bits[2]);
+        let result = ir.instruction(format!(
+            "call double @llvm.fma.f64(double {first}, double {second}, double {third})"
+        ));
+        return ir.encode(Width::Double, &result);
+    }
+    let first_nan = ir.instruction(format!("fcmp uno double {first}, {first}"));
+    let second_nan = ir.instruction(format!("fcmp uno double {second}, {second}"));
+    let predicate = if operation == ScalarMath::Min {
+        "olt"
+    } else {
+        "ogt"
+    };
+    let first_preferred = ir.instruction(format!("fcmp {predicate} double {first}, {second}"));
+    let second_preferred = ir.instruction(format!("fcmp {predicate} double {second}, {first}"));
+    let bit_operator = if operation == ScalarMath::Min {
+        "or"
+    } else {
+        "and"
+    };
+    let equal_bits = ir.instruction(format!("{bit_operator} i64 {}, {}", bits[0], bits[1]));
+    let second_or_equal = ir.instruction(format!(
+        "select i1 {second_preferred}, i64 {}, i64 {equal_bits}",
+        bits[1]
+    ));
+    let ordered = ir.instruction(format!(
+        "select i1 {first_preferred}, i64 {}, i64 {second_or_equal}",
+        bits[0]
+    ));
+    let second_checked = ir.instruction(format!(
+        "select i1 {second_nan}, i64 {}, i64 {ordered}",
+        bits[0]
+    ));
+    ir.instruction(format!(
+        "select i1 {first_nan}, i64 {}, i64 {second_checked}",
+        bits[1]
+    ))
 }
 
 pub(super) fn evaluate_unary_math(operation: UnaryMath, bits: i64) -> i64 {
@@ -476,6 +609,11 @@ pub(super) fn llvm_convert(
 }
 
 pub(super) fn llvm_helpers(module: &mut String) {
+    writeln!(
+        module,
+        "declare double @llvm.fma.f64(double, double, double)"
+    )
+    .unwrap();
     for name in ["floor", "ceil", "roundeven", "round", "trunc", "fabs"] {
         writeln!(module, "declare double @llvm.{name}.f64(double)").unwrap();
     }

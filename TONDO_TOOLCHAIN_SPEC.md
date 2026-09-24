@@ -1619,13 +1619,14 @@ escalar privado y ramas acotadas; los extremos exclusivos e inclusivos, los
 límites enteros y el salto Unicode conservan las observaciones fuente. Esto no
 acredita cursores prestados, enlace con el runtime de producción ni Gate N1.
 
-The same private source-driven route executes six unary `std.math` operations
-on `Float`: `floor`, `ceil`, ties-even `round`, `roundTiesAway`, `truncate` and
-`abs`. The corpus observes signed zero, subnormals, infinities, NaN, large
-integral values and ordinary calls against the hosted VM. The scalar comparison
+The same private source-driven route executes nine pure `std.math` operations
+on `Float`: `floor`, `ceil`, ties-even `round`, `roundTiesAway`, `truncate`,
+`abs`, `fma`, `min` and `max`. The corpus observes fused rounding, signed zero,
+subnormals, infinities, NaN, large integral values and ordinary calls against
+the hosted VM. The scalar comparison
 may link system `libm` for LLVM math intrinsics; it does not link Tondo's
-production runtime or establish a public ABI or N1 promotion. `sqrt`, `fma`,
-`min`, `max` and float collections remain pending in this route.
+production runtime or establish a public ABI or N1 promotion. `sqrt` and float
+collections remain pending in this route.
 
 `PERF-001` cierra el diseño y sus validaciones negativas, no la captura de
 números. La baseline debe capturarse antes de `NATIVE-001`, `NATIVE-ABI-001` o

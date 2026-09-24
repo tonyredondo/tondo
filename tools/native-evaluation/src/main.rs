@@ -3189,10 +3189,12 @@ fn lower_rvalue_cranelift(
             lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)
         }
         MirBackendRvalue::HostCall { kind, arguments } => {
-            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
-                let bits =
-                    lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)?;
-                return Ok(floating::cranelift_unary_math(builder, operation, bits));
+            if let Some((operation, arguments)) = floating::math_arguments(kind, arguments)? {
+                let bits = arguments
+                    .iter()
+                    .map(|argument| lower_operand_cranelift_with_runtime(builder, argument, locals, runtime))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(floating::cranelift_math(builder, operation, &bits));
             }
             let kind_id = host_call_kind(kind)?;
             let argument = arguments
@@ -3312,10 +3314,12 @@ fn lower_operation_cranelift(
                 .ok_or_else(|| "Cranelift await did not return a value".to_owned())
         }
         MirBackendOperation::HostCall { kind, arguments } => {
-            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
-                let bits =
-                    lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)?;
-                return Ok(floating::cranelift_unary_math(builder, operation, bits));
+            if let Some((operation, arguments)) = floating::math_arguments(kind, arguments)? {
+                let bits = arguments
+                    .iter()
+                    .map(|argument| lower_operand_cranelift_with_runtime(builder, argument, locals, runtime))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(floating::cranelift_math(builder, operation, &bits));
             }
             let kind_id = host_call_kind(kind)?;
             let argument = arguments
@@ -9410,9 +9414,12 @@ fn evaluate_rvalue(value: &MirBackendRvalue, locals: &BTreeMap<u32, i64>) -> Res
             evaluate_operand(operand, locals)
         }
         MirBackendRvalue::HostCall { kind, arguments } => {
-            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
-                let bits = evaluate_operand(argument, locals)?;
-                return Ok(floating::evaluate_unary_math(operation, bits));
+            if let Some((operation, arguments)) = floating::math_arguments(kind, arguments)? {
+                let bits = arguments
+                    .iter()
+                    .map(|argument| evaluate_operand(argument, locals))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(floating::evaluate_math(operation, &bits));
             }
             let payload = arguments
                 .first()
@@ -9464,9 +9471,12 @@ fn evaluate_operation(
         MirBackendOperation::Spawn { operation, .. } => evaluate_operation(operation, locals),
         MirBackendOperation::JoinValue { operand } => evaluate_operand(operand, locals),
         MirBackendOperation::HostCall { kind, arguments } => {
-            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
-                let bits = evaluate_operand(argument, locals)?;
-                return Ok(floating::evaluate_unary_math(operation, bits));
+            if let Some((operation, arguments)) = floating::math_arguments(kind, arguments)? {
+                let bits = arguments
+                    .iter()
+                    .map(|argument| evaluate_operand(argument, locals))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(floating::evaluate_math(operation, &bits));
             }
             let payload = arguments
                 .first()
@@ -11335,14 +11345,12 @@ fn llvm_rvalue(
             llvm_operand(operand, slots, module, value_index)
         }
         MirBackendRvalue::HostCall { kind, arguments } => {
-            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
-                let bits = llvm_operand(argument, slots, module, value_index)?;
-                return Ok(floating::llvm_unary_math(
-                    operation,
-                    &bits,
-                    module,
-                    value_index,
-                ));
+            if let Some((operation, arguments)) = floating::math_arguments(kind, arguments)? {
+                let bits = arguments
+                    .iter()
+                    .map(|argument| llvm_operand(argument, slots, module, value_index))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(floating::llvm_math(operation, &bits, module, value_index));
             }
             let argument = arguments
                 .first()
@@ -11455,14 +11463,12 @@ fn llvm_operation(
             Ok(name)
         }
         MirBackendOperation::HostCall { kind, arguments } => {
-            if let Some((operation, argument)) = floating::unary_math_argument(kind, arguments)? {
-                let bits = llvm_operand(argument, slots, module, value_index)?;
-                return Ok(floating::llvm_unary_math(
-                    operation,
-                    &bits,
-                    module,
-                    value_index,
-                ));
+            if let Some((operation, arguments)) = floating::math_arguments(kind, arguments)? {
+                let bits = arguments
+                    .iter()
+                    .map(|argument| llvm_operand(argument, slots, module, value_index))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(floating::llvm_math(operation, &bits, module, value_index));
             }
             let argument = arguments
                 .first()

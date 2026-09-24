@@ -35,6 +35,20 @@ impl VmHost for ScalarMathHost {
                 tondo_stdlib::math::truncate(*value)
             }
             ("std.math.abs", [RuntimeValue::Float(value)]) => tondo_stdlib::math::abs(*value),
+            (
+                "std.math.fma",
+                [
+                    RuntimeValue::Float(a),
+                    RuntimeValue::Float(b),
+                    RuntimeValue::Float(c),
+                ],
+            ) => tondo_stdlib::math::fma(*a, *b, *c),
+            ("std.math.min", [RuntimeValue::Float(a), RuntimeValue::Float(b)]) => {
+                tondo_stdlib::math::min(*a, *b)
+            }
+            ("std.math.max", [RuntimeValue::Float(a), RuntimeValue::Float(b)]) => {
+                tondo_stdlib::math::max(*a, *b)
+            }
             _ => return RejectingHost.invoke(name, arguments),
         };
         Ok(RuntimeValue::Float(value))

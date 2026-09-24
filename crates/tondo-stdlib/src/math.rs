@@ -56,10 +56,16 @@ pub fn abs(value: f64) -> f64 {
 }
 
 pub fn min(a: f64, b: f64) -> f64 {
+    if a == 0.0 && b == 0.0 {
+        return f64::from_bits(a.to_bits() | b.to_bits());
+    }
     a.min(b)
 }
 
 pub fn max(a: f64, b: f64) -> f64 {
+    if a == 0.0 && b == 0.0 {
+        return f64::from_bits(a.to_bits() & b.to_bits());
+    }
     a.max(b)
 }
 
@@ -142,6 +148,10 @@ mod tests {
         assert_eq!(abs(-3.5), 3.5);
         assert_eq!(min(-0.0, 0.0), -0.0);
         assert_eq!(max(-0.0, 0.0), 0.0);
+        assert_eq!(min(-0.0, 0.0).to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(min(0.0, -0.0).to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(max(-0.0, 0.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(max(0.0, -0.0).to_bits(), 0.0_f64.to_bits());
         assert_eq!(min(f64::NAN, 1.0), 1.0);
         assert_eq!(max(f64::NEG_INFINITY, 2.0), 2.0);
     }
