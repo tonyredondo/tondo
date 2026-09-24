@@ -18,6 +18,9 @@ expect_failure() {
 jq '.implementation.status = "pending-after-native-gate"' testing/stdlib-cbor.json > "$tmp_dir/pending.json"
 expect_failure pending env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/pending.json" scripts/stdlib-cbor-implementation-check.sh
 
+jq '.implementation.quality_gate = "passed"' testing/stdlib-cbor.json > "$tmp_dir/quality.json"
+expect_failure quality env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/quality.json" scripts/stdlib-cbor-implementation-check.sh
+
 jq '.implementation.public_api_promoted = true' testing/stdlib-cbor.json > "$tmp_dir/public.json"
 expect_failure public env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/public.json" scripts/stdlib-cbor-implementation-check.sh
 

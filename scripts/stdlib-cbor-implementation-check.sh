@@ -17,7 +17,8 @@ tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end wi
 jq -e '
   .owner == "std.cbor"
   and .task == "STD-CBOR-001"
-  and .implementation.status == "verified-stdlib-kernel"
+  and .implementation.status == "kernel-verified-quality-pending"
+  and .implementation.quality_gate == "pending-80-percent-per-scope"
   and .implementation.public_api_promoted == false
   and .implementation.host == "not-claimed-until-compiler-cbor-abi"
   and .implementation.native_aot_lowering == "not-claimed"
@@ -27,8 +28,8 @@ jq -e '
   and .implementation.fixture == null
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-cbor-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
-  and .promotion.next_blocks == ["STD-CBOR-TEST-001"]
+  and .implementation.required_follow_ups == ["STD-CBOR-IMPL-001", "STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+  and .promotion.next_blocks == ["STD-CBOR-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable implementation state"
 
 while IFS= read -r path; do
@@ -55,9 +56,9 @@ for marker in \
 done
 grep -Fq 'pub struct Cbor;' crates/tondo-stdlib/src/serialization.rs || die "missing static codec identity"
 grep -Fq 'pub mod cbor;' crates/tondo-stdlib/src/lib.rs || die "missing stdlib module registration"
-grep -Fq 'verified-stdlib-kernel' docs/contracts/stdlib-cbor.md || die "missing documented kernel boundary"
+grep -Fq 'kernel-verified-quality-pending' docs/contracts/stdlib-cbor.md || die "missing documented kernel boundary"
 grep -Fq 'not-claimed-until-compiler-cbor-abi' docs/contracts/stdlib-cbor.md || die "missing documented host boundary"
-grep -Fq '[x] **STD-CBOR-IMPL-001' TONDO_IMPLEMENTATION_TRACKER.md || die "tracker does not record implementation"
+grep -Fq '[ ] **STD-CBOR-IMPL-001' TONDO_IMPLEMENTATION_TRACKER.md || die "tracker incorrectly closes the implementation"
 grep -Fq 'STD-CBOR-TEST-001' TONDO_STANDARD_LIBRARY_SPEC.md || die "spec does not record follow-up"
 
-echo "std.cbor implementation: OK (bounded Rust kernel; public/host/native boundaries unclaimed)"
+echo "std.cbor implementation: OK (bounded Rust kernel; quality and public/host/native boundaries pending)"

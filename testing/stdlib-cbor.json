@@ -214,10 +214,11 @@
       {"id": "performance", "requires": ["scalar-oracle", "bounded-allocation", "adversarial-depth", "target-qualified-report"]},
       {"id": "promote", "requires": ["tag-preservation", "unknown-simple-preservation", "deterministic-map-proof", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-CBOR-TEST-001"]
+    "next_blocks": ["STD-CBOR-IMPL-001"]
   },
   "implementation": {
-    "status": "verified-stdlib-kernel",
+    "status": "kernel-verified-quality-pending",
+    "quality_gate": "pending-80-percent-per-scope",
     "public_api_promoted": false,
     "host": "not-claimed-until-compiler-cbor-abi",
     "native_aot_lowering": "not-claimed",
@@ -244,7 +245,7 @@
     ],
     "fixture": null,
     "evidence_report": "target/reliability/evidence/stdlib-cbor-implementation.json",
-    "proof": "cargo test -p tondo-stdlib --locked cbor::tests and cargo clippy -p tondo-stdlib --locked -- -D warnings pass for the bounded CBOR scalar kernel; compiler/host/native ABI/AOT promotion remains explicitly unclaimed.",
-    "required_follow_ups": ["STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+    "proof": "Focused CBOR tests and Clippy pass for the bounded scalar kernel; the workspace quality campaign on f16b430 measured 89.26% global lines but verifier and execution scopes below the agreed 80% floor. The implementation task remains open; compiler/host/native ABI/AOT promotion is unclaimed.",
+    "required_follow_ups": ["STD-CBOR-IMPL-001", "STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
   }
 }

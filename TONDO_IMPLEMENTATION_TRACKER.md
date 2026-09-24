@@ -34,9 +34,10 @@ discharge a missing integration task.
 kernel. `STD-TOML-PERF-001` now fixes a target-qualified kernel baseline;
 `STD-TOML-CONF-001` verifies the private VM host adapter against a native
 stdlib process. `STD-TOML-DOC-001` now verifies executable Rust-kernel usage.
-The next owner leaf is `STD-CBOR-TEST-001`. The CBOR kernel evidence does
-not imply a public compiler API, production host registration, native ABI or
-AOT lowering.
+The next owner leaf remains `STD-CBOR-IMPL-001`: the CBOR kernel passes its
+focused tests, but the workspace quality gate is below the agreed 80% floor
+in existing verifier and execution scopes. The kernel evidence does not imply
+a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
 
 T0 now verifies full-target compilation, sealed production sources, isolated
@@ -6706,16 +6707,20 @@ estas leaves.
 
 #### 21.3.9 `std.cbor`
 
-- [x] **STD-CBOR-IMPL-001 — Implementar CBOR.** The Rust scalar kernel now
+- [ ] **STD-CBOR-IMPL-001 — Implementar CBOR.** The Rust scalar kernel now
   covers dynamic values, typed primitive/collection encode and decode through
   `std.serialization`, exact raw bytes, bounded event reader/writer, tags,
   definite and indefinite forms, explicit deterministic encoding, and
   negative/resource/lifecycle paths. `CborReader.from_reader` buffers the
   bounded document before exposing events. The 14 focused tests and strict
-  Clippy are recorded by `scripts/stdlib-cbor-implementation.sh`. This closes
-  the kernel implementation boundary only; public compiler API, production
-  host registration, native ABI, native AOT, independent model/fuzzing,
-  performance, and conformance remain unclaimed. Next: `STD-CBOR-TEST-001`.
+  Clippy are recorded by `scripts/stdlib-cbor-implementation.sh`. The task
+  remains open: the workspace quality campaign on `f16b430` measured 89.26% global
+  line coverage, but verifier lines/functions/regions and execution functions
+  fell below the agreed 80% per-scope floor. All six selected mutants were
+  caught. Repair and remeasure those scopes before closing this task; do not
+  lower the floor. Public compiler API, production host registration, native
+  ABI, native AOT, independent model/fuzzing, performance, and conformance
+  remain unclaimed. After closure: `STD-CBOR-TEST-001`.
 - [ ] **STD-CBOR-TEST-001 — Probar y fuzzear CBOR.** Cubrir vectores RFC,
   floats/NaN, tags, maps, chunks, forms no mínimas, nesting, límites y
   preservación definida por policy.

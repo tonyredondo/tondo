@@ -4176,11 +4176,13 @@ son [`testing/stdlib-cbor.json`](./testing/stdlib-cbor.json),
 [`docs/contracts/stdlib-cbor.md`](./docs/contracts/stdlib-cbor.md),
 [`scripts/stdlib-cbor-check.sh`](./scripts/stdlib-cbor-check.sh) y
 [`scripts/stdlib-cbor-test.sh`](./scripts/stdlib-cbor-test.sh). El diseño B0
-queda cerrado por `STD-CBOR-001`. `STD-CBOR-IMPL-001` verifies the bounded
-Rust scalar kernel for dynamic values, static primitive/collection codecs,
-event reader/writer, and deterministic encoding. This is not a public Tondo
-compiler API, production VM host registration, native ABI, or native AOT
-lowering. The independent model/fuzz, performance, conformance, and usage
+queda cerrado por `STD-CBOR-001`. `STD-CBOR-IMPL-001` has a bounded Rust scalar
+kernel for dynamic values, static primitive/collection codecs, event
+reader/writer, and deterministic encoding. Focused kernel checks pass, but the
+task remains open until the 80% per-scope workspace coverage gate passes. This
+is not a public Tondo compiler API, production VM host registration, native
+ABI, or native AOT lowering. The independent model/fuzz, performance,
+conformance, and usage
 gates remain `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
 `STD-CBOR-CONF-001`, and `STD-CBOR-DOC-001`.
 
