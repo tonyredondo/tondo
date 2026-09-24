@@ -5,8 +5,12 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 contract="${TONDO_ASYNC_SELECT_CONTRACT:-$root/testing/async-select-conformance.json}"
-result="${TONDO_ASYNC_SELECT_RESULT:-$root/target/reliability/evidence/conformance-result.json}"
-evidence_dir="${TONDO_ASYNC_SELECT_EVIDENCE_DIR:-$root/target/reliability/evidence}"
+target_dir="${CARGO_TARGET_DIR:-$root/target}"
+if [[ "$target_dir" != /* ]]; then
+    target_dir="$root/$target_dir"
+fi
+result="${TONDO_ASYNC_SELECT_RESULT:-$target_dir/reliability/evidence/conformance-result.json}"
+evidence_dir="${TONDO_ASYNC_SELECT_EVIDENCE_DIR:-$target_dir/reliability/evidence}"
 report="$evidence_dir/async-select-conformance.json"
 
 die() {
