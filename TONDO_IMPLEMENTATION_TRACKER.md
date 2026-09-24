@@ -32,8 +32,10 @@ discharge a missing integration task.
 
 `std.toml` implementation and model/test/fuzz evidence cover the Rust scalar
 kernel. `STD-TOML-PERF-001` now fixes a target-qualified kernel baseline;
-`STD-TOML-CONF-001` is the next owner block. Neither the kernel benchmark nor
-the test corpus implies compiler API, hosted VM, or native AOT coverage.
+`STD-TOML-CONF-001` verifies the private VM host adapter against a native
+stdlib process. `STD-TOML-DOC-001` is the next owner block. This evidence does
+not imply a public compiler API, production host registration, native ABI or
+AOT lowering.
 Project manifests remain a separate TOML owner.
 
 T0 now verifies full-target compilation, sealed production sources, isolated
@@ -6682,8 +6684,17 @@ estas leaves.
   [`testing/stdlib-toml-performance.json`](./testing/stdlib-toml-performance.json),
   [`docs/contracts/stdlib-toml-performance.md`](./docs/contracts/stdlib-toml-performance.md).
   El siguiente bloque es `STD-TOML-CONF-001`.
-- [ ] **STD-TOML-CONF-001 — Conformar TOML.** Verificar interoperabilidad,
-  typed/dynamic, errores/spans y equivalencia VM/nativo.
+- [x] **STD-TOML-CONF-001 — Conformar TOML.** Seis casos con los mismos bytes
+  TOML ejecutan el kernel Rust desde un callable host privado de bytecode
+  verificado en la VM y desde un proceso nativo separado. Comparan observables
+  exactos de typed/dynamic, Unicode, radix, fechas, orden canónico, streaming
+  fragmentado, errores con path/span, límites y cleanup. El contrato es
+  [`testing/stdlib-toml-conformance.json`](./testing/stdlib-toml-conformance.json)
+  y la frontera está en
+  [`docs/contracts/stdlib-toml-conformance.md`](./docs/contracts/stdlib-toml-conformance.md).
+  Esta equivalencia de adapters no promociona la API `std.toml` del compilador,
+  registro hosted de producción, ABI nativo, SIMD ni AOT. Sigue
+  `STD-TOML-DOC-001`.
 - [ ] **STD-TOML-DOC-001 — Documentar TOML.** Separar data format y
   `tondo.toml`, fijar policies, costes y ejemplos ejecutables.
 

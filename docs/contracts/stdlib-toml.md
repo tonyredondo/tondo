@@ -426,8 +426,17 @@ por el modelo canónico, corpus, chunking, límites, spans y fuzz bounded; no
 mueve esta frontera. STD-TOML-PERF-001 mide el kernel Rust en un target concreto,
 con la misma separación de ejecución. Su registro y límites de interpretación
 están en [testing/stdlib-toml-performance.json](../../testing/stdlib-toml-performance.json)
-y [stdlib-toml-performance.md](./stdlib-toml-performance.md). El siguiente
-bloque es STD-TOML-CONF-001.
+y [stdlib-toml-performance.md](./stdlib-toml-performance.md).
+
+STD-TOML-CONF-001 compara seis casos de los mismos bytes TOML entre un
+callable host privado ejecutado por bytecode verificado en el VM y otro
+proceso nativo que llama al kernel Rust. Comprueba typed/dynamic, TOML 1.1,
+orden canónico, eventos con fragmentos de un byte, errores con path/span y
+rechazo atómico por límite. La frontera exacta, el corpus y el reporte están
+en [testing/stdlib-toml-conformance.json](../../testing/stdlib-toml-conformance.json)
+y [stdlib-toml-conformance.md](./stdlib-toml-conformance.md). Esta prueba
+no registra `std.toml` como API pública en el compilador ni establece ABI o
+lowering AOT. El siguiente bloque es STD-TOML-DOC-001.
 
 ## Exclusiones deliberadas y leaves posteriores
 
@@ -437,9 +446,9 @@ preservados, edición round-trip, schema discovery, valores binarios implícitos
 segundos intercalares, offsets fuera de `std.time`, fracciones de más de nueve
 dígitos, futures duplicadas ni `selectable`.
 
-El host/compiler, conformance y documentación de uso permanecen pendientes de:
+La API pública compiler/host, el ABI nativo y el lowering AOT continúan sin
+implementarse. La documentación de uso pendiente es:
 
 ```text
-STD-TOML-CONF-001
 STD-TOML-DOC-001
 ```

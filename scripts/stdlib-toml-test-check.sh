@@ -61,8 +61,8 @@ jq -e '
   and .sanitization.native_aot == "not-claimed"
   and .promotion.model_test_fuzz_complete == true
   and .promotion.implementation_pending == ["compiler-toml-abi", "hosted-runtime-registration", "native-aot-lowering"]
-  and .promotion.next_blocks == ["STD-TOML-CONF-001"]
-  and .promotion.remaining == ["STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .promotion.next_blocks == ["STD-TOML-DOC-001"]
+  and .promotion.remaining == ["STD-TOML-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable TOML testing contract"
 
 for path in \

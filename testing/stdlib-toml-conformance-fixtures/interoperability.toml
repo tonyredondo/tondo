@@ -1,0 +1,4 @@
+z = 'café'
+a = 0x10
+when = 1979-05-27T07:32:00Z
+inline = { x = 1, y = [true, 2] }

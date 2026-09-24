@@ -4090,18 +4090,30 @@ parse/view, encode normal/canónico, eventos y rechazos acotados. El contrato
 y la guía [`docs/contracts/stdlib-toml-performance.md`](./docs/contracts/stdlib-toml-performance.md)
 definen latencia, throughput y contadores lógicos. La medición no promociona
 un bridge VM, ABI nativo, SIMD ni AOT; `parseView` todavía materializa y
-descarta el valor durante la validación. Sigue `STD-TOML-CONF-001`.
+descarta el valor durante la validación. `STD-TOML-CONF-001` ejecuta seis casos
+con bytes compartidos mediante un callable host privado en el bytecode VM y un
+proceso nativo separado que llama al mismo kernel Rust. Comprueba typed/dynamic,
+TOML 1.1, orden canónico, streaming fragmentado, path/span y rechazo atómico;
+el contrato está en
+[`testing/stdlib-toml-conformance.json`](./testing/stdlib-toml-conformance.json)
+y el límite en
+[`docs/contracts/stdlib-toml-conformance.md`](./docs/contracts/stdlib-toml-conformance.md).
+El callable es solo de prueba: todavía no existe una API `std.toml` ejecutable
+desde Tondo, registro hosted de producción, ABI TOML nativo ni lowering AOT.
+Sigue `STD-TOML-DOC-001`.
 
 El contrato machine-readable, la documentación y los checks negativos son
 [testing/stdlib-toml.json](./testing/stdlib-toml.json),
 [docs/contracts/stdlib-toml.md](./docs/contracts/stdlib-toml.md),
 [testing/stdlib-toml-test.json](./testing/stdlib-toml-test.json),
 [docs/contracts/stdlib-toml-test.md](./docs/contracts/stdlib-toml-test.md),
+[testing/stdlib-toml-conformance.json](./testing/stdlib-toml-conformance.json),
+[docs/contracts/stdlib-toml-conformance.md](./docs/contracts/stdlib-toml-conformance.md),
 [scripts/stdlib-toml-check.sh](./scripts/stdlib-toml-check.sh) y
 [scripts/stdlib-toml-test.sh](./scripts/stdlib-toml-test.sh). El contrato
-queda cerrado como diseño B0; host/compiler, conformance y documentación de
-uso permanecen pendientes de las leaves
-STD-TOML-CONF-001 y STD-TOML-DOC-001.
+queda cerrado como diseño B0 y la conformance acotada está verificada. La
+documentación de uso permanece pendiente en STD-TOML-DOC-001; la API pública
+compiler/host y el ABI/AOT nativo siguen fuera de esta promoción.
 
 ### 14.15 `std.cbor`
 

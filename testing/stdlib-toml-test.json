@@ -110,10 +110,9 @@
       "native-aot-lowering"
     ],
     "next_blocks": [
-      "STD-TOML-CONF-001"
+      "STD-TOML-DOC-001"
     ],
     "remaining": [
-      "STD-TOML-CONF-001",
       "STD-TOML-DOC-001"
     ]
   }

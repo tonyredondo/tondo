@@ -138,13 +138,25 @@ jq -e '
   and .implementation.fixture == null
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-toml-implementation.json"
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-TOML-CONF-001", "STD-TOML-DOC-001"]
+  and .implementation.required_follow_ups == ["STD-TOML-DOC-001"]
   and .performance.task == "STD-TOML-PERF-001"
   and .performance.contract == "testing/stdlib-toml-performance.json"
   and .performance.status == "verified-stdlib-kernel-baseline"
   and .performance.hosted_vm == "not-claimed-no-toml-bridge"
   and .performance.native_aot == "not-claimed"
-  and .promotion.next_blocks == ["STD-TOML-CONF-001"]
+  and .conformance.task == "STD-TOML-CONF-001"
+  and .conformance.contract == "testing/stdlib-toml-conformance.json"
+  and .conformance.document == "docs/contracts/stdlib-toml-conformance.md"
+  and .conformance.status == "verified-hosted-vm-adapter-and-native-stdlib-process"
+  and .conformance.vm == "verified-bytecode-test-only-host-callable"
+  and .conformance.native == "verified-native-stdlib-process"
+  and .conformance.shared_cases == 6
+  and .conformance.public_compiler_api == "not-implemented"
+  and .conformance.hosted_production_registration == "not-implemented"
+  and .conformance.native_abi == "not-implemented"
+  and .conformance.native_aot == "not-claimed"
+  and .conformance.report == "target/reliability/evidence/stdlib-toml-conformance.json"
+  and .promotion.next_blocks == ["STD-TOML-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.toml contract"
 
 for path in \
@@ -183,5 +195,7 @@ grep -Fq 'testing/stdlib-toml-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" 
     || die "main stdlib spec does not link the TOML testing contract"
 grep -Fq 'stdlib-toml-test.md' "$root/docs/contracts/stdlib-toml.md" \
     || die "TOML owner document does not link the testing contract"
+grep -Fq 'stdlib-toml-conformance.md' "$root/docs/contracts/stdlib-toml.md" \
+    || die "TOML owner document does not link the conformance contract"
 
 echo "std.toml contract: OK (TOML 1.1.0; typed/dynamic/streaming; spans; toolchain boundary)"

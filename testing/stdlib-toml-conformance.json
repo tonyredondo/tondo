@@ -1,0 +1,115 @@
+{
+  "format": "tondo-stdlib-toml-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.toml",
+  "task": "STD-TOML-CONF-001",
+  "status": "verified-hosted-vm-adapter-and-native-stdlib-process",
+  "contract": "testing/stdlib-toml.json",
+  "document": "docs/contracts/stdlib-toml-conformance.md",
+  "fixtures": {
+    "directory": "testing/stdlib-toml-conformance-fixtures",
+    "files": [
+      "typed-dynamic.toml",
+      "typed.toml",
+      "interoperability.toml",
+      "streaming.toml",
+      "duplicate.toml",
+      "limit.toml"
+    ]
+  },
+  "vm": {
+    "probe": "crates/tondo-reliability/examples/toml_conformance_vm.rs",
+    "command": "cargo run -q -p tondo-reliability --example toml_conformance_vm --locked",
+    "expected_exit": 0,
+    "expected_stdout": [
+      "typed-dynamic:3:Tondo:7:2",
+      "interoperability:4:16:café:date-time",
+      "streaming:2:12:closed",
+      "errors-path:DuplicateKey:first:10:2:1",
+      "limits-lifecycle:ResourceLimit:0",
+      "route-boundary:scalar:simd-not-claimed:native-aot-not-claimed",
+      "toml-conformance-ok"
+    ],
+    "boundary": "verified-bytecode-test-only-host-callable",
+    "public_compiler_api": "not-implemented",
+    "oracle": "portable-stdlib-TOML-kernel"
+  },
+  "native": {
+    "probe": "crates/tondo-native-runtime/examples/toml_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example toml_conformance --locked",
+    "status": "verified-native-stdlib-process",
+    "target_policy": "host-target-only-until-native-aot-toml-lowering",
+    "oracle": "same-fixture-bytes-and-normalized-stdlib-toml-observables",
+    "abi": "not-implemented",
+    "aot": "not-claimed"
+  },
+  "rules": {
+    "same_fixture_bytes": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "vm_dispatch": "verified-bodyless-bytecode-host-callable-with-detached-string-result",
+    "typed_dynamic": "dynamic-root-table-and-typed-BTreeMap-String-Int-round-trip",
+    "interoperability": "TOML-1.1-UTF-8-radix-offset-datetime-inline-table-and-canonical-order",
+    "streaming": "array-of-tables-and-one-byte-reader-fragments-have-identical-event-count-and-closed-transition",
+    "errors": "duplicate-key-kind-path-half-open-span-offset-line-column-are-preserved",
+    "limits": "input-limit-rejects-before-publication-and-reader-construction-fails",
+    "scalar": "both-probes-use-the-portable-stdlib-TOML-kernel",
+    "simd": "not-measured-no-optimized-route",
+    "native_aot": "not-claimed",
+    "cleanup": "zero-live-native-runtime-table-objects-after-each-case",
+    "project_manifest": "tondo.toml-is-a-separate-toolchain-owner"
+  },
+  "cases": [
+    {
+      "id": "typed-dynamic",
+      "fixtures": ["typed-dynamic.toml", "typed.toml"],
+      "vm_observable": "typed-dynamic:3:Tondo:7:2",
+      "native_expected": {"status":"passed","line":"typed-dynamic:3:Tondo:7:2","dynamic_keys":3,"typed_length":2,"cleanup":true}
+    },
+    {
+      "id": "interoperability",
+      "fixtures": ["interoperability.toml"],
+      "vm_observable": "interoperability:4:16:café:date-time",
+      "native_expected": {"status":"passed","line":"interoperability:4:16:café:date-time","canonical_keys":4,"radix_integer":16,"temporal":true,"cleanup":true}
+    },
+    {
+      "id": "streaming",
+      "fixtures": ["streaming.toml"],
+      "vm_observable": "streaming:2:12:closed",
+      "native_expected": {"status":"passed","line":"streaming:2:12:closed","rows":2,"bytes_events":12,"chunk_events":12,"terminal":true,"cleanup":true}
+    },
+    {
+      "id": "errors-path",
+      "fixtures": ["duplicate.toml"],
+      "vm_observable": "errors-path:DuplicateKey:first:10:2:1",
+      "native_expected": {"status":"passed","line":"errors-path:DuplicateKey:first:10:2:1","kind":"DuplicateKey","path":["first"],"offset":10,"start_line":2,"start_column":1,"cleanup":true}
+    },
+    {
+      "id": "limits-lifecycle",
+      "fixtures": ["limit.toml"],
+      "vm_observable": "limits-lifecycle:ResourceLimit:0",
+      "native_expected": {"status":"passed","line":"limits-lifecycle:ResourceLimit:0","kind":"ResourceLimit","offset":0,"partial_value":false,"cleanup":true}
+    },
+    {
+      "id": "route-boundary",
+      "fixtures": [],
+      "vm_observable": "route-boundary:scalar:simd-not-claimed:native-aot-not-claimed",
+      "native_expected": {"status":"passed","line":"route-boundary:scalar:simd-not-claimed:native-aot-not-claimed","scalar":"verified","simd":"not-measured-no-optimized-route","native_aot":"not-claimed","cleanup":true}
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-shared-fixture",
+    "corpus-id-drift",
+    "native-case-missing-or-duplicate",
+    "observable-line-drift",
+    "wrong-error-kind-path-or-span",
+    "reader-event-count-drift",
+    "public-compiler-api-claim",
+    "native-abi-or-aot-claim",
+    "nonzero-live-objects"
+  ],
+  "report": "target/reliability/evidence/stdlib-toml-conformance.json",
+  "next_blocks": ["STD-TOML-DOC-001"]
+}

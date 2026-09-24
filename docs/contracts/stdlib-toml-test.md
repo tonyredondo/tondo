@@ -66,5 +66,7 @@ separado de tondo.toml y de los schemas privados del toolchain.
 La implementación del kernel permanece en verified-stdlib-kernel, con
 host: not-claimed-until-compiler-toml-abi, native_aot_lowering: not-claimed y
 public_api_promoted: false. La campaña del kernel está en
-`stdlib-toml-performance.md`; el siguiente leaf es STD-TOML-CONF-001 y la
-documentación de uso permanece posterior.
+`stdlib-toml-performance.md`. STD-TOML-CONF-001 compara los mismos bytes en
+el VM mediante un callable host privado y en un proceso nativo separado; sus
+límites constan en `stdlib-toml-conformance.md`. La documentación de uso
+permanece pendiente.

@@ -36,7 +36,7 @@ jq -e '
   and .performance.samples_per_workload == 27
   and .performance.native_aot == "not-claimed"
   and .performance.hosted_vm == "not-claimed-no-toml-bridge"
-  and .promotion.next_blocks == ["STD-TOML-CONF-001"]
+  and .promotion.next_blocks == ["STD-TOML-DOC-001"]
   and .implementation.host == "not-claimed-until-compiler-toml-abi"
 ' testing/stdlib-toml.json >/dev/null || {
     echo "std.toml performance: parent registry drift" >&2

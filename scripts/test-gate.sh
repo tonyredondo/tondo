@@ -318,6 +318,12 @@ run_step stdlib-toml-performance-contract-tests \
     scripts/stdlib-toml-performance-test.sh
 run_step stdlib-toml-performance \
     scripts/stdlib-toml-performance.sh
+run_step stdlib-toml-conformance-contract \
+    scripts/stdlib-toml-conformance-check.sh
+run_step stdlib-toml-conformance-contract-tests \
+    scripts/stdlib-toml-conformance-test.sh
+run_step stdlib-toml-conformance \
+    scripts/stdlib-toml-conformance.sh
 run_step stdlib-cbor-contract \
     scripts/stdlib-cbor-check.sh
 run_step stdlib-cbor-contract-tests \
