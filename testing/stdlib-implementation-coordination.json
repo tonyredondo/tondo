@@ -443,61 +443,61 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.math:240",
+            "id": "std.math:246",
             "symbol": "std.math.floor",
             "signature": "pub fn floor(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:241",
+            "id": "std.math:247",
             "symbol": "std.math.ceil",
             "signature": "pub fn ceil(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:242",
+            "id": "std.math:248",
             "symbol": "std.math.round",
             "signature": "pub fn round(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:243",
+            "id": "std.math:249",
             "symbol": "std.math.roundTiesAway",
             "signature": "pub fn roundTiesAway(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:244",
+            "id": "std.math:250",
             "symbol": "std.math.truncate",
             "signature": "pub fn truncate(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:245",
+            "id": "std.math:251",
             "symbol": "std.math.sqrt",
             "signature": "pub fn sqrt(value: Float): Float ! MathError",
             "status": "verified"
           },
           {
-            "id": "std.math:246",
+            "id": "std.math:252",
             "symbol": "std.math.fma",
             "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:247",
+            "id": "std.math:253",
             "symbol": "std.math.abs",
             "signature": "pub fn abs(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:248",
+            "id": "std.math:254",
             "symbol": "std.math.min",
             "signature": "pub fn min(a: Float, b: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:249",
+            "id": "std.math:255",
             "symbol": "std.math.max",
             "signature": "pub fn max(a: Float, b: Float): Float",
             "status": "verified"
@@ -542,31 +542,31 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.format:261",
+            "id": "std.format:267",
             "symbol": "std.format.Builder.new",
             "signature": "pub fn Builder.new(): Builder",
             "status": "verified"
           },
           {
-            "id": "std.format:262",
+            "id": "std.format:268",
             "symbol": "std.format.Builder.append",
             "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:263",
+            "id": "std.format:269",
             "symbol": "std.format.Builder.finish",
             "signature": "pub fn Builder.finish(var self): String ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:264",
+            "id": "std.format:270",
             "symbol": "std.format.format",
             "signature": "pub fn format[T: Display](value: T): String ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:265",
+            "id": "std.format:271",
             "symbol": "std.format.join",
             "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
             "status": "verified"
@@ -611,43 +611,43 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.io:285",
+            "id": "std.io:291",
             "symbol": "std.io.Reader.read",
             "signature": "fn read(var self, max: Int): ReadResult ! IoError suspends",
             "status": "verified"
           },
           {
-            "id": "std.io:288",
+            "id": "std.io:294",
             "symbol": "std.io.Writer.write",
             "signature": "fn write(var self, data: Bytes): Int ! IoError suspends",
             "status": "verified"
           },
           {
-            "id": "std.io:289",
+            "id": "std.io:295",
             "symbol": "std.io.Writer.flush",
             "signature": "fn flush(var self): Unit ! IoError suspends",
             "status": "verified"
           },
           {
-            "id": "std.io:291",
+            "id": "std.io:297",
             "symbol": "std.io.defaultLimits",
             "signature": "pub fn defaultLimits(): IoLimits",
             "status": "verified"
           },
           {
-            "id": "std.io:292",
+            "id": "std.io:298",
             "symbol": "std.io.limits",
             "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
             "status": "verified"
           },
           {
-            "id": "std.io:293",
+            "id": "std.io:299",
             "symbol": "std.io.readAll",
             "signature": "pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends",
             "status": "verified"
           },
           {
-            "id": "std.io:294",
+            "id": "std.io:300",
             "symbol": "std.io.writeAll",
             "signature": "pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends",
             "status": "verified"

@@ -592,18 +592,18 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.format:261",
-            "std.format:262",
-            "std.format:263",
-            "std.format:264",
-            "std.format:265"
+            "std.format:267",
+            "std.format:268",
+            "std.format:269",
+            "std.format:270",
+            "std.format:271"
           ],
           "verified_signatures": [
-            "std.format:261",
-            "std.format:262",
-            "std.format:263",
-            "std.format:264",
-            "std.format:265"
+            "std.format:267",
+            "std.format:268",
+            "std.format:269",
+            "std.format:270",
+            "std.format:271"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -775,22 +775,22 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.io:285",
-            "std.io:288",
-            "std.io:289",
             "std.io:291",
-            "std.io:292",
-            "std.io:293",
-            "std.io:294"
+            "std.io:294",
+            "std.io:295",
+            "std.io:297",
+            "std.io:298",
+            "std.io:299",
+            "std.io:300"
           ],
           "verified_signatures": [
-            "std.io:285",
-            "std.io:288",
-            "std.io:289",
             "std.io:291",
-            "std.io:292",
-            "std.io:293",
-            "std.io:294"
+            "std.io:294",
+            "std.io:295",
+            "std.io:297",
+            "std.io:298",
+            "std.io:299",
+            "std.io:300"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1060,28 +1060,28 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.math:240",
-            "std.math:241",
-            "std.math:242",
-            "std.math:243",
-            "std.math:244",
-            "std.math:245",
             "std.math:246",
             "std.math:247",
             "std.math:248",
-            "std.math:249"
+            "std.math:249",
+            "std.math:250",
+            "std.math:251",
+            "std.math:252",
+            "std.math:253",
+            "std.math:254",
+            "std.math:255"
           ],
           "verified_signatures": [
-            "std.math:240",
-            "std.math:241",
-            "std.math:242",
-            "std.math:243",
-            "std.math:244",
-            "std.math:245",
             "std.math:246",
             "std.math:247",
             "std.math:248",
-            "std.math:249"
+            "std.math:249",
+            "std.math:250",
+            "std.math:251",
+            "std.math:252",
+            "std.math:253",
+            "std.math:254",
+            "std.math:255"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

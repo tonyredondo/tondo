@@ -1126,11 +1126,11 @@
       "status": "pending",
       "reason": "The conformance registry declares cases; current execution has not been promoted",
       "public_signatures": [
-        "std.format:261",
-        "std.format:262",
-        "std.format:263",
-        "std.format:264",
-        "std.format:265"
+        "std.format:267",
+        "std.format:268",
+        "std.format:269",
+        "std.format:270",
+        "std.format:271"
       ],
       "requirements": [
         "requirement:std.format:async-cancellation",
@@ -1206,7 +1206,7 @@
           ]
         },
         {
-          "id": "signature:std.format:261",
+          "id": "signature:std.format:267",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -1215,7 +1215,7 @@
           ]
         },
         {
-          "id": "signature:std.format:262",
+          "id": "signature:std.format:268",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -1224,7 +1224,7 @@
           ]
         },
         {
-          "id": "signature:std.format:263",
+          "id": "signature:std.format:269",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -1233,7 +1233,7 @@
           ]
         },
         {
-          "id": "signature:std.format:264",
+          "id": "signature:std.format:270",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -1242,7 +1242,7 @@
           ]
         },
         {
-          "id": "signature:std.format:265",
+          "id": "signature:std.format:271",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -1549,13 +1549,13 @@
       "status": "pending",
       "reason": "The conformance registry declares cases; current execution has not been promoted",
       "public_signatures": [
-        "std.io:285",
-        "std.io:288",
-        "std.io:289",
         "std.io:291",
-        "std.io:292",
-        "std.io:293",
-        "std.io:294"
+        "std.io:294",
+        "std.io:295",
+        "std.io:297",
+        "std.io:298",
+        "std.io:299",
+        "std.io:300"
       ],
       "requirements": [
         "requirement:std.io:async-cancellation",
@@ -1631,33 +1631,6 @@
           ]
         },
         {
-          "id": "signature:std.io:285",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.io:288",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.io:289",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
           "id": "signature:std.io:291",
           "kind": "signature",
           "status": "pending",
@@ -1667,25 +1640,52 @@
           ]
         },
         {
-          "id": "signature:std.io:292",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.io:293",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
           "id": "signature:std.io:294",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.io:295",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.io:297",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.io:298",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.io:299",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.io:300",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -2236,16 +2236,16 @@
       "status": "pending",
       "reason": "The conformance registry declares cases; current execution has not been promoted",
       "public_signatures": [
-        "std.math:240",
-        "std.math:241",
-        "std.math:242",
-        "std.math:243",
-        "std.math:244",
-        "std.math:245",
         "std.math:246",
         "std.math:247",
         "std.math:248",
-        "std.math:249"
+        "std.math:249",
+        "std.math:250",
+        "std.math:251",
+        "std.math:252",
+        "std.math:253",
+        "std.math:254",
+        "std.math:255"
       ],
       "requirements": [
         "requirement:std.math:async-cancellation",
@@ -2321,60 +2321,6 @@
           ]
         },
         {
-          "id": "signature:std.math:240",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.math:241",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.math:242",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.math:243",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.math:244",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
-          "id": "signature:std.math:245",
-          "kind": "signature",
-          "status": "pending",
-          "reason": "The conformance registry declares cases; current execution has not been promoted",
-          "refs": [
-            "testing/stdlib-conformance.json"
-          ]
-        },
-        {
           "id": "signature:std.math:246",
           "kind": "signature",
           "status": "pending",
@@ -2403,6 +2349,60 @@
         },
         {
           "id": "signature:std.math:249",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.math:250",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.math:251",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.math:252",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.math:253",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.math:254",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.math:255",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",

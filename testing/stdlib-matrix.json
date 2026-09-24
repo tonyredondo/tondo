@@ -793,11 +793,11 @@
         "requirement:std.format:ownership"
       ],
       "signature_rows": [
-        "signature:std.format:261",
-        "signature:std.format:262",
-        "signature:std.format:263",
-        "signature:std.format:264",
-        "signature:std.format:265"
+        "signature:std.format:267",
+        "signature:std.format:268",
+        "signature:std.format:269",
+        "signature:std.format:270",
+        "signature:std.format:271"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -1069,13 +1069,13 @@
         "requirement:std.io:ownership"
       ],
       "signature_rows": [
-        "signature:std.io:285",
-        "signature:std.io:288",
-        "signature:std.io:289",
         "signature:std.io:291",
-        "signature:std.io:292",
-        "signature:std.io:293",
-        "signature:std.io:294"
+        "signature:std.io:294",
+        "signature:std.io:295",
+        "signature:std.io:297",
+        "signature:std.io:298",
+        "signature:std.io:299",
+        "signature:std.io:300"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -1477,16 +1477,16 @@
         "requirement:std.math:ownership"
       ],
       "signature_rows": [
-        "signature:std.math:240",
-        "signature:std.math:241",
-        "signature:std.math:242",
-        "signature:std.math:243",
-        "signature:std.math:244",
-        "signature:std.math:245",
         "signature:std.math:246",
         "signature:std.math:247",
         "signature:std.math:248",
-        "signature:std.math:249"
+        "signature:std.math:249",
+        "signature:std.math:250",
+        "signature:std.math:251",
+        "signature:std.math:252",
+        "signature:std.math:253",
+        "signature:std.math:254",
+        "signature:std.math:255"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -5445,120 +5445,120 @@
     },
     {
       "dimensions_ref": "owner:std.format",
-      "id": "signature:std.format:261",
+      "id": "signature:std.format:267",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
       "signature": "pub fn Builder.new(): Builder",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.format:261",
+        "audit": "testing/stdlib-public-api.json#rows/std.format:267",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 261
+        "line": 267
       },
       "stage_refs": {
         "CONF": "owner:std.format:CONF",
         "DOC": "owner:std.format:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:261:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:261:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:267:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:267:MODEL/TEST/FUZZ",
         "PERF": "owner:std.format:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:261:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:267:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.format.Builder.new"
     },
     {
       "dimensions_ref": "owner:std.format",
-      "id": "signature:std.format:262",
+      "id": "signature:std.format:268",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
       "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.format:262",
+        "audit": "testing/stdlib-public-api.json#rows/std.format:268",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 262
+        "line": 268
       },
       "stage_refs": {
         "CONF": "owner:std.format:CONF",
         "DOC": "owner:std.format:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:262:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:262:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:268:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:268:MODEL/TEST/FUZZ",
         "PERF": "owner:std.format:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:262:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:268:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.format.Builder.append"
     },
     {
       "dimensions_ref": "owner:std.format",
-      "id": "signature:std.format:263",
+      "id": "signature:std.format:269",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
       "signature": "pub fn Builder.finish(var self): String ! FormatError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.format:263",
+        "audit": "testing/stdlib-public-api.json#rows/std.format:269",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 263
+        "line": 269
       },
       "stage_refs": {
         "CONF": "owner:std.format:CONF",
         "DOC": "owner:std.format:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:263:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:263:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:269:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:269:MODEL/TEST/FUZZ",
         "PERF": "owner:std.format:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:263:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:269:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.format.Builder.finish"
     },
     {
       "dimensions_ref": "owner:std.format",
-      "id": "signature:std.format:264",
+      "id": "signature:std.format:270",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
       "signature": "pub fn format[T: Display](value: T): String ! FormatError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.format:264",
+        "audit": "testing/stdlib-public-api.json#rows/std.format:270",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 264
+        "line": 270
       },
       "stage_refs": {
         "CONF": "owner:std.format:CONF",
         "DOC": "owner:std.format:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:264:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:264:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:270:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:270:MODEL/TEST/FUZZ",
         "PERF": "owner:std.format:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:264:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:270:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.format.format"
     },
     {
       "dimensions_ref": "owner:std.format",
-      "id": "signature:std.format:265",
+      "id": "signature:std.format:271",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
       "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.format:265",
+        "audit": "testing/stdlib-public-api.json#rows/std.format:271",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 265
+        "line": 271
       },
       "stage_refs": {
         "CONF": "owner:std.format:CONF",
         "DOC": "owner:std.format:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:265:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:265:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:271:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:271:MODEL/TEST/FUZZ",
         "PERF": "owner:std.format:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:265:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:271:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.format.join"
@@ -6318,86 +6318,12 @@
     {
       "declaring_trait": "Reader",
       "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:285",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.io",
-      "scope": "STD-0.1A",
-      "signature": "fn read(var self, max: Int): ReadResult ! IoError suspends",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:285",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 285
-      },
-      "stage_refs": {
-        "CONF": "owner:std.io:CONF",
-        "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:285:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:285:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:285:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.io.Reader.read"
-    },
-    {
-      "declaring_trait": "Writer",
-      "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:288",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.io",
-      "scope": "STD-0.1A",
-      "signature": "fn write(var self, data: Bytes): Int ! IoError suspends",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:288",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 288
-      },
-      "stage_refs": {
-        "CONF": "owner:std.io:CONF",
-        "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:288:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:288:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:288:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.io.Writer.write"
-    },
-    {
-      "declaring_trait": "Writer",
-      "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:289",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.io",
-      "scope": "STD-0.1A",
-      "signature": "fn flush(var self): Unit ! IoError suspends",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:289",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 289
-      },
-      "stage_refs": {
-        "CONF": "owner:std.io:CONF",
-        "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:289:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:289:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:289:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.io.Writer.flush"
-    },
-    {
-      "dimensions_ref": "owner:std.io",
       "id": "signature:std.io:291",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
-      "signature": "pub fn defaultLimits(): IoLimits",
+      "signature": "fn read(var self, max: Int): ReadResult ! IoError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.io:291",
         "contract": "docs/contracts/stdlib-core.md",
@@ -6412,64 +6338,17 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:291:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.io.defaultLimits"
+      "symbol": "std.io.Reader.read"
     },
     {
-      "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:292",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.io",
-      "scope": "STD-0.1A",
-      "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:292",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 292
-      },
-      "stage_refs": {
-        "CONF": "owner:std.io:CONF",
-        "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:292:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:292:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:292:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.io.limits"
-    },
-    {
-      "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:293",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.io",
-      "scope": "STD-0.1A",
-      "signature": "pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:293",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 293
-      },
-      "stage_refs": {
-        "CONF": "owner:std.io:CONF",
-        "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:293:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:293:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:293:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.io.readAll"
-    },
-    {
+      "declaring_trait": "Writer",
       "dimensions_ref": "owner:std.io",
       "id": "signature:std.io:294",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
-      "signature": "pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends",
+      "signature": "fn write(var self, data: Bytes): Int ! IoError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.io:294",
         "contract": "docs/contracts/stdlib-core.md",
@@ -6482,6 +6361,127 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:294:MODEL/TEST/FUZZ",
         "PERF": "owner:std.io:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:294:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.io.Writer.write"
+    },
+    {
+      "declaring_trait": "Writer",
+      "dimensions_ref": "owner:std.io",
+      "id": "signature:std.io:295",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.io",
+      "scope": "STD-0.1A",
+      "signature": "fn flush(var self): Unit ! IoError suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.io:295",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 295
+      },
+      "stage_refs": {
+        "CONF": "owner:std.io:CONF",
+        "DOC": "owner:std.io:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:295:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:295:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.io:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:295:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.io.Writer.flush"
+    },
+    {
+      "dimensions_ref": "owner:std.io",
+      "id": "signature:std.io:297",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.io",
+      "scope": "STD-0.1A",
+      "signature": "pub fn defaultLimits(): IoLimits",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.io:297",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 297
+      },
+      "stage_refs": {
+        "CONF": "owner:std.io:CONF",
+        "DOC": "owner:std.io:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:297:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:297:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.io:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:297:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.io.defaultLimits"
+    },
+    {
+      "dimensions_ref": "owner:std.io",
+      "id": "signature:std.io:298",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.io",
+      "scope": "STD-0.1A",
+      "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.io:298",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 298
+      },
+      "stage_refs": {
+        "CONF": "owner:std.io:CONF",
+        "DOC": "owner:std.io:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:298:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:298:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.io:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:298:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.io.limits"
+    },
+    {
+      "dimensions_ref": "owner:std.io",
+      "id": "signature:std.io:299",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.io",
+      "scope": "STD-0.1A",
+      "signature": "pub fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.io:299",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 299
+      },
+      "stage_refs": {
+        "CONF": "owner:std.io:CONF",
+        "DOC": "owner:std.io:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:299:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:299:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.io:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:299:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.io.readAll"
+    },
+    {
+      "dimensions_ref": "owner:std.io",
+      "id": "signature:std.io:300",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.io",
+      "scope": "STD-0.1A",
+      "signature": "pub fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.io:300",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 300
+      },
+      "stage_refs": {
+        "CONF": "owner:std.io:CONF",
+        "DOC": "owner:std.io:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:300:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:300:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.io:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:300:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.io.writeAll"
@@ -7802,156 +7802,12 @@
     },
     {
       "dimensions_ref": "owner:std.math",
-      "id": "signature:std.math:240",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.math",
-      "scope": "STD-0.1A",
-      "signature": "pub fn floor(value: Float): Float",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.math:240",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 240
-      },
-      "stage_refs": {
-        "CONF": "owner:std.math:CONF",
-        "DOC": "owner:std.math:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:240:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:240:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.math:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:240:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.math.floor"
-    },
-    {
-      "dimensions_ref": "owner:std.math",
-      "id": "signature:std.math:241",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.math",
-      "scope": "STD-0.1A",
-      "signature": "pub fn ceil(value: Float): Float",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.math:241",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 241
-      },
-      "stage_refs": {
-        "CONF": "owner:std.math:CONF",
-        "DOC": "owner:std.math:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:241:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:241:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.math:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:241:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.math.ceil"
-    },
-    {
-      "dimensions_ref": "owner:std.math",
-      "id": "signature:std.math:242",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.math",
-      "scope": "STD-0.1A",
-      "signature": "pub fn round(value: Float): Float",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.math:242",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 242
-      },
-      "stage_refs": {
-        "CONF": "owner:std.math:CONF",
-        "DOC": "owner:std.math:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:242:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:242:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.math:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:242:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.math.round"
-    },
-    {
-      "dimensions_ref": "owner:std.math",
-      "id": "signature:std.math:243",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.math",
-      "scope": "STD-0.1A",
-      "signature": "pub fn roundTiesAway(value: Float): Float",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.math:243",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 243
-      },
-      "stage_refs": {
-        "CONF": "owner:std.math:CONF",
-        "DOC": "owner:std.math:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:243:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:243:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.math:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:243:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.math.roundTiesAway"
-    },
-    {
-      "dimensions_ref": "owner:std.math",
-      "id": "signature:std.math:244",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.math",
-      "scope": "STD-0.1A",
-      "signature": "pub fn truncate(value: Float): Float",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.math:244",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 244
-      },
-      "stage_refs": {
-        "CONF": "owner:std.math:CONF",
-        "DOC": "owner:std.math:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:244:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:244:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.math:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:244:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.math.truncate"
-    },
-    {
-      "dimensions_ref": "owner:std.math",
-      "id": "signature:std.math:245",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.math",
-      "scope": "STD-0.1A",
-      "signature": "pub fn sqrt(value: Float): Float ! MathError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.math:245",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 245
-      },
-      "stage_refs": {
-        "CONF": "owner:std.math:CONF",
-        "DOC": "owner:std.math:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:245:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:245:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.math:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:245:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.math.sqrt"
-    },
-    {
-      "dimensions_ref": "owner:std.math",
       "id": "signature:std.math:246",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
+      "signature": "pub fn floor(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:246",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7966,7 +7822,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:246:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.fma"
+      "symbol": "std.math.floor"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7975,7 +7831,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn abs(value: Float): Float",
+      "signature": "pub fn ceil(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:247",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7990,7 +7846,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:247:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.abs"
+      "symbol": "std.math.ceil"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7999,7 +7855,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn min(a: Float, b: Float): Float",
+      "signature": "pub fn round(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:248",
         "contract": "docs/contracts/stdlib-core.md",
@@ -8014,7 +7870,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:248:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.min"
+      "symbol": "std.math.round"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -8023,7 +7879,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn max(a: Float, b: Float): Float",
+      "signature": "pub fn roundTiesAway(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:249",
         "contract": "docs/contracts/stdlib-core.md",
@@ -8036,6 +7892,150 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:249:MODEL/TEST/FUZZ",
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:249:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.math.roundTiesAway"
+    },
+    {
+      "dimensions_ref": "owner:std.math",
+      "id": "signature:std.math:250",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.math",
+      "scope": "STD-0.1A",
+      "signature": "pub fn truncate(value: Float): Float",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.math:250",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 250
+      },
+      "stage_refs": {
+        "CONF": "owner:std.math:CONF",
+        "DOC": "owner:std.math:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:250:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:250:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.math:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:250:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.math.truncate"
+    },
+    {
+      "dimensions_ref": "owner:std.math",
+      "id": "signature:std.math:251",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.math",
+      "scope": "STD-0.1A",
+      "signature": "pub fn sqrt(value: Float): Float ! MathError",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.math:251",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 251
+      },
+      "stage_refs": {
+        "CONF": "owner:std.math:CONF",
+        "DOC": "owner:std.math:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:251:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:251:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.math:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:251:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.math.sqrt"
+    },
+    {
+      "dimensions_ref": "owner:std.math",
+      "id": "signature:std.math:252",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.math",
+      "scope": "STD-0.1A",
+      "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.math:252",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 252
+      },
+      "stage_refs": {
+        "CONF": "owner:std.math:CONF",
+        "DOC": "owner:std.math:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:252:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:252:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.math:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:252:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.math.fma"
+    },
+    {
+      "dimensions_ref": "owner:std.math",
+      "id": "signature:std.math:253",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.math",
+      "scope": "STD-0.1A",
+      "signature": "pub fn abs(value: Float): Float",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.math:253",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 253
+      },
+      "stage_refs": {
+        "CONF": "owner:std.math:CONF",
+        "DOC": "owner:std.math:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:253:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:253:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.math:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:253:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.math.abs"
+    },
+    {
+      "dimensions_ref": "owner:std.math",
+      "id": "signature:std.math:254",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.math",
+      "scope": "STD-0.1A",
+      "signature": "pub fn min(a: Float, b: Float): Float",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.math:254",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 254
+      },
+      "stage_refs": {
+        "CONF": "owner:std.math:CONF",
+        "DOC": "owner:std.math:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:254:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:254:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.math:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:254:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.math.min"
+    },
+    {
+      "dimensions_ref": "owner:std.math",
+      "id": "signature:std.math:255",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.math",
+      "scope": "STD-0.1A",
+      "signature": "pub fn max(a: Float, b: Float): Float",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.math:255",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 255
+      },
+      "stage_refs": {
+        "CONF": "owner:std.math:CONF",
+        "DOC": "owner:std.math:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:255:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:255:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.math:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:255:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.math.max"

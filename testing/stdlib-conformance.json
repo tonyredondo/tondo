@@ -14,7 +14,7 @@
   "runner": {
     "lineage": "draft",
     "manifest": "conformance/0.1/manifest.json",
-    "manifest_sha256": "6fe62193f3cb1c71af00c16b1d3ee197dbf2fce96eb3218af147512c624e2809",
+    "manifest_sha256": "395154ece2ea5cc6f9dd450ec4eed22ebe9741a4a576eb5fdd72c455258a0cb7",
     "full_suite_case_count": 206,
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
@@ -338,11 +338,11 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.format:261",
-        "signature:std.format:262",
-        "signature:std.format:263",
-        "signature:std.format:264",
-        "signature:std.format:265"
+        "signature:std.format:267",
+        "signature:std.format:268",
+        "signature:std.format:269",
+        "signature:std.format:270",
+        "signature:std.format:271"
       ],
       "requirements": [
         "requirement:std.format:async-cancellation",
@@ -437,13 +437,13 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.io:285",
-        "signature:std.io:288",
-        "signature:std.io:289",
         "signature:std.io:291",
-        "signature:std.io:292",
-        "signature:std.io:293",
-        "signature:std.io:294"
+        "signature:std.io:294",
+        "signature:std.io:295",
+        "signature:std.io:297",
+        "signature:std.io:298",
+        "signature:std.io:299",
+        "signature:std.io:300"
       ],
       "requirements": [
         "requirement:std.io:async-cancellation",
@@ -599,16 +599,16 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.math:240",
-        "signature:std.math:241",
-        "signature:std.math:242",
-        "signature:std.math:243",
-        "signature:std.math:244",
-        "signature:std.math:245",
         "signature:std.math:246",
         "signature:std.math:247",
         "signature:std.math:248",
-        "signature:std.math:249"
+        "signature:std.math:249",
+        "signature:std.math:250",
+        "signature:std.math:251",
+        "signature:std.math:252",
+        "signature:std.math:253",
+        "signature:std.math:254",
+        "signature:std.math:255"
       ],
       "requirements": [
         "requirement:std.math:async-cancellation",
