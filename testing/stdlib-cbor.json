@@ -214,12 +214,37 @@
       {"id": "performance", "requires": ["scalar-oracle", "bounded-allocation", "adversarial-depth", "target-qualified-report"]},
       {"id": "promote", "requires": ["tag-preservation", "unknown-simple-preservation", "deterministic-map-proof", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-CBOR-TEST-001"]
   },
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "verified-stdlib-kernel",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
-    "required_follow_ups": ["STD-CBOR-IMPL-001", "STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+    "host": "not-claimed-until-compiler-cbor-abi",
+    "native_aot_lowering": "not-claimed",
+    "sources": [
+      "crates/tondo-stdlib/src/cbor.rs",
+      "crates/tondo-stdlib/src/serialization.rs",
+      "crates/tondo-stdlib/src/lib.rs"
+    ],
+    "tests": [
+      "crates/tondo-stdlib/src/cbor.rs::major_types_preserve_widths_tags_and_map_order",
+      "crates/tondo-stdlib/src/cbor.rs::indefinite_forms_and_chunk_utf8_are_checked",
+      "crates/tondo-stdlib/src/cbor.rs::deterministic_encoding_sorts_keys_and_shortens_floats",
+      "crates/tondo-stdlib/src/cbor.rs::malformed_and_limits_return_no_value",
+      "crates/tondo-stdlib/src/cbor.rs::duplicate_policies_and_raw_preserve_first_position_and_wire",
+      "crates/tondo-stdlib/src/cbor.rs::reader_is_invariant_to_one_byte_input_and_has_terminal_finish",
+      "crates/tondo-stdlib/src/cbor.rs::writer_round_trips_indefinite_frames_and_closes_on_error",
+      "crates/tondo-stdlib/src/cbor.rs::deterministic_writer_checks_order_and_definite_lengths",
+      "crates/tondo-stdlib/src/cbor.rs::typed_collections_use_the_common_static_protocol",
+      "crates/tondo-stdlib/src/cbor.rs::direct_event_scan_agrees_with_value_parser_on_bounded_inputs",
+      "crates/tondo-stdlib/src/cbor.rs::depth_and_output_limits_reject_before_publication",
+      "crates/tondo-stdlib/src/cbor.rs::reader_io_failure_does_not_publish_events",
+      "crates/tondo-stdlib/src/cbor.rs::writer_reports_no_progress_and_stays_terminal",
+      "crates/tondo-stdlib/src/cbor.rs::exact_half_round_trip_covers_every_finite_wire_pattern"
+    ],
+    "fixture": null,
+    "evidence_report": "target/reliability/evidence/stdlib-cbor-implementation.json",
+    "proof": "cargo test -p tondo-stdlib --locked cbor::tests and cargo clippy -p tondo-stdlib --locked -- -D warnings pass for the bounded CBOR scalar kernel; compiler/host/native ABI/AOT promotion remains explicitly unclaimed.",
+    "required_follow_ups": ["STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
   }
 }

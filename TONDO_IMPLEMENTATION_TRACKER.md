@@ -34,7 +34,7 @@ discharge a missing integration task.
 kernel. `STD-TOML-PERF-001` now fixes a target-qualified kernel baseline;
 `STD-TOML-CONF-001` verifies the private VM host adapter against a native
 stdlib process. `STD-TOML-DOC-001` now verifies executable Rust-kernel usage.
-The next owner leaf is `STD-CBOR-IMPL-001`. This evidence does
+The next owner leaf is `STD-CBOR-TEST-001`. The CBOR kernel evidence does
 not imply a public compiler API, production host registration, native ABI or
 AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6706,9 +6706,16 @@ estas leaves.
 
 #### 21.3.9 `std.cbor`
 
-- [ ] **STD-CBOR-IMPL-001 — Implementar CBOR.** Publicar typed, dynamic y
-  streaming con tags, longitudes definidas/indefinidas y modo determinista
-  explícito sobre serialization.
+- [x] **STD-CBOR-IMPL-001 — Implementar CBOR.** The Rust scalar kernel now
+  covers dynamic values, typed primitive/collection encode and decode through
+  `std.serialization`, exact raw bytes, bounded event reader/writer, tags,
+  definite and indefinite forms, explicit deterministic encoding, and
+  negative/resource/lifecycle paths. `CborReader.from_reader` buffers the
+  bounded document before exposing events. The 14 focused tests and strict
+  Clippy are recorded by `scripts/stdlib-cbor-implementation.sh`. This closes
+  the kernel implementation boundary only; public compiler API, production
+  host registration, native ABI, native AOT, independent model/fuzzing,
+  performance, and conformance remain unclaimed. Next: `STD-CBOR-TEST-001`.
 - [ ] **STD-CBOR-TEST-001 — Probar y fuzzear CBOR.** Cubrir vectores RFC,
   floats/NaN, tags, maps, chunks, forms no mínimas, nesting, límites y
   preservación definida por policy.

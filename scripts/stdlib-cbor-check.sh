@@ -149,11 +149,14 @@ jq -e '
   and all(.corpora[]; .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "verified-stdlib-kernel"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
-  and .implementation.required_follow_ups == ["STD-CBOR-IMPL-001", "STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.host == "not-claimed-until-compiler-cbor-abi"
+  and .implementation.native_aot_lowering == "not-claimed"
+  and (.implementation.sources | length) == 3
+  and (.implementation.tests | length) == 14
+  and .implementation.required_follow_ups == ["STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+  and .promotion.next_blocks == ["STD-CBOR-TEST-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.cbor contract"
 
 for path in \

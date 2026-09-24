@@ -26,6 +26,10 @@ pub struct Yaml;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Toml;
 
+/// CBOR codec identity for the common static serialization protocol.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Cbor;
+
 /// A common owned value for the dynamic JSON/MessagePack path.
 ///
 /// Protobuf intentionally keeps its wire-oriented `ProtoValue` model instead
@@ -193,6 +197,15 @@ pub enum SerializationError {
     InvalidContainerLength,
 }
 
+/// Duplicate handling for typed map entries. Formats retain rejection unless
+/// their explicit decode options select a different policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapDuplicatePolicy {
+    Reject,
+    First,
+    Last,
+}
+
 /// The statically-dispatched sink used by every typed serializer.
 ///
 /// A serializer writes the common event vocabulary; format owners decide how
@@ -313,6 +326,10 @@ pub trait Encoder<C, E> {
 /// Public static decoder protocol from the 0.1 standard-library ABI.
 pub trait Decoder<C, E> {
     fn limits(&self) -> Limits;
+
+    fn map_duplicate_policy(&self) -> MapDuplicatePolicy {
+        MapDuplicatePolicy::Reject
+    }
 
     fn peek_event(&mut self) -> Result<Option<Event>, E>;
 
@@ -920,6 +937,7 @@ where
             return Err(E::from(SerializationError::LimitExceeded));
         }
         let mut values = BTreeMap::new();
+        let mut pairs = 0usize;
         loop {
             match decoder.peek_event()? {
                 Some(Event::EndMap) => {
@@ -928,20 +946,34 @@ where
                 }
                 Some(Event::MapKey) => {
                     let _ = decoder.next()?;
-                    if values.len() >= decoder.limits().max_container_items {
+                    if pairs >= decoder.limits().max_container_items {
                         return Err(E::from(SerializationError::LimitExceeded));
                     }
                     let key = K::decode(decoder)?;
                     let value = V::decode(decoder)?;
-                    if values.insert(key, value).is_some() {
-                        return Err(E::from(SerializationError::DuplicateField));
+                    pairs += 1;
+                    match values.entry(key) {
+                        std::collections::btree_map::Entry::Vacant(slot) => {
+                            slot.insert(value);
+                        }
+                        std::collections::btree_map::Entry::Occupied(mut slot) => {
+                            match decoder.map_duplicate_policy() {
+                                MapDuplicatePolicy::Reject => {
+                                    return Err(E::from(SerializationError::DuplicateField));
+                                }
+                                MapDuplicatePolicy::First => {}
+                                MapDuplicatePolicy::Last => {
+                                    slot.insert(value);
+                                }
+                            }
+                        }
                     }
                 }
                 Some(_) => return Err(E::from(SerializationError::UnexpectedEvent)),
                 None => return Err(E::from(SerializationError::EndOfInput)),
             }
         }
-        if declared.is_some_and(|length| length != values.len()) {
+        if declared.is_some_and(|length| length != pairs) {
             return Err(E::from(SerializationError::InvalidContainerLength));
         }
         Ok(values)

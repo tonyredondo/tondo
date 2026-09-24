@@ -1,8 +1,10 @@
 # Contrato de `std.cbor`
 
 **Estado:** contrato `contract-locked` para STD-0.1B, cerrado por
-`STD-CBOR-001`. La implementación de VM/host y el backend nativo permanecen
-pendientes de sus leaves posteriores a `NATIVE-001`.
+`STD-CBOR-001`. The Rust scalar kernel is `verified-stdlib-kernel` under
+`STD-CBOR-IMPL-001`; the public compiler API, production host registration,
+native ABI, and native AOT lowering remain unclaimed. The production host
+boundary is `not-claimed-until-compiler-cbor-abi`.
 
 `std.cbor` implementa el modelo de datos de CBOR definido por RFC 8949. Es un
 codec de datos y no un protocolo de aplicación: conserva tags, bytes y valores
@@ -357,7 +359,17 @@ El contrato machine-readable, la documentación y los checks negativos son
 [`testing/stdlib-cbor.json`](../../testing/stdlib-cbor.json),
 [`scripts/stdlib-cbor-check.sh`](../../scripts/stdlib-cbor-check.sh) y
 [`scripts/stdlib-cbor-test.sh`](../../scripts/stdlib-cbor-test.sh). El contrato
-queda cerrado como diseño B0; implementación, host, fuzzing, rendimiento,
-conformance y documentación de uso permanecen pendientes de
-`STD-CBOR-IMPL-001`, `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
-`STD-CBOR-CONF-001` y `STD-CBOR-DOC-001`.
+queda cerrado como diseño B0. The Rust kernel implementation is closed by
+[`scripts/stdlib-cbor-implementation.sh`](../../scripts/stdlib-cbor-implementation.sh)
+with 14 focused tests and strict Clippy. It supports dynamic values, exact
+validated raw bytes, borrowed encoded-byte views, statically dispatched
+primitive/collection encode and decode, owned event reader/writer, finite
+limits, and explicit deterministic encoding. The Rust reader buffers a bounded
+document before exposing events; `from_reader` is invariant to input
+fragmentation. Its `own` operation clones an owned event. Generated Tondo
+record/enum decoding, public compiler API, production host registration,
+native ABI, and native AOT lowering are not promoted by this kernel gate.
+`CborUnknownTagPolicy.Reject` rejects every tag at this boundary because the
+codec has no built-in tag registry. `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
+`STD-CBOR-CONF-001`, and `STD-CBOR-DOC-001` remain pending; no fuzzing,
+performance, cross-implementation, or public-use claim follows from this gate.
