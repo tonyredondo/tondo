@@ -34,9 +34,11 @@ discharge a missing integration task.
 kernel. `STD-TOML-PERF-001` now fixes a target-qualified kernel baseline;
 `STD-TOML-CONF-001` verifies the private VM host adapter against a native
 stdlib process. `STD-TOML-DOC-001` now verifies executable Rust-kernel usage.
-The next owner leaf remains `STD-CBOR-IMPL-001`: the CBOR kernel passes its
-focused tests, but the workspace quality gate is below the agreed 80% floor
-in existing verifier and execution scopes. The kernel evidence does not imply
+`STD-CBOR-IMPL-001` now verifies the bounded Rust scalar kernel after the full
+functional gate and provenance-bound quality checks pass. Every global and
+risk-scope coverage dimension meets the unchanged 80% floor; all six selected
+critical mutants are caught. The next owner leaf is `STD-CBOR-TEST-001`.
+The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
 
@@ -6070,9 +6072,11 @@ publica hasta cerrar el gate final.
   conserva valor/signo, un quiet-NaN estable y orden lexicográfico por bytes
   deterministas de las claves, rechazando colisiones. Los negativos están en
   `scripts/stdlib-cbor-check.sh` y `scripts/stdlib-cbor-test.sh`, integrados
-  en `test-gate.sh`. La implementación, host, tests/fuzzing, rendimiento,
-  conformance y documentación de uso quedan pendientes de
-  `STD-CBOR-IMPL-001`, `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
+  en `test-gate.sh`. The bounded Rust kernel is verified by
+  `STD-CBOR-IMPL-001`; compiler/public API, production host registration and
+  native ABI/AOT remain unclaimed. Independent model/fuzzing, performance,
+  conformance and usage documentation remain pending under
+  `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
   `STD-CBOR-CONF-001` y `STD-CBOR-DOC-001`.
 
 - [x] **STD-REGEX-001 — Especificar `std.regex`.** El registro
@@ -6707,20 +6711,20 @@ estas leaves.
 
 #### 21.3.9 `std.cbor`
 
-- [ ] **STD-CBOR-IMPL-001 — Implementar CBOR.** The Rust scalar kernel now
+- [x] **STD-CBOR-IMPL-001 — Implementar CBOR.** The Rust scalar kernel now
   covers dynamic values, typed primitive/collection encode and decode through
   `std.serialization`, exact raw bytes, bounded event reader/writer, tags,
   definite and indefinite forms, explicit deterministic encoding, and
   negative/resource/lifecycle paths. `CborReader.from_reader` buffers the
   bounded document before exposing events. The 14 focused tests and strict
-  Clippy are recorded by `scripts/stdlib-cbor-implementation.sh`. The task
-  remains open: the workspace quality campaign on `f16b430` measured 89.26% global
-  line coverage, but verifier lines/functions/regions and execution functions
-  fell below the agreed 80% per-scope floor. All six selected mutants were
-  caught. Repair and remeasure those scopes before closing this task; do not
-  lower the floor. Public compiler API, production host registration, native
+  Clippy are recorded by `scripts/stdlib-cbor-implementation.sh`. The full
+  functional gate passes. Provenance-bound workspace coverage with current
+  executable artifacts measures 91.5113% global lines; every global and
+  risk-scope line/function/region dimension meets the unchanged 80% floor.
+  All six selected critical mutants are caught. Public compiler API,
+  production host registration, native
   ABI, native AOT, independent model/fuzzing, performance, and conformance
-  remain unclaimed. After closure: `STD-CBOR-TEST-001`.
+  remain unclaimed. Next: `STD-CBOR-TEST-001`.
 - [ ] **STD-CBOR-TEST-001 — Probar y fuzzear CBOR.** Cubrir vectores RFC,
   floats/NaN, tags, maps, chunks, forms no mínimas, nesting, límites y
   preservación definida por policy.

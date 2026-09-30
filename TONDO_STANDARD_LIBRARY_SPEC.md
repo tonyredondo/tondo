@@ -4106,8 +4106,8 @@ by `crates/tondo-stdlib/examples/toml_usage.rs` and
 `scripts/stdlib-toml-doc-check.sh`. It separates application TOML from the
 toolchain's `tondo.toml`, fixes explicit limits, ownership, error and
 buffering costs, and shows materialized, typed, view and event usage. The
-example does not claim a source-level Tondo API. The next owner leaf is
-`STD-CBOR-IMPL-001`.
+example does not claim a source-level Tondo API. The following CBOR owner
+section records its verified kernel and remaining owner gates.
 
 El contrato machine-readable, la documentación y los checks negativos son
 [testing/stdlib-toml.json](./testing/stdlib-toml.json),
@@ -4178,10 +4178,12 @@ son [`testing/stdlib-cbor.json`](./testing/stdlib-cbor.json),
 [`scripts/stdlib-cbor-test.sh`](./scripts/stdlib-cbor-test.sh). El diseño B0
 queda cerrado por `STD-CBOR-001`. `STD-CBOR-IMPL-001` has a bounded Rust scalar
 kernel for dynamic values, static primitive/collection codecs, event
-reader/writer, and deterministic encoding. Focused kernel checks pass, but the
-task remains open until the 80% per-scope workspace coverage gate passes. This
-is not a public Tondo compiler API, production VM host registration, native
-ABI, or native AOT lowering. The independent model/fuzz, performance,
+reader/writer, and deterministic encoding. The task closes at that bounded
+kernel boundary: focused checks, the full functional gate and provenance-bound
+coverage/mutation checks pass. Every global and risk-scope coverage dimension
+meets the unchanged 80% floor, and all six selected critical mutants are caught.
+Public compiler API, production VM host registration, native ABI and native AOT
+lowering remain unclaimed. The independent model/fuzz, performance,
 conformance, and usage
 gates remain `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
 `STD-CBOR-CONF-001`, and `STD-CBOR-DOC-001`.

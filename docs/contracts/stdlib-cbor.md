@@ -1,7 +1,7 @@
 # Contrato de `std.cbor`
 
 **Estado:** contrato `contract-locked` para STD-0.1B, cerrado por
-`STD-CBOR-001`. The Rust scalar kernel is `kernel-verified-quality-pending`
+`STD-CBOR-001`. The Rust scalar kernel is `verified-stdlib-kernel`
 under `STD-CBOR-IMPL-001`; the public compiler API, production host registration,
 native ABI, and native AOT lowering remain unclaimed. The production host
 boundary is `not-claimed-until-compiler-cbor-abi`.
@@ -370,9 +370,11 @@ fragmentation. Its `own` operation clones an owned event. Generated Tondo
 record/enum decoding, public compiler API, production host registration,
 native ABI, and native AOT lowering are not promoted by this kernel gate.
 `CborUnknownTagPolicy.Reject` rejects every tag at this boundary because the
-codec has no built-in tag registry. `STD-CBOR-IMPL-001` remains open because
-the workspace quality campaign on `f16b430` fell below the agreed 80% floor in
-existing verifier and execution scopes; the threshold is unchanged. Once that
-gate passes, `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`, `STD-CBOR-CONF-001`,
+codec has no built-in tag registry. `STD-CBOR-IMPL-001` closes at this bounded
+kernel boundary after the full functional gate and provenance-bound quality
+checks pass. Coverage uses only current workspace executable artifacts:
+global lines are 91.5113%, every global and risk-scope line/function/region
+dimension meets the unchanged 80% floor, and all six selected critical mutants
+are caught. `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`, `STD-CBOR-CONF-001`,
 and `STD-CBOR-DOC-001` remain pending; no fuzzing,
 performance, cross-implementation, or public-use claim follows from this gate.
