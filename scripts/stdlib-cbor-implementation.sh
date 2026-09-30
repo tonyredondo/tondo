@@ -42,8 +42,8 @@ jq -n \
       {
         format:"tondo-stdlib-cbor-implementation-evidence/1",
         task:"STD-CBOR-IMPL-001",
-        status:"kernel-passed-quality-pending",
-        quality_gate:"pending-80-percent-per-scope",
+        status:"kernel-passed",
+        quality_gate:"not-measured-by-kernel-checks",
         source_revision:$revision,
         contract_sha256:("sha256:" + $contract_sha256),
         scalar_tests:{package:"tondo-stdlib",filter:"cbor::tests",status:"passed",log_sha256:("sha256:" + $stdlib_test_sha256)},
@@ -57,4 +57,4 @@ jq -n \
       }
     ' >"$evidence_dir/stdlib-cbor-implementation.json"
 
-echo "std.cbor implementation: kernel checks passed, quality pending (report: $evidence_dir/stdlib-cbor-implementation.json)"
+echo "std.cbor implementation: kernel checks passed (workspace quality is verified separately; report: $evidence_dir/stdlib-cbor-implementation.json)"

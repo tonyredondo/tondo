@@ -10001,7 +10001,7 @@ mod tests {
     use crate::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
     use crate::types::TypeInterner;
 
-    fn checked_mir(source: &str) -> (ResolvedProgram, HirProgram, MirProgram) {
+    pub(super) fn checked_mir(source: &str) -> (ResolvedProgram, HirProgram, MirProgram) {
         let mut sources = SourceDatabase::new();
         let file = sources
             .add(SourceInput::virtual_file(
@@ -10072,7 +10072,7 @@ mod tests {
         (resolved, hir, mir)
     }
 
-    fn callable_named(resolved: &ResolvedProgram, name: &str) -> HirCallableId {
+    pub(super) fn callable_named(resolved: &ResolvedProgram, name: &str) -> HirCallableId {
         HirCallableId::Symbol(
             resolved
                 .symbols()
@@ -14549,3 +14549,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod boundary_tests;

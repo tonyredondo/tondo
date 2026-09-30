@@ -226,14 +226,14 @@ impl QualityBaseline {
                 ("function", &baseline.metrics.functions, &observed.functions),
                 ("region", &baseline.metrics.regions, &observed.regions),
             ] {
-                let required = self.coverage.acceptance_floor_basis_points.map_or_else(
-                    || {
+                let required = self
+                    .coverage
+                    .acceptance_floor_basis_points
+                    .unwrap_or_else(|| {
                         baseline_metric
                             .basis_points
                             .saturating_sub(self.coverage.maximum_drop_basis_points)
-                    },
-                    |floor| baseline_metric.basis_points.min(floor),
-                );
+                    });
                 if observed_metric.basis_points < required {
                     return Err(format!(
                         "{} {name} coverage is {} basis points, below required {} (historical {})",
@@ -878,14 +878,26 @@ mod tests {
         }
         assert_eq!(baseline.coverage.global, historical);
         let report = CoverageReport {
-            global: at_floor,
+            global: at_floor.clone(),
             risk_scopes: baseline.coverage.risk_scopes.clone(),
         };
-        // The fixture's 75% region scope retains its historical minimum.
+        // An explicit floor also applies to historically lower risk dimensions.
+        assert!(baseline.verify_coverage_report(&report).is_err());
+        let mut report = report;
+        for scope in &mut report.risk_scopes {
+            scope.metrics = at_floor.clone();
+        }
         baseline.verify_coverage_report(&report).unwrap();
-        let mut below = report;
-        below.risk_scopes[0].metrics.regions = metric(10000, 7499).unwrap();
-        assert!(baseline.verify_coverage_report(&below).is_err());
+        for dimension in 0..3 {
+            let mut below = report.clone();
+            let metrics = &mut below.risk_scopes[0].metrics;
+            *match dimension {
+                0 => &mut metrics.lines,
+                1 => &mut metrics.functions,
+                _ => &mut metrics.regions,
+            } = metric(10000, 7999).unwrap();
+            assert!(baseline.verify_coverage_report(&below).is_err());
+        }
         assert!(baseline.verify_mutation_score(7499).is_err());
         for floor in [0, 10001] {
             baseline.coverage.acceptance_floor_basis_points = Some(floor);

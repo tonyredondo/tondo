@@ -2811,8 +2811,8 @@ semántica de `test`.
 
 The repository's current acceptance floor is 80% for global line, function
 and region coverage. Historical measurements and their provenance remain
-unchanged. Each risk dimension uses the lower of 80% and its historical
-threshold, so previously lower dimensions do not acquire an unrelated increase.
+unchanged. Every risk scope must meet the same 80% floor for each dimension,
+including dimensions whose historical measurement was below that floor.
 An explicit floor cannot be combined with a relative-drop allowance. Mutation
 requirements remain separate. Implementation batches use focused behavioral
 checks, followed by one consolidated coverage campaign for the completed batch.

@@ -160,8 +160,8 @@ Local reports belong in the selected artifact directory through
 
 The current acceptance floor is 8,000 basis points (80%) for global line,
 function and region coverage, as recorded in `testing/quality-baseline.json`.
-Historical measurements remain unchanged; risk dimensions retain the lower
-of 80% and their historical threshold. Mutation requirements remain separate.
+Historical measurements remain unchanged; every risk scope must meet the same
+80% floor for each dimension. Mutation requirements remain separate.
 Coverage, mutation,
 conformance, current provenance and all reopened prerequisites must pass
 before sealing S1A again. Publication additionally requires the explicit

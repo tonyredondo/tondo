@@ -20670,6 +20670,8 @@ mod tests {
     #[path = "executor_performance.rs"]
     mod executor_performance;
 
+    mod boundary_tests;
+
     fn root_pressure_program() -> BytecodeProgram {
         let string = BytecodeTypeId::new(0);
         let strings = BytecodeTypeId::new(1);

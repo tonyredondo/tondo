@@ -21,6 +21,16 @@ expect_failure pending env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/pending.json" sc
 jq '.implementation.quality_gate = "passed"' testing/stdlib-cbor.json > "$tmp_dir/quality.json"
 expect_failure quality env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/quality.json" scripts/stdlib-cbor-implementation-check.sh
 
+jq 'if .implementation.status == "verified-stdlib-kernel"
+    then .implementation.quality_gate = "pending-80-percent-per-scope"
+    else .implementation.quality_gate = "verified-80-percent-per-scope" end' testing/stdlib-cbor.json > "$tmp_dir/mixed-quality.json"
+expect_failure mixed-quality env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/mixed-quality.json" scripts/stdlib-cbor-implementation-check.sh
+
+jq 'if .implementation.status == "verified-stdlib-kernel"
+    then .promotion.next_blocks = ["STD-CBOR-IMPL-001"]
+    else .promotion.next_blocks = ["STD-CBOR-TEST-001"] end' testing/stdlib-cbor.json > "$tmp_dir/mixed-next.json"
+expect_failure mixed-next env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/mixed-next.json" scripts/stdlib-cbor-implementation-check.sh
+
 jq '.implementation.public_api_promoted = true' testing/stdlib-cbor.json > "$tmp_dir/public.json"
 expect_failure public env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/public.json" scripts/stdlib-cbor-implementation-check.sh
 

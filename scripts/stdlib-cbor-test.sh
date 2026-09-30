@@ -87,7 +87,9 @@ jq -e '
   and .streaming.stack == "explicit-bounded-frames-and-worklists"
   and .errors.partial_success == false
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-CBOR-IMPL-001"]
+  and (if .implementation.status == "verified-stdlib-kernel"
+       then .promotion.next_blocks == ["STD-CBOR-TEST-001"]
+       else .promotion.next_blocks == ["STD-CBOR-IMPL-001"] end)
 ' testing/stdlib-cbor.json >/dev/null
 
 echo "std.cbor tests: OK (RFC 8949; tags; undefined; indefinite chunks; deterministic ordering; limits)"

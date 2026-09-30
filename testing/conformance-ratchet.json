@@ -3,19 +3,19 @@
   "lineage": "tondo-draft",
   "manifest": {
     "path": "conformance/draft/manifest.json",
-    "sha256": "c9f6d49db8176bb83c2d2a30215cfbcfd5026ee5b73ab9b38aa243e45630dd64"
+    "sha256": "0ab4f8bc0aacd5af4a583e72a429e4f0cb4e5d16cd00a77687527d68f905d2fc"
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "52d15230be6f7ba87a8c11c7499333a6fb97b6c4b9aa37fb7a375a957daf003c"
+    "sha256": "b98bb0221d8b46b74e785181386323453b94118277a34456d07bac44d1aadd6e"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "27ee151c56020411ebf52c235be39a9ffd6ff5139bfabbba4fc8e422379bcf03"
+    "sha256": "cd2a235d4b88a3bfa54aa17000fba6c3b1d31de40c605f00c789891adbf8dd92"
   },
   "gap_audit": {
     "path": "testing/normative-gap-audit.json",
-    "sha256": "fff50e13f0e3c1abc2b71baa27ed19c1975d3ce2ec987aa6a8de404179bcb6df"
+    "sha256": "052bb01b05fed002cbaf80dbfc3c7d70e7d8cc5d91a11f9219156cb97c1c9c2a"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",
@@ -28,17 +28,17 @@
   "coverage": {
     "status": "validated",
     "reason": "the supplied coverage report passed the quality and provenance gates",
-    "report_sha256": "b377d0ffd5ea269e29605c69d6e09ca6110ba49364e6a91de1f36458875cf16a",
-    "provenance_sha256": "42a54fa77dedbe384493fca3cdd59e23d7e554e7d67b1a71d3979e8e59c57ee8",
-    "tree_sha256": "884243740d7940c714f8282f54594e04c0334818c0ef23ef094c196531fc5ffd",
-    "input_set_sha256": "a18043c0a60e8eb7bf7cd6c132b074b0eaf91b0594649b18e1a01db577ac523f"
+    "report_sha256": "317b545953bdbe731eccfa5d23633830b85c552c370a5a834c2eca5235058a80",
+    "provenance_sha256": "c27095e0ed367bf5bf80a26168cf5e11860a83c95ce122918e79cfd972e158e5",
+    "tree_sha256": "b81a27825f56835b9009ae8b6c0093fb9a8d33918e41d97981c95f0935e57d74",
+    "input_set_sha256": "6ebc7fc6429b2bfcac0155416b2b47a8ecaa9c90a81166ae11bedd782adc5f5d"
   },
   "mutation": {
     "status": "validated",
     "reason": "the supplied mutation report passed the quality and provenance gates",
     "report_sha256": "199c2c86cfd3ce51c7956e20d879b38a652a16fc8cf67c5ab91e5ca1f3781401",
-    "provenance_sha256": "42a54fa77dedbe384493fca3cdd59e23d7e554e7d67b1a71d3979e8e59c57ee8",
-    "tree_sha256": "884243740d7940c714f8282f54594e04c0334818c0ef23ef094c196531fc5ffd",
-    "input_set_sha256": "a18043c0a60e8eb7bf7cd6c132b074b0eaf91b0594649b18e1a01db577ac523f"
+    "provenance_sha256": "c27095e0ed367bf5bf80a26168cf5e11860a83c95ce122918e79cfd972e158e5",
+    "tree_sha256": "b81a27825f56835b9009ae8b6c0093fb9a8d33918e41d97981c95f0935e57d74",
+    "input_set_sha256": "6ebc7fc6429b2bfcac0155416b2b47a8ecaa9c90a81166ae11bedd782adc5f5d"
   }
 }

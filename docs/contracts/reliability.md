@@ -286,10 +286,16 @@ The historical measurement retained in `testing/quality-baseline.json` records
 8,701 for functions and 8,891 for regions. These are observed results, not the
 current acceptance thresholds.
 
+The coverage campaign removes generated workspace binaries and counters with
+`cargo llvm-cov clean --workspace` before measuring. Third-party dependency
+caches remain reusable. Clearing counters alone leaves executables from older
+source or feature selections in the report's object search; their unexecuted
+mappings can distort both denominators and source locations. Only the current
+workspace build may contribute executable mappings to a promoted report.
+
 The authorized policy uses `coverage.acceptance_floor_basis_points: 8000`:
-global lines, functions and regions must each reach 80%. Risk dimensions use
-the lower of 80% and their historical measured threshold. This preserves the
-existing requirements for dimensions that were already below 80%. The floor
+global lines, functions and regions must each reach 80%. Every risk scope must
+also reach 80% for each dimension, including historically lower dimensions. The floor
 cannot combine with `maximum_drop_basis_points`; historical counts, reports,
 provenance and mutation requirements are retained. A fresh capture records the
 new observations and retains the explicit 80% policy.

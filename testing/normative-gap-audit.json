@@ -9,7 +9,7 @@
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "479bf4986ff40ff1a222e274ad5e069e7d05edca779165248888d2ee6e338ac0"
+      "sha256": "2074c100be5750678be5d47bd627d5a9e3ade0e2e003e1d8dde5436e9ca3810e"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
@@ -4031,7 +4031,7 @@
     },
     {
       "requirement": "TT01-13-1-R001",
-      "text_sha256": "aae0b202b9a7cef38fa9948d67592825f43824bd288c5cc4fda366bd87c92c69",
+      "text_sha256": "a62adf2138dd9d07789b4159ecc92eaf6260cfcb8c820e30f485185481fe319f",
       "outcome": "implemented-without-trace",
       "reason": "TT01-13-1-R001 is implemented in the quality tooling and has focused executable evidence; its six-dimension normative trace remains incomplete. Tondo test-report serialization is not evidence for coverage policy or source-bound quality reports.",
       "implementation": [
