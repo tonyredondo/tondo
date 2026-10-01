@@ -156,8 +156,13 @@ jq -e '
       and .promotion.next_blocks == ["STD-CBOR-IMPL-001"])
     or (.implementation.status == "verified-stdlib-kernel"
       and .implementation.quality_gate == "verified-80-percent-per-scope"
-      and .implementation.required_follow_ups == ["STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
-      and .promotion.next_blocks == ["STD-CBOR-TEST-001"])
+      and (
+        (.implementation.required_follow_ups == ["STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+          and .promotion.next_blocks == ["STD-CBOR-TEST-001"])
+        or (.testing_contract == "testing/stdlib-cbor-test.json"
+          and .implementation.required_follow_ups == ["STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+          and .promotion.next_blocks == ["STD-CBOR-PERF-001"])
+      ))
   )
   and .implementation.public_api_promoted == false
   and .implementation.host == "not-claimed-until-compiler-cbor-abi"

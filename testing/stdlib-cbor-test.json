@@ -1,0 +1,91 @@
+{
+  "format": "tondo-stdlib-cbor-testing/1",
+  "owner": "std.cbor",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-CBOR-TEST-001",
+  "status": "verified",
+  "contract": "docs/contracts/stdlib-cbor-test.md",
+  "parent_contract": "testing/stdlib-cbor.json",
+  "target": "independent-reference-and-rust-kernel-regression-boundary",
+  "limits": {
+    "max_reference_nodes": 128,
+    "max_reference_depth": 8,
+    "max_reference_scalar_bytes": 96,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 512,
+    "model_seed_count": 4096,
+    "float16_pattern_count": 65536,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "status": "verified",
+    "source": "crates/tondo-reliability/src/cbor_model.rs",
+    "oracle": "independent bounded recursive wire grammar and arithmetic float renderer",
+    "production_imports": false,
+    "laws": [
+      "ordinary encoding preserves float wire bits, map order, pairs and tags",
+      "deterministic encoding uses shortest exact widths and preserves zero sign",
+      "all NaNs deterministically encode as f97e00",
+      "deterministic map keys sort by encoded bytes and collisions are rejected",
+      "indefinite strings validate UTF-8 per chunk and materialize definite values",
+      "two-byte simple values below 32 are malformed under every decode policy",
+      "trailing items never publish a successful value",
+      "node, depth, scalar, input and replay budgets are explicit",
+      "identical seeds produce identical values, bytes and replay summaries",
+      "Limit denotes outside the bounded oracle domain, not malformed CBOR"
+    ]
+  },
+  "corpus": {
+    "path": "crates/tondo-reliability/tests/fixtures/cbor-wire.json",
+    "valid_cases": 61,
+    "invalid_cases": 30,
+    "source": "https://www.rfc-editor.org/rfc/rfc8949.html",
+    "scope": "bounded-wire-vectors-and-owner-regressions"
+  },
+  "test": {
+    "status": "verified",
+    "source": "crates/tondo-reliability/tests/cbor_models.rs",
+    "integration_tests": 9,
+    "kernel_tests": 14,
+    "command": "cargo test -p tondo-reliability --test cbor_models --locked",
+    "cases": [
+      "persistent RFC wire and owner regression vectors",
+      "parse, validate, raw, borrowed encoded-byte views and owned events",
+      "all binary16 patterns and widening from independent arithmetic values",
+      "ordinary and deterministic encode against 4096 generated seeds",
+      "every malformed two-byte simple encoding across six routes",
+      "duplicate, tag, non-minimal and indefinite policies",
+      "typed collection protocol and typed duplicate refusal",
+      "half-open byte spans and nested stable paths",
+      "all kernel resource limits and independent model budgets",
+      "input fragmentation, empty chunks, writer balance and terminal states",
+      "input/output failures and untouched sink after invalid event sequence"
+    ]
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_cbor",
+    "source": "fuzz/fuzz_targets/stdlib_cbor.rs",
+    "corpus": "fuzz/corpus/stdlib_cbor/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 512,
+    "smoke": {"runs": 128, "seed": 4113, "toolchain": "nightly-2026-07-28", "result": "passed"},
+    "timeout_seconds": 10,
+    "rss_limit_mb": 4096,
+    "command": "TONDO_CBOR_FUZZ_RUNS=128 scripts/stdlib-cbor-fuzz.sh",
+    "oracle": "repeatable independent replay, generated encode/parse comparison and arbitrary wire rejection within the model domain",
+    "minimal_dependency_graph": "stdlib-only-no-compiler-vm-conformance-or-reliability-cli"
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "public_api_promoted": false,
+    "production_host_registration": "not-claimed",
+    "native_abi": "not-claimed",
+    "native_aot": "not-claimed",
+    "simd": "not-claimed",
+    "performance": "not-claimed",
+    "next_blocks": ["STD-CBOR-PERF-001"],
+    "remaining": ["STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+  }
+}

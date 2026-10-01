@@ -338,6 +338,12 @@ run_step stdlib-cbor-implementation-contract-tests \
     scripts/stdlib-cbor-implementation-test.sh
 run_step stdlib-cbor-implementation \
     scripts/stdlib-cbor-implementation.sh
+run_step stdlib-cbor-testing-contract \
+    scripts/stdlib-cbor-test-check.sh
+run_step stdlib-cbor-testing-contract-tests \
+    scripts/stdlib-cbor-test-test.sh
+run_step stdlib-cbor-fuzz \
+    scripts/stdlib-cbor-fuzz.sh
 run_step stdlib-regex-contract \
     scripts/stdlib-regex-check.sh
 run_step stdlib-regex-contract-tests \

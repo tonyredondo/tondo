@@ -348,6 +348,13 @@ la operación que la devuelve.
 
 ## Separación de alcance y promoción
 
+RFC 8949 section 3.3 requires every two-byte simple encoding `f8 00` through
+`f8 1f` to be rejected as `InvalidSimpleValue`, including when non-minimal
+integer and length arguments are accepted. The independent bounded model,
+persistent wire corpus and fuzz boundary are documented in
+[stdlib-cbor-test.md](./stdlib-cbor-test.md) and registered by
+[testing/stdlib-cbor-test.json](../../testing/stdlib-cbor-test.json).
+
 `std.cbor` no interpreta `tondo.toml`, `tondo.test.toml` ni
 `tondo.lock.toml`, no modifica el package graph y no tiene includes,
 environment interpolation, locale, timezone lookup, schema discovery ni

@@ -626,12 +626,9 @@ pub fn parse(input: &[u8], options: CborDecodeOptions) -> Result<CborValue, Cbor
                 24 => {
                     let simple = c.take(1)?[0];
                     match simple {
-                        0..=19 if options.non_minimal == CborNonMinimalPolicy::Reject => {
-                            return Err(c.error(CborErrorKind::NonMinimalEncoding, start));
-                        }
-                        0..=19 => Some(CborValue::Simple(simple)),
-                        20..=23 => return Err(c.error(CborErrorKind::InvalidSimpleValue, start)),
-                        24..=31 => return Err(c.error(CborErrorKind::InvalidSimpleValue, start)),
+                        // RFC 8949 section 3.3 gives every simple value exactly
+                        // one encoding. f8 followed by 0..31 is malformed.
+                        0..=31 => return Err(c.error(CborErrorKind::InvalidSimpleValue, start)),
                         _ => Some(CborValue::Simple(simple)),
                     }
                 }
@@ -1437,11 +1434,8 @@ fn scan_events_inner(
                 23 => CborEvent::Undefined,
                 24 => {
                     let n = cursor.take(1)?[0];
-                    if (20..=31).contains(&n) {
+                    if n < 32 {
                         return Err(cursor.error(CborErrorKind::InvalidSimpleValue, start));
-                    }
-                    if n < 20 && options.non_minimal == CborNonMinimalPolicy::Reject {
-                        return Err(cursor.error(CborErrorKind::NonMinimalEncoding, start));
                     }
                     cursor.simple_values += 1;
                     if cursor.simple_values > options.limits.max_simple_values {
@@ -2627,14 +2621,18 @@ mod tests {
                 "case {case}: {bytes:02x?}"
             );
         }
-        assert_eq!(parse(&[0xf8, 0x00], options).unwrap(), CborValue::Simple(0));
+        assert_eq!(parse(&[0xe0], options).unwrap(), CborValue::Simple(0));
+        assert_eq!(
+            parse(&[0xf8, 0x00], options).unwrap_err().kind,
+            CborErrorKind::InvalidSimpleValue
+        );
         let mut strict = options;
         strict.non_minimal = CborNonMinimalPolicy::Reject;
         assert_eq!(
             scan_events_inner(&[0xf8, 0x00], strict, false)
                 .unwrap_err()
                 .kind,
-            CborErrorKind::NonMinimalEncoding
+            CborErrorKind::InvalidSimpleValue
         );
     }
 

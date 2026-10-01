@@ -130,5 +130,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "stdlib_cbor"
+path = "fuzz_targets/stdlib_cbor.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

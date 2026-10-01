@@ -1,5 +1,6 @@
 #![doc = "Deterministic reliability tooling for the Tondo repository."]
 
+pub mod cbor_model;
 pub mod channel_model;
 pub mod codec_fuzz;
 pub mod encoding_model;

@@ -4188,6 +4188,13 @@ conformance, and usage
 gates remain `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
 `STD-CBOR-CONF-001`, and `STD-CBOR-DOC-001`.
 
+The independent bounded model and Rust-kernel test/fuzz boundary are registered
+in [testing/stdlib-cbor-test.json](./testing/stdlib-cbor-test.json) and defined
+in [docs/contracts/stdlib-cbor-test.md](./docs/contracts/stdlib-cbor-test.md).
+Their evidence does not promote public compiler, production VM, ABI or AOT
+integration. Every two-byte simple encoding with a value below 32 is malformed
+under RFC 8949 section 3.3, regardless of the non-minimal decode policy.
+
 ### 14.16 `std.regex`
 
 `std.regex` es el motor de expresiones regulares Unicode de Tondo, no un
