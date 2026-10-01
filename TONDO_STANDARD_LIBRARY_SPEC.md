@@ -4183,10 +4183,10 @@ kernel boundary: focused checks, the full functional gate and provenance-bound
 coverage/mutation checks pass. Every global and risk-scope coverage dimension
 meets the unchanged 80% floor, and all six selected critical mutants are caught.
 Public compiler API, production VM host registration, native ABI and native AOT
-lowering remain unclaimed. The independent model/fuzz, performance,
-conformance, and usage
-gates remain `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
-`STD-CBOR-CONF-001`, and `STD-CBOR-DOC-001`.
+lowering remain unclaimed. `STD-CBOR-TEST-001` verifies the independent bounded
+model, retained corpus, Rust-kernel regressions and bounded fuzz. Performance,
+conformance and usage remain `STD-CBOR-PERF-001`, `STD-CBOR-CONF-001` and
+`STD-CBOR-DOC-001`.
 
 The independent bounded model and Rust-kernel test/fuzz boundary are registered
 in [testing/stdlib-cbor-test.json](./testing/stdlib-cbor-test.json) and defined

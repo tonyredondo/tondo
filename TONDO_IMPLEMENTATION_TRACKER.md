@@ -13,7 +13,7 @@ memory design remains hybrid ARC with cycle collection. Native promotion for
 to the production runtime. LLVM remains an experimental comparison. ARM64,
 macOS and Windows probes do not promote additional product targets.
 
-**Last updated:** 2026-09-10
+**Last updated:** 2026-10-02
 
 **Normative specifications:**
 
@@ -37,7 +37,11 @@ stdlib process. `STD-TOML-DOC-001` now verifies executable Rust-kernel usage.
 `STD-CBOR-IMPL-001` now verifies the bounded Rust scalar kernel after the full
 functional gate and provenance-bound quality checks pass. Every global and
 risk-scope coverage dimension meets the unchanged 80% floor; all six selected
-critical mutants are caught. The next owner leaf is `STD-CBOR-TEST-001`.
+critical mutants are caught. `STD-CBOR-TEST-001` verifies the independent
+bounded wire model, retained corpus, kernel regressions and bounded fuzz.
+The current quality campaign measures 91.5669% global lines and preserves
+the 80% floor in every global and risk-scope coverage dimension. The next
+owner leaf is `STD-CBOR-PERF-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6719,15 +6723,29 @@ estas leaves.
   bounded document before exposing events. The 14 focused tests and strict
   Clippy are recorded by `scripts/stdlib-cbor-implementation.sh`. The full
   functional gate passes. Provenance-bound workspace coverage with current
-  executable artifacts measures 91.5113% global lines; every global and
+  executable artifacts measures 91.5669% global lines; every global and
   risk-scope line/function/region dimension meets the unchanged 80% floor.
   All six selected critical mutants are caught. Public compiler API,
-  production host registration, native
-  ABI, native AOT, independent model/fuzzing, performance, and conformance
-  remain unclaimed. Next: `STD-CBOR-TEST-001`.
-- [ ] **STD-CBOR-TEST-001 — Probar y fuzzear CBOR.** Cubrir vectores RFC,
-  floats/NaN, tags, maps, chunks, forms no mínimas, nesting, límites y
-  preservación definida por policy.
+  production host registration, native ABI, native AOT, performance, and
+  conformance remain unclaimed. The independent model/fuzz boundary is
+  recorded by `STD-CBOR-TEST-001` below.
+- [x] **STD-CBOR-TEST-001 — Probar y fuzzear CBOR.** The independent bounded
+  wire grammar and arithmetic float renderer agree with the Rust kernel over
+  61 valid and 30 invalid retained vectors, 4096 deterministic model seeds,
+  and all 65536 binary16 patterns, also widened to binary32 and binary64.
+  Nine integration tests cover policies, typed collections, spans, paths,
+  resource limits, fragmentation, atomic rejection, I/O and terminal states.
+  All malformed two-byte simple encodings below 32 are rejected across six
+  routes under both non-minimal policies. The unchanged sanitizer campaign
+  passes 128 runs with seed 4113. The full functional gate and current
+  provenance-bound quality checks pass: 91.5669% global lines, every global
+  and risk-scope line/function/region dimension at or above 80%, and all six
+  selected critical mutants caught. The register is
+  `testing/stdlib-cbor-test.json`; the contract is
+  `docs/contracts/stdlib-cbor-test.md`. This promotes only the independent
+  model, Rust-kernel tests, corpus and bounded fuzz, not a public compiler
+  API, production VM host, native ABI, native AOT or performance. Next:
+  `STD-CBOR-PERF-001`.
 - [ ] **STD-CBOR-PERF-001 — Medir CBOR.** Fijar throughput, tail, memoria,
   allocations y coste del modo determinista.
 - [ ] **STD-CBOR-CONF-001 — Conformar CBOR.** Verificar interoperabilidad,

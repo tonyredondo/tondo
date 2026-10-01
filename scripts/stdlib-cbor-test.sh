@@ -49,6 +49,17 @@ expect_failure premature-promotion env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/prem
 jq '.corpora += [.corpora[0]]' testing/stdlib-cbor.json > "$tmp_dir/duplicate-corpus.json"
 expect_failure duplicate-corpus env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/duplicate-corpus.json" scripts/stdlib-cbor-check.sh
 
+if jq -e '.testing_contract == "testing/stdlib-cbor-test.json"' testing/stdlib-cbor.json >/dev/null; then
+    jq 'del(.testing_contract)' testing/stdlib-cbor.json > "$tmp_dir/missing-testing.json"
+    expect_failure missing-testing env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/missing-testing.json" scripts/stdlib-cbor-check.sh
+
+    jq '.promotion.next_blocks = ["STD-CBOR-TEST-001"]' testing/stdlib-cbor.json > "$tmp_dir/stale-testing-next.json"
+    expect_failure stale-testing-next env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/stale-testing-next.json" scripts/stdlib-cbor-check.sh
+
+    jq '.implementation.required_follow_ups |= ["STD-CBOR-TEST-001"] + .' testing/stdlib-cbor.json > "$tmp_dir/stale-testing-follow-up.json"
+    expect_failure stale-testing-follow-up env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/stale-testing-follow-up.json" scripts/stdlib-cbor-check.sh
+fi
+
 for marker in \
     'RFC 8949' \
     'major types 0 a 7' \
@@ -88,7 +99,9 @@ jq -e '
   and .errors.partial_success == false
   and .implementation.public_api_promoted == false
   and (if .implementation.status == "verified-stdlib-kernel"
-       then .promotion.next_blocks == ["STD-CBOR-TEST-001"]
+       then (if .testing_contract == "testing/stdlib-cbor-test.json"
+             then .promotion.next_blocks == ["STD-CBOR-PERF-001"]
+             else .promotion.next_blocks == ["STD-CBOR-TEST-001"] end)
        else .promotion.next_blocks == ["STD-CBOR-IMPL-001"] end)
 ' testing/stdlib-cbor.json >/dev/null
 

@@ -77,6 +77,8 @@ VM host, implement a native ABI or native AOT lowering, or establish SIMD,
 code-size or performance claims. The kernel remains
 `verified-stdlib-kernel`, with `public_api_promoted: false` and
 `host: not-claimed-until-compiler-cbor-abi`. Performance is the next owner leaf,
-followed by conformance and usage documentation. Closure still requires the
-full functional gate and current provenance-bound quality checks with the
-unchanged 80% floor in every global/risk coverage dimension.
+followed by conformance and usage documentation. The full functional gate and
+current provenance-bound quality checks pass. Global line coverage is
+91.5669%; every global and risk-scope line/function/region dimension meets the
+unchanged 80% floor, and all six selected critical mutants are caught. This
+evidence does not change the pending S1A prerequisites or release status.
