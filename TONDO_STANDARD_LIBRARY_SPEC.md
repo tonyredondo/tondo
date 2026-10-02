@@ -4292,15 +4292,18 @@ Rust kernel with pinned `regex-syntax =0.8.10` and an ordered Thompson NFA.
 Searches have a cumulative step budget across lazy iteration and replacement;
 total enumeration is not claimed linear when suffixes are rescanned. Public
 Tondo compiler/VM registration, native ABI and AOT are not promoted by that
-kernel boundary. The preceding kernel campaign passed the full functional gate
-and provenance-bound quality checks, preserving the 80% floor in every global
-and risk-scope coverage dimension and catching all six selected critical mutants. The next
-leaf is `STD-REGEX-TEST-001` for independent model and bounded fuzz evidence,
-recorded in [testing/stdlib-regex-test.json](./testing/stdlib-regex-test.json)
-and [docs/contracts/stdlib-regex-test.md](./docs/contracts/stdlib-regex-test.md).
-The retained model/corpus and fuzz are implemented; the middle-hyphen correction
-reopens affected kernel proof pending their joint consolidated quality and
-functional campaign. Performance, shared conformance and executable usage remain
+kernel boundary. `STD-REGEX-TEST-001` verifies an independent bounded grammar
+and ordered path oracle, 41 valid/33 invalid retained vectors, 4,096 generated
+seeds and 128 seeded minimal fuzz runs. Thirty-two valid vectors fit the model;
+nine use separately authored Unicode expectations. The model does not claim
+complete independent Unicode property tables. Its limits are not kernel
+rejections. The middle-hyphen class admission correction and testing boundary
+pass the joint full functional and source-bound quality gates: 91.5772% global
+line coverage, every global/risk dimension at or above 80%, six critical mutants
+caught. The register and contract are
+[testing/stdlib-regex-test.json](./testing/stdlib-regex-test.json) and
+[docs/contracts/stdlib-regex-test.md](./docs/contracts/stdlib-regex-test.md).
+The next leaf is performance; shared conformance and executable usage remain
 `STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
 
 ### 14.17 `std.uuid`

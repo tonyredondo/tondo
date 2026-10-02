@@ -4,8 +4,8 @@
   "edition": "0.1",
   "phase": "STD-0.1B",
   "task": "STD-REGEX-TEST-001",
-  "status": "ready",
-  "quality_gate": "pending-80-percent-per-scope",
+  "status": "verified",
+  "quality_gate": "verified-80-percent-per-scope",
   "contract": "docs/contracts/stdlib-regex-test.md",
   "parent_contract": "testing/stdlib-regex.json",
   "target": "independent-reference-and-rust-kernel-regression-boundary",
@@ -82,7 +82,7 @@
     "minimal_dependency_graph": "stdlib-only-no-compiler-vm-conformance-or-reliability-cli"
   },
   "promotion": {
-    "test_boundary_promoted": false,
+    "test_boundary_promoted": true,
     "public_api_promoted": false,
     "production_vm_registration": "not-claimed",
     "native_abi": "not-claimed",

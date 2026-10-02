@@ -7,10 +7,11 @@ verifies the bounded Rust kernel described in section 10. Public Tondo
 compiler/VM registration, native ABI and native AOT are not promoted.
 The independent model/fuzz boundary is defined by
 [stdlib-regex-test.md](./stdlib-regex-test.md) and
-`testing/stdlib-regex-test.json`. Its status remains `ready` until consolidated
-quality and functional proof. The middle-hyphen class correction reopens the
-kernel's affected proof for that same campaign. Performance, shared conformance
-and executable usage remain `STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and
+`testing/stdlib-regex-test.json`. Its verified scope includes the independent
+bounded oracle, 41 valid/33 invalid retained vectors, 4,096 generated seeds and
+128 seeded fuzz runs. The middle-hyphen correction and testing boundary pass
+their joint quality and functional proof. Performance, shared conformance and
+executable usage remain `STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and
 `STD-REGEX-DOC-001`.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce
@@ -456,9 +457,10 @@ endian u64 values. It excludes paths, pointer values, timing and hash-map seeds.
 Functional proof covers syntax and rejection spans, captures, Unicode 16,
 folding, anchors, local priorities, iterator lifecycle, replacements, limits,
 fingerprints, a small-stack nested-pattern check and 4,096 deterministic
-generated patterns. An independent bounded model and fuzz promotion remain
-`STD-REGEX-TEST-001`; performance, shared VM/native conformance and an executable
-usage guide remain their separate leaves.
+generated patterns. `STD-REGEX-TEST-001` separately verifies the independent
+bounded grammar/path model and seeded fuzz; its Unicode properties use distinct
+authored expectations, not a second full table oracle. Performance, shared
+VM/native conformance and an executable usage guide remain their separate leaves.
 
 Run `scripts/stdlib-regex-implementation-check.sh` and
 `scripts/stdlib-regex-implementation-test.sh` for contract and kernel proof.
@@ -467,10 +469,12 @@ evidence from the canonical tests and Clippy; it does not measure coverage.
 Quality is established separately at the unchanged 80% global and per-scope
 floor, with the critical mutation baseline preserved.
 
-The implementation leaf has passed the full functional gate, including the
-206-case draft conformance suite and async/select observations. Its bound
-workspace quality campaign measures 291,260 of 318,090 lines (91.5653%);
+The implementation and independent testing leaves pass the full functional
+gate, including the 206-case draft suite, async/select observations and the
+128-run regex smoke. Their joint source-bound workspace campaign measures
+291,951 of 318,803 lines (91.5772%);
 every global and risk-scope line/function/region dimension meets the 80% floor,
 and all six selected critical mutants are caught. These observations promote
-`verified-stdlib-kernel` only. They do not close the independent model/fuzz leaf
-or any public, production VM or native integration boundary.
+`verified-stdlib-kernel` and the independent model/test/fuzz boundary only.
+Public Tondo calls, production VM registration and native integration remain
+unimplemented/unclaimed. The next owner is `STD-REGEX-PERF-001`.

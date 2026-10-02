@@ -6799,27 +6799,34 @@ estas leaves.
 
 #### 21.3.10 `std.regex`
 
-- [ ] **STD-REGEX-IMPL-001 — Implement bounded regex.** The Rust kernel is
-  `ready-stdlib-kernel`, with pinned `regex-syntax =0.8.10`, Unicode 16.0.0,
+- [x] **STD-REGEX-IMPL-001 — Implement bounded regex.** The Rust kernel is
+  `verified-stdlib-kernel`, with pinned `regex-syntax =0.8.10`, Unicode 16.0.0,
   an ordered Thompson NFA, local greedy/lazy priorities, captures, literal
   replacement and lazy `Iterator[RegexMatch ! RegexError]` with cumulative
   budgets and terminal errors. Ten kernel tests cover behavior, rejection,
   lifecycle, bounds, small-stack compilation and 4,096 generated patterns.
-  Previously verified at 91.5653% global lines with every global/risk coverage
-  dimension at or above 80% and six critical mutants caught. The independent
-  test model exposed middle literal hyphen admission in classes; its correction
-  reopens affected kernel proof for the consolidated TEST campaign.
+  The independent model exposed middle literal hyphen admission in classes;
+  its correction restores kernel proof through the consolidated TEST campaign.
+  The full functional gate and source-bound quality checks pass: 91.5772%
+  global lines, every global/risk dimension at or above 80%, six critical
+  mutants caught.
   Storage is a conservative logical metric;
   dependency/global-allocator OOM recovery is unclaimed. Public Tondo
   compiler/VM registration, native ABI, native AOT and performance are unclaimed.
-  Next: `STD-REGEX-TEST-001` for the independent model and bounded fuzz.
-- [ ] **STD-REGEX-TEST-001 — Modelar y fuzzear regex.** Cubrir parser,
-  automata/oracle, Unicode, vacíos, captures, replace, límites y patrones/input
-  hostiles.
-  The independent bounded grammar/path oracle, 41 valid/33 invalid vectors,
-  4,096 generated seeds and 128-run seeded minimal fuzz are implemented in
-  `testing/stdlib-regex-test.json`. Consolidated quality/full functional proof
-  and exact-SHA CI remain pending; public/native/performance promotion is unclaimed.
+  Independent model and bounded fuzz are verified by `STD-REGEX-TEST-001`.
+- [x] **STD-REGEX-TEST-001 — Verify independent regex models and bounded fuzz.**
+  The std-only bounded grammar/path oracle compares captures, local priorities,
+  full matching, scalar spans, zero-width progress and replacements against
+  the Rust kernel over 4,096 deterministic seeds. The retained corpus has
+  41 valid/33 invalid vectors: 32 valid model cases and nine separately authored
+  Unicode expectations. Ten model tests and ten kernel tests cover bounds,
+  nominal errors, concurrency, independent cursors, retained captures and
+  atomic output. The full gate includes 128 seeded sanitizer fuzz runs and
+  minimal/full harness graphs. Quality verifies 91.5772% global lines, all
+  global/risk coverage dimensions at or above 80%, six critical mutants caught.
+  `testing/stdlib-regex-test.json` and `docs/contracts/stdlib-regex-test.md`
+  record this boundary; public/production VM/native/performance promotion is
+  unclaimed. Next: `STD-REGEX-PERF-001`.
 - [ ] **STD-REGEX-PERF-001 — Medir regex.** Fijar compile/match throughput,
   tail, memoria y tamaño de automata sobre corpus normal y adversario.
 - [ ] **STD-REGEX-CONF-001 — Conformar regex.** Ejecutar vectores portables y
