@@ -45,7 +45,7 @@ resource model. `STD-CBOR-CONF-001` verifies seven shared private VM/native Rust
 process cases with the independent wire model. The current quality campaign
 measures 91.5681% global lines
 and preserves the 80% floor in every global and risk-scope coverage dimension.
-The next owner leaf is `STD-CBOR-DOC-001`.
+The next owner leaf is `STD-REGEX-IMPL-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6085,7 +6085,8 @@ publica hasta cerrar el gate final.
   native ABI/AOT remain unclaimed. `STD-CBOR-TEST-001` verifies the independent
   model/fuzzing boundary; `STD-CBOR-PERF-001` verifies the bounded scalar
   baseline; `STD-CBOR-CONF-001` verifies the private VM/native Rust process
-  comparison. Usage documentation remains pending under `STD-CBOR-DOC-001`.
+  comparison. `STD-CBOR-DOC-001` verifies executable Rust-kernel usage;
+  public compiler/production host/native ABI/AOT promotion remains unclaimed.
 
 - [x] **STD-REGEX-001 — Especificar `std.regex`.** El registro
   [`testing/stdlib-regex.json`](./testing/stdlib-regex.json) y el contrato
@@ -6782,12 +6783,17 @@ estas leaves.
   remain unclaimed. `testing/stdlib-cbor-conformance.json` and
   `docs/contracts/stdlib-cbor-conformance.md` record the exact boundary.
   Next: `STD-CBOR-DOC-001`.
-- [ ] **STD-CBOR-DOC-001 — Documentar CBOR.** Explicar tags, determinismo,
-  preservación, límites, costes y ejemplos ejecutables.
-  The `usage-ready` Rust-kernel guide and canonical `cbor_usage.rs` cover six
-  executable paths, including exact errors, terminal streams and irreversible
-  partial I/O. The full functional/quality gate and clean publication are
-  pending; public Tondo/production VM/native ABI/AOT promotion is not claimed.
+- [x] **STD-CBOR-DOC-001 — Document CBOR kernel usage.** The English guide and
+  canonical `cbor_usage.rs` verify six executable paths: materialized/typed
+  values, tags/determinism, raw/views, fragmented events and terminal lifecycle,
+  exact errors/limits, and irreversible external I/O. It documents actual DOM,
+  clone, buffering and retention costs. The canonical example, seven-section
+  negatives, both owner transitions and all prior CBOR owner checks pass.
+  Full workspace functional and provenance-bound quality gates pass: 91.5681%
+  global lines, every global/risk dimension at or above 80%, six critical
+  mutants caught. Public Tondo API, production VM registration, native CBOR
+  ABI, native AOT and SIMD remain unimplemented/unclaimed.
+  Next: `STD-REGEX-IMPL-001`.
 
 #### 21.3.10 `std.regex`
 

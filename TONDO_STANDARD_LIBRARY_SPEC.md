@@ -4189,8 +4189,8 @@ Public compiler API, production VM host registration, native ABI and native AOT
 lowering remain unclaimed. `STD-CBOR-TEST-001` verifies the independent bounded
 model, retained corpus, Rust-kernel regressions and bounded fuzz. Performance
 has its bounded Rust scalar baseline, and `STD-CBOR-CONF-001` verifies the
-private VM/native Rust process comparison. Executable usage is prepared under
-`STD-CBOR-DOC-001`; its full gate and clean publication are pending.
+private VM/native Rust process comparison. `STD-CBOR-DOC-001` verifies
+executable Rust-kernel usage after the full functional and quality gates.
 
 The independent bounded model and Rust-kernel test/fuzz boundary are registered
 in [testing/stdlib-cbor-test.json](./testing/stdlib-cbor-test.json) and defined
@@ -4238,7 +4238,7 @@ retention costs. Six paths in
 `scripts/stdlib-cbor-doc-check.sh` with successful stdout `cbor-doc-ok`.
 Codec errors never publish a successful partial result; external I/O can
 irreversibly accept a prefix or fail to flush, as the example demonstrates.
-This `usage-ready` documentation does not claim public Tondo execution,
+This `verified-rust-kernel-usage` documentation does not claim public Tondo execution,
 production VM registration, native CBOR ABI, native AOT or SIMD.
 
 ### 14.16 `std.regex`

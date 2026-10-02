@@ -226,7 +226,7 @@
       {"id": "performance", "requires": ["scalar-oracle", "bounded-allocation", "adversarial-depth", "target-qualified-report"]},
       {"id": "promote", "requires": ["tag-preservation", "unknown-simple-preservation", "deterministic-map-proof", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-CBOR-DOC-001"]
+    "next_blocks": ["STD-REGEX-IMPL-001"]
   },
   "conformance": {
     "task": "STD-CBOR-CONF-001",
@@ -240,7 +240,7 @@
   },
   "documentation": {
     "task": "STD-CBOR-DOC-001",
-    "status": "usage-ready",
+    "status": "verified-rust-kernel-usage",
     "document": "docs/contracts/stdlib-cbor.md",
     "example": "crates/tondo-stdlib/examples/cbor_usage.rs",
     "command": "scripts/stdlib-cbor-doc-check.sh",
@@ -281,6 +281,6 @@
     "fixture": null,
     "evidence_report": "target/reliability/evidence/stdlib-cbor-implementation.json",
     "proof": "All 14 focused CBOR tests, strict Clippy and the full workspace functional gate pass for the bounded scalar kernel. The independent model, nine integration tests and bounded fuzz are verified by testing/stdlib-cbor-test.json. Seven shared cases verify private bytecode host dispatch against a native Rust kernel process using 61 valid and 30 invalid wire vectors, exact errors, typed/dynamic/event paths and deterministic encoding. The conformance-block campaign renews provenance-bound workspace coverage using current executable artifacts at 91.5681% global lines, with every global and risk-scope line/function/region dimension at or above the unchanged 80% floor; all six selected critical mutants are caught. Compiler/public API, production host registration, native ABI and native AOT promotion remain unclaimed.",
-    "required_follow_ups": ["STD-CBOR-DOC-001"]
+    "required_follow_ups": []
   }
 }

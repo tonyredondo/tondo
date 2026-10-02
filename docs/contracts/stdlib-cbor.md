@@ -407,9 +407,12 @@ The implementation, test, performance and conformance leaves passed their
 required functional and provenance-bound quality gates. The latest conformance
 campaign measures 91.5681% global lines, every global and risk-scope
 line/function/region dimension meets the unchanged 80% floor, and all six
-selected critical mutants are caught. The executable usage below is
-`usage-ready` for `STD-CBOR-DOC-001`; its full gate and clean publication are
-still pending.
+selected critical mutants are caught. `STD-CBOR-DOC-001` verifies the
+executable usage below after the canonical example, documentation/owner
+negatives and full functional/quality gates pass. Its renewed campaign also
+measures 91.5681% global lines, all coverage dimensions at or above 80% and
+six critical mutants caught. The register is `verified-rust-kernel-usage`;
+the next owner block is `STD-REGEX-IMPL-001`.
 
 ## Executable usage guide for `std.cbor`
 
