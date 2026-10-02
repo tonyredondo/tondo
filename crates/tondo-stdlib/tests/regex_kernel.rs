@@ -103,6 +103,17 @@ fn unicode_16_properties_simple_folding_and_exact_word_set() {
 
 #[test]
 fn line_anchors_dot_and_options_are_explicit() {
+    assert!(regex(r"\b{2}a\b{1,}").is_match("a").unwrap());
+    assert_eq!(
+        regex(r"\b{0,0}").find("a").unwrap().unwrap().span,
+        span(0, 0)
+    );
+    assert_eq!(
+        Regex::compile(r"\b{start}", Default::default(), Default::default())
+            .unwrap_err()
+            .kind,
+        Kind::UnsupportedFeature
+    );
     let compile =
         |pattern, options| Regex::compile(pattern, options, RegexLimits::default()).unwrap();
     assert!(!regex("^a$").is_match("x\na\n").unwrap());

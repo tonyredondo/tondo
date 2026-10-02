@@ -112,7 +112,11 @@ fn admit(pattern: &str, limits: RegexLimits) -> Result<(), RegexError> {
                 b'b' | b'A' | b'z' if class => {
                     return Err(error(Kind::InvalidClass, start, offset));
                 }
-                b'b' if bytes.get(offset) == Some(&b'{') => {
+                b'b' if bytes.get(offset) == Some(&b'{')
+                    && bytes
+                        .get(offset + 1)
+                        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'-') =>
+                {
                     return Err(error(Kind::UnsupportedFeature, start, offset + 1));
                 }
                 b'0'..=b'9' | b'k' | b'C' | b'B' => {
