@@ -4209,6 +4209,16 @@ the full functional gate and current quality checks. The unoptimized Rust
 test profile does not promote the public Tondo API, production VM bridge,
 native ABI/AOT, SIMD or conformance.
 
+The bounded CBOR VM/native-process conformance protocol is registered in
+[testing/stdlib-cbor-conformance.json](./testing/stdlib-cbor-conformance.json)
+and defined in
+[docs/contracts/stdlib-cbor-conformance.md](./docs/contracts/stdlib-cbor-conformance.md).
+Its seven shared cases use the retained independent wire corpus, a private
+verified-bytecode host callable and a native Rust kernel process. The initial
+`adapter-ready` state awaits the clean-source comparison and required gates.
+It does not promote source-level `std.cbor`, production host registration,
+native CBOR ABI or Cranelift lowering.
+
 ### 14.16 `std.regex`
 
 `std.regex` es el motor de expresiones regulares Unicode de Tondo, no un

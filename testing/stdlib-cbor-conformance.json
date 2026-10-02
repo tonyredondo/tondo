@@ -1,0 +1,109 @@
+{
+  "format": "tondo-stdlib-cbor-conformance/1",
+  "edition": "0.1",
+  "owner": "std.cbor",
+  "phase": "STD-0.1B",
+  "task": "STD-CBOR-CONF-001",
+  "status": "adapter-ready",
+  "parent": "testing/stdlib-cbor.json",
+  "document": "docs/contracts/stdlib-cbor-conformance.md",
+  "sources": [
+    "crates/tondo-reliability/examples/cbor_conformance_vm.rs",
+    "crates/tondo-native-runtime/examples/cbor_conformance.rs",
+    "crates/tondo-stdlib/examples/support/cbor_conformance_cases.rs",
+    "crates/tondo-reliability/tests/fixtures/cbor-wire.json",
+    "crates/tondo-stdlib/src/cbor.rs",
+    "crates/tondo-stdlib/src/serialization.rs",
+    "crates/tondo-vm/src/runtime.rs",
+    "crates/tondo-native-runtime/src/lib.rs",
+    "crates/tondo-reliability/src/cbor_model.rs",
+    "crates/tondo-reliability/tests/cbor_models.rs",
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+    "crates/tondo-reliability/Cargo.toml",
+    "crates/tondo-native-runtime/Cargo.toml",
+    "crates/tondo-stdlib/Cargo.toml",
+    "crates/tondo-vm/Cargo.toml",
+    "scripts/stdlib_cbor_conformance.py"
+  ],
+  "boundary": {
+    "vm": "verified-bytecode-test-only-host-callable",
+    "native": "rust-stdlib-process-no-cbor-abi",
+    "compiler_api": "not-implemented",
+    "production_host": "not-implemented",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed",
+    "simd": "not-measured-no-optimized-route",
+    "runtime_objects": "table-counter-only-kernel-does-not-allocate-runtime-objects"
+  },
+  "rules": {
+    "same_compiled_fixture_bytes": true,
+    "same_case_order": true,
+    "independent_wire_model_before_vm": true,
+    "fresh_process_per_probe": true,
+    "exact_returned_vm_strings": true,
+    "exact_native_objects": true,
+    "reader_fragments": [
+      1,
+      2,
+      7
+    ],
+    "valid_vectors": 61,
+    "invalid_vectors": 30,
+    "deterministic_outputs": 59,
+    "key_collisions": 2,
+    "events": 270,
+    "error": {
+      "kind": "InvalidUtf8",
+      "start": 5,
+      "end": 7,
+      "path": [
+        "ArrayIndex(0)",
+        "MapEntry(0)",
+        "MapValue",
+        "Tag"
+      ]
+    },
+    "limits": [
+      "input",
+      "depth",
+      "output"
+    ],
+    "terminal_streams": true
+  },
+  "cases": [
+    {
+      "id": "typed-dynamic",
+      "line": "typed-dynamic:3:18446744073709551615:2:3"
+    },
+    {
+      "id": "wire-model",
+      "line": "wire-model:61:30:raw-view-widths-tags"
+    },
+    {
+      "id": "deterministic",
+      "line": "deterministic:59:2:bytewise-shortest-nan-sign"
+    },
+    {
+      "id": "streaming",
+      "line": "streaming:61:270:fragments-1-2-7:closed"
+    },
+    {
+      "id": "errors-path",
+      "line": "errors-path:InvalidUtf8:5:7:array-0-map-0-value-tag"
+    },
+    {
+      "id": "limits-lifecycle",
+      "line": "limits-lifecycle:input-depth-output:atomic:terminal"
+    },
+    {
+      "id": "route-boundary",
+      "line": "route-boundary:scalar:public-api-not-implemented:native-abi-aot-not-claimed"
+    }
+  ],
+  "report": "target/reliability/evidence/stdlib-cbor-conformance.json",
+  "next_blocks": [
+    "STD-CBOR-DOC-001"
+  ]
+}

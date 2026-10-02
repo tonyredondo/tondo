@@ -402,3 +402,10 @@ scalar baseline with 91.5646% global line coverage, every global and risk-scope
 line/function/region dimension at or above 80%, and all six selected critical
 mutants caught. `STD-CBOR-CONF-001` and `STD-CBOR-DOC-001` remain pending;
 cross-implementation and public-use promotion do not follow from these gates.
+
+The bounded private VM/native Rust-process conformance protocol is registered
+in [testing/stdlib-cbor-conformance.json](../../testing/stdlib-cbor-conformance.json)
+and defined in [stdlib-cbor-conformance.md](./stdlib-cbor-conformance.md).
+Its `adapter-ready` state covers seven shared cases awaiting promotion checks;
+it does not implement the public compiler API, production host registration,
+native CBOR ABI or native AOT lowering.

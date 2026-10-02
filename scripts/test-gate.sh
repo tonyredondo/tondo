@@ -350,6 +350,12 @@ run_step stdlib-cbor-performance-contract-tests \
     scripts/stdlib-cbor-performance-test.sh
 run_step stdlib-cbor-performance \
     scripts/stdlib-cbor-performance.sh
+run_step stdlib-cbor-conformance-contract \
+    scripts/stdlib-cbor-conformance-check.sh
+run_step stdlib-cbor-conformance-contract-tests \
+    scripts/stdlib-cbor-conformance-test.sh
+run_step stdlib-cbor-conformance \
+    scripts/stdlib-cbor-conformance.sh
 run_step stdlib-regex-contract \
     scripts/stdlib-regex-check.sh
 run_step stdlib-regex-contract-tests \
