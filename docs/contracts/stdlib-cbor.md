@@ -380,7 +380,7 @@ native ABI, and native AOT lowering are not promoted by this kernel gate.
 codec has no built-in tag registry. `STD-CBOR-IMPL-001` closes at this bounded
 kernel boundary after the full functional gate and provenance-bound quality
 checks pass. Coverage uses only current workspace executable artifacts:
-global lines are 91.5669%, every global and risk-scope line/function/region
+global lines are 91.5653%, every global and risk-scope line/function/region
 dimension meets the unchanged 80% floor, and all six selected critical mutants
 are caught. `STD-CBOR-TEST-001` verifies the independent bounded model,
 61 valid and 30 invalid retained wire vectors, nine integration tests,

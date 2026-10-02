@@ -30,6 +30,17 @@ for mutation in 'duplicate|.valid[1].id=.valid[0].id' 'wire|.valid[0].wire="z0"'
     expect_failure "$name" env TONDO_STDLIB_CBOR_TEST_CORPUS="$tmp_dir/$name.json" scripts/stdlib-cbor-test-check.sh
 done
 scripts/stdlib-cbor-test-check.sh
+# The CI runner provides standard utilities, without requiring ripgrep.
+mkdir "$tmp_dir/no-rg" "$tmp_dir/no-grep"
+for utility in bash jq tail cmp grep; do
+    utility_path="$(command -v "$utility")"
+    ln -s "$utility_path" "$tmp_dir/no-rg/$utility"
+    if [[ "$utility" != grep ]]; then
+        ln -s "$utility_path" "$tmp_dir/no-grep/$utility"
+    fi
+done
+env PATH="$tmp_dir/no-rg" scripts/stdlib-cbor-test-check.sh
+expect_failure missing-inspection-tool env PATH="$tmp_dir/no-grep" scripts/stdlib-cbor-test-check.sh
 cargo test -q -p tondo-reliability --test cbor_models --locked
 cargo test -q -p tondo-stdlib cbor::tests --locked
 cargo check -q --manifest-path fuzz/Cargo.toml --bin stdlib_cbor --no-default-features --locked
@@ -45,4 +56,4 @@ jq -e '
 ' "$tmp_dir/minimal.json" >/dev/null
 # Ordinary fuzz commands must still include all existing compiler targets.
 cargo check -q --manifest-path fuzz/Cargo.toml --bins --locked
-echo "std.cbor tests: OK (12 rejected contract mutations, model/kernel tests and minimal/full harness builds)"
+echo "std.cbor tests: OK (12 rejected contract mutations, utility availability, model/kernel tests and minimal/full harness builds)"

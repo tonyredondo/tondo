@@ -69,6 +69,11 @@ Run `scripts/stdlib-cbor-test-test.sh` for the positive and negative contract
 checks and focused Rust suites; run `scripts/stdlib-cbor-fuzz.sh` for the smoke.
 `CARGO_TARGET_DIR` selects the task's artifact disk.
 
+The contract checker uses Bash, jq and standard grep/coreutils; ripgrep is not
+a runner dependency. The focused script checks a restricted `PATH` without
+ripgrep and rejects a missing inspection utility, so an unavailable tool cannot
+be interpreted as proof that the model has no production imports.
+
 ## Promotion boundary
 
 Only the independent bounded model, Rust kernel tests, corpus and bounded fuzz
@@ -79,6 +84,6 @@ code-size or performance claims. The kernel remains
 `host: not-claimed-until-compiler-cbor-abi`. Performance is the next owner leaf,
 followed by conformance and usage documentation. The full functional gate and
 current provenance-bound quality checks pass. Global line coverage is
-91.5669%; every global and risk-scope line/function/region dimension meets the
+91.5653%; every global and risk-scope line/function/region dimension meets the
 unchanged 80% floor, and all six selected critical mutants are caught. This
 evidence does not change the pending S1A prerequisites or release status.

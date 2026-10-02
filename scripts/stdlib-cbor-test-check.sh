@@ -59,9 +59,12 @@ for path in scripts/stdlib-cbor-test-check.sh scripts/stdlib-cbor-test-test.sh s
     [[ -x "$path" ]] || die "runner is not executable: $path"
 done
 [[ -s fuzz/corpus/stdlib_cbor/seed ]] || die "missing fuzz seed"
-! rg -q 'tondo_stdlib|tondo_compiler|tondo_vm' crates/tondo-reliability/src/cbor_model.rs \
-    || die "reference model imports production code"
-rg -Fq 'name = "stdlib_cbor"' fuzz/Cargo.toml || die "missing fuzz target"
-rg -Fq 'stdlib-cbor-test.md' docs/contracts/stdlib-cbor.md || die "missing parent documentation link"
-rg -Fq 'stdlib-cbor-test.json' TONDO_STANDARD_LIBRARY_SPEC.md || die "missing normative register link"
+if grep -Eq 'tondo_stdlib|tondo_compiler|tondo_vm' crates/tondo-reliability/src/cbor_model.rs; then
+    die "reference model imports production code"
+else
+    [[ "$?" == 1 ]] || die "reference model source could not be inspected"
+fi
+grep -Fq 'name = "stdlib_cbor"' fuzz/Cargo.toml || die "missing fuzz target"
+grep -Fq 'stdlib-cbor-test.md' docs/contracts/stdlib-cbor.md || die "missing parent documentation link"
+grep -Fq 'stdlib-cbor-test.json' TONDO_STANDARD_LIBRARY_SPEC.md || die "missing normative register link"
 echo "std.cbor tests: OK (independent wire oracle, persistent corpus, policies, limits and bounded fuzz)"

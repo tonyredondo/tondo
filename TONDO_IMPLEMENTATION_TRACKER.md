@@ -39,7 +39,7 @@ functional gate and provenance-bound quality checks pass. Every global and
 risk-scope coverage dimension meets the unchanged 80% floor; all six selected
 critical mutants are caught. `STD-CBOR-TEST-001` verifies the independent
 bounded wire model, retained corpus, kernel regressions and bounded fuzz.
-The current quality campaign measures 91.5669% global lines and preserves
+The current quality campaign measures 91.5653% global lines and preserves
 the 80% floor in every global and risk-scope coverage dimension. The next
 owner leaf is `STD-CBOR-PERF-001`.
 The kernel evidence does not imply
@@ -6723,7 +6723,7 @@ estas leaves.
   bounded document before exposing events. The 14 focused tests and strict
   Clippy are recorded by `scripts/stdlib-cbor-implementation.sh`. The full
   functional gate passes. Provenance-bound workspace coverage with current
-  executable artifacts measures 91.5669% global lines; every global and
+  executable artifacts measures 91.5653% global lines; every global and
   risk-scope line/function/region dimension meets the unchanged 80% floor.
   All six selected critical mutants are caught. Public compiler API,
   production host registration, native ABI, native AOT, performance, and
@@ -6738,7 +6738,7 @@ estas leaves.
   All malformed two-byte simple encodings below 32 are rejected across six
   routes under both non-minimal policies. The unchanged sanitizer campaign
   passes 128 runs with seed 4113. The full functional gate and current
-  provenance-bound quality checks pass: 91.5669% global lines, every global
+  provenance-bound quality checks pass: 91.5653% global lines, every global
   and risk-scope line/function/region dimension at or above 80%, and all six
   selected critical mutants caught. The register is
   `testing/stdlib-cbor-test.json`; the contract is
