@@ -46,7 +46,11 @@ expect_failure source env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/source.json" scri
 jq '.implementation.tests = .implementation.tests[0:13]' testing/stdlib-cbor.json > "$tmp_dir/test.json"
 expect_failure test env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/test.json" scripts/stdlib-cbor-implementation-check.sh
 
-jq '.promotion.next_blocks = ["STD-CBOR-DOC-001"]' testing/stdlib-cbor.json > "$tmp_dir/next.json"
+# DOC is legitimate after conformance closes. Always select a different
+# next block so this negative does not become a no-op on owner progression.
+jq '.promotion.next_blocks = (if .promotion.next_blocks == ["STD-CBOR-DOC-001"]
+    then ["STD-CBOR-CONF-001"] else ["STD-CBOR-DOC-001"] end)' \
+    testing/stdlib-cbor.json > "$tmp_dir/next.json"
 expect_failure next env TONDO_STDLIB_CBOR_CONTRACT="$tmp_dir/next.json" scripts/stdlib-cbor-implementation-check.sh
 
 scripts/stdlib-cbor-implementation-check.sh
