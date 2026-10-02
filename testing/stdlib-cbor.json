@@ -174,7 +174,19 @@
     "dispatch": "target-declared-and-input-size-based",
     "parser_stack": "explicit-worklist",
     "streaming_allocation": "bounded-by-chunk-and-limits",
-    "claims_before_perf_gate": "forbidden"
+    "claims_before_perf_gate": "forbidden",
+    "task": "STD-CBOR-PERF-001",
+    "contract": "testing/stdlib-cbor-performance.json",
+    "document": "docs/contracts/stdlib-cbor-performance.md",
+    "status": "measurement-ready",
+    "target": "x86_64-unknown-linux-gnu",
+    "backend": "rust-stdlib-kernel",
+    "profile": "test",
+    "workloads": 15,
+    "samples_per_workload": 27,
+    "selected_dispatch": "scalar-fixed-target",
+    "native_aot": "not-claimed",
+    "hosted_vm": "not-claimed-no-cbor-bridge"
   },
   "test_matrix": [
     {"id": "major-types", "required": true, "observables": ["all-major-types", "special-values", "wire-round-trip"]},

@@ -376,6 +376,17 @@ document before exposing events; `from_reader` is invariant to input
 fragmentation. Its `own` operation clones an owned event. Generated Tondo
 record/enum decoding, public compiler API, production host registration,
 native ABI, and native AOT lowering are not promoted by this kernel gate.
+
+The performance protocol is registered in
+[`testing/stdlib-cbor-performance.json`](../../testing/stdlib-cbor-performance.json)
+and defined in
+[`docs/contracts/stdlib-cbor-performance.md`](./stdlib-cbor-performance.md).
+Its initial `measurement-ready` state records the protocol without claiming
+a verified baseline. The
+fifteen bounded workloads measure the Rust scalar kernel, with logical resource
+models and no public compiler, production VM, native ABI/AOT or SIMD promotion.
+The performance owner remains open until clean-source measurement and the
+required functional and quality gates pass.
 `CborUnknownTagPolicy.Reject` rejects every tag at this boundary because the
 codec has no built-in tag registry. `STD-CBOR-IMPL-001` closes at this bounded
 kernel boundary after the full functional gate and provenance-bound quality

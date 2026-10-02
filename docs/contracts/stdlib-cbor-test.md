@@ -81,8 +81,10 @@ are promoted. This block does not register a public compiler API or production
 VM host, implement a native ABI or native AOT lowering, or establish SIMD,
 code-size or performance claims. The kernel remains
 `verified-stdlib-kernel`, with `public_api_promoted: false` and
-`host: not-claimed-until-compiler-cbor-abi`. Performance is the next owner leaf,
-followed by conformance and usage documentation. The full functional gate and
+`host: not-claimed-until-compiler-cbor-abi`. This test leaf records performance
+as its historical unlock, followed by conformance and usage documentation.
+The parent owner register carries the current next block as later leaves close.
+The full functional gate and
 current provenance-bound quality checks pass. Global line coverage is
 91.5653%; every global and risk-scope line/function/region dimension meets the
 unchanged 80% floor, and all six selected critical mutants are caught. This

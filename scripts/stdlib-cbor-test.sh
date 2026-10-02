@@ -80,7 +80,8 @@ for marker in \
         || { echo "std.cbor tests: missing marker $marker" >&2; exit 1; }
 done
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_cbor_progression";
   .task == "STD-CBOR-001"
   and .wire.major_types == ["unsigned-integer", "negative-integer", "byte-string", "text-string", "array", "map", "tag", "simple-or-float"]
   and .wire.length_forms == ["definite", "indefinite"]
@@ -98,11 +99,7 @@ jq -e '
   and .streaming.stack == "explicit-bounded-frames-and-worklists"
   and .errors.partial_success == false
   and .implementation.public_api_promoted == false
-  and (if .implementation.status == "verified-stdlib-kernel"
-       then (if .testing_contract == "testing/stdlib-cbor-test.json"
-             then .promotion.next_blocks == ["STD-CBOR-PERF-001"]
-             else .promotion.next_blocks == ["STD-CBOR-TEST-001"] end)
-       else .promotion.next_blocks == ["STD-CBOR-IMPL-001"] end)
+  and cbor_owner_progression
 ' testing/stdlib-cbor.json >/dev/null
 
 echo "std.cbor tests: OK (RFC 8949; tags; undefined; indefinite chunks; deterministic ordering; limits)"

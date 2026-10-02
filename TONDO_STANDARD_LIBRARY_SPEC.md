@@ -4195,6 +4195,15 @@ Their evidence does not promote public compiler, production VM, ABI or AOT
 integration. Every two-byte simple encoding with a value below 32 is malformed
 under RFC 8949 section 3.3, regardless of the non-minimal decode policy.
 
+The bounded Rust scalar performance protocol is registered in
+[testing/stdlib-cbor-performance.json](./testing/stdlib-cbor-performance.json)
+and defined in
+[docs/contracts/stdlib-cbor-performance.md](./docs/contracts/stdlib-cbor-performance.md).
+The `measurement-ready` state records fifteen target-qualified kernel routes,
+not completion of `STD-CBOR-PERF-001`. A development capture, a retained-resource
+model and an unoptimized Rust test profile cannot promote the public Tondo API,
+production VM bridge, native ABI/AOT, SIMD or conformance.
+
 ### 14.16 `std.regex`
 
 `std.regex` es el motor de expresiones regulares Unicode de Tondo, no un

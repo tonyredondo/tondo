@@ -36,6 +36,7 @@ jq -e '
   and .fuzz.minimal_dependency_graph == "stdlib-only-no-compiler-vm-conformance-or-reliability-cli"
   and .promotion == {model_test_fuzz_complete:true, public_api_promoted:false,
     production_host_registration:"not-claimed", native_abi:"not-claimed", native_aot:"not-claimed",
+    # The test leaf records its own unlock; the parent owns current progression.
     simd:"not-claimed", performance:"not-claimed", next_blocks:["STD-CBOR-PERF-001"],
     remaining:["STD-CBOR-PERF-001","STD-CBOR-CONF-001","STD-CBOR-DOC-001"]}
 ' "$contract" >/dev/null || die "invalid testing contract"

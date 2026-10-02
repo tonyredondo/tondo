@@ -344,6 +344,12 @@ run_step stdlib-cbor-testing-contract-tests \
     scripts/stdlib-cbor-test-test.sh
 run_step stdlib-cbor-fuzz \
     scripts/stdlib-cbor-fuzz.sh
+run_step stdlib-cbor-performance-contract \
+    scripts/stdlib-cbor-performance-check.sh
+run_step stdlib-cbor-performance-contract-tests \
+    scripts/stdlib-cbor-performance-test.sh
+run_step stdlib-cbor-performance \
+    scripts/stdlib-cbor-performance.sh
 run_step stdlib-regex-contract \
     scripts/stdlib-regex-check.sh
 run_step stdlib-regex-contract-tests \

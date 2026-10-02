@@ -15,7 +15,8 @@ die() {
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "owner contract contains CR or trailing whitespace"
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_cbor_progression";
   .format == "tondo-stdlib-owner-contract/1"
   and .owner == "std.cbor"
   and .parent_owner == "std"
@@ -149,21 +150,7 @@ jq -e '
   and all(.corpora[]; .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and (
-    (.implementation.status == "kernel-verified-quality-pending"
-      and .implementation.quality_gate == "pending-80-percent-per-scope"
-      and .implementation.required_follow_ups == ["STD-CBOR-IMPL-001", "STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
-      and .promotion.next_blocks == ["STD-CBOR-IMPL-001"])
-    or (.implementation.status == "verified-stdlib-kernel"
-      and .implementation.quality_gate == "verified-80-percent-per-scope"
-      and (
-        (.implementation.required_follow_ups == ["STD-CBOR-TEST-001", "STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
-          and .promotion.next_blocks == ["STD-CBOR-TEST-001"])
-        or (.testing_contract == "testing/stdlib-cbor-test.json"
-          and .implementation.required_follow_ups == ["STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
-          and .promotion.next_blocks == ["STD-CBOR-PERF-001"])
-      ))
-  )
+  and cbor_owner_progression
   and .implementation.public_api_promoted == false
   and .implementation.host == "not-claimed-until-compiler-cbor-abi"
   and .implementation.native_aot_lowering == "not-claimed"
