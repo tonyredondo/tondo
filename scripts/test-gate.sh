@@ -374,6 +374,8 @@ run_step stdlib-regex-testing-contract \
     scripts/stdlib-regex-test-check.sh
 run_step stdlib-regex-testing-contract-tests \
     scripts/stdlib-regex-test-test.sh
+run_step stdlib-regex-fuzz \
+    scripts/stdlib-regex-fuzz.sh
 run_step stdlib-uuid-contract \
     scripts/stdlib-uuid-check.sh
 run_step stdlib-uuid-contract-tests \
