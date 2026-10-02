@@ -400,12 +400,18 @@ campaign with unchanged sanitizers. Its full functional and quality gates
 pass at the model/Rust-kernel boundary. `STD-CBOR-PERF-001` closes its bounded
 scalar baseline with 91.5646% global line coverage, every global and risk-scope
 line/function/region dimension at or above 80%, and all six selected critical
-mutants caught. `STD-CBOR-CONF-001` and `STD-CBOR-DOC-001` remain pending;
-cross-implementation and public-use promotion do not follow from these gates.
+mutants caught. `STD-CBOR-CONF-001` verifies the bounded private VM/native Rust
+process comparison; `STD-CBOR-DOC-001` remains pending. Public compiler/native
+API promotion does not follow from these gates.
 
 The bounded private VM/native Rust-process conformance protocol is registered
 in [testing/stdlib-cbor-conformance.json](../../testing/stdlib-cbor-conformance.json)
 and defined in [stdlib-cbor-conformance.md](./stdlib-cbor-conformance.md).
-Its `adapter-ready` state covers seven shared cases awaiting promotion checks;
-it does not implement the public compiler API, production host registration,
-native CBOR ABI or native AOT lowering.
+Its `verified-hosted-vm-adapter-and-native-stdlib-process` state covers seven
+shared cases, 61 valid and 30 invalid wire vectors, exact typed/dynamic/event
+observables and deterministic encodings. Clean-source comparison, report
+negatives and the full functional/quality gates pass. The renewed campaign
+measures 91.5681% global lines, every coverage dimension meets the unchanged
+80% floor and six critical mutants are caught. This does not implement the
+public compiler API, production host registration, native CBOR ABI or native
+AOT lowering.

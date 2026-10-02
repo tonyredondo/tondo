@@ -3,9 +3,10 @@
 `STD-CBOR-CONF-001` compares seven cases through verified hosted bytecode and
 a fresh native Rust process. The register is
 [`testing/stdlib-cbor-conformance.json`](../../testing/stdlib-cbor-conformance.json).
-Its initial `adapter-ready` state describes executable cases awaiting the
-clean-source comparison and required functional/quality gates. A verified
-closure advances the owner to `STD-CBOR-DOC-001`.
+Its `verified-hosted-vm-adapter-and-native-stdlib-process` state follows the
+clean-source comparison and required functional/quality gates. The historical
+`adapter-ready` state describes executable cases before that verification.
+The next owner block is `STD-CBOR-DOC-001`.
 
 Both probes compile the same
 [`shared case implementation`](../../crates/tondo-stdlib/examples/support/cbor_conformance_cases.rs)
@@ -63,3 +64,10 @@ false cleanup, nonzero counters, incorrect source hashes, stale owner state,
 and unsupported promotion claims. Kernel, independent-model and VM dispatch
 tests must pass before the report is written. The terminal runtime counter is
 not RSS, allocator instrumentation or a native codec handle count.
+
+The closure campaign verifies 91.5681% global line coverage, every global and
+risk-scope line/function/region dimension at or above the unchanged 80% floor,
+and all six selected critical mutants caught. The full functional gate passes,
+including the current 206-case draft corpus. These results qualify the shared
+Rust-kernel and private-adapter boundary described here; they do not promote
+the public Tondo API or release readiness.

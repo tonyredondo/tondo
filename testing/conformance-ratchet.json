@@ -7,11 +7,11 @@
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "890eb256bced2cadb1561f1e2395f594e61f0e73ab69a240d6a2223e0ddcc4a0"
+    "sha256": "5d1efe2b83ff587e08be49e700d7d218e32d070cc08809110c1e8c9b9fae86ed"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "d4339f6f22252db7e184b1a49cd188f1e2d6162437fc0a2e751029b7663e0457"
+    "sha256": "733e6f3e5b51a0f79c078a2fd5ef51aa7ae905e3f1b6dd3c8d019503555a47c7"
   },
   "gap_audit": {
     "path": "testing/normative-gap-audit.json",

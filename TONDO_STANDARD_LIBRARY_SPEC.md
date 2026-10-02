@@ -4185,8 +4185,8 @@ meets the unchanged 80% floor, and all six selected critical mutants are caught.
 Public compiler API, production VM host registration, native ABI and native AOT
 lowering remain unclaimed. `STD-CBOR-TEST-001` verifies the independent bounded
 model, retained corpus, Rust-kernel regressions and bounded fuzz. Performance
-has its bounded Rust scalar baseline; conformance and usage remain
-`STD-CBOR-CONF-001` and `STD-CBOR-DOC-001`.
+has its bounded Rust scalar baseline, and `STD-CBOR-CONF-001` verifies the
+private VM/native Rust process comparison. Usage remains `STD-CBOR-DOC-001`.
 
 The independent bounded model and Rust-kernel test/fuzz boundary are registered
 in [testing/stdlib-cbor-test.json](./testing/stdlib-cbor-test.json) and defined
@@ -4213,11 +4213,18 @@ The bounded CBOR VM/native-process conformance protocol is registered in
 [testing/stdlib-cbor-conformance.json](./testing/stdlib-cbor-conformance.json)
 and defined in
 [docs/contracts/stdlib-cbor-conformance.md](./docs/contracts/stdlib-cbor-conformance.md).
-Its seven shared cases use the retained independent wire corpus, a private
-verified-bytecode host callable and a native Rust kernel process. The initial
-`adapter-ready` state awaits the clean-source comparison and required gates.
-It does not promote source-level `std.cbor`, production host registration,
-native CBOR ABI or Cranelift lowering.
+Its seven shared cases use 61 valid and 30 invalid retained wire vectors,
+the independent bounded model, a private verified-bytecode host callable and
+a native Rust kernel process. The register is
+`verified-hosted-vm-adapter-and-native-stdlib-process` after clean-source exact
+comparison, report/owner negatives and the full functional/quality gates.
+It verifies typed/dynamic round trips, raw/views, 270 events under fragments
+of one, two and seven bytes, exact error spans/paths, atomic limits, terminal
+streams, 59 deterministic outputs and two rejected key collisions. The
+conformance campaign measures 91.5681% global lines, every coverage dimension
+meets the unchanged 80% floor, and all six critical mutants are caught.
+This does not promote source-level `std.cbor`, production host registration,
+native CBOR ABI or Cranelift lowering. `STD-CBOR-DOC-001` remains pending.
 
 ### 14.16 `std.regex`
 

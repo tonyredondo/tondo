@@ -4,7 +4,7 @@
   "owner": "std.cbor",
   "phase": "STD-0.1B",
   "task": "STD-CBOR-CONF-001",
-  "status": "adapter-ready",
+  "status": "verified-hosted-vm-adapter-and-native-stdlib-process",
   "parent": "testing/stdlib-cbor.json",
   "document": "docs/contracts/stdlib-cbor-conformance.md",
   "sources": [

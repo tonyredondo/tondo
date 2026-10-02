@@ -41,9 +41,11 @@ critical mutants are caught. `STD-CBOR-TEST-001` verifies the independent
 bounded wire model, retained corpus, kernel regressions and bounded fuzz.
 `STD-CBOR-PERF-001` verifies fifteen target-qualified Rust scalar routes with
 27 retained samples each, exact independent oracles and a declared logical
-resource model. The current quality campaign measures 91.5646% global lines
+resource model. `STD-CBOR-CONF-001` verifies seven shared private VM/native Rust
+process cases with the independent wire model. The current quality campaign
+measures 91.5681% global lines
 and preserves the 80% floor in every global and risk-scope coverage dimension.
-The next owner leaf is `STD-CBOR-CONF-001`.
+The next owner leaf is `STD-CBOR-DOC-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6069,8 +6071,8 @@ publica hasta cerrar el gate final.
   permitidos; break fuera del frame actual, chunks de tipo incorrecto y
   trailing data son rechazos atómicos. `CborValue` conserva tags, orden de
   arrays/maps, duplicados según policy, bytes, simples no asignados y bits de
-  floats; `CborRaw` conserva la codificación exacta y `CborValueView` presta
-  payloads hasta el siguiente evento. `CborReader`/`CborWriter` exponen
+  floats; `CborRaw` conserva la codificación exacta y `CborValueView` presta los
+  bytes codificados del input validado. `CborReader`/`CborWriter` exponen
   frames explícitos para chunks y tags, son invariantes al chunking, acotados
   por límites finitos y nunca usan la pila recursiva del host. El modo
   ordinario acepta formas no mínimas y NaN sin normalizar; `encodeDeterministic`
@@ -6080,10 +6082,10 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-cbor-check.sh` y `scripts/stdlib-cbor-test.sh`, integrados
   en `test-gate.sh`. The bounded Rust kernel is verified by
   `STD-CBOR-IMPL-001`; compiler/public API, production host registration and
-  native ABI/AOT remain unclaimed. Independent model/fuzzing, performance,
-  conformance and usage documentation remain pending under
-  `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
-  `STD-CBOR-CONF-001` y `STD-CBOR-DOC-001`.
+  native ABI/AOT remain unclaimed. `STD-CBOR-TEST-001` verifies the independent
+  model/fuzzing boundary; `STD-CBOR-PERF-001` verifies the bounded scalar
+  baseline; `STD-CBOR-CONF-001` verifies the private VM/native Rust process
+  comparison. Usage documentation remains pending under `STD-CBOR-DOC-001`.
 
 - [x] **STD-REGEX-001 — Especificar `std.regex`.** El registro
   [`testing/stdlib-regex.json`](./testing/stdlib-regex.json) y el contrato
@@ -6765,8 +6767,21 @@ estas leaves.
   test-profile boundary. Public compiler API, production VM registration,
   native ABI/AOT, SIMD and code-size claims remain absent. Next:
   `STD-CBOR-CONF-001`.
-- [ ] **STD-CBOR-CONF-001 — Conformar CBOR.** Verificar interoperabilidad,
-  typed/dynamic/streaming, determinismo y equivalencia VM/nativo.
+- [x] **STD-CBOR-CONF-001 — Conformar CBOR.** Seven shared cases compare
+  a private verified-bytecode host adapter and a fresh native Rust process,
+  both using the scalar kernel and identical compiled fixtures. The independent
+  model verifies the 61 valid and 30 invalid wire vectors. Exact typed/dynamic,
+  raw/view, deterministic and event paths, 270 events under fragments of one,
+  two and seven bytes, nested error spans/paths, atomic limits and terminal
+  states pass. Report/owner negatives, clean-source capture and the full
+  functional/quality gates pass: 91.5681% global lines, every global/risk
+  dimension at or above 80%, six critical mutants caught. The native table
+  counter observes zero objects; the kernel allocates no runtime table objects,
+  so this does not claim native codec memory management. Public compiler API,
+  production host registration, native CBOR ABI, Cranelift lowering and SIMD
+  remain unclaimed. `testing/stdlib-cbor-conformance.json` and
+  `docs/contracts/stdlib-cbor-conformance.md` record the exact boundary.
+  Next: `STD-CBOR-DOC-001`.
 - [ ] **STD-CBOR-DOC-001 — Documentar CBOR.** Explicar tags, determinismo,
   preservación, límites, costes y ejemplos ejecutables.
 
