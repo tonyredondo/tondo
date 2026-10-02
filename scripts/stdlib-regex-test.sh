@@ -48,7 +48,7 @@ expect_failure duplicate-corpus env TONDO_STDLIB_REGEX_CONTRACT="$tmp_dir/duplic
 
 for marker in \
     'inicio más a la izquierda' \
-    'longitud greedy más larga' \
+    'local greedy/lazy priorities' \
     'longitud cero' \
     'Unicode 16.0.0' \
     'RegexOptions.ungreedy' \
@@ -62,7 +62,8 @@ for marker in \
         || { echo "std.regex tests: missing marker $marker" >&2; exit 1; }
 done
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_regex_progression";
   .task == "STD-REGEX-001"
   and .unicode.version == "16.0.0"
   and .unicode.normalization == "none"
@@ -79,7 +80,7 @@ jq -e '
   and .performance.scalar_oracle == true
   and .performance.simd_allowed_after_equivalence == true
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and regex_kernel_progression
 ' testing/stdlib-regex.json >/dev/null
 
 echo "std.regex tests: OK (syntax; Unicode; captures; zero-width progress; bounded linear safety)"

@@ -87,7 +87,7 @@
   },
   "semantics": {
     "search": "leftmost",
-    "tie_break": "greedy-longest-then-alternative-order",
+    "tie_break": "alternative-order-and-local-greedy-lazy-priorities",
     "ungreedy": "reverses-greedy-and-lazy-preference",
     "full_match": "span-equals-whole-input",
     "find_all": "non-overlapping",
@@ -112,7 +112,8 @@
     "types": ["Regex", "RegexOptions", "RegexLimits", "RegexErrorKind", "RegexError", "RegexSpan", "RegexCapture", "RegexMatch", "RegexFindIterator"],
     "functions": ["compile", "isMatch", "isFullMatch", "match", "findAll", "replace", "replaceAll"],
     "iterator_methods": ["next"],
-    "terminal_state": "iterator-none-is-terminal",
+    "terminal_state": "iterator-error-once-then-terminal-none",
+    "iterator_protocol": "Iterator[RegexMatch ! RegexError]",
     "typed_dispatch": "not-applicable-pure-text-engine",
     "annotations": [],
     "unicode_descriptor": "recorded-at-compile"
@@ -132,7 +133,7 @@
       {"id": "find-all", "signature": "pub fn Regex.findAll(self, input: String): RegexFindIterator ! RegexError", "kind": "iterator", "effect": "pure"},
       {"id": "replace", "signature": "pub fn Regex.replace(self, input: String, replacement: String): String ! RegexError", "kind": "replace", "effect": "pure"},
       {"id": "replace-all", "signature": "pub fn Regex.replaceAll(self, input: String, replacement: String): String ! RegexError", "kind": "replace", "effect": "pure"},
-      {"id": "iterator-next", "signature": "pub fn RegexFindIterator.next(var self): RegexMatch?", "kind": "iterator", "effect": "pure"},
+      {"id": "iterator-next", "signature": "pub fn RegexFindIterator.next(var self): (RegexMatch ! RegexError)?", "kind": "iterator", "effect": "pure"},
       {"id": "match-capture", "signature": "pub fn RegexMatch.capture(self, index: Int): RegexCapture?", "kind": "capture", "effect": "pure"},
       {"id": "match-capture-name", "signature": "pub fn RegexMatch.captureName(self, name: String): RegexCapture?", "kind": "capture", "effect": "pure"},
       {"id": "span-slice", "signature": "pub fn RegexSpan.slice(self, input: String): String ! RegexError", "kind": "span", "effect": "pure"}
@@ -174,6 +175,7 @@
     "type": "RegexError",
     "location": "phase-and-pattern-or-input-byte-offset",
     "partial_success": false,
+    "iterator_atomicity": "per-element-prior-matches-remain-valid",
     "kinds": ["InvalidSyntax", "UnexpectedEnd", "InvalidEscape", "InvalidUnicodeScalar", "InvalidUnicodeProperty", "InvalidClass", "InvalidRange", "InvalidQuantifier", "InvalidCaptureName", "DuplicateCaptureName", "UnsupportedFeature", "PatternLimitExceeded", "ProgramLimitExceeded", "InputLimitExceeded", "StepLimitExceeded", "MatchLimitExceeded", "ReplacementLimitExceeded", "InvalidReplacement", "OutputLimitExceeded", "InvalidBoundary", "OutOfMemory", "NoProgress"]
   },
   "test_matrix": [
@@ -226,12 +228,34 @@
       {"id": "performance", "requires": ["scalar-oracle", "adversarial-input", "target-qualified-report", "allocation-report"]},
       {"id": "promote", "requires": ["linear-safety-proof", "deterministic-errors", "unicode-descriptor-parity", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-REGEX-IMPL-001"]
   },
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "ready-stdlib-kernel",
+    "quality_gate": "pending-80-percent-per-scope",
     "public_api_promoted": false,
     "host": "not-applicable-pure-core",
+    "production_vm_registration": "not-claimed",
+    "native_abi": "not-claimed",
+    "native_aot_lowering": "not-claimed",
+    "selected_route": "rust-kernel-ordered-thompson-nfa",
+    "parser_dependency": {"name": "regex-syntax", "version": "=0.8.10", "unicode": "16.0.0"},
+    "sources": ["crates/tondo-stdlib/src/regex.rs", "crates/tondo-stdlib/src/regex/syntax.rs", "crates/tondo-stdlib/src/regex/engine.rs", "crates/tondo-stdlib/src/lib.rs"],
+    "tests": [
+      "crates/tondo-stdlib/tests/regex_kernel.rs::local_priorities_and_full_search_are_distinct",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::captures_preserve_optional_and_empty_repeated_groups",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::unicode_16_properties_simple_folding_and_exact_word_set",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::line_anchors_dot_and_options_are_explicit",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::iterator_is_lazy_fallible_cumulative_and_fused",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::replacement_templates_and_zero_width_progress_are_atomic",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::closed_dialect_rejects_extensions_and_reports_spans",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::compile_and_match_limits_are_nominal_and_fingerprints_are_stable",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::bounded_ambiguous_and_nested_patterns_terminate_without_recursion",
+      "crates/tondo-stdlib/tests/regex_kernel.rs::malformed_unicode_patterns_never_panic_or_split_error_boundaries"
+    ],
+    "heap_metric": "conservative-logical-storage-not-rss-or-vm-allocator",
+    "system_oom_recovery": "not-claimed-for-dependency-or-rust-global-allocator",
+    "evidence_report": "target/reliability/evidence/stdlib-regex-implementation.json",
     "required_follow_ups": ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
   }
 }

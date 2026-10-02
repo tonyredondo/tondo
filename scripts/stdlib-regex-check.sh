@@ -15,7 +15,8 @@ die() {
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "owner contract contains CR or trailing whitespace"
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_regex_progression";
   .format == "tondo-stdlib-owner-contract/1"
   and .owner == "std.regex"
   and .parent_owner == "std"
@@ -66,7 +67,7 @@ jq -e '
   and .engine.matching_complexity == "linear-in-input-within-max-steps"
   and .engine.deterministic == true
   and .semantics.search == "leftmost"
-  and .semantics.tie_break == "greedy-longest-then-alternative-order"
+  and .semantics.tie_break == "alternative-order-and-local-greedy-lazy-priorities"
   and .semantics.find_all == "non-overlapping"
   and .semantics.zero_width_progress == "one-unicode-scalar"
   and .semantics.offsets == "utf8-byte-half-open-scalar-boundaries"
@@ -77,7 +78,9 @@ jq -e '
   and .api.module == "std.regex"
   and ([.api.functions[]] | sort) == ["compile", "findAll", "isFullMatch", "isMatch", "match", "replace", "replaceAll"]
   and .api.iterator_methods == ["next"]
-  and .api.terminal_state == "iterator-none-is-terminal"
+  and .api.terminal_state == "iterator-error-once-then-terminal-none"
+  and .api.iterator_protocol == "Iterator[RegexMatch ! RegexError]"
+  and (.surface.signatures[] | select(.id == "iterator-next") | .signature) == "pub fn RegexFindIterator.next(var self): (RegexMatch ! RegexError)?"
   and .api.unicode_descriptor == "recorded-at-compile"
   and ([.surface.types[]] | sort) == ["Regex", "RegexCapture", "RegexError", "RegexErrorKind", "RegexFindIterator", "RegexLimits", "RegexMatch", "RegexOptions", "RegexSpan"]
   and (.surface.signatures | length) == 16
@@ -98,6 +101,7 @@ jq -e '
   and .errors.type == "RegexError"
   and .errors.location == "phase-and-pattern-or-input-byte-offset"
   and .errors.partial_success == false
+  and .errors.iterator_atomicity == "per-element-prior-matches-remain-valid"
   and (.errors.kinds | length) == 22
   and ((.errors.kinds | unique | length) == (.errors.kinds | length))
   and ((.errors.kinds | index("UnsupportedFeature")) != null)
@@ -115,11 +119,7 @@ jq -e '
   and all(.corpora[]; .source == "owner-generated" and .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
-  and .implementation.status == "pending-after-native-gate"
-  and .implementation.public_api_promoted == false
-  and .implementation.host == "not-applicable-pure-core"
-  and .implementation.required_follow_ups == ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+  and regex_kernel_progression
 ' "$contract" >/dev/null || die "invalid machine-readable std.regex contract"
 
 for path in \

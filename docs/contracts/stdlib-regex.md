@@ -102,7 +102,7 @@ La gramática abstracta es:
 ```text
 pattern       := alternation
 alternation   := sequence ("|" sequence)*
-sequence      := atom quantifier?
+sequence      := (atom quantifier?)*
 atom          := literal | "." | class | group | anchor
 group         := "(" alternation ")"
                 | "(?:" alternation ")"
@@ -110,12 +110,12 @@ group         := "(" alternation ")"
 class         := "[" "^"? class_item+ "]"
 class_item    := scalar | scalar "-" scalar | escape | property
 escape        := "\\" ("\\" | "." | "^" | "$" | "|" | "(" | ")"
-                | "[" | "]" | "{" | "}" | "*" | "+" | "?"
+                | "[" | "]" | "{" | "}" | "*" | "+" | "?" | "-"
                 | "a" | "f" | "n" | "r" | "t" | "v"
                 | "d" | "D" | "s" | "S" | "w" | "W" | "b"
                 | "A" | "z" | "p" | "P" | "x")
 property      := "\p{" property_name "}" | "\P{" property_name "}"
-quantifier    := "*" | "+" | "?" | "{m}" | "{m,n}" | "{m,}"
+quantifier    := ("*" | "+" | "?" | "{m}" | "{m,n}" | "{m,}") "?"?
 ```
 
 Detalles normativos:
@@ -185,10 +185,12 @@ no incluye direcciones, timestamps ni hashes de memoria del host.
 Todas las operaciones de búsqueda siguen la misma regla:
 
 1. se elige el inicio más a la izquierda en scalars/bytes del input;
-2. entre alternativas que empiezan ahí se elige la longitud greedy más larga,
-   o la más corta si está activo `ungreedy`/lazy;
-3. en igualdad se conserva el orden de las alternativas del patrón; y
-4. los captures se resuelven con la misma prioridad, de forma determinista.
+2. alternatives retain their order in the pattern;
+3. each quantifier applies local greedy/lazy priorities, inverted by `ungreedy`;
+4. captures follow those same priorities deterministically.
+
+For example, `a|ab` over `ab` selects `a`; `a*?a*` over `aaa` selects `aaa`.
+Selection does not impose a global longest or shortest match rule.
 
 `isMatch` busca en cualquier posición. `isFullMatch` exige que la coincidencia
 abarque exactamente todo el input. `match` devuelve la primera coincidencia con
@@ -199,8 +201,10 @@ scalar Unicode; así un patrón vacío siempre termina y no produce duplicados.
 `RegexFindIterator` conserva solo el cursor, los offsets y los captures del
 último match. Presta el input mientras vive el iterador, no copia el texto y no
 puede sobrevivir al owner del input. Consumirlo con `for` usa el protocolo
-`Iterator[RegexMatch]` ordinario; no existe `AsyncIterator` ni una operación
-`selectable`.
+`Iterator[RegexMatch ! RegexError]`. It is lazy: each step produces a complete
+match or one nominal error, after which the cursor returns `none` permanently.
+Previously emitted matches remain valid. No `AsyncIterator` or `selectable`
+operation is provided. Step and match budgets are cumulative across the cursor.
 
 ### 4.3 Captures y spans
 
@@ -262,7 +266,7 @@ pub fn Regex.match(self, input: String): RegexMatch? ! RegexError
 pub fn Regex.findAll(self, input: String): RegexFindIterator ! RegexError
 pub fn Regex.replace(self, input: String, replacement: String): String ! RegexError
 pub fn Regex.replaceAll(self, input: String, replacement: String): String ! RegexError
-pub fn RegexFindIterator.next(var self): RegexMatch?
+pub fn RegexFindIterator.next(var self): (RegexMatch ! RegexError)?
 pub fn RegexMatch.capture(self, index: Int): RegexCapture?
 pub fn RegexMatch.captureName(self, name: String): RegexCapture?
 pub fn RegexSpan.slice(self, input: String): String ! RegexError
@@ -334,8 +338,10 @@ NoProgress
 
 La API no hace panic por input del usuario. Un límite, error de sintaxis,
 replacement inválido o falta de memoria no publica `Regex`, `RegexMatch`,
-iterator ni output parcial. Las llamadas puras no tienen estado terminal entre
-operaciones; un `RegexFindIterator` agotado devuelve `none` para siempre.
+iterator ni output parcial. Atomicity is per element for the lazy iterator:
+an error preserves earlier complete matches and makes the cursor terminal.
+Other pure operations have no terminal state between calls. An exhausted
+`RegexFindIterator` returns `none` forever.
 
 ## 8. Rendimiento y seguridad
 
@@ -377,6 +383,81 @@ con la especificación principal y los checks ejecutables son
 [`scripts/stdlib-regex-check.sh`](../../scripts/stdlib-regex-check.sh) y
 [`scripts/stdlib-regex-test.sh`](../../scripts/stdlib-regex-test.sh).
 
-La implementación queda deliberadamente pendiente de las leaves de 21.3.10 y
-de `NATIVE-001`; cerrar esta frontera B0 no promueve una API runtime implementada
-ni abre todavía la matriz de owners ejecutables.
+## 10. Executable Rust kernel boundary
+
+`STD-REGEX-IMPL-001` uses `regex-syntax =0.8.10` for its iterative parser and
+Unicode 16.0.0 tables, with an ordered Thompson NFA implemented in Tondo's Rust
+standard-library crate. The register distinguishes `ready-stdlib-kernel`
+(functional checks ready, quality still pending) from `verified-stdlib-kernel`
+(functional and workspace quality proof complete). Neither state promotes a
+public compiler API, production VM registration, native ABI, native AOT,
+SIMD, multiversion dispatch or measured performance.
+
+The Rust kernel is in `crates/tondo-stdlib/src/regex.rs` and its `syntax` and
+`engine` modules. `Regex::find` implements the specified `Regex.match` operation;
+other method names use Rust snake case. `RegexCapture` is a span, captures are
+indexed including capture zero, and `capture_count()` excludes capture zero.
+`capture_names()` visits named captures in opening-parenthesis order. Matches
+own their spans and share immutable name metadata. The iterator borrows both
+the program and UTF-8 input; successful matches remain usable after it ends.
+
+Closed-dialect admission counts syntax frames and captures before the dependency
+constructs its AST. It checks repetition bounds and rejects unsupported syntax
+before translation. AST and HIR traversal, program construction, thread closure
+and destruction use explicit worklists. Each class is admitted separately before
+translating the entire pattern. `\w`, `\W` and `\b` use Tondo's exact word set;
+`Join_Control` is excluded even though the dependency's default word class
+includes it. Property assignments are limited to General Category, Script and
+Script Extensions. Bare General Category, Script and supported UCD binary names
+use the pinned tables. Age, segmentation property assignments, and synthetic
+`Any`, `ASCII` and `Assigned` properties are outside this descriptor.
+
+Alternatives and repetition splits preserve local priorities. A successful
+candidate suppresses lower-priority threads while higher-priority threads can
+continue. Zero-progress loop exits retain the final empty capture without
+re-entering an empty repetition. Visited state includes the active loop progress
+depth; marking only the instruction would lose valid paths and empty captures.
+Full matching checks the end condition during selection, so `a|ab` fully matches
+`ab` through its second alternative even though ordinary search selects `a`.
+
+Each search is linear in input length for a fixed compiled program, with bounded
+thread width and capture snapshots. `findAll` and `replaceAll` may perform several
+searches over overlapping suffixes: for example, `a*b|a` over repeated `a` can
+rescan text. They have a cumulative `max_steps` budget, not a claim of total
+linear enumeration time. The same budget covers failed attempts, duplicates
+visited during closure and consuming transitions. The iterator emits one error
+then terminal `none`; `replaceAll` discards its builder on any error. Every
+replacement template is validated even when no match exists. Match budgets
+check before emission and allow exact exhaustion when no further match exists.
+
+With `multiLine` and `crlf`, anchors recognize LF and the complete CRLF pair,
+never the position between CR and LF. A standalone CR is not a line boundary.
+The dot excludes CR and LF with `crlf`, unless `dotMatchesNewline` is enabled.
+`RegexSpan.slice` checks ordering, range and UTF-8 scalar boundaries before
+returning an owned copy.
+
+The Rust mapping of `vm_heap` defaults to 128 MiB of conservative logical storage.
+Admission includes a 256-byte-per-pattern-byte parser estimate, materialized
+Unicode ranges, program entries, visited progress states, thread/capture
+snapshots and replacement buffers. This is not RSS, allocation-call counting,
+or a production VM allocator guarantee. Fallible owned buffer reservations and
+logical-budget exhaustion produce `OutOfMemory`; recovery from exhaustion in
+the dependency or Rust global allocator is not claimed. No host allocator or
+environment setting changes matching behavior.
+
+Compile identity is SHA-256 over a versioned domain, Unicode version, exact
+pattern bytes, the five option flags and all twelve limits encoded as little
+endian u64 values. It excludes paths, pointer values, timing and hash-map seeds.
+Functional proof covers syntax and rejection spans, captures, Unicode 16,
+folding, anchors, local priorities, iterator lifecycle, replacements, limits,
+fingerprints, a small-stack nested-pattern check and 4,096 deterministic
+generated patterns. An independent bounded model and fuzz promotion remain
+`STD-REGEX-TEST-001`; performance, shared VM/native conformance and an executable
+usage guide remain their separate leaves.
+
+Run `scripts/stdlib-regex-implementation-check.sh` and
+`scripts/stdlib-regex-implementation-test.sh` for contract and kernel proof.
+`scripts/stdlib-regex-implementation.sh` generates source-bound functional
+evidence from the canonical tests and Clippy; it does not measure coverage.
+Quality is established separately at the unchanged 80% global and per-scope
+floor, with the critical mutation baseline preserved.

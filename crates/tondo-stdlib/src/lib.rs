@@ -13,6 +13,7 @@ pub mod math;
 pub mod messagepack;
 pub mod path;
 pub mod protobuf;
+pub mod regex;
 pub mod serialization;
 pub mod testing;
 pub mod toml;

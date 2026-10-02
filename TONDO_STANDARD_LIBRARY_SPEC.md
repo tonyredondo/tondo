@@ -4257,14 +4257,16 @@ look-around, recursion, conditionals, código embebido, includes, clases
 dependientes de locale, flags embebidos y matching de bytes inválidos se
 rechazan con un error de compilación; no se reinterpretan silenciosamente.
 
-`Regex.compile` produce un valor inmutable y reutilizable. `isMatch`,
-`isFullMatch`, `match`, `findAll`, `replace` y `replaceAll` son operaciones
-puramente síncronas y bounded; `findAll` usa el `Iterator[RegexMatch]` ordinario,
-no `AsyncIterator`. La selección es leftmost y después greedy-longest (o lazy
-cuando corresponda), con orden de alternativas estable. Los matches no se
-solapan y un match de longitud cero avanza un scalar Unicode para garantizar
-progreso. Captures y spans exponen offsets UTF-8 half-open en límites de scalar;
-un capture opcional no participante es `none` y `capture(0)` es el match entero.
+`Regex.compile` produces an immutable, reusable value. `isMatch`,
+`isFullMatch`, `match`, `findAll`, `replace` and `replaceAll` are
+purely synchronous and bounded; `findAll` lazily implements
+`Iterator[RegexMatch ! RegexError]`, with `next(): (RegexMatch ! RegexError)?`.
+It emits at most one error, then remains exhausted; earlier complete matches
+remain valid. Selection uses the leftmost start, alternatives in pattern order
+and local greedy/lazy priorities for each quantifier. Matches do not overlap;
+a zero-length match advances one Unicode scalar to ensure progress. Captures
+and spans use half-open UTF-8 byte offsets at scalar boundaries. A capture
+whose branch did not participate is `none`; capture zero is the whole match.
 
 El replacement solo admite `$0`, `$N`, `${name}` y `$$`. `replace` modifica la
 primera coincidencia y `replaceAll` todas las no solapadas. No existen callbacks
@@ -4284,9 +4286,13 @@ El contrato machine-readable, la documentación normativa y los negativos son
 [`testing/stdlib-regex.json`](./testing/stdlib-regex.json),
 [`docs/contracts/stdlib-regex.md`](./docs/contracts/stdlib-regex.md),
 [`scripts/stdlib-regex-check.sh`](./scripts/stdlib-regex-check.sh) y
-[`scripts/stdlib-regex-test.sh`](./scripts/stdlib-regex-test.sh). El diseño B0
-queda cerrado por `STD-REGEX-001`; implementación, tests/fuzzing, rendimiento,
-conformance y documentación de uso siguen pendientes de
+[`scripts/stdlib-regex-test.sh`](./scripts/stdlib-regex-test.sh). The B0 design
+is closed by `STD-REGEX-001`. `STD-REGEX-IMPL-001` is implementing the bounded
+Rust kernel with pinned `regex-syntax =0.8.10` and an ordered Thompson NFA.
+Searches have a cumulative step budget across lazy iteration and replacement;
+total enumeration is not claimed linear when suffixes are rescanned. Public
+Tondo compiler/VM registration, native ABI and AOT are not promoted by that
+kernel boundary. Functional and quality verification remains pending for
 `STD-REGEX-IMPL-001`, `STD-REGEX-TEST-001`, `STD-REGEX-PERF-001`,
 `STD-REGEX-CONF-001` y `STD-REGEX-DOC-001`.
 

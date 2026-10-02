@@ -364,6 +364,12 @@ run_step stdlib-regex-contract \
     scripts/stdlib-regex-check.sh
 run_step stdlib-regex-contract-tests \
     scripts/stdlib-regex-test.sh
+run_step stdlib-regex-implementation \
+    scripts/stdlib-regex-implementation-check.sh
+run_step stdlib-regex-implementation-tests \
+    scripts/stdlib-regex-implementation-test.sh
+run_step stdlib-regex-implementation-evidence \
+    scripts/stdlib-regex-implementation.sh
 run_step stdlib-uuid-contract \
     scripts/stdlib-uuid-check.sh
 run_step stdlib-uuid-contract-tests \

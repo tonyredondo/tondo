@@ -266,6 +266,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-syntax"
+version = "0.8.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+
+[[package]]
 name = "rmp"
 version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -501,8 +507,10 @@ name = "tondo-stdlib"
 version = "0.1.0"
 dependencies = [
  "prost",
+ "regex-syntax",
  "rmpv",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

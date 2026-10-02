@@ -6800,6 +6800,11 @@ estas leaves.
 - [ ] **STD-REGEX-IMPL-001 — Implementar regex acotado.** Publicar compile,
   match, find y replace con sintaxis/Unicode cerrados y memoria/tiempo sometidos
   a límites; ninguna entrada válida activa backtracking exponencial oculto.
+  The Rust kernel is `ready-stdlib-kernel`, with pinned `regex-syntax =0.8.10`,
+  an ordered Thompson NFA, local greedy/lazy priorities and a lazy
+  `Iterator[RegexMatch ! RegexError]` with cumulative budgets. Workspace quality
+  and final integration proof are pending. Public compiler/VM registration,
+  native ABI and native AOT are unclaimed.
 - [ ] **STD-REGEX-TEST-001 — Modelar y fuzzear regex.** Cubrir parser,
   automata/oracle, Unicode, vacíos, captures, replace, límites y patrones/input
   hostiles.
