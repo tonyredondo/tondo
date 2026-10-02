@@ -4184,9 +4184,9 @@ coverage/mutation checks pass. Every global and risk-scope coverage dimension
 meets the unchanged 80% floor, and all six selected critical mutants are caught.
 Public compiler API, production VM host registration, native ABI and native AOT
 lowering remain unclaimed. `STD-CBOR-TEST-001` verifies the independent bounded
-model, retained corpus, Rust-kernel regressions and bounded fuzz. Performance,
-conformance and usage remain `STD-CBOR-PERF-001`, `STD-CBOR-CONF-001` and
-`STD-CBOR-DOC-001`.
+model, retained corpus, Rust-kernel regressions and bounded fuzz. Performance
+has its bounded Rust scalar baseline; conformance and usage remain
+`STD-CBOR-CONF-001` and `STD-CBOR-DOC-001`.
 
 The independent bounded model and Rust-kernel test/fuzz boundary are registered
 in [testing/stdlib-cbor-test.json](./testing/stdlib-cbor-test.json) and defined
@@ -4199,10 +4199,15 @@ The bounded Rust scalar performance protocol is registered in
 [testing/stdlib-cbor-performance.json](./testing/stdlib-cbor-performance.json)
 and defined in
 [docs/contracts/stdlib-cbor-performance.md](./docs/contracts/stdlib-cbor-performance.md).
-The `measurement-ready` state records fifteen target-qualified kernel routes,
-not completion of `STD-CBOR-PERF-001`. A development capture, a retained-resource
-model and an unoptimized Rust test profile cannot promote the public Tondo API,
-production VM bridge, native ABI/AOT, SIMD or conformance.
+`STD-CBOR-PERF-001` verifies fifteen target-qualified kernel routes on
+`x86_64-unknown-linux-gnu`, using three independent processes and 27 retained
+samples per workload. Exact independent oracles, errors and terminal stream
+states are checked before timing. Latency and throughput are measured; copies,
+allocations and memory describe the explicitly bounded logical resource model.
+The register is `verified-stdlib-kernel-baseline` after clean-source capture,
+the full functional gate and current quality checks. The unoptimized Rust
+test profile does not promote the public Tondo API, production VM bridge,
+native ABI/AOT, SIMD or conformance.
 
 ### 14.16 `std.regex`
 

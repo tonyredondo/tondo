@@ -113,3 +113,26 @@ Focused checks cover missing/duplicated samples, source and probe drift,
 percentile/throughput corruption, resource-model changes, terminal streams,
 partial success, unsupported promotion and deterministic identities.
 Conformance and public/native integration remain separate owner gates.
+
+## Captured baseline
+
+The clean-source capture at `887d53cc222b4017251ec6e756ad92977a420cf3`
+contains all 405 samples. Its source-tree hash is
+`b758bd1a01b31941463de565f96bead6ecf1cb5a3c3923323e5c5eb4563b02f1`,
+and `CARGO_INCREMENTAL=0` is recorded in the report. Selected observations
+below are nanoseconds per sixteen-operation batch, not per operation:
+
+| Workload | Median | P95 | P99 |
+| --- | ---: | ---: | ---: |
+| `parse-maps-large` | 416030 | 426490 | 516021 |
+| `parse-view-large` | 421161 | 425541 | 426061 |
+| `deterministic-maps-large` | 625481 | 923542 | 1038071 |
+| `reader-indefinite` | 69050 | 71120 | 78030 |
+| `writer-indefinite` | 29590 | 35630 | 93820 |
+
+View validation retains its materialization cost. The deterministic route
+also retains sorting and normalization costs; no optimized route or speedup
+is claimed. The full functional gate passes, global line coverage is 91.5646%,
+all global/risk line/function/region dimensions meet the unchanged 80% floor,
+and all six selected critical mutants are caught. These observations establish
+`verified-stdlib-kernel-baseline`, not a native runtime, AOT or release gate.

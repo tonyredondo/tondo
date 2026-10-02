@@ -178,7 +178,7 @@
     "task": "STD-CBOR-PERF-001",
     "contract": "testing/stdlib-cbor-performance.json",
     "document": "docs/contracts/stdlib-cbor-performance.md",
-    "status": "measurement-ready",
+    "status": "verified-stdlib-kernel-baseline",
     "target": "x86_64-unknown-linux-gnu",
     "backend": "rust-stdlib-kernel",
     "profile": "test",
@@ -226,7 +226,7 @@
       {"id": "performance", "requires": ["scalar-oracle", "bounded-allocation", "adversarial-depth", "target-qualified-report"]},
       {"id": "promote", "requires": ["tag-preservation", "unknown-simple-preservation", "deterministic-map-proof", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-CBOR-PERF-001"]
+    "next_blocks": ["STD-CBOR-CONF-001"]
   },
   "testing_contract": "testing/stdlib-cbor-test.json",
   "implementation": {
@@ -258,7 +258,7 @@
     ],
     "fixture": null,
     "evidence_report": "target/reliability/evidence/stdlib-cbor-implementation.json",
-    "proof": "All 14 focused CBOR tests, strict Clippy and the full workspace functional gate pass for the bounded scalar kernel. The independent model, nine integration tests and bounded fuzz are verified by testing/stdlib-cbor-test.json. Provenance-bound workspace coverage using current executable artifacts measures 91.5669% global lines, with every global and risk-scope line/function/region dimension at or above the unchanged 80% floor; all six selected critical mutants are caught. Compiler/public API, production host registration, native ABI and native AOT promotion remain unclaimed.",
-    "required_follow_ups": ["STD-CBOR-PERF-001", "STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
+    "proof": "All 14 focused CBOR tests, strict Clippy and the full workspace functional gate pass for the bounded scalar kernel. The independent model, nine integration tests and bounded fuzz are verified by testing/stdlib-cbor-test.json. The performance-block campaign renews provenance-bound workspace coverage using current executable artifacts at 91.5646% global lines, with every global and risk-scope line/function/region dimension at or above the unchanged 80% floor; all six selected critical mutants are caught. Compiler/public API, production host registration, native ABI and native AOT promotion remain unclaimed.",
+    "required_follow_ups": ["STD-CBOR-CONF-001", "STD-CBOR-DOC-001"]
   }
 }

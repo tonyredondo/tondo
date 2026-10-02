@@ -381,22 +381,24 @@ The performance protocol is registered in
 [`testing/stdlib-cbor-performance.json`](../../testing/stdlib-cbor-performance.json)
 and defined in
 [`docs/contracts/stdlib-cbor-performance.md`](./stdlib-cbor-performance.md).
-Its initial `measurement-ready` state records the protocol without claiming
-a verified baseline. The
-fifteen bounded workloads measure the Rust scalar kernel, with logical resource
-models and no public compiler, production VM, native ABI/AOT or SIMD promotion.
-The performance owner remains open until clean-source measurement and the
-required functional and quality gates pass.
+Its `verified-stdlib-kernel-baseline` state records fifteen bounded workloads,
+three independent processes and 27 retained samples per workload. Clean-source
+measurement, exact independent oracles, report/contract negatives and the
+required functional and quality gates pass. The campaign measures the Rust
+scalar kernel, with logical resource models and no public compiler, production
+VM, native ABI/AOT or SIMD promotion.
 `CborUnknownTagPolicy.Reject` rejects every tag at this boundary because the
 codec has no built-in tag registry. `STD-CBOR-IMPL-001` closes at this bounded
 kernel boundary after the full functional gate and provenance-bound quality
-checks pass. Coverage uses only current workspace executable artifacts:
+checks pass. The test-leaf closure campaign uses current workspace executable artifacts:
 global lines are 91.5653%, every global and risk-scope line/function/region
 dimension meets the unchanged 80% floor, and all six selected critical mutants
 are caught. `STD-CBOR-TEST-001` verifies the independent bounded model,
 61 valid and 30 invalid retained wire vectors, nine integration tests,
 4096 deterministic seeds, all 65536 binary16 patterns and a 128-run fuzz
 campaign with unchanged sanitizers. Its full functional and quality gates
-pass at the model/Rust-kernel boundary. `STD-CBOR-PERF-001`,
-`STD-CBOR-CONF-001` and `STD-CBOR-DOC-001` remain pending; performance,
+pass at the model/Rust-kernel boundary. `STD-CBOR-PERF-001` closes its bounded
+scalar baseline with 91.5646% global line coverage, every global and risk-scope
+line/function/region dimension at or above 80%, and all six selected critical
+mutants caught. `STD-CBOR-CONF-001` and `STD-CBOR-DOC-001` remain pending;
 cross-implementation and public-use promotion do not follow from these gates.

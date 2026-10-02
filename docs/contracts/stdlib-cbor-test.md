@@ -84,8 +84,8 @@ code-size or performance claims. The kernel remains
 `host: not-claimed-until-compiler-cbor-abi`. This test leaf records performance
 as its historical unlock, followed by conformance and usage documentation.
 The parent owner register carries the current next block as later leaves close.
-The full functional gate and
-current provenance-bound quality checks pass. Global line coverage is
+At test-leaf closure the full functional gate and
+provenance-bound quality checks pass. Global line coverage is
 91.5653%; every global and risk-scope line/function/region dimension meets the
 unchanged 80% floor, and all six selected critical mutants are caught. This
 evidence does not change the pending S1A prerequisites or release status.

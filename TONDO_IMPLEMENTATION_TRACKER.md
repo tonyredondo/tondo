@@ -24,8 +24,8 @@ macOS and Windows probes do not promote additional product targets.
 - [Optional Tondo LLM Form companion](./TONDO_LLM_FORM_SPEC.md)
 
 **Next work:** complete source-driven native AOT and its observed runtime,
-diagnostic, quality and performance contracts; then resume STD-0.1B with
-explicit public, hosted, ABI and AOT owner boundaries. Section 24 records the
+diagnostic, quality and performance contracts; continue bounded STD-0.1B
+owner leaves with explicit public, hosted, ABI and AOT boundaries. Section 24 records the
 verified remediation blocks and remaining order. The global public API audit
 still includes the unindexed std.bytes owner. A checked component task cannot
 discharge a missing integration task.
@@ -39,9 +39,11 @@ functional gate and provenance-bound quality checks pass. Every global and
 risk-scope coverage dimension meets the unchanged 80% floor; all six selected
 critical mutants are caught. `STD-CBOR-TEST-001` verifies the independent
 bounded wire model, retained corpus, kernel regressions and bounded fuzz.
-The current quality campaign measures 91.5653% global lines and preserves
-the 80% floor in every global and risk-scope coverage dimension. The next
-owner leaf is `STD-CBOR-PERF-001`.
+`STD-CBOR-PERF-001` verifies fifteen target-qualified Rust scalar routes with
+27 retained samples each, exact independent oracles and a declared logical
+resource model. The current quality campaign measures 91.5646% global lines
+and preserves the 80% floor in every global and risk-scope coverage dimension.
+The next owner leaf is `STD-CBOR-CONF-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6746,8 +6748,23 @@ estas leaves.
   model, Rust-kernel tests, corpus and bounded fuzz, not a public compiler
   API, production VM host, native ABI, native AOT or performance. Next:
   `STD-CBOR-PERF-001`.
-- [ ] **STD-CBOR-PERF-001 — Medir CBOR.** Fijar throughput, tail, memoria,
-  allocations y coste del modo determinista.
+- [x] **STD-CBOR-PERF-001 — Medir CBOR.** The target-qualified Rust scalar
+  baseline covers fifteen bounded parse/view, ordinary/deterministic encode,
+  Reader/Writer and adversarial rejection workloads on
+  `x86_64-unknown-linux-gnu`. Three independent processes retain 27 monotonic
+  samples per workload, including outliers, with nearest-rank median/P95/P99
+  and byte/operation throughput. Independent wire/value/event/full-error
+  oracles and terminal stream states are checked before timing. Copies,
+  allocations and memory are explicitly modeled retained payload/result
+  metrics, not allocator calls or RSS; native handles remain unmeasured.
+  The clean-source campaign, report/provenance/resource negatives, full
+  functional gate and current quality checks pass: 91.5646% global lines,
+  every global and risk dimension at or above 80%, six critical mutants caught.
+  `testing/stdlib-cbor-performance.json` and
+  `docs/contracts/stdlib-cbor-performance.md` record this unoptimized Rust
+  test-profile boundary. Public compiler API, production VM registration,
+  native ABI/AOT, SIMD and code-size claims remain absent. Next:
+  `STD-CBOR-CONF-001`.
 - [ ] **STD-CBOR-CONF-001 — Conformar CBOR.** Verificar interoperabilidad,
   typed/dynamic/streaming, determinismo y equivalencia VM/nativo.
 - [ ] **STD-CBOR-DOC-001 — Documentar CBOR.** Explicar tags, determinismo,
