@@ -2,11 +2,12 @@
 
 Estado: **contract-locked** para `STD-0.1B` / `STD-REGEX-001`.
 
-Este documento fija la frontera normativa de `std.regex`. No afirma que el
-runtime, el host nativo, el corpus de fuzzing, los benchmarks, la conformance o
-los ejemplos de uso ya estén implementados. Esas piezas permanecen en las
-leaves `STD-REGEX-IMPL-001`, `STD-REGEX-TEST-001`, `STD-REGEX-PERF-001`,
-`STD-REGEX-CONF-001` y `STD-REGEX-DOC-001`.
+This document fixes the normative `std.regex` boundary. `STD-REGEX-IMPL-001`
+verifies the bounded Rust kernel described in section 10. Public Tondo
+compiler/VM registration, native ABI and native AOT are not promoted.
+Independent model/fuzz, performance, shared conformance and executable usage
+remain `STD-REGEX-TEST-001`, `STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and
+`STD-REGEX-DOC-001`.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce
 un valor inmutable y reutilizable; las operaciones de búsqueda son puras,
@@ -461,3 +462,11 @@ Run `scripts/stdlib-regex-implementation-check.sh` and
 evidence from the canonical tests and Clippy; it does not measure coverage.
 Quality is established separately at the unchanged 80% global and per-scope
 floor, with the critical mutation baseline preserved.
+
+The implementation leaf has passed the full functional gate, including the
+206-case draft conformance suite and async/select observations. Its bound
+workspace quality campaign measures 291,260 of 318,090 lines (91.5653%);
+every global and risk-scope line/function/region dimension meets the 80% floor,
+and all six selected critical mutants are caught. These observations promote
+`verified-stdlib-kernel` only. They do not close the independent model/fuzz leaf
+or any public, production VM or native integration boundary.

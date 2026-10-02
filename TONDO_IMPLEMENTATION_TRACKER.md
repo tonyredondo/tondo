@@ -42,10 +42,12 @@ bounded wire model, retained corpus, kernel regressions and bounded fuzz.
 `STD-CBOR-PERF-001` verifies fifteen target-qualified Rust scalar routes with
 27 retained samples each, exact independent oracles and a declared logical
 resource model. `STD-CBOR-CONF-001` verifies seven shared private VM/native Rust
-process cases with the independent wire model. The current quality campaign
-measures 91.5681% global lines
+process cases with the independent wire model. `STD-CBOR-DOC-001` verifies the
+canonical executable Rust-kernel guide. `STD-REGEX-IMPL-001` verifies a bounded
+Unicode 16 Rust kernel with local priorities, captures, literal replacement
+and fallible lazy iteration. The current quality campaign measures 91.5653% global lines
 and preserves the 80% floor in every global and risk-scope coverage dimension.
-The next owner leaf is `STD-REGEX-IMPL-001`.
+The next owner leaf is `STD-REGEX-TEST-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6797,14 +6799,18 @@ estas leaves.
 
 #### 21.3.10 `std.regex`
 
-- [ ] **STD-REGEX-IMPL-001 — Implementar regex acotado.** Publicar compile,
-  match, find y replace con sintaxis/Unicode cerrados y memoria/tiempo sometidos
-  a límites; ninguna entrada válida activa backtracking exponencial oculto.
-  The Rust kernel is `ready-stdlib-kernel`, with pinned `regex-syntax =0.8.10`,
-  an ordered Thompson NFA, local greedy/lazy priorities and a lazy
-  `Iterator[RegexMatch ! RegexError]` with cumulative budgets. Workspace quality
-  and final integration proof are pending. Public compiler/VM registration,
-  native ABI and native AOT are unclaimed.
+- [x] **STD-REGEX-IMPL-001 — Implement bounded regex.** The Rust kernel is
+  `verified-stdlib-kernel`, with pinned `regex-syntax =0.8.10`, Unicode 16.0.0,
+  an ordered Thompson NFA, local greedy/lazy priorities, captures, literal
+  replacement and lazy `Iterator[RegexMatch ! RegexError]` with cumulative
+  budgets and terminal errors. Ten kernel tests cover behavior, rejection,
+  lifecycle, bounds, small-stack compilation and 4,096 generated patterns.
+  The full functional gate and provenance-bound quality checks pass: 91.5653%
+  global lines, every global/risk coverage dimension at or above 80%, six
+  critical mutants caught. Storage is a conservative logical metric;
+  dependency/global-allocator OOM recovery is unclaimed. Public Tondo
+  compiler/VM registration, native ABI, native AOT and performance are unclaimed.
+  Next: `STD-REGEX-TEST-001` for the independent model and bounded fuzz.
 - [ ] **STD-REGEX-TEST-001 — Modelar y fuzzear regex.** Cubrir parser,
   automata/oracle, Unicode, vacíos, captures, replace, límites y patrones/input
   hostiles.

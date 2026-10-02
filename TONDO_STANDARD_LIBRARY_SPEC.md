@@ -4287,14 +4287,17 @@ El contrato machine-readable, la documentación normativa y los negativos son
 [`docs/contracts/stdlib-regex.md`](./docs/contracts/stdlib-regex.md),
 [`scripts/stdlib-regex-check.sh`](./scripts/stdlib-regex-check.sh) y
 [`scripts/stdlib-regex-test.sh`](./scripts/stdlib-regex-test.sh). The B0 design
-is closed by `STD-REGEX-001`. `STD-REGEX-IMPL-001` is implementing the bounded
+is closed by `STD-REGEX-001`. `STD-REGEX-IMPL-001` verifies the bounded
 Rust kernel with pinned `regex-syntax =0.8.10` and an ordered Thompson NFA.
 Searches have a cumulative step budget across lazy iteration and replacement;
 total enumeration is not claimed linear when suffixes are rescanned. Public
 Tondo compiler/VM registration, native ABI and AOT are not promoted by that
-kernel boundary. Functional and quality verification remains pending for
-`STD-REGEX-IMPL-001`, `STD-REGEX-TEST-001`, `STD-REGEX-PERF-001`,
-`STD-REGEX-CONF-001` y `STD-REGEX-DOC-001`.
+kernel boundary. Kernel tests, the full functional gate and provenance-bound
+quality checks pass, preserving the 80% floor in every global and risk-scope
+coverage dimension and catching all six selected critical mutants. The next
+leaf is `STD-REGEX-TEST-001` for independent model and bounded fuzz evidence;
+performance, shared conformance and executable usage remain
+`STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
 
 ### 14.17 `std.uuid`
 
