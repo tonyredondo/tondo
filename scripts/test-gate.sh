@@ -356,6 +356,10 @@ run_step stdlib-cbor-conformance-contract-tests \
     scripts/stdlib-cbor-conformance-test.sh
 run_step stdlib-cbor-conformance \
     scripts/stdlib-cbor-conformance.sh
+run_step stdlib-cbor-documentation \
+    scripts/stdlib-cbor-doc-check.sh
+run_step stdlib-cbor-documentation-tests \
+    scripts/stdlib-cbor-doc-test.sh
 run_step stdlib-regex-contract \
     scripts/stdlib-regex-check.sh
 run_step stdlib-regex-contract-tests \

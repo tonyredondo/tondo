@@ -6784,6 +6784,10 @@ estas leaves.
   Next: `STD-CBOR-DOC-001`.
 - [ ] **STD-CBOR-DOC-001 — Documentar CBOR.** Explicar tags, determinismo,
   preservación, límites, costes y ejemplos ejecutables.
+  The `usage-ready` Rust-kernel guide and canonical `cbor_usage.rs` cover six
+  executable paths, including exact errors, terminal streams and irreversible
+  partial I/O. The full functional/quality gate and clean publication are
+  pending; public Tondo/production VM/native ABI/AOT promotion is not claimed.
 
 #### 21.3.10 `std.regex`
 

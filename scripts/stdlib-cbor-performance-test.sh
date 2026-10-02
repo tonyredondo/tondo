@@ -25,7 +25,7 @@ for status in measurement-ready verified-stdlib-kernel-baseline; do
     jq --arg status "$status" '.status = $status' testing/stdlib-cbor-performance.json > "$tmp/performance.json"
     jq --arg status "$status" '
       .performance.status = $status
-      | del(.conformance)
+      | del(.conformance, .documentation)
       | if $status == "verified-stdlib-kernel-baseline" then
           .promotion.next_blocks = ["STD-CBOR-CONF-001"]
           | .implementation.required_follow_ups = ["STD-CBOR-CONF-001","STD-CBOR-DOC-001"]

@@ -275,17 +275,21 @@ emitir `Bytes`/`Text` directamente. `StartArray(none)` y `StartMap(none)`
 representan longitudes indefinidas; el entero presente representa una longitud
 definida. `Tag(number)` precede al único item anidado y no tiene un `EndTag`.
 
-Los payloads de bytes y texto son vistas hasta el siguiente `next`; `own`
-materializa una copia y es la única forma de conservarlos fuera de ese límite.
+The public Reader contract borrows byte/text payloads until its next `next`;
+`own` materializes a copy for retention beyond that cursor boundary. The Rust
+kernel currently returns owned events instead; the usage guide records that
+implementation and its buffering costs.
 El reader es invariante a fragmentar la entrada en un byte, en la cabecera, en
 cualquier frontera de chunk o en bloques grandes. `finish` exige que se haya
 consumido exactamente la raíz, permite solo EOF y deja el estado terminal.
 
 `CborWriter` valida balance de frames, que map keys y values estén alternados,
 que los chunks solo aparezcan dentro de su string indefinido y que el break
-solo cierre el frame correcto. Un error de I/O, límite o secuencia no escribe
-un miembro parcial según el contrato de `std.io.Writer`; writer y reader
-entran en estado terminal y no se reutilizan.
+solo cierre el frame correcto. A codec limit or invalid sequence never returns
+a successful partial item. External writes follow the partial-I/O contract of
+`std.io.Writer`: an accepted prefix or a failed flush cannot be rolled back.
+An I/O failure is terminal and returns no successful codec result; writer and
+reader cannot be reused.
 
 ## Determinismo explícito
 
@@ -342,9 +346,10 @@ records, enums, `@name` y `@ignore` obedecen el contrato común de
 `raw` valida un único data item y devuelve `CborRaw` con los bytes exactos,
 incluyendo forma de longitud, orden y float. `rawUnchecked` es `unsafe` y solo
 promete almacenamiento opaco; no puede entrar en `decode`, `validate` ni en
-el modo determinista sin una validación posterior. `CborValueView` puede
-prestar slices del input, pero su vida termina al avanzar el reader o salir de
-la operación que la devuelve.
+el modo determinista sin una validación posterior. A standalone `CborValueView`
+borrows the original validated encoded input, whose owner must outlive the
+view. It is independent of the Reader cursor and may survive the function
+that created it while that input remains alive.
 
 ## Separación de alcance y promoción
 
@@ -362,56 +367,176 @@ capabilities requeridas. CBOR es un codec binario general; COSE, CDDL,
 CBOR-LD, tags de IP y tags de tiempo con política de aplicación son owners o
 protocolos posteriores.
 
-El contrato machine-readable, la documentación y los checks negativos son
-[`testing/stdlib-cbor.json`](../../testing/stdlib-cbor.json),
-[`scripts/stdlib-cbor-check.sh`](../../scripts/stdlib-cbor-check.sh) y
-[`scripts/stdlib-cbor-test.sh`](../../scripts/stdlib-cbor-test.sh). El contrato
-queda cerrado como diseño B0. The Rust kernel implementation is exercised by
-[`scripts/stdlib-cbor-implementation.sh`](../../scripts/stdlib-cbor-implementation.sh)
-with 14 focused tests and strict Clippy. It supports dynamic values, exact
-validated raw bytes, borrowed encoded-byte views, statically dispatched
-primitive/collection encode and decode, owned event reader/writer, finite
-limits, and explicit deterministic encoding. The Rust reader buffers a bounded
-document before exposing events; `from_reader` is invariant to input
-fragmentation. Its `own` operation clones an owned event. Generated Tondo
-record/enum decoding, public compiler API, production host registration,
-native ABI, and native AOT lowering are not promoted by this kernel gate.
+The design contract and negative checks are
+[testing/stdlib-cbor.json](../../testing/stdlib-cbor.json),
+[scripts/stdlib-cbor-check.sh](../../scripts/stdlib-cbor-check.sh) and
+[scripts/stdlib-cbor-test.sh](../../scripts/stdlib-cbor-test.sh).
+`STD-CBOR-IMPL-001` verifies the bounded scalar Rust kernel: dynamic values,
+exact validated raw bytes, borrowed encoded-byte views, static
+primitive/collection codecs, owned event reader/writer, finite limits and
+explicit deterministic encoding. Its fourteen focused tests and strict Clippy
+are run by
+[scripts/stdlib-cbor-implementation.sh](../../scripts/stdlib-cbor-implementation.sh).
+Generated Tondo record/enum decoding, the public compiler API, production host
+registration, native ABI and native AOT lowering remain unimplemented.
 
-The performance protocol is registered in
-[`testing/stdlib-cbor-performance.json`](../../testing/stdlib-cbor-performance.json)
-and defined in
-[`docs/contracts/stdlib-cbor-performance.md`](./stdlib-cbor-performance.md).
-Its `verified-stdlib-kernel-baseline` state records fifteen bounded workloads,
-three independent processes and 27 retained samples per workload. Clean-source
-measurement, exact independent oracles, report/contract negatives and the
-required functional and quality gates pass. The campaign measures the Rust
-scalar kernel, with logical resource models and no public compiler, production
-VM, native ABI/AOT or SIMD promotion.
-`CborUnknownTagPolicy.Reject` rejects every tag at this boundary because the
-codec has no built-in tag registry. `STD-CBOR-IMPL-001` closes at this bounded
-kernel boundary after the full functional gate and provenance-bound quality
-checks pass. The test-leaf closure campaign uses current workspace executable artifacts:
-global lines are 91.5653%, every global and risk-scope line/function/region
-dimension meets the unchanged 80% floor, and all six selected critical mutants
-are caught. `STD-CBOR-TEST-001` verifies the independent bounded model,
-61 valid and 30 invalid retained wire vectors, nine integration tests,
-4096 deterministic seeds, all 65536 binary16 patterns and a 128-run fuzz
-campaign with unchanged sanitizers. Its full functional and quality gates
-pass at the model/Rust-kernel boundary. `STD-CBOR-PERF-001` closes its bounded
-scalar baseline with 91.5646% global line coverage, every global and risk-scope
-line/function/region dimension at or above 80%, and all six selected critical
-mutants caught. `STD-CBOR-CONF-001` verifies the bounded private VM/native Rust
-process comparison; `STD-CBOR-DOC-001` remains pending. Public compiler/native
-API promotion does not follow from these gates.
+`STD-CBOR-TEST-001` verifies the independent model, 61 valid and 30 invalid
+retained wire vectors, nine integration tests, 4096 deterministic seeds,
+all 65536 binary16 patterns and bounded 128-run fuzz with unchanged sanitizers.
+See [stdlib-cbor-test.md](./stdlib-cbor-test.md) and its register linked above.
 
-The bounded private VM/native Rust-process conformance protocol is registered
-in [testing/stdlib-cbor-conformance.json](../../testing/stdlib-cbor-conformance.json)
-and defined in [stdlib-cbor-conformance.md](./stdlib-cbor-conformance.md).
-Its `verified-hosted-vm-adapter-and-native-stdlib-process` state covers seven
-shared cases, 61 valid and 30 invalid wire vectors, exact typed/dynamic/event
-observables and deterministic encodings. Clean-source comparison, report
-negatives and the full functional/quality gates pass. The renewed campaign
-measures 91.5681% global lines, every coverage dimension meets the unchanged
-80% floor and six critical mutants are caught. This does not implement the
-public compiler API, production host registration, native CBOR ABI or native
-AOT lowering.
+`STD-CBOR-PERF-001` records fifteen bounded unoptimized Rust test-profile
+routes, three independent processes and 27 retained samples per workload in
+[testing/stdlib-cbor-performance.json](../../testing/stdlib-cbor-performance.json)
+and [stdlib-cbor-performance.md](./stdlib-cbor-performance.md).
+Clean-source measurement, exact independent oracles and report negatives pass.
+Its logical resource models do not promote production VM, native ABI/AOT,
+SIMD or allocator measurements.
+
+`STD-CBOR-CONF-001` verifies seven shared cases through a private test-only
+bytecode host callable and a native Rust process using the same kernel.
+The independent model checks 61 valid and 30 invalid vectors before dispatch.
+Exact typed/dynamic/event paths, raw/views, errors, terminal limits and
+deterministic output are compared by
+[testing/stdlib-cbor-conformance.json](../../testing/stdlib-cbor-conformance.json)
+and [stdlib-cbor-conformance.md](./stdlib-cbor-conformance.md).
+This is a bounded adapter comparison, not an independently implemented native
+CBOR ABI or source-level public API.
+
+The implementation, test, performance and conformance leaves passed their
+required functional and provenance-bound quality gates. The latest conformance
+campaign measures 91.5681% global lines, every global and risk-scope
+line/function/region dimension meets the unchanged 80% floor, and all six
+selected critical mutants are caught. The executable usage below is
+`usage-ready` for `STD-CBOR-DOC-001`; its full gate and clean publication are
+still pending.
+
+## Executable usage guide for `std.cbor`
+
+This guide describes the bounded Rust scalar kernel. The Tondo declarations
+above remain the public language contract; compiler imports, production host
+registration, the native CBOR ABI and native AOT lowering are unimplemented.
+The executable examples use Rust methods and synchronous `std::io` adapters.
+They do not establish execution of the public Tondo `suspends` methods.
+
+### Values and byte preservation
+
+Use `parse` for an owned `CborValue`, or `decode_typed` for existing primitive
+and collection implementations of the common static `Decode[Cbor]` protocol.
+`encode_typed` writes the corresponding static `Encode[Cbor]` events without
+building a dynamic tree. Generated Tondo record/enum adapters are not part of
+this kernel promotion.
+
+Dynamic maps are ordered `CborEntry` pairs with arbitrary keys. Their default
+duplicate policy is `Preserve`; typed maps default to `Reject`. `First` and
+`Last` must be selected explicitly. For a dynamic map, `Last` keeps the first
+pair position; a typed collection has its own iteration order.
+`Negative(n)` represents `-1 - n`, including `-2^64`, and `Undefined` remains
+distinct from `Null`. Rust `Float32` and `Float64` variants contain bit patterns;
+`Float16(CborFloat16 { bits })` preserves binary16 bits.
+
+Ordinary encoding preserves float widths, bits, tags and pair order, but it
+uses minimal integer/length arguments and definite containers. Parsing loses
+the original defined/indefinite length form. A semantic round trip therefore
+does not promise identical input bytes. Use validated `raw` when the original
+wire representation matters. It checks one complete item and copies its bytes;
+the guide does not use `raw_unchecked`.
+
+In the common Rust protocol, `Vec<u8>` is an array of integers. Use
+`serialization::Bytes` for a CBOR byte string. `String` encodes UTF-8 text;
+binary bytes do not undergo UTF-8 interpretation.
+
+### Tags and deterministic encoding
+
+Tags preserve their unsigned number and nested value. The kernel does not
+interpret time, bignum, decimal or application tags. The default
+`CborUnknownTagPolicy::Preserve` retains them; `Reject` rejects every tag because
+there is no built-in tag registry.
+
+Use `encode_deterministic` when the application needs this explicit policy:
+minimal arguments, definite lengths, shortest exact floats, one quiet binary16
+NaN (`0x7e00`), preserved negative zero and bytewise sorted deterministic map
+keys. Equivalent key encodings fail with `DeterministicKeyCollision`; there is
+no arbitrary tie-break. This policy is not a universal CBOR canonical form.
+
+The materialized encoder sorts bounded maps and normalizes parsed indefinite
+values into definite output. A deterministic `CborWriter` instead requires
+already ordered keys and definite event frames; it rejects indefinite frames
+and reports `OutOfOrderKey` for key-order violations.
+
+### Policies and limits
+
+Start from `CborDecodeOptions::default()` and `CborEncodeOptions::default()`.
+Decode accepts well-formed non-minimal arguments and indefinite lengths by
+default; either policy can explicitly reject them. Malformed two-byte simple
+values below 32 remain invalid under both non-minimal policies.
+
+`CborLimits::default()` supplies finite bounds for document/output bytes, depth,
+array items, map pairs, string/byte payloads, chunks, tags, simple values and
+events. Set limits appropriate to the input, then validate them with
+`CborLimits::create`. Zero or values above `isize::MAX` fail. Invalid input,
+policy violations and resource rejection return `CborError`, with no successful
+partial value, raw item, view or reader.
+
+### Errors, ownership and terminal streams
+
+`CborError` carries a nominal kind, a half-open byte span and stable
+`CborPath` segments. Binary input has byte offsets rather than text columns.
+The executable nested UTF-8 example checks bytes `4..7` and the exact
+array/map/value/tag path; human error wording is not the identity.
+
+`parse_view` lends the original validated encoded bytes, whose owner must
+outlive the view. It is independent of a Reader cursor. `view.own()` returns
+an owned value by reparsing. Validated `CborRaw` owns its byte copy.
+
+The current Rust `CborReader::from_reader` buffers the bounded document and
+then all validated events. `next()` clones an owned event, and `own()` clones
+it again. These owned Rust payloads are distinct from the borrowed public
+Reader payload contract specified above. `StreamEnd` closes the event stream;
+one subsequent `next()` returns `None`, further calls return `Closed`, and
+`finish()` must still be called. Early finish fails and is terminal.
+
+`CborWriter::to_writer` validates events and retains encoded bytes before
+`finish()` writes and flushes the sink. Errors and finish are terminal; later
+operations return `Closed`. A limit or invalid event before finish leaves the
+sink untouched. External I/O is not transactional: a sink can accept a prefix
+and then fail, or accept all bytes and fail to flush. The returned operation
+fails with `IoError` or `NoProgress`; it cannot undo those external writes.
+
+### Costs and performance
+
+`parse` builds a DOM. `validate` currently builds and drops that same DOM, so
+`parse_view` is not an allocation-free parser despite retaining borrowed bytes.
+Its `own()` repeats parsing; `raw` additionally copies the validated document.
+Typed decode buffers CBOR events and common protocol events without a dynamic
+CBOR tree. Reader construction buffers input and owned events, and each event
+delivery/copy has the cloning cost described above. Reader event storage and
+Writer output/event buffers are retained until the Rust objects are dropped,
+including after terminal `finish()`. Neither adapter promises constant-memory
+incremental parsing or immediate sink delivery.
+
+The target-qualified
+[scalar performance contract](./stdlib-cbor-performance.md) records fifteen
+bounded unoptimized Rust test-profile routes and 27 retained samples per route.
+Latency and throughput are measured. Its copy/allocation/peak-memory metrics
+are declared logical models, not allocator calls, RSS or a production native
+codec benchmark. Native codec handles, SIMD and code size remain unmeasured.
+
+### Executable kernel example
+
+[cbor_usage.rs](../../crates/tondo-stdlib/examples/cbor_usage.rs) checks six
+independent usage paths: materialized and typed values; tags, float preservation
+and deterministic encoding; raw bytes and borrowed-view costs; fragmented
+events and terminal lifecycle; exact errors and finite limits; and external
+partial I/O. All assertions run through `scripts/stdlib-cbor-doc-check.sh`,
+which compiles and executes this canonical source with the workspace lockfile.
+Its complete successful stdout is `cbor-doc-ok`.
+
+### Promotion boundary
+
+`STD-CBOR-DOC-001` documents executable Rust-kernel usage. The independent
+model, bounded fuzz, scalar performance campaign and private VM/native Rust
+process comparison retain their own qualified evidence. This guide does not
+implement or promote the public Tondo API, generated Tondo record/enum codecs,
+production VM registration, a native CBOR ABI, native AOT or SIMD.
+The next owner block after verified documentation is `STD-REGEX-IMPL-001`.

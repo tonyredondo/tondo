@@ -238,6 +238,18 @@
     "public_api": "not-implemented",
     "native_aot": "not-claimed"
   },
+  "documentation": {
+    "task": "STD-CBOR-DOC-001",
+    "status": "usage-ready",
+    "document": "docs/contracts/stdlib-cbor.md",
+    "example": "crates/tondo-stdlib/examples/cbor_usage.rs",
+    "command": "scripts/stdlib-cbor-doc-check.sh",
+    "expected_stdout": "cbor-doc-ok",
+    "examples": ["materialized-and-typed", "tags-and-determinism", "raw-view-and-costs", "buffered-events-and-lifecycle", "errors-and-limits", "partial-io-is-not-transactional"],
+    "sections": ["values-and-byte-preservation", "tags-and-deterministic-encoding", "policies-and-limits", "errors-ownership-and-terminal-streams", "costs-and-performance", "executable-kernel-example", "promotion-boundary"],
+    "public_tondo_api": "not-implemented",
+    "native_aot": "not-claimed"
+  },
   "testing_contract": "testing/stdlib-cbor-test.json",
   "implementation": {
     "status": "verified-stdlib-kernel",

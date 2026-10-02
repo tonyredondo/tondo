@@ -19,6 +19,7 @@ for status in adapter-ready verified-hosted-vm-adapter-and-native-stdlib-process
     jq --arg status "$status" '.status = $status' testing/stdlib-cbor-conformance.json >"$tmp/conformance.json"
     jq --arg status "$status" '
       .conformance.status = $status
+      | del(.documentation)
       | if $status == "adapter-ready" then
         .promotion.next_blocks = ["STD-CBOR-CONF-001"]
         | .implementation.required_follow_ups = ["STD-CBOR-CONF-001","STD-CBOR-DOC-001"]

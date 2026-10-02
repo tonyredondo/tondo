@@ -4142,7 +4142,10 @@ tags privados.
 
 La ruta dinámica usa `CborValue` con `Array[CborEntry]` para maps, de forma que
 las claves pueden ser cualquier data item y el orden/duplicados son
-observables. `CborValueView` presta payloads hasta el siguiente evento y
+observables. A standalone `CborValueView` borrows validated encoded input;
+its owner must outlive the view. This lifetime is independent of a Reader
+cursor. The specified public Reader payloads borrow until its next event;
+the current Rust kernel instead returns owned events.
 `CborRaw` conserva bytes exactos, incluida la forma de longitud y el float
 original. `parse`, `parseView`, `validate`, `decode`, `encode`,
 `encodeDeterministic` y `raw` comparten el contrato de
@@ -4186,7 +4189,8 @@ Public compiler API, production VM host registration, native ABI and native AOT
 lowering remain unclaimed. `STD-CBOR-TEST-001` verifies the independent bounded
 model, retained corpus, Rust-kernel regressions and bounded fuzz. Performance
 has its bounded Rust scalar baseline, and `STD-CBOR-CONF-001` verifies the
-private VM/native Rust process comparison. Usage remains `STD-CBOR-DOC-001`.
+private VM/native Rust process comparison. Executable usage is prepared under
+`STD-CBOR-DOC-001`; its full gate and clean publication are pending.
 
 The independent bounded model and Rust-kernel test/fuzz boundary are registered
 in [testing/stdlib-cbor-test.json](./testing/stdlib-cbor-test.json) and defined
@@ -4224,7 +4228,18 @@ streams, 59 deterministic outputs and two rejected key collisions. The
 conformance campaign measures 91.5681% global lines, every coverage dimension
 meets the unchanged 80% floor, and all six critical mutants are caught.
 This does not promote source-level `std.cbor`, production host registration,
-native CBOR ABI or Cranelift lowering. `STD-CBOR-DOC-001` remains pending.
+native CBOR ABI or Cranelift lowering.
+
+The [executable Rust-kernel guide](./docs/contracts/stdlib-cbor.md#executable-usage-guide-for-stdcbor)
+records tags, preservation and deterministic policy, exact errors, finite
+limits, borrowed-input lifetimes, owned buffered events, terminal states and
+retention costs. Six paths in
+[cbor_usage.rs](./crates/tondo-stdlib/examples/cbor_usage.rs) run through
+`scripts/stdlib-cbor-doc-check.sh` with successful stdout `cbor-doc-ok`.
+Codec errors never publish a successful partial result; external I/O can
+irreversibly accept a prefix or fail to flush, as the example demonstrates.
+This `usage-ready` documentation does not claim public Tondo execution,
+production VM registration, native CBOR ABI, native AOT or SIMD.
 
 ### 14.16 `std.regex`
 
