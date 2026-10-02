@@ -5,8 +5,12 @@ Estado: **contract-locked** para `STD-0.1B` / `STD-REGEX-001`.
 This document fixes the normative `std.regex` boundary. `STD-REGEX-IMPL-001`
 verifies the bounded Rust kernel described in section 10. Public Tondo
 compiler/VM registration, native ABI and native AOT are not promoted.
-Independent model/fuzz, performance, shared conformance and executable usage
-remain `STD-REGEX-TEST-001`, `STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and
+The independent model/fuzz boundary is defined by
+[stdlib-regex-test.md](./stdlib-regex-test.md) and
+`testing/stdlib-regex-test.json`. Its status remains `ready` until consolidated
+quality and functional proof. The middle-hyphen class correction reopens the
+kernel's affected proof for that same campaign. Performance, shared conformance
+and executable usage remain `STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and
 `STD-REGEX-DOC-001`.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce

@@ -370,6 +370,10 @@ run_step stdlib-regex-implementation-tests \
     scripts/stdlib-regex-implementation-test.sh
 run_step stdlib-regex-implementation-evidence \
     scripts/stdlib-regex-implementation.sh
+run_step stdlib-regex-testing-contract \
+    scripts/stdlib-regex-test-check.sh
+run_step stdlib-regex-testing-contract-tests \
+    scripts/stdlib-regex-test-test.sh
 run_step stdlib-uuid-contract \
     scripts/stdlib-uuid-check.sh
 run_step stdlib-uuid-contract-tests \

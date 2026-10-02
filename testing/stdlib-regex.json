@@ -228,11 +228,11 @@
       {"id": "performance", "requires": ["scalar-oracle", "adversarial-input", "target-qualified-report", "allocation-report"]},
       {"id": "promote", "requires": ["linear-safety-proof", "deterministic-errors", "unicode-descriptor-parity", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-REGEX-TEST-001"]
+    "next_blocks": ["STD-REGEX-IMPL-001"]
   },
   "implementation": {
-    "status": "verified-stdlib-kernel",
-    "quality_gate": "verified-80-percent-per-scope",
+    "status": "ready-stdlib-kernel",
+    "quality_gate": "pending-80-percent-per-scope",
     "public_api_promoted": false,
     "host": "not-applicable-pure-core",
     "production_vm_registration": "not-claimed",
@@ -256,6 +256,7 @@
     "heap_metric": "conservative-logical-storage-not-rss-or-vm-allocator",
     "system_oom_recovery": "not-claimed-for-dependency-or-rust-global-allocator",
     "evidence_report": "target/reliability/evidence/stdlib-regex-implementation.json",
-    "required_follow_ups": ["STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
-  }
+    "required_follow_ups": ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+  },
+  "testing_contract": "testing/stdlib-regex-test.json"
 }

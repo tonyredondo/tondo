@@ -139,3 +139,10 @@ bench = false
 
 [workspace]
 members = ["."]
+
+[[bin]]
+name = "stdlib_regex"
+path = "fuzz_targets/stdlib_regex.rs"
+test = false
+doc = false
+bench = false

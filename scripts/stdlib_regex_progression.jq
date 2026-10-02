@@ -30,6 +30,10 @@ def regex_kernel_progression:
     or
     (.implementation.status == "verified-stdlib-kernel"
       and .implementation.quality_gate == "verified-80-percent-per-scope"
-      and .promotion.next_blocks == ["STD-REGEX-TEST-001"]
-      and .implementation.required_follow_ups == ["STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])
+      and ((.testing_contract == null
+        and .promotion.next_blocks == ["STD-REGEX-TEST-001"]
+        and .implementation.required_follow_ups == ["STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])
+      or (.testing_contract == "testing/stdlib-regex-test.json"
+        and .promotion.next_blocks == ["STD-REGEX-PERF-001"]
+        and .implementation.required_follow_ups == ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])))
   );

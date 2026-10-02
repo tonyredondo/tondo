@@ -6799,21 +6799,27 @@ estas leaves.
 
 #### 21.3.10 `std.regex`
 
-- [x] **STD-REGEX-IMPL-001 — Implement bounded regex.** The Rust kernel is
-  `verified-stdlib-kernel`, with pinned `regex-syntax =0.8.10`, Unicode 16.0.0,
+- [ ] **STD-REGEX-IMPL-001 — Implement bounded regex.** The Rust kernel is
+  `ready-stdlib-kernel`, with pinned `regex-syntax =0.8.10`, Unicode 16.0.0,
   an ordered Thompson NFA, local greedy/lazy priorities, captures, literal
   replacement and lazy `Iterator[RegexMatch ! RegexError]` with cumulative
   budgets and terminal errors. Ten kernel tests cover behavior, rejection,
   lifecycle, bounds, small-stack compilation and 4,096 generated patterns.
-  The full functional gate and provenance-bound quality checks pass: 91.5653%
-  global lines, every global/risk coverage dimension at or above 80%, six
-  critical mutants caught. Storage is a conservative logical metric;
+  Previously verified at 91.5653% global lines with every global/risk coverage
+  dimension at or above 80% and six critical mutants caught. The independent
+  test model exposed middle literal hyphen admission in classes; its correction
+  reopens affected kernel proof for the consolidated TEST campaign.
+  Storage is a conservative logical metric;
   dependency/global-allocator OOM recovery is unclaimed. Public Tondo
   compiler/VM registration, native ABI, native AOT and performance are unclaimed.
   Next: `STD-REGEX-TEST-001` for the independent model and bounded fuzz.
 - [ ] **STD-REGEX-TEST-001 — Modelar y fuzzear regex.** Cubrir parser,
   automata/oracle, Unicode, vacíos, captures, replace, límites y patrones/input
   hostiles.
+  The independent bounded grammar/path oracle, 41 valid/33 invalid vectors,
+  4,096 generated seeds and 128-run seeded minimal fuzz are implemented in
+  `testing/stdlib-regex-test.json`. Consolidated quality/full functional proof
+  and exact-SHA CI remain pending; public/native/performance promotion is unclaimed.
 - [ ] **STD-REGEX-PERF-001 — Medir regex.** Fijar compile/match throughput,
   tail, memoria y tamaño de automata sobre corpus normal y adversario.
 - [ ] **STD-REGEX-CONF-001 — Conformar regex.** Ejecutar vectores portables y

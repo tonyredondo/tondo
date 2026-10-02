@@ -268,6 +268,8 @@ fn word_ast(span: ast::Span, negated: bool) -> Result<ast::ClassBracketed, Regex
 }
 
 fn class_items(class: &mut ast::ClassBracketed) -> Result<(), RegexError> {
+    let first_literal = class.span.start.offset + 1 + usize::from(class.negated);
+    let closing_bracket = class.span.end.offset.saturating_sub(1);
     let ClassSet::Item(item) = &mut class.kind else {
         return Err(error(
             Kind::UnsupportedFeature,
@@ -278,6 +280,18 @@ fn class_items(class: &mut ast::ClassBracketed) -> Result<(), RegexError> {
     let mut pending = vec![item];
     while let Some(item) = pending.pop() {
         match item {
+            ClassSetItem::Literal(literal)
+                if literal.c == '-'
+                    && literal.kind == ast::LiteralKind::Verbatim
+                    && literal.span.start.offset != first_literal
+                    && literal.span.end.offset != closing_bracket =>
+            {
+                return Err(error(
+                    Kind::InvalidClass,
+                    literal.span.start.offset,
+                    literal.span.end.offset,
+                ));
+            }
             ClassSetItem::Perl(perl) if perl.kind == ast::ClassPerlKind::Word => {
                 *item = ClassSetItem::Bracketed(Box::new(word_ast(perl.span, perl.negated)?));
             }

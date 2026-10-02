@@ -1,0 +1,765 @@
+{
+  "format": "tondo-stdlib-regex-corpus/1",
+  "source": "docs/contracts/stdlib-regex.md",
+  "unicode": "16.0.0",
+  "scope": "bounded-model-and-separately-authored-unicode-vectors",
+  "valid": [
+    {
+      "id": "alternative-order",
+      "pattern": "a|ab",
+      "input": "ab",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "reverse-alternatives",
+      "pattern": "ab|a",
+      "input": "ab",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          2
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "leftmost-start",
+      "pattern": "a+",
+      "input": "xxaaa",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          2,
+          5
+        ]
+      ],
+      "full": false
+    },
+    {
+      "id": "local-lazy-then-greedy",
+      "pattern": "a*?a*",
+      "input": "aaa",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          3
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "lazy-empty",
+      "pattern": "a*?",
+      "input": "aaa",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          0
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "greedy-all",
+      "pattern": "a*",
+      "input": "aaa",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          3
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "ungreedy",
+      "pattern": "a+",
+      "input": "aaa",
+      "options": 16,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "ungreedy-lazy-inverts",
+      "pattern": "a+?",
+      "input": "aaa",
+      "options": 16,
+      "model": true,
+      "first": [
+        [
+          0,
+          3
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "bounded-lazy",
+      "pattern": "a{2,4}?",
+      "input": "aaaa",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          2
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "nullable-last-capture",
+      "pattern": "(a*)*",
+      "input": "aaa",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          3
+        ],
+        [
+          3,
+          3
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "absent-and-empty",
+      "pattern": "(a)?()",
+      "input": "",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          0
+        ],
+        null,
+        [
+          0,
+          0
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "previous-iteration-capture",
+      "pattern": "(a|(b))+",
+      "input": "ba",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "unicode-empty-progress",
+      "pattern": "",
+      "input": "é🙂",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          0
+        ]
+      ],
+      "full": false,
+      "all": [
+        [
+          0,
+          0
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          6,
+          6
+        ]
+      ],
+      "replacement": {
+        "template": "_",
+        "first": "_é🙂",
+        "all": "_é_🙂_"
+      }
+    },
+    {
+      "id": "named-replacement",
+      "pattern": "(?<n>[ab])(c)?",
+      "input": "ab",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1
+        ],
+        null
+      ],
+      "full": false,
+      "replacement": {
+        "template": "${n}-$0-$1-$2-$$",
+        "first": "a-a-a--$b",
+        "all": "a-a-a--$b-b-b--$"
+      }
+    },
+    {
+      "id": "ascii-word-boundary",
+      "pattern": "\\b\\w+\\b",
+      "input": "!ab_",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          1,
+          4
+        ]
+      ],
+      "full": false
+    },
+    {
+      "id": "digit-runs",
+      "pattern": "\\d+",
+      "input": "x12",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          1,
+          3
+        ]
+      ],
+      "full": false
+    },
+    {
+      "id": "space-class",
+      "pattern": "\\s+",
+      "input": " \t\n",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          3
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "unicode-literals",
+      "pattern": "é|π",
+      "input": "π",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          2
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "hex-scalar",
+      "pattern": "\\x{1f642}",
+      "input": "🙂",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          4
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "unicode-range",
+      "pattern": "[é-π]+",
+      "input": "πé",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          4
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "first-hyphen",
+      "pattern": "[-ab]",
+      "input": "-",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "last-hyphen",
+      "pattern": "[ab-]",
+      "input": "-",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "escaped-middle-hyphen",
+      "pattern": "[a-b\\-c]",
+      "input": "-",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "hex-middle-hyphen",
+      "pattern": "[a-b\\x{2d}c]",
+      "input": "-",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "unicode16-script",
+      "pattern": "\\p{Script=Tulu_Tigalari}",
+      "input": "𑎀",
+      "options": 0,
+      "model": false,
+      "first": [
+        [
+          0,
+          4
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "unicode16-script-extensions",
+      "pattern": "\\p{scx=Tulu_Tigalari}",
+      "input": "𑎀",
+      "options": 0,
+      "model": false,
+      "first": [
+        [
+          0,
+          4
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "unicode16-letter",
+      "pattern": "\\p{L}",
+      "input": "𑎀",
+      "options": 0,
+      "model": false,
+      "first": [
+        [
+          0,
+          4
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "unicode16-alphabetic",
+      "pattern": "\\p{Alphabetic}",
+      "input": "𑎀",
+      "options": 0,
+      "model": false,
+      "first": [
+        [
+          0,
+          4
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "word-mark",
+      "pattern": "\\w",
+      "input": "́",
+      "options": 0,
+      "model": false,
+      "first": [
+        [
+          0,
+          2
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "word-excludes-join-control",
+      "pattern": "\\w",
+      "input": "‌",
+      "options": 0,
+      "model": false,
+      "first": null,
+      "full": false
+    },
+    {
+      "id": "join-control-boundary",
+      "pattern": "\\bа\\b",
+      "input": "‌а‍",
+      "options": 0,
+      "model": false,
+      "first": [
+        [
+          3,
+          5
+        ]
+      ],
+      "full": false
+    },
+    {
+      "id": "kelvin-simple-fold",
+      "pattern": "k",
+      "input": "K",
+      "options": 1,
+      "model": false,
+      "first": [
+        [
+          0,
+          3
+        ]
+      ],
+      "full": true
+    },
+    {
+      "id": "sharp-s-no-expansion",
+      "pattern": "ß",
+      "input": "ss",
+      "options": 1,
+      "model": false,
+      "first": null,
+      "full": false
+    },
+    {
+      "id": "no-normalization",
+      "pattern": "é",
+      "input": "é",
+      "options": 0,
+      "model": true,
+      "first": null,
+      "full": false
+    },
+    {
+      "id": "lf-multiline",
+      "pattern": "^a$",
+      "input": "x\na\n",
+      "options": 2,
+      "model": true,
+      "first": [
+        [
+          2,
+          3
+        ]
+      ],
+      "full": false
+    },
+    {
+      "id": "crlf-multiline",
+      "pattern": "^a$",
+      "input": "x\r\na\r\n",
+      "options": 10,
+      "model": true,
+      "first": [
+        [
+          3,
+          4
+        ]
+      ],
+      "full": false
+    },
+    {
+      "id": "standalone-cr",
+      "pattern": "^a$",
+      "input": "x\ra\r",
+      "options": 10,
+      "model": true,
+      "first": null,
+      "full": false
+    },
+    {
+      "id": "dot-crlf-excludes-cr",
+      "pattern": ".",
+      "input": "\r",
+      "options": 8,
+      "model": true,
+      "first": null,
+      "full": false
+    },
+    {
+      "id": "dot-includes-newline",
+      "pattern": ".",
+      "input": "\r\n",
+      "options": 12,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": false
+    },
+    {
+      "id": "absolute-anchors",
+      "pattern": "\\Aa\\z",
+      "input": "x\na\n",
+      "options": 2,
+      "model": true,
+      "first": null,
+      "full": false
+    },
+    {
+      "id": "numeric-boundary-repeat",
+      "pattern": "\\b{2}a\\b{1,}",
+      "input": "a",
+      "options": 0,
+      "model": true,
+      "first": [
+        [
+          0,
+          1
+        ]
+      ],
+      "full": true
+    }
+  ],
+  "invalid": [
+    {
+      "id": "backreference",
+      "pattern": "(a)\\1",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "lookahead",
+      "pattern": "(?=a)",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "lookbehind",
+      "pattern": "(?<=a)",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "atomic-group",
+      "pattern": "(?>a)",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "possessive",
+      "pattern": "a*+",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "inline-flags",
+      "pattern": "(?i)a",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "python-name",
+      "pattern": "(?P<a>a)",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "posix-class",
+      "pattern": "[[:alpha:]]",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "set-intersection",
+      "pattern": "[a&&b]",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "nested-class",
+      "pattern": "[a[b]]",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "byte-escape",
+      "pattern": "\\C",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "negative-boundary",
+      "pattern": "\\B",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "special-boundary",
+      "pattern": "\\b{start}",
+      "error": "UnsupportedFeature"
+    },
+    {
+      "id": "unknown-escape",
+      "pattern": "\\q",
+      "error": "InvalidEscape"
+    },
+    {
+      "id": "unbraced-hex",
+      "pattern": "\\x41",
+      "error": "InvalidEscape"
+    },
+    {
+      "id": "surrogate",
+      "pattern": "\\x{d800}",
+      "error": "InvalidUnicodeScalar"
+    },
+    {
+      "id": "too-large-scalar",
+      "pattern": "\\x{110000}",
+      "error": "InvalidUnicodeScalar"
+    },
+    {
+      "id": "unknown-property",
+      "pattern": "\\p{NoSuchProperty}",
+      "error": "InvalidUnicodeProperty"
+    },
+    {
+      "id": "age-property",
+      "pattern": "\\p{Age=16.0}",
+      "error": "InvalidUnicodeProperty"
+    },
+    {
+      "id": "synthetic-property",
+      "pattern": "\\p{Any}",
+      "error": "InvalidUnicodeProperty"
+    },
+    {
+      "id": "reversed-range",
+      "pattern": "[z-a]",
+      "error": "InvalidRange"
+    },
+    {
+      "id": "unclosed-class",
+      "pattern": "[",
+      "error": "InvalidClass"
+    },
+    {
+      "id": "descending-repeat",
+      "pattern": "a{3,2}",
+      "error": "InvalidQuantifier"
+    },
+    {
+      "id": "double-repeat",
+      "pattern": "a**",
+      "error": "InvalidQuantifier"
+    },
+    {
+      "id": "empty-zero-repeat",
+      "pattern": "(){0,0}",
+      "error": "InvalidQuantifier"
+    },
+    {
+      "id": "invalid-name",
+      "pattern": "(?<1>a)",
+      "error": "InvalidCaptureName"
+    },
+    {
+      "id": "duplicate-name",
+      "pattern": "(?<n>a)(?<n>b)",
+      "error": "DuplicateCaptureName"
+    },
+    {
+      "id": "middle-hyphen",
+      "pattern": "[a-b-c]",
+      "error": "InvalidClass"
+    },
+    {
+      "id": "negated-middle-hyphen",
+      "pattern": "[^a-b-c]",
+      "error": "InvalidClass"
+    },
+    {
+      "id": "unicode-middle-hyphen",
+      "pattern": "é[é-π-x]",
+      "error": "InvalidClass"
+    },
+    {
+      "id": "raw-close-class",
+      "pattern": "]",
+      "error": "InvalidSyntax"
+    },
+    {
+      "id": "raw-close-repeat",
+      "pattern": "}",
+      "error": "InvalidSyntax"
+    },
+    {
+      "id": "trailing-escape",
+      "pattern": "\\",
+      "error": "UnexpectedEnd"
+    }
+  ]
+}

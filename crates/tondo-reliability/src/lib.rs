@@ -13,6 +13,7 @@ pub mod matrix;
 pub mod provenance;
 pub mod quality;
 pub mod ratchet;
+pub mod regex_model;
 pub mod regression;
 pub mod scalar_fuzz;
 pub mod spec_structure;
