@@ -29,16 +29,16 @@
     "status": "validated",
     "reason": "the supplied coverage report passed the quality and provenance gates",
     "report_sha256": "c66c141c0ed10f314cb080449b3b7e470d561f01b652d75dd59be7b64a061057",
-    "provenance_sha256": "36012802a60678af44d2d2aa669d272140539fbfed65122c3933d7f243b22b1b",
-    "tree_sha256": "da45028f2179b71dc1d80e648e660658064a2b66df56ddf3fda516ba5c4efe2f",
+    "provenance_sha256": "aaee506c3446cf945c599be57700a51cf4eb5adc3196f841a97fe8f85a1e2952",
+    "tree_sha256": "12262a28bfe47c9901d8164f51ce9d50f378be0835674f58c4af938135d77740",
     "input_set_sha256": "ebf6de49d03b353e514ab461c75ca6111a37f43047f298a2a84a78bc8639dff0"
   },
   "mutation": {
     "status": "validated",
     "reason": "the supplied mutation report passed the quality and provenance gates",
     "report_sha256": "199c2c86cfd3ce51c7956e20d879b38a652a16fc8cf67c5ab91e5ca1f3781401",
-    "provenance_sha256": "36012802a60678af44d2d2aa669d272140539fbfed65122c3933d7f243b22b1b",
-    "tree_sha256": "da45028f2179b71dc1d80e648e660658064a2b66df56ddf3fda516ba5c4efe2f",
+    "provenance_sha256": "aaee506c3446cf945c599be57700a51cf4eb5adc3196f841a97fe8f85a1e2952",
+    "tree_sha256": "12262a28bfe47c9901d8164f51ce9d50f378be0835674f58c4af938135d77740",
     "input_set_sha256": "ebf6de49d03b353e514ab461c75ca6111a37f43047f298a2a84a78bc8639dff0"
   }
 }
