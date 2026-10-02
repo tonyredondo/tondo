@@ -8,7 +8,7 @@
   "suite": "tondo-conformance-draft",
   "result_format": "tondo-conformance-result-draft/2",
   "manifest": "conformance/0.1/manifest.json",
-  "manifest_sha256": "1f2734afeaeb38d9cdb268f4d2df23b97ee89f1a44fc852db8877db18e645ab0",
+  "manifest_sha256": "99acd8d953952d574f10c13d5e8722507d8429dd8e09c459f625f51a231a1ea2",
   "target": "tondo-vm-hosted",
   "profile": "hosted",
   "pipeline": [
