@@ -2984,9 +2984,10 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   observation hash may vary between runs. This separates retained evidence
   from scheduler-dependent paths without rewriting a promoted record.
   Nightly reliability caches dependencies without restoring workspace build
-  artifacts. The fresh-campaign correction awaits consolidated quality and
-  exact-SHA nightly validation; it does not promote unrelated portable,
-  native, standard-library or release gates.
+  artifacts. The source-bound campaign passes every 80% floor and catches all
+  six critical mutants. Full functional and exact-SHA nightly validation
+  remain pending; this correction does not promote unrelated portable, native,
+  standard-library or release gates.
 
 - [x] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
   El runner de quality debe calcular antes y después un digest canónico de

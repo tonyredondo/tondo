@@ -50,8 +50,10 @@ retained manifest, inventory, matrix, baseline, scope and provenance field
 must still match. Only the coverage observation hash may differ between
 campaigns; host scheduling can exercise additional passing paths. The
 mutation result hash remains exact, and no retained record is rewritten.
-Nightly runs cache registry/Git dependencies only; restoring workspace
-`target` artifacts previously exhausted a hosted runner's disk.
+Nightly runs cache registry/Git dependencies only. A historical run failed
+because its hosted runner ran out of disk space. Excluding workspace `target`
+artifacts limits restored disk usage; it does not establish a unique cause
+for that historical failure.
 The record never contains physical paths or report
 contents, only portable logical paths and SHA-256 identities.
 
@@ -322,7 +324,8 @@ instrumentation domain, branch-heavy behavior is defended by region coverage,
 closed decision matrices, model/property tests, and mutation testing. Enabling
 either numeric gate requires a reviewed toolchain report with actual units.
 
-`cargo-mutants 27.1.0` runs a bounded, explicit 30-mutant selection over:
+The quality gate uses `cargo-mutants 27.1.0` with six explicit mutations,
+one per critical frontier, over:
 
 - project and privileged-unit admission;
 - documentation line-ending admission;
@@ -330,12 +333,13 @@ either numeric gate requires a reviewed toolchain report with actual units.
 - heap capacity enforcement.
 
 The campaign copies VCS metadata because the process fixture intentionally
-executes `git log`. Of 30 generated mutations, 26 are executable and all 26
-must be caught; four are unviable because the generated replacement cannot
-compile or has no valid return value. A changed selection, an additional
-unviable mutant, any survivor, any timeout, or a lower score requires review
-and a new baseline. The build timeout is 900 seconds because the isolated
-workspace build is a legitimate, bounded operation on the supported runner.
+executes `git log`. All six mutations must be caught, with zero survivors,
+timeouts or unviable results, matching `testing/quality-baseline.json`.
+A changed selection or lower score requires review and a new baseline.
+Wider campaigns have separate selections and evidence; their results do not
+automatically replace this six-mutant acceptance contract. The build timeout
+is 900 seconds because the isolated workspace build is a legitimate, bounded
+operation on the supported runner.
 
 ## Regression rule
 
@@ -364,7 +368,7 @@ bash scripts/quality-gate.sh
 ~~~
 
 `quality-gate.sh` supplies the fresh coverage and mutation paths to
-`ratchet check`; invoking the ratchet without those reports is expected to fail
+`ratchet verify`; invoking the ratchet without those reports is expected to fail
 while executable draft layers exist.
 
 Updating a quality threshold is a reviewed baseline change, not an automatic
