@@ -42,8 +42,17 @@ the host-specific raw tool output. Each supplied binding separately hashes the
 exact retained raw bytes before the ratchet accepts those metrics. Moving a
 report preserves its binding; rewriting it, even with equivalent metrics,
 requires its own capture evidence. The strict gate validates the deterministic
-repository records; the quality gate supplies fresh coverage and mutation
-reports to the ratchet. The record never contains physical paths or report
+repository records. `ratchet check` compares the retained canonical report
+identities exactly. The quality gate uses `ratchet verify` for fresh coverage
+and mutation reports: raw bindings, current sources, flags, toolchain, all
+80% global/risk floors and the mutation baseline are checked first. Every
+retained manifest, inventory, matrix, baseline, scope and provenance field
+must still match. Only the coverage observation hash may differ between
+campaigns; host scheduling can exercise additional passing paths. The
+mutation result hash remains exact, and no retained record is rewritten.
+Nightly runs cache registry/Git dependencies only; restoring workspace
+`target` artifacts previously exhausted a hosted runner's disk.
+The record never contains physical paths or report
 contents, only portable logical paths and SHA-256 identities.
 
 The ratchet binds report identities to the canonical digest of the measured

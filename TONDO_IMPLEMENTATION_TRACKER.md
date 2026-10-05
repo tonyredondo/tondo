@@ -2976,14 +2976,17 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   conformidad completa.
 
 - [x] **CONF-RATCHET-001 — Keep current evidence bound to the measured tree.**
-  The current ratchet binds 2,466 passing Rust tests, 196 layer observations
-  and the live inventory/matrix. The consolidated campaign covers 283,058 of
-  309,823 lines (9,136 basis points), above the authorized 80% acceptance floor;
-  all six selected critical mutants are caught. Report bindings retain exact
-  raw bytes, while the ratchet separately compares canonical metrics.
-  Current-input verification passes and changed reports, source inputs and
-  build flags are rejected. This local evidence does not replace portable CI
-  or promote unrelated native, standard-library or release gates.
+  The ratchet binds the live inventory/matrix and measured source identity.
+  Report bindings retain exact raw bytes; `ratchet check` compares the retained
+  canonical metrics exactly. `ratchet verify` checks a fresh campaign against
+  the same recorded inputs and mutation result after validating raw bindings,
+  every 80% global/risk floor and the mutation baseline. Only the coverage
+  observation hash may vary between runs. This separates retained evidence
+  from scheduler-dependent paths without rewriting a promoted record.
+  Nightly reliability caches dependencies without restoring workspace build
+  artifacts. The fresh-campaign correction awaits consolidated quality and
+  exact-SHA nightly validation; it does not promote unrelated portable,
+  native, standard-library or release gates.
 
 - [x] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
   El runner de quality debe calcular antes y después un digest canónico de

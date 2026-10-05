@@ -193,6 +193,31 @@ pub fn validate(record: &RatchetRecord) -> Result<(), String> {
     Ok(())
 }
 
+/// Compare a fresh, quality-verified campaign with the retained wave record.
+/// Both records must describe the same inputs. Only coverage observations may
+/// differ: scheduler and host paths can change covered units between runs.
+/// Callers construct `measured` through `build`, which checks raw report bytes,
+/// current provenance and every global/risk quality floor before comparison.
+pub fn verify_measurement(
+    retained: &RatchetRecord,
+    measured: &RatchetRecord,
+) -> Result<(), String> {
+    validate(retained)?;
+    validate(measured)?;
+    let mut comparable = measured.clone();
+    comparable
+        .coverage
+        .report_sha256
+        .clone_from(&retained.coverage.report_sha256);
+    if *retained != comparable {
+        return Err(
+            "fresh measurement does not match the retained ratchet inputs or mutation result"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 fn scope_evidence(
     root: &Path,
     name: &str,
@@ -314,6 +339,61 @@ mod tests {
         let mut record = record();
         record.coverage.report_sha256 = None;
         assert!(validate(&record).is_err());
+    }
+
+    #[test]
+    fn fresh_measurement_accepts_coverage_observation_changes_only() {
+        let retained = record();
+        let mut measured = retained.clone();
+        measured.coverage.report_sha256 = Some("f".repeat(64));
+        assert_ne!(
+            canonical_json(&retained).unwrap(),
+            canonical_json(&measured).unwrap()
+        );
+        verify_measurement(&retained, &measured).unwrap();
+        assert_eq!(retained.coverage.report_sha256, Some("b".repeat(64)));
+        assert_eq!(measured.coverage.report_sha256, Some("f".repeat(64)));
+    }
+
+    #[test]
+    fn fresh_measurement_rejects_every_retained_input_and_scope_change() {
+        let retained = record();
+        let changes: Vec<fn(&mut RatchetRecord)> = vec![
+            |r| r.format = "other".into(),
+            |r| r.lineage = "other".into(),
+            |r| r.manifest.sha256 = "f".repeat(64),
+            |r| r.inventory.sha256 = "f".repeat(64),
+            |r| r.matrix.sha256 = "f".repeat(64),
+            |r| r.gap_audit.sha256 = "f".repeat(64),
+            |r| r.quality_baseline.sha256 = "f".repeat(64),
+            |r| r.draft_case_layers += 1,
+            |r| r.pending_tasks.push("later".into()),
+            |r| r.coverage.status = "not-applicable".into(),
+            |r| r.coverage.reason = "other".into(),
+            |r| r.coverage.report_sha256 = None,
+            |r| r.coverage.report_sha256 = Some("bad".into()),
+            |r| r.coverage.provenance_sha256 = Some("f".repeat(64)),
+            |r| r.coverage.tree_sha256 = Some("f".repeat(64)),
+            |r| r.coverage.input_set_sha256 = Some("f".repeat(64)),
+            |r| r.mutation.status = "not-applicable".into(),
+            |r| r.mutation.reason = "other".into(),
+            |r| r.mutation.report_sha256 = Some("f".repeat(64)),
+            |r| r.mutation.provenance_sha256 = Some("f".repeat(64)),
+            |r| r.mutation.tree_sha256 = Some("f".repeat(64)),
+            |r| r.mutation.input_set_sha256 = Some("f".repeat(64)),
+        ];
+        for (index, change) in changes.into_iter().enumerate() {
+            let mut measured = retained.clone();
+            change(&mut measured);
+            assert!(
+                verify_measurement(&retained, &measured).is_err(),
+                "change {index}"
+            );
+            assert!(
+                verify_measurement(&measured, &retained).is_err(),
+                "retained change {index}"
+            );
+        }
     }
 
     #[test]

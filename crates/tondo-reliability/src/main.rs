@@ -25,7 +25,7 @@ Usage:
   tondo-reliability inventory <generate|check> [--root <directory>]
   tondo-reliability matrix <generate|check> [--root <directory>]
   tondo-reliability layer-evidence attest --test-log <path> --before <json> --output <json> [--root <directory>]
-  tondo-reliability ratchet <generate|check> [--coverage <json>] [--mutants <json>] [--coverage-binding <json>] [--mutants-binding <json>] [--root <directory>]
+  tondo-reliability ratchet <generate|check|verify> [--coverage <json>] [--mutants <json>] [--coverage-binding <json>] [--mutants-binding <json>] [--root <directory>]
   tondo-reliability quality check [--root <directory>]
   tondo-reliability quality provenance [--root <directory>]
   tondo-reliability quality capture --coverage <json> --coverage-binding <json> --mutants <json> --mutants-binding <json> --revision <id> [--root <directory>]
@@ -101,6 +101,10 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
         [area, command] if area == "ratchet" && command == "check" => {
             reject_ratchet_options(&arguments)?;
             check_ratchet(&root, &arguments)
+        }
+        [area, command] if area == "ratchet" && command == "verify" => {
+            reject_ratchet_options(&arguments)?;
+            verify_ratchet(&root, &arguments)
         }
         [area, command] if area == "quality" && command == "check" => {
             reject_quality_options(&arguments)?;
@@ -555,6 +559,27 @@ fn check_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String> {
     Ok(format!(
         "ratchet is current: {} draft case layers",
         expected.draft_case_layers
+    ))
+}
+
+fn verify_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String> {
+    let measured = ratchet::build(
+        root,
+        arguments.coverage.as_deref(),
+        arguments.mutants.as_deref(),
+        arguments.coverage_binding.as_deref(),
+        arguments.mutants_binding.as_deref(),
+    )?;
+    let path = root.join(ratchet::PATH);
+    let bytes =
+        std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let retained: ratchet::RatchetRecord = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid retained ratchet: {error}"))?;
+    check_bytes(&path, &canonical_json(&retained)?)?;
+    ratchet::verify_measurement(&retained, &measured)?;
+    Ok(format!(
+        "fresh quality measurement verified: {} draft case layers",
+        measured.draft_case_layers
     ))
 }
 

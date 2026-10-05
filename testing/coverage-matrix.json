@@ -15,7 +15,7 @@
       "sha256": "0e5046a644ca552b66df01afbed3548573f8f30192a5bc7ba96617f9abf1f801"
     }
   ],
-  "inventory_sha256": "afd0279ece61ecc12981b4ead9f77838a329f98138de3623ea7af2503f8a10bd",
+  "inventory_sha256": "c87ae7dfa5e1899e0d29b726560a035e7b903762fb6a793c4346c0f4d997d35b",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 445,

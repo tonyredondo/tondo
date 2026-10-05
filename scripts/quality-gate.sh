@@ -120,7 +120,7 @@ cargo run -p tondo-reliability --locked -- quality verify \
     --mutants "$mutation_report" \
     --mutants-binding "$mutation_binding"
 
-cargo run -p tondo-reliability --locked -- ratchet check \
+cargo run -p tondo-reliability --locked -- ratchet verify \
     --root . \
     --coverage "$coverage" \
     --coverage-binding "$coverage_binding" \

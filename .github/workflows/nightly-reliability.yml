@@ -24,16 +24,15 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Cache nightly build
+      - name: Cache nightly dependencies
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: tondo-nightly-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: tondo-nightly-dependencies-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
-            tondo-nightly-${{ runner.os }}-${{ runner.arch }}-
+            tondo-nightly-dependencies-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install full-gate fuzz toolchain
         run: |

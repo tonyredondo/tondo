@@ -138,6 +138,10 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
     assert!(!ratchet.status.success());
     assert!(text(&ratchet.stderr).contains("coverage report is required"));
 
+    let fresh = run(&["ratchet", "verify", "--root", root]);
+    assert!(!fresh.status.success());
+    assert!(text(&fresh.stderr).contains("coverage report is required"));
+
     let workspace = TemporaryWorkspace::new();
     let before = workspace.0.join("before.json");
     let test_log = workspace.0.join("tests.log");
@@ -506,6 +510,14 @@ fn invalid_commands_and_quality_option_leaks_have_stable_failures() {
         vec!["quality", "check", "--coverage", "report.json"],
         vec!["quality", "capture", "--root", root],
         vec!["quality", "verify", "--root", root],
+        vec![
+            "ratchet",
+            "verify",
+            "--revision",
+            "forbidden",
+            "--root",
+            root,
+        ],
         vec![
             "quality",
             "verify",
