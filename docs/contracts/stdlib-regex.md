@@ -13,9 +13,9 @@ bounded oracle, 41 valid/33 invalid retained vectors, 4,096 generated seeds and
 their joint quality and functional proof. The target-qualified direct Rust
 performance boundary is described in
 [stdlib-regex-performance.md](./stdlib-regex-performance.md) and
-`testing/stdlib-regex-performance.json`. It starts at `measurement-ready`;
-the performance leaf remains open until the clean-source campaign and quality
-gates pass. Shared conformance and executable usage remain
+`testing/stdlib-regex-performance.json`. Its `verified-stdlib-kernel-baseline`
+state follows the clean-source campaign and the full functional and quality
+gates. Shared conformance and executable usage remain
 `STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce
@@ -355,8 +355,10 @@ Other pure operations have no terminal state between calls. An exhausted
 
 ## 8. Rendimiento y seguridad
 
-- La complejidad de matching es lineal en el input para un programa compilado,
-  dentro de `max_steps`; no hay backtracking exponencial.
+- A single search has linear input work for a fixed compiled program within
+  `max_steps`; no hay backtracking exponencial. Lazy enumeration and repeated
+  replacement can rescan remaining suffixes. Their cumulative work stays
+  step-bounded; no total linear enumeration guarantee is claimed.
 - La compilación puede usar lazy DFA o tablas equivalentes, pero cada estado,
   rango y transición cuenta contra `max_program_states`/`max_class_ranges`.
 - El compilador y el matcher usan worklists explícitos; un patrón anidado no

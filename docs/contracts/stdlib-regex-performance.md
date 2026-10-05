@@ -9,9 +9,14 @@ Public compiler calls, production VM registration, native ABI/AOT, SIMD,
 multiversion dispatch and code size remain unclaimed or unmeasured.
 `native_live_handles` is unmeasured and must remain `null`.
 
-The register starts at `measurement-ready`. Only a clean-source capture and
-the required functional and source-bound quality gates can establish
-`verified-stdlib-kernel-baseline`. A development report cannot close this leaf.
+The register advances from `measurement-ready` to
+`verified-stdlib-kernel-baseline` after the clean-source capture and the
+required functional and source-bound quality gates. A development report
+cannot close this leaf. The campaign uses committed probe bytes from `495a573`;
+its 19 workloads retain 513 actual measurements. Workspace quality verifies
+292,637 of 319,506 lines (91.5905%), every global/risk line/function/region
+dimension at or above 80%, and all six selected critical mutants caught. The
+full gate includes the 206-case draft suite and async/select repetitions.
 
 ## Protocol and independent expectations
 
@@ -56,6 +61,10 @@ error and then remains fused. The output-limit replacement returns no partial
 String. Successful empty matches progress through UTF-8 scalar boundaries and
 publish EOF once. The tests compare complete captures, including absent
 groups, and verify the terminal cursor twice.
+
+The capture workload times `Regex::find` constructing the complete capture
+payload. Individual capture access and exact span comparison occur outside
+timing; no separate capture-lookup throughput is claimed.
 
 The scale pair measures fixed-program single-search work. The suffix-rescan
 fixture separately records iteration's cumulative step count. Neither the

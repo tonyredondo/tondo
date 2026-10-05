@@ -219,7 +219,7 @@
     "parser_stack": "explicit-worklist",
     "allocation": "bounded-by-program-input-and-output-limits",
     "claims_before_perf_gate": "forbidden",
-    "status": "measurement-ready",
+    "status": "verified-stdlib-kernel-baseline",
     "task": "STD-REGEX-PERF-001",
     "contract": "testing/stdlib-regex-performance.json",
     "document": "docs/contracts/stdlib-regex-performance.md",
@@ -240,7 +240,7 @@
       {"id": "performance", "requires": ["scalar-oracle", "adversarial-input", "target-qualified-report", "allocation-report"]},
       {"id": "promote", "requires": ["linear-safety-proof", "deterministic-errors", "unicode-descriptor-parity", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-REGEX-PERF-001"]
+    "next_blocks": ["STD-REGEX-CONF-001"]
   },
   "implementation": {
     "status": "verified-stdlib-kernel",
@@ -268,7 +268,7 @@
     "heap_metric": "conservative-logical-storage-not-rss-or-vm-allocator",
     "system_oom_recovery": "not-claimed-for-dependency-or-rust-global-allocator",
     "evidence_report": "target/reliability/evidence/stdlib-regex-implementation.json",
-    "required_follow_ups": ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+    "required_follow_ups": ["STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
   },
   "testing_contract": "testing/stdlib-regex-test.json"
 }
