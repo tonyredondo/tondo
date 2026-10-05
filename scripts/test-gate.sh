@@ -376,6 +376,12 @@ run_step stdlib-regex-testing-contract-tests \
     scripts/stdlib-regex-test-test.sh
 run_step stdlib-regex-fuzz \
     scripts/stdlib-regex-fuzz.sh
+run_step stdlib-regex-performance-contract \
+    scripts/stdlib-regex-performance-check.sh
+run_step stdlib-regex-performance-contract-tests \
+    scripts/stdlib-regex-performance-test.sh
+run_step stdlib-regex-performance \
+    scripts/stdlib-regex-performance.sh
 run_step stdlib-uuid-contract \
     scripts/stdlib-uuid-check.sh
 run_step stdlib-uuid-contract-tests \

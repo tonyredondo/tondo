@@ -4303,8 +4303,14 @@ line coverage, every global/risk dimension at or above 80%, six critical mutants
 caught. The register and contract are
 [testing/stdlib-regex-test.json](./testing/stdlib-regex-test.json) and
 [docs/contracts/stdlib-regex-test.md](./docs/contracts/stdlib-regex-test.md).
-The next leaf is performance; shared conformance and executable usage remain
-`STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
+The next leaf is performance. Its `measurement-ready` contract is
+[testing/stdlib-regex-performance.json](./testing/stdlib-regex-performance.json)
+and [docs/contracts/stdlib-regex-performance.md](./docs/contracts/stdlib-regex-performance.md):
+19 direct Rust kernel workloads, three independent processes and 27 retained
+samples per workload, exact model/authored expectations, actual program/search
+counters and explicitly selected logical resources. Hosted VM, native Tondo,
+SIMD and code-size measurements are not claimed. Shared conformance and
+executable usage remain `STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
 
 ### 14.17 `std.uuid`
 

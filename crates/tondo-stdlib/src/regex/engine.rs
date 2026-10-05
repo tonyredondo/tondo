@@ -77,6 +77,23 @@ fn compile_limit(kind: Kind, id: &'static str) -> RegexError {
 }
 
 impl Program {
+    #[cfg(test)]
+    pub(super) fn performance_shape(&self) -> [usize; 4] {
+        let range_vectors = self.code.iter().filter(|instruction| {
+            matches!(instruction, Inst::Consume(Matcher::Ranges(ranges), _) if !ranges.is_empty())
+        }).count() + usize::from(!self.word.is_empty());
+        [
+            self.code.len(),
+            self.semantic_states,
+            self.ranges,
+            range_vectors,
+        ]
+    }
+    #[cfg(test)]
+    pub(super) fn performance_search_storage(&self) -> usize {
+        let thread = size_of::<Thread>() + self.slots * size_of::<Option<usize>>();
+        self.semantic_states * (thread * 4 + size_of::<usize>()) + self.logical_storage()
+    }
     pub(super) fn state_count(&self) -> usize {
         self.code.len()
     }

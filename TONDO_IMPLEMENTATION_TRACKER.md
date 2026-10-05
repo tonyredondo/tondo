@@ -6833,8 +6833,13 @@ estas leaves.
   `testing/stdlib-regex-test.json` and `docs/contracts/stdlib-regex-test.md`
   record this boundary; public/production VM/native/performance promotion is
   unclaimed. Next: `STD-REGEX-PERF-001`.
-- [ ] **STD-REGEX-PERF-001 — Medir regex.** Fijar compile/match throughput,
-  tail, memoria y tamaño de automata sobre corpus normal y adversario.
+- [ ] **STD-REGEX-PERF-001 — Measure the bounded Rust regex kernel.**
+  The measurement-ready protocol covers 19 compile/search/capture/iteration/
+  replacement/rejection workloads, with 27 retained samples each, exact
+  independent/authored expectations, actual automaton/search counters and
+  explicitly selected logical resources. Clean-source capture, consolidated
+  quality and full functional validation remain pending. Public compiler/VM,
+  native ABI/AOT, SIMD and code-size promotion are outside this boundary.
 - [ ] **STD-REGEX-CONF-001 — Conformar regex.** Ejecutar vectores portables y
   equivalencia VM/nativo con los mismos límites y errores.
 - [ ] **STD-REGEX-DOC-001 — Documentar regex.** Publicar sintaxis exacta,

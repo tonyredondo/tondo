@@ -10,9 +10,13 @@ The independent model/fuzz boundary is defined by
 `testing/stdlib-regex-test.json`. Its verified scope includes the independent
 bounded oracle, 41 valid/33 invalid retained vectors, 4,096 generated seeds and
 128 seeded fuzz runs. The middle-hyphen correction and testing boundary pass
-their joint quality and functional proof. Performance, shared conformance and
-executable usage remain `STD-REGEX-PERF-001`, `STD-REGEX-CONF-001` and
-`STD-REGEX-DOC-001`.
+their joint quality and functional proof. The target-qualified direct Rust
+performance boundary is described in
+[stdlib-regex-performance.md](./stdlib-regex-performance.md) and
+`testing/stdlib-regex-performance.json`. It starts at `measurement-ready`;
+the performance leaf remains open until the clean-source campaign and quality
+gates pass. Shared conformance and executable usage remain
+`STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce
 un valor inmutable y reutilizable; las operaciones de búsqueda son puras,
@@ -472,7 +476,7 @@ floor, with the critical mutation baseline preserved.
 The implementation and independent testing leaves pass the full functional
 gate, including the 206-case draft suite, async/select observations and the
 128-run regex smoke. Their joint source-bound workspace campaign measures
-291,951 of 318,803 lines (91.5772%);
+291,951 of 318,803 lines (91.5772%) at the independent testing boundary;
 every global and risk-scope line/function/region dimension meets the 80% floor,
 and all six selected critical mutants are caught. These observations promote
 `verified-stdlib-kernel` and the independent model/test/fuzz boundary only.

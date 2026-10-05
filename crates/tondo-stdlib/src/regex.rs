@@ -4,6 +4,8 @@
 //! Iteration borrows both the immutable program and input; errors are per item.
 
 mod engine;
+#[cfg(test)]
+mod performance;
 mod syntax;
 
 use std::{fmt, sync::Arc};

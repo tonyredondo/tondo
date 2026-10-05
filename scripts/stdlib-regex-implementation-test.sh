@@ -10,13 +10,18 @@ expect_failure() {
         echo "std.regex implementation tests: $name unexpectedly passed" >&2; exit 1
     fi
 }
+# Reconstruct the design fields for earlier owner transitions; later child
+# metadata must not turn these historical projections into premature promotion.
+jq '.performance |= {scalar_oracle, simd_allowed_after_equivalence, dispatch,
+  matching, parser_stack, allocation, claims_before_perf_gate}
+  | del(.conformance, .documentation)' testing/stdlib-regex.json > "$tmp_dir/design.json"
 for transition in ready verified tested; do
     if [[ "$transition" == ready ]]; then
-        jq 'del(.testing_contract) | .implementation.status = "ready-stdlib-kernel" | .implementation.quality_gate = "pending-80-percent-per-scope" | .promotion.next_blocks = ["STD-REGEX-IMPL-001"] | .implementation.required_follow_ups = ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]' testing/stdlib-regex.json > "$tmp_dir/base.json"
+        jq 'del(.testing_contract) | .implementation.status = "ready-stdlib-kernel" | .implementation.quality_gate = "pending-80-percent-per-scope" | .promotion.next_blocks = ["STD-REGEX-IMPL-001"] | .implementation.required_follow_ups = ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]' "$tmp_dir/design.json" > "$tmp_dir/base.json"
     elif [[ "$transition" == verified ]]; then
-        jq 'del(.testing_contract) | .implementation.status = "verified-stdlib-kernel" | .implementation.quality_gate = "verified-80-percent-per-scope" | .promotion.next_blocks = ["STD-REGEX-TEST-001"] | .implementation.required_follow_ups = ["STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]' testing/stdlib-regex.json > "$tmp_dir/base.json"
+        jq 'del(.testing_contract) | .implementation.status = "verified-stdlib-kernel" | .implementation.quality_gate = "verified-80-percent-per-scope" | .promotion.next_blocks = ["STD-REGEX-TEST-001"] | .implementation.required_follow_ups = ["STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]' "$tmp_dir/design.json" > "$tmp_dir/base.json"
     else
-        jq '.implementation.status = "verified-stdlib-kernel" | .implementation.quality_gate = "verified-80-percent-per-scope" | .testing_contract = "testing/stdlib-regex-test.json" | .promotion.next_blocks = ["STD-REGEX-PERF-001"] | .implementation.required_follow_ups = ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]' testing/stdlib-regex.json > "$tmp_dir/base.json"
+        jq '.implementation.status = "verified-stdlib-kernel" | .implementation.quality_gate = "verified-80-percent-per-scope" | .testing_contract = "testing/stdlib-regex-test.json" | .promotion.next_blocks = ["STD-REGEX-PERF-001"] | .implementation.required_follow_ups = ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]' "$tmp_dir/design.json" > "$tmp_dir/base.json"
     fi
     for checker in scripts/stdlib-regex-check.sh scripts/stdlib-regex-implementation-check.sh; do
         TONDO_STDLIB_REGEX_CONTRACT="$tmp_dir/base.json" bash "$checker"

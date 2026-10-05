@@ -1,3 +1,37 @@
+def regex_performance_metadata:
+  (.performance | keys) == ["allocation", "backend", "claims_before_perf_gate", "contract", "dispatch", "document", "hosted_vm", "matching", "native_aot", "parser_stack", "profile", "samples_per_workload", "scalar_oracle", "selected_dispatch", "simd_allowed_after_equivalence", "status", "target", "task", "workloads"]
+  and .performance.task == "STD-REGEX-PERF-001"
+  and .performance.contract == "testing/stdlib-regex-performance.json"
+  and .performance.document == "docs/contracts/stdlib-regex-performance.md"
+  and .performance.target == "x86_64-unknown-linux-gnu"
+  and .performance.backend == "rust-stdlib-kernel"
+  and .performance.profile == "test"
+  and .performance.workloads == 19
+  and .performance.samples_per_workload == 27
+  and .performance.selected_dispatch == "scalar-fixed-target"
+  and .performance.native_aot == "not-claimed"
+  and .performance.hosted_vm == "not-claimed-no-regex-bridge";
+
+def regex_without_performance_child:
+  (.performance | keys) == ["allocation", "claims_before_perf_gate", "dispatch", "matching", "parser_stack", "scalar_oracle", "simd_allowed_after_equivalence"];
+
+def regex_tested_progression:
+  .testing_contract == "testing/stdlib-regex-test.json"
+  and .conformance == null and .documentation == null
+  and (if regex_without_performance_child then
+    .promotion.next_blocks == ["STD-REGEX-PERF-001"]
+    and .implementation.required_follow_ups == ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+  else
+    regex_performance_metadata
+    and (if .performance.status == "measurement-ready" then
+      .promotion.next_blocks == ["STD-REGEX-PERF-001"]
+      and .implementation.required_follow_ups == ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+    elif .performance.status == "verified-stdlib-kernel-baseline" then
+      .promotion.next_blocks == ["STD-REGEX-CONF-001"]
+      and .implementation.required_follow_ups == ["STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+    else false end)
+  end);
+
 def regex_kernel_progression:
   .implementation.public_api_promoted == false
   and .implementation.host == "not-applicable-pure-core"
@@ -24,16 +58,15 @@ def regex_kernel_progression:
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-regex-implementation.json"
   and (
     (.implementation.status == "ready-stdlib-kernel"
+      and .testing_contract == null and regex_without_performance_child
       and .implementation.quality_gate == "pending-80-percent-per-scope"
       and .promotion.next_blocks == ["STD-REGEX-IMPL-001"]
       and .implementation.required_follow_ups == ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])
     or
     (.implementation.status == "verified-stdlib-kernel"
       and .implementation.quality_gate == "verified-80-percent-per-scope"
-      and ((.testing_contract == null
+      and ((.testing_contract == null and regex_without_performance_child
         and .promotion.next_blocks == ["STD-REGEX-TEST-001"]
         and .implementation.required_follow_ups == ["STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])
-      or (.testing_contract == "testing/stdlib-regex-test.json"
-        and .promotion.next_blocks == ["STD-REGEX-PERF-001"]
-        and .implementation.required_follow_ups == ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])))
+      or regex_tested_progression))
   );

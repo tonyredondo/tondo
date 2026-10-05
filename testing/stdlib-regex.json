@@ -218,7 +218,19 @@
     "matching": "linear-with-explicit-step-budget",
     "parser_stack": "explicit-worklist",
     "allocation": "bounded-by-program-input-and-output-limits",
-    "claims_before_perf_gate": "forbidden"
+    "claims_before_perf_gate": "forbidden",
+    "status": "measurement-ready",
+    "task": "STD-REGEX-PERF-001",
+    "contract": "testing/stdlib-regex-performance.json",
+    "document": "docs/contracts/stdlib-regex-performance.md",
+    "target": "x86_64-unknown-linux-gnu",
+    "backend": "rust-stdlib-kernel",
+    "profile": "test",
+    "workloads": 19,
+    "samples_per_workload": 27,
+    "selected_dispatch": "scalar-fixed-target",
+    "native_aot": "not-claimed",
+    "hosted_vm": "not-claimed-no-regex-bridge"
   },
   "promotion": {
     "gates": [
