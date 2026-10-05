@@ -2984,10 +2984,12 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   observation hash may vary between runs. This separates retained evidence
   from scheduler-dependent paths without rewriting a promoted record.
   Nightly reliability caches dependencies without restoring workspace build
-  artifacts. The source-bound campaign passes every 80% floor and catches all
-  six critical mutants. Full functional and exact-SHA nightly validation
-  remain pending; this correction does not promote unrelated portable, native,
-  standard-library or release gates.
+  artifacts. The local full gate, strict push gate and all three jobs of
+  [nightly run 37377272429](https://github.com/tonyredondo/tondo/actions/runs/37377272429)
+  pass for `4c82f48414d8663c03e9f179b2ce6963ba564596`. Its source-bound
+  campaign covers 292,031 of 318,890 lines (91.5773%), passes every 80% floor
+  and catches all six critical mutants. This correction does not promote
+  unrelated portable, native, standard-library or release gates.
 
 - [x] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
   El runner de quality debe calcular antes y después un digest canónico de
