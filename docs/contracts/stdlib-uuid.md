@@ -746,11 +746,17 @@ guide/source assertions cannot stand in for successful execution.
 
 ### Promotion boundary
 
-The documentation state is `usage-ready` while consolidated quality, the full
-functional gate and publication are pending. `verified-public-hosted-usage`
-requires actual same-source full execution, every global/risk coverage floor
-of 80%, and all six selected critical mutants caught. Exact-SHA CI closure
-remains a tracker requirement. The next owner is `STD-NET-IMPL-001`.
+`usage-ready` records focused execution before consolidated quality and the
+full functional gate pass. The local documentation state is now
+`verified-public-hosted-usage`: all 326 refusals, the actual documented project,
+core/v5 without provider grants, all 2,650 workspace Rust tests and every full
+functional gate step pass. Source-bound quality measures 295,204 of 322,169
+lines (91.6302%), preserves every global/risk 80% line/function/region floor
+and catches all six selected critical mutants. The 206 draft cases and three
+async/select cases repeated exactly 32 times pass. Existing scalar native
+regressions pass 630 cases, 70 arithmetic traps and 75 invalid evidence changes;
+they do not establish UUID AOT. Publication and exact-SHA CI closure remain
+pending in the tracker. The next owner is `STD-NET-IMPL-001`.
 
 This is public compiler/production hosted VM usage. The following are
 not implemented: native UUID ABI, native provider adaptation or native UUID AOT lowering.

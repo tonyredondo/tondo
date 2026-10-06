@@ -4442,15 +4442,18 @@ exact-SHA CI confirmation. Native UUID ABI/provider/AOT promotion is not claimed
 The [public Tondo usage guide](./docs/contracts/stdlib-uuid.md#executable-usage-guide-for-stduuid)
 and [canonical program](./tests/runtime/m11-std-uuid-doc-001.to) cover all fourteen
 UUID operations in six paths. Seven checked fragments include the entry point;
-the guide and actual program must agree before execution. The `usage-ready`
-documentation record in the parent register keeps quality and full promotion
-pending. Focused checks pass 326 invalid records/guide fixtures and both local
+the guide and actual program must agree before execution. The documentation
+record is `verified-public-hosted-usage`. Checks pass 326 invalid records/guide
+fixtures and both local
 progression states, execute the documented project and core/v5 without provider
 grants, and observe actual `E1008` refusals. v4/v7 use production OS providers.
 The guide records nominal errors, encoding choices, copies, limits and costs,
 without a uniqueness, strict-monotonicity, public provider-setter or native UUID
-claim. `STD-UUID-DOC-001` still requires consolidated source-bound quality,
-the full functional gate and publication CI before closure.
+claim. All 2,650 workspace Rust tests and every full functional gate step pass.
+Source-bound quality measures 295,204 of 322,169 lines (91.6302%), preserves
+every global/risk 80% line/function/region floor and catches all six selected
+critical mutants. Publication and exact-SHA CI closure remain pending in the
+tracker; the next owner is `STD-NET-IMPL-001`.
 
 ### 14.18 `std.log`
 
