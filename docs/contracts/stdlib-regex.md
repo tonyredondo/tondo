@@ -21,7 +21,9 @@ gates. The shared conformance protocol is described in
 `verified-hosted-vm-adapter-and-native-stdlib-process` state covers seven case
 groups after the clean comparison and source-bound quality/full gates pass.
 It uses private VM dispatch and a Rust process, with no public regex VM API,
-native ABI or Tondo AOT promotion. Executable usage remains `STD-REGEX-DOC-001`.
+native ABI or Tondo AOT promotion. The `usage-ready` documentation record for
+`STD-REGEX-DOC-001` points to the executable guide below and its canonical Rust
+example. Consolidated verification is required before documentation promotion.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce
 un valor inmutable y reutilizable; las operaciones de búsqueda son puras,
@@ -494,3 +496,144 @@ now verified within their stated kernel/adapter boundaries. The current
 workspace campaign covers 292,638 of 319,506 lines (91.5908%), meets every 80%
 floor and catches all six critical mutants. The next owner is
 `STD-REGEX-DOC-001`.
+
+## Executable usage guide for `std.regex`
+
+This guide runs the bounded Rust kernel. The declarations above specify the
+public Tondo API, whose compiler imports, production VM registration, native
+regex ABI and native AOT lowering are unimplemented. Rust calls below do not
+establish execution of those Tondo declarations. The kernel is synchronous;
+it requires no locale, environment lookup, capability or async wrapper.
+
+### Patterns and reuse
+
+Compile with `Regex::compile(pattern, options, limits)` and keep the immutable
+program for repeated searches. Start with `RegexOptions::default()` and
+`RegexLimits::default()`. Literal strings and scalars match directly; use Rust
+raw strings when backslashes should reach the regex parser unchanged, such as
+`r"\p{Letter}+"`. Embedded flags, lookaround, backreferences and callbacks are
+outside the closed dialect. Select supported flags through `RegexOptions`.
+
+`is_match` asks whether any substring matches. `find` returns the first match
+by leftmost start and local alternative/quantifier priorities. `is_full_match`
+requires the entire input before it selects an acceptable path; it is not a
+comparison of the first search span with the input length. Thus `a|ab` finds
+`a` in `ab`, while full matching succeeds with `ab`. Local lazy behavior also
+means `a*?a*` can select all of `aaa`.
+
+The fingerprint includes the exact pattern, options, limits and Unicode
+version. Equal inputs have equal fingerprints; changing a budget changes that
+identity. This does not create an implicit global cache or promise a portable
+serialized compiled program. Rust `Regex` has no `Clone` method; share immutable
+access with ordinary references or `Arc` when appropriate.
+
+### Unicode and options
+
+Both pattern and input are valid UTF-8 strings. Matching operates on scalars,
+and returned spans use UTF-8 byte offsets. Unicode properties and simple case
+folding use version 16.0.0. Kelvin sign can match `k` with
+`case_insensitive`, but sharp-s does not expand into `ss`. There is no locale
+lookup, normalization or grapheme-cluster matching: precomposed `é` and
+`e` followed by a combining accent remain different sequences.
+
+The five flags are `case_insensitive`, `multi_line`, `dot_matches_newline`,
+`crlf` and `ungreedy`; all default to false. Unicode remains enabled.
+`multi_line` changes the line anchors, `crlf` treats CRLF as one line boundary,
+`dot_matches_newline` changes dot admission, and `ungreedy` reverses local
+greedy/lazy preferences. Absolute `\A` and `\z` still refer to the whole input.
+
+### Captures and UTF-8 spans
+
+Capture zero is the whole match. Use `capture(index)` for a numbered capture or
+`capture_name(name)` for a named capture. An absent optional group returns
+`None`; a participating empty group returns a span with equal start and end.
+The last participating repetition supplies the retained capture. A capture
+name lookup which does not exist also returns `None` in this Rust kernel.
+
+`RegexSpan { start, end }` describes half-open byte offsets. For `é`, the whole
+span is `0..2`, not `0..1`. `RegexSpan::slice` validates range and scalar
+boundaries, then returns an owned String copy. Slicing `1..2` fails with
+`InvalidBoundary`. Keep and supply the corresponding original input when
+interpreting spans; a span does not store that text or its identity.
+
+### Lazy iteration and ownership
+
+`find_all` lends both the compiled regex and the input for the cursor's
+lifetime. It does not materialize every match in advance. Each Rust iterator
+item is `Result<RegexMatch, RegexError>`; the public Tondo protocol specified
+above is `Iterator[RegexMatch ! RegexError]`.
+
+The cursor is non-overlapping and carries a cumulative step budget. Empty
+matches advance by one Unicode scalar and visit EOF once. On `é🙂`, an empty
+pattern produces byte offsets 0, 2 and 6. Exhaustion stays exhausted.
+An error is delivered once and the cursor then returns `None` permanently.
+Already delivered owned matches remain valid; retain the corresponding input
+to read their numeric spans after the cursor's scope ends. A later independent
+search receives a fresh budget.
+
+Choose how to handle a fallible item explicitly. Collecting into
+`Result<Vec<_>, _>` stops on the first error and does not return the earlier
+vector. The executable example instead retains a delivered match before a
+`MatchLimitExceeded` at byte 1 and verifies the terminal cursor twice.
+
+### Replacement and errors
+
+`replace` changes the first match; `replace_all` changes every non-overlapping
+match. Templates support `$0`, numbered `$1` captures, `${name}` and literal
+`$$`. A valid absent capture inserts empty text. Unknown references and
+malformed templates produce `InvalidReplacement` even when the input has no
+match. Replacement does not execute callbacks or interpret arbitrary code.
+
+Zero-width replacement follows the same scalar progress, preserving input
+between insertions: replacing empty matches in `é🙂` with `_` yields
+`_é_🙂_`. The returned String is atomic. `OutputLimitExceeded` returns no
+partial owned output, and the regex can be reused afterward. There is no sink
+or external I/O transaction in these pure text operations.
+
+`RegexError` records a nominal kind, `Compile`, `Match` or `Replace` phase,
+byte offset, optional byte span and optional limit descriptor. Use those fields
+instead of matching human error text. The example verifies the middle-hyphen
+class refusal at bytes `6..7` in `é[a-b-c]`.
+
+### Limits and costs
+
+Set finite positive limits for the application's input. Pattern/input/output/
+template budgets count UTF-8 bytes; other fields bound syntax depth, captures,
+class ranges, repetitions, program states, transitions and emitted matches.
+Configuration values outside the positive Tondo Int range are rejected during
+compile. The Rust kernel reports `PatternLimitExceeded` with the offending
+limit descriptor even for an invalid zero `max_steps` configuration. A valid
+step budget exhausted during matching instead yields `StepLimitExceeded`.
+
+`vm_heap` is a selected conservative logical storage admission budget, not
+RSS or a VM allocator counter. It does not measure every parser temporary,
+thread workspace or Rust allocation, and it does not guarantee recovery from
+system OOM in the parser dependency or global allocator. `find` owns capture
+storage; name metadata is shared, and `RegexSpan::slice` copies text.
+
+A single ordered NFA search is bounded by program size, input and `max_steps`.
+Iteration and replacement can rescan suffixes for repeated searches, so their
+total cost is not claimed globally linear in input length. They share a
+cumulative transition budget and should use suitable match/output limits.
+The [performance contract](./stdlib-regex-performance.md) measures nineteen
+bounded Rust test-profile routes with 27 retained samples per route. These
+unoptimized kernel timings and selected logical resources do not measure
+production Tondo AOT, native regex handles, RSS, SIMD or code size.
+
+### Executable kernel example
+
+[regex_usage.rs](../../crates/tondo-stdlib/examples/regex_usage.rs) checks six
+usage paths: patterns and reuse; Unicode and options; captures and byte spans;
+lazy iteration and ownership; replacement and errors; limits and costs.
+`scripts/stdlib-regex-doc-check.sh` compiles and executes this one canonical
+source with the workspace lockfile. The example's entire successful stdout is
+`regex-doc-ok`. No alternate source override substitutes another example.
+
+### Promotion boundary
+
+`STD-REGEX-DOC-001` documents executable Rust-kernel usage. The independent
+model, bounded fuzz, target-qualified performance and private VM/native Rust
+process comparison retain their own measured boundaries. This guide does not
+promote the public Tondo regex API, production host registration, a native regex
+ABI, Cranelift lowering, SIMD or release readiness. The next owner is selected
+from the live tracker after the documentation leaf is verified.

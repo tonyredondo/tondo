@@ -6864,8 +6864,15 @@ estas leaves.
   skips. Remote SHA and all checks are confirmed after the quiet interval.
   Next: `STD-REGEX-DOC-001`. Public compiler/VM
   registration, native ABI and Tondo AOT are not promoted by these adapters.
-- [ ] **STD-REGEX-DOC-001 — Documentar regex.** Publicar sintaxis exacta,
-  Unicode, captures, complejidad, límites y ejemplos ejecutables.
+- [ ] **STD-REGEX-DOC-001 — Document executable regex kernel usage.**
+  The `usage-ready` guide has eight sections and one canonical Rust example
+  covering six paths: patterns/reuse, Unicode/options, captures/UTF-8 spans,
+  lazy fallible iteration, replacement/errors and limits/costs. Documentation
+  checks require the canonical source and exact stdout, reject missing sections
+  and invalid promotion records, and preserve earlier owner transitions.
+  Consolidated quality, the full functional gate, publication and exact-SHA CI
+  remain pending. Public Tondo, production VM, native ABI/AOT and release
+  promotion are outside the executable example's boundary.
 
 #### 21.3.11 `std.uuid`
 

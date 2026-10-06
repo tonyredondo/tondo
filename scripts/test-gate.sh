@@ -388,6 +388,10 @@ run_step stdlib-regex-conformance-contract-tests \
     scripts/stdlib-regex-conformance-test.sh
 run_step stdlib-regex-conformance \
     scripts/stdlib-regex-conformance.sh
+run_step stdlib-regex-documentation \
+    scripts/stdlib-regex-doc-check.sh
+run_step stdlib-regex-documentation-tests \
+    scripts/stdlib-regex-doc-test.sh
 run_step stdlib-uuid-contract \
     scripts/stdlib-uuid-check.sh
 run_step stdlib-uuid-contract-tests \

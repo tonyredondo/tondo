@@ -280,5 +280,19 @@
     "native_abi": "not-implemented",
     "native_aot": "not-claimed",
     "status": "verified-hosted-vm-adapter-and-native-stdlib-process"
+  },
+  "documentation": {
+    "task": "STD-REGEX-DOC-001",
+    "status": "usage-ready",
+    "document": "docs/contracts/stdlib-regex.md",
+    "example": "crates/tondo-stdlib/examples/regex_usage.rs",
+    "command": "scripts/stdlib-regex-doc-check.sh",
+    "expected_stdout": "regex-doc-ok",
+    "examples": ["patterns-and-reuse", "unicode-and-options", "captures-and-spans", "lazy-iteration-and-ownership", "replacement-and-errors", "limits-and-costs"],
+    "sections": ["patterns-and-reuse", "unicode-and-options", "captures-and-utf8-spans", "lazy-iteration-and-ownership", "replacement-and-errors", "limits-and-costs", "executable-kernel-example", "promotion-boundary"],
+    "public_tondo_api": "not-implemented",
+    "production_vm_registration": "not-claimed",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed"
   }
 }
