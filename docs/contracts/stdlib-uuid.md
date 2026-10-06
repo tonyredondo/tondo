@@ -421,8 +421,13 @@ The [performance register](../../testing/stdlib-uuid-performance.json) and
 bridge workloads with 27 retained samples each. Dashed/URN parse, canonical
 format, byte round trips, v4/v5/v7, sealed and explicit OS providers, and ten
 bounded refusal routes use independent/authored expectations before timing.
-The current state is `measurement-ready`; clean capture, the complete functional
-gate and current source-bound quality remain necessary for promotion.
+The local state is `verified-hosted-scalar-baseline`: clean captures retain all
+594 samples; four private Rust tests, eight report tests and 117 negative
+records pass. The single consolidated quality campaign verifies 295,200 of
+322,169 workspace lines (91.6289%), every global/risk 80% floor and all six
+critical mutants caught. All 2,647 Rust tests and every full functional step
+pass on the same frozen source, including the 206-case suite and exact
+async/select repetitions. Publication and exact-SHA CI remain tracker steps.
 
 Selected owned identities and retained logical storage include fixture setup,
 while actual reply charges and host registry increments are separately observed.

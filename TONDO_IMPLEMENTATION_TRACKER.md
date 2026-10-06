@@ -6955,12 +6955,19 @@ estas leaves.
   `STD-UUID-PERF-001`.
 - [ ] **STD-UUID-PERF-001 — Medir UUID.** Fijar parse/format/generation,
   allocations, memoria y coste de providers.
-  In progress: a target-qualified direct hosted scalar bridge campaign defines
+  Locally verified; publication and exact-SHA CI closure remain pending.
+  The target-qualified direct hosted scalar bridge campaign verifies
   22 routes and 27 retained measurements per route, exact bounded-model/authored
   expectations, sealed/OS provider costs, admission/lifecycle checks and
   explicitly selected logical resource counters. Complete VM/native UUID timing
-  is not claimed. Clean committed capture, the consolidated source-bound quality
-  and full functional gates, publication and exact-SHA CI remain pending.
+  is not claimed. Clean committed captures retain all 594 samples. Four private
+  Rust tests, eight report tests, 117 negative records and the unchanged
+  IMPL/HOST/TEST regressions pass. The single consolidated quality campaign
+  verifies 295,200 of 322,169 lines (91.6289%), every global/risk 80% floor and
+  all six selected critical mutants caught. All 2,647 workspace Rust tests
+  pass; every full functional gate step passes on the same frozen source,
+  including the 206-case suite and exact async/select repeats. Standard-package
+  and dependent suite pins are synchronized without changing assertions.
 - [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
   capabilities civil-clock/entropy sobre VM/nativo con providers sellados.
 - [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de

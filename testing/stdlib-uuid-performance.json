@@ -4,7 +4,7 @@
   "phase": "STD-0.1B",
   "task": "STD-UUID-PERF-001",
   "owner": "std.uuid",
-  "status": "measurement-ready",
+  "status": "verified-hosted-scalar-baseline",
   "target": "x86_64-unknown-linux-gnu",
   "backend": "rust-hosted-bridge",
   "profile": "test",

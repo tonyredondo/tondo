@@ -9,12 +9,18 @@ leaf. These calls execute no bytecode and do not measure the complete VM,
 native runtime ABI, native AOT, SIMD, multiversion dispatch or code size.
 `native_live_handles` is unmeasured and remains `null`.
 
-The register starts at `measurement-ready`. Promotion to
-`verified-hosted-scalar-baseline` requires committed clean-source probe bytes,
-the focused tests, the complete functional gate and source-bound quality with
+The register advances from `measurement-ready` to
+`verified-hosted-scalar-baseline` after committed clean-source capture, focused
+checks and the complete functional/source-bound quality gates. Probe bytes
+from `1838ba5` and corrected conformance pins from `971d431` retain 594 actual
+measurements. Quality verifies 295,200 of 322,169 workspace lines (91.6289%),
 every global/risk dimension at or above 80% and all six critical mutants
-caught. Development captures cannot close the leaf. Shared conformance and
-usage documentation remain separate owner leaves. No speedup is claimed.
+caught. All 2,647 Rust tests and the complete functional gate pass on that
+unchanged source. The initially stale standard/suite pins were corrected with
+the supported generator and exact dependent-pin update, with all assertions
+preserved. Publication and exact-SHA CI closure remain tracker steps.
+Development captures cannot close the leaf. Shared conformance and usage
+documentation remain separate owner leaves. No speedup is claimed.
 
 ## Protocol and expectations
 
@@ -32,6 +38,12 @@ in the resource model. Host calls, black boxes, exact reply comparisons,
 result destruction, output-buffer release and charge checks stay timed.
 Remaining-provider checks and final fixture cleanup occur after timing.
 Oracle temporaries are not included in latency or retained resources.
+
+Successful fixtures use an 8,192-byte host target limit and a 16,384-byte shared
+reply/buffer budget. The selected refusals reduce the name target to 63 bytes,
+the v4 provider target to 15 bytes, or the reply budget to 181 bytes. Sealed
+envelopes have 16,384-unit work, memory and metadata limits. These are bounded
+probe settings rather than production defaults or a complete VM-heap limit.
 
 The 22 cases are the smallest selected set covering these distinct routes:
 

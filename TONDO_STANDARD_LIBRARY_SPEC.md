@@ -4411,14 +4411,18 @@ Source-bound quality verifies 294,814 of 321,733 lines (91.6331%), every
 global/risk 80% floor and six selected mutants caught. Published source
 `27bd0d3` and tracker closure `048730a` pass exact-SHA CI confirmation.
 Reference bounds do not establish production rejection.
-The `measurement-ready` performance protocol is registered in
+The locally `verified-hosted-scalar-baseline` performance protocol is registered in
 [testing/stdlib-uuid-performance.json](./testing/stdlib-uuid-performance.json)
 and [docs/contracts/stdlib-uuid-performance.md](./docs/contracts/stdlib-uuid-performance.md).
 It selects 22 hosted scalar bridge routes and 27 retained samples each,
 including explicit sealed/OS providers, exact independent/authored expectations
 and bounded refusals. Logical resource models are distinct from actual reply
-charges and registry counts. Clean capture and the current consolidated quality
-and full functional gates remain necessary for promotion. Complete VM latency,
+charges and registry counts. Clean captures retain 594 measurements; the
+focused tests and all 2,647 workspace Rust tests pass. Source-bound quality
+verifies 295,200 of 322,169 lines (91.6289%), every global/risk 80% floor and
+all six critical mutants caught. Every full functional gate step passes,
+including 206 draft cases and exact async/select repetitions. Publication and
+exact-SHA CI closure remain tracker steps. Complete VM latency,
 native UUID ABI/AOT, SIMD and code-size measurements are not claimed.
 Conformance and usage remain their separate CONF and DOC leaves.
 
