@@ -4424,7 +4424,7 @@ all six critical mutants caught. Every full functional gate step passes,
 including 206 draft cases and exact async/select repetitions. Publication and
 exact-SHA CI closure remain tracker steps. Complete VM latency,
 native UUID ABI/AOT, SIMD and code-size measurements are not claimed.
-The conformance implementation is `adapter-ready` in
+The conformance implementation is `verified-public-hosted-vm-and-native-kernel-process` in
 [testing/stdlib-uuid-conformance.json](./testing/stdlib-uuid-conformance.json)
 and [docs/contracts/stdlib-uuid-conformance.md](./docs/contracts/stdlib-uuid-conformance.md).
 Five groups compare seventy-seven exact public hosted VM and native Rust-kernel
@@ -4433,9 +4433,13 @@ VM capability checks preserve sealed first-provider values after direct,
 alias and `defer` static checks. The full fifty-four-vector prerequisite corpus
 is distinct from the fifty-two common public-call vectors; two kernel-only
 configuration controls retain separate proof. Three Rust adapter tests and seven
-report-law tests pass. Clean committed capture, source-bound quality, the full
-functional gate and exact-SHA publication closure remain pending. Native UUID
-ABI/provider/AOT promotion is not claimed. Usage remains `STD-UUID-DOC-001`.
+report-law tests pass, alongside 174 invalid records and all 2,650 workspace
+Rust tests. Clean committed capture and every full functional gate step pass
+on the frozen source. Source-bound quality verifies 295,206 of 322,169 lines
+(91.6308%), every global/risk 80% line/function/region floor and all six selected
+critical mutants caught. Publication and exact-SHA CI closure remain pending
+in the tracker. Native UUID ABI/provider/AOT promotion is not claimed.
+Usage remains `STD-UUID-DOC-001`.
 
 ### 14.18 `std.log`
 

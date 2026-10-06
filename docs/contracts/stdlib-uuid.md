@@ -454,8 +454,11 @@ Tondo has their configuration APIs. Closed envelopes and native runtime table
 counters have explicitly bounded meanings, without a VM heap or native UUID
 ARC claim. No native UUID ABI, native provider adapter or AOT lowering is added.
 
-The conformance state is `adapter-ready`. Focused execution, three Rust adapter
-tests and seven report-law tests pass; clean committed capture, consolidated
-source-bound quality, the full functional gate and publication CI remain
-pending. `verified-public-hosted-vm-and-native-kernel-process` requires those
-local gates and leads to `STD-UUID-DOC-001`. The tracker records exact-SHA closure.
+The conformance state is `verified-public-hosted-vm-and-native-kernel-process`.
+Clean committed capture, three Rust adapter tests, seven report-law tests and
+174 invalid promotion/report records pass. All 2,650 workspace Rust tests and
+every full functional gate step pass on the same frozen source. Source-bound
+quality verifies 295,206 of 322,169 workspace lines (91.6308%), every global/risk
+80% line/function/region floor and all six selected critical mutants caught.
+Publication and exact-SHA CI closure remain pending in the tracker. Executable
+usage is the next owner leaf, `STD-UUID-DOC-001`.

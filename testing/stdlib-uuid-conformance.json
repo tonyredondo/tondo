@@ -4,7 +4,7 @@
   "owner": "std.uuid",
   "phase": "STD-0.1B",
   "task": "STD-UUID-CONF-001",
-  "status": "adapter-ready",
+  "status": "verified-public-hosted-vm-and-native-kernel-process",
   "parent": "testing/stdlib-uuid.json",
   "document": "docs/contracts/stdlib-uuid-conformance.md",
   "sources": [

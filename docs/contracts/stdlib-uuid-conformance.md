@@ -121,3 +121,14 @@ conformance register remains `adapter-ready` until those gates and the full
 functional campaign actually pass on the same frozen source. Public hosted
 conformance, this native Rust reference and native Tondo execution remain
 distinct evidence layers. The next owner leaf is `STD-UUID-DOC-001`.
+
+The local register is now `verified-public-hosted-vm-and-native-kernel-process`.
+Clean committed capture, all three Rust adapter tests, seven report-law tests,
+174 negative records and all 2,650 workspace Rust tests pass. Source-bound
+quality measures 295,206 of 322,169 lines (91.6308%), preserves every global/risk
+80% line/function/region floor and catches all six selected critical mutants.
+Every full functional gate step passes, including 206 draft cases and three
+async/select cases repeated exactly 32 times each. The existing scalar native
+route passes 630 Cranelift cases, 70 arithmetic traps and 75 rejected evidence
+changes; these do not establish UUID AOT. Publication and exact-SHA CI closure
+remain pending in the live tracker.

@@ -6978,15 +6978,20 @@ estas leaves.
   remain unchanged after the quiet interval. Next: `STD-UUID-CONF-001`.
 - [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
   capabilities civil-clock/entropy sobre VM/nativo con providers sellados.
-  Implementation is in progress at `adapter-ready`. Five shared groups execute
+  Local implementation is `verified-public-hosted-vm-and-native-kernel-process`.
+  Five shared groups execute
   public compiled Tondo UUID calls in the hosted VM and the scalar kernel in a
   native Rust reference process, with 77 exact observations. Fifteen VM-only
   static capability checks preserve their sealed first-provider values; three
   Rust adapter tests and seven report-law tests pass. The full 54-vector
   prerequisite corpus is separate from 52 common public-call vectors and two
   kernel-only controls. Native UUID ABI, native provider capabilities and native
-  AOT remain unimplemented/unclaimed. Clean capture, consolidated quality,
-  the full functional gate and publication CI are still pending.
+  AOT remain unimplemented/unclaimed. Clean committed capture, 174 invalid
+  promotion/report records and all 2,650 workspace Rust tests pass. Source-bound
+  quality verifies 295,206 of 322,169 lines (91.6308%), every global/risk 80%
+  line/function/region floor and all six critical mutants caught. Every full
+  functional gate step passes on the same frozen source. Publication and
+  exact-SHA CI confirmation remain pending; the checkbox stays open until then.
 - [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
   generación, providers, errores, costes y ejemplos ejecutables.
 
