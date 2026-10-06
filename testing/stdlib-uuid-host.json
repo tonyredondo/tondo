@@ -4,8 +4,8 @@
   "task": "STD-UUID-HOST-001",
   "parent": "testing/stdlib-uuid.json",
   "contract": "docs/contracts/stdlib-uuid-host.md",
-  "status": "ready-production-hosted",
-  "quality_gate": "pending-80-percent-per-scope",
+  "status": "verified-production-hosted",
+  "quality_gate": "verified-80-percent-per-scope",
   "selected_route": "hosted-scalar",
   "target": "tondo-vm-hosted",
   "public_registration": "implemented-four-nominals-fourteen-operations",
@@ -124,6 +124,6 @@
     "crates/tondo-vm/src/runtime/execute.rs::uuid_ordinary_and_paused_imports_check_heap_without_a_test_account"
   ],
   "not_claimed": ["native-runtime-ABI", "native-AOT", "independent-model", "fuzz", "performance", "SIMD", "conformance-promotion", "usage-documentation"],
-  "proof": "The 23 focused compiler/VM tests and 86 invalid promotion records pass in both local progression states. Actual public core, real OS generation, sealed Operation::Test RFC vectors, capability rejection, error Display and ordinary/paused VM heap refusal are observed. Strict component Clippy passes. Source-bound quality, the full functional gate and exact-SHA publication CI remain pending.",
-  "required_follow_ups": ["STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+  "proof": "The 23 focused compiler/VM tests, 86 invalid promotion records, both local progression states, strict Clippy and every full functional gate step pass on the frozen source. Actual public core, real OS generation, sealed Operation::Test RFC vectors, capability rejection, error Display and ordinary/paused VM heap refusal are observed. Source-bound quality verifies 294,459 of 321,402 workspace lines (91.6170%), every global/risk 80% line/function/region floor and all six selected critical mutants caught. The full VM feature suite passes 219 tests including the unchanged malformed callback regression. Publication and exact-SHA CI closure are tracked separately; native ABI/AOT and later owner leaves are not promoted.",
+  "required_follow_ups": ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
 }

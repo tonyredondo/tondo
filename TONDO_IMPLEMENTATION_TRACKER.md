@@ -49,15 +49,16 @@ and fallible lazy iteration. `STD-REGEX-TEST-001` verifies the independent model
 and seeded fuzz; `STD-REGEX-PERF-001` verifies nineteen target-qualified kernel
 routes. `STD-REGEX-CONF-001` verifies seven shared private VM/native Rust
 process groups, clean-source comparison and the full local/CI gates. The current workspace
-campaign measures 91.6013% global lines and preserves the 80% floor in every
+campaign measures 91.6170% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
 `STD-REGEX-DOC-001` verifies the canonical executable Rust-kernel guide after
 the full local gate, publication and exact-SHA CI confirmation.
 `STD-UUID-IMPL-001` verifies the scalar Rust kernel with explicit generation
 inputs after the full local gate, source-bound quality, publication and
 exact-SHA CI confirmation. `STD-UUID-HOST-001` is active: public compiler/VM
-registration and explicit OS providers are implemented; hosted quality,
-full-gate and publication closure remain pending.
+registration and explicit OS providers are locally verified after source-bound
+quality and every full functional gate step. Publication and exact-SHA CI
+closure remain pending.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6139,12 +6140,11 @@ publica hasta cerrar el gate final.
   Se rechazan compact/braced text, UUID como secreto, v1/v2/v3/v6/v8 de
   generación, timezone lookup, collision registries, retries y estado global.
   El parser conserva UUID externos de cualquier variante/versión; los errores
-  son nominales, bounded y atómicos, y no hay API async ni `selectable`. La
-  implementación, providers, tests/fuzzing, rendimiento, conformance y
-  documentación de uso permanecen pendientes de `STD-UUID-IMPL-001`,
-  `STD-UUID-HOST-001`, `STD-UUID-TEST-001`, `STD-UUID-PERF-001`,
-  `STD-UUID-CONF-001` y `STD-UUID-DOC-001`; la instrumentación hosted de
-  `DIAG-RUNTIME-001` ya está cerrada.
+  son nominales, bounded y atómicos, y no hay API async ni `selectable`.
+  The B0 design establishes no implementation or runtime evidence. Current kernel
+  and hosted provider progression are recorded in section 21.3.11; model/fuzz,
+  performance, conformance and usage remain separate owner leaves. The hosted
+  instrumentation of `DIAG-RUNTIME-001` is already closed.
 
 - [x] **STD-LOG-001 — Especificar `std.log`.** El registro
   [`testing/stdlib-log.json`](./testing/stdlib-log.json), el contrato
@@ -6908,7 +6908,7 @@ estas leaves.
   production VM, native ABI/AOT and runtime heap admission are not promoted.
   Next: `STD-UUID-HOST-001`.
 - [ ] **STD-UUID-HOST-001 — Integrate hosted UUID providers.**
-  `ready-production-hosted` implements the fourteen public operations, private
+  `verified-production-hosted` implements the fourteen public operations, private
   128-bit value storage, exact capability checks and synchronous effects.
   OS entropy uses approved `getrandom = "=0.4.3"`; v7 checks `SystemTime` before
   entropy. Sealed envelope fixtures cover nominal failure, once consumption,
@@ -6917,9 +6917,14 @@ estas leaves.
   [`testing/stdlib-uuid-host.json`](./testing/stdlib-uuid-host.json) and
   [`docs/contracts/stdlib-uuid-host.md`](./docs/contracts/stdlib-uuid-host.md).
   Twenty-three focused compiler/VM tests and 86 invalid state records pass.
-  Strict component Clippy passes. Source-bound quality, full gate, publication and
-  exact-SHA CI closure remain pending. Native ABI/AOT and later owner leaves
-  are not promoted.
+  Strict Clippy and every full functional gate step pass on the frozen source,
+  including the 206-case common corpus and the existing native scalar route.
+  Source-bound quality covers 294,459 of 321,402 lines (91.6170%), preserves
+  every global/risk 80% floor and catches all six critical mutants. Metadata-only
+  source/probe/suite pins are refreshed without changing expectations; retained
+  prefixes and resumed suffixes share the same source provenance. Publication
+  and exact-SHA CI closure remain pending. Native UUID ABI/AOT and later owner
+  leaves are not promoted.
 - [ ] **STD-UUID-TEST-001 — Probar UUID.** Cubrir vectores por versión,
   canonical text, inválidos, orden aplicable, providers deterministas,
   colisiones modeladas y límites.

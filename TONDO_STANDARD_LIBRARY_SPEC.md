@@ -4397,7 +4397,11 @@ including ordinary VM byte/object limits and test phase budgets. The host
 register is [`testing/stdlib-uuid-host.json`](./testing/stdlib-uuid-host.json);
 its contract and local promotion state are
 [`docs/contracts/stdlib-uuid-host.md`](./docs/contracts/stdlib-uuid-host.md).
-HOST quality/full-gate/publication closure is pending. Independent model/fuzz,
+HOST quality and every full functional gate step pass on the frozen source:
+294,459 of 321,402 workspace lines (91.6170%), every global/risk 80% floor,
+six critical mutants caught, 23 focused compiler/VM tests and 86 invalid
+promotion records. Publication and exact-SHA CI closure remain tracker steps.
+Independent model/fuzz,
 performance, conformance and usage remain TEST, PERF, CONF and DOC. Native ABI
 and native AOT are not promoted by the hosted implementation.
 

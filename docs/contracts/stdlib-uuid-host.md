@@ -121,3 +121,17 @@ register, source/test anchors, dependency pin and parent progression.
 local progression states, invalid records and the compiler/VM tests. Independent
 model/fuzz, performance, conformance and executable usage remain TEST, PERF,
 CONF and DOC. Native ABI, AOT and SIMD are not measured or promoted here.
+
+The local boundary is `verified-production-hosted`. Source-bound workspace
+quality measures 294,459 of 321,402 covered lines (91.6170%), preserves every
+global/risk 80% line/function/region floor and catches all six selected critical
+mutants. The complete instrumented VM feature suite passes 219 tests, including
+the unchanged malformed callback regression. All functional gate steps pass:
+the unchanged source prefix is retained, and the remaining steps were resumed
+after refreshing metadata-only host/probe/suite pins. Each continuation verifies
+the same frozen source provenance. Refreshed performance campaigns retain all
+27 samples per workload; no benchmark limits or expectations change. The common
+corpus passes 206 cases, select repeats its three exact cases 32 times each,
+and Cranelift's existing scalar route passes 630 cases, 70 arithmetic traps and
+75 invalid evidence changes. These native checks do not establish UUID AOT.
+Publication and exact-SHA CI closure remain separate tracker evidence.

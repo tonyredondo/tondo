@@ -383,3 +383,10 @@ without creating a test account; test execution additionally reserves its
 phase account and joint import pool. This boundary promotes hosted registration
 and admission only. Public conformance, native ABI/AOT, independent model/fuzz,
 performance and usage remain unpromoted.
+
+The hosted block is locally `verified-production-hosted`: its 23 focused
+compiler/VM tests and 86 invalid promotion records pass, along with every full
+functional gate step. The frozen workspace source covers 294,459 of 321,402
+lines (91.6170%), preserves every global/risk 80% coverage floor and catches all
+six selected critical mutants. Publication and exact-SHA CI closure are recorded
+in the tracker. `STD-UUID-TEST-001` is the next owner leaf.
