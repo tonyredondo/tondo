@@ -389,4 +389,16 @@ compiler/VM tests and 86 invalid promotion records pass, along with every full
 functional gate step. The frozen workspace source covers 294,459 of 321,402
 lines (91.6170%), preserves every global/risk 80% coverage floor and catches all
 six selected critical mutants. Publication and exact-SHA CI closure are recorded
-in the tracker. `STD-UUID-TEST-001` is the next owner leaf.
+in the tracker.
+
+## 11. Independent model, regression and fuzz boundary
+
+`STD-UUID-TEST-001` is implemented with consolidated quality still pending.
+The [test register](../../testing/stdlib-uuid-test.json) and
+[test contract](stdlib-uuid-test.md) define a std-only unsigned integer oracle,
+an independently computed bounded v5 digest, seventeen valid and thirty-seven
+invalid retained vectors, eleven integration tests and a bounded fuzz target.
+The model compares 4,096 deterministic seeds and replays a sealed provider
+transcript through the production VM. Reference name/provider bounds are not
+production limits. Native ABI/AOT, performance, public conformance and usage
+are separate later boundaries.

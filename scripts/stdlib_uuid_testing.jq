@@ -1,0 +1,37 @@
+def uuid_testing_boundary:
+  .format == "tondo-stdlib-uuid-testing/1" and .owner == "std.uuid"
+  and .edition == "0.1" and .phase == "STD-0.1B" and .task == "STD-UUID-TEST-001"
+  and .contract == "docs/contracts/stdlib-uuid-test.md"
+  and .parent_contract == "testing/stdlib-uuid.json"
+  and .target == "independent-reference-and-kernel-hosted-regression-boundary"
+  and ((.status == "ready" and .quality_gate == "pending-80-percent-per-scope"
+        and .promotion.test_boundary_promoted == false)
+    or (.status == "verified" and .quality_gate == "verified-80-percent-per-scope"
+        and .promotion.test_boundary_promoted == true))
+  and .limits == {max_reference_name_bytes:96, max_reference_provider_rows:16,
+    max_fuzz_input_bytes:4096, max_fuzz_steps:512, model_seed_count:4096, fuzz_smoke_runs:128}
+  and .model == {status:"verified", sources:["crates/tondo-reliability/src/uuid_model.rs"],
+    oracle:"independent-u128-values-lexical-parser-and-bounded-name-digest",
+    production_imports:false,
+    name_digest_domain:"namespace-16-bytes-plus-0-to-96-opaque-name-bytes",
+    provider_domain:"sequential-finite-millisecond-transcripts-without-OS-heap-or-concurrency-oracle",
+    outside_domain:"not-a-production-rejection"}
+  and .corpus == {path:"crates/tondo-reliability/tests/fixtures/uuid-cases.json",
+    valid_cases:17, invalid_cases:37, source:"https://www.rfc-editor.org/rfc/rfc9562.html",
+    scope:"rfc-vectors-and-owner-regressions"}
+  and .test == {status:"verified", source:"crates/tondo-reliability/tests/uuid_models.rs",
+    integration_tests:11, kernel_tests:18, host_tests:23,
+    command:"cargo test -p tondo-reliability --test uuid_models --locked",
+    production_vm_transcript:"sealed-envelope-no-OS-fallback"}
+  and (.fuzz | del(.status, .smoke)) == {target:"stdlib_uuid",
+    source:"fuzz/fuzz_targets/stdlib_uuid.rs", corpus:"fuzz/corpus/stdlib_uuid/seed",
+    input_limit_bytes:4096, step_limit:512, timeout_seconds:10, rss_limit_mb:4096,
+    command:"TONDO_UUID_FUZZ_RUNS=128 scripts/stdlib-uuid-fuzz.sh",
+    minimal_dependency_graph:"stdlib-only-no-compiler-vm-conformance-or-reliability-cli"}
+  and .fuzz.status == "verified"
+  and .fuzz.smoke == {runs:128, seed:4113, toolchain:"nightly-2026-07-28", result:"passed"}
+  and (.promotion | del(.test_boundary_promoted)) == {public_api_promoted:false,
+    production_vm_registration:"inherited-verified-production-hosted",
+    native_abi:"not-claimed", native_aot:"not-claimed", simd:"not-claimed",
+    performance:"not-claimed", next_blocks:["STD-UUID-PERF-001"],
+    remaining:["STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]};

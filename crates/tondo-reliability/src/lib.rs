@@ -21,6 +21,7 @@ pub mod sync_collection_model;
 pub mod sync_model;
 pub mod toml_model;
 pub mod tracker;
+pub mod uuid_model;
 pub mod yaml_model;
 
 use std::fmt::Write as _;

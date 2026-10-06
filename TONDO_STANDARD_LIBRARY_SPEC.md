@@ -4401,8 +4401,13 @@ HOST quality and every full functional gate step pass on the frozen source:
 294,459 of 321,402 workspace lines (91.6170%), every global/risk 80% floor,
 six critical mutants caught, 23 focused compiler/VM tests and 86 invalid
 promotion records. Publication and exact-SHA CI closure remain tracker steps.
-Independent model/fuzz,
-performance, conformance and usage remain TEST, PERF, CONF and DOC. Native ABI
+The independent model/fuzz boundary is implemented with quality pending in
+[testing/stdlib-uuid-test.json](./testing/stdlib-uuid-test.json) and
+[docs/contracts/stdlib-uuid-test.md](./docs/contracts/stdlib-uuid-test.md).
+It uses an independent unsigned value/parser/bounded v5 digest, 54 retained
+vectors and eleven integration tests including a sealed production VM provider
+transcript. Reference bounds do not establish production rejection. Performance,
+conformance and usage remain PERF, CONF and DOC. Native ABI
 and native AOT are not promoted by the hosted implementation.
 
 ### 14.18 `std.log`

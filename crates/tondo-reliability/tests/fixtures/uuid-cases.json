@@ -1,0 +1,425 @@
+{
+  "format": "tondo-stdlib-uuid-corpus/1",
+  "source": "https://www.rfc-editor.org/rfc/rfc9562.html",
+  "scope": "rfc-vectors-and-owner-regressions",
+  "valid": [
+    {
+      "id": "nil",
+      "operation": "parse",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "version": 0,
+      "variant": "Ncs",
+      "text": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "max",
+      "operation": "parse",
+      "value": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "version": 15,
+      "variant": "Future",
+      "text": "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    },
+    {
+      "id": "network-order",
+      "operation": "bytes",
+      "value": "00010203-0405-0607-0809-0a0b0c0d0e0f",
+      "version": 0,
+      "variant": "Ncs",
+      "bytes_hex": "000102030405060708090a0b0c0d0e0f"
+    },
+    {
+      "id": "rfc-v4",
+      "operation": "v4",
+      "value": "919108f7-52d1-4320-9bac-f847db4148a8",
+      "version": 4,
+      "variant": "Rfc9562",
+      "entropy_hex": "919108f752d133205bacf847db4148a8"
+    },
+    {
+      "id": "rfc-v5",
+      "operation": "v5",
+      "value": "2ed6657d-e927-568b-95e1-2665a8aea6a2",
+      "version": 5,
+      "variant": "Rfc9562",
+      "namespace": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name_hex": "7777772e6578616d706c652e636f6d",
+      "name_limit": 15
+    },
+    {
+      "id": "rfc-v7",
+      "operation": "v7",
+      "value": "017f22e2-79b0-7cc3-98c4-dc0c0c07398f",
+      "version": 7,
+      "variant": "Rfc9562",
+      "milliseconds": 1645557742000,
+      "entropy_hex": "0cc318c4dc0c0c07398f"
+    },
+    {
+      "id": "uppercase-text",
+      "operation": "parse",
+      "value": "919108f7-52d1-4320-9bac-f847db4148a8",
+      "version": 4,
+      "variant": "Rfc9562",
+      "text": "919108F7-52D1-4320-9BAC-F847DB4148A8"
+    },
+    {
+      "id": "mixed-case-urn",
+      "operation": "parse",
+      "value": "919108f7-52d1-4320-9bac-f847db4148a8",
+      "version": 4,
+      "variant": "Rfc9562",
+      "text": "URN:uUiD:919108F7-52D1-4320-9BAC-F847DB4148A8"
+    },
+    {
+      "id": "external-ncs",
+      "operation": "parse",
+      "value": "ffffffff-ffff-cfff-7fff-ffffffffffff",
+      "version": 12,
+      "variant": "Ncs",
+      "text": "ffffffff-ffff-cfff-7fff-ffffffffffff"
+    },
+    {
+      "id": "external-microsoft",
+      "operation": "parse",
+      "value": "00000000-0000-9000-c000-000000000000",
+      "version": 9,
+      "variant": "Microsoft",
+      "text": "00000000-0000-9000-c000-000000000000"
+    },
+    {
+      "id": "external-future",
+      "operation": "parse",
+      "value": "00000000-0000-0000-e000-000000000000",
+      "version": 0,
+      "variant": "Future",
+      "text": "00000000-0000-0000-e000-000000000000"
+    },
+    {
+      "id": "v5-empty",
+      "operation": "v5",
+      "value": "4ebd0208-8328-5d69-8c44-ec50939c0967",
+      "version": 5,
+      "variant": "Rfc9562",
+      "namespace": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name_hex": "",
+      "name_limit": 0
+    },
+    {
+      "id": "v5-binary",
+      "operation": "v5",
+      "value": "57fd3774-11c4-5edc-b858-d2d34db0bcd6",
+      "version": 5,
+      "variant": "Rfc9562",
+      "namespace": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name_hex": "00ff80",
+      "name_limit": 3
+    },
+    {
+      "id": "v5-precomposed",
+      "operation": "v5",
+      "value": "ebfe0af8-3997-5ade-b634-ba92cf69f557",
+      "version": 5,
+      "variant": "Rfc9562",
+      "namespace": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name_hex": "c3a9",
+      "name_limit": 2
+    },
+    {
+      "id": "v5-decomposed",
+      "operation": "v5",
+      "value": "39004b7f-2a0b-588c-88f7-aa24552a7636",
+      "version": 5,
+      "variant": "Rfc9562",
+      "namespace": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name_hex": "65cc81",
+      "name_limit": 3
+    },
+    {
+      "id": "v7-epoch",
+      "operation": "v7",
+      "value": "00000000-0000-7000-8000-000000000000",
+      "version": 7,
+      "variant": "Rfc9562",
+      "milliseconds": 0,
+      "entropy_hex": "00000000000000000000"
+    },
+    {
+      "id": "v7-maximum",
+      "operation": "v7",
+      "value": "ffffffff-ffff-7fff-bfff-ffffffffffff",
+      "version": 7,
+      "variant": "Rfc9562",
+      "milliseconds": 281474976710655,
+      "entropy_hex": "ffffffffffffffffffff"
+    }
+  ],
+  "invalid": [
+    {
+      "id": "text-empty",
+      "operation": "parse",
+      "error": "InvalidTextLength",
+      "offset": null,
+      "text": ""
+    },
+    {
+      "id": "text-compact",
+      "operation": "parse",
+      "error": "InvalidTextLength",
+      "offset": null,
+      "text": "00000000000000000000000000000000"
+    },
+    {
+      "id": "text-truncated",
+      "operation": "parse",
+      "error": "InvalidTextLength",
+      "offset": null,
+      "text": "00000000-0000-0000-0000-00000000000"
+    },
+    {
+      "id": "text-surplus",
+      "operation": "parse",
+      "error": "InvalidTextLength",
+      "offset": null,
+      "text": "00000000-0000-0000-0000-0000000000000"
+    },
+    {
+      "id": "text-braces",
+      "operation": "parse",
+      "error": "InvalidTextLength",
+      "offset": null,
+      "text": "{00000000-0000-0000-0000-000000000000}"
+    },
+    {
+      "id": "text-leading-space",
+      "operation": "parse",
+      "error": "InvalidTextLength",
+      "offset": null,
+      "text": " 00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "text-trailing-space",
+      "operation": "parse",
+      "error": "InvalidTextLength",
+      "offset": null,
+      "text": "00000000-0000-0000-0000-000000000000 "
+    },
+    {
+      "id": "separator-8",
+      "operation": "parse",
+      "error": "InvalidSeparator",
+      "offset": 8,
+      "text": "00000000_0000-0000-0000-000000000000"
+    },
+    {
+      "id": "separator-13",
+      "operation": "parse",
+      "error": "InvalidSeparator",
+      "offset": 13,
+      "text": "00000000-0000_0000-0000-000000000000"
+    },
+    {
+      "id": "separator-18",
+      "operation": "parse",
+      "error": "InvalidSeparator",
+      "offset": 18,
+      "text": "00000000-0000-0000_0000-000000000000"
+    },
+    {
+      "id": "separator-23",
+      "operation": "parse",
+      "error": "InvalidSeparator",
+      "offset": 23,
+      "text": "00000000-0000-0000-0000_000000000000"
+    },
+    {
+      "id": "character-0-33",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 0,
+      "text": "!0000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "character-35-103",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 35,
+      "text": "00000000-0000-0000-0000-00000000000g"
+    },
+    {
+      "id": "character-4-0",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 4,
+      "text": "0000\u0000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "character-35-10",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 35,
+      "text": "00000000-0000-0000-0000-00000000000\n"
+    },
+    {
+      "id": "character-0-32",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 0,
+      "text": " 0000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "utf8-0",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 0,
+      "text": "é000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "utf8-21",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 21,
+      "text": "00000000-0000-0000-00é-000000000000"
+    },
+    {
+      "id": "urn-prefix-0",
+      "operation": "parse",
+      "error": "InvalidUrnPrefix",
+      "offset": 0,
+      "text": "!rn:uuid:00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "urn-prefix-3",
+      "operation": "parse",
+      "error": "InvalidUrnPrefix",
+      "offset": 3,
+      "text": "urn!uuid:00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "urn-prefix-8",
+      "operation": "parse",
+      "error": "InvalidUrnPrefix",
+      "offset": 8,
+      "text": "urn:uuid!00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "character-before-separator",
+      "operation": "parse",
+      "error": "InvalidCharacter",
+      "offset": 0,
+      "text": "!0000000_0000-0000-0000-000000000000"
+    },
+    {
+      "id": "separator-before-character",
+      "operation": "parse",
+      "error": "InvalidSeparator",
+      "offset": 8,
+      "text": "00000000_0000-0000-0000-00000000000!"
+    },
+    {
+      "id": "prefix-before-body",
+      "operation": "parse",
+      "error": "InvalidUrnPrefix",
+      "offset": 0,
+      "text": "!rn:uuid:!0000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "bytes-length-0",
+      "operation": "bytes",
+      "error": "InvalidBytesLength",
+      "offset": null,
+      "bytes_hex": ""
+    },
+    {
+      "id": "v4-length-0",
+      "operation": "v4",
+      "error": "ProviderMisconfigured",
+      "offset": null,
+      "entropy_hex": ""
+    },
+    {
+      "id": "bytes-length-15",
+      "operation": "bytes",
+      "error": "InvalidBytesLength",
+      "offset": null,
+      "bytes_hex": "000000000000000000000000000000"
+    },
+    {
+      "id": "v4-length-15",
+      "operation": "v4",
+      "error": "ProviderMisconfigured",
+      "offset": null,
+      "entropy_hex": "000000000000000000000000000000"
+    },
+    {
+      "id": "bytes-length-17",
+      "operation": "bytes",
+      "error": "InvalidBytesLength",
+      "offset": null,
+      "bytes_hex": "0000000000000000000000000000000000"
+    },
+    {
+      "id": "v4-length-17",
+      "operation": "v4",
+      "error": "ProviderMisconfigured",
+      "offset": null,
+      "entropy_hex": "0000000000000000000000000000000000"
+    },
+    {
+      "id": "v5-name-limit",
+      "operation": "v5",
+      "error": "NameLimitExceeded",
+      "offset": null,
+      "namespace": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name_hex": "6e616d65",
+      "name_limit": 3
+    },
+    {
+      "id": "v7-negative",
+      "operation": "v7",
+      "error": "TimestampOutOfRange",
+      "offset": null,
+      "milliseconds": -1,
+      "entropy_hex": "00000000000000000000"
+    },
+    {
+      "id": "v7-overflow-before-length",
+      "operation": "v7",
+      "error": "TimestampOutOfRange",
+      "offset": null,
+      "milliseconds": 281474976710656,
+      "entropy_hex": ""
+    },
+    {
+      "id": "v7-negative-before-length",
+      "operation": "v7",
+      "error": "TimestampOutOfRange",
+      "offset": null,
+      "milliseconds": -1,
+      "entropy_hex": ""
+    },
+    {
+      "id": "v7-empty-entropy",
+      "operation": "v7",
+      "error": "ProviderMisconfigured",
+      "offset": null,
+      "milliseconds": 0,
+      "entropy_hex": ""
+    },
+    {
+      "id": "v7-short-entropy",
+      "operation": "v7",
+      "error": "ProviderMisconfigured",
+      "offset": null,
+      "milliseconds": 0,
+      "entropy_hex": "000000000000000000"
+    },
+    {
+      "id": "v7-long-entropy",
+      "operation": "v7",
+      "error": "ProviderMisconfigured",
+      "offset": null,
+      "milliseconds": 0,
+      "entropy_hex": "0000000000000000000000"
+    }
+  ]
+}

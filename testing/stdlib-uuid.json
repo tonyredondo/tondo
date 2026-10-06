@@ -264,6 +264,14 @@
     "proof": "The 18 focused Rust kernel tests, 96 negative promotion records, both local progression states, strict Clippy and the full workspace functional gate pass. RFC v4/v5/v7 vectors, exhaustive external variant/version preservation, exact text errors, entropy layout, name/timestamp bounds, immutable copies and stateless reuse are observed. Source-bound quality verifies 293,081 of 319,953 workspace lines (91.6013%), every global/risk 80% line/function/region floor and all six selected critical mutants caught. Providers, compiler/public Tondo API, production VM, native ABI and native AOT are not promoted; publication CI closure is tracked separately.",
     "required_follow_ups": ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
   },
+  "model": {
+    "task": "STD-UUID-TEST-001",
+    "register": "testing/stdlib-uuid-test.json",
+    "contract": "docs/contracts/stdlib-uuid-test.md",
+    "selected_route": "independent-reference-and-kernel-hosted-regression-boundary",
+    "status": "ready",
+    "quality_gate": "pending-80-percent-per-scope"
+  },
   "host": {
     "task": "STD-UUID-HOST-001",
     "contract": "docs/contracts/stdlib-uuid-host.md",

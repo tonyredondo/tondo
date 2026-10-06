@@ -146,3 +146,10 @@ path = "fuzz_targets/stdlib_regex.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "stdlib_uuid"
+path = "fuzz_targets/stdlib_uuid.rs"
+test = false
+doc = false
+bench = false

@@ -6931,6 +6931,14 @@ estas leaves.
 - [ ] **STD-UUID-TEST-001 — Probar UUID.** Cubrir vectores por versión,
   canonical text, inválidos, orden aplicable, providers deterministas,
   colisiones modeladas y límites.
+  Implemented locally, with consolidated quality, full functional gate and
+  publication/CI proof still pending. The std-only integer/name-digest model,
+  54 retained vectors and eleven integration tests compare 4,096 seeds, every
+  version/variant and lexical/entropy bit boundary, plus a sealed production VM
+  provider transcript. The fuzz harness keeps the minimal stdlib graph.
+  Registers/contracts: `testing/stdlib-uuid-test.json` and
+  `docs/contracts/stdlib-uuid-test.md`. Reference limits are not production
+  rejections; native ABI/AOT, PERF, CONF and DOC remain unpromoted.
 - [ ] **STD-UUID-PERF-001 — Medir UUID.** Fijar parse/format/generation,
   allocations, memoria y coste de providers.
 - [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y

@@ -13,7 +13,7 @@ expect_failure() {
 for status in ready-stdlib-kernel verified-stdlib-kernel; do
     jq --arg status "$status" '
       .implementation.status = $status
-      | del(.host)
+      | del(.host, .model)
       | .implementation.host = "not-claimed-until-uuid-host"
       | .implementation.runtime_heap = "not-claimed"
       | if $status == "verified-stdlib-kernel" then

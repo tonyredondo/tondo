@@ -14,7 +14,7 @@ def uuid_kernel_progression:
   and ($impl.tests | unique | length) == 18
   and all($impl.tests[]; test("^crates/tondo-stdlib/src/uuid\\.rs::[a-z0-9_]+$"))
   and ($impl.proof | type == "string" and length > 0)
-  and .model == null and .measurement == null and .conformance == null and .documentation == null
+  and .measurement == null and .conformance == null and .documentation == null
   and (if .host != null then
     $impl.status == "verified-stdlib-kernel"
     and $impl.quality_gate == "verified-80-percent-per-scope"
@@ -24,18 +24,32 @@ def uuid_kernel_progression:
     and .host.selected_route == "hosted-scalar"
     and $impl.host == .host.status
     and (if .host.status == "ready-production-hosted" then
-      .host.quality_gate == "pending-80-percent-per-scope"
+      .model == null
+      and .host.quality_gate == "pending-80-percent-per-scope"
       and $impl.runtime_heap == "ready-hosted-admission"
       and .promotion.next_blocks == ["STD-UUID-HOST-001"]
       and $impl.required_follow_ups == ["STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
     elif .host.status == "verified-production-hosted" then
       .host.quality_gate == "verified-80-percent-per-scope"
       and $impl.runtime_heap == "verified-hosted-admission"
-      and .promotion.next_blocks == ["STD-UUID-TEST-001"]
       and $impl.required_follow_ups == ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+      and (if .model != null then
+        (.model | del(.status, .quality_gate)) == {
+          task:"STD-UUID-TEST-001", register:"testing/stdlib-uuid-test.json",
+          contract:"docs/contracts/stdlib-uuid-test.md",
+          selected_route:"independent-reference-and-kernel-hosted-regression-boundary"}
+        and (if .model.status == "ready" then
+          .model.quality_gate == "pending-80-percent-per-scope"
+          and .promotion.next_blocks == ["STD-UUID-TEST-001"]
+        elif .model.status == "verified" then
+          .model.quality_gate == "verified-80-percent-per-scope"
+          and .promotion.next_blocks == ["STD-UUID-PERF-001"]
+        else false end)
+      else .promotion.next_blocks == ["STD-UUID-TEST-001"] end)
     else false end)
   else
-    $impl.host == "not-claimed-until-uuid-host"
+    .model == null
+    and $impl.host == "not-claimed-until-uuid-host"
     and $impl.runtime_heap == "not-claimed"
     and (if $impl.status == "ready-stdlib-kernel" then
     $impl.quality_gate == "pending-80-percent-per-scope"
