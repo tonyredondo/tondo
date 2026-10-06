@@ -55,10 +55,10 @@ global and risk-scope coverage dimension, with all six critical mutants caught.
 the full local gate, publication and exact-SHA CI confirmation.
 `STD-UUID-IMPL-001` verifies the scalar Rust kernel with explicit generation
 inputs after the full local gate, source-bound quality, publication and
-exact-SHA CI confirmation. `STD-UUID-HOST-001` is active: public compiler/VM
-registration and explicit OS providers are locally verified after source-bound
-quality and every full functional gate step. Publication and exact-SHA CI
-closure remain pending.
+exact-SHA CI confirmation. `STD-UUID-HOST-001` verifies public compiler/VM
+registration and explicit OS providers after source-bound quality, every full
+functional gate step, publication and exact-SHA CI confirmation. The next owner
+leaf is `STD-UUID-TEST-001`, for the independent model, retained corpus and fuzz.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6907,7 +6907,7 @@ estas leaves.
   Provider capability/quality/error normalization, public Tondo,
   production VM, native ABI/AOT and runtime heap admission are not promoted.
   Next: `STD-UUID-HOST-001`.
-- [ ] **STD-UUID-HOST-001 — Integrate hosted UUID providers.**
+- [x] **STD-UUID-HOST-001 — Integrate hosted UUID providers.**
   `verified-production-hosted` implements the fourteen public operations, private
   128-bit value storage, exact capability checks and synchronous effects.
   OS entropy uses approved `getrandom = "=0.4.3"`; v7 checks `SystemTime` before
@@ -6922,9 +6922,12 @@ estas leaves.
   Source-bound quality covers 294,459 of 321,402 lines (91.6170%), preserves
   every global/risk 80% floor and catches all six critical mutants. Metadata-only
   source/probe/suite pins are refreshed without changing expectations; retained
-  prefixes and resumed suffixes share the same source provenance. Publication
-  and exact-SHA CI closure remain pending. Native UUID ABI/AOT and later owner
-  leaves are not promoted.
+  prefixes and resumed suffixes share the same source provenance. Published
+  source `1d91d75` passes exact-SHA CI run `37444798816`: the strict Linux x86_64
+  job executes the complete functional gate and succeeds in 43m28s. Normal-push
+  portable/fuzz jobs are expected skips. Actual checkout, the remote SHA and all
+  checks are confirmed after the quiet interval. Native UUID ABI/AOT and later
+  owner leaves are not promoted. Next: `STD-UUID-TEST-001`.
 - [ ] **STD-UUID-TEST-001 — Probar UUID.** Cubrir vectores por versión,
   canonical text, inválidos, orden aplicable, providers deterministas,
   colisiones modeladas y límites.
