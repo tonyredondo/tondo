@@ -51,7 +51,9 @@ routes. `STD-REGEX-CONF-001` verifies seven shared private VM/native Rust
 process groups, clean-source comparison and the full local/CI gates. The current workspace
 campaign measures 91.5908% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
-The next owner leaf is `STD-REGEX-DOC-001`.
+`STD-REGEX-DOC-001` has passed local verification of the canonical executable
+guide and awaits publication and exact-SHA CI closure. The next owner after
+that closure is `STD-UUID-IMPL-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6865,13 +6867,19 @@ estas leaves.
   Next: `STD-REGEX-DOC-001`. Public compiler/VM
   registration, native ABI and Tondo AOT are not promoted by these adapters.
 - [ ] **STD-REGEX-DOC-001 — Document executable regex kernel usage.**
-  The `usage-ready` guide has eight sections and one canonical Rust example
-  covering six paths: patterns/reuse, Unicode/options, captures/UTF-8 spans,
+  The `verified-rust-kernel-usage` guide has eight sections and one canonical
+  Rust example covering six paths: patterns/reuse, Unicode/options,
+  captures/UTF-8 spans,
   lazy fallible iteration, replacement/errors and limits/costs. Documentation
   checks require the canonical source and exact stdout, reject missing sections
   and invalid promotion records, and preserve earlier owner transitions.
-  Consolidated quality, the full functional gate, publication and exact-SHA CI
-  remain pending. Public Tondo, production VM, native ABI/AOT and release
+  The canonical example, 171 negative documentation records/guide fixtures,
+  both valid progression states and the full functional gate pass. Source-bound
+  quality verifies 292,638 of 319,506 lines (91.5908%), every global/risk 80%
+  floor and six critical mutants caught. Formal coverage excludes example
+  source lines; its execution is verified separately. Publication and exact-SHA
+  CI closure remain pending. Next after closure: `STD-UUID-IMPL-001`.
+  Public Tondo, production VM, native ABI/AOT and release
   promotion are outside the executable example's boundary.
 
 #### 21.3.11 `std.uuid`

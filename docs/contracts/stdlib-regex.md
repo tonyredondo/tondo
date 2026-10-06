@@ -21,9 +21,11 @@ gates. The shared conformance protocol is described in
 `verified-hosted-vm-adapter-and-native-stdlib-process` state covers seven case
 groups after the clean comparison and source-bound quality/full gates pass.
 It uses private VM dispatch and a Rust process, with no public regex VM API,
-native ABI or Tondo AOT promotion. The `usage-ready` documentation record for
-`STD-REGEX-DOC-001` points to the executable guide below and its canonical Rust
-example. Consolidated verification is required before documentation promotion.
+native ABI or Tondo AOT promotion. The `verified-rust-kernel-usage` documentation
+record for `STD-REGEX-DOC-001` points to the executable guide below and its
+canonical Rust example. The canonical execution, documentation regressions, full functional
+gate and current source-bound quality checks pass. Publication and exact-SHA CI
+closure are tracked separately in the live tracker.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce
 un valor inmutable y reutilizable; las operaciones de búsqueda son puras,
@@ -494,8 +496,9 @@ unimplemented/unclaimed. At that testing boundary the next owner was
 `STD-REGEX-PERF-001`. The later performance and shared conformance leaves are
 now verified within their stated kernel/adapter boundaries. The current
 workspace campaign covers 292,638 of 319,506 lines (91.5908%), meets every 80%
-floor and catches all six critical mutants. The next owner is
-`STD-REGEX-DOC-001`.
+floor and catches all six critical mutants. The documentation leaf now verifies
+the canonical executable guide within its Rust-kernel boundary. The next owner
+after publication and exact-SHA CI closure is `STD-UUID-IMPL-001`.
 
 ## Executable usage guide for `std.regex`
 
@@ -635,5 +638,7 @@ source with the workspace lockfile. The example's entire successful stdout is
 model, bounded fuzz, target-qualified performance and private VM/native Rust
 process comparison retain their own measured boundaries. This guide does not
 promote the public Tondo regex API, production host registration, a native regex
-ABI, Cranelift lowering, SIMD or release readiness. The next owner is selected
-from the live tracker after the documentation leaf is verified.
+ABI, Cranelift lowering, SIMD or release readiness. The parent register records
+`verified-rust-kernel-usage` after the canonical example, negative documentation
+checks, full functional gate and source-bound quality pass. The next owner after
+publication and exact-SHA CI closure is `STD-UUID-IMPL-001`.

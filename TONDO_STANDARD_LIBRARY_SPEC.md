@@ -4326,14 +4326,18 @@ measures 292,638 of 319,506 workspace lines (91.5908%), preserves every global
 and risk-scope line/function/region floor of 80% and catches all six critical
 mutants. Example/integration-test source lines are excluded from formal
 coverage; focused and full execution separately verify the adapters.
-The `STD-REGEX-DOC-001` documentation record is `usage-ready` in the parent
-register. The [executable guide](./docs/contracts/stdlib-regex.md) and
+The `STD-REGEX-DOC-001` documentation record is `verified-rust-kernel-usage` in
+the parent register. The [executable guide](./docs/contracts/stdlib-regex.md) and
 [canonical Rust example](./crates/tondo-stdlib/examples/regex_usage.rs) cover
 patterns, Unicode/options, capture spans, lazy fallible iteration, replacement
 and limits/costs. `scripts/stdlib-regex-doc-check.sh` executes that example and
 requires its exact `regex-doc-ok` stdout. This is Rust-kernel usage; public
 Tondo/production VM/native ABI/AOT routes remain unimplemented or unclaimed.
-Full functional and current source-bound quality gates precede promotion.
+The full functional and current source-bound quality gates pass, including
+292,638 of 319,506 covered workspace lines (91.5908%), every global/risk 80%
+floor and all six critical mutants caught. The documentation checker covers
+171 negative records/guide fixtures and both valid progression states.
+Publication and exact-SHA CI closure are tracked separately in the live tracker.
 
 ### 14.17 `std.uuid`
 
