@@ -1,6 +1,7 @@
 # Private networking implementation
 
-`STD-NET-IMPL-001` currently has state `ready-kernel-private-provider`.
+`STD-NET-IMPL-001` advanced from `ready-kernel-private-provider` to
+`verified-kernel-private-provider` for the private Rust boundary.
 Its selected route is `scalar-rust-kernel-and-private-nonblocking-provider`.
 The parent contract is [stdlib-net.md](stdlib-net.md); the owner register is
 [stdlib-net.json](../../testing/stdlib-net.json).
@@ -62,9 +63,19 @@ with fixed validation time and never enter the production trust bundle.
 
 The implementation checker verifies those source/test anchors and exact
 dependency routes. Its negative tests preserve the distinction between ready
-and verified states. The formal global/risk 80% quality floors, six selected
-critical mutants, complete functional gate and exact-source publication CI
-remain required before tracker closure.
+and verified states. Fresh workspace coverage observed 296,733 of 323,815
+lines (91.6366%), 87.8228% of functions and 90.0416% of regions. All global
+and risk metrics passed the 80% floors; all six selected critical mutants
+were caught, with no missed, unviable or timed-out cases. The campaign ran
+2,689 Rust tests and attested 196 layer observations. After correcting the
+two normative expectation tests, it reused unchanged instrumented binaries
+with the same target/features and discarded all previous raw counters before
+rerunning every workspace target. No historical counters enter this report.
+The source tree is
+`04d1514617d51586119b155dcd8702d4dd3e1c3b599225a8d9a3bba16ee8f0b7`;
+the generated [ratchet](../../testing/conformance-ratchet.json) binds both
+reports to that tree and the exact input set. The complete functional gate
+and exact-source publication CI remain required before tracker closure.
 
 Public Tondo compiler registration, static capability/affine checking, VM host
 admission, production scope cleanup, sealed VM provider controls and target

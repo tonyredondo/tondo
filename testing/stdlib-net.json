@@ -272,10 +272,10 @@
     "tls-renegotiation", "raw-socket-public-api", "stdlib-select-api", "diagnostics-publish-payloads"
   ],
   "implementation": {
-    "status": "ready-kernel-private-provider",
+    "status": "verified-kernel-private-provider",
     "task": "STD-NET-IMPL-001",
     "selected_route": "scalar-rust-kernel-and-private-nonblocking-provider",
-    "quality_gate": "pending-80-percent-per-scope",
+    "quality_gate": "verified-80-percent-per-scope",
     "contract": "docs/contracts/stdlib-net-implementation.md",
     "sources": ["crates/tondo-stdlib/src/net.rs", "crates/tondo-compiler/src/net_provider.rs", "crates/tondo-compiler/src/net_provider/executor.rs", "crates/tondo-compiler/src/net_provider/dns_runtime.rs", "crates/tondo-compiler/src/net_provider/transport.rs", "crates/tondo-compiler/src/net_provider/tls_transport.rs", "crates/tondo-compiler/src/toolchain.rs", "crates/tondo-compiler/src/project.rs", "crates/tondo-cli/src/project_discovery.rs"],
     "tests": ["crates/tondo-stdlib/src/net.rs::tcp_read_admission_delivers_the_final_chunk_before_eof", "crates/tondo-stdlib/src/net.rs::tcp_write_admission_keeps_partial_progress_exact", "crates/tondo-stdlib/src/net.rs::udp_send_admission_never_reports_a_partial_datagram_as_success", "crates/tondo-stdlib/src/net.rs::received_datagrams_preserve_empty_payloads_and_exact_source", "crates/tondo-stdlib/src/net.rs::received_datagrams_refuse_truncation_and_oversize_without_partial_values", "crates/tondo-stdlib/src/net.rs::nominal_errors_never_include_host_or_certificate_payloads", "crates/tondo-stdlib/src/net.rs::host_names_preserve_case_punycode_and_the_final_root_dot", "crates/tondo-stdlib/src/net.rs::host_names_reject_invalid_labels_without_normalization", "crates/tondo-stdlib/src/net.rs::numeric_addresses_are_lookup_free_and_keep_the_address_family", "crates/tondo-stdlib/src/net.rs::zero_port_is_a_bind_value_and_never_a_destination", "crates/tondo-stdlib/src/net.rs::limits_separate_invalid_inputs_from_finite_target_resource_ceilings", "crates/tondo-stdlib/src/net.rs::read_and_datagram_admission_refuse_oversized_requests", "crates/tondo-stdlib/src/net.rs::deadline_validation_and_outcome_priority_precede_registration", "crates/tondo-stdlib/src/net.rs::resolver_deduplication_preserves_order_and_rejects_partial_publication", "crates/tondo-compiler/src/net_provider/tests.rs::dns_local_provider_preserves_address_order_and_deduplicates", "crates/tondo-compiler/src/net_provider/tests.rs::dns_local_provider_refuses_whole_oversized_and_negative_results", "crates/tondo-compiler/src/net_provider/tests.rs::dns_invalid_port_has_no_io_and_silent_provider_has_no_retry_or_failover", "crates/tondo-compiler/src/net_provider/tests.rs::dns_cancellation_immediately_releases_every_query_socket", "crates/tondo-compiler/src/net_provider/tests.rs::dns_provider_job_budget_and_terminal_cleanup_are_observable", "crates/tondo-compiler/src/net_provider/tests.rs::tcp_losing_preparation_preserves_connection_and_bytes_then_reports_eof", "crates/tondo-compiler/src/net_provider/tests.rs::tcp_pending_read_cancellation_releases_consumer_and_preserves_next_chunk", "crates/tondo-compiler/src/net_provider/tests.rs::tcp_argument_failures_precede_io_and_shutdown_is_explicit", "crates/tondo-compiler/src/net_provider/tests.rs::udp_losing_preparation_preserves_empty_and_oversized_datagrams", "crates/tondo-compiler/src/net_provider/tests.rs::udp_send_refusals_have_no_datagram_and_pending_cancel_releases_consumer", "crates/tondo-compiler/src/net_provider/tests.rs::tls_loopback_split_reader_and_writer_make_progress_without_holding_a_wait_lock", "crates/tondo-compiler/src/net_provider/tests.rs::tls_cancelled_handshake_closes_its_consumed_tcp_transport", "crates/tondo-compiler/src/net_provider/tests.rs::tls_exact_pin_authenticates_real_tls12_and_tls13_handshakes", "crates/tondo-compiler/src/net_provider/tests.rs::tls_matching_pin_still_refuses_wrong_name_and_expired_certificate", "crates/tondo-compiler/src/net_provider/tests.rs::tls_configuration_refuses_invalid_der_and_non_sni_names_before_handshake", "crates/tondo-compiler/src/net_provider/executor.rs::network_executor_admits_bounded_slots_before_effects_and_retires_on_drop", "crates/tondo-compiler/src/net_provider/executor.rs::network_executor_cancel_precedes_timeout_and_cleanup_precedes_reply", "crates/tondo-compiler/src/net_provider/executor.rs::network_executor_committed_progress_cannot_be_overwritten_by_late_cancel", "crates/tondo-compiler/src/net_provider/executor.rs::network_executor_rejects_cross_owner_operations_and_invalid_construction", "crates/tondo-compiler/src/net_provider/executor.rs::network_executor_drives_real_tcp_readiness_without_a_worker", "crates/tondo-compiler/src/toolchain.rs::network_target_requires_explicit_bounded_numeric_endpoints", "crates/tondo-compiler/src/toolchain.rs::network_target_selection_rejects_missing_and_unauthorized_configuration", "crates/tondo-compiler/src/toolchain.rs::network_target_data_changes_identity_and_retains_endpoint_order", "crates/tondo-cli/src/project_discovery.rs::network_target_toml_preserves_explicit_servers_without_ambient_keys", "crates/tondo-cli/src/project_discovery.rs::network_target_manifest_identity_includes_servers_and_omits_absent_config"],
@@ -297,7 +297,6 @@
     "public_api_promoted": false,
     "host": "required-after-native-gate",
     "required_follow_ups": [
-      "STD-NET-IMPL-001",
       "STD-NET-HOST-001",
       "STD-NET-TEST-001",
       "STD-NET-PERF-001",
@@ -306,7 +305,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-NET-IMPL-001"],
+    "next_blocks": ["STD-NET-HOST-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

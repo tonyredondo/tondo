@@ -330,10 +330,13 @@ by-value parameters, for example `TcpStream.close(stream)` and
 `self` receiver. The contract does not introduce a `ref self` receiver or an
 implicit consuming instance receiver.
 
-This implementation is in progress. Private Rust kernel/provider tests do not
-establish public VM registration, compiler ownership checks, target activation,
-native ABI/AOT execution or a conformant promotion. The owner remains open
-until its required executable integration and gates are observed.
+The private Rust kernel/provider has state `verified-kernel-private-provider`;
+its focused tests and source-bound quality reports are recorded in
+[stdlib-net-implementation.md](stdlib-net-implementation.md). Public VM
+registration, compiler ownership checks, target activation and production
+scope cleanup remain `STD-NET-HOST-001`. Native ABI/AOT execution and a
+conformant promotion are not established by this implementation. The tracker
+owner remains open until its complete functional gate and publication CI pass.
 
 ## Diagnóstico, cleanup y portabilidad
 
@@ -369,8 +372,7 @@ Happy Eyeballs implícito, buffer ilimitado, TLS inseguro, downgrade plaintext,
 resolver configurable por environment, `HttpClient`, `RpcClient`, QUIC,
 WebSocket, Unix sockets y raw sockets.
 
-La implementación queda pendiente de
-`STD-NET-IMPL-001`, `STD-NET-HOST-001`, `STD-NET-TEST-001`,
-`STD-NET-PERF-001`, `STD-NET-CONF-001` y `STD-NET-DOC-001`. El contrato puede
-alimentar `DIAG-RUNTIME-001` y `NATIVE-001`, pero no promociona símbolos
-runtime antes de cerrar esas leaves.
+Public integration remains `STD-NET-HOST-001`, followed by `STD-NET-TEST-001`,
+`STD-NET-PERF-001`, `STD-NET-CONF-001` and `STD-NET-DOC-001`. The contract can
+inform `DIAG-RUNTIME-001` and `NATIVE-001`; public runtime symbols require their
+own executable integration and gates.
