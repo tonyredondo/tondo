@@ -22,6 +22,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 toml = "0.8"
 sha2 = "0.11.0"
+sha1 = { version = "=0.10.6", features = ["force-soft"] }
 unicode-ident = "=1.0.18"
 unicode-normalization = "=0.1.24"
 unicode-security = "=0.1.2"

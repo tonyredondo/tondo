@@ -4370,11 +4370,20 @@ El contrato machine-readable, la documentación normativa y los negativos son
 [`testing/stdlib-uuid.json`](./testing/stdlib-uuid.json),
 [`docs/contracts/stdlib-uuid.md`](./docs/contracts/stdlib-uuid.md),
 [`scripts/stdlib-uuid-check.sh`](./scripts/stdlib-uuid-check.sh) y
-[`scripts/stdlib-uuid-test.sh`](./scripts/stdlib-uuid-test.sh). El diseño B0
-queda cerrado por `STD-ID-001`; implementación, providers, tests/fuzzing,
-rendimiento, conformance y documentación de uso permanecen pendientes de
-`STD-UUID-IMPL-001`, `STD-UUID-HOST-001`, `STD-UUID-TEST-001`,
-`STD-UUID-PERF-001`, `STD-UUID-CONF-001` y `STD-UUID-DOC-001`.
+[`scripts/stdlib-uuid-test.sh`](./scripts/stdlib-uuid-test.sh). The B0 design is
+locked by `STD-ID-001`. `STD-UUID-IMPL-001` has a `ready-stdlib-kernel` scalar
+Rust implementation with 18 focused tests, exact network/text semantics and
+explicit-input v4/v5/v7 transformations. UUIDv5 uses exactly pinned
+`sha1 0.10.6` with `force-soft`, hashing namespace and opaque name separately.
+The kernel performs no provider calls: v4 receives sixteen entropy bytes and
+v7 receives checked Unix milliseconds plus ten bytes. Its fixed-width Rust
+value/copy and fallible 36-byte string materialization do not establish public
+Tondo heap admission, capability checking or provider quality. Source-bound
+quality, the full functional gate and publication CI remain pending.
+Providers, independent tests/fuzzing, performance, conformance and usage remain
+in `STD-UUID-HOST-001`, `STD-UUID-TEST-001`, `STD-UUID-PERF-001`,
+`STD-UUID-CONF-001` and `STD-UUID-DOC-001`; public compiler/production VM,
+native ABI and native AOT are not promoted by the kernel.
 
 ### 14.18 `std.log`
 

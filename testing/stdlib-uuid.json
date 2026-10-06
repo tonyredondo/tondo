@@ -228,12 +228,40 @@
       {"id": "performance", "requires": ["scalar-oracle", "fixed-width-allocation-report", "provider-cost-report", "target-qualified-report"]},
       {"id": "promote", "requires": ["capability-diagnostics", "deterministic-provider-evidence", "no-secret-claim", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-UUID-IMPL-001"]
   },
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "ready-stdlib-kernel",
+    "quality_gate": "pending-80-percent-per-scope",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
+    "host": "not-claimed-until-uuid-host",
+    "native_aot_lowering": "not-claimed",
+    "runtime_heap": "not-claimed",
+    "selected_route": "rust-scalar-kernel",
+    "dependency": {"crate": "sha1", "version": "=0.10.6", "features": ["force-soft"], "assembly": false},
+    "generator_inputs": {"v4": "exact-16-supplied-entropy-bytes", "v5": "namespace-network-bytes-and-opaque-name", "v7": "checked-i128-unix-milliseconds-and-exact-10-supplied-entropy-bytes"},
+    "sources": ["crates/tondo-stdlib/src/uuid.rs", "crates/tondo-stdlib/src/lib.rs"],
+    "tests": [
+      "crates/tondo-stdlib/src/uuid.rs::representation_copies_network_bytes_and_supports_keys",
+      "crates/tondo-stdlib/src/uuid.rs::sentinels_round_trip_and_preserve_special_variants",
+      "crates/tondo-stdlib/src/uuid.rs::parse_accepts_dashed_mixed_case_and_urn",
+      "crates/tondo-stdlib/src/uuid.rs::parse_rejects_lengths_before_lexical_scanning",
+      "crates/tondo-stdlib/src/uuid.rs::parse_reports_first_absolute_character_separator_and_prefix_offsets",
+      "crates/tondo-stdlib/src/uuid.rs::byte_inputs_require_exact_length_without_publishing_partial_values",
+      "crates/tondo-stdlib/src/uuid.rs::every_variant_byte_and_version_nibble_is_preserved",
+      "crates/tondo-stdlib/src/uuid.rs::ordering_is_unsigned_lexicographic_for_every_byte_position",
+      "crates/tondo-stdlib/src/uuid.rs::v4_matches_rfc_9562_vector",
+      "crates/tondo-stdlib/src/uuid.rs::v4_preserves_all_122_entropy_bits_and_only_replaces_six_layout_bits",
+      "crates/tondo-stdlib/src/uuid.rs::v5_matches_rfc_9562_vector_and_hashes_opaque_name_bytes",
+      "crates/tondo-stdlib/src/uuid.rs::v5_checks_exact_and_zero_name_limits_before_hashing",
+      "crates/tondo-stdlib/src/uuid.rs::v7_matches_rfc_9562_vector",
+      "crates/tondo-stdlib/src/uuid.rs::v7_timestamp_boundaries_are_checked_without_wrap_or_saturation",
+      "crates/tondo-stdlib/src/uuid.rs::v7_preserves_all_74_entropy_bits_with_no_monotonic_state",
+      "crates/tondo-stdlib/src/uuid.rs::generation_rejects_incomplete_or_excess_entropy_and_recovers_statelessly",
+      "crates/tondo-stdlib/src/uuid.rs::immutable_values_are_shared_across_threads_without_provider_state",
+      "crates/tondo-stdlib/src/uuid.rs::nominal_errors_have_stable_environment_free_display"
+    ],
+    "proof": "The 18 focused Rust kernel tests and the locked dependency build pass. RFC v4/v5/v7 vectors, exhaustive external variant/version preservation, exact text errors, entropy layout, name/timestamp bounds, immutable copies and stateless reuse are observed. Full workspace, source-bound quality and publication CI remain pending. Providers, compiler/public Tondo API, production VM, native ABI and native AOT are not promoted.",
     "required_follow_ups": ["STD-UUID-IMPL-001", "STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
   }
 }

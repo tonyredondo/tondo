@@ -17,6 +17,7 @@ pub mod regex;
 pub mod serialization;
 pub mod testing;
 pub mod toml;
+pub mod uuid;
 pub mod yaml;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

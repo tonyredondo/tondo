@@ -15,7 +15,8 @@ die() {
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "owner contract contains CR or trailing whitespace"
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_uuid_progression";
   .format == "tondo-stdlib-owner-contract/1"
   and .owner == "std.uuid"
   and .parent_owner == "std"
@@ -148,11 +149,7 @@ jq -e '
   and all(.corpora[]; .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
-  and .implementation.status == "pending-after-native-gate"
-  and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
-  and .implementation.required_follow_ups == ["STD-UUID-IMPL-001", "STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+  and uuid_kernel_progression
 ' "$contract" >/dev/null || die "invalid machine-readable std.uuid contract"
 
 for path in \

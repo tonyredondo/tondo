@@ -396,6 +396,10 @@ run_step stdlib-uuid-contract \
     scripts/stdlib-uuid-check.sh
 run_step stdlib-uuid-contract-tests \
     scripts/stdlib-uuid-test.sh
+run_step stdlib-uuid-implementation \
+    scripts/stdlib-uuid-implementation-check.sh
+run_step stdlib-uuid-implementation-tests \
+    scripts/stdlib-uuid-implementation-test.sh
 run_step stdlib-log-contract \
     scripts/stdlib-log-check.sh
 run_step stdlib-log-contract-tests \

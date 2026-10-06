@@ -65,7 +65,8 @@ for marker in \
         || { echo "std.uuid tests: missing marker $marker" >&2; exit 1; }
 done
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_uuid_progression";
   .task == "STD-ID-001"
   and .standard.width_bits == 128
   and .standard.byte_order == "network-big-endian"
@@ -80,7 +81,7 @@ jq -e '
   and .ownership.global_registry == false
   and .performance.generation_state == "no-global-lock-counter-or-registry"
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and uuid_kernel_progression
 ' testing/stdlib-uuid.json >/dev/null
 
-echo "std.uuid tests: OK (RFC vectors; text/bytes; v4/v5/v7; capabilities; no hidden state)"
+echo "std.uuid contract tests: OK (normative text/bytes, versions, capabilities and state rules; no runtime provider execution)"

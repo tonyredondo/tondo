@@ -14,7 +14,7 @@
   "runner": {
     "lineage": "draft",
     "manifest": "conformance/0.1/manifest.json",
-    "manifest_sha256": "91f2236592526d8920ca64c17055cac37d1f4686372e8a0b2483edf49e204684",
+    "manifest_sha256": "c8f3767320cfda951d65200610c84b1e663de7280a468a0315216a693fc28876",
     "full_suite_case_count": 206,
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",

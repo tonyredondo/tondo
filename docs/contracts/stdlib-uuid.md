@@ -2,11 +2,11 @@
 
 Estado: **contract-locked** para `STD-0.1B` / `STD-ID-001`.
 
-Este documento fija la frontera normativa de `std.uuid`. No afirma que el
-runtime, los proveedores de entropía/reloj, los vectores de conformance, los
-benchmarks, ni los ejemplos de uso estén implementados. Esas piezas permanecen
-en las leaves `STD-UUID-IMPL-001`, `STD-UUID-HOST-001`, `STD-UUID-TEST-001`,
-`STD-UUID-PERF-001`, `STD-UUID-CONF-001` y `STD-UUID-DOC-001`.
+This document locks the normative `std.uuid` design. `STD-UUID-IMPL-001` now
+has an explicit-input scalar Rust kernel; its local promotion state and proof
+are recorded in section 9. Runtime providers, public Tondo calls, independent
+model/fuzz evidence, performance, conformance and usage documentation remain
+separate owner leaves.
 
 El contrato sigue [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html), que
 define el UUID de 128 bits y sustituye RFC 4122. Tondo adopta una superficie
@@ -283,7 +283,67 @@ El contrato machine-readable y los negativos ejecutables son
 [`testing/stdlib-uuid.json`](../../testing/stdlib-uuid.json),
 [`scripts/stdlib-uuid-check.sh`](../../scripts/stdlib-uuid-check.sh) y
 [`scripts/stdlib-uuid-test.sh`](../../scripts/stdlib-uuid-test.sh). El diseño B0
-queda cerrado por `STD-ID-001`; la implementación, providers, tests/fuzzing,
-rendimiento, conformance y documentación permanecen pendientes de las leaves
-`STD-UUID-IMPL-001`, `STD-UUID-HOST-001`, `STD-UUID-TEST-001`,
-`STD-UUID-PERF-001`, `STD-UUID-CONF-001` y `STD-UUID-DOC-001`.
+queda cerrado por `STD-ID-001`. The implementation boundary below does not
+promote providers, public compiler/VM/native registration, independent testing,
+performance, conformance or executable usage documentation.
+
+## 9. Explicit-input Rust kernel
+
+`crates/tondo-stdlib/src/uuid.rs` implements immutable network-order values,
+nil/max, strict dashed/URN parsing, canonical formatting, variant/version,
+unsigned byte comparison and v4/v5/v7 transformations. The selected route is
+`rust-scalar-kernel`. `ready-stdlib-kernel` records focused executable evidence
+with `pending-80-percent-per-scope`; `verified-stdlib-kernel` requires the full
+functional gate and `verified-80-percent-per-scope` quality evidence. Publication
+and exact-SHA CI closure remain separate proof in the tracker.
+
+No provider calls occur in this kernel. Rust `Uuid::v4(&[u8])` requires exactly
+16 supplied entropy bytes. `Uuid::v7(i128, &[u8])` checks UTC Unix milliseconds
+in `0..=281474976710655`, then requires exactly ten supplied bytes. Both reject
+short or excess snapshots as `ProviderMisconfigured`; timestamp range rejection
+precedes snapshot length rejection. They overwrite only version/variant bits,
+preserve respectively 122/74 entropy bits and publish no partial value. The
+input snapshots are trusted boundary data, not proof of entropy quality or
+provider capability. Those checks belong to `STD-UUID-HOST-001`.
+
+Rust `Uuid::v5(Uuid, &[u8], UuidLimits)` checks `max_name_bytes` before hashing.
+The default is 16 MiB; zero permits an empty name. Names remain opaque, including
+non-UTF-8 bytes. Incremental hashing of the namespace and name avoids a combined
+input allocation. The exactly pinned `sha1 = "=0.10.6"` dependency uses
+`force-soft`; assembly features are not enabled. It uses `digest 0.10.7`,
+separately from the workspace's `sha2 0.11` / `digest 0.11` family. This is a
+UUIDv5 interoperability dependency, not a general hashing API or a release
+license decision.
+
+Text length is checked before lexical scanning. Wrong lengths have
+`InvalidTextLength` with no offset; bytes require exact length with
+`InvalidBytesLength`. A malformed 45-byte URN prefix reports `InvalidUrnPrefix`
+at its first mismatching byte. Characters and separators report the first
+invalid absolute byte offset, including the nine-byte prefix. Length, name
+limit, snapshot length and timestamp failures have no lexical offset.
+
+The Rust value and `to_bytes()` result contain sixteen inline bytes. Parse,
+compare, inspection and generation use bounded stack/hash state. Canonical
+formatting builds 36 ASCII bytes on the stack; `try_to_string()` reserves an
+owned 36-byte string and maps a failed reservation to `OutOfMemory`. `Display`
+writes the same bytes to its caller's formatter, whose allocation policy is
+outside the kernel. These facts do not measure allocator calls, RSS or code
+size. Public Tondo `Bytes`/`String` materialization and `vm_heap` admission remain
+unimplemented; the Rust return types do not demonstrate those runtime bounds.
+
+The 18 kernel tests cover the RFC 9562 v4/v5/v7 vectors, all 256 variant bytes
+crossed with all 16 version nibbles, exact lexical offsets, byte-copy ownership,
+unsigned ordering, entropy bit preservation, timestamp boundaries, v5 name
+limits, repeated-call behavior and immutable threaded reuse. Provider error
+variants are declared, with stable environment-free display, but actual provider
+failure normalization is not established by these tests. An independent model,
+bounded fuzz campaign and target-qualified performance remain pending.
+
+The implementation checker and tests are
+[`scripts/stdlib-uuid-implementation-check.sh`](../../scripts/stdlib-uuid-implementation-check.sh)
+and [`scripts/stdlib-uuid-implementation-test.sh`](../../scripts/stdlib-uuid-implementation-test.sh).
+They validate both local states and reject 96 invalid state/route/dependency
+records before running the canonical 18 Rust tests and checking `force-soft`.
+The host state is `not-claimed-until-uuid-host`; production VM, native ABI and
+native AOT lowering are not promoted. The next owner after implementation
+closure is `STD-UUID-HOST-001`, followed by TEST, PERF, CONF and DOC.

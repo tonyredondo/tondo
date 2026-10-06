@@ -52,8 +52,10 @@ process groups, clean-source comparison and the full local/CI gates. The current
 campaign measures 91.5908% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
 `STD-REGEX-DOC-001` verifies the canonical executable Rust-kernel guide after
-the full local gate, publication and exact-SHA CI confirmation. The next owner
-leaf is `STD-UUID-IMPL-001`.
+the full local gate, publication and exact-SHA CI confirmation.
+`STD-UUID-IMPL-001` is active: its scalar Rust kernel receives explicit
+generation inputs, with full functional/quality and publication proof pending.
+The next owner after that closure is `STD-UUID-HOST-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6887,9 +6889,16 @@ estas leaves.
 
 #### 21.3.11 `std.uuid`
 
-- [ ] **STD-UUID-IMPL-001 — Implementar UUID.** Publicar representación,
-  parse/format y generadores de las versiones fijadas, separando operaciones
-  puras de civil-clock/entropy.
+- [ ] **STD-UUID-IMPL-001 — Implement explicit-input UUID kernels.**
+  `ready-stdlib-kernel` covers immutable 16-byte network-order values,
+  strict dashed/URN parse, canonical format, comparison/introspection and
+  v4/v5/v7 transformations. Eighteen focused Rust tests pass, including RFC
+  vectors, exact errors, all external variants/versions, limits, entropy bit
+  preservation and immutable reuse. UUIDv5 uses `sha1 = "=0.10.6"` with
+  `force-soft`. Full functional, source-bound quality and publication CI remain
+  pending. Provider capability/quality/error normalization, public Tondo,
+  production VM, native ABI/AOT and runtime heap admission are not promoted.
+  Next after closure: `STD-UUID-HOST-001`.
 - [ ] **STD-UUID-HOST-001 — Integrar proveedores de UUID.** Enlazar entropy y
   clock declarados con límites y fallos nominales, sin RNG o reloj global
   implícitos.
