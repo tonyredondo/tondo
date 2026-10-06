@@ -1,0 +1,103 @@
+{
+  "format": "tondo-stdlib-uuid-conformance/1",
+  "edition": "0.1",
+  "owner": "std.uuid",
+  "phase": "STD-0.1B",
+  "task": "STD-UUID-CONF-001",
+  "status": "adapter-ready",
+  "parent": "testing/stdlib-uuid.json",
+  "document": "docs/contracts/stdlib-uuid-conformance.md",
+  "sources": [
+    "crates/tondo-reliability/examples/uuid_conformance_vm.rs",
+    "crates/tondo-native-runtime/examples/uuid_conformance.rs",
+    "crates/tondo-stdlib/examples/support/uuid_conformance_cases.rs",
+    "crates/tondo-reliability/tests/fixtures/uuid-cases.json",
+    "crates/tondo-stdlib/src/uuid.rs",
+    "crates/tondo-reliability/src/uuid_model.rs",
+    "crates/tondo-reliability/tests/uuid_models.rs",
+    "crates/tondo-compiler/src/driver.rs",
+    "crates/tondo-compiler/src/package.rs",
+    "crates/tondo-compiler/src/process_host.rs",
+    "crates/tondo-compiler/src/process_host/uuid.rs",
+    "crates/tondo-compiler/src/test_control.rs",
+    "crates/tondo-compiler/src/uuid_provider.rs",
+    "crates/tondo-vm/src/bytecode.rs",
+    "crates/tondo-vm/src/bytecode/verify.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "crates/tondo-vm/src/runtime/heap.rs",
+    "crates/tondo-vm/src/runtime/worker_import.rs",
+    "crates/tondo-native-runtime/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "crates/tondo-reliability/Cargo.toml",
+    "crates/tondo-native-runtime/Cargo.toml",
+    "crates/tondo-compiler/Cargo.toml",
+    "crates/tondo-stdlib/Cargo.toml",
+    "crates/tondo-vm/Cargo.toml",
+    "scripts/stdlib_uuid_conformance.py"
+  ],
+  "boundary": {
+    "vm": "compiled-public-tondo-uuid-through-production-host",
+    "native": "rust-stdlib-kernel-process-with-test-provider-replay",
+    "compiler_api": "verified-production-hosted",
+    "production_host": "verified-production-hosted",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed",
+    "native_provider_capabilities": "not-claimed-no-native-tondo-provider-adapter",
+    "runtime_objects": "table-counter-only-no-native-uuid-managed-objects",
+    "vm_heap_metrics": "not-measured",
+    "simd": "not-measured-no-optimized-route"
+  },
+  "rules": {
+    "fresh_process_per_adapter": true,
+    "same_compiled_fixture_bytes": true,
+    "capture_budget_seconds": 480,
+    "independent_model_before_vm": true,
+    "full_reference_vectors": 54,
+    "common_valid_vectors": 17,
+    "common_invalid_vectors": 35,
+    "kernel_only_controls": [
+      "v4-length-17",
+      "v5-name-limit"
+    ],
+    "common_observations": 77,
+    "vm_static_capability_checks": 15,
+    "vm_missing_capability_refusals": 9,
+    "vm_capability_acceptances": 6,
+    "sealed_replay_after_each_static_check": true,
+    "native_reference_consumed_rows": {
+      "clock": 8,
+      "entropy": 9
+    },
+    "vm_consumption_proof": "exact-finite-transcript-and-first-row-replay-not-a-counter",
+    "envelope_closed_after_execution": true,
+    "partial_failed_capture_promotes": false
+  },
+  "cases": [
+    {
+      "id": "retained-values",
+      "observations": 17
+    },
+    {
+      "id": "retained-refusals",
+      "observations": 35
+    },
+    {
+      "id": "core-value-laws",
+      "observations": 3
+    },
+    {
+      "id": "provider-transcript",
+      "observations": 16
+    },
+    {
+      "id": "clock-laws",
+      "observations": 6
+    }
+  ],
+  "report": "target/reliability/evidence/stdlib-uuid-conformance.json",
+  "next_blocks": [
+    "STD-UUID-DOC-001"
+  ]
+}

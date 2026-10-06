@@ -272,6 +272,21 @@
     "status": "verified",
     "quality_gate": "verified-80-percent-per-scope"
   },
+  "conformance": {
+    "task": "STD-UUID-CONF-001",
+    "register": "testing/stdlib-uuid-conformance.json",
+    "contract": "docs/contracts/stdlib-uuid-conformance.md",
+    "status": "adapter-ready",
+    "quality_gate": "pending-80-percent-per-scope",
+    "selected_route": "public-hosted-vm-and-native-kernel-process",
+    "target": "x86_64-unknown-linux-gnu",
+    "cases": 5,
+    "common_observations": 77,
+    "public_api": "verified-production-hosted",
+    "vm_capability_checks": 15,
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed"
+  },
   "measurement": {
     "task": "STD-UUID-PERF-001",
     "register": "testing/stdlib-uuid-performance.json",

@@ -7,7 +7,8 @@ has an explicit-input scalar Rust kernel; its local promotion state and proof
 are recorded in section 9. Section 10 records the new hosted provider/public
 registration boundary. Section 11 records the verified independent model/fuzz
 boundary; section 12 defines the hosted scalar performance campaign.
-Conformance and usage documentation remain separate owner leaves.
+Section 13 records the public hosted VM/native Rust-reference conformance
+implementation. Usage documentation remains a separate owner leaf.
 
 El contrato sigue [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html), que
 define el UUID de 128 bits y sustituye RFC 4122. Tondo adopta una superficie
@@ -434,4 +435,27 @@ while actual reply charges and host registry increments are separately observed.
 Logical memory is not RSS or allocator instrumentation. Provider requests are
 not OS syscalls. The report measures the existing hosted scalar bridge with
 reply admission, without executing bytecode or claiming complete VM latency,
-native UUID ABI/AOT, SIMD or code-size measurements. CONF and DOC remain open.
+native UUID ABI/AOT, SIMD or code-size measurements. CONF promotion and DOC remain open.
+
+## 13. Public hosted VM and native Rust-reference conformance
+
+[`testing/stdlib-uuid-conformance.json`](../../testing/stdlib-uuid-conformance.json)
+and [`stdlib-uuid-conformance.md`](stdlib-uuid-conformance.md) define five shared
+groups and seventy-seven exact observations. The VM compiles and executes
+actual public Tondo UUID calls; the native Rust process invokes the scalar
+kernel with bounded fixture replay. Fifteen additional VM capability checks
+cover direct/alias/defer references and replay the first sealed provider value
+after each static check. Fixture installation grants no capability.
+
+The complete fifty-four-vector model/kernel corpus remains a prerequisite.
+Seventeen valid and thirty-five invalid vectors have common public VM calls;
+two per-kernel controls retain separate proof without pretending that public
+Tondo has their configuration APIs. Closed envelopes and native runtime table
+counters have explicitly bounded meanings, without a VM heap or native UUID
+ARC claim. No native UUID ABI, native provider adapter or AOT lowering is added.
+
+The conformance state is `adapter-ready`. Focused execution, three Rust adapter
+tests and seven report-law tests pass; clean committed capture, consolidated
+source-bound quality, the full functional gate and publication CI remain
+pending. `verified-public-hosted-vm-and-native-kernel-process` requires those
+local gates and leads to `STD-UUID-DOC-001`. The tracker records exact-SHA closure.

@@ -1,3 +1,26 @@
+def uuid_conformance_progression($impl):
+  if .conformance == null then
+    .promotion.next_blocks == ["STD-UUID-CONF-001"]
+    and $impl.required_follow_ups == ["STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+  else
+    (.conformance | del(.status, .quality_gate)) == {
+      task:"STD-UUID-CONF-001", register:"testing/stdlib-uuid-conformance.json",
+      contract:"docs/contracts/stdlib-uuid-conformance.md",
+      selected_route:"public-hosted-vm-and-native-kernel-process",
+      target:"x86_64-unknown-linux-gnu", cases:5, common_observations:77,
+      public_api:"verified-production-hosted", vm_capability_checks:15,
+      native_abi:"not-implemented", native_aot:"not-claimed"}
+    and (if .conformance.status == "adapter-ready" then
+      .conformance.quality_gate == "pending-80-percent-per-scope"
+      and .promotion.next_blocks == ["STD-UUID-CONF-001"]
+      and $impl.required_follow_ups == ["STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+    elif .conformance.status == "verified-public-hosted-vm-and-native-kernel-process" then
+      .conformance.quality_gate == "verified-80-percent-per-scope"
+      and .promotion.next_blocks == ["STD-UUID-DOC-001"]
+      and $impl.required_follow_ups == ["STD-UUID-DOC-001"]
+    else false end)
+  end;
+
 def uuid_kernel_progression:
   .implementation as $impl
   | $impl.public_api_promoted == false
@@ -14,7 +37,9 @@ def uuid_kernel_progression:
   and ($impl.tests | unique | length) == 18
   and all($impl.tests[]; test("^crates/tondo-stdlib/src/uuid\\.rs::[a-z0-9_]+$"))
   and ($impl.proof | type == "string" and length > 0)
-  and .conformance == null and .documentation == null
+  and .documentation == null
+  and (.conformance == null or (.measurement.status == "verified-hosted-scalar-baseline"
+    and .model.status == "verified" and .host.status == "verified-production-hosted"))
   and (if .host != null then
     $impl.status == "verified-stdlib-kernel"
     and $impl.quality_gate == "verified-80-percent-per-scope"
@@ -49,8 +74,7 @@ def uuid_kernel_progression:
           and $impl.required_follow_ups == ["STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
         elif .measurement.status == "verified-hosted-scalar-baseline" then
           .measurement.quality_gate == "verified-80-percent-per-scope"
-          and .promotion.next_blocks == ["STD-UUID-CONF-001"]
-          and $impl.required_follow_ups == ["STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+          and uuid_conformance_progression($impl)
         else false end)
       elif .model != null then
         $impl.required_follow_ups == ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]

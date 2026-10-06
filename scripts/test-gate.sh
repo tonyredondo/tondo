@@ -416,6 +416,12 @@ run_step stdlib-uuid-performance-tests \
     scripts/stdlib-uuid-performance-test.sh
 run_step stdlib-uuid-performance-campaign \
     scripts/stdlib-uuid-performance.sh
+run_step stdlib-uuid-conformance-contract \
+    scripts/stdlib-uuid-conformance-check.sh
+run_step stdlib-uuid-conformance-contract-tests \
+    scripts/stdlib-uuid-conformance-test.sh
+run_step stdlib-uuid-conformance \
+    scripts/stdlib-uuid-conformance.sh
 run_step stdlib-log-contract \
     scripts/stdlib-log-check.sh
 run_step stdlib-log-contract-tests \
