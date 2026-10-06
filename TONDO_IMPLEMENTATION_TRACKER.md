@@ -49,7 +49,7 @@ and fallible lazy iteration. `STD-REGEX-TEST-001` verifies the independent model
 and seeded fuzz; `STD-REGEX-PERF-001` verifies nineteen target-qualified kernel
 routes. `STD-REGEX-CONF-001` verifies seven shared private VM/native Rust
 process groups, clean-source comparison and the full local/CI gates. The current workspace
-campaign measures 91.6331% global lines and preserves the 80% floor in every
+campaign measures 91.6289% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
 `STD-REGEX-DOC-001` verifies the canonical executable Rust-kernel guide after
 the full local gate, publication and exact-SHA CI confirmation.
@@ -60,8 +60,11 @@ registration and explicit OS providers after source-bound quality, every full
 functional gate step, publication and exact-SHA CI confirmation.
 `STD-UUID-TEST-001` verifies the independent bounded model, retained corpus and
 fuzz after source-bound quality, the full local gate, publication and exact-SHA
-CI confirmation. The next owner leaf is `STD-UUID-PERF-001`, for target-qualified
-parse/format/generation, memory and provider costs.
+CI confirmation. `STD-UUID-PERF-001` verifies 22 target-qualified hosted scalar
+bridge routes, exact oracles and declared logical resource counters after the
+full local gate, source-bound quality, publication and exact-SHA CI confirmation.
+The next owner leaf is `STD-UUID-CONF-001`, comparing public hosted VM calls and
+sealed providers with the native Rust kernel reference process.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6953,9 +6956,8 @@ estas leaves.
   actually run; normal-push portable/fuzz jobs are expected skips. All checks and
   the remote SHA remain unchanged after the quiet interval. Next:
   `STD-UUID-PERF-001`.
-- [ ] **STD-UUID-PERF-001 — Medir UUID.** Fijar parse/format/generation,
+- [x] **STD-UUID-PERF-001 — Medir UUID.** Fijar parse/format/generation,
   allocations, memoria y coste de providers.
-  Locally verified; publication and exact-SHA CI closure remain pending.
   The target-qualified direct hosted scalar bridge campaign verifies
   22 routes and 27 retained measurements per route, exact bounded-model/authored
   expectations, sealed/OS provider costs, admission/lifecycle checks and
@@ -6968,6 +6970,12 @@ estas leaves.
   pass; every full functional gate step passes on the same frozen source,
   including the 206-case suite and exact async/select repeats. Standard-package
   and dependent suite pins are synchronized without changing assertions.
+  Published source `599a27d` passes CI run `37486125145`: the strict Linux
+  x86_64 job checks out that exact revision and succeeds in 44m31s, executing
+  the full functional gate, the clean 22-route campaign, 117 negative records,
+  UUID fuzz and the composed conformance/native scalar regressions. The separate
+  portable/fuzz jobs are expected normal-push skips. All checks and main refs
+  remain unchanged after the quiet interval. Next: `STD-UUID-CONF-001`.
 - [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
   capabilities civil-clock/entropy sobre VM/nativo con providers sellados.
 - [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
