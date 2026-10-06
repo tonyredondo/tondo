@@ -6845,8 +6845,14 @@ estas leaves.
   strict Linux x86_64 gate; normal-push portable/fuzz jobs are expected skips.
   Next: `STD-REGEX-CONF-001`. Public compiler/VM,
   native ABI/AOT, SIMD and code-size promotion are outside this boundary.
-- [ ] **STD-REGEX-CONF-001 — Conformar regex.** Ejecutar vectores portables y
-  equivalencia VM/nativo con los mismos límites y errores.
+- [ ] **STD-REGEX-CONF-001 — Conform the bounded regex kernel adapters.**
+  The `adapter-ready` register compares seven shared case groups, 41 valid
+  and 33 invalid retained vectors, through private verified bytecode dispatch
+  and a Rust kernel process. It covers Unicode 16, local capture priorities,
+  lazy fused iteration, atomic replacement, exact byte spans and six nominal
+  limits. Clean-source comparison, source-bound quality, the full functional
+  gate, publication and exact-SHA CI remain pending. Public compiler/VM
+  registration, native ABI and Tondo AOT are not promoted by these adapters.
 - [ ] **STD-REGEX-DOC-001 — Documentar regex.** Publicar sintaxis exacta,
   Unicode, captures, complejidad, límites y ejemplos ejecutables.
 

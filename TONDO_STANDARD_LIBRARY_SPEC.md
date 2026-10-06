@@ -4312,8 +4312,16 @@ counters and explicitly selected logical resources. Hosted VM, native Tondo,
 SIMD and code-size measurements are not claimed. Clean-source measurements,
 the full functional gate and source-bound quality checks pass: 292,637 of
 319,506 lines (91.5905%), every global/risk dimension at or above 80%, six
-critical mutants caught. Shared conformance and
-executable usage remain `STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
+critical mutants caught. The `STD-REGEX-CONF-001` shared protocol is recorded in
+[testing/stdlib-regex-conformance.json](./testing/stdlib-regex-conformance.json)
+and [docs/contracts/stdlib-regex-conformance.md](./docs/contracts/stdlib-regex-conformance.md).
+Its `adapter-ready` state compares seven shared case groups, including the
+41 valid and 33 invalid retained vectors, through a private bodyless VM callable
+and a fresh Rust kernel process. Unicode, captures, lazy iteration, replacement,
+nominal errors and all six main limits share exact assertions. This is not a
+public compiler/VM registration, native regex ABI or Cranelift lowering.
+Clean-source comparison and current quality/full gates are still required.
+Executable usage remains `STD-REGEX-DOC-001`.
 
 ### 14.17 `std.uuid`
 

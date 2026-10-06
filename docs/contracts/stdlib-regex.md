@@ -15,8 +15,12 @@ performance boundary is described in
 [stdlib-regex-performance.md](./stdlib-regex-performance.md) and
 `testing/stdlib-regex-performance.json`. Its `verified-stdlib-kernel-baseline`
 state follows the clean-source campaign and the full functional and quality
-gates. Shared conformance and executable usage remain
-`STD-REGEX-CONF-001` and `STD-REGEX-DOC-001`.
+gates. The shared conformance protocol is described in
+[stdlib-regex-conformance.md](./stdlib-regex-conformance.md) and
+`testing/stdlib-regex-conformance.json`. Its `adapter-ready` state covers seven
+case groups awaiting the clean comparison and source-bound quality/full gates.
+It uses private VM dispatch and a Rust process, with no public regex VM API,
+native ABI or Tondo AOT promotion. Executable usage remains `STD-REGEX-DOC-001`.
 
 La API es deliberadamente una sola superficie: compilar una expresión produce
 un valor inmutable y reutilizable; las operaciones de búsqueda son puras,

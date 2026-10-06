@@ -1,3 +1,28 @@
+def regex_conformance_metadata:
+  (.conformance | keys) == ["contract", "document", "hosted_vm", "native_abi", "native_aot", "native_process", "status", "task"]
+  and .conformance.contract == "testing/stdlib-regex-conformance.json"
+  and .conformance.document == "docs/contracts/stdlib-regex-conformance.md"
+  and .conformance.task == "STD-REGEX-CONF-001"
+  and .conformance.hosted_vm == "verified-bytecode-test-only-host-callable"
+  and .conformance.native_process == "rust-stdlib-process-no-regex-abi"
+  and .conformance.native_abi == "not-implemented"
+  and .conformance.native_aot == "not-claimed";
+
+def regex_performance_follow_ups:
+  if .conformance == null then
+    .promotion.next_blocks == ["STD-REGEX-CONF-001"]
+    and .implementation.required_follow_ups == ["STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+  else
+    regex_conformance_metadata
+    and (if .conformance.status == "adapter-ready" then
+      .promotion.next_blocks == ["STD-REGEX-CONF-001"]
+      and .implementation.required_follow_ups == ["STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+    elif .conformance.status == "verified-hosted-vm-adapter-and-native-stdlib-process" then
+      .promotion.next_blocks == ["STD-REGEX-DOC-001"]
+      and .implementation.required_follow_ups == ["STD-REGEX-DOC-001"]
+    else false end)
+  end;
+
 def regex_performance_metadata:
   (.performance | keys) == ["allocation", "backend", "claims_before_perf_gate", "contract", "dispatch", "document", "hosted_vm", "matching", "native_aot", "parser_stack", "profile", "samples_per_workload", "scalar_oracle", "selected_dispatch", "simd_allowed_after_equivalence", "status", "target", "task", "workloads"]
   and .performance.task == "STD-REGEX-PERF-001"
@@ -17,18 +42,17 @@ def regex_without_performance_child:
 
 def regex_tested_progression:
   .testing_contract == "testing/stdlib-regex-test.json"
-  and .conformance == null and .documentation == null
+  and .documentation == null
   and (if regex_without_performance_child then
-    .promotion.next_blocks == ["STD-REGEX-PERF-001"]
+    .conformance == null and .promotion.next_blocks == ["STD-REGEX-PERF-001"]
     and .implementation.required_follow_ups == ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
   else
     regex_performance_metadata
     and (if .performance.status == "measurement-ready" then
-      .promotion.next_blocks == ["STD-REGEX-PERF-001"]
+      .conformance == null and .promotion.next_blocks == ["STD-REGEX-PERF-001"]
       and .implementation.required_follow_ups == ["STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
     elif .performance.status == "verified-stdlib-kernel-baseline" then
-      .promotion.next_blocks == ["STD-REGEX-CONF-001"]
-      and .implementation.required_follow_ups == ["STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+      regex_performance_follow_ups
     else false end)
   end);
 
@@ -58,14 +82,14 @@ def regex_kernel_progression:
   and .implementation.evidence_report == "target/reliability/evidence/stdlib-regex-implementation.json"
   and (
     (.implementation.status == "ready-stdlib-kernel"
-      and .testing_contract == null and regex_without_performance_child
+      and .testing_contract == null and .conformance == null and .documentation == null and regex_without_performance_child
       and .implementation.quality_gate == "pending-80-percent-per-scope"
       and .promotion.next_blocks == ["STD-REGEX-IMPL-001"]
       and .implementation.required_follow_ups == ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])
     or
     (.implementation.status == "verified-stdlib-kernel"
       and .implementation.quality_gate == "verified-80-percent-per-scope"
-      and ((.testing_contract == null and regex_without_performance_child
+      and ((.testing_contract == null and .conformance == null and .documentation == null and regex_without_performance_child
         and .promotion.next_blocks == ["STD-REGEX-TEST-001"]
         and .implementation.required_follow_ups == ["STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"])
       or regex_tested_progression))

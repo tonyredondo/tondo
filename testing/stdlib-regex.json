@@ -270,5 +270,15 @@
     "evidence_report": "target/reliability/evidence/stdlib-regex-implementation.json",
     "required_follow_ups": ["STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
   },
-  "testing_contract": "testing/stdlib-regex-test.json"
+  "testing_contract": "testing/stdlib-regex-test.json",
+  "conformance": {
+    "contract": "testing/stdlib-regex-conformance.json",
+    "document": "docs/contracts/stdlib-regex-conformance.md",
+    "task": "STD-REGEX-CONF-001",
+    "hosted_vm": "verified-bytecode-test-only-host-callable",
+    "native_process": "rust-stdlib-process-no-regex-abi",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed",
+    "status": "adapter-ready"
+  }
 }

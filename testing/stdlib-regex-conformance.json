@@ -1,0 +1,108 @@
+{
+  "format": "tondo-stdlib-regex-conformance/1",
+  "edition": "0.1",
+  "owner": "std.regex",
+  "phase": "STD-0.1B",
+  "task": "STD-REGEX-CONF-001",
+  "status": "adapter-ready",
+  "parent": "testing/stdlib-regex.json",
+  "document": "docs/contracts/stdlib-regex-conformance.md",
+  "sources": [
+    "crates/tondo-reliability/examples/regex_conformance_vm.rs",
+    "crates/tondo-native-runtime/examples/regex_conformance.rs",
+    "crates/tondo-stdlib/examples/support/regex_conformance_cases.rs",
+    "crates/tondo-reliability/tests/fixtures/regex-cases.json",
+    "crates/tondo-stdlib/src/regex.rs",
+    "crates/tondo-stdlib/src/regex/engine.rs",
+    "crates/tondo-stdlib/src/regex/syntax.rs",
+    "crates/tondo-vm/src/runtime.rs",
+    "crates/tondo-native-runtime/src/lib.rs",
+    "crates/tondo-reliability/src/regex_model.rs",
+    "crates/tondo-reliability/src/regex_model/grammar.rs",
+    "crates/tondo-reliability/tests/regex_models.rs",
+    "crates/tondo-stdlib/tests/regex_kernel.rs",
+    "Cargo.lock",
+    "Cargo.toml",
+    "rust-toolchain.toml",
+    "crates/tondo-reliability/Cargo.toml",
+    "crates/tondo-native-runtime/Cargo.toml",
+    "crates/tondo-stdlib/Cargo.toml",
+    "crates/tondo-vm/Cargo.toml",
+    "scripts/stdlib_regex_conformance.py"
+  ],
+  "boundary": {
+    "vm": "verified-bytecode-test-only-host-callable",
+    "native": "rust-stdlib-process-no-regex-abi",
+    "compiler_api": "not-implemented",
+    "production_host": "not-implemented",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed",
+    "simd": "not-measured-no-optimized-route",
+    "runtime_objects": "table-counter-only-kernel-does-not-allocate-runtime-objects"
+  },
+  "rules": {
+    "same_compiled_fixture_bytes": true,
+    "same_case_order": true,
+    "independent_bounded_model_before_vm": true,
+    "fresh_process_per_probe": true,
+    "exact_returned_vm_strings": true,
+    "exact_native_objects": true,
+    "valid_vectors": 41,
+    "invalid_vectors": 33,
+    "bounded_model_vectors": 32,
+    "authored_unicode_vectors": 9,
+    "unicode_version": "16.0.0",
+    "option_flags": 5,
+    "limits": [
+      "pattern",
+      "program",
+      "input",
+      "steps",
+      "matches",
+      "output"
+    ],
+    "empty_scalar_offsets": [
+      0,
+      2,
+      6
+    ],
+    "iterator_prior_valid_matches": 1,
+    "terminal_iterators": true,
+    "no_partial_owned_output": true,
+    "native_runtime_objects": "table-counter-only-no-regex-managed-objects"
+  },
+  "cases": [
+    {
+      "id": "retained-vectors",
+      "line": "retained-vectors:41:33:full-captures-replacements"
+    },
+    {
+      "id": "capture-priorities",
+      "line": "capture-priorities:local-order:empty-absent-repeat:clone"
+    },
+    {
+      "id": "unicode-options",
+      "line": "unicode-options:16-0-0:simple-fold:no-normalization:five-flags"
+    },
+    {
+      "id": "lazy-lifecycle",
+      "line": "lazy-lifecycle:utf8-eof-once:valid-prefix:error-once:fused"
+    },
+    {
+      "id": "replacement",
+      "line": "replacement:named-numbered-dollar:utf8-empty:atomic-output"
+    },
+    {
+      "id": "limits-errors",
+      "line": "limits-errors:pattern-program-input-steps:exact-byte-spans"
+    },
+    {
+      "id": "route-boundary",
+      "line": "route-boundary:scalar:public-api-not-implemented:native-abi-aot-not-claimed"
+    }
+  ],
+  "report": "target/reliability/evidence/stdlib-regex-conformance.json",
+  "next_blocks": [
+    "STD-REGEX-DOC-001"
+  ]
+}
