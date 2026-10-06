@@ -96,3 +96,12 @@ gate, source-bound coverage at or above 80% for every global/risk dimension and
 all six selected critical mutants caught. Negative contract tests exercise
 both states, parent progression, corpus corruption and utility availability.
 The next owner is `STD-UUID-PERF-001`; CONF and DOC follow separately.
+
+The boundary is locally `verified` on the source from `aa0aae4`. Focused tests,
+85 invalid testing records and the observed 128-run smoke pass. The consolidated
+quality campaign verifies 294,814 of 321,733 lines (91.6331%), all global/risk
+80% floors and six selected mutants caught. The full functional gate passes
+on that same frozen source. The initial unscoped coverage invocation refused
+the required process-test isolation; recovery reset only counters and reused
+the current instrumented binaries in the documented delegated scope. No source,
+test or threshold changed. Publication/CI closure remains a tracker step.

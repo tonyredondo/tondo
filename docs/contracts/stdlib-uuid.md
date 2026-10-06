@@ -381,8 +381,8 @@ The host reserves transport and complete typed result storage before provider
 effects. Ordinary synchronous VM execution checks its byte/object heap limits
 without creating a test account; test execution additionally reserves its
 phase account and joint import pool. This boundary promotes hosted registration
-and admission only. Public conformance, native ABI/AOT, independent model/fuzz,
-performance and usage remain unpromoted.
+and admission only. Public conformance, native ABI/AOT, performance and usage
+remain unpromoted; model/testing progression is recorded below.
 
 The hosted block is locally `verified-production-hosted`: its 23 focused
 compiler/VM tests and 86 invalid promotion records pass, along with every full
@@ -393,7 +393,7 @@ in the tracker.
 
 ## 11. Independent model, regression and fuzz boundary
 
-`STD-UUID-TEST-001` is implemented with consolidated quality still pending.
+`STD-UUID-TEST-001` is locally verified on the frozen source from `aa0aae4`.
 The [test register](../../testing/stdlib-uuid-test.json) and
 [test contract](stdlib-uuid-test.md) define a std-only unsigned integer oracle,
 an independently computed bounded v5 digest, seventeen valid and thirty-seven
@@ -402,3 +402,12 @@ The model compares 4,096 deterministic seeds and replays a sealed provider
 transcript through the production VM. Reference name/provider bounds are not
 production limits. Native ABI/AOT, performance, public conformance and usage
 are separate later boundaries.
+
+The eleven integration tests, eighteen kernel tests, twenty-three HOST tests,
+85 invalid testing records and the 128-run fuzz smoke pass. The single
+consolidated quality campaign covers 294,814 of 321,733 workspace lines
+(91.6331%), preserves every global/risk 80% floor and catches all six selected
+critical mutants. Every full functional gate step passes on the same source,
+including the 206-case draft suite and repeated async/select observations.
+Publication and exact-SHA CI closure are separate tracker steps. The next
+local owner boundary is `STD-UUID-PERF-001`.

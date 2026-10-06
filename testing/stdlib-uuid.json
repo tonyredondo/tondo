@@ -228,7 +228,7 @@
       {"id": "performance", "requires": ["scalar-oracle", "fixed-width-allocation-report", "provider-cost-report", "target-qualified-report"]},
       {"id": "promote", "requires": ["capability-diagnostics", "deterministic-provider-evidence", "no-secret-claim", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-UUID-TEST-001"]
+    "next_blocks": ["STD-UUID-PERF-001"]
   },
   "implementation": {
     "status": "verified-stdlib-kernel",
@@ -269,8 +269,8 @@
     "register": "testing/stdlib-uuid-test.json",
     "contract": "docs/contracts/stdlib-uuid-test.md",
     "selected_route": "independent-reference-and-kernel-hosted-regression-boundary",
-    "status": "ready",
-    "quality_gate": "pending-80-percent-per-scope"
+    "status": "verified",
+    "quality_gate": "verified-80-percent-per-scope"
   },
   "host": {
     "task": "STD-UUID-HOST-001",
