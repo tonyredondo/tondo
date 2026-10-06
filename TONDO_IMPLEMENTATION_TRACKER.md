@@ -49,14 +49,13 @@ and fallible lazy iteration. `STD-REGEX-TEST-001` verifies the independent model
 and seeded fuzz; `STD-REGEX-PERF-001` verifies nineteen target-qualified kernel
 routes. `STD-REGEX-CONF-001` verifies seven shared private VM/native Rust
 process groups, clean-source comparison and the full local/CI gates. The current workspace
-campaign measures 91.5908% global lines and preserves the 80% floor in every
+campaign measures 91.6013% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
 `STD-REGEX-DOC-001` verifies the canonical executable Rust-kernel guide after
 the full local gate, publication and exact-SHA CI confirmation.
-`STD-UUID-IMPL-001` is active: its scalar Rust kernel receives explicit
-generation inputs and passes full functional/source-bound quality checks.
-Publication and exact-SHA CI closure remain pending.
-The next owner after that closure is `STD-UUID-HOST-001`.
+`STD-UUID-IMPL-001` verifies the scalar Rust kernel with explicit generation
+inputs after the full local gate, source-bound quality, publication and
+exact-SHA CI confirmation. The next owner is `STD-UUID-HOST-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6890,7 +6889,7 @@ estas leaves.
 
 #### 21.3.11 `std.uuid`
 
-- [ ] **STD-UUID-IMPL-001 — Implement explicit-input UUID kernels.**
+- [x] **STD-UUID-IMPL-001 — Implement explicit-input UUID kernels.**
   `verified-stdlib-kernel` covers immutable 16-byte network-order values,
   strict dashed/URN parse, canonical format, comparison/introspection and
   v4/v5/v7 transformations. Eighteen focused Rust tests pass, including RFC
@@ -6899,11 +6898,13 @@ estas leaves.
   `force-soft`. The full functional gate and source-bound quality pass,
   including 293,081 of 319,953 covered workspace lines (91.6013%), every
   global/risk 80% floor and six critical mutants caught. The checker verifies
-  96 negative records and both valid local progression states. Publication and
-  exact-SHA CI closure remain pending. Provider capability/quality/error
-  normalization, public Tondo,
+  96 negative records and both valid local progression states. Published source
+  `3e3f9e1` passes exact-SHA CI run `37423365085`, including the full strict
+  Linux x86_64 gate; normal-push portable/fuzz jobs are expected skips. The
+  remote SHA and all checks are confirmed after the quiet interval.
+  Provider capability/quality/error normalization, public Tondo,
   production VM, native ABI/AOT and runtime heap admission are not promoted.
-  Next after closure: `STD-UUID-HOST-001`.
+  Next: `STD-UUID-HOST-001`.
 - [ ] **STD-UUID-HOST-001 — Integrar proveedores de UUID.** Enlazar entropy y
   clock declarados con límites y fallos nominales, sin RNG o reloj global
   implícitos.
