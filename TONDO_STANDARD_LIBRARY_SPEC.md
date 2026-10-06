@@ -4315,12 +4315,17 @@ the full functional gate and source-bound quality checks pass: 292,637 of
 critical mutants caught. The `STD-REGEX-CONF-001` shared protocol is recorded in
 [testing/stdlib-regex-conformance.json](./testing/stdlib-regex-conformance.json)
 and [docs/contracts/stdlib-regex-conformance.md](./docs/contracts/stdlib-regex-conformance.md).
-Its `adapter-ready` state compares seven shared case groups, including the
+Its `verified-hosted-vm-adapter-and-native-stdlib-process` state compares seven
+shared case groups, including the
 41 valid and 33 invalid retained vectors, through a private bodyless VM callable
 and a fresh Rust kernel process. Unicode, captures, lazy iteration, replacement,
 nominal errors and all six main limits share exact assertions. This is not a
 public compiler/VM registration, native regex ABI or Cranelift lowering.
-Clean-source comparison and current quality/full gates are still required.
+The clean-source comparison and current full gate pass. Source-bound quality
+measures 292,638 of 319,506 workspace lines (91.5908%), preserves every global
+and risk-scope line/function/region floor of 80% and catches all six critical
+mutants. Example/integration-test source lines are excluded from formal
+coverage; focused and full execution separately verify the adapters.
 Executable usage remains `STD-REGEX-DOC-001`.
 
 ### 14.17 `std.uuid`

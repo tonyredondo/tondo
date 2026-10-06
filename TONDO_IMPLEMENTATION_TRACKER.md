@@ -13,7 +13,7 @@ memory design remains hybrid ARC with cycle collection. Native promotion for
 to the production runtime. LLVM remains an experimental comparison. ARM64,
 macOS and Windows probes do not promote additional product targets.
 
-**Last updated:** 2026-10-02
+**Last updated:** 2026-10-06
 
 **Normative specifications:**
 
@@ -45,9 +45,13 @@ resource model. `STD-CBOR-CONF-001` verifies seven shared private VM/native Rust
 process cases with the independent wire model. `STD-CBOR-DOC-001` verifies the
 canonical executable Rust-kernel guide. `STD-REGEX-IMPL-001` verifies a bounded
 Unicode 16 Rust kernel with local priorities, captures, literal replacement
-and fallible lazy iteration. The current quality campaign measures 91.5653% global lines
-and preserves the 80% floor in every global and risk-scope coverage dimension.
-The next owner leaf is `STD-REGEX-TEST-001`.
+and fallible lazy iteration. `STD-REGEX-TEST-001` verifies the independent model
+and seeded fuzz; `STD-REGEX-PERF-001` verifies nineteen target-qualified kernel
+routes. The current conformance comparison and local full/quality gates pass;
+tracker closure awaits publication and exact-SHA CI. The current workspace
+campaign measures 91.5908% global lines and preserves the 80% floor in every
+global and risk-scope coverage dimension, with all six critical mutants caught.
+The next owner leaf after conformance closure is `STD-REGEX-DOC-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6846,12 +6850,16 @@ estas leaves.
   Next: `STD-REGEX-CONF-001`. Public compiler/VM,
   native ABI/AOT, SIMD and code-size promotion are outside this boundary.
 - [ ] **STD-REGEX-CONF-001 — Conform the bounded regex kernel adapters.**
-  The `adapter-ready` register compares seven shared case groups, 41 valid
+  The verified adapter register compares seven shared case groups, 41 valid
   and 33 invalid retained vectors, through private verified bytecode dispatch
   and a Rust kernel process. It covers Unicode 16, local capture priorities,
   lazy fused iteration, atomic replacement, exact byte spans and six nominal
-  limits. Clean-source comparison, source-bound quality, the full functional
-  gate, publication and exact-SHA CI remain pending. Public compiler/VM
+  limits. Clean-source comparison and the full functional gate pass, including
+  206 draft cases, async/select repetitions and 128 seeded regex fuzz runs.
+  Quality covers 292,638 of 319,506 lines (91.5908%), meets every global/risk
+  80% dimension and catches all six critical mutants. Formal coverage excludes
+  example/integration-test source lines; adapter execution has separate proof.
+  Publication and exact-SHA CI remain pending. Public compiler/VM
   registration, native ABI and Tondo AOT are not promoted by these adapters.
 - [ ] **STD-REGEX-DOC-001 — Documentar regex.** Publicar sintaxis exacta,
   Unicode, captures, complejidad, límites y ejemplos ejecutables.
@@ -7335,8 +7343,10 @@ Complete one coherent boundary with observed proof before promoting dependents:
 4. Complete public reflection and metaprogramming; renew applicable S1A cells.
 5. Integrate source-driven Cranelift AOT with the production runtime; renew
    actual conformance, diagnostics, quality and performance before N1.
-6. Resume STD-0.1B owner work with explicit integration leaves. The next TOML
-   sequence remains PERF, CONF, DOC within the stated hosted scalar boundary.
+6. Continue STD-0.1B owner work with explicit integration leaves. The TOML and
+   CBOR kernel/model/performance/private-adapter/documentation sequences are
+   verified within their stated boundaries. Regex conformance is locally
+   verified pending publication/CI; executable documentation follows it.
 
 - [x] **AUDIT-ALIGN-001 — Reconcile status, dependencies and provenance.**
   The live tracker and dependency graph distinguish specified behavior,
@@ -7372,8 +7382,9 @@ Complete one coherent boundary with observed proof before promoting dependents:
 - [ ] **STD-B-INTEGRATION-PLAN-001 — Make owner integration explicit.**
   Distinguish public frontend/API, hosted runtime, private ABI, native AOT,
   model/test/fuzz, performance, conformance and documentation tasks. Existing
-  bounded owner closures cannot imply missing execution routes. Resume TOML
-  PERF/CONF/DOC after the remediation prerequisites have real proof.
+  bounded owner closures cannot imply missing execution routes. Keep subsequent
+  owner work within its explicit boundary while missing integration leaves
+  remain open.
 
 G5, candidate preparation, licensing and publication remain separate human
 release decisions. They do not block technical integration or authorize it to

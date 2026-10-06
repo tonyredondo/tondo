@@ -4,7 +4,7 @@
   "owner": "std.regex",
   "phase": "STD-0.1B",
   "task": "STD-REGEX-CONF-001",
-  "status": "adapter-ready",
+  "status": "verified-hosted-vm-adapter-and-native-stdlib-process",
   "parent": "testing/stdlib-regex.json",
   "document": "docs/contracts/stdlib-regex-conformance.md",
   "sources": [

@@ -17,8 +17,9 @@ performance boundary is described in
 state follows the clean-source campaign and the full functional and quality
 gates. The shared conformance protocol is described in
 [stdlib-regex-conformance.md](./stdlib-regex-conformance.md) and
-`testing/stdlib-regex-conformance.json`. Its `adapter-ready` state covers seven
-case groups awaiting the clean comparison and source-bound quality/full gates.
+`testing/stdlib-regex-conformance.json`. Its
+`verified-hosted-vm-adapter-and-native-stdlib-process` state covers seven case
+groups after the clean comparison and source-bound quality/full gates pass.
 It uses private VM dispatch and a Rust process, with no public regex VM API,
 native ABI or Tondo AOT promotion. Executable usage remains `STD-REGEX-DOC-001`.
 
@@ -487,4 +488,9 @@ every global and risk-scope line/function/region dimension meets the 80% floor,
 and all six selected critical mutants are caught. These observations promote
 `verified-stdlib-kernel` and the independent model/test/fuzz boundary only.
 Public Tondo calls, production VM registration and native integration remain
-unimplemented/unclaimed. The next owner is `STD-REGEX-PERF-001`.
+unimplemented/unclaimed. At that testing boundary the next owner was
+`STD-REGEX-PERF-001`. The later performance and shared conformance leaves are
+now verified within their stated kernel/adapter boundaries. The current
+workspace campaign covers 292,638 of 319,506 lines (91.5908%), meets every 80%
+floor and catches all six critical mutants. The next owner is
+`STD-REGEX-DOC-001`.

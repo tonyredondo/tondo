@@ -2,9 +2,10 @@
 
 `STD-REGEX-CONF-001` compares seven shared case groups through verified hosted
 bytecode and a fresh native Rust process. The register is
-`testing/stdlib-regex-conformance.json`. `adapter-ready` describes executable
-cases awaiting the clean capture and source-bound quality/full gates;
-`verified-hosted-vm-adapter-and-native-stdlib-process` requires those proofs.
+`testing/stdlib-regex-conformance.json`. Its
+`verified-hosted-vm-adapter-and-native-stdlib-process` state follows the clean
+capture, focused checks and source-bound quality/full gates. The earlier
+`adapter-ready` state does not support promotion.
 The next owner leaf is `STD-REGEX-DOC-001`.
 
 Both adapters compile the same shared assertions and retained
@@ -64,4 +65,13 @@ contracts. Missing/duplicate cases, changed observables/errors, false cleanup,
 nonzero counters, source or identity drift and unsupported promotion claims
 fail. The required consolidated quality campaign preserves every global/risk
 line/function/region floor of 80% and the six critical mutation baseline.
-The full functional gate and exact-SHA CI remain required for tracker closure.
+The clean-source comparison passes all seven case groups. The consolidated
+workspace campaign covers 292,638 of 319,506 lines (91.5908%); every global and
+risk-scope line/function/region dimension meets the 80% floor, with all six
+critical mutants caught. The formal coverage report excludes example and
+integration-test source lines; the adapters and their assertions have separate
+execution proof from the focused comparison and full functional gate.
+That gate also passes the 206-case draft corpus, async/select repetitions and
+the 128-run seeded regex fuzz smoke. Exact-SHA CI remains required for tracker
+closure. Public Tondo, native ABI/AOT and release promotion remain outside this
+proof.
