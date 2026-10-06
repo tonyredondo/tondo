@@ -130,5 +130,5 @@ quality measures 295,206 of 322,169 lines (91.6308%), preserves every global/ris
 Every full functional gate step passes, including 206 draft cases and three
 async/select cases repeated exactly 32 times each. The existing scalar native
 route passes 630 Cranelift cases, 70 arithmetic traps and 75 rejected evidence
-changes; these do not establish UUID AOT. Publication and exact-SHA CI closure
-remain pending in the live tracker.
+changes; these do not establish UUID AOT. The tracker records completed
+publication and exact-SHA CI for source `24859a1` and closure `0173d30`.

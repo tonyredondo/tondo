@@ -186,8 +186,9 @@ entropía.
 
 La ausencia de `civil-clock` es estática. El provider no consulta `TZ`, locale,
 environment, filesystem, red ni timezone data para construir el timestamp.
-`std.testing` puede instalar un provider civil sellado y determinista en su
-envelope de test; eso no concede la capability a código de producción.
+The Rust testing envelope can install sealed deterministic civil-provider
+fixtures during setup. This is not a public Tondo `std.testing` setter and
+does not grant a capability to production code.
 
 ### 5.3 Name-based v5
 
@@ -341,8 +342,9 @@ crossed with all 16 version nibbles, exact lexical offsets, byte-copy ownership,
 unsigned ordering, entropy bit preservation, timestamp boundaries, v5 name
 limits, repeated-call behavior and immutable threaded reuse. Provider error
 variants are declared, with stable environment-free display, but actual provider
-failure normalization is not established by these tests. An independent model,
-bounded fuzz campaign and target-qualified performance remain pending.
+failure normalization is not established by these kernel tests. Sections 10–12
+record separate hosted, independent model/fuzz and target-qualified performance
+proof; those capabilities are not inferred from the kernel-only boundary.
 
 The implementation checker and tests are
 [`scripts/stdlib-uuid-implementation-check.sh`](../../scripts/stdlib-uuid-implementation-check.sh)
@@ -413,7 +415,8 @@ critical mutants. Every full functional gate step passes on the same source,
 including the 206-case draft suite and repeated async/select observations.
 Published source `27bd0d3` and tracker closure `048730a` pass exact-SHA CI runs
 `37463121847` and `37468095223`, respectively, with quiet-interval confirmation.
-The next owner boundary is `STD-UUID-PERF-001`.
+This model/test boundary does not establish performance; section 12 records
+the separately verified `STD-UUID-PERF-001` campaign.
 
 ## 12. Target-qualified hosted scalar performance
 
@@ -460,5 +463,296 @@ Clean committed capture, three Rust adapter tests, seven report-law tests and
 every full functional gate step pass on the same frozen source. Source-bound
 quality verifies 295,206 of 322,169 workspace lines (91.6308%), every global/risk
 80% line/function/region floor and all six selected critical mutants caught.
-Publication and exact-SHA CI closure remain pending in the tracker. Executable
-usage is the next owner leaf, `STD-UUID-DOC-001`.
+Conformance source `24859a1` and tracker closure `0173d30` pass exact-SHA CI
+confirmation. The executable guide below records usage under `STD-UUID-DOC-001`.
+
+## Executable usage guide for `std.uuid`
+
+`STD-UUID-DOC-001` documents the public compiler/hosted VM API. The canonical
+program is [`m11-std-uuid-doc-001.to`](../../tests/runtime/m11-std-uuid-doc-001.to).
+It executes six paths and all fourteen UUID operations. The code blocks below
+are checked against that program before execution; a changed or missing block
+cannot silently keep the previous success marker. The owner register is
+[`testing/stdlib-uuid.json`](../../testing/stdlib-uuid.json).
+
+Use these imports when combining the examples:
+
+~~~tondo
+import std.bytes
+import std.console
+import std.uuid
+~~~
+
+| Generator | Caller chooses | Provider requirements | Value information |
+|---|---|---|---|
+| `Uuid.v4()` | A random identifier | `entropy`, one sixteen-byte request | 122 random bits |
+| `Uuid.v5(namespace, name)` | Namespace and exact name bytes | None | Deterministic SHA-1 name transformation |
+| `Uuid.v7()` | A timestamp-bearing identifier | `civil-clock` and `entropy`, one ten-byte request | 48-bit Unix milliseconds and 74 random bits |
+
+An identifier is not a secret or authenticator. v7 reveals its encoded UTC
+millisecond. There is no strict monotonicity, collision registry or uniqueness
+check: a regressing clock or repeated provider inputs can repeat or reorder
+values. External values are preserved rather than silently rewritten.
+
+### Text and bytes
+
+`Uuid.parse` accepts dashed text and the case-insensitive `urn:uuid:` prefix,
+with either hex case. `toString` emits thirty-six lowercase ASCII bytes.
+Whitespace, compact/braced text and COM GUID byte order are rejected.
+`toBytes` materializes a fresh sixteen-byte network-order copy; `fromBytes`
+requires exactly sixteen bytes and copies them. The original immutable UUID
+remains valid after either result is released.
+
+<!-- uuid-doc:text-and-bytes -->
+~~~tondo
+fn textAndBytes(): !uuid.UuidError {
+    let value = uuid.Uuid.parse("URN:UUID:919108F7-52D1-4320-9BAC-F847DB4148A8")?
+    assert(value.toString() == "919108f7-52d1-4320-9bac-f847db4148a8")
+    let owned = value.toBytes()
+    assert(owned.length() == 16)
+    let roundtrip = uuid.Uuid.fromBytes(owned)?
+    assert(roundtrip == value)
+    assert(uuid.Uuid.parse(roundtrip.toString())? == value)
+}
+~~~
+
+### Sentinels and keys
+
+`nil` and `max` retain every bit, including their special variants. Assignment
+copies an immutable value. UUID supports `Copy`, `Discard`, `Equatable`, `Key`,
+`Send` and `Share`; it does not retain a provider or mutable reference.
+`Map` and `Set` keys compare all sixteen bytes. `compare` returns exactly
+`-1`, `0` or `1` using unsigned network-byte order, without interpreting a
+timestamp. UUID has no public fields or intrinsic `Display`; use `toString`.
+
+<!-- uuid-doc:sentinels-and-keys -->
+~~~tondo
+fn sentinelsAndKeys(): !uuid.UuidError {
+    let nil = uuid.Uuid.nil()
+    let maximum = uuid.Uuid.max()
+    let duplicate = maximum
+    assert(nil.isNil())
+    assert(not nil.isMax())
+    assert(maximum.isMax())
+    assert(not maximum.isNil())
+    assert(maximum == duplicate)
+    assert(nil.compare(maximum) == -1)
+    assert(maximum.compare(nil) == 1)
+    assert(maximum.compare(duplicate) == 0)
+    let keys: Map[uuid.Uuid, Int] = [nil: 1, maximum: 2]
+    let roundtrip = uuid.Uuid.fromBytes(duplicate.toBytes())?
+    assert(keys[roundtrip] == some(2))
+    assert(keys[nil] == some(1))
+}
+~~~
+
+### External versions
+
+Parsing is value preservation, not generator selection. Values of any version
+and variant are accepted when their text or bytes are valid. `version` returns
+the retained nibble even for non-RFC values; `variant` distinguishes RFC 9562,
+NCS, Microsoft and Future. Only v4, v5 and v7 generation is implemented.
+
+<!-- uuid-doc:external-versions -->
+~~~tondo
+fn externalVersions(): !uuid.UuidError {
+    let external = uuid.Uuid.parse("00000000-0000-9000-c000-000000000000")?
+    assert(external.version() == 9)
+    assert(external.variant() == uuid.UuidVariant.Microsoft)
+    assert(external.toString() == "00000000-0000-9000-c000-000000000000")
+    assert(uuid.Uuid.nil().version() == 0)
+    assert(uuid.Uuid.nil().variant() == uuid.UuidVariant.Ncs)
+    assert(uuid.Uuid.max().version() == 15)
+    assert(uuid.Uuid.max().variant() == uuid.UuidVariant.Future)
+}
+~~~
+
+### Names and encoding
+
+v5 uses the namespace's network bytes followed by the supplied name bytes.
+The caller chooses the namespace, encoding and any application normalization.
+Tondo does not normalize, case-fold or reinterpret the name, and the input can
+also contain non-UTF-8 bytes. `bytes.Bytes(text)` explicitly supplies UTF-8.
+The RFC DNS namespace/example below is a retained interoperability vector.
+The two Unicode names intentionally produce distinct retained values.
+
+<!-- uuid-doc:names-and-encoding -->
+~~~tondo
+fn namesAndEncoding(): !(bytes.BytesError | uuid.UuidError) {
+    let dns = uuid.Uuid.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")?
+    let name = bytes.Bytes("www.example.com")?
+    let value = uuid.Uuid.v5(dns, name)?
+    assert(value.toString() == "2ed6657d-e927-568b-95e1-2665a8aea6a2")
+    assert(uuid.Uuid.v5(dns, name)? == value)
+    assert(value.version() == 5)
+    assert(value.variant() == uuid.UuidVariant.Rfc9562)
+    let composed = uuid.Uuid.v5(dns, bytes.Bytes("é")?)?
+    let decomposed = uuid.Uuid.v5(dns, bytes.Bytes("e\u{301}")?)?
+    assert(composed.toString() == "ebfe0af8-3997-5ade-b634-ba92cf69f557")
+    assert(decomposed.toString() == "39004b7f-2a0b-588c-88f7-aa24552a7636")
+    assert(composed != decomposed)
+}
+~~~
+
+### Errors and results
+
+Parse and generation return `Uuid ! UuidError`. Propagate with `?`, or match
+the nominal `kind` and optional `offset`. Lexical offsets are absolute UTF-8
+byte positions, including an URN prefix; length/provider/limit errors have
+`none`. `Display.display(error)` uses the stable kind and optional byte offset,
+without errno, paths or platform-specific text. No failed operation publishes
+a successful partial UUID. The examples exercise actual malformed text and
+byte lengths; they do not substitute an expected error string for execution.
+
+<!-- uuid-doc:errors-and-results -->
+~~~tondo
+fn errorsAndResults(): !bytes.BytesError {
+    match uuid.Uuid.parse("g19108f7-52d1-4320-9bac-f847db4148a8") {
+        ok(_) => assert(false)
+        err(error) =>
+            {
+                assert(error.kind == uuid.UuidErrorKind.InvalidCharacter)
+                assert(error.offset == some(0))
+                assert(Display.display(error) == "InvalidCharacter at byte 0")
+            }
+    }
+    match uuid.Uuid.parse("short") {
+        ok(_) => assert(false)
+        err(error) =>
+            {
+                assert(error.kind == uuid.UuidErrorKind.InvalidTextLength)
+                assert(error.offset == none)
+            }
+    }
+    match uuid.Uuid.fromBytes(bytes.Bytes("short")?) {
+        ok(_) => assert(false)
+        err(error) =>
+            {
+                assert(error.kind == uuid.UuidErrorKind.InvalidBytesLength)
+                assert(error.offset == none)
+            }
+    }
+}
+~~~
+
+### Generate with providers
+
+v4 and v7 are ordinary synchronous calls. The example uses the production OS
+providers and checks the generated layout and round trips; it makes no
+statistical uniqueness claim. `?` propagates a provider error to the caller.
+Tondo performs no hidden retry or fallback. v7 checks its UTC timestamp before
+requesting entropy; negative or greater-than-48-bit milliseconds produce
+`TimestampOutOfRange`. It does not read timezone or locale data.
+
+<!-- uuid-doc:generate-with-providers -->
+~~~tondo
+fn generateWithProviders(): !uuid.UuidError {
+    let random = uuid.Uuid.v4()?
+    assert(random.version() == 4)
+    assert(random.variant() == uuid.UuidVariant.Rfc9562)
+    assert(uuid.Uuid.fromBytes(random.toBytes())? == random)
+    let timestamped = uuid.Uuid.v7()?
+    assert(timestamped.version() == 7)
+    assert(timestamped.variant() == uuid.UuidVariant.Rfc9562)
+    assert(uuid.Uuid.parse(timestamped.toString())? == timestamped)
+}
+~~~
+
+### Capabilities and providers
+
+Core operations and v5 require no provider capability; importing `std.uuid`
+does not read a provider. v4 references require `entropy`; v7 references require
+both `civil-clock` and `entropy`, including stored function references and
+`defer`. A missing grant is static `E1008`, rather than an error returned by
+generation. Runtime entropy errors are `EntropyUnavailable`/`EntropyFailure`.
+
+The loose-script CLI selects its supported hosted capabilities. For an explicit
+project, place the canonical program at `src/main.to` and use this `tondo.toml`:
+
+<!-- uuid-project-capabilities -->
+~~~toml
+[package]
+name = "uuid_usage"
+
+[target]
+capabilities = ["civil-clock", "console", "entropy"]
+~~~
+
+`console` belongs to the example's final output, not to UUID. Removing the
+provider-generation function and call leaves core/v5 usable with `console`
+alone. No external dependency or application lockfile is needed for this
+standard-library example. The project manifest is a separate toolchain owner.
+
+There is no public Tondo provider setter. Rust test envelopes can install
+bounded, sealed snapshots during setup; they grant no capability. Once-only
+consumption, failures, exhaustion, closure and clock regressions have separate
+[HOST](stdlib-uuid-host.md) and [CONF](stdlib-uuid-conformance.md) evidence.
+This ordinary CLI program does not claim to inject provider failures or to
+measure their probabilities. OS success is evidence for the observed host.
+
+### Limits and costs
+
+| Operation | Work and retained result |
+|---|---|
+| Text parse | At most 45 input bytes; length checked before lexical scanning |
+| `fromBytes` | Exactly sixteen bytes, copied before publishing a complete value |
+| Compare/inspect/copy | Fixed-width value operations |
+| `toBytes` / `toString` | New sixteen-byte buffer / thirty-six-byte ASCII string |
+| v5 | Linear in name bytes; default maximum 16 MiB, further bounded by the host target |
+| v4/v7 | Fixed-width transformation plus the actual OS entropy/clock calls |
+
+Hosted UUIDs use ordinary VM records; fixed width does not mean zero managed
+allocations. Materialized bytes, strings and host replies have separate
+admission/storage costs. Logical accounting is not RSS or a count of OS
+allocator calls. Provider latency has no global bound claimed by this guide.
+Large v5 names can fail with `NameLimitExceeded`; result admission can refuse
+under the VM byte/object budget. There is no public per-call `UuidLimits`
+setter: the Rust kernel's explicit limits are a separate boundary.
+
+[The performance contract](stdlib-uuid-performance.md) retains twenty-two
+hosted scalar bridge workloads with twenty-seven samples each. Its logical
+models are distinguished from actual transport charges and live handles;
+complete VM latency, native Tondo, SIMD and code size are not measured.
+
+### Executable verification
+
+This entry point runs every example and propagates any fallible error before
+the success marker:
+
+<!-- uuid-doc:entrypoint -->
+~~~tondo
+fn main(): !(bytes.BytesError | uuid.UuidError) {
+    textAndBytes()?
+    sentinelsAndKeys()?
+    externalVersions()?
+    namesAndEncoding()?
+    errorsAndResults()?
+    generateWithProviders()?
+    _ = console.println("uuid-doc-ok")
+}
+~~~
+
+Run `cargo run -p tondo-cli --locked -- run tests/runtime/m11-std-uuid-doc-001.to`
+for the loose hosted script, or `tondo run --project <example-directory>` for
+the project above. Successful stdout is exactly `uuid-doc-ok` followed by LF,
+with exit code zero. A host provider failure is reported rather than retried.
+
+[`stdlib-uuid-doc-check.sh`](../../scripts/stdlib-uuid-doc-check.sh) checks
+the owner prerequisites, exact fragments, entry point and sidecars, then
+compiles and executes the public program. The focused documentation tests
+also execute the explicit project, core/v5 without provider grants, and real
+`E1008` refusals. Altered guide code, skipped calls or equally altered
+guide/source assertions cannot stand in for successful execution.
+
+### Promotion boundary
+
+The documentation state is `usage-ready` while consolidated quality, the full
+functional gate and publication are pending. `verified-public-hosted-usage`
+requires actual same-source full execution, every global/risk coverage floor
+of 80%, and all six selected critical mutants caught. Exact-SHA CI closure
+remains a tracker requirement. The next owner is `STD-NET-IMPL-001`.
+
+This is public compiler/production hosted VM usage. The following are
+not implemented: native UUID ABI, native provider adaptation or native UUID AOT lowering.
+The native Rust reference comparison remains a separate conformance layer.
+No release, SIMD dispatch, VM heap metric or code-size claim is introduced.

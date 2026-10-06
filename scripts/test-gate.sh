@@ -422,6 +422,10 @@ run_step stdlib-uuid-conformance-contract-tests \
     scripts/stdlib-uuid-conformance-test.sh
 run_step stdlib-uuid-conformance \
     scripts/stdlib-uuid-conformance.sh
+run_step stdlib-uuid-documentation \
+    scripts/stdlib-uuid-doc-check.sh
+run_step stdlib-uuid-documentation-tests \
+    scripts/stdlib-uuid-doc-test.sh
 run_step stdlib-log-contract \
     scripts/stdlib-log-check.sh
 run_step stdlib-log-contract-tests \

@@ -287,6 +287,22 @@
     "native_abi": "not-implemented",
     "native_aot": "not-claimed"
   },
+  "documentation": {
+    "task": "STD-UUID-DOC-001",
+    "status": "usage-ready",
+    "quality_gate": "pending-80-percent-per-scope",
+    "document": "docs/contracts/stdlib-uuid.md",
+    "fixture": "tests/runtime/m11-std-uuid-doc-001.to",
+    "command": "scripts/stdlib-uuid-doc-check.sh",
+    "expected_stdout": "uuid-doc-ok",
+    "examples": ["text-and-bytes", "sentinels-and-keys", "external-versions", "names-and-encoding", "errors-and-results", "generate-with-providers"],
+    "sections": ["text-and-bytes", "sentinels-and-keys", "external-versions", "names-and-encoding", "errors-and-results", "generate-with-providers", "capabilities-and-providers", "limits-and-costs", "executable-verification", "promotion-boundary"],
+    "public_tondo_api": "verified-production-hosted",
+    "production_vm_registration": "verified-production-hosted",
+    "providers": "production-os",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed"
+  },
   "measurement": {
     "task": "STD-UUID-PERF-001",
     "register": "testing/stdlib-uuid-performance.json",

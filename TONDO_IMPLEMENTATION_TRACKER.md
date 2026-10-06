@@ -7002,6 +7002,15 @@ estas leaves.
   confirmation. Next: `STD-UUID-DOC-001`.
 - [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
   generación, providers, errores, costes y ejemplos ejecutables.
+  Local usage is `usage-ready`. The canonical public Tondo program executes
+  all fourteen UUID operations in six paths. Seven exact source/guide fragments
+  include the entry point, which must call every path and propagate errors.
+  Focused checks pass 326 invalid records/guide fixtures, both progression
+  states, the actual documented project and provider-grant `E1008` refusals.
+  Core/v5 runs with only the example's console capability; v4/v7 use production
+  OS providers. Costs, nominal errors, opaque name bytes and nonmonotonic v7
+  behavior are documented. Native UUID ABI/provider/AOT remain unimplemented.
+  Consolidated source-bound quality, the full gate and publication CI are pending.
 
 #### 21.3.12 `std.net`
 

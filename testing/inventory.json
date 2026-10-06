@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "8c4c23ed3ff59f83b0c78ca41bd67474ac6624d73c9be341b214f5d8fe5d8be3"
+      "sha256": "b2e6fbd81e7407e8fc853ff298ab7b14dc90270f315380fe0a9fc6c363fa496b"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,15 +34,15 @@
     }
   ],
   "summary": {
-    "logical_tests": 3524,
-    "repetitions": 3836,
-    "physical_sources": 647,
-    "unique_source_hashes": 999,
+    "logical_tests": 3525,
+    "repetitions": 3837,
+    "physical_sources": 648,
+    "unique_source_hashes": 1000,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 73,
       "draft-contract": 38,
-      "fixture": 217,
+      "fixture": 218,
       "fuzz-target": 17,
       "rust-test": 2654,
       "spec-fence": 319
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 17,
       "draft-pending": 38,
-      "executable": 3447,
+      "executable": 3448,
       "non-executable": 22
     },
     "by_phase": {
@@ -71,7 +71,7 @@
       "protocol": 94,
       "reliability": 203,
       "resolution": 31,
-      "runtime": 438,
+      "runtime": 439,
       "semantic": 1273,
       "testing": 38,
       "tooling": 4
@@ -16218,6 +16218,27 @@
       "sidecars": [
         "tests/runtime/m11-std-text-002.exit",
         "tests/runtime/m11-std-text-002.stdout"
+      ]
+    },
+    {
+      "id": "fixture:runtime/m11-std-uuid-doc-001",
+      "kind": "fixture",
+      "crate_name": "tondo-compiler",
+      "phase": "runtime",
+      "source": "tests/runtime/m11-std-uuid-doc-001.to",
+      "fixture": "runtime/m11-std-uuid-doc-001",
+      "group": "runtime",
+      "requirements": [],
+      "oracle": "exit+stdout+stderr+diagnostics",
+      "repetitions": 1,
+      "source_sha256": "3803d9b49f42600cc4c243f3deeda00839c773d0714f1c58873e50a89131c6ac",
+      "target": "tondo-vm-hosted",
+      "document": null,
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "tests/runtime/m11-std-uuid-doc-001.exit",
+        "tests/runtime/m11-std-uuid-doc-001.stdout"
       ]
     },
     {

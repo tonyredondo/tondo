@@ -18,7 +18,7 @@ expect_failure() {
 for status in adapter-ready verified-public-hosted-vm-and-native-kernel-process; do
     jq --arg status "$status" '.status=$status' testing/stdlib-uuid-conformance.json > "$tmp/conformance.json"
     jq --arg status "$status" '
-      .conformance.status=$status
+      del(.documentation) | .conformance.status=$status
       | .conformance.quality_gate=(if $status == "adapter-ready" then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
       | .promotion.next_blocks=(if $status == "adapter-ready" then ["STD-UUID-CONF-001"] else ["STD-UUID-DOC-001"] end)
       | .implementation.required_follow_ups=(if $status == "adapter-ready" then ["STD-UUID-CONF-001", "STD-UUID-DOC-001"] else ["STD-UUID-DOC-001"] end)

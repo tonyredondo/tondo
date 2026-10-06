@@ -1,6 +1,41 @@
+def uuid_documentation_metadata:
+  .documentation == {
+    task:"STD-UUID-DOC-001", status:.documentation.status,
+    quality_gate:.documentation.quality_gate,
+    document:"docs/contracts/stdlib-uuid.md",
+    fixture:"tests/runtime/m11-std-uuid-doc-001.to",
+    command:"scripts/stdlib-uuid-doc-check.sh", expected_stdout:"uuid-doc-ok",
+    examples:["text-and-bytes", "sentinels-and-keys", "external-versions",
+      "names-and-encoding", "errors-and-results", "generate-with-providers"],
+    sections:["text-and-bytes", "sentinels-and-keys", "external-versions",
+      "names-and-encoding", "errors-and-results", "generate-with-providers",
+      "capabilities-and-providers", "limits-and-costs", "executable-verification",
+      "promotion-boundary"],
+    public_tondo_api:"verified-production-hosted",
+    production_vm_registration:"verified-production-hosted",
+    providers:"production-os", native_abi:"not-implemented", native_aot:"not-claimed"
+  };
+
+def uuid_documentation_progression($impl):
+  if .documentation == null then
+    .promotion.next_blocks == ["STD-UUID-DOC-001"]
+    and $impl.required_follow_ups == ["STD-UUID-DOC-001"]
+  else
+    uuid_documentation_metadata
+    and (if .documentation.status == "usage-ready" then
+      .documentation.quality_gate == "pending-80-percent-per-scope"
+      and .promotion.next_blocks == ["STD-UUID-DOC-001"]
+      and $impl.required_follow_ups == ["STD-UUID-DOC-001"]
+    elif .documentation.status == "verified-public-hosted-usage" then
+      .documentation.quality_gate == "verified-80-percent-per-scope"
+      and .promotion.next_blocks == ["STD-NET-IMPL-001"]
+      and $impl.required_follow_ups == []
+    else false end)
+  end;
+
 def uuid_conformance_progression($impl):
   if .conformance == null then
-    .promotion.next_blocks == ["STD-UUID-CONF-001"]
+    .documentation == null and .promotion.next_blocks == ["STD-UUID-CONF-001"]
     and $impl.required_follow_ups == ["STD-UUID-CONF-001", "STD-UUID-DOC-001"]
   else
     (.conformance | del(.status, .quality_gate)) == {
@@ -11,13 +46,12 @@ def uuid_conformance_progression($impl):
       public_api:"verified-production-hosted", vm_capability_checks:15,
       native_abi:"not-implemented", native_aot:"not-claimed"}
     and (if .conformance.status == "adapter-ready" then
-      .conformance.quality_gate == "pending-80-percent-per-scope"
+      .documentation == null and .conformance.quality_gate == "pending-80-percent-per-scope"
       and .promotion.next_blocks == ["STD-UUID-CONF-001"]
       and $impl.required_follow_ups == ["STD-UUID-CONF-001", "STD-UUID-DOC-001"]
     elif .conformance.status == "verified-public-hosted-vm-and-native-kernel-process" then
       .conformance.quality_gate == "verified-80-percent-per-scope"
-      and .promotion.next_blocks == ["STD-UUID-DOC-001"]
-      and $impl.required_follow_ups == ["STD-UUID-DOC-001"]
+      and uuid_documentation_progression($impl)
     else false end)
   end;
 
@@ -37,7 +71,8 @@ def uuid_kernel_progression:
   and ($impl.tests | unique | length) == 18
   and all($impl.tests[]; test("^crates/tondo-stdlib/src/uuid\\.rs::[a-z0-9_]+$"))
   and ($impl.proof | type == "string" and length > 0)
-  and .documentation == null
+  and (.documentation == null
+    or .conformance.status == "verified-public-hosted-vm-and-native-kernel-process")
   and (.conformance == null or (.measurement.status == "verified-hosted-scalar-baseline"
     and .model.status == "verified" and .host.status == "verified-production-hosted"))
   and (if .host != null then

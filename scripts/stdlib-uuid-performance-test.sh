@@ -18,7 +18,7 @@ cargo test -q -p tondo-compiler --lib --locked process_host::uuid::performance
 for status in measurement-ready verified-hosted-scalar-baseline; do
     jq --arg status "$status" '.status=$status' testing/stdlib-uuid-performance.json > "$tmp/performance.json"
     jq --arg status "$status" '
-      del(.conformance)
+      del(.conformance, .documentation)
       | .measurement.status=$status
       | .measurement.quality_gate=(if $status == "measurement-ready" then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
       | .promotion.next_blocks=(if $status == "measurement-ready" then ["STD-UUID-PERF-001"] else ["STD-UUID-CONF-001"] end)
