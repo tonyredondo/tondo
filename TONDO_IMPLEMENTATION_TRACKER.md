@@ -66,7 +66,9 @@ full local gate, source-bound quality, publication and exact-SHA CI confirmation
 `STD-UUID-CONF-001` verifies public hosted VM calls and sealed providers against
 the native Rust kernel reference process after the full local gate, source-bound
 quality, publication and exact-SHA CI confirmation.
-The next owner leaf is `STD-UUID-DOC-001` for executable UUID usage.
+`STD-UUID-DOC-001` verifies the executable public hosted usage guide after the
+full local gate, source-bound quality, publication and exact-SHA CI confirmation.
+The next owner leaf is `STD-NET-IMPL-001` for portable networking.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -7000,9 +7002,9 @@ estas leaves.
   portable/fuzz jobs are expected normal-push skips. All paginated checks,
   statuses, PRs, runs and main refs remain unchanged after 86 seconds of quiet
   confirmation. Next: `STD-UUID-DOC-001`.
-- [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
+- [x] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
   generación, providers, errores, costes y ejemplos ejecutables.
-  Local usage is `verified-public-hosted-usage`. The canonical public Tondo program executes
+  Usage is `verified-public-hosted-usage`. The canonical public Tondo program executes
   all fourteen UUID operations in six paths. Seven exact source/guide fragments
   include the entry point, which must call every path and propagate errors.
   Focused checks pass 326 invalid records/guide fixtures, both progression
@@ -7013,8 +7015,15 @@ estas leaves.
   All 2,650 workspace Rust tests and every full functional gate step pass on
   the same frozen source. Source-bound quality measures 295,204 of 322,169
   lines (91.6302%), preserves every global/risk 80% line/function/region floor
-  and catches all six critical mutants. Publication and exact-SHA CI are
-  pending; the checkbox remains open until they are confirmed.
+  and catches all six critical mutants. Published source
+  `f4943e3523427095b0e193b28abe08bfcd043892` passes Test run `37523395661`,
+  attempt 1, strict job `112474194994` in 33m21s. The actual checkout and full
+  gate verify the 326 documentation refusals, executable public guide and
+  project, UUID's 77 observations and 15 capability checks, and existing
+  native and draft/select regressions. Separate portable/fuzz jobs are expected
+  normal-push skips. All paginated checks, statuses, PRs, runs and main refs
+  remain unchanged after 79 seconds of quiet confirmation.
+  Next: `STD-NET-IMPL-001`.
 
 #### 21.3.12 `std.net`
 
