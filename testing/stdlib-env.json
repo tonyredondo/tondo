@@ -12,7 +12,7 @@
   "api": "tondo-std-env-0.1/1",
   "source": {
     "path": "crates/tondo-compiler/src/process_host.rs",
-    "sha256": "sha256:f3ad3a85efdcd0a59e89a7a2fd4cbb639d859f037a4bd0152331d9fe4de13660"
+    "sha256": "sha256:d0a55057398ca5e10fc8b715d247723d9fd7f198087c9bac2916796108f173d8"
   },
   "capabilities": {
     "required": ["environment"],
