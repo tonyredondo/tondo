@@ -234,6 +234,10 @@ run_step stdlib-net-contract \
     scripts/stdlib-net-check.sh
 run_step stdlib-net-contract-tests \
     scripts/stdlib-net-test.sh
+run_step stdlib-net-implementation \
+    scripts/stdlib-net-implementation-check.sh
+run_step stdlib-net-implementation-tests \
+    scripts/stdlib-net-implementation-test.sh
 run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
 run_step stdlib-civil-time-contract-tests \

@@ -33,11 +33,16 @@ const MANIFEST: &str = "conformance/0.1/manifest.json";
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
-    if arguments != ["bless"] {
-        eprintln!("usage: tondo-conformance-maintain bless");
-        return ExitCode::from(2);
-    }
-    match bless() {
+    let result = match arguments.as_slice() {
+        [command] if command == "bless" => bless(),
+        [command] if command == "refresh-pins" => refresh_draft_manifest(&workspace_root())
+            .map(|()| "refreshed draft input pins without changing case expectations".into()),
+        _ => {
+            eprintln!("usage: tondo-conformance-maintain bless|refresh-pins");
+            return ExitCode::from(2);
+        }
+    };
+    match result {
         Ok(summary) => {
             println!("{summary}");
             ExitCode::SUCCESS

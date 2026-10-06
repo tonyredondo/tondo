@@ -416,6 +416,20 @@ Los nombres de feature son identificadores kebab-case ASCII: comienzan por una
 letra minúscula y continúan con minúsculas, dígitos o `-`. El lenguaje no les
 atribuye semántica implícita.
 
+#### 3.2.1 Explicit network target configuration
+
+When `network` is selected, `[target.network]` must be supplied and accepts only
+`resolver_servers = ["IP:port", ...]`. Its ordered list contains 1..8 distinct
+numeric endpoints with positive ports, no host names or IPv6 scope/flow IDs,
+and at most 64 bytes per endpoint. The table is forbidden without `network`.
+Its complete ordered contents enter the canonical internal manifest and build
+identity. Unknown keys are rejected.
+
+The runtime must use only the explicitly declared resolver configuration and
+must not substitute system DNS settings. This schema does not by itself
+activate an unsupported network target. The provider and promotion boundary
+are defined by [`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md).
+
 ### 3.3 Raíz
 
 `root.package` debe nombrar exactamente un elemento de `packages`.

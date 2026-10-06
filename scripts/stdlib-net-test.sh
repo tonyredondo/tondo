@@ -37,6 +37,18 @@ expect_failure cleanup-gap env TONDO_STDLIB_NET_CONTRACT="$tmp_dir/cleanup-gap.j
 jq '.negative_cases += ["duplicate-negative"]' testing/stdlib-net.json > "$tmp_dir/duplicate-negative.json"
 expect_failure duplicate-negative env TONDO_STDLIB_NET_CONTRACT="$tmp_dir/duplicate-negative.json" scripts/stdlib-net-check.sh
 
+for field in \
+    '.target_configuration.required_with_network = false' \
+    '.target_configuration.order = "ambient"' \
+    '.target_configuration.system_config_fallback = true' \
+    '.private_provider_draft.dns_udp_retransmits = true' \
+    '.private_provider_draft.tls_versions = ["1.0"]' \
+    '.private_provider_draft.tls_pin = "skip-verification"' \
+    '.private_provider_draft.public_runtime_registered = true'; do
+    jq "$field" testing/stdlib-net.json > "$tmp_dir/provider-contract.json"
+    expect_failure provider-contract env TONDO_STDLIB_NET_CONTRACT="$tmp_dir/provider-contract.json" scripts/stdlib-net-check.sh
+done
+
 for marker in \
     'pub enum NetError' \
     'pub enum TlsError' \
@@ -44,9 +56,9 @@ for marker in \
     'pub fn NetLimits.create(maxRead: Int, maxDatagram: Int, maxResults: Int): NetLimits ! NetError' \
     'pub fn options(deadline: Instant?, limits: NetLimits): NetOptions ! NetError' \
     'pub fn connect(address: SocketAddress, options: NetOptions): TcpStream ! NetError suspends' \
-    'pub fn TcpStream.split(self): (TcpReadHalf, TcpWriteHalf)' \
-    'pub fn TcpStream.shutdown(ref self, how: Shutdown, options: NetOptions): Unit ! NetError suspends' \
-    'pub fn UdpSocket.sendTo(ref self, data: Bytes, destination: SocketAddress, options: NetOptions): Unit ! NetError suspends' \
+    'pub fn TcpStream.split(stream: TcpStream): (TcpReadHalf, TcpWriteHalf)' \
+    'pub fn TcpStream.shutdown(self, how: Shutdown, options: NetOptions): Unit ! NetError suspends' \
+    'pub fn UdpSocket.sendTo(self, data: Bytes, destination: SocketAddress, options: NetOptions): Unit ! NetError suspends' \
     'pub fn TlsStream.connect(stream: TcpStream, server: HostName, config: TlsConfig, options: NetOptions): TlsStream ! TlsError suspends'; do
     grep -Fq "$marker" docs/contracts/stdlib-net.md || { echo "missing marker: $marker" >&2; exit 1; }
 done

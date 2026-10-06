@@ -26,6 +26,19 @@
       ]
     },
     {
+      "id": "REG-NET-001",
+      "confirmed_by": "Controlled local UDP DNS probe exceeding Hickory's 333 ms retry floor",
+      "boundary": "private Rust DnsConfig.resolve",
+      "reproducer": "A silent explicitly configured resolver receives additional A/AAAA queries during an 800 ms operation even with ResolverOpts.attempts=0.",
+      "test_id": "rust:tondo-compiler:src::net_provider::tests:dns_invalid_port_has_no_io_and_silent_provider_has_no_retry_or_failover",
+      "source": "crates/tondo-compiler/src/net_provider/tests.rs",
+      "fixed_in": "STD-NET-IMPL-001",
+      "evidence": [
+        "local regression retains exactly one A and one AAAA query with no failover",
+        "private ConnectionProvider selects UdpClientStream.with_max_retries(0)"
+      ]
+    },
+    {
       "id": "REG-PARSER-001",
       "confirmed_by": "DOC-TEST-CONF-001 normative document corpus",
       "boundary": "tondo doc-test syntax production selection",

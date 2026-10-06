@@ -23,6 +23,7 @@ use tondo_compiler::project::{
     BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, ProjectPlan,
     bootstrap_standard_hash,
 };
+use tondo_compiler::toolchain::{NetworkTarget, validate_network_selection};
 
 #[derive(Debug, Clone)]
 pub(crate) struct DiscoveredProject {
@@ -76,6 +77,7 @@ struct TargetConfig {
     capability_registry: Option<String>,
     capabilities: Option<Vec<String>>,
     features: Option<Vec<String>>,
+    network: Option<NetworkTarget>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,16 +180,19 @@ fn project_manifest(
     capability_registry: &str,
     capabilities: &[String],
     features: &[String],
+    network: Option<&NetworkTarget>,
     dependencies: &BTreeMap<String, DependencyConfig>,
     sources: &[SourceRecord],
 ) -> Result<Vec<u8>, String> {
+    validate_network_selection(capabilities.iter().map(String::as_str), network)
+        .map_err(|error| error.to_string())?;
     let root_source = choose_root_source(sources);
     let package_id = format!("workspace:{package_name}@local");
     let dependencies = dependencies
         .iter()
         .map(|(alias, dependency)| json!({"alias": alias, "package": dependency.package()}))
         .collect::<Vec<_>>();
-    let manifest = json!({
+    let mut manifest = json!({
         "format": MANIFEST_FORMAT,
         "target": {
             "name": target_name,
@@ -219,6 +224,9 @@ fn project_manifest(
         "generator_inputs": [],
         "privileged_units": []
     });
+    if let Some(network) = network {
+        manifest["target"]["network"] = json!(network);
+    }
     serde_json::to_vec(&manifest)
         .map_err(|error| format!("cannot encode discovered project: {error}"))
 }
@@ -387,6 +395,9 @@ fn discover_with_selection(
             .collect()
     });
     let features = target.features.unwrap_or_default();
+    let network = target.network;
+    validate_network_selection(capabilities.iter().map(String::as_str), network.as_ref())
+        .map_err(|error| error.to_string())?;
     let package_id = format!("workspace:{package_name}@local");
     if lock_policy == LockPolicy::RefreshLocal && !config.dependencies.is_empty() {
         return Err("local lock resolution does not resolve external runtime dependencies".into());
@@ -408,6 +419,7 @@ fn discover_with_selection(
                 &capability_registry,
                 &capabilities,
                 &features,
+                network.as_ref(),
                 &config.dependencies,
                 &production_sources,
             )
@@ -427,6 +439,7 @@ fn discover_with_selection(
             &capability_registry,
             &capabilities,
             &features,
+            network.as_ref(),
             &config.dependencies,
             &sources,
         )?)?,
@@ -827,6 +840,83 @@ mod tests {
     use super::*;
 
     static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn network_target_toml_preserves_explicit_servers_without_ambient_keys() {
+        let config: TargetConfig = toml::from_str(
+            "capabilities = [\"network\"]\n[network]\nresolver_servers = [\"127.0.0.1:53\", \"[::1]:5353\"]\n",
+        ).unwrap();
+        validate_network_selection(
+            config
+                .capabilities
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(String::as_str),
+            config.network.as_ref(),
+        )
+        .unwrap();
+        assert_eq!(
+            config.network.unwrap().resolver_servers,
+            vec!["127.0.0.1:53", "[::1]:5353"]
+        );
+        assert!(
+            toml::from_str::<TargetConfig>(
+                "[network]\nresolver_servers = [\"127.0.0.1:53\"]\nuse_system_dns = true\n"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn network_target_manifest_identity_includes_servers_and_omits_absent_config() {
+        let sources = vec![SourceRecord {
+            physical_path: "src/main.to".into(),
+            logical_path: "main.to".into(),
+            module: "main".into(),
+            sha256: sha256(b"fn main() {}\n"),
+        }];
+        let encode_target = |network: Option<&NetworkTarget>| {
+            let capabilities = [if network.is_some() {
+                "network".into()
+            } else {
+                "console".into()
+            }];
+            project_manifest(
+                "app",
+                "0.1",
+                "tondo-vm-hosted",
+                "hosted",
+                CAPABILITY_REGISTRY,
+                &capabilities,
+                &[],
+                network,
+                &BTreeMap::new(),
+                &sources,
+            )
+            .unwrap()
+        };
+        let absent = encode_target(None);
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&absent).unwrap()["target"]
+                .get("network")
+                .is_none()
+        );
+        let first = NetworkTarget {
+            resolver_servers: vec!["127.0.0.1:53".into()],
+        };
+        let second = NetworkTarget {
+            resolver_servers: vec!["127.0.0.1:5353".into()],
+        };
+        let first_bytes = encode_target(Some(&first));
+        let second_bytes = encode_target(Some(&second));
+        assert_ne!(sha256(&first_bytes), sha256(&second_bytes));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&first_bytes).unwrap()["target"]["network"]
+                ["resolver_servers"],
+            json!(["127.0.0.1:53"])
+        );
+    }
 
     fn temporary_project() -> PathBuf {
         let nonce = SystemTime::now()

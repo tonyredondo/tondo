@@ -11,6 +11,7 @@ pub mod io;
 pub mod json;
 pub mod math;
 pub mod messagepack;
+pub mod net;
 pub mod path;
 pub mod protobuf;
 pub mod regex;

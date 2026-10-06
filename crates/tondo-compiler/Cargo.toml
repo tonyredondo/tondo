@@ -13,6 +13,10 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 getrandom.workspace = true
+tokio.workspace = true
+hickory-resolver.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
 tondo-stdlib = { path = "../tondo-stdlib" }
 tondo-vm = { path = "../tondo-vm" }
 unicode-ident.workspace = true

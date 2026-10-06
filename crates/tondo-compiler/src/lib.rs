@@ -24,6 +24,14 @@ mod meta_test_support;
 pub mod meta_type;
 pub mod meta_vm;
 pub mod mir;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "The private provider precedes STD-NET-HOST-001 public registration."
+    )
+)]
+mod net_provider;
 pub mod package;
 mod process_host;
 pub mod project;

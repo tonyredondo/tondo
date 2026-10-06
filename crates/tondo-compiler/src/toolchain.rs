@@ -295,6 +295,81 @@ pub struct Target {
     pub capabilities: Vec<String>,
     #[serde(default)]
     pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkTarget>,
+}
+
+/// Explicit resolver endpoints are target data, never ambient host policy.
+/// Endpoint order is retained in the manifest and its content hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkTarget {
+    pub resolver_servers: Vec<String>,
+}
+
+impl NetworkTarget {
+    pub const MAX_RESOLVER_SERVERS: usize = 8;
+
+    pub fn validate(&self) -> Result<(), FormatError> {
+        if self.resolver_servers.is_empty()
+            || self.resolver_servers.len() > Self::MAX_RESOLVER_SERVERS
+        {
+            return Err(FormatError::Invalid(
+                "target.network.resolver_servers requires 1..8 explicit endpoints".into(),
+            ));
+        }
+        let mut seen = Vec::with_capacity(self.resolver_servers.len());
+        for endpoint in &self.resolver_servers {
+            if endpoint.len() > 64 {
+                return Err(FormatError::Invalid(
+                    "target.network resolver endpoint exceeds 64 bytes".into(),
+                ));
+            }
+            let address = endpoint.parse::<std::net::SocketAddr>().map_err(|_| {
+                FormatError::Invalid(
+                    "target.network resolver endpoint must be a numeric IP and port".into(),
+                )
+            })?;
+            if address.port() == 0 {
+                return Err(FormatError::Invalid(
+                    "target.network resolver port must be positive".into(),
+                ));
+            }
+            if let std::net::SocketAddr::V6(address) = address
+                && (address.scope_id() != 0 || address.flowinfo() != 0)
+            {
+                return Err(FormatError::Invalid(
+                    "target.network resolver endpoints do not admit IPv6 scope or flow IDs".into(),
+                ));
+            }
+            if seen.contains(&address) {
+                return Err(FormatError::Invalid(
+                    "target.network resolver endpoints must be bytewise unique".into(),
+                ));
+            }
+            seen.push(address);
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_network_selection<'a>(
+    capabilities: impl IntoIterator<Item = &'a str>,
+    network: Option<&NetworkTarget>,
+) -> Result<(), FormatError> {
+    let enabled = capabilities
+        .into_iter()
+        .any(|capability| capability == "network");
+    match (enabled, network) {
+        (true, Some(network)) => network.validate(),
+        (true, None) => Err(FormatError::Invalid(
+            "network requires explicit target.network.resolver_servers".into(),
+        )),
+        (false, Some(_)) => Err(FormatError::Invalid(
+            "target.network requires the network capability".into(),
+        )),
+        (false, None) => Ok(()),
+    }
 }
 
 impl Target {
@@ -319,6 +394,10 @@ impl Target {
         for feature in &self.features {
             require_kebab("feature", feature)?;
         }
+        validate_network_selection(
+            self.capabilities.iter().map(String::as_str),
+            self.network.as_ref(),
+        )?;
         validate_compilation_target(&self.name, &self.profile, &self.capabilities)?;
         Ok(())
     }
@@ -4661,6 +4740,76 @@ fn owner_for_source(manifest: &Manifest, path: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn network_target_requires_explicit_bounded_numeric_endpoints() {
+        NetworkTarget {
+            resolver_servers: vec!["127.0.0.1:53".into(), "[::1]:5353".into()],
+        }
+        .validate()
+        .unwrap();
+        for servers in [
+            vec![],
+            vec!["example.com:53".into()],
+            vec!["127.0.0.1:0".into()],
+            vec!["127.0.0.1".into()],
+            vec![" 127.0.0.1:53".into()],
+            vec!["x".repeat(65)],
+            vec!["[::1]:53".into(), "[0:0:0:0:0:0:0:1]:53".into()],
+            (1..=9).map(|port| format!("127.0.0.1:{port}")).collect(),
+        ] {
+            assert!(
+                NetworkTarget {
+                    resolver_servers: servers
+                }
+                .validate()
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn network_target_selection_rejects_missing_and_unauthorized_configuration() {
+        let network = NetworkTarget {
+            resolver_servers: vec!["127.0.0.1:53".into()],
+        };
+        validate_network_selection(["network"], Some(&network)).unwrap();
+        validate_network_selection(["console"], None).unwrap();
+        assert!(validate_network_selection(["network"], None).is_err());
+        assert!(validate_network_selection(["console"], Some(&network)).is_err());
+        assert!(
+            serde_json::from_value::<NetworkTarget>(
+                serde_json::json!({"resolver_servers":["127.0.0.1:53"],"proxy":"ambient"})
+            )
+            .is_err()
+        );
+        assert!(serde_json::from_value::<NetworkTarget>(serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn network_target_data_changes_identity_and_retains_endpoint_order() {
+        let mut target = manifest().target;
+        let original = encode(&target).unwrap();
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&original)
+                .unwrap()
+                .get("network")
+                .is_none()
+        );
+        target.capabilities.push("network".into());
+        target.network = Some(NetworkTarget {
+            resolver_servers: vec!["127.0.0.1:53".into(), "[::1]:53".into()],
+        });
+        let first = encode(&target).unwrap();
+        target.network.as_mut().unwrap().resolver_servers.reverse();
+        let second = encode(&target).unwrap();
+        assert_ne!(sha256(&first), sha256(&second));
+        let decoded: Target = serde_json::from_slice(&second).unwrap();
+        assert_eq!(
+            decoded.network.unwrap().resolver_servers,
+            vec!["[::1]:53", "127.0.0.1:53"]
+        );
+    }
+
     fn manifest() -> Manifest {
         Manifest {
             format: MANIFEST_FORMAT.into(),
@@ -4670,6 +4819,7 @@ mod tests {
                 capability_registry: CAPABILITY_REGISTRY.into(),
                 capabilities: vec![],
                 features: vec![],
+                network: None,
             },
             root: Root {
                 package: "workspace:app@1".into(),

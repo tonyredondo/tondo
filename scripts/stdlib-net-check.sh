@@ -37,10 +37,35 @@ jq -e '
   and .capabilities.missing_network == "static-capability-error"
   and .capabilities.deadline_without_clock == "static-capability-error"
   and .host.status == "required-after-native-gate"
+  and .target_configuration.manifest == "tondo.toml"
+  and .target_configuration.table == "target.network"
+  and .target_configuration.key == "resolver_servers"
+  and .target_configuration.required_with_network == true
+  and .target_configuration.forbidden_without_network == true
+  and .target_configuration.endpoint_count == [1, 8]
+  and .target_configuration.endpoint_bytes_max == 64
+  and .target_configuration.numeric_only == true
+  and .target_configuration.positive_port == true
+  and .target_configuration.ipv6_scope_or_flow == false
+  and .target_configuration.duplicates == "reject-numeric-identity"
+  and .target_configuration.order == "preserved-in-build-identity"
+  and .target_configuration.system_config_fallback == false
+  and .private_provider_draft.status == "in-progress-unpromoted"
+  and .private_provider_draft.tokio == "1.53.2"
+  and .private_provider_draft.hickory_resolver == "0.26.3"
+  and .private_provider_draft.rustls == "0.23.45"
+  and .private_provider_draft.rustls_crypto == "aws-lc"
+  and .private_provider_draft.webpki_roots == "1.0.9"
+  and .private_provider_draft.roots_hash == "sha256:142ba280f8d4a0090f7dec142503ce47aa6960752374f31147cb84e1dc797f14"
+  and .private_provider_draft.dns_udp_retransmits == false
+  and .private_provider_draft.tls_versions == ["1.2", "1.3"]
+  and .private_provider_draft.tls_pin == "exact-leaf-plus-normal-verification"
+  and .private_provider_draft.public_runtime_registered == false
+  and .private_provider_draft.native_abi_or_aot == false
   and .surface.types[0:5] == ["HostName", "IpAddress", "SocketAddress", "NetLimits", "NetOptions"]
   and (.surface.signatures | length) == 39
   and ([.surface.signatures[].id] | unique | length) == 39
-  and any(.surface.signatures[]; .id == "tcp-shutdown" and .signature == "pub fn TcpStream.shutdown(ref self, how: Shutdown, options: NetOptions): Unit ! NetError suspends")
+  and any(.surface.signatures[]; .id == "tcp-shutdown" and .signature == "pub fn TcpStream.shutdown(self, how: Shutdown, options: NetOptions): Unit ! NetError suspends")
   and all(.surface.signatures[]; (.signature | type == "string" and length > 0) and (.kind | type == "string" and length > 0) and (.effect | type == "string" and length > 0))
   and .surface.direct_call_waits == true
   and .surface.explicit_await_direct_call == "forbidden"
@@ -108,11 +133,27 @@ jq -e '
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 40
-  and .implementation.status == "pending-after-native-gate"
+  and (.implementation.status == "ready-kernel-private-provider"
+       or .implementation.status == "verified-kernel-private-provider")
+  and .implementation.task == "STD-NET-IMPL-001"
+  and .implementation.selected_route == "scalar-rust-kernel-and-private-nonblocking-provider"
+  and .implementation.contract == "docs/contracts/stdlib-net-implementation.md"
+  and .implementation.quality_gate == (if .implementation.status == "ready-kernel-private-provider"
+       then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
+  and .implementation.compiler_api == "not-claimed-until-net-host"
+  and .implementation.runtime_registration == "not-claimed-until-net-host"
+  and .implementation.runtime_heap_admission == "not-claimed-until-net-host"
+  and .implementation.native_abi == "not-implemented"
+  and .implementation.native_aot == "not-claimed"
+  and .implementation.independent_model == "not-claimed-until-net-test"
+  and .implementation.performance == "not-measured"
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"
-  and .implementation.required_follow_ups == ["STD-NET-IMPL-001", "STD-NET-HOST-001", "STD-NET-TEST-001", "STD-NET-PERF-001", "STD-NET-CONF-001", "STD-NET-DOC-001"]
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.required_follow_ups == (if .implementation.status == "ready-kernel-private-provider"
+       then ["STD-NET-IMPL-001", "STD-NET-HOST-001", "STD-NET-TEST-001", "STD-NET-PERF-001", "STD-NET-CONF-001", "STD-NET-DOC-001"]
+       else ["STD-NET-HOST-001", "STD-NET-TEST-001", "STD-NET-PERF-001", "STD-NET-CONF-001", "STD-NET-DOC-001"] end)
+  and .promotion.next_blocks == (if .implementation.status == "ready-kernel-private-provider"
+       then ["STD-NET-IMPL-001"] else ["STD-NET-HOST-001"] end)
 ' "$contract" >/dev/null || die "invalid machine-readable net contract"
 
 for path in \
@@ -126,9 +167,9 @@ for marker in \
     'STD-NET-001' \
     'pub type TcpStream' \
     'pub fn resolve(host: HostName, port: Int, options: NetOptions): Array[SocketAddress] ! NetError suspends' \
-    'pub fn TcpListener.accept(ref self, options: NetOptions): TcpStream ! NetError selectable' \
-    'pub fn TcpReadHalf.read(ref self, max: Int, options: NetOptions): ReadResult ! NetError selectable' \
-    'pub fn UdpSocket.receiveFrom(ref self, options: NetOptions): Datagram ! NetError selectable' \
+    'pub fn TcpListener.accept(self, options: NetOptions): TcpStream ! NetError selectable' \
+    'pub fn TcpReadHalf.read(self, max: Int, options: NetOptions): ReadResult ! NetError selectable' \
+    'pub fn UdpSocket.receiveFrom(self, options: NetOptions): Datagram ! NetError selectable' \
     'PlatformRoots' \
     'DatagramTooLarge' \
     'required-after-native-gate'; do

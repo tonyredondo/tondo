@@ -2988,6 +2988,14 @@ promoción pública siguen pendientes.
 
 #### 14.4.6 Networking
 
+The adopted hosted network provider is private Tokio 1.53.2, Hickory Resolver
+0.26.3, Rustls 0.23.45 with AWS-LC and webpki-roots 1.0.9. Targets explicitly
+supply the ordered numeric resolver endpoints in `[target.network]` of
+`tondo.toml`; these inputs enter build identity, without inheriting system DNS.
+TLS supports versions 1.2 and 1.3 with explicit suites and certificate/name
+verification. Dependency and schema adoption does not close the implementation,
+host or conformance leaves or establish native ABI/AOT coverage.
+
 `std.net` es un owner capability-gated: el target debe declarar `network` y un
 import nunca abre sockets, consulta DNS, lee proxies o certificados, crea tasks
 ni toca el entorno. `clock` solo es necesario cuando el caller construye un

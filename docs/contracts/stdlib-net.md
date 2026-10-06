@@ -87,39 +87,39 @@ pub fn options(deadline: Instant?, limits: NetLimits): NetOptions ! NetError
 pub fn resolve(host: HostName, port: Int, options: NetOptions): Array[SocketAddress] ! NetError suspends
 pub fn connect(address: SocketAddress, options: NetOptions): TcpStream ! NetError suspends
 pub fn listen(address: SocketAddress, backlog: Int): TcpListener ! NetError
-pub fn TcpListener.accept(ref self, options: NetOptions): TcpStream ! NetError selectable
-pub fn TcpListener.close(self): Unit
+pub fn TcpListener.accept(self, options: NetOptions): TcpStream ! NetError selectable
+pub fn TcpListener.close(listener: TcpListener): Unit
 
-pub fn TcpStream.split(self): (TcpReadHalf, TcpWriteHalf)
+pub fn TcpStream.split(stream: TcpStream): (TcpReadHalf, TcpWriteHalf)
 pub fn TcpStream.localAddress(self): SocketAddress ! NetError
 pub fn TcpStream.peerAddress(self): SocketAddress ! NetError
-pub fn TcpStream.shutdown(ref self, how: Shutdown, options: NetOptions): Unit ! NetError suspends
-pub fn TcpStream.close(self): Unit
-pub fn TcpReadHalf.read(ref self, max: Int, options: NetOptions): ReadResult ! NetError selectable
-pub fn TcpReadHalf.close(self): Unit
-pub fn TcpWriteHalf.write(ref self, data: Bytes, options: NetOptions): Int ! NetError suspends
-pub fn TcpWriteHalf.flush(ref self, options: NetOptions): Unit ! NetError suspends
-pub fn TcpWriteHalf.shutdown(ref self, options: NetOptions): Unit ! NetError suspends
-pub fn TcpWriteHalf.close(self): Unit
+pub fn TcpStream.shutdown(self, how: Shutdown, options: NetOptions): Unit ! NetError suspends
+pub fn TcpStream.close(stream: TcpStream): Unit
+pub fn TcpReadHalf.read(self, max: Int, options: NetOptions): ReadResult ! NetError selectable
+pub fn TcpReadHalf.close(reader: TcpReadHalf): Unit
+pub fn TcpWriteHalf.write(self, data: Bytes, options: NetOptions): Int ! NetError suspends
+pub fn TcpWriteHalf.flush(self, options: NetOptions): Unit ! NetError suspends
+pub fn TcpWriteHalf.shutdown(self, options: NetOptions): Unit ! NetError suspends
+pub fn TcpWriteHalf.close(writer: TcpWriteHalf): Unit
 
 pub fn bind(address: SocketAddress): UdpSocket ! NetError
-pub fn UdpSocket.sendTo(ref self, data: Bytes, destination: SocketAddress, options: NetOptions): Unit ! NetError suspends
-pub fn UdpSocket.receiveFrom(ref self, options: NetOptions): Datagram ! NetError selectable
+pub fn UdpSocket.sendTo(self, data: Bytes, destination: SocketAddress, options: NetOptions): Unit ! NetError suspends
+pub fn UdpSocket.receiveFrom(self, options: NetOptions): Datagram ! NetError selectable
 pub fn UdpSocket.localAddress(self): SocketAddress ! NetError
-pub fn UdpSocket.close(self): Unit
+pub fn UdpSocket.close(socket: UdpSocket): Unit
 pub fn Datagram.bytes(self): Bytes
 pub fn Datagram.source(self): SocketAddress
 
 pub fn tlsConfig(verification: TlsVerification): TlsConfig ! TlsError
 pub fn TlsStream.connect(stream: TcpStream, server: HostName, config: TlsConfig, options: NetOptions): TlsStream ! TlsError suspends
-pub fn TlsStream.split(self): (TlsReadHalf, TlsWriteHalf)
-pub fn TlsStream.close(self): Unit
-pub fn TlsReadHalf.read(ref self, max: Int, options: NetOptions): ReadResult ! TlsError suspends
-pub fn TlsReadHalf.close(self): Unit
-pub fn TlsWriteHalf.write(ref self, data: Bytes, options: NetOptions): Int ! TlsError suspends
-pub fn TlsWriteHalf.flush(ref self, options: NetOptions): Unit ! TlsError suspends
-pub fn TlsWriteHalf.shutdown(ref self, options: NetOptions): Unit ! TlsError suspends
-pub fn TlsWriteHalf.close(self): Unit
+pub fn TlsStream.split(stream: TlsStream): (TlsReadHalf, TlsWriteHalf)
+pub fn TlsStream.close(stream: TlsStream): Unit
+pub fn TlsReadHalf.read(self, max: Int, options: NetOptions): ReadResult ! TlsError suspends
+pub fn TlsReadHalf.close(reader: TlsReadHalf): Unit
+pub fn TlsWriteHalf.write(self, data: Bytes, options: NetOptions): Int ! TlsError suspends
+pub fn TlsWriteHalf.flush(self, options: NetOptions): Unit ! TlsError suspends
+pub fn TlsWriteHalf.shutdown(self, options: NetOptions): Unit ! TlsError suspends
+pub fn TlsWriteHalf.close(writer: TlsWriteHalf): Unit
 ~~~
 
 `HostName`, `IpAddress` y `SocketAddress` son valores inmutables, `Copy`,
@@ -279,6 +279,61 @@ el `spawn` y `Join` normales, sin crear un segundo selector ni una API paralela.
 El contrato no fija una biblioteca TLS concreta, ABI, cipher suite privada ni
 formato de trust store. Sí fija que el target declare el provider, las suites
 permitidas, la versión TLS mínima, los límites y el hash del bundle de roots.
+
+## Adopted hosted provider and explicit target inputs
+
+The hosted provider uses the pinned private dependencies Tokio 1.53.2,
+Hickory Resolver 0.26.3, Rustls 0.23.45 with AWS-LC, and webpki-roots 1.0.9.
+Tondo retains its own scheduler and suspension model. Importing `std.net`
+does not construct a runtime, resolver or TLS connection.
+
+Selecting `network` requires this additional human manifest table:
+
+~~~toml
+[target.network]
+resolver_servers = ["192.0.2.53:53", "[2001:db8::53]:53"]
+~~~
+
+The addresses above are documentation examples, not default resolvers.
+The ordered list contains 1..8 distinct numeric IP endpoints with positive
+ports; each spelling is at most 64 bytes. Host names, IPv6 scope/flow IDs,
+duplicate numeric addresses and unknown keys are rejected. Omitting the table
+with `network`, or supplying it without `network`, is an error. The complete
+ordered configuration enters the project manifest and build identity. There
+is no public `Resolver` object and no fallback to system DNS configuration.
+
+The private provider selects one endpoint per explicit resolution, rotating
+in declared order from the first endpoint. Both A and AAAA use that endpoint;
+the result places A records before AAAA records and retains record order within
+each family. There is no retry or server failover within a resolution,
+including UDP retransmissions below the resolver layer. Search domains, hosts
+files, cache, TCP fallback and opportunistic encrypted-DNS discovery are
+disabled. A DNS transaction has a declared five-second provider response
+bound; exhaustion is `ResolveFailed`, rather than an implicit `NetOptions`
+deadline. A caller's earlier deadline still covers the complete operation.
+Provider futures belong to the operation and are polled by its owner; dropping
+the operation synchronously retires those futures and their sockets.
+
+TLS admits TLS 1.2 and 1.3 with explicit AES-GCM suites for ECDHE/RSA or
+ECDHE/ECDSA in TLS 1.2, and AES-GCM/ChaCha20-Poly1305 suites in TLS 1.3.
+Session resumption and early data are disabled. Platform roots come only from
+the versioned Mozilla bundle; its identity hashes the ordered trust anchors,
+including field lengths and optional name constraints. An explicit DER pin
+must match the exact received leaf and still pass certificate validity, name,
+chain and handshake-signature verification. Pins are bounded to 64 KiB;
+provider outgoing buffers are bounded to 64 KiB. These are provider bounds,
+not RSS or operating-system allocation measurements.
+
+Terminal operations and `split` use qualified associated calls with ordinary
+by-value parameters, for example `TcpStream.close(stream)` and
+`TcpStream.split(stream)`. Observational methods use the canonical shared
+`self` receiver. The contract does not introduce a `ref self` receiver or an
+implicit consuming instance receiver.
+
+This implementation is in progress. Private Rust kernel/provider tests do not
+establish public VM registration, compiler ownership checks, target activation,
+native ABI/AOT execution or a conformant promotion. The owner remains open
+until its required executable integration and gates are observed.
 
 ## Diagnóstico, cleanup y portabilidad
 

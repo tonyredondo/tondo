@@ -325,6 +325,10 @@ impl ProjectPlan {
         &self.target.capabilities
     }
 
+    pub fn network_target(&self) -> Option<&crate::toolchain::NetworkTarget> {
+        self.target.network.as_ref()
+    }
+
     pub fn features(&self) -> &BTreeSet<FeatureName> {
         &self.target.features
     }
@@ -1195,6 +1199,7 @@ struct PlannedTarget {
     profile: HostProfile,
     capabilities: BTreeSet<CapabilityName>,
     features: BTreeSet<FeatureName>,
+    network: Option<crate::toolchain::NetworkTarget>,
 }
 
 impl PlannedTarget {
@@ -1215,6 +1220,11 @@ impl PlannedTarget {
             .map(CapabilityName::new)
             .collect::<Result<BTreeSet<_>, _>>()?;
         let supported = BuildTarget::vm_hosted().supported_capabilities().clone();
+        crate::toolchain::validate_network_selection(
+            capabilities.iter().map(CapabilityName::as_str),
+            target.network.as_ref(),
+        )
+        .map_err(|error| ProjectError::InvalidManifest(error.to_string()))?;
         if let Some(capability) = capabilities
             .iter()
             .find(|capability| !supported.contains(*capability))
@@ -1234,6 +1244,7 @@ impl PlannedTarget {
             profile,
             capabilities,
             features,
+            network: target.network,
         })
     }
 }
@@ -1299,6 +1310,8 @@ struct TargetWire {
     capabilities: Vec<String>,
     #[serde(default)]
     features: Vec<String>,
+    #[serde(default)]
+    network: Option<crate::toolchain::NetworkTarget>,
 }
 
 #[derive(Debug, Deserialize)]
