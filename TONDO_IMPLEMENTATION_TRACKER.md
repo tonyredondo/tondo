@@ -49,7 +49,7 @@ and fallible lazy iteration. `STD-REGEX-TEST-001` verifies the independent model
 and seeded fuzz; `STD-REGEX-PERF-001` verifies nineteen target-qualified kernel
 routes. `STD-REGEX-CONF-001` verifies seven shared private VM/native Rust
 process groups, clean-source comparison and the full local/CI gates. The current workspace
-campaign measures 91.6170% global lines and preserves the 80% floor in every
+campaign measures 91.6331% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
 `STD-REGEX-DOC-001` verifies the canonical executable Rust-kernel guide after
 the full local gate, publication and exact-SHA CI confirmation.
@@ -57,8 +57,11 @@ the full local gate, publication and exact-SHA CI confirmation.
 inputs after the full local gate, source-bound quality, publication and
 exact-SHA CI confirmation. `STD-UUID-HOST-001` verifies public compiler/VM
 registration and explicit OS providers after source-bound quality, every full
-functional gate step, publication and exact-SHA CI confirmation. The next owner
-leaf is `STD-UUID-TEST-001`, for the independent model, retained corpus and fuzz.
+functional gate step, publication and exact-SHA CI confirmation.
+`STD-UUID-TEST-001` verifies the independent bounded model, retained corpus and
+fuzz after source-bound quality, the full local gate, publication and exact-SHA
+CI confirmation. The next owner leaf is `STD-UUID-PERF-001`, for target-qualified
+parse/format/generation, memory and provider costs.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6928,10 +6931,10 @@ estas leaves.
   portable/fuzz jobs are expected skips. Actual checkout, the remote SHA and all
   checks are confirmed after the quiet interval. Native UUID ABI/AOT and later
   owner leaves are not promoted. Next: `STD-UUID-TEST-001`.
-- [ ] **STD-UUID-TEST-001 — Probar UUID.** Cubrir vectores por versión,
+- [x] **STD-UUID-TEST-001 — Probar UUID.** Cubrir vectores por versión,
   canonical text, inválidos, orden aplicable, providers deterministas,
   colisiones modeladas y límites.
-  Locally verified; publication and exact-SHA CI closure remain pending.
+  Verified after local gates, publication and exact-SHA CI confirmation.
   The std-only integer/name-digest model,
   54 retained vectors and eleven integration tests compare 4,096 seeds, every
   version/variant and lexical/entropy bit boundary, plus a sealed production VM
@@ -6944,6 +6947,12 @@ estas leaves.
   workspace lines (91.6331%), preserves every global/risk 80% floor and catches
   all six selected critical mutants. The full functional gate passes in 27m38s
   on the same frozen source, including 206 draft cases and async/select repeats.
+  Published source `27bd0d3` passes CI run `37463121847`: the strict Linux x86_64
+  job checks out that exact revision and executes the full functional gate in
+  28m34s. UUID tests/fuzz, the 206-case suite and native scalar regression steps
+  actually run; normal-push portable/fuzz jobs are expected skips. All checks and
+  the remote SHA remain unchanged after the quiet interval. Next:
+  `STD-UUID-PERF-001`.
 - [ ] **STD-UUID-PERF-001 — Medir UUID.** Fijar parse/format/generation,
   allocations, memoria y coste de providers.
 - [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
