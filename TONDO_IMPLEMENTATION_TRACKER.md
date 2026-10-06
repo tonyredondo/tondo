@@ -6833,15 +6833,17 @@ estas leaves.
   `testing/stdlib-regex-test.json` and `docs/contracts/stdlib-regex-test.md`
   record this boundary; public/production VM/native/performance promotion is
   unclaimed. Next: `STD-REGEX-PERF-001`.
-- [ ] **STD-REGEX-PERF-001 — Measure the bounded Rust regex kernel.**
-  The locally verified protocol covers 19 compile/search/capture/iteration/
+- [x] **STD-REGEX-PERF-001 — Measure the bounded Rust regex kernel.**
+  The verified protocol covers 19 compile/search/capture/iteration/
   replacement/rejection workloads, with 27 retained samples each, exact
   independent/authored expectations, actual automaton/search counters and
-  explicitly selected logical resources. Clean-source capture from `495a573`,
-  the full functional gate and consolidated quality checks pass: 292,637 of
+  explicitly selected logical resources. Clean-source captures from `495a573`
+  and published `e5f6c1`, the full functional gate and consolidated quality
+  checks pass: 292,637 of
   319,506 lines (91.5905%), every global/risk dimension at or above 80%, six
-  critical mutants caught. Publication and exact-SHA CI remain pending.
-  Public compiler/VM,
+  critical mutants caught. Exact-SHA CI run `37390159574` passes the full
+  strict Linux x86_64 gate; normal-push portable/fuzz jobs are expected skips.
+  Next: `STD-REGEX-CONF-001`. Public compiler/VM,
   native ABI/AOT, SIMD and code-size promotion are outside this boundary.
 - [ ] **STD-REGEX-CONF-001 — Conformar regex.** Ejecutar vectores portables y
   equivalencia VM/nativo con los mismos límites y errores.
