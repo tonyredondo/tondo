@@ -230,6 +230,10 @@ impl BuildTarget {
             CapabilityName::new("process")
                 .expect("process is a registered Tondo target capability"),
             CapabilityName::new("clock").expect("clock is a registered Tondo target capability"),
+            CapabilityName::new("civil-clock")
+                .expect("civil-clock is a registered Tondo target capability"),
+            CapabilityName::new("entropy")
+                .expect("entropy is a registered Tondo target capability"),
             CapabilityName::new("environment")
                 .expect("environment is a registered Tondo target capability"),
             CapabilityName::new("filesystem")
@@ -2286,6 +2290,40 @@ fn execute_pipeline(
             ),
             PrimaryLocation::Source(expression.span()),
         )?);
+    }
+
+    for capability in ["civil-clock", "entropy"] {
+        if request
+            .capabilities
+            .iter()
+            .any(|selected| selected.as_str() == capability)
+        {
+            continue;
+        }
+        if let Some((expression, function)) = hir_program.expressions().find_map(|expression| {
+            let function = match expression.kind() {
+                HirExpressionKind::Function(HirCallableId::Host(function))
+                | HirExpressionKind::SpecializedFunction {
+                    callable: HirCallableId::Host(function),
+                    ..
+                }
+                | HirExpressionKind::BootstrapHostCall { function, .. } => *function,
+                _ => return None,
+            };
+            (function == HirBootstrapHostFunction::UuidV7
+                || (capability == "entropy" && function == HirBootstrapHostFunction::UuidV4))
+                .then_some((expression, function))
+        }) {
+            expression_diagnostics.push(Diagnostic::new(
+                Severity::Error,
+                DiagnosticCode::new("E1008")?,
+                format!(
+                    "capability `{capability}` is missing for `{}`",
+                    function.name()
+                ),
+                PrimaryLocation::Source(expression.span()),
+            )?);
+        }
     }
 
     if expression_diagnostics
@@ -5152,6 +5190,231 @@ mod tests {
             Err(DriverError::UnsupportedTargetCapability { target, capability })
                 if target == "tondo-vm-hosted" && capability == "network"
         ));
+    }
+
+    #[test]
+    fn uuid_hosted_core_operations_require_no_provider_capabilities() {
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            include_bytes!("../tests/fixtures/uuid-core.to"),
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+        assert!(output.stdout().is_empty());
+    }
+
+    #[test]
+    fn uuid_provider_capabilities_are_checked_for_calls_aliases_and_defer() {
+        for (generator, required) in [
+            ("v4", vec!["entropy"]),
+            ("v7", vec!["civil-clock", "entropy"]),
+        ] {
+            for body in [
+                format!("_ = uuid.Uuid.{generator}()"),
+                format!("let generate = uuid.Uuid.{generator}\n _ = generate()"),
+                format!("defer {{\n _ = uuid.Uuid.{generator}()\n }}"),
+            ] {
+                let source = format!("import std.uuid\nfn main() {{\n {body}\n}}\n");
+                for omitted in &required {
+                    let capabilities = required
+                        .iter()
+                        .filter(|name| *name != omitted)
+                        .map(|name| CapabilityName::new(*name).unwrap())
+                        .collect();
+                    let output = execute(operation_request_with_capabilities(
+                        Operation::Check,
+                        source.as_bytes(),
+                        SourceForm::Module,
+                        ResourceLimits::default(),
+                        capabilities,
+                    ))
+                    .unwrap();
+                    assert_eq!(output.status(), CompilationStatus::Rejected);
+                    assert!(
+                        output.diagnostics().diagnostics().iter().any(|diagnostic| {
+                            diagnostic.code() == "E1008" && diagnostic.message().contains(omitted)
+                        }),
+                        "{generator}, {body}, missing {omitted}: {}",
+                        output.diagnostics().human()
+                    );
+                }
+                let capabilities = required
+                    .iter()
+                    .map(|name| CapabilityName::new(*name).unwrap())
+                    .collect();
+                let output = execute(operation_request_with_capabilities(
+                    Operation::Check,
+                    source.as_bytes(),
+                    SourceForm::Module,
+                    ResourceLimits::default(),
+                    capabilities,
+                ))
+                .unwrap();
+                assert_eq!(
+                    output.status(),
+                    CompilationStatus::Success,
+                    "{}",
+                    output.diagnostics().human()
+                );
+            }
+        }
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            b"import std.uuid\nfn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn uuid_storage_is_private_and_generation_never_suspends() {
+        for source in [
+            "import std.uuid\nfn invalid(value: uuid.Uuid): UInt64 { value.high }\n",
+            "import std.uuid\nfn invalid(): uuid.Uuid { uuid.Uuid { high: 0, low: 0 } }\n",
+            "import std.uuid\nfn invalid(): uuid.Uuid ! uuid.UuidError { await uuid.Uuid.v4() }\n",
+            "import std.uuid\nfn invalid() {\n let generate = uuid.Uuid.v4[Int]\n _ = generate\n}\n",
+            "import std.uuid\nfn invalid() {\n let generate = uuid.Uuid.v8\n _ = generate\n}\n",
+        ] {
+            let output = execute(operation_request(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{source}");
+            assert!(
+                !output
+                    .diagnostics()
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code() == "T0001"),
+                "UUID rejection must come from an implemented phase: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn uuid_sealed_providers_execute_through_the_production_vm() {
+        use crate::test_control::{EnvelopeHandle, EnvelopeLimits, UuidTestProviders};
+        use std::time::{Duration, UNIX_EPOCH};
+        let envelope = EnvelopeHandle::new("uuid", EnvelopeLimits::new(4096, 4096, 4096));
+        envelope
+            .with_uuid_providers(
+                UuidTestProviders::new(
+                    vec![Ok(UNIX_EPOCH + Duration::from_millis(1_645_557_742_000))],
+                    vec![
+                        Ok(vec![
+                            0x91, 0x91, 0x08, 0xf7, 0x52, 0xd1, 0x33, 0x20, 0x5b, 0xac, 0xf8, 0x47,
+                            0xdb, 0x41, 0x48, 0xa8,
+                        ]),
+                        Ok(vec![
+                            0x0c, 0xc3, 0x18, 0xc4, 0xdc, 0x0c, 0x0c, 0x07, 0x39, 0x8f,
+                        ]),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let source = b"import std.uuid\nimport std.testing\ntest uuidProviders {\n let v4 = testing.assertOk(uuid.Uuid.v4())\n let v7 = testing.assertOk(uuid.Uuid.v7())\n testing.assertTextEqual(v4.toString(), \"919108f7-52d1-4320-9bac-f847db4148a8\")\n testing.assertTextEqual(v7.toString(), \"017f22e2-79b0-7cc3-98c4-dc0c0c07398f\")\n}\n";
+        let base = operation_request(
+            Operation::Test,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let request = base
+            .for_test_entry(&entries[0])
+            .unwrap()
+            .with_test_envelope(envelope);
+        let output = execute(request).unwrap();
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+    }
+
+    #[test]
+    fn uuid_os_providers_run_through_the_public_hosted_pipeline() {
+        let source = b"import std.uuid\nfn main(): Unit ! uuid.UuidError {\n let v4 = uuid.Uuid.v4()?\n let v7 = uuid.Uuid.v7()?\n if v4.version() != 4 or v7.version() != 7 {\n  panic(\"UUID provider version\")\n }\n if v4.variant() != uuid.UuidVariant.Rfc9562 or v7.variant() != uuid.UuidVariant.Rfc9562 {\n  panic(\"UUID provider variant\")\n }\n if uuid.Uuid.parse(v4.toString())? != v4 or uuid.Uuid.parse(v7.toString())? != v7 {\n  panic(\"UUID provider round trip\")\n }\n}\n";
+        let output = execute(operation_request(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+    }
+
+    #[test]
+    fn uuid_error_display_matches_every_kernel_kind_and_lexical_offset() {
+        let mut source = String::from(
+            "import std.uuid\nimport std.console\nfn main(): Unit ! console.ConsoleError {\n",
+        );
+        let mut expected = String::new();
+        for (index, kind) in tondo_stdlib::uuid::ERROR_VARIANTS.iter().enumerate() {
+            source.push_str(&format!(" let value{index} = uuid.UuidError {{ kind: uuid.UuidErrorKind.{kind}, offset: none }}\n console.println(Display.display(value{index}))?\n"));
+            expected.push_str(kind);
+            expected.push('\n');
+        }
+        source.push_str(" match uuid.Uuid.parse(\"!0000000-0000-0000-0000-000000000000\") {\n  ok(_) => panic(\"invalid text\")\n  err(failure) => console.println(Display.display(failure))?\n }\n}\n");
+        expected.push_str("InvalidCharacter at byte 0\n");
+        let output = execute(operation_request(
+            Operation::Run,
+            source.as_bytes(),
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+        assert_eq!(output.stdout(), expected.as_bytes());
+    }
+
+    #[test]
+    fn uuid_assert_ok_failure_formats_the_nominal_provider_error() {
+        use crate::test_control::{EnvelopeHandle, EnvelopeLimits, UuidTestProviders};
+        use tondo_stdlib::uuid::UuidErrorKind;
+        let envelope = EnvelopeHandle::new("uuid-failure", EnvelopeLimits::new(4096, 4096, 4096));
+        envelope
+            .with_uuid_providers(
+                UuidTestProviders::new(vec![], vec![Err(UuidErrorKind::EntropyFailure)]).unwrap(),
+            )
+            .unwrap();
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let base = operation_request(Operation::Test,
+            b"import std.uuid\nimport std.testing\ntest providerFailure {\n _ = testing.assertOk(uuid.Uuid.v4())\n}\n",
+            SourceForm::Module, ResourceLimits::default());
+        let entries = discover_tests(&base).unwrap();
+        let output = execute(
+            base.for_test_entry(&entries[0])
+                .unwrap()
+                .with_test_envelope(envelope),
+        )
+        .unwrap();
+        assert_ne!(output.exit_code(), 0);
+        assert!(
+            output.diagnostics().human().contains("EntropyFailure"),
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(!output.diagnostics().human().contains("E1105"));
     }
 
     #[test]

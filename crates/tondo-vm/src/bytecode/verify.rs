@@ -6703,6 +6703,12 @@ impl Verifier<'_> {
                     arguments,
                     ..
                 }) if arguments.is_empty()
+                    && self.program.uuid_error_fields(*nominal).is_some() => {}
+                Some(BytecodeTypeKind::Nominal {
+                    nominal: Some(nominal),
+                    arguments,
+                    ..
+                }) if arguments.is_empty()
                     && self
                         .program
                         .nominals

@@ -55,7 +55,9 @@ global and risk-scope coverage dimension, with all six critical mutants caught.
 the full local gate, publication and exact-SHA CI confirmation.
 `STD-UUID-IMPL-001` verifies the scalar Rust kernel with explicit generation
 inputs after the full local gate, source-bound quality, publication and
-exact-SHA CI confirmation. The next owner is `STD-UUID-HOST-001`.
+exact-SHA CI confirmation. `STD-UUID-HOST-001` is active: public compiler/VM
+registration and explicit OS providers are implemented; hosted quality,
+full-gate and publication closure remain pending.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6905,9 +6907,19 @@ estas leaves.
   Provider capability/quality/error normalization, public Tondo,
   production VM, native ABI/AOT and runtime heap admission are not promoted.
   Next: `STD-UUID-HOST-001`.
-- [ ] **STD-UUID-HOST-001 — Integrar proveedores de UUID.** Enlazar entropy y
-  clock declarados con límites y fallos nominales, sin RNG o reloj global
-  implícitos.
+- [ ] **STD-UUID-HOST-001 — Integrate hosted UUID providers.**
+  `ready-production-hosted` implements the fourteen public operations, private
+  128-bit value storage, exact capability checks and synchronous effects.
+  OS entropy uses approved `getrandom = "=0.4.3"`; v7 checks `SystemTime` before
+  entropy. Sealed envelope fixtures cover nominal failure, once consumption,
+  exhaustion and lifecycle. Transport/typed VM result admission precedes
+  provider effects. The boundary is recorded in
+  [`testing/stdlib-uuid-host.json`](./testing/stdlib-uuid-host.json) and
+  [`docs/contracts/stdlib-uuid-host.md`](./docs/contracts/stdlib-uuid-host.md).
+  Twenty-three focused compiler/VM tests and 86 invalid state records pass.
+  Strict component Clippy passes. Source-bound quality, full gate, publication and
+  exact-SHA CI closure remain pending. Native ABI/AOT and later owner leaves
+  are not promoted.
 - [ ] **STD-UUID-TEST-001 — Probar UUID.** Cubrir vectores por versión,
   canonical text, inválidos, orden aplicable, providers deterministas,
   colisiones modeladas y límites.

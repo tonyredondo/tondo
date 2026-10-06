@@ -1,0 +1,39 @@
+import std.uuid
+import std.bytes
+
+fn copy[T: Copy + Discard + Equatable + Key + Send + Share](value: T): T {
+    value
+}
+
+fn require(condition: Bool) {
+    if not condition {
+        panic("UUID hosted core regression failed")
+    }
+}
+
+fn main(): Unit ! (uuid.UuidError | bytes.BytesError) {
+    let nil = uuid.Uuid.nil()
+    let maximum = uuid.Uuid.max()
+    require(nil.isNil())
+    require(maximum.isMax())
+    require(nil.compare(maximum) == -1)
+    require(maximum.version() == 15)
+    require(maximum.variant() == uuid.UuidVariant.Future)
+    require(maximum.toString() == "ffffffff-ffff-ffff-ffff-ffffffffffff")
+    require(uuid.Uuid.fromBytes(maximum.toBytes())? == maximum)
+    require(copy(maximum) == maximum)
+    let keys: Map[uuid.Uuid, Int] = [nil: 0, maximum: 1]
+    require(keys[copy(maximum)] == some(1))
+    let parsed = uuid.Uuid.parse("URN:UUID:919108F7-52D1-4320-9BAC-F847DB4148A8")?
+    require(parsed.toString() == "919108f7-52d1-4320-9bac-f847db4148a8")
+    let namespace = uuid.Uuid.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")?
+    let name = bytes.Bytes("www.example.com")?
+    require(uuid.Uuid.v5(namespace, name)?.toString() == "2ed6657d-e927-568b-95e1-2665a8aea6a2")
+    match uuid.Uuid.parse("!0000000-0000-0000-0000-000000000000") {
+        ok(_) => panic("malformed UUID unexpectedly accepted")
+        err(failure) => {
+            require(failure.kind == uuid.UuidErrorKind.InvalidCharacter)
+            require(failure.offset == some(0))
+        }
+    }
+}

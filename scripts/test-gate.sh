@@ -400,6 +400,10 @@ run_step stdlib-uuid-implementation \
     scripts/stdlib-uuid-implementation-check.sh
 run_step stdlib-uuid-implementation-tests \
     scripts/stdlib-uuid-implementation-test.sh
+run_step stdlib-uuid-host \
+    scripts/stdlib-uuid-host-check.sh
+run_step stdlib-uuid-host-tests \
+    scripts/stdlib-uuid-host-test.sh
 run_step stdlib-log-contract \
     scripts/stdlib-log-check.sh
 run_step stdlib-log-contract-tests \

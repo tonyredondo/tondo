@@ -19,6 +19,8 @@ use crate::test_limits::{BudgetKind, BudgetLedger, LimitError, LimitProfile};
 use crate::test_output::CapturedOutput;
 use crate::test_plan::TestSourceClass;
 use crate::test_virtual_time::{AutoAdvance, VirtualDomain, VirtualTimeError, WaitKind};
+pub use crate::uuid_provider::UuidTestProviders;
+use tondo_stdlib::uuid::{UuidError, UuidErrorKind};
 
 pub const TEST_CONTROL_FORMAT: &str = "tondo-test-control-draft/1";
 
@@ -689,6 +691,7 @@ impl Error for ControlError {}
 struct EnvelopeState {
     _node_id: String,
     limits: EnvelopeLimits,
+    uuid_providers: Option<UuidTestProviders>,
     phase: ExecutionPhase,
     terminal: Option<Terminal>,
     sequence: u64,
@@ -721,6 +724,7 @@ impl EnvelopeHandle {
             state: Arc::new(Mutex::new(EnvelopeState {
                 _node_id: node_id.into(),
                 limits,
+                uuid_providers: None,
                 phase: ExecutionPhase::Setup,
                 terminal: None,
                 sequence: 0,
@@ -790,7 +794,17 @@ impl EnvelopeHandle {
             });
         }
         if state.phase != phase && phase != ExecutionPhase::Closed {
-            state.budget = BudgetLedger::closed(state.limits.profile());
+            let mut budget = BudgetLedger::closed(state.limits.profile());
+            if let Some(providers) = &state.uuid_providers {
+                reserve_evidence(
+                    &mut budget,
+                    [(BudgetKind::Memory, providers.logical_bytes())],
+                )?;
+            }
+            state.budget = budget;
+        }
+        if phase == ExecutionPhase::Closed {
+            state.uuid_providers = None;
         }
         state.phase = phase;
         Ok(())
@@ -802,6 +816,62 @@ impl EnvelopeHandle {
 
     pub(crate) fn limits(&self) -> Result<EnvelopeLimits, ControlError> {
         Ok(self.lock()?.limits)
+    }
+
+    /// Seal UUID fixtures before this attempt enters its body. This runtime
+    /// input does not grant any source capability or publish a Tondo handle.
+    pub fn with_uuid_providers(&self, providers: UuidTestProviders) -> Result<(), UuidError> {
+        let mut state = self
+            .lock()
+            .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ProviderMisconfigured))?;
+        if state.phase != ExecutionPhase::Setup || state.uuid_providers.is_some() {
+            return Err(crate::uuid_provider::error(
+                UuidErrorKind::ProviderMisconfigured,
+            ));
+        }
+        reserve_evidence(
+            &mut state.budget,
+            [
+                (BudgetKind::Work, 1),
+                (BudgetKind::Memory, providers.logical_bytes()),
+            ],
+        )
+        .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ResourceLimit))?;
+        state.uuid_providers = Some(providers);
+        Ok(())
+    }
+
+    pub(crate) fn uuid_clock(
+        &self,
+    ) -> Result<Option<Result<std::time::SystemTime, UuidError>>, UuidError> {
+        let mut state = self
+            .lock()
+            .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ProviderMisconfigured))?;
+        ensure_open(&state)
+            .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ProviderMisconfigured))?;
+        if state.uuid_providers.is_none() {
+            return Ok(None);
+        }
+        reserve_evidence(&mut state.budget, [(BudgetKind::Work, 1)])
+            .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ResourceLimit))?;
+        Ok(Some(state.uuid_providers.as_mut().unwrap().clock()))
+    }
+
+    pub(crate) fn uuid_entropy(
+        &self,
+        bytes: &mut [u8],
+    ) -> Result<Option<Result<(), UuidError>>, UuidError> {
+        let mut state = self
+            .lock()
+            .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ProviderMisconfigured))?;
+        ensure_open(&state)
+            .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ProviderMisconfigured))?;
+        if state.uuid_providers.is_none() {
+            return Ok(None);
+        }
+        reserve_evidence(&mut state.budget, [(BudgetKind::Work, 1)])
+            .map_err(|_| crate::uuid_provider::error(UuidErrorKind::ResourceLimit))?;
+        Ok(Some(state.uuid_providers.as_mut().unwrap().entropy(bytes)))
     }
 
     pub(crate) fn reserve_runtime_timer(&self) -> Result<(), ControlError> {
@@ -1348,6 +1418,7 @@ impl EnvelopeHandle {
         if state.virtual_time_active {
             return Err(ControlError::VirtualTimeActive);
         }
+        state.uuid_providers = None;
         state.phase = ExecutionPhase::Closed;
         Ok(())
     }

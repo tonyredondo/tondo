@@ -1872,6 +1872,16 @@ fn intrinsic_display_type(interner: &TypeInterner, root: TypeId) -> Result<bool,
             } if arguments.is_empty()
                 && identity.package().as_str() == crate::project::BOOTSTRAP_STANDARD_PACKAGE
                 && identity.source_id().as_str() == crate::project::BOOTSTRAP_STANDARD_PACKAGE
+                && identity.module().as_str() == "uuid"
+                && identity.namespace() == crate::package::Namespace::Type
+                && matches!(identity.declaration().names(), [name] if matches!(name.as_str(), "UuidError" | "UuidErrorKind")) =>
+                {}
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } if arguments.is_empty()
+                && identity.package().as_str() == crate::project::BOOTSTRAP_STANDARD_PACKAGE
+                && identity.source_id().as_str() == crate::project::BOOTSTRAP_STANDARD_PACKAGE
                 && identity.module().as_str() == "testing"
                 && identity.namespace() == crate::package::Namespace::Type
                 && matches!(identity.declaration().names(), [name] if matches!(name.as_str(), "FloatToleranceError" | "TempError" | "GenerationError")) =>
@@ -2746,6 +2756,20 @@ impl HirSelectArm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
     Reflection(tondo_vm::reflection::ReflectionOperation),
+    UuidNil,
+    UuidMax,
+    UuidParse,
+    UuidFromBytes,
+    UuidToBytes,
+    UuidToString,
+    UuidVersion,
+    UuidVariant,
+    UuidIsNil,
+    UuidIsMax,
+    UuidCompare,
+    UuidV4,
+    UuidV5,
+    UuidV7,
     ConsolePrint,
     ConsolePrintln,
     ConsoleFlush,
@@ -3254,6 +3278,19 @@ pub enum HirBootstrapHostFunction {
 }
 
 impl HirBootstrapHostFunction {
+    pub(crate) fn uuid_static(name: &str) -> Option<Self> {
+        Some(match name {
+            "nil" => Self::UuidNil,
+            "max" => Self::UuidMax,
+            "parse" => Self::UuidParse,
+            "fromBytes" => Self::UuidFromBytes,
+            "v4" => Self::UuidV4,
+            "v5" => Self::UuidV5,
+            "v7" => Self::UuidV7,
+            _ => return None,
+        })
+    }
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::Reflection(operation) => operation.name(),
@@ -3552,6 +3589,20 @@ impl HirBootstrapHostFunction {
             Self::YamlOptionsDefaults => "intrinsic.yaml.YamlOptions.defaults",
             Self::YamlOptionsConstruct => "intrinsic.yaml.YamlOptions.construct",
             Self::YamlValidate => "std.yaml.validate",
+            Self::UuidNil => "std.uuid.Uuid.nil",
+            Self::UuidMax => "std.uuid.Uuid.max",
+            Self::UuidParse => "std.uuid.Uuid.parse",
+            Self::UuidFromBytes => "std.uuid.Uuid.fromBytes",
+            Self::UuidToBytes => "std.uuid.Uuid.toBytes",
+            Self::UuidToString => "std.uuid.Uuid.toString",
+            Self::UuidVersion => "std.uuid.Uuid.version",
+            Self::UuidVariant => "std.uuid.Uuid.variant",
+            Self::UuidIsNil => "std.uuid.Uuid.isNil",
+            Self::UuidIsMax => "std.uuid.Uuid.isMax",
+            Self::UuidCompare => "std.uuid.Uuid.compare",
+            Self::UuidV4 => "std.uuid.Uuid.v4",
+            Self::UuidV5 => "std.uuid.Uuid.v5",
+            Self::UuidV7 => "std.uuid.Uuid.v7",
             Self::YamlParse => "std.yaml.parse",
             Self::YamlParseAll => "std.yaml.parseAll",
             Self::YamlParseView => "std.yaml.parseView",

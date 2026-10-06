@@ -5272,6 +5272,57 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        let mut identifiers = node
+            .child_tokens()
+            .filter(|token| token.kind() == TokenKind::Identifier);
+        if let (Some(module_token), Some(type_token), Some(function_token), None) = (
+            identifiers.next(),
+            identifiers.next(),
+            identifiers.next(),
+            identifiers.next(),
+        ) && type_token.token().normalized_identifier() == Some("Uuid")
+            && let Some(reference) = self.resolved.reference(file, module_token.range())
+            && let ResolvedEntity::Module(module) = reference.entity()
+            && module.package().as_str() == "toolchain:std:0.1-bootstrap"
+            && module.path().as_str() == "uuid"
+        {
+            if node
+                .child_nodes()
+                .any(|child| child.kind() == SyntaxKind::BracketPostfix)
+            {
+                self.emit(
+                    self.sources.span(file, node.range())?,
+                    "E1104",
+                    "std.uuid functions do not accept explicit type arguments",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, node.range());
+            }
+            let Some(function) = function_token
+                .token()
+                .normalized_identifier()
+                .and_then(HirBootstrapHostFunction::uuid_static)
+            else {
+                self.emit(
+                    self.sources.span(file, node.range())?,
+                    "E1102",
+                    "unknown std.uuid associated function",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, node.range());
+            };
+            let value =
+                self.bootstrap_host_callee(function, self.sources.span(file, node.range())?)?;
+            return self.close_contextual_function_value(
+                file,
+                node.range(),
+                value,
+                expected,
+                context,
+            );
+        }
         if let Some(collection) =
             self.check_sync_collection_literal(file, node, expected, context)?
         {
@@ -15605,6 +15656,11 @@ impl<'a> ExpressionChecker<'a> {
         let (module_token, function_token, static_type) = match identifiers.as_slice() {
             [module_token, function_token] => (module_token, function_token, 0_u8),
             [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("Uuid") =>
+            {
+                (module_token, function_token, 32_u8)
+            }
+            [module_token, type_token, function_token]
                 if type_token.token().normalized_identifier() == Some("TextDiff") =>
             {
                 (module_token, function_token, 31_u8)
@@ -15781,7 +15837,16 @@ impl<'a> ExpressionChecker<'a> {
             // call. Leave it for the nominal-constructor checker below.
             return Ok(None);
         }
-        let host_function = if static_type == 31 {
+        let host_function = if static_type == 32 {
+            if module.path().as_str() != "uuid" {
+                return Ok(None);
+            }
+            let Some(function) = function_name.and_then(HirBootstrapHostFunction::uuid_static)
+            else {
+                return Ok(None);
+            };
+            function
+        } else if static_type == 31 {
             if module.path().as_str() == "testing" && function_name == Some("render") {
                 HirBootstrapHostFunction::TestingTextDiffRender
             } else {
@@ -19842,6 +19907,20 @@ impl<'a> ExpressionChecker<'a> {
             {
                 match member {
                     "render" => HirBootstrapHostFunction::TestingTextDiffRender,
+                    _ => return Ok(None),
+                }
+            }
+            TypeKind::Nominal { identity, .. }
+                if *identity == SymbolIdentity::bootstrap_standard("uuid", "Uuid") =>
+            {
+                match member {
+                    "toBytes" => HirBootstrapHostFunction::UuidToBytes,
+                    "toString" => HirBootstrapHostFunction::UuidToString,
+                    "version" => HirBootstrapHostFunction::UuidVersion,
+                    "variant" => HirBootstrapHostFunction::UuidVariant,
+                    "isNil" => HirBootstrapHostFunction::UuidIsNil,
+                    "isMax" => HirBootstrapHostFunction::UuidIsMax,
+                    "compare" => HirBootstrapHostFunction::UuidCompare,
                     _ => return Ok(None),
                 }
             }

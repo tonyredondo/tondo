@@ -4384,10 +4384,22 @@ quality and the full functional gate pass: 293,081 of 319,953 workspace lines
 (91.6013%), every global/risk 80% floor and six critical mutants caught.
 The implementation checker verifies 96 invalid records and both valid local
 states. Publication and exact-SHA CI closure are tracked separately.
-Providers, independent tests/fuzzing, performance, conformance and usage remain
-in `STD-UUID-HOST-001`, `STD-UUID-TEST-001`, `STD-UUID-PERF-001`,
-`STD-UUID-CONF-001` and `STD-UUID-DOC-001`; public compiler/production VM,
-native ABI and native AOT are not promoted by the kernel.
+`STD-UUID-HOST-001` now implements public compiler/production VM registration
+for all fourteen operations, with private high/low `UInt64` storage and the six
+normative value capabilities. Exactly pinned `getrandom 0.4.3` supplies one
+bounded entropy fill; checked `SystemTime` supplies v7's Unix milliseconds.
+Direct/alias/defer references enforce provider capabilities with `E1008`.
+`UuidError` exposes `kind: UuidErrorKind` and `offset: Int?` with intrinsic
+`Display`, including the real `testing.assertOk` failure path. Sealed Rust
+envelope fixtures exercise provider failures without a public Tondo setter.
+Transport and complete typed result storage are checked before provider effects,
+including ordinary VM byte/object limits and test phase budgets. The host
+register is [`testing/stdlib-uuid-host.json`](./testing/stdlib-uuid-host.json);
+its contract and local promotion state are
+[`docs/contracts/stdlib-uuid-host.md`](./docs/contracts/stdlib-uuid-host.md).
+HOST quality/full-gate/publication closure is pending. Independent model/fuzz,
+performance, conformance and usage remain TEST, PERF, CONF and DOC. Native ABI
+and native AOT are not promoted by the hosted implementation.
 
 ### 14.18 `std.log`
 

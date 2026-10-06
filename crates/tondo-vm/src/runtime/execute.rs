@@ -1971,9 +1971,7 @@ impl PendingHostImportPlanner<'_> {
         preview: super::VmHostReturnPreview<'_>,
     ) -> Result<Option<host_import::PreparedHostImport>, VmError> {
         let task = recipient.task();
-        let Some(budget) = self.budget(task) else {
-            return Ok(None);
-        };
+        let budget = self.budget(task);
         let record = self
             .tasks
             .get(task)
@@ -1989,7 +1987,20 @@ impl PendingHostImportPlanner<'_> {
             limits: self.limits,
             nominal_names: self.nominal_names,
         }
-        .host_import_preview_cost(outcome, preview, Some(&budget))?;
+        .host_import_preview_cost(outcome, preview, budget.as_ref())?;
+        let Some(budget) = budget else {
+            // An ordinary synchronous call has no phase account. It still
+            // checks the complete result against the VM's byte/object limits
+            // before the provider runs; no VM heap operation can interleave.
+            self.heap.preflight_import(
+                cost.objects,
+                cost.heap_bytes,
+                None,
+                self.roots,
+                self.statistics,
+            )?;
+            return Ok(None);
+        };
         let mut prepared = host_import::reserve_prepared_import(
             self.heap,
             self.statistics,
@@ -2834,12 +2845,6 @@ impl<'program, 'host> Engine<'program, 'host> {
         outcome: BytecodeTypeId,
         prepared: Option<host_import::PreparedHostImport>,
     ) -> Result<(VmHostReturn, Option<host_import::PreparedHostImport>), VmError> {
-        if self.current_test_memory().is_none() {
-            // Ordinary execution has no phase account or joint import pool.
-            return self
-                .dispatch_host_arguments(name, arguments)
-                .map(|returned| (returned, prepared));
-        }
         let task = self.tasks.get_mut(self.current_task).ok_or_else(|| {
             VmError::invariant("an admitted synchronous call has no executing task")
         })?;
@@ -4482,6 +4487,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         ) -> Result<T, VmError>,
     ) -> Result<T, VmError> {
         if worker.is_none()
+            && outcome.is_none()
             && self.entry_test_memory.is_none()
             && self.inherited_test_work.is_none()
             && self.test_instruction_budgets.is_empty()
@@ -13859,6 +13865,47 @@ impl Engine<'_, '_> {
                     .nominals
                     .get(nominal.index() as usize)
                     .ok_or_else(|| VmError::invariant("Display nominal metadata is missing"))?;
+                if let Some(fields) = self.program.uuid_error_fields(*nominal) {
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant("UUID error is not managed"));
+                    };
+                    let HeapObject::Record {
+                        nominal: actual,
+                        fields: values,
+                    } = self.heap.get(handle)?
+                    else {
+                        return Err(VmError::invariant("UUID error has an invalid value shape"));
+                    };
+                    if actual != nominal {
+                        return Err(VmError::invariant("UUID error nominal differs"));
+                    }
+                    let field = |member| {
+                        values
+                            .iter()
+                            .find(|(id, _)| *id == member)
+                            .and_then(|(_, value)| value.as_ref())
+                            .cloned()
+                            .ok_or_else(|| VmError::invariant("UUID error field is missing"))
+                    };
+                    let kind = self.display_text(fields[0].ty, field(fields[0].member)?)?;
+                    let kind = kind
+                        .strip_prefix("UuidErrorKind.")
+                        .ok_or_else(|| VmError::invariant("UUID error kind is invalid"))?;
+                    let Value::Heap(offset) = field(fields[1].member)? else {
+                        return Err(VmError::invariant("UUID error offset is invalid"));
+                    };
+                    let _memory = self
+                        .current_test_memory()
+                        .map(|budget| budget.reserve(super::TEST_DETACHED_VALUE_BYTES + 64))
+                        .transpose()?;
+                    return match self.heap.get(offset)? {
+                        HeapObject::OptionNone => Ok(kind.to_owned()),
+                        HeapObject::OptionSome(Some(Value::Integer(offset))) => {
+                            Ok(format!("{kind} at byte {offset}"))
+                        }
+                        _ => Err(VmError::invariant("UUID error offset has an invalid shape")),
+                    };
+                }
                 let names = schema.intrinsic_display_variants().ok_or_else(|| {
                     VmError::invariant("Display nominal has no intrinsic implementation")
                 })?;
@@ -32200,6 +32247,77 @@ mod tests {
             },
         });
         (program, array)
+    }
+
+    #[test]
+    fn uuid_ordinary_and_paused_imports_check_heap_without_a_test_account() {
+        use super::super::VmHostReturnPreview;
+        let (program, array) = prepared_import_program();
+        let value = PreparedReplyHost::new().value.unwrap();
+        for paused in [false, true] {
+            for refuse in [None, Some("bytes"), Some("objects")] {
+                let mut worker_host = RejectingHost;
+                let mut worker = executor_engine_with_scope(&program, &mut worker_host);
+                let cost = worker.host_import_cost(array, &value, None).unwrap();
+                assert!(cost.objects > 1 && cost.heap_bytes > 1);
+                worker.heap = Heap::new(
+                    VmLimits {
+                        max_heap_bytes: if refuse == Some("bytes") {
+                            cost.heap_bytes - 1
+                        } else {
+                            cost.heap_bytes
+                        },
+                        max_heap_objects: if refuse == Some("objects") {
+                            cost.objects - 1
+                        } else {
+                            cost.objects
+                        },
+                        ..pressure_limits()
+                    },
+                    derive_trace_metadata(&program).unwrap().types,
+                );
+                let mut parent_host = RejectingHost;
+                let mut parent = executor_engine_with_scope(&program, &mut parent_host);
+                let mut committed = false;
+                let result = worker.with_host_import_admission_for(Some(array), |_, admission| {
+                    if paused {
+                        let context = admission.pause_current()?.unwrap();
+                        let guard = context.guard();
+                        parent.with_host_import_admission_context(
+                            None,
+                            Some(context),
+                            |_, receiving| {
+                                let import = receiving
+                                    .prepare_current(VmHostReturnPreview::Value(&value))?;
+                                assert!(import.is_none());
+                                receiving.commit(&mut [import])?;
+                                committed = true;
+                                Ok(())
+                            },
+                        )?;
+                        assert!(guard.take_prepared()?.is_none());
+                    } else {
+                        let import =
+                            admission.prepare_current(VmHostReturnPreview::Value(&value))?;
+                        assert!(import.is_none());
+                        admission.commit(&mut [import])?;
+                        committed = true;
+                    }
+                    Ok(())
+                });
+                if refuse.is_some() {
+                    assert!(result.unwrap_err().is_resource_limit());
+                } else {
+                    result.unwrap();
+                }
+                assert_eq!(committed, refuse.is_none(), "{paused}/{refuse:?}");
+                assert!(worker.entry_test_memory.is_none() && parent.entry_test_memory.is_none());
+                assert!(worker.tasks[0].prepared_host_import.is_none());
+                assert!(parent.tasks[0].prepared_host_import.is_none());
+                assert_eq!(worker.statistics.allocations, 0);
+                assert_eq!(parent.statistics.allocations, 0);
+            }
+        }
     }
 
     #[test]

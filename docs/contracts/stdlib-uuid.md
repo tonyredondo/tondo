@@ -4,9 +4,9 @@ Estado: **contract-locked** para `STD-0.1B` / `STD-ID-001`.
 
 This document locks the normative `std.uuid` design. `STD-UUID-IMPL-001` now
 has an explicit-input scalar Rust kernel; its local promotion state and proof
-are recorded in section 9. Runtime providers, public Tondo calls, independent
-model/fuzz evidence, performance, conformance and usage documentation remain
-separate owner leaves.
+are recorded in section 9. Section 10 records the new hosted provider/public
+registration boundary. Independent model/fuzz evidence, performance,
+conformance and usage documentation remain separate owner leaves.
 
 El contrato sigue [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html), que
 define el UUID de 128 bits y sustituye RFC 4122. Tondo adopta una superficie
@@ -156,8 +156,9 @@ The normative Tondo capabilities are `Copy`, `Discard`, `Equatable`, `Key`,
 `Send` and `Share`. Ordering is exposed by `Uuid.compare`; `Eq`, `Ord` and
 `Hash` are Rust traits of the kernel, not additional intrinsic Tondo
 capabilities. A UUID contains no references, host handles or mutable aliases.
-Read operations need no allocation except public `toBytes`/`toString`, which
-materialize their result copies.
+The Rust kernel's read operations use fixed width state, except formatting an
+owned string. Hosted transport and managed VM records have separate logical
+storage costs; public `toBytes`/`toString` additionally materialize copies.
 
 ## 5. Generación y capabilities
 
@@ -330,8 +331,8 @@ formatting builds 36 ASCII bytes on the stack; `try_to_string()` reserves an
 owned 36-byte string and maps a failed reservation to `OutOfMemory`. `Display`
 writes the same bytes to its caller's formatter, whose allocation policy is
 outside the kernel. These facts do not measure allocator calls, RSS or code
-size. Public Tondo `Bytes`/`String` materialization and `vm_heap` admission remain
-unimplemented; the Rust return types do not demonstrate those runtime bounds.
+size. The Rust return types alone do not demonstrate public Tondo `Bytes`/`String`
+materialization or `vm_heap` admission; section 10 supplies the hosted evidence.
 
 The 18 kernel tests cover the RFC 9562 v4/v5/v7 vectors, all 256 variant bytes
 crossed with all 16 version nibbles, exact lexical offsets, byte-copy ownership,
@@ -346,13 +347,39 @@ The implementation checker and tests are
 and [`scripts/stdlib-uuid-implementation-test.sh`](../../scripts/stdlib-uuid-implementation-test.sh).
 They validate both local states and reject 96 invalid state/route/dependency
 records before running the canonical 18 Rust tests and checking `force-soft`.
-The host state is `not-claimed-until-uuid-host`; production VM, native ABI and
-native AOT lowering are not promoted. The next owner after implementation
-closure is `STD-UUID-HOST-001`, followed by TEST, PERF, CONF and DOC.
+The historical kernel-only host state is `not-claimed-until-uuid-host`;
+production VM, native ABI and native AOT are not promoted by that kernel proof.
+Hosted progression is recorded separately below, followed by TEST, PERF, CONF
+and DOC.
 
-The current kernel is `verified-stdlib-kernel`. The full functional gate and
-source-bound quality pass, with 293,081 of 319,953 covered workspace lines
+The kernel block is `verified-stdlib-kernel`. Its completed source revision
+passed the full functional gate and source-bound quality, with 293,081 of
+319,953 covered workspace lines
 (91.6013%), every global/risk 80% line/function/region floor and all six selected
 critical mutants caught. The indexed UUID source coverage includes its unit
 tests; it is not a separate production-only coverage campaign. Publication
 and exact-SHA CI closure are recorded in the tracker.
+
+## 10. Hosted provider and public registration boundary
+
+`STD-UUID-HOST-001` implements all fourteen public operations in the compiler
+and production VM, selecting `hosted-scalar`. The parent register links the
+[`host register`](../../testing/stdlib-uuid-host.json) and
+[`host contract`](stdlib-uuid-host.md). `ready-production-hosted` requires focused
+proof and keeps quality pending; `verified-production-hosted` requires the
+source-bound quality and full functional gate. Publication/CI closure remains
+a separate tracker step.
+
+The carrier is a private high/low `UInt64` record preserving all 128 bits.
+Provider calls use exactly pinned `getrandom 0.4.3` and checked `SystemTime`.
+Core/import/v5 remain provider-free; references to v4 and v7 require the declared
+capabilities. A sealed Rust envelope fixture exercises once-only providers,
+nominal failures and refusal without granting source capabilities. Both public
+error fields and intrinsic `Display` work through the real test framework.
+
+The host reserves transport and complete typed result storage before provider
+effects. Ordinary synchronous VM execution checks its byte/object heap limits
+without creating a test account; test execution additionally reserves its
+phase account and joint import pool. This boundary promotes hosted registration
+and admission only. Public conformance, native ABI/AOT, independent model/fuzz,
+performance and usage remain unpromoted.

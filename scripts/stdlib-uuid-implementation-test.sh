@@ -13,9 +13,12 @@ expect_failure() {
 for status in ready-stdlib-kernel verified-stdlib-kernel; do
     jq --arg status "$status" '
       .implementation.status = $status
+      | del(.host)
+      | .implementation.host = "not-claimed-until-uuid-host"
+      | .implementation.runtime_heap = "not-claimed"
       | if $status == "verified-stdlib-kernel" then
           .implementation.quality_gate = "verified-80-percent-per-scope"
-          | .implementation.required_follow_ups |= map(select(. != "STD-UUID-IMPL-001"))
+          | .implementation.required_follow_ups = ["STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
           | .promotion.next_blocks = ["STD-UUID-HOST-001"]
         else
           .implementation.quality_gate = "pending-80-percent-per-scope"

@@ -273,9 +273,29 @@ pub(super) struct PausedImportCapacity {
     live_objects: u32,
     live_bytes: u64,
     limit: u32,
+    byte_limit: u64,
 }
 
 impl PausedImportCapacity {
+    pub(super) fn preflight(&self, objects: u32, bytes: u64) -> Result<(), VmError> {
+        if self
+            .live_objects
+            .checked_add(self.reserved.load(Ordering::Acquire))
+            .and_then(|total| total.checked_add(objects))
+            .is_none_or(|total| total > self.limit)
+            || self
+                .live_bytes
+                .checked_add(bytes)
+                .is_none_or(|total| total > self.byte_limit)
+        {
+            return Err(VmError::OutOfMemory {
+                live_objects: self.live_objects,
+                live_bytes: self.live_bytes,
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn reserve(&mut self, objects: u32) -> Result<ImportObjectReservation, VmError> {
         if self
             .live_objects
@@ -428,6 +448,7 @@ impl Heap {
             live_objects: self.live_objects,
             live_bytes: self.live_bytes,
             limit: self.limits.max_heap_objects,
+            byte_limit: self.limits.max_heap_bytes,
         })
     }
 

@@ -38,6 +38,7 @@ use crate::test_control::{ControlError, EnvelopeHandle};
 use crate::test_temporaries::TempError;
 
 mod filesystem;
+mod uuid;
 
 const INT_MIN: i128 = i64::MIN as i128;
 const INT_MAX: i128 = i64::MAX as i128;
@@ -4187,7 +4188,9 @@ impl BootstrapHost {
         if let Some(maximum) = maximum {
             response.reserve(maximum, [])?;
         }
-        let value = if base_name == "std.console.readLine" {
+        let value = if base_name.starts_with("std.uuid.Uuid.") {
+            self.invoke_uuid_admitted(base_name, arguments, &mut response, admission)?
+        } else if base_name == "std.console.readLine" {
             let [reader] = arguments else {
                 return Err(VmError::Host("readLine expects one Input".into()));
             };
@@ -8155,6 +8158,7 @@ impl VmHost for BootstrapHost {
             || Self::is_filesystem_mutation(base)
             || Self::is_console_output(base)
             || base == "std.console.readLine"
+            || base.starts_with("std.uuid.Uuid.")
         {
             return self.invoke_admitted_with_import(name, &arguments, budget, admission);
         }
@@ -8327,6 +8331,14 @@ impl VmHost for BootstrapHost {
         // host contract is owned by the unspecialized function name.
         let specialized_name = name;
         let name = name.split_once('[').map_or(name, |(base, _)| base);
+        if name.starts_with("std.uuid.Uuid.") {
+            return self.invoke_uuid_admitted(
+                name,
+                arguments,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            );
+        }
         match (name, arguments) {
             ("std.console.print", [RuntimeValue::String(text)]) => {
                 if let Some(envelope) = self.testing.clone() {

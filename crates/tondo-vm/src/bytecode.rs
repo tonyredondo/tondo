@@ -210,6 +210,45 @@ impl BytecodeProgram {
     pub fn ty(&self, id: BytecodeTypeId) -> Option<&BytecodeType> {
         self.types.get(id.index() as usize)
     }
+
+    /// Display admission for the exact UUID error record and its field types.
+    pub(crate) fn uuid_error_fields(&self, id: BytecodeNominalId) -> Option<&[BytecodeField; 2]> {
+        let nominal = self.nominals.get(id.index() as usize)?;
+        if nominal.name != "UuidError"
+            || nominal.generic_arity != 0
+            || nominal.identity != "@27:toolchain:std:0.1-bootstrap::uuid::type::UuidError"
+        {
+            return None;
+        }
+        let BytecodeNominalShape::Record { fields } = &nominal.shape else {
+            return None;
+        };
+        let fields: &[BytecodeField; 2] = fields.as_slice().try_into().ok()?;
+        let BytecodeTypeKind::Nominal {
+            nominal: Some(kind),
+            identity,
+            arguments,
+        } = &self.ty(fields[0].ty)?.kind
+        else {
+            return None;
+        };
+        let kind = self.nominals.get(kind.index() as usize)?;
+        if !arguments.is_empty()
+            || identity != &kind.identity
+            || kind.name != "UuidErrorKind"
+            || kind.intrinsic_display_variants().is_none()
+        {
+            return None;
+        }
+        let BytecodeTypeKind::Option(offset) = self.ty(fields[1].ty)?.kind else {
+            return None;
+        };
+        matches!(
+            self.ty(offset)?.kind,
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Int)
+        )
+        .then_some(fields)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -805,6 +844,22 @@ impl BytecodeNominal {
             return None;
         }
         let names: &'static [&'static str] = match (self.name.as_str(), self.identity.as_str()) {
+            ("UuidErrorKind", "@27:toolchain:std:0.1-bootstrap::uuid::type::UuidErrorKind") => &[
+                "InvalidTextLength",
+                "InvalidCharacter",
+                "InvalidSeparator",
+                "InvalidUrnPrefix",
+                "InvalidBytesLength",
+                "NameLimitExceeded",
+                "TimestampOutOfRange",
+                "EntropyUnavailable",
+                "EntropyFailure",
+                "ClockUnavailable",
+                "ClockFailure",
+                "ProviderMisconfigured",
+                "ResourceLimit",
+                "OutOfMemory",
+            ],
             (
                 "FloatToleranceError",
                 "@27:toolchain:std:0.1-bootstrap::testing::type::FloatToleranceError",
@@ -1780,6 +1835,128 @@ pub enum BytecodeTag {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uuid_error_display_requires_exact_record_kind_and_offset_schemas() {
+        let mut program = BytecodeProgram {
+            reflection: Default::default(),
+            types: vec![],
+            nominals: vec![],
+            callables: vec![],
+            constants: vec![],
+            functions: vec![],
+        };
+        let kind_identity = "@27:toolchain:std:0.1-bootstrap::uuid::type::UuidErrorKind";
+        program.types = vec![
+            BytecodeType {
+                name: "kind".into(),
+                kind: BytecodeTypeKind::Nominal {
+                    nominal: Some(BytecodeNominalId::new(0)),
+                    identity: kind_identity.into(),
+                    arguments: vec![],
+                },
+            },
+            BytecodeType {
+                name: "Int".into(),
+                kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Int),
+            },
+            BytecodeType {
+                name: "Int?".into(),
+                kind: BytecodeTypeKind::Option(BytecodeTypeId::new(1)),
+            },
+        ];
+        program.nominals = vec![
+            BytecodeNominal {
+                name: "UuidErrorKind".into(),
+                identity: kind_identity.into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Enum {
+                    variants: (0..14)
+                        .map(|member| BytecodeVariant {
+                            member,
+                            payload: BytecodeVariantPayload::Unit,
+                        })
+                        .collect(),
+                },
+            },
+            BytecodeNominal {
+                name: "UuidError".into(),
+                identity: "@27:toolchain:std:0.1-bootstrap::uuid::type::UuidError".into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Record {
+                    fields: vec![
+                        BytecodeField {
+                            member: 20,
+                            ty: BytecodeTypeId::new(0),
+                        },
+                        BytecodeField {
+                            member: 21,
+                            ty: BytecodeTypeId::new(2),
+                        },
+                    ],
+                },
+            },
+        ];
+        let id = BytecodeNominalId::new(1);
+        assert!(program.uuid_error_fields(id).is_some());
+        for mutation in [
+            "name",
+            "identity",
+            "arity",
+            "record-shape",
+            "record-count",
+            "kind-type",
+            "kind-name",
+            "kind-identity",
+            "kind-arity",
+            "kind-count",
+            "kind-payload",
+            "offset-type",
+            "offset-inner",
+        ] {
+            let mut invalid = program.clone();
+            match mutation {
+                "name" => invalid.nominals[1].name = "Other".into(),
+                "identity" => invalid.nominals[1].identity = "user::UuidError".into(),
+                "arity" => invalid.nominals[1].generic_arity = 1,
+                "record-shape" => {
+                    invalid.nominals[1].shape = BytecodeNominalShape::Enum { variants: vec![] }
+                }
+                "record-count" => {
+                    let BytecodeNominalShape::Record { fields } = &mut invalid.nominals[1].shape
+                    else {
+                        unreachable!()
+                    };
+                    fields.pop();
+                }
+                "kind-type" => {
+                    invalid.types[0].kind = BytecodeTypeKind::Scalar(BytecodeScalarType::Int)
+                }
+                "kind-name" => invalid.nominals[0].name = "Other".into(),
+                "kind-identity" => invalid.nominals[0].identity = "user::UuidErrorKind".into(),
+                "kind-arity" => invalid.nominals[0].generic_arity = 1,
+                "kind-count" | "kind-payload" => {
+                    let BytecodeNominalShape::Enum { variants } = &mut invalid.nominals[0].shape
+                    else {
+                        unreachable!()
+                    };
+                    if mutation == "kind-count" {
+                        variants.pop();
+                    } else {
+                        variants[0].payload = BytecodeVariantPayload::Tuple(vec![]);
+                    }
+                }
+                "offset-type" => {
+                    invalid.types[2].kind = BytecodeTypeKind::Scalar(BytecodeScalarType::Int)
+                }
+                "offset-inner" => {
+                    invalid.types[1].kind = BytecodeTypeKind::Scalar(BytecodeScalarType::Bool)
+                }
+                _ => unreachable!(),
+            }
+            assert!(invalid.uuid_error_fields(id).is_none(), "{mutation}");
+        }
+    }
 
     #[test]
     fn standard_enum_display_requires_exact_identity_and_unit_variant_schema() {

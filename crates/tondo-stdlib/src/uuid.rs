@@ -18,6 +18,26 @@ pub const MAX_UNIX_MILLISECONDS: i128 = (1_i128 << 48) - 1;
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const URN_PREFIX: &[u8; 9] = b"urn:uuid:";
 
+/// Closed declaration order shared with the trusted compiler host bridge.
+pub const VARIANT_NAMES: &[&str] = &["Rfc9562", "Ncs", "Microsoft", "Future"];
+/// Nominal error tags; no platform error strings cross this schema.
+pub const ERROR_VARIANTS: &[&str] = &[
+    "InvalidTextLength",
+    "InvalidCharacter",
+    "InvalidSeparator",
+    "InvalidUrnPrefix",
+    "InvalidBytesLength",
+    "NameLimitExceeded",
+    "TimestampOutOfRange",
+    "EntropyUnavailable",
+    "EntropyFailure",
+    "ClockUnavailable",
+    "ClockFailure",
+    "ProviderMisconfigured",
+    "ResourceLimit",
+    "OutOfMemory",
+];
+
 /// UUID variant bits; external values in every variant are preserved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UuidVariant {

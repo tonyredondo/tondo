@@ -69,6 +69,7 @@ pub mod test_tree;
 pub mod test_virtual_time;
 pub mod toolchain;
 pub mod types;
+mod uuid_provider;
 
 /// Language edition targeted by the bootstrap compiler.
 pub const LANGUAGE_EDITION: &str = "0.1";

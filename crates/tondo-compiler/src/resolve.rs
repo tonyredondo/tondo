@@ -748,6 +748,31 @@ fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShap
     ]
 }
 
+fn bootstrap_uuid_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 4] {
+    [
+        (
+            "Uuid",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["high", "low"]),
+        ),
+        (
+            "UuidVariant",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(tondo_stdlib::uuid::VARIANT_NAMES),
+        ),
+        (
+            "UuidErrorKind",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(tondo_stdlib::uuid::ERROR_VARIANTS),
+        ),
+        (
+            "UuidError",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["kind", "offset"]),
+        ),
+    ]
+}
+
 fn bootstrap_yaml_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 6] {
     [
         (
@@ -1354,6 +1379,7 @@ impl Resolver<'_> {
         )?;
         self.install_bootstrap_module_nominals(file, program, "json", &bootstrap_json_nominals())?;
         self.install_bootstrap_module_nominals(file, program, "yaml", &bootstrap_yaml_nominals())?;
+        self.install_bootstrap_module_nominals(file, program, "uuid", &bootstrap_uuid_nominals())?;
         self.install_bootstrap_module_nominals(
             file,
             program,
@@ -1518,6 +1544,7 @@ impl Resolver<'_> {
                 },
                 synthetic: true,
             });
+            let private_uuid_fields = module_name == "uuid" && name.as_str() == "Uuid";
             program
                 .bootstrap_nominals
                 .insert((module.clone(), name), id);
@@ -1540,7 +1567,11 @@ impl Resolver<'_> {
                             MemberOwner::Type(id),
                             field,
                             MemberKind::RecordField,
-                            Visibility::Public,
+                            if private_uuid_fields {
+                                Visibility::Private
+                            } else {
+                                Visibility::Public
+                            },
                             span,
                         );
                     }

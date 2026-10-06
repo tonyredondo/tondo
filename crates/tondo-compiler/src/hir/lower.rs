@@ -382,6 +382,7 @@ impl<'a> TypeLowerer<'a> {
             );
         }
         self.lower_bootstrap_testing_nominal_declarations()?;
+        self.lower_bootstrap_uuid_nominal_declarations()?;
         self.lower_bootstrap_yaml_nominal_declarations()?;
         self.lower_bootstrap_encoding_nominal_declarations()?;
         self.lower_bootstrap_serialization_nominal_declarations()?;
@@ -394,6 +395,139 @@ impl<'a> TypeLowerer<'a> {
         self.lower_reflection_nominals()?;
         self.lower_bootstrap_fs_nominal_declarations()?;
         self.lower_bootstrap_console_nominal_declarations()
+    }
+
+    fn lower_bootstrap_uuid_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("uuid")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let uint = self.interner.scalar(ScalarType::UInt64);
+        let int = self.interner.scalar(ScalarType::Int);
+        let bool_type = self.interner.scalar(ScalarType::Bool);
+        let string = self.interner.scalar(ScalarType::String);
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let offset = self.interner.option(int)?;
+        for name in ["Uuid", "UuidVariant", "UuidErrorKind", "UuidError"] {
+            let name = Name::new(name).expect("UUID nominal name is valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &name) else {
+                return Ok(());
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("UUID nominal is indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name.as_str() {
+                "Uuid" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "high", uint),
+                        self.bootstrap_field(symbol, "low", uint),
+                    ],
+                },
+                "UuidError" => {
+                    let kind = self.bootstrap_nominal_type(&module, "UuidErrorKind")?;
+                    HirNominalShape::Record {
+                        fields: vec![
+                            self.bootstrap_field(symbol, "kind", kind),
+                            self.bootstrap_field(symbol, "offset", offset),
+                        ],
+                    }
+                }
+                name => HirNominalShape::Enum {
+                    variants: (if name == "UuidVariant" {
+                        tondo_stdlib::uuid::VARIANT_NAMES
+                    } else {
+                        tondo_stdlib::uuid::ERROR_VARIANTS
+                    })
+                    .iter()
+                    .map(|name| self.bootstrap_variant(symbol, name, Vec::new()))
+                    .collect(),
+                },
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        let uuid = self.bootstrap_nominal_type(&module, "Uuid")?;
+        let error = self.bootstrap_nominal_type(&module, "UuidError")?;
+        let variant = self.bootstrap_nominal_type(&module, "UuidVariant")?;
+        let result = self.interner.result(uuid, error)?;
+        let symbol = self
+            .resolved
+            .bootstrap_nominal(&module, &Name::new("Uuid").unwrap())
+            .unwrap();
+        let span = self.resolved.symbol(symbol).unwrap().span();
+        for (function, parameters, output) in [
+            (HirBootstrapHostFunction::UuidNil, vec![], uuid),
+            (HirBootstrapHostFunction::UuidMax, vec![], uuid),
+            (
+                HirBootstrapHostFunction::UuidParse,
+                vec![(string, false)],
+                result,
+            ),
+            (
+                HirBootstrapHostFunction::UuidFromBytes,
+                vec![(bytes, false)],
+                result,
+            ),
+            (
+                HirBootstrapHostFunction::UuidToBytes,
+                vec![(uuid, true)],
+                bytes,
+            ),
+            (
+                HirBootstrapHostFunction::UuidToString,
+                vec![(uuid, true)],
+                string,
+            ),
+            (
+                HirBootstrapHostFunction::UuidVersion,
+                vec![(uuid, true)],
+                int,
+            ),
+            (
+                HirBootstrapHostFunction::UuidVariant,
+                vec![(uuid, true)],
+                variant,
+            ),
+            (
+                HirBootstrapHostFunction::UuidIsNil,
+                vec![(uuid, true)],
+                bool_type,
+            ),
+            (
+                HirBootstrapHostFunction::UuidIsMax,
+                vec![(uuid, true)],
+                bool_type,
+            ),
+            (
+                HirBootstrapHostFunction::UuidCompare,
+                vec![(uuid, true), (uuid, false)],
+                int,
+            ),
+            (HirBootstrapHostFunction::UuidV4, vec![], result),
+            (
+                HirBootstrapHostFunction::UuidV5,
+                vec![(uuid, false), (bytes, false)],
+                result,
+            ),
+            (HirBootstrapHostFunction::UuidV7, vec![], result),
+        ] {
+            self.push_bootstrap_host_callable(span, function, parameters, None, output)?;
+        }
+        Ok(())
     }
 
     fn lower_bootstrap_fs_nominal_declarations(&mut self) -> Result<(), HirError> {

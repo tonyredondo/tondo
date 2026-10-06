@@ -377,6 +377,7 @@ El registro inicial es `tondo-capabilities-draft` y contiene exactamente:
 
 ~~~text
 clock
+civil-clock
 console
 dynamic-linking
 entropy
@@ -390,18 +391,26 @@ threads
 Un nombre fuera de este registro es error, incluso si no se utiliza. Un target
 solo puede seleccionar capacidades que implemente realmente.
 
-El bootstrap implementa una única combinación:
+The hosted bootstrap supports this target/profile combination:
 
 ~~~text
 target       = tondo-vm-hosted
 profile      = hosted
-capabilities = console, process
+capabilities = clock, civil-clock, console, entropy, environment, filesystem, process, threads
 ~~~
 
-Puede compilarse con cualquier subconjunto de esas dos capacidades. Solicitar
-otra capacidad registrada, como `network`, es error de configuración del
-target. La ausencia de `console` o `process` elimina el correspondiente módulo
-de `std`; importarlo produce `E1008`.
+A request may select a subset of these supported capabilities. The default
+hosted source set selects the list above except `threads`; thread operations
+require its explicit selection. Registered but unsupported capabilities such
+as `network` remain target configuration errors. This hosted support does not
+establish native ABI or AOT support for the same operations.
+
+Capability checks follow the owner's source-set contract. Missing `console`
+or `process` prevents importing the corresponding module with `E1008`.
+Importing the pure `std.uuid` core needs no provider capability: v4 references
+require `entropy` and v7 references require `civil-clock + entropy`, including
+stored function references and deferred calls. `civil-clock` is separate from
+the monotonic `clock` capability.
 
 Los nombres de feature son identificadores kebab-case ASCII: comienzan por una
 letra minúscula y continúan con minúsculas, dígitos o `-`. El lenguaje no les

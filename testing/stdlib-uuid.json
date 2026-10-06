@@ -234,9 +234,9 @@
     "status": "verified-stdlib-kernel",
     "quality_gate": "verified-80-percent-per-scope",
     "public_api_promoted": false,
-    "host": "not-claimed-until-uuid-host",
+    "host": "ready-production-hosted",
     "native_aot_lowering": "not-claimed",
-    "runtime_heap": "not-claimed",
+    "runtime_heap": "ready-hosted-admission",
     "selected_route": "rust-scalar-kernel",
     "dependency": {"crate": "sha1", "version": "=0.10.6", "features": ["force-soft"], "assembly": false},
     "generator_inputs": {"v4": "exact-16-supplied-entropy-bytes", "v5": "namespace-network-bytes-and-opaque-name", "v7": "checked-i128-unix-milliseconds-and-exact-10-supplied-entropy-bytes"},
@@ -263,5 +263,13 @@
     ],
     "proof": "The 18 focused Rust kernel tests, 96 negative promotion records, both local progression states, strict Clippy and the full workspace functional gate pass. RFC v4/v5/v7 vectors, exhaustive external variant/version preservation, exact text errors, entropy layout, name/timestamp bounds, immutable copies and stateless reuse are observed. Source-bound quality verifies 293,081 of 319,953 workspace lines (91.6013%), every global/risk 80% line/function/region floor and all six selected critical mutants caught. Providers, compiler/public Tondo API, production VM, native ABI and native AOT are not promoted; publication CI closure is tracked separately.",
     "required_follow_ups": ["STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+  },
+  "host": {
+    "task": "STD-UUID-HOST-001",
+    "contract": "docs/contracts/stdlib-uuid-host.md",
+    "register": "testing/stdlib-uuid-host.json",
+    "status": "ready-production-hosted",
+    "quality_gate": "pending-80-percent-per-scope",
+    "selected_route": "hosted-scalar"
   }
 }

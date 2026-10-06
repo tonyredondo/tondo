@@ -15,7 +15,7 @@ enum RequestStatus {
 struct RequestState {
     status: RequestStatus,
     prepared: Option<PreparedHostImport>,
-    _memory: VmMemoryCharge,
+    _memory: Option<VmMemoryCharge>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ impl Drop for WorkerImportGuard {
 pub(super) struct PausedHostImport {
     task: usize,
     outcome: BytecodeTypeId,
-    budget: VmMemoryBudget,
+    budget: Option<VmMemoryBudget>,
     capacity: super::super::heap::PausedImportCapacity,
     pub(super) control: WorkerImportControl,
 }
@@ -103,9 +103,7 @@ pub(super) fn pause_current(
     let (task, outcome) = planner
         .current
         .ok_or_else(|| VmError::invariant("worker import has no current result type"))?;
-    let Some(budget) = planner.budget(task) else {
-        return Ok(None);
-    };
+    let budget = planner.budget(task);
     if planner
         .tasks
         .get(task)
@@ -118,7 +116,10 @@ pub(super) fn pause_current(
     let capacity = planner
         .heap
         .pause_import_capacity(planner.roots, planner.statistics)?;
-    let memory = budget.reserve(CONTEXT_BYTES)?;
+    let memory = budget
+        .as_ref()
+        .map(|budget| budget.reserve(CONTEXT_BYTES))
+        .transpose()?;
     Ok(Some(PausedHostImport {
         task,
         outcome,
@@ -178,10 +179,18 @@ impl HostImportPlanner for WorkerHostImportPlanner<'_> {
         .host_import_preview_cost(
             self.current.outcome,
             preview,
-            Some(&self.current.budget),
+            self.current.budget.as_ref(),
         )?;
-        let (additional, workspace) = cost.prepared_bytes(self.current.budget.limit())?;
-        let mut heap = self.current.budget.reserve(additional)?;
+        let Some(budget) = &self.current.budget else {
+            // The caller is paused and cannot allocate while its provider
+            // checks this exported ordinary heap capacity.
+            self.current
+                .capacity
+                .preflight(cost.objects, cost.heap_bytes)?;
+            return Ok(None);
+        };
+        let (additional, workspace) = cost.prepared_bytes(budget.limit())?;
+        let mut heap = budget.reserve(additional)?;
         let workspace = heap.split_off(workspace)?;
         let objects = self.current.capacity.reserve(cost.objects)?;
         Ok(Some(PreparedHostImport {
@@ -228,7 +237,11 @@ impl HostImportPlanner for WorkerHostImportPlanner<'_> {
                     != Some(ImportRecipient::Current {
                         task: self.current.task,
                     })
-                || !entry.heap.budget().same_account(&self.current.budget)
+                || self
+                    .current
+                    .budget
+                    .as_ref()
+                    .is_none_or(|budget| !entry.heap.budget().same_account(budget))
             {
                 return Err(VmError::invariant(
                     "worker import recipient changed before commit",
