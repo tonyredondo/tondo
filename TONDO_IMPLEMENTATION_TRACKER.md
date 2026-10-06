@@ -63,8 +63,10 @@ fuzz after source-bound quality, the full local gate, publication and exact-SHA
 CI confirmation. `STD-UUID-PERF-001` verifies 22 target-qualified hosted scalar
 bridge routes, exact oracles and declared logical resource counters after the
 full local gate, source-bound quality, publication and exact-SHA CI confirmation.
-The next owner leaf is `STD-UUID-CONF-001`, comparing public hosted VM calls and
-sealed providers with the native Rust kernel reference process.
+`STD-UUID-CONF-001` verifies public hosted VM calls and sealed providers against
+the native Rust kernel reference process after the full local gate, source-bound
+quality, publication and exact-SHA CI confirmation.
+The next owner leaf is `STD-UUID-DOC-001` for executable UUID usage.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6976,7 +6978,7 @@ estas leaves.
   UUID fuzz and the composed conformance/native scalar regressions. The separate
   portable/fuzz jobs are expected normal-push skips. All checks and main refs
   remain unchanged after the quiet interval. Next: `STD-UUID-CONF-001`.
-- [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
+- [x] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
   capabilities civil-clock/entropy sobre VM/nativo con providers sellados.
   Local implementation is `verified-public-hosted-vm-and-native-kernel-process`.
   Five shared groups execute
@@ -6990,8 +6992,14 @@ estas leaves.
   promotion/report records and all 2,650 workspace Rust tests pass. Source-bound
   quality verifies 295,206 of 322,169 lines (91.6308%), every global/risk 80%
   line/function/region floor and all six critical mutants caught. Every full
-  functional gate step passes on the same frozen source. Publication and
-  exact-SHA CI confirmation remain pending; the checkbox stays open until then.
+  functional gate step passes on the same frozen source. Published source
+  `24859a1cc70c7d0662698b4b50060f333a2383cc` passes Test run `37508302891`,
+  attempt 1, strict job `112422509578` in 29m25s. The actual checkout and full
+  gate verify UUID's 77 observations, 15 capability checks and 174 invalid
+  records, plus the existing native and draft/select regressions. Separate
+  portable/fuzz jobs are expected normal-push skips. All paginated checks,
+  statuses, PRs, runs and main refs remain unchanged after 86 seconds of quiet
+  confirmation. Next: `STD-UUID-DOC-001`.
 - [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
   generación, providers, errores, costes y ejemplos ejecutables.
 
