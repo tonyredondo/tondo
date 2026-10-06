@@ -86,6 +86,10 @@ both provider streams unconsumed. Charged replies shrink to their actual
 logical size. Direct host tests and production VM sweeps exercise refusal and
 success transitions; the ordinary/paused import regression checks receiving
 capacity and commit ordering. Phase tests verify reuse and charge release.
+Internal synchronous reference-host calls without a scheduled VM recipient
+retain their transport-only route. Executable UUID calls have a root task and
+retain result preflight. The existing malformed virtual-time callback
+regression verifies invocation and clock restoration across this internal path.
 
 Provider buffers check target byte limits before access. `toBytes` reserves
 ownership for a fresh sixteen-byte buffer before allocation/publication;

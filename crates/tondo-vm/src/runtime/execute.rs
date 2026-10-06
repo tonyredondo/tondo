@@ -2845,6 +2845,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         outcome: BytecodeTypeId,
         prepared: Option<host_import::PreparedHostImport>,
     ) -> Result<(VmHostReturn, Option<host_import::PreparedHostImport>), VmError> {
+        if self.tasks.is_empty() && self.current_test_memory().is_none() {
+            // Internal synchronous boundary calls can use a reference host
+            // without a scheduled VM recipient. They retain the existing
+            // transport route; executable programs always have a root task.
+            return self
+                .dispatch_host_arguments(name, arguments)
+                .map(|returned| (returned, prepared));
+        }
         let task = self.tasks.get_mut(self.current_task).ok_or_else(|| {
             VmError::invariant("an admitted synchronous call has no executing task")
         })?;
