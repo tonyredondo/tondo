@@ -14,7 +14,7 @@ def uuid_kernel_progression:
   and ($impl.tests | unique | length) == 18
   and all($impl.tests[]; test("^crates/tondo-stdlib/src/uuid\\.rs::[a-z0-9_]+$"))
   and ($impl.proof | type == "string" and length > 0)
-  and .measurement == null and .conformance == null and .documentation == null
+  and .conformance == null and .documentation == null
   and (if .host != null then
     $impl.status == "verified-stdlib-kernel"
     and $impl.quality_gate == "verified-80-percent-per-scope"
@@ -24,7 +24,7 @@ def uuid_kernel_progression:
     and .host.selected_route == "hosted-scalar"
     and $impl.host == .host.status
     and (if .host.status == "ready-production-hosted" then
-      .model == null
+      .model == null and .measurement == null
       and .host.quality_gate == "pending-80-percent-per-scope"
       and $impl.runtime_heap == "ready-hosted-admission"
       and .promotion.next_blocks == ["STD-UUID-HOST-001"]
@@ -32,8 +32,29 @@ def uuid_kernel_progression:
     elif .host.status == "verified-production-hosted" then
       .host.quality_gate == "verified-80-percent-per-scope"
       and $impl.runtime_heap == "verified-hosted-admission"
-      and $impl.required_follow_ups == ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
-      and (if .model != null then
+      and (if .measurement != null then
+        .model == {task:"STD-UUID-TEST-001", register:"testing/stdlib-uuid-test.json",
+          contract:"docs/contracts/stdlib-uuid-test.md", status:"verified",
+          quality_gate:"verified-80-percent-per-scope",
+          selected_route:"independent-reference-and-kernel-hosted-regression-boundary"}
+        and (.measurement | del(.status, .quality_gate)) == {
+          task:"STD-UUID-PERF-001", register:"testing/stdlib-uuid-performance.json",
+          contract:"docs/contracts/stdlib-uuid-performance.md", selected_route:"hosted-scalar",
+          backend:"rust-hosted-bridge", target:"x86_64-unknown-linux-gnu", profile:"test",
+          workloads:22, samples_per_workload:27, hosted_vm_timing:"not-measured",
+          native_aot:"not-measured"}
+        and (if .measurement.status == "measurement-ready" then
+          .measurement.quality_gate == "pending-80-percent-per-scope"
+          and .promotion.next_blocks == ["STD-UUID-PERF-001"]
+          and $impl.required_follow_ups == ["STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+        elif .measurement.status == "verified-hosted-scalar-baseline" then
+          .measurement.quality_gate == "verified-80-percent-per-scope"
+          and .promotion.next_blocks == ["STD-UUID-CONF-001"]
+          and $impl.required_follow_ups == ["STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+        else false end)
+      elif .model != null then
+        $impl.required_follow_ups == ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+        and
         (.model | del(.status, .quality_gate)) == {
           task:"STD-UUID-TEST-001", register:"testing/stdlib-uuid-test.json",
           contract:"docs/contracts/stdlib-uuid-test.md",
@@ -45,10 +66,11 @@ def uuid_kernel_progression:
           .model.quality_gate == "verified-80-percent-per-scope"
           and .promotion.next_blocks == ["STD-UUID-PERF-001"]
         else false end)
-      else .promotion.next_blocks == ["STD-UUID-TEST-001"] end)
+      else .promotion.next_blocks == ["STD-UUID-TEST-001"]
+        and $impl.required_follow_ups == ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"] end)
     else false end)
   else
-    .model == null
+    .model == null and .measurement == null
     and $impl.host == "not-claimed-until-uuid-host"
     and $impl.runtime_heap == "not-claimed"
     and (if $impl.status == "ready-stdlib-kernel" then

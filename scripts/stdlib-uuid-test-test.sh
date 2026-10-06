@@ -18,7 +18,9 @@ for transition in ready verified; do
       | .promotion.test_boundary_promoted=($status == "verified")
     ' testing/stdlib-uuid-test.json > "$tmp_dir/base.json"
     jq --slurpfile child "$tmp_dir/base.json" '
-      .model.status=$child[0].status | .model.quality_gate=$child[0].quality_gate
+      del(.measurement)
+      | .implementation.required_follow_ups=["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+      | .model.status=$child[0].status | .model.quality_gate=$child[0].quality_gate
       | .promotion.next_blocks=(if $child[0].status == "verified" then ["STD-UUID-PERF-001"] else ["STD-UUID-TEST-001"] end)
     ' testing/stdlib-uuid.json > "$tmp_dir/parent.json"
     env TONDO_STDLIB_UUID_CONTRACT="$tmp_dir/parent.json" TONDO_STDLIB_UUID_TEST_CONTRACT="$tmp_dir/base.json" scripts/stdlib-uuid-test-check.sh

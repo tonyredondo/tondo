@@ -18,7 +18,7 @@ for status in ready-production-hosted verified-production-hosted; do
       | .required_follow_ups = (["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"] | if $status == "ready-production-hosted" then ["STD-UUID-HOST-001"] + . else . end)
     ' testing/stdlib-uuid-host.json > "$tmp_dir/host.json"
     jq --slurpfile host "$tmp_dir/host.json" '
-      del(.model)
+      del(.model, .measurement)
       | .host.status = $host[0].status | .host.quality_gate = $host[0].quality_gate
       | .implementation.host = $host[0].status
       | .implementation.runtime_heap = (if $host[0].status == "verified-production-hosted" then "verified-hosted-admission" else "ready-hosted-admission" end)

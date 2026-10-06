@@ -4401,18 +4401,26 @@ HOST quality and every full functional gate step pass on the frozen source:
 294,459 of 321,402 workspace lines (91.6170%), every global/risk 80% floor,
 six critical mutants caught, 23 focused compiler/VM tests and 86 invalid
 promotion records. Publication and exact-SHA CI closure are recorded in the tracker.
-The independent model/fuzz boundary is locally verified in
+The independent model/fuzz boundary is verified in
 [testing/stdlib-uuid-test.json](./testing/stdlib-uuid-test.json) and
 [docs/contracts/stdlib-uuid-test.md](./docs/contracts/stdlib-uuid-test.md).
 It uses an independent unsigned value/parser/bounded v5 digest, 54 retained
 vectors and eleven integration tests including a sealed production VM provider
 transcript. Its 85 invalid records, 128-run smoke and full functional gate pass.
 Source-bound quality verifies 294,814 of 321,733 lines (91.6331%), every
-global/risk 80% floor and six selected mutants caught. Publication and exact-SHA
-CI closure remain separate tracker steps. Reference bounds do not establish
-production rejection. Performance,
-conformance and usage remain PERF, CONF and DOC. Native ABI
-and native AOT are not promoted by the hosted implementation.
+global/risk 80% floor and six selected mutants caught. Published source
+`27bd0d3` and tracker closure `048730a` pass exact-SHA CI confirmation.
+Reference bounds do not establish production rejection.
+The `measurement-ready` performance protocol is registered in
+[testing/stdlib-uuid-performance.json](./testing/stdlib-uuid-performance.json)
+and [docs/contracts/stdlib-uuid-performance.md](./docs/contracts/stdlib-uuid-performance.md).
+It selects 22 hosted scalar bridge routes and 27 retained samples each,
+including explicit sealed/OS providers, exact independent/authored expectations
+and bounded refusals. Logical resource models are distinct from actual reply
+charges and registry counts. Clean capture and the current consolidated quality
+and full functional gates remain necessary for promotion. Complete VM latency,
+native UUID ABI/AOT, SIMD and code-size measurements are not claimed.
+Conformance and usage remain their separate CONF and DOC leaves.
 
 ### 14.18 `std.log`
 

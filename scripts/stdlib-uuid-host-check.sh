@@ -15,7 +15,11 @@ jq -e -L scripts --slurpfile parent "$parent" '
   and .status == $parent[0].host.status
   and .quality_gate == $parent[0].host.quality_gate
   and .selected_route == $parent[0].host.selected_route
-  and .required_follow_ups == $parent[0].implementation.required_follow_ups
+  # This child retains the follow-ups recorded at its HOST promotion. The
+  # parent progression validates their subsequently completed TEST/PERF leaves.
+  and .required_follow_ups == (if $parent[0].measurement != null then
+    ["STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+    else $parent[0].implementation.required_follow_ups end)
 ' "$contract" >/dev/null || die "invalid host boundary or parent progression"
 while IFS= read -r path; do
     [[ -f "$path" ]] || die "missing host source/fixture: $path"

@@ -6955,6 +6955,12 @@ estas leaves.
   `STD-UUID-PERF-001`.
 - [ ] **STD-UUID-PERF-001 — Medir UUID.** Fijar parse/format/generation,
   allocations, memoria y coste de providers.
+  In progress: a target-qualified direct hosted scalar bridge campaign defines
+  22 routes and 27 retained measurements per route, exact bounded-model/authored
+  expectations, sealed/OS provider costs, admission/lifecycle checks and
+  explicitly selected logical resource counters. Complete VM/native UUID timing
+  is not claimed. Clean committed capture, the consolidated source-bound quality
+  and full functional gates, publication and exact-SHA CI remain pending.
 - [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
   capabilities civil-clock/entropy sobre VM/nativo con providers sellados.
 - [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de

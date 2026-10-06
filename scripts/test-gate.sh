@@ -410,6 +410,12 @@ run_step stdlib-uuid-testing-contract-tests \
     scripts/stdlib-uuid-test-test.sh
 run_step stdlib-uuid-fuzz \
     scripts/stdlib-uuid-fuzz.sh
+run_step stdlib-uuid-performance-contract \
+    scripts/stdlib-uuid-performance-check.sh
+run_step stdlib-uuid-performance-tests \
+    scripts/stdlib-uuid-performance-test.sh
+run_step stdlib-uuid-performance-campaign \
+    scripts/stdlib-uuid-performance.sh
 run_step stdlib-log-contract \
     scripts/stdlib-log-check.sh
 run_step stdlib-log-contract-tests \

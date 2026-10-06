@@ -7,6 +7,9 @@ use tondo_stdlib::uuid::{DEFAULT_MAX_NAME_BYTES, Uuid, UuidError, UuidErrorKind,
 
 const UUID_REPLY_BYTES: u64 = 5 * tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES + 22;
 
+#[cfg(test)]
+mod performance;
+
 fn uuid_value(uuid: Uuid) -> RuntimeValue {
     let bytes = uuid.to_bytes();
     let high = u64::from_be_bytes(bytes[..8].try_into().unwrap());

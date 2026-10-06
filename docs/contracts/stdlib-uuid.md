@@ -5,8 +5,9 @@ Estado: **contract-locked** para `STD-0.1B` / `STD-ID-001`.
 This document locks the normative `std.uuid` design. `STD-UUID-IMPL-001` now
 has an explicit-input scalar Rust kernel; its local promotion state and proof
 are recorded in section 9. Section 10 records the new hosted provider/public
-registration boundary. Independent model/fuzz evidence, performance,
-conformance and usage documentation remain separate owner leaves.
+registration boundary. Section 11 records the verified independent model/fuzz
+boundary; section 12 defines the hosted scalar performance campaign.
+Conformance and usage documentation remain separate owner leaves.
 
 El contrato sigue [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html), que
 define el UUID de 128 bits y sustituye RFC 4122. Tondo adopta una superficie
@@ -393,7 +394,7 @@ in the tracker.
 
 ## 11. Independent model, regression and fuzz boundary
 
-`STD-UUID-TEST-001` is locally verified on the frozen source from `aa0aae4`.
+`STD-UUID-TEST-001` is verified on the frozen source from `aa0aae4`.
 The [test register](../../testing/stdlib-uuid-test.json) and
 [test contract](stdlib-uuid-test.md) define a std-only unsigned integer oracle,
 an independently computed bounded v5 digest, seventeen valid and thirty-seven
@@ -409,5 +410,23 @@ consolidated quality campaign covers 294,814 of 321,733 workspace lines
 (91.6331%), preserves every global/risk 80% floor and catches all six selected
 critical mutants. Every full functional gate step passes on the same source,
 including the 206-case draft suite and repeated async/select observations.
-Publication and exact-SHA CI closure are separate tracker steps. The next
-local owner boundary is `STD-UUID-PERF-001`.
+Published source `27bd0d3` and tracker closure `048730a` pass exact-SHA CI runs
+`37463121847` and `37468095223`, respectively, with quiet-interval confirmation.
+The next owner boundary is `STD-UUID-PERF-001`.
+
+## 12. Target-qualified hosted scalar performance
+
+The [performance register](../../testing/stdlib-uuid-performance.json) and
+[performance contract](stdlib-uuid-performance.md) define 22 direct hosted
+bridge workloads with 27 retained samples each. Dashed/URN parse, canonical
+format, byte round trips, v4/v5/v7, sealed and explicit OS providers, and ten
+bounded refusal routes use independent/authored expectations before timing.
+The current state is `measurement-ready`; clean capture, the complete functional
+gate and current source-bound quality remain necessary for promotion.
+
+Selected owned identities and retained logical storage include fixture setup,
+while actual reply charges and host registry increments are separately observed.
+Logical memory is not RSS or allocator instrumentation. Provider requests are
+not OS syscalls. The report measures the existing hosted scalar bridge with
+reply admission, without executing bytecode or claiming complete VM latency,
+native UUID ABI/AOT, SIMD or code-size measurements. CONF and DOC remain open.

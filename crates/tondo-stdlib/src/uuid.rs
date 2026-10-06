@@ -2,8 +2,9 @@
 //!
 //! This module performs no provider calls. v4 consumes a supplied 16-byte
 //! entropy snapshot; v7 consumes checked Unix milliseconds and ten supplied
-//! bytes. Provider capabilities, VM heap accounting and public Tondo/native
-//! registration belong to later owner blocks.
+//! bytes. The compiler host bridge separately implements provider capabilities,
+//! VM heap admission and public Tondo registration. This kernel establishes no
+//! native UUID ABI or native AOT lowering.
 
 use std::{cmp::Ordering, fmt};
 
@@ -47,7 +48,7 @@ pub enum UuidVariant {
     Future,
 }
 
-/// Closed nominal errors shared with the future capability/provider boundary.
+/// Closed nominal errors shared with the compiler capability/provider boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UuidErrorKind {
     InvalidTextLength,
