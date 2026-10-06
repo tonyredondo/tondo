@@ -47,11 +47,11 @@ canonical executable Rust-kernel guide. `STD-REGEX-IMPL-001` verifies a bounded
 Unicode 16 Rust kernel with local priorities, captures, literal replacement
 and fallible lazy iteration. `STD-REGEX-TEST-001` verifies the independent model
 and seeded fuzz; `STD-REGEX-PERF-001` verifies nineteen target-qualified kernel
-routes. The current conformance comparison and local full/quality gates pass;
-tracker closure awaits publication and exact-SHA CI. The current workspace
+routes. `STD-REGEX-CONF-001` verifies seven shared private VM/native Rust
+process groups, clean-source comparison and the full local/CI gates. The current workspace
 campaign measures 91.5908% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
-The next owner leaf after conformance closure is `STD-REGEX-DOC-001`.
+The next owner leaf is `STD-REGEX-DOC-001`.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -6849,7 +6849,7 @@ estas leaves.
   strict Linux x86_64 gate; normal-push portable/fuzz jobs are expected skips.
   Next: `STD-REGEX-CONF-001`. Public compiler/VM,
   native ABI/AOT, SIMD and code-size promotion are outside this boundary.
-- [ ] **STD-REGEX-CONF-001 — Conform the bounded regex kernel adapters.**
+- [x] **STD-REGEX-CONF-001 — Conform the bounded regex kernel adapters.**
   The verified adapter register compares seven shared case groups, 41 valid
   and 33 invalid retained vectors, through private verified bytecode dispatch
   and a Rust kernel process. It covers Unicode 16, local capture priorities,
@@ -6859,7 +6859,10 @@ estas leaves.
   Quality covers 292,638 of 319,506 lines (91.5908%), meets every global/risk
   80% dimension and catches all six critical mutants. Formal coverage excludes
   example/integration-test source lines; adapter execution has separate proof.
-  Publication and exact-SHA CI remain pending. Public compiler/VM
+  Published source `cfc0959` passes exact-SHA CI run `37398661662`, including
+  the full strict Linux x86_64 gate; normal-push portable/fuzz jobs are expected
+  skips. Remote SHA and all checks are confirmed after the quiet interval.
+  Next: `STD-REGEX-DOC-001`. Public compiler/VM
   registration, native ABI and Tondo AOT are not promoted by these adapters.
 - [ ] **STD-REGEX-DOC-001 — Documentar regex.** Publicar sintaxis exacta,
   Unicode, captures, complejidad, límites y ejemplos ejecutables.
@@ -7345,8 +7348,9 @@ Complete one coherent boundary with observed proof before promoting dependents:
    actual conformance, diagnostics, quality and performance before N1.
 6. Continue STD-0.1B owner work with explicit integration leaves. The TOML and
    CBOR kernel/model/performance/private-adapter/documentation sequences are
-   verified within their stated boundaries. Regex conformance is locally
-   verified pending publication/CI; executable documentation follows it.
+   verified within their stated boundaries. Regex conformance passes clean
+   comparison, full functional/quality gates and exact-SHA CI; executable
+   documentation follows it.
 
 - [x] **AUDIT-ALIGN-001 — Reconcile status, dependencies and provenance.**
   The live tracker and dependency graph distinguish specified behavior,
