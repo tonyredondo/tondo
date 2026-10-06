@@ -228,11 +228,11 @@
       {"id": "performance", "requires": ["scalar-oracle", "fixed-width-allocation-report", "provider-cost-report", "target-qualified-report"]},
       {"id": "promote", "requires": ["capability-diagnostics", "deterministic-provider-evidence", "no-secret-claim", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-UUID-IMPL-001"]
+    "next_blocks": ["STD-UUID-HOST-001"]
   },
   "implementation": {
-    "status": "ready-stdlib-kernel",
-    "quality_gate": "pending-80-percent-per-scope",
+    "status": "verified-stdlib-kernel",
+    "quality_gate": "verified-80-percent-per-scope",
     "public_api_promoted": false,
     "host": "not-claimed-until-uuid-host",
     "native_aot_lowering": "not-claimed",
@@ -261,7 +261,7 @@
       "crates/tondo-stdlib/src/uuid.rs::immutable_values_are_shared_across_threads_without_provider_state",
       "crates/tondo-stdlib/src/uuid.rs::nominal_errors_have_stable_environment_free_display"
     ],
-    "proof": "The 18 focused Rust kernel tests and the locked dependency build pass. RFC v4/v5/v7 vectors, exhaustive external variant/version preservation, exact text errors, entropy layout, name/timestamp bounds, immutable copies and stateless reuse are observed. Full workspace, source-bound quality and publication CI remain pending. Providers, compiler/public Tondo API, production VM, native ABI and native AOT are not promoted.",
-    "required_follow_ups": ["STD-UUID-IMPL-001", "STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+    "proof": "The 18 focused Rust kernel tests, 96 negative promotion records, both local progression states, strict Clippy and the full workspace functional gate pass. RFC v4/v5/v7 vectors, exhaustive external variant/version preservation, exact text errors, entropy layout, name/timestamp bounds, immutable copies and stateless reuse are observed. Source-bound quality verifies 293,081 of 319,953 workspace lines (91.6013%), every global/risk 80% line/function/region floor and all six selected critical mutants caught. Providers, compiler/public Tondo API, production VM, native ABI and native AOT are not promoted; publication CI closure is tracked separately.",
+    "required_follow_ups": ["STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
   }
 }

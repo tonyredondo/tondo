@@ -152,10 +152,12 @@ la fecha UTC del provider civil, no el `Instant` monotónico de `std.time`.
 supera el límite del target. Las tres operaciones son síncronas y no son
 `selectable`; no existen `v4Async`, `v7Async`, `UuidFuture` ni un API paralelo.
 
-`Uuid` es `Copy`, `Discard`, `Eq`, `Ord`, `Hash`, `Send` y `Share`. No contiene
-referencias, handles host ni aliases mutables. Los métodos de lectura son
-allocation-free salvo `toBytes`/`toString`, que deben materializar sus copias
-de resultado.
+The normative Tondo capabilities are `Copy`, `Discard`, `Equatable`, `Key`,
+`Send` and `Share`. Ordering is exposed by `Uuid.compare`; `Eq`, `Ord` and
+`Hash` are Rust traits of the kernel, not additional intrinsic Tondo
+capabilities. A UUID contains no references, host handles or mutable aliases.
+Read operations need no allocation except public `toBytes`/`toString`, which
+materialize their result copies.
 
 ## 5. Generación y capabilities
 
@@ -347,3 +349,10 @@ records before running the canonical 18 Rust tests and checking `force-soft`.
 The host state is `not-claimed-until-uuid-host`; production VM, native ABI and
 native AOT lowering are not promoted. The next owner after implementation
 closure is `STD-UUID-HOST-001`, followed by TEST, PERF, CONF and DOC.
+
+The current kernel is `verified-stdlib-kernel`. The full functional gate and
+source-bound quality pass, with 293,081 of 319,953 covered workspace lines
+(91.6013%), every global/risk 80% line/function/region floor and all six selected
+critical mutants caught. The indexed UUID source coverage includes its unit
+tests; it is not a separate production-only coverage campaign. Publication
+and exact-SHA CI closure are recorded in the tracker.

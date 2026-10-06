@@ -4341,14 +4341,15 @@ Publication and exact-SHA CI closure are tracked separately in the live tracker.
 
 ### 14.17 `std.uuid`
 
-`std.uuid` fija un valor inmutable de 128 bits interoperable con RFC 9562. La
-representación usa 16 bytes big-endian de red, es `Copy`, `Eq`, `Ord`, `Hash`,
-`Send` y `Share`, y puede utilizarse como clave de `Map` o `Set`. `Uuid.parse`
-acepta la forma dashed `8-4-4-4-12` y el prefijo `urn:uuid:` con hex en ambos
-casos; `Uuid.toString` siempre produce una única forma dashed en minúsculas.
-No se aceptan compact UUIDs, braces, whitespace, conversiones COM GUID ni
-normalización de texto. `nil`, `max`, `fromBytes`, `toBytes`, variant y version
-son operaciones core y no consultan el host.
+`std.uuid` defines an immutable 128-bit value interoperable with RFC 9562.
+Its sixteen network-order bytes support the normative Tondo capabilities
+`Copy`, `Discard`, `Equatable`, `Key`, `Send` and `Share`, including `Map`/`Set`
+keys; `Uuid.compare` provides unsigned byte ordering. The Rust kernel separately
+implements `Eq`, `Ord` and `Hash`. Parsing accepts dashed `8-4-4-4-12` text and
+the `urn:uuid:` prefix with either hex case; formatting always emits lowercase
+dashed text. Compact/braced text, whitespace, COM GUID conversion and text
+normalization are rejected. Sentinels, bytes, text and inspection are core
+operations that do not consult the host.
 
 Solo se generan v4, v5 y v7. v4 requiere la capability `entropy` y fija 122
 bits aleatorios; v5 es determinista sobre `namespace.bytes || name` con SHA-1
@@ -4371,7 +4372,7 @@ El contrato machine-readable, la documentación normativa y los negativos son
 [`docs/contracts/stdlib-uuid.md`](./docs/contracts/stdlib-uuid.md),
 [`scripts/stdlib-uuid-check.sh`](./scripts/stdlib-uuid-check.sh) y
 [`scripts/stdlib-uuid-test.sh`](./scripts/stdlib-uuid-test.sh). The B0 design is
-locked by `STD-ID-001`. `STD-UUID-IMPL-001` has a `ready-stdlib-kernel` scalar
+locked by `STD-ID-001`. `STD-UUID-IMPL-001` has a `verified-stdlib-kernel` scalar
 Rust implementation with 18 focused tests, exact network/text semantics and
 explicit-input v4/v5/v7 transformations. UUIDv5 uses exactly pinned
 `sha1 0.10.6` with `force-soft`, hashing namespace and opaque name separately.
@@ -4379,7 +4380,10 @@ The kernel performs no provider calls: v4 receives sixteen entropy bytes and
 v7 receives checked Unix milliseconds plus ten bytes. Its fixed-width Rust
 value/copy and fallible 36-byte string materialization do not establish public
 Tondo heap admission, capability checking or provider quality. Source-bound
-quality, the full functional gate and publication CI remain pending.
+quality and the full functional gate pass: 293,081 of 319,953 workspace lines
+(91.6013%), every global/risk 80% floor and six critical mutants caught.
+The implementation checker verifies 96 invalid records and both valid local
+states. Publication and exact-SHA CI closure are tracked separately.
 Providers, independent tests/fuzzing, performance, conformance and usage remain
 in `STD-UUID-HOST-001`, `STD-UUID-TEST-001`, `STD-UUID-PERF-001`,
 `STD-UUID-CONF-001` and `STD-UUID-DOC-001`; public compiler/production VM,
