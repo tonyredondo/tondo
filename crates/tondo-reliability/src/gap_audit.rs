@@ -281,7 +281,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "TC01-10-1-4-R001",
-                "TC01-3-2-1-R002",
                 "TL01-10-18-R001",
                 "TL01-11-10-R002",
                 "TL01-11-10-R004",
@@ -297,6 +296,18 @@ mod tests {
                 "TL01-ASYNC-Y-CONCURRENCIA-ESTRUCTURADA-R001",
             ]
         );
+        let network = audit
+            .entries
+            .iter()
+            .find(|entry| entry.requirement == "TC01-3-2-1-R002")
+            .unwrap();
+        assert_eq!(network.outcome, "implemented-without-trace");
+        let network_requirement = matrix
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == network.requirement)
+            .unwrap();
+        assert_eq!(network_requirement.status, "toolchain-limit");
     }
 
     #[test]
