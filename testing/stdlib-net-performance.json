@@ -1,0 +1,329 @@
+{
+  "format": "tondo-stdlib-net-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-NET-PERF-001",
+  "owner": "std.net",
+  "status": "measurement-ready",
+  "target": "x86_64-unknown-linux-gnu",
+  "backend": "rust-hosted-bridge",
+  "profile": "test",
+  "contract": "docs/contracts/stdlib-net-performance.md",
+  "parent_contract": "testing/stdlib-net.json",
+  "probe": {
+    "path": "crates/tondo-compiler/src/process_host/net/performance.rs",
+    "test": "process_host::net::performance::network_performance_probe",
+    "sha256": "24cd509e391ab68aa8ce4941454fdf8953421883b8f54ca60c37ea3dbac64ae4"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "logical_workloads_per_sample": 1,
+    "outliers": "report-not-delete",
+    "sample_coordinates": "process-1-through-3-and-repetition-0-through-8",
+    "fixture_setup": "excluded-from-latency; selected-resource-observations-retained",
+    "timed_interval": "host-admission-polling-return-checks-result-disposal-and-explicit-close",
+    "post_timing": "peer-byte-checks-join-private-root-collection-zero-terminal-and-reactor-drop"
+  },
+  "strategy": {
+    "selected_route": "hosted-scalar",
+    "compiler_api": "inherited-verified-production-hosted",
+    "hosted_bridge": "direct-private-bootstrap-host-with-reply-admission-and-owner-polling",
+    "hosted_vm": "not-measured-no-bytecode-execution",
+    "native_runtime_abi": "not-measured",
+    "native_aot": "not-measured",
+    "simd": "not-measured-no-tondo-optimized-route",
+    "multiversion_dispatch": "not-claimed",
+    "code_size": "not-measured",
+    "providers": "controlled-loopback-explicit-DNS-TLS12-TLS13-and-pinned-adapters",
+    "dependency_crypto_acceleration": "not-a-tondo-simd-promotion",
+    "peer_end_to_end_throughput": "not-measured-host-interval-only"
+  },
+  "resource_model": {
+    "scope": "selected-setup-timed-and-teardown-observations-per-complete-workload",
+    "copies": "timed-delivered-read-bytes-UDP-accessor-and-argument-provider-input-copies; excludes-fixture-construction",
+    "allocations": "selected-result-box-container-name-provider-future-job-and-owned-buffer-identities; not-allocator-calls",
+    "fixture_storage": "explicitly-retained-authored-byte-vectors-and-certificate-DER",
+    "logical_memory": "retained-selected-fixture-bytes-plus-sampled-shared-admission-charge; estimate-not-RSS-or-full-peak",
+    "reply_retained_bytes": "observed-maximum-typed-return-charge-before-result-disposal",
+    "host_handles_created": "actual-whole-workload-registry-ID-increment-including-setup",
+    "terminal": "actual-registry-network-jobs-executor-slots-and-shared-charge-after-private-cleanup",
+    "memory_refusal": "held-logical-admission-charge-does-not-allocate-equivalent-OS-bytes",
+    "native_live_handles": "unmeasured-null",
+    "excluded": [
+      "oracle-temporaries",
+      "stack-buffers",
+      "capacity-slack",
+      "host-map-nodes",
+      "Arc-control-blocks",
+      "clock-carrier-metadata",
+      "provider-and-crypto-internals",
+      "private-reactor",
+      "OS-allocator-and-native-runtime"
+    ]
+  },
+  "limits": {
+    "fixture_bytes": 8388608,
+    "reference_bytes": 128,
+    "reference_addresses": 32,
+    "sample_latency_ns": 30000000000,
+    "selected_counter": 2147483648,
+    "provider_wait_seconds": 5
+  },
+  "oracle": {
+    "kind": "independent-finite-admission-stream-TLS-verdict-and-authored-peer-laws",
+    "sources": [
+      "crates/tondo-reliability/src/net_model.rs",
+      "crates/tondo-reliability/src/net_model/admission.rs",
+      "crates/tondo-reliability/src/net_model/stream.rs",
+      "crates/tondo-reliability/src/net_model/tls.rs",
+      "crates/tondo-compiler/src/process_host/net/performance.rs"
+    ],
+    "large_payload": "bytes(index % 251); peer-checks-every-byte; OutsideDomain-not-a-target-error",
+    "DNS": "two-explicit-A-then-AAAA-requests; first-seen-deduplication; whole-result-limit",
+    "TLS": "model-verdict-ownership-plus-real-existing-local-certificate-fixtures; no-independent-record-parser"
+  },
+  "identity_fields": [
+    "backend",
+    "flags",
+    "git_revision",
+    "probe_sha256",
+    "profile",
+    "source_tree_sha256",
+    "suite",
+    "target",
+    "toolchain",
+    "workload_id"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "path",
+    "pid",
+    "timestamp",
+    "ephemeral_port"
+  ],
+  "workloads": [
+    {
+      "id": "tcp-connect-accept",
+      "operation": "tcp-lifecycle",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tcp-read-small",
+      "operation": "tcp-read",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tcp-read-chunked",
+      "operation": "tcp-read",
+      "size_class": "large",
+      "payload_bytes": 65536,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tcp-read-rollback",
+      "operation": "tcp-read",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tcp-write-small",
+      "operation": "tcp-write",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tcp-write-large",
+      "operation": "tcp-write",
+      "size_class": "large",
+      "payload_bytes": 65536,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tcp-write-backpressure",
+      "operation": "tcp-write",
+      "size_class": "large",
+      "payload_bytes": 8388608,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "udp-send-empty",
+      "operation": "udp-send",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "udp-send-small",
+      "operation": "udp-send",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "udp-receive-empty",
+      "operation": "udp-receive",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "udp-receive-small",
+      "operation": "udp-receive",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "udp-reject-oversized",
+      "operation": "udp-receive",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 1,
+      "expected_error": "NetError.DatagramTooLarge",
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "dns-ordered",
+      "operation": "dns",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "dns-delay",
+      "operation": "dns",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "dns-result-limit",
+      "operation": "dns",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 1,
+      "expected_error": "NetError.ResourceLimit",
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tls12-echo",
+      "operation": "tls",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tls13-echo",
+      "operation": "tls",
+      "size_class": "small",
+      "payload_bytes": 64,
+      "expected_rejections": 0,
+      "expected_error": null,
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "tls-reject-name",
+      "operation": "tls",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 1,
+      "expected_error": "TlsError.CertificateRejected",
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "pending-accept-cancel",
+      "operation": "cancellation",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 1,
+      "expected_error": "NetError.Cancelled",
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "reject-expired-deadline",
+      "operation": "admission",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 1,
+      "expected_error": "NetError.Timeout",
+      "dispatch": "hosted-scalar"
+    },
+    {
+      "id": "reject-host-memory",
+      "operation": "admission",
+      "size_class": "small",
+      "payload_bytes": 0,
+      "expected_rejections": 1,
+      "expected_error": "VmMemoryResourceLimit",
+      "dispatch": "hosted-scalar"
+    }
+  ],
+  "metrics": [
+    "backpressure_pending_polls",
+    "bytes_copied",
+    "cancellations",
+    "dns_queries",
+    "host_calls",
+    "host_handles_created",
+    "latency",
+    "native_live_handles",
+    "partial_replies",
+    "pending_polls",
+    "polls",
+    "rejections",
+    "reply_retained_peak_bytes",
+    "rollbacks",
+    "sampled_budget_peak_bytes",
+    "selected_allocations",
+    "selected_fixture_allocations",
+    "selected_fixture_bytes",
+    "selected_logical_allocations",
+    "selected_logical_storage_estimate_bytes",
+    "tail_latency",
+    "throughput"
+  ],
+  "report": {
+    "format": "tondo-stdlib-net-performance-report/1",
+    "path": "target/reliability/evidence/stdlib-net-performance.json",
+    "portable_artifact": false
+  }
+}

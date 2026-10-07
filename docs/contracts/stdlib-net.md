@@ -364,6 +364,11 @@ progression belongs to `host`, `model` and `promotion.next_blocks`; its next
 leaf is `STD-NET-PERF-001`. Native ABI/AOT and complete API conformance/promotion
 remain outside these hosted/test boundaries.
 
+The measurement-ready hosted protocol is
+[stdlib-net-performance.md](stdlib-net-performance.md), with 21 controlled
+loopback routes and 27 retained samples per route. It measures admitted private
+host calls and owner polling, without bytecode VM or native runtime/AOT timing.
+
 ## Diagnóstico, cleanup y portabilidad
 
 El runtime puede emitir eventos privados en `std.net`: `resolve.start`,

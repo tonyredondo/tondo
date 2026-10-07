@@ -14,6 +14,9 @@ use tondo_vm::network::{NetworkOperation as Operation, NetworkType as Kind};
 
 const NODE: u64 = tondo_vm::runtime::TEST_DETACHED_VALUE_BYTES;
 
+#[cfg(test)]
+mod performance;
+
 pub(super) enum NetworkValue {
     Limits(NetLimits),
     Options(NetOptions),

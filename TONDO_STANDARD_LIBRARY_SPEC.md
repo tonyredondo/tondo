@@ -3040,6 +3040,14 @@ is [`testing/stdlib-net-test.json`](testing/stdlib-net-test.json), with its exac
 model, controlled hosted replay and fuzz scope in
 [`stdlib-net-test.md`](docs/contracts/stdlib-net-test.md).
 
+The measurement-ready networking protocol is registered in
+[testing/stdlib-net-performance.json](testing/stdlib-net-performance.json) and
+[stdlib-net-performance.md](docs/contracts/stdlib-net-performance.md). It covers
+21 controlled hosted bridge workloads and 27 retained samples each, including
+connections, partial I/O, backpressure, explicit DNS/TLS, cancellation and
+bounded refusal. Resource counters are selected logical observations; VM
+interpreter, native ABI/AOT, SIMD and code-size timing are not promoted.
+
 #### 14.4.7 `std.encoding`
 
 `std.encoding` es el owner único de los encodings binario-texto de STD-0.1B.

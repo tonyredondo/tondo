@@ -74,6 +74,21 @@
     "quality_gate": "verified-80-percent-per-scope",
     "selected_route": "independent-reference-and-public-hosted-regression-boundary"
   },
+  "measurement": {
+    "task": "STD-NET-PERF-001",
+    "register": "testing/stdlib-net-performance.json",
+    "contract": "docs/contracts/stdlib-net-performance.md",
+    "status": "measurement-ready",
+    "quality_gate": "pending-80-percent-per-scope",
+    "target": "x86_64-unknown-linux-gnu",
+    "backend": "rust-hosted-bridge",
+    "profile": "test",
+    "selected_route": "hosted-scalar",
+    "samples_per_workload": 27,
+    "hosted_vm_timing": "not-measured",
+    "native_abi": "not-measured",
+    "native_aot": "not-measured"
+  },
   "surface": {
     "types": [
       "HostName",

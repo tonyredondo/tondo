@@ -252,6 +252,12 @@ run_step stdlib-net-testing-contract-tests \
     scripts/stdlib-net-test-test.sh
 run_step stdlib-net-fuzz \
     scripts/stdlib-net-fuzz.sh
+run_step stdlib-net-performance-contract \
+    scripts/stdlib-net-performance-check.sh
+run_step stdlib-net-performance-contract-tests \
+    scripts/stdlib-net-performance-test.sh
+run_step stdlib-net-performance \
+    scripts/stdlib-net-performance.sh
 run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
 run_step stdlib-civil-time-contract-tests \

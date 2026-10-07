@@ -42,6 +42,22 @@ def net_testing_boundary:
   and .promotion.performance == "not-claimed"
   and .promotion.next_blocks == ["STD-NET-PERF-001"];
 
+def net_measurement_progression:
+  .measurement as $measurement
+  | if $measurement == null then true else
+    .host.status == "verified-production-hosted" and .model.status == "verified"
+    and ($measurement | del(.status,.quality_gate)) == {
+      task:"STD-NET-PERF-001", register:"testing/stdlib-net-performance.json",
+      contract:"docs/contracts/stdlib-net-performance.md",
+      target:"x86_64-unknown-linux-gnu", backend:"rust-hosted-bridge", profile:"test",
+      selected_route:"hosted-scalar", samples_per_workload:27,
+      hosted_vm_timing:"not-measured", native_abi:"not-measured", native_aot:"not-measured"}
+    and ($measurement.status == "measurement-ready"
+      or $measurement.status == "verified-hosted-scalar-baseline")
+    and $measurement.quality_gate == (if $measurement.status == "measurement-ready"
+      then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
+  end;
+
 def net_owner_progression:
   .host as $host | .model as $model
   | ($host.status == "implementation-in-progress" or $host.status == "verified-production-hosted")
@@ -56,8 +72,11 @@ def net_owner_progression:
       or ($model.status == "verified" and $model.quality_gate == "verified-80-percent-per-scope"
         and $host.status == "verified-production-hosted"))
   end)
+  and net_measurement_progression
   and .promotion.next_blocks == (if .implementation.status == "ready-kernel-private-provider"
     then ["STD-NET-IMPL-001"]
     elif $host.status == "implementation-in-progress" then ["STD-NET-HOST-001"]
-    elif $model.status == "verified" then ["STD-NET-PERF-001"]
+    elif $model.status == "verified" then
+      (if .measurement.status == "verified-hosted-scalar-baseline"
+        then ["STD-NET-CONF-001"] else ["STD-NET-PERF-001"] end)
     else ["STD-NET-TEST-001"] end);
