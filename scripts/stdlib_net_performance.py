@@ -113,7 +113,7 @@ def require(condition, message):
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
-                                    ensure_ascii=False).encode()).hexdigest()
+                                    ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
 
 def nearest_rank(values, fraction):
@@ -229,7 +229,8 @@ def measurement(context, name, samples):
 
 
 def validate_measurement(context, row):
-    require(row == measurement(context, row["workload_id"], row["samples"]),
+    # JSON booleans and decimal numbers must not compare equal to derived integers.
+    require(digest(row) == digest(measurement(context, row["workload_id"], row["samples"])),
             "measurement aggregation or provenance drift")
 
 
@@ -263,13 +264,14 @@ def load_contract(path):
             and value["probe"]["test"] == "process_host::net::performance::network_performance_probe"
             and value["probe"]["sha256"] == hashlib.sha256((ROOT / PROBE).read_bytes()).hexdigest(),
             "probe provenance")
-    require(value["protocol"] == PROTOCOL and value["strategy"] == STRATEGY
-            and value["resource_model"] == RESOURCE_MODEL and value["limits"] == LIMITS
-            and value["oracle"] == ORACLE, "protocol, oracle or resource boundary")
+    require(all(digest(value[key]) == digest(expected) for key, expected in (
+        ("protocol", PROTOCOL), ("strategy", STRATEGY), ("resource_model", RESOURCE_MODEL),
+        ("limits", LIMITS), ("oracle", ORACLE))), "protocol, oracle or resource boundary")
     require(value["identity_fields"] == sorted(IDENTITY)
             and value["forbidden_identity"] == ["ambient_environment", "cpu_frequency", "path", "pid",
                                                "timestamp", "ephemeral_port"], "identity boundary")
-    require(value["workloads"] == [workload(name) for name in ROUTES], "workload boundary")
+    require(digest(value["workloads"]) == digest([workload(name) for name in ROUTES]),
+            "workload boundary")
     require(value["metrics"] == sorted(COUNTERS | {"latency", "tail_latency", "throughput",
             "selected_logical_storage_estimate_bytes", "selected_logical_allocations", "native_live_handles"}),
             "metric boundary")
@@ -295,7 +297,7 @@ def validate_report(contract, report, tree):
     require(report["format"] == "tondo-stdlib-net-performance-report/1", "report format")
     for key in ("edition", "phase", "task", "owner", "target", "backend", "profile", "protocol",
                 "strategy", "resource_model"):
-        require(report[key] == contract[key], "report contract boundary")
+        require(digest(report[key]) == digest(contract[key]), "report contract boundary")
     context = {key: report[key] for key in CONTEXT}
     validate_context(context)
     require(context["source_tree_sha256"] == tree

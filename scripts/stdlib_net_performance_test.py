@@ -150,6 +150,22 @@ class NetworkReportPreparation(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_measurement(context_fixture(), result)
 
+    def test_derived_integer_metrics_reject_decimal_and_boolean_substitutions(self):
+        original = self.capture()
+        for key in ("latency_ns", "observations"):
+            result = deepcopy(original)
+            values = result[key] if key == "latency_ns" else result[key]["bytes_copied"]
+            values["median"] = float(values["median"])
+            with self.assertRaises(ValueError):
+                validate_measurement(context_fixture(), result)
+        rows = sample_fixture()
+        for row in rows:
+            row["nanos"] = 1
+        result = self.capture(rows)
+        result["latency_ns"]["median"] = True
+        with self.assertRaises(ValueError):
+            validate_measurement(context_fixture(), result)
+
     def test_backpressure_requires_partial_progress_and_retained_pending(self):
         name = "tcp-write-backpressure"
         row = sample_fixture(name)[0]
@@ -243,6 +259,14 @@ class CompleteNetworkReport(unittest.TestCase):
             report[key] = value
             with self.assertRaises(ValueError):
                 perf.validate_report(self.contract, report, self.context["source_tree_sha256"])
+
+    def test_protocol_numbers_reject_equal_decimal_values(self):
+        # A captured report is read independently of the contract; modifying an
+        # in-memory render's shared dictionary would alter both test inputs.
+        report = deepcopy(self.report())
+        report["protocol"]["independent_processes"] = 3.0
+        with self.assertRaises(ValueError):
+            perf.validate_report(self.contract, report, self.context["source_tree_sha256"])
 
     def test_host_description_does_not_enter_stable_identity(self):
         report = self.report()
