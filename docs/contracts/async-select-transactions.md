@@ -2,8 +2,9 @@
 
 `ASYNC-SELECT-ATOMIC-001` repairs the common hosted protocol used by source
 `selectable` adapters, network readiness, channels, timers, one-shot waiters,
-group completions, actors and Join waits. Its promotion remains pending until
-the current source passes the complete repository gate and publication CI.
+group completions, actors and Join waits. The hosted boundary is verified on
+published source `adfd5bf`, with source-bound quality and the complete repository
+gate observed locally and in exact-source publication CI.
 
 Every selection receives a private registration identity. Preparation retains
 affine argument and callable owners. Source adapters receive private aggregate
@@ -53,13 +54,17 @@ The joint selection/network quality campaign passes 2,726 Rust tests and
 196 layer observations. It covers 300,343 of 328,050 lines (91.554031%),
 87.760902% of functions and 89.940606% of regions, preserves every global and
 risk-scope 80% floor, and catches all six critical mutants without survivors,
-timeouts or unviable cases. The current ratchet binds both reports to source
+timeouts or unviable cases. The [retained joint-campaign ratchet](https://github.com/tonyredondo/tondo/blob/adfd5bf87a2c96f312b34de5591a1cae994b34b2/testing/conformance-ratchet.json) binds both reports to source
 tree `e2eb54c57ee988d1ab984ff872efbe821b18d05d8e80cf0cfac3df2d4d52e907`.
 Every functional-gate step passes across the retained, dependency-aware local
 continuations; the final draft run passes all 206 cases and three selected
 cases with 32 exact observations each. This is complete local step coverage,
-not a single uninterrupted gate invocation. Exact-source publication CI still
-precedes tracker closure.
+not a single uninterrupted local gate invocation. [Publication CI run
+37614412926](https://github.com/tonyredondo/tondo/actions/runs/37614412926),
+attempt 1, checks out `adfd5bf` and passes all 345 named repository-gate steps
+in strict Linux job `112769189980` (32m07s). All paginated checks, statuses,
+runs, main refs and open-PR queries remain stable after 111 seconds. Portable
+and separate fuzz jobs are expected normal-push skips.
 
 The first publication CI run checked out `f1b9c8a` and passed its Rust suites,
 then stopped because two new contract checkers required unavailable ripgrep.

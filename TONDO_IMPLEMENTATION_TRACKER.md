@@ -73,10 +73,13 @@ DNS/TCP/UDP/TLS provider after source-bound quality, the full local gate,
 publication and exact-SHA CI confirmation. Public compiler/VM registration,
 target activation, VM heap admission and production scope cleanup remain
 `STD-NET-HOST-001`, the next owner leaf.
-`ASYNC-SELECT-ATOMIC-001` is its active prerequisite after public integration
-reproduced losing data through source adapters and mixed channel/network arms.
-Both current hosted implementations remain unpromoted until their joint
-quality gate, complete functional gate and exact-SHA publication CI pass.
+`ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
+integration reproduced losing data through source adapters and mixed
+channel/network arms. Source-bound quality and all 345 repository-gate steps
+pass on published `adfd5bf`; exact-source CI run `37614412926` is stable.
+The networking implementation has the same executable proof; its owner remains
+open while the spec's temporal promotion statement is aligned and the next
+networking TEST boundary is prepared for consolidated validation.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -2451,17 +2454,22 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   `Join` perdedores awaitables. Se validan además los tipos de registration y
   payload en MIR/bytecode y se conserva la afinidad en pánico/cancelación.
 
-- [ ] **ASYNC-SELECT-ATOMIC-001 — Repair hosted selection transactions.**
-  Public network integration reproduces losing datagram consumption through a
-  source `selectable` forwarder and losing channel-message consumption in a
-  mixed channel/network selection. Keep `STD-NET-HOST-001` unpromoted until
-  registration, readiness, winner commitment and rollback share one protocol
-  across source adapters and standard operations. Verify affine payload
-  ownership, buffered and rendezvous channels, fairness, `else`, cancellation,
-  panic and result admission before effects. Check `E1614` for bodies that
-  cannot preserve the atomic contract. Earlier bounded selection evidence
-  does not establish these compositions. Tony approved this prerequisite
-  repair before resuming network HOST promotion.
+- [x] **ASYNC-SELECT-ATOMIC-001 — Repair hosted selection transactions.**
+  Registration, readiness, commitment and rollback share a sealed protocol
+  across source adapters, network/channels, rendezvous, timers, waiters, groups,
+  actors and Join waits. Preparation preserves affine arguments and callables;
+  winner edges alone transfer them. Joint rendezvous admits both results and
+  claims both selectors before either continuation. Source/typed-HIR/bytecode
+  proofs reject irreversible pre-checkpoint effects with `E1614`. Losing arms,
+  `else`, rejected result admission and cancellation preserve data or execute
+  the transferred owners' terminal cleanup. Eighteen retained executable
+  anchors and 4,096 finite rendezvous-model seeds pass. The joint campaign
+  runs 2,726 Rust tests, attests 196 layers, covers 300,343/328,050 lines
+  (91.554031%), preserves every global/risk 80% floor and catches six critical
+  mutants. Published `adfd5bf`, CI run `37614412926` attempt 1, strict job
+  `112769189980`, passes all 345 gate steps in 32m07s; all remote evidence is
+  stable after 111 seconds. Portable/fuzz jobs are expected skips. This closes
+  hosted execution only; native general compositions remain separate.
 
 - [x] **ASYNC-SELECT-TEST-001 — Modelar, probar y fuzzear el núcleo de
   selección.** `SelectModel` en `crates/tondo-reliability/tests/models.rs`

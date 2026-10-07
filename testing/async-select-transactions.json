@@ -2,8 +2,14 @@
   "format": "tondo-selection-transactions/1",
   "task": "ASYNC-SELECT-ATOMIC-001",
   "contract": "docs/contracts/async-select-transactions.md",
-  "status": "implementation-in-progress",
-  "quality_gate": "pending-current-source-proof",
+  "status": "verified-production-hosted",
+  "quality_gate": "verified-80-percent-per-scope",
+  "publication": {
+    "source_revision": "adfd5bf87a2c96f312b34de5591a1cae994b34b2",
+    "ci_run": 37614412926,
+    "strict_job": 112769189980,
+    "result": "passed-linux-x86_64-portable-and-fuzz-jobs-expected-skipped"
+  },
   "target": "tondo-vm-hosted",
   "native_abi_or_aot": false,
   "protocol": {
