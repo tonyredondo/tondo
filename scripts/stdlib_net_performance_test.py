@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 import stdlib_net_performance as perf
@@ -267,6 +268,23 @@ class CompleteNetworkReport(unittest.TestCase):
         report["protocol"]["independent_processes"] = 3.0
         with self.assertRaises(ValueError):
             perf.validate_report(self.contract, report, self.context["source_tree_sha256"])
+
+    def test_pinned_contract_numbers_and_boolean_descriptor_require_exact_types(self):
+        with tempfile.TemporaryDirectory(prefix="tondo-net-performance-types-") as temporary:
+            path = Path(temporary) / "contract.json"
+            for section, key, value in (("protocol", "independent_processes", 3.0),
+                                        ("limits", "provider_wait_seconds", 5.0),
+                                        ("report", "portable_artifact", 0)):
+                contract = deepcopy(self.contract)
+                contract[section][key] = value
+                path.write_text(json.dumps(contract, indent=2) + "\n")
+                with self.assertRaises(ValueError):
+                    perf.load_contract(path)
+            contract = deepcopy(self.contract)
+            contract["workloads"][0]["payload_bytes"] = False
+            path.write_text(json.dumps(contract, indent=2) + "\n")
+            with self.assertRaises(ValueError):
+                perf.load_contract(path)
 
     def test_host_description_does_not_enter_stable_identity(self):
         report = self.report()

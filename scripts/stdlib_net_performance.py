@@ -275,9 +275,9 @@ def load_contract(path):
     require(value["metrics"] == sorted(COUNTERS | {"latency", "tail_latency", "throughput",
             "selected_logical_storage_estimate_bytes", "selected_logical_allocations", "native_live_handles"}),
             "metric boundary")
-    require(value["report"] == {"format": "tondo-stdlib-net-performance-report/1",
+    require(digest(value["report"]) == digest({"format": "tondo-stdlib-net-performance-report/1",
             "path": "target/reliability/evidence/stdlib-net-performance.json",
-            "portable_artifact": False}, "report boundary")
+            "portable_artifact": False}), "report boundary")
     return value
 
 
