@@ -14,6 +14,9 @@ tondo-conformance = { path = "../tondo-conformance" }
 tondo-stdlib = { path = "../tondo-stdlib" }
 tondo-vm = { path = "../tondo-vm", features = ["conformance"] }
 
+[dev-dependencies]
+rustls.workspace = true
+
 [lints]
 workspace = true
 

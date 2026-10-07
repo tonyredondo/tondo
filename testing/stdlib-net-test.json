@@ -1,0 +1,79 @@
+{
+  "format": "tondo-stdlib-net-testing/1",
+  "owner": "std.net",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-NET-TEST-001",
+  "status": "ready",
+  "quality_gate": "pending-current-source-proof",
+  "contract": "docs/contracts/stdlib-net-test.md",
+  "parent_contract": "testing/stdlib-net.json",
+  "target": "independent-reference-and-public-hosted-regression-boundary",
+  "limits": {
+    "max_reference_bytes": 128,
+    "max_reference_addresses": 32,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 512,
+    "model_seed_count": 4096,
+    "fuzz_smoke_runs": 128
+  },
+  "model": {
+    "sources": [
+      "crates/tondo-reliability/src/net_model.rs",
+      "crates/tondo-reliability/src/net_model/admission.rs",
+      "crates/tondo-reliability/src/net_model/stream.rs",
+      "crates/tondo-reliability/src/net_model/tls.rs"
+    ],
+    "production_imports": false,
+    "outside_domain": "not-a-production-rejection",
+    "tls_oracle": "explicit-verdict-admission-and-affine-owner-ledger",
+    "os_dns_tls_packet_parser": false
+  },
+  "corpus": {
+    "path": "crates/tondo-reliability/tests/fixtures/net-cases.json",
+    "cases": 40,
+    "scope": "bounded-admission-and-owner-regressions"
+  },
+  "test": {
+    "sources": [
+      "crates/tondo-reliability/tests/net_kernel_models.rs",
+      "crates/tondo-reliability/tests/net_corpus.rs",
+      "crates/tondo-reliability/tests/net_hosted_models.rs"
+    ],
+    "independent_unit_tests": 14,
+    "integration_tests": 9,
+    "providers": "controlled-loopback-no-external-service",
+    "tls_versions": [
+      "1.2",
+      "1.3"
+    ],
+    "process_scope": "explicit-delegated-scope",
+    "terminal_proof": "model-ledger-peer-eof-and-production-host-retirement"
+  },
+  "fuzz": {
+    "target": "stdlib_net",
+    "source": "fuzz/fuzz_targets/stdlib_net.rs",
+    "corpus": "fuzz/corpus/stdlib_net/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 512,
+    "smoke": {
+      "runs": 128,
+      "seed": 4113,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "timeout_seconds": 10,
+    "rss_limit_mb": 4096,
+    "minimal_dependency_graph": "stdlib-only-no-compiler-vm-conformance-or-reliability-cli"
+  },
+  "promotion": {
+    "test_boundary_promoted": false,
+    "public_api_promoted": false,
+    "native_abi": "not-claimed",
+    "native_aot": "not-claimed",
+    "performance": "not-claimed",
+    "next_blocks": [
+      "STD-NET-PERF-001"
+    ]
+  }
+}

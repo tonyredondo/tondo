@@ -246,6 +246,12 @@ run_step stdlib-net-host \
     scripts/stdlib-net-host-check.sh
 run_step stdlib-net-host-tests \
     scripts/stdlib-net-host-test.sh
+run_step stdlib-net-testing-contract \
+    scripts/stdlib-net-test-check.sh
+run_step stdlib-net-testing-contract-tests \
+    scripts/stdlib-net-test-test.sh
+run_step stdlib-net-fuzz \
+    scripts/stdlib-net-fuzz.sh
 run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
 run_step stdlib-civil-time-contract-tests \

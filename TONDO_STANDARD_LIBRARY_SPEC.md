@@ -3030,10 +3030,13 @@ diagnóstico privado y ausencia de efectos por import. La superficie queda
 from the public hosted integration. The latter implements the 40 operations,
 nominal types, explicit resolver configuration, receiving-account admission
 and scope cleanup described in
-[`stdlib-net-host.md`](docs/contracts/stdlib-net-host.md); its promotion remains
-pending the joint selection and current-source quality gates. Networking test,
+[`stdlib-net-host.md`](docs/contracts/stdlib-net-host.md); its promotion requires
+the joint selection and current-source quality gates. Networking test,
 performance, portable conformance, usage documentation and native ABI/AOT
-remain separate `STD-NET-*` owner leaves.
+remain separate `STD-NET-*` owner leaves. The independent bounded test register
+is [`testing/stdlib-net-test.json`](testing/stdlib-net-test.json), with its exact
+model, controlled hosted replay and fuzz scope in
+[`stdlib-net-test.md`](docs/contracts/stdlib-net-test.md).
 
 #### 14.4.7 `std.encoding`
 

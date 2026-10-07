@@ -15,7 +15,8 @@ die() {
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "owner contract contains CR or trailing whitespace"
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_net_testing";
   .format == "tondo-stdlib-owner-contract/1"
   and .owner == "std.net"
   and .parent_owner == "std"
@@ -155,8 +156,7 @@ jq -e '
   and .implementation.required_follow_ups == (if .implementation.status == "ready-kernel-private-provider"
        then ["STD-NET-IMPL-001", "STD-NET-HOST-001", "STD-NET-TEST-001", "STD-NET-PERF-001", "STD-NET-CONF-001", "STD-NET-DOC-001"]
        else ["STD-NET-HOST-001", "STD-NET-TEST-001", "STD-NET-PERF-001", "STD-NET-CONF-001", "STD-NET-DOC-001"] end)
-  and .promotion.next_blocks == (if .implementation.status == "ready-kernel-private-provider"
-       then ["STD-NET-IMPL-001"] else ["STD-NET-HOST-001"] end)
+  and net_owner_progression
 ' "$contract" >/dev/null || die "invalid machine-readable net contract"
 
 for path in \

@@ -26,6 +26,13 @@ tondo-stdlib = { path = "../crates/tondo-stdlib" }
 tondo-vm = { path = "../crates/tondo-vm", optional = true }
 
 [[bin]]
+name = "stdlib_net"
+path = "fuzz_targets/stdlib_net.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "frontend"
 path = "fuzz_targets/frontend.rs"
 required-features = ["compiler-targets"]

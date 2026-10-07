@@ -13,6 +13,9 @@ expect_failure() {
 for status in ready-kernel-private-provider verified-kernel-private-provider; do
     jq --arg status "$status" '
       .implementation.status = $status
+      | .host.status = "implementation-in-progress"
+      | .host.quality_gate = "pending-current-source-proof"
+      | .model = null
       | .implementation.quality_gate = (if $status == "ready-kernel-private-provider"
           then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
       | .implementation.required_follow_ups = (if $status == "ready-kernel-private-provider"

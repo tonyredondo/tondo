@@ -8,9 +8,13 @@ Este cierre fija la frontera de red, pero no afirma que el runtime público de
 sockets, DNS o TLS ya esté implementado.
 
 The public hosted implementation is tracked separately in
-[`stdlib-net-host.md`](stdlib-net-host.md). Its current-source promotion is
-pending the general selection prerequisite, joint quality gate and exact-SHA CI.
-The private-provider register retains its original kernel-only boundary.
+[`stdlib-net-host.md`](stdlib-net-host.md). Its current-source promotion requires
+the general selection prerequisite, joint quality gate and exact-SHA CI.
+The private-provider register retains its historical kernel-only evidence;
+the live integration state is the separate `host` entry. The independent model,
+controlled public replay and bounded fuzz scope are recorded in
+[`stdlib-net-test.md`](stdlib-net-test.md) and
+[`testing/stdlib-net-test.json`](../../testing/stdlib-net-test.json).
 
 `std.net` solo aparece cuando el target selecciona la capability `network`.
 Importar el módulo no abre sockets, consulta DNS, lee proxies o certificados,
@@ -18,9 +22,9 @@ crea tasks ni toca el entorno. Las operaciones de red son explícitas y usan el
 único modelo suspendible de Tondo: una llamada directa espera implícitamente,
 `spawn` devuelve el `Join` ordinario y no existe una familia `connectAsync`.
 
-La frontera `HOST` tiene estado `required-after-native-gate`: el contrato
-alimenta `DIAG-RUNTIME-001` y la elección de backend, mientras que los
-adaptadores de VM/nativo y el proveedor TLS quedan detrás de `NATIVE-001`.
+The original design records `required-after-native-gate` as the HOST
+prerequisite. `NATIVE-001` is complete. This historical dependency does not
+describe the live HOST status or establish native networking support.
 
 ## Superficie pública
 
@@ -344,9 +348,10 @@ The private Rust kernel/provider has state `verified-kernel-private-provider`;
 its focused tests and source-bound quality reports are recorded in
 [stdlib-net-implementation.md](stdlib-net-implementation.md). Public VM
 registration, compiler ownership checks, target activation and production
-scope cleanup remain `STD-NET-HOST-001`. Native ABI/AOT execution and a
-conformant promotion are not established by this implementation. The tracker
-owner remains open until its complete functional gate and publication CI pass.
+scope cleanup belong to the separate `STD-NET-HOST-001` evidence. Native ABI/AOT
+execution and conformant promotion are not established by this private
+implementation checkpoint. Each tracker owner requires its complete
+functional gate and publication CI.
 
 ## Diagnóstico, cleanup y portabilidad
 
@@ -382,7 +387,7 @@ Happy Eyeballs implícito, buffer ilimitado, TLS inseguro, downgrade plaintext,
 resolver configurable por environment, `HttpClient`, `RpcClient`, QUIC,
 WebSocket, Unix sockets y raw sockets.
 
-Public integration remains `STD-NET-HOST-001`, followed by `STD-NET-TEST-001`,
+The owner order is `STD-NET-HOST-001`, followed by `STD-NET-TEST-001`,
 `STD-NET-PERF-001`, `STD-NET-CONF-001` and `STD-NET-DOC-001`. The contract can
 inform `DIAG-RUNTIME-001` and `NATIVE-001`; public runtime symbols require their
 own executable integration and gates.

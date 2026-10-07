@@ -10,6 +10,7 @@ pub mod harness;
 pub mod inventory;
 pub mod layer_evidence;
 pub mod matrix;
+pub mod net_model;
 pub mod provenance;
 pub mod quality;
 pub mod ratchet;

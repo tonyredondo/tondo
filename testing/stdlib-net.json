@@ -47,6 +47,7 @@
     "system_config_fallback": false
   },
   "private_provider_draft": {
+    "evidence_scope": "historical-private-provider-design-checkpoint",
     "status": "in-progress-unpromoted",
     "tokio": "1.53.2",
     "hickory_resolver": "0.26.3",
@@ -64,6 +65,14 @@
     "tls_outgoing_buffer_bytes_max": 65536,
     "public_runtime_registered": false,
     "native_abi_or_aot": false
+  },
+  "model": {
+    "task": "STD-NET-TEST-001",
+    "register": "testing/stdlib-net-test.json",
+    "contract": "docs/contracts/stdlib-net-test.md",
+    "status": "ready",
+    "quality_gate": "pending-current-source-proof",
+    "selected_route": "independent-reference-and-public-hosted-regression-boundary"
   },
   "surface": {
     "types": [
