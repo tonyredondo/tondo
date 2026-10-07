@@ -25,7 +25,8 @@ jobs:
   strict:
     name: Strict gate (Linux x86_64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Complete runs exhausted 45 minutes before the final conformance checks.
+    timeout-minutes: 55
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

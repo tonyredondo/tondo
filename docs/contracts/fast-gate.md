@@ -16,6 +16,12 @@ only Cargo's registry and git sources; it does not archive `target/`, because
 generated build and mutation artifacts are unbounded and must never stall the
 feedback gate.
 
+The strict Linux job has a finite 55-minute budget, including a complete
+shared-frontier gate when selected. Two complete runs exhausted the earlier
+45-minute budget before the final conformance checks. All required commands,
+samples and quality floors remain mandatory; timeout is a failure. Portable
+jobs retain 45 minutes and deterministic fuzz retains 30 minutes.
+
 The `documentation` tier executes `scripts/documentation-gate.sh`. It validates
 typed fences, documentation conformance, normative evidence, tracker topology,
 the live draft manifest and standard-library contracts. It does not run the
