@@ -91,7 +91,7 @@ for marker in \
     'RuntimeSelectReservation' \
     'ActorSelectSend' \
     'actor_select_send_ready' \
-    'select_actor_send_move_places' \
+    'select_call_move_places' \
     'selectable_actor_send_commit_consumes_message_once' \
     'selectable_actor_send_rollback_unregisters_waiter_and_retains_message' \
     'selectable_actor_send_waiter_wakes_only_after_capacity_opens'; do
