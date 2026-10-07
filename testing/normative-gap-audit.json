@@ -13,14 +13,14 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "ccb3038c53b3693b367dcc8375de615a58facbee34acdff677ea437d823c3c01"
+      "sha256": "d9a0344859876e47dd0f88313e098091aac4710684efd294275d80431edbce41"
     }
   ],
   "summary": {
     "total": 386,
     "by_outcome": {
-      "absent": 15,
-      "implemented-without-trace": 369,
+      "absent": 14,
+      "implemented-without-trace": 370,
       "not-applicable": 2
     }
   },
@@ -230,7 +230,7 @@
       "requirement": "TC01-3-2-1-R001",
       "text_sha256": "e715e50a9552d3f30a8370108acd1d0b824304d4d792efbeedc641acff8db38a",
       "outcome": "implemented-without-trace",
-      "reason": "TC01-3-2-1-R001 has explicit CLI/toolchain parser validation and build-identity tests; its six-dimension public trace remains incomplete and network target activation is not promoted.",
+      "reason": "TC01-3-2-1-R001 has explicit CLI/toolchain parser validation and build-identity tests; production hosted networking is verified by STD-NET-HOST-001, while its six-dimension normative trace remains incomplete.",
       "implementation": [
         "crates/tondo-cli/src/project_discovery.rs",
         "crates/tondo-compiler/src/project.rs",
@@ -247,12 +247,19 @@
     },
     {
       "requirement": "TC01-3-2-1-R002",
-      "text_sha256": "f53aeca24e56aa2f43922149f5fe5e5f8afb8719ce7de77bc40ee44173740269",
-      "outcome": "absent",
-      "reason": "TC01-3-2-1-R002 requires production runtime target activation and explicit resolver forwarding; private provider tests do not establish this public boundary. STD-NET-HOST-001 remains open, with its normative trace retained as a separate follow-up.",
-      "implementation": [],
-      "tests": [],
-      "follow_up": "CONF-GAP-IMPL-001:TC01-3-2-1-R002"
+      "text_sha256": "73c36f7bc1d0ed84565fb2b2ec4c4bc5af03a3b81cc504f8f2833b9ad83d9937",
+      "outcome": "implemented-without-trace",
+      "reason": "TC01-3-2-1-R002 has explicit resolver forwarding through the verified production hosted provider and a public DNS transcript compared with an independent finite reference; its six-dimension normative trace remains incomplete and native networking is not implemented.",
+      "implementation": [
+        "crates/tondo-compiler/src/driver.rs",
+        "crates/tondo-compiler/src/net_provider/dns_runtime.rs",
+        "crates/tondo-compiler/src/process_host/net.rs"
+      ],
+      "tests": [
+        "rust:tondo-compiler:src::driver:network_configuration_survives_direct_requests_and_input_replacement",
+        "rust:tondo-reliability:tests::net_hosted_models:public_dns_transcript_matches_ordered_finite_reference"
+      ],
+      "follow_up": null
     },
     {
       "requirement": "TC01-3-3-R001",

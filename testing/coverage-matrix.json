@@ -12,10 +12,10 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "ccb3038c53b3693b367dcc8375de615a58facbee34acdff677ea437d823c3c01"
+      "sha256": "d9a0344859876e47dd0f88313e098091aac4710684efd294275d80431edbce41"
     }
   ],
-  "inventory_sha256": "cebb9f63f8e6ac1930e6dbeda09734e31f9dff591b3c8263be47f5ffbba2e3bb",
+  "inventory_sha256": "93dac449f17b72a15a1c2ff745ad56c5d869a1b8ecb8dec82d65811d0e1775fa",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 448,
@@ -42,11 +42,11 @@
     {
       "id": "TC01-10-1-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "10.1.2 Clausura de artefactos nativos",
       "heading_anchor": "10-1-2-clausura-de-artefactos-nativos",
-      "line_start": 1464,
-      "line_end": 1471,
+      "line_start": 1473,
+      "line_end": 1480,
       "text": "`nodes` y `producers` son listas ordenadas por `id`; `inputs` y `outputs` son conjuntos ordenados. Los únicos kinds de nodo son `object`, `runtime`, `stdlib`, `privileged-unit` y `product`. Un input no tiene producer; un intermediate es un object producido por `compile` o `prepare`; el único output es `product`, producido por un único producer `link`. El grafo completo debe ser alcanzable desde `product_id` y no puede contener ciclos. Debe declarar al menos un object input, exactamente un runtime y exactamente un stdlib; las unidades privilegiadas son opcionales y pueden ser varias.",
       "text_sha256": "46efee51b88d158f343894f3fb6ce549f823c18744e42d5254cfc522ea67f3be",
       "phase": "cli",
@@ -54,7 +54,7 @@
       "status": "toolchain-limit",
       "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:1464#10-1-2-clausura-de-artefactos-nativos"
+        "TONDO_TOOLCHAIN_SPEC.md:1473#10-1-2-clausura-de-artefactos-nativos"
       ],
       "dimensions": {
         "positive": {
@@ -86,11 +86,11 @@
     {
       "id": "TC01-10-1-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "10.1.3 Plan de enlace nativo",
       "heading_anchor": "10-1-3-plan-de-enlace-nativo",
-      "line_start": 1537,
-      "line_end": 1543,
+      "line_start": 1546,
+      "line_end": 1552,
       "text": "El record repite la identidad del descriptor como `artifact_target_descriptor_hash` para rechazar de forma pura una mezcla de targets antes de resolver bytes. `NativeLinkPlan::validate_against` valida además el descriptor y el `NativeArtifact` seleccionados: package, identidad del artifact, driver exacto y sus argumentos ordenados, hash del artefacto del driver, inputs del producer `link`, object format, product ID y hash esperado de salida deben coincidir.",
       "text_sha256": "f066d8a2d4d4c68ada91e7c03c9db5ff047e2a8354628d56c209cc14b09cc177",
       "phase": "cli",
@@ -98,7 +98,7 @@
       "status": "toolchain-limit",
       "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:1537#10-1-3-plan-de-enlace-nativo"
+        "TONDO_TOOLCHAIN_SPEC.md:1546#10-1-3-plan-de-enlace-nativo"
       ],
       "dimensions": {
         "positive": {
@@ -130,11 +130,11 @@
     {
       "id": "TC01-10-1-4-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "10.1.4 Publicación y consumo nativos",
       "heading_anchor": "10-1-4-publicación-y-consumo-nativos",
-      "line_start": 1589,
-      "line_end": 1592,
+      "line_start": 1598,
+      "line_end": 1601,
       "text": "El orquestador debe tratar producto y receipt como un único par de publicación atómica y `tondo run` debe rechazar antes de ejecutar cualquier ausencia, mezcla de identidades, límite excedido o divergencia entre el receipt y los bytes físicos; no puede exponer ni consumir un miembro parcial del par.",
       "text_sha256": "76649742eaa509482682584bd73e395e8bdfddaa1e89f03571d46a64b7f58445",
       "phase": "cli",
@@ -142,7 +142,7 @@
       "status": "toolchain-limit",
       "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:1589#10-1-4-publicación-y-consumo-nativos"
+        "TONDO_TOOLCHAIN_SPEC.md:1598#10-1-4-publicación-y-consumo-nativos"
       ],
       "dimensions": {
         "positive": {
@@ -174,11 +174,11 @@
     {
       "id": "TC01-10-1-5-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "10.1.5 Baseline de rendimiento antes del backend",
       "heading_anchor": "10-1-5-baseline-de-rendimiento-antes-del-backend",
-      "line_start": 1657,
-      "line_end": 1660,
+      "line_start": 1666,
+      "line_end": 1669,
       "text": "`PERF-001` cierra el diseño y sus validaciones negativas, no la captura de números. La baseline debe capturarse antes de `NATIVE-001`, `NATIVE-ABI-001` o promover una optimización, y las gates de captura, comparación y promoción deben conservar la baseline anterior ante cualquier fallo.",
       "text_sha256": "25dbc4aad334567038999a273a4768ccc8aa6128d599c9a5555705f512bf821b",
       "phase": "cli",
@@ -186,7 +186,7 @@
       "status": "toolchain-limit",
       "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:1657#10-1-5-baseline-de-rendimiento-antes-del-backend"
+        "TONDO_TOOLCHAIN_SPEC.md:1666#10-1-5-baseline-de-rendimiento-antes-del-backend"
       ],
       "dimensions": {
         "positive": {
@@ -218,11 +218,11 @@
     {
       "id": "TC01-10-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "10.2 Doc-tests",
       "heading_anchor": "10-2-doc-tests",
-      "line_start": 1697,
-      "line_end": 1699,
+      "line_start": 1706,
+      "line_end": 1708,
       "text": "La forma, opciones, selección, ejecución y reportes de `tondo test` se rigen por `TONDO_TESTING_SPEC.md`; antes de invocar al compilador debe materializar el plan cerrado descrito arriba.",
       "text_sha256": "7e440ad7e1ad2e8f5b2e44b7f748ac6d675960b458fffb8217933c6c1493c4bb",
       "phase": "cli",
@@ -279,11 +279,11 @@
     {
       "id": "TC01-10-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "10.3 Referencia informativa a TLF",
       "heading_anchor": "10-3-referencia-informativa-a-tlf",
-      "line_start": 1720,
-      "line_end": 1722,
+      "line_start": 1729,
+      "line_end": 1731,
       "text": "Un producto no puede declarar el mismo path que una fuente suelta, archivo de configuración del proyecto, source activo o generado, interfaz de dependencia, unidad privilegiada u otro producto de esa invocación.",
       "text_sha256": "f135c41d1b95cfd5fd0689fc3ec073fe5846e2807ed6e968bf5de448f785d320",
       "phase": "cli",
@@ -339,11 +339,11 @@
     {
       "id": "TC01-10-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "10. CLI de proyecto",
       "heading_anchor": "10-cli-de-proyecto",
-      "line_start": 1332,
-      "line_end": 1342,
+      "line_start": 1341,
+      "line_end": 1351,
       "text": "For test targets declaring `process`, the Linux hosted CLI must receive `--process-cgroup <absolute-path>` pointing to an explicitly delegated cgroup-v2 domain. It creates and verifies a fresh child group before dispatch. The worker enters that group before receiving its sealed program; the coordinator uses `cgroup.kill` and verifies `cgroup.events` is unpopulated before removing it. The cleanup deadline is 5,000 ms. An ordinary directory, symlinked path, missing delegation, unsupported kernel control or unsupported host rejects execution with exit `3`. No environment variable implicitly selects this provider and there is no process-group fallback. This Linux provider does not promote native AOT execution or a provider on another operating system. Test targets without `process`, and compilation-only `--list`, need no delegated cgroup.",
       "text_sha256": "e7d0b965e32a398b11e3527c61487190627c95392e886156dc6f80201e05470b",
       "phase": "cli",
@@ -399,11 +399,11 @@
     {
       "id": "TC01-13-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "13. Límites deliberados de 0.1",
       "heading_anchor": "13-límites-deliberados-de-0-1",
-      "line_start": 1784,
-      "line_end": 1785,
+      "line_start": 1793,
+      "line_end": 1794,
       "text": "Añadir cualquiera de esas piezas no puede relajar la entrada cerrada del compilador ni convertir estado ambiental no declarado en semántica fuente.",
       "text_sha256": "bd29d8de2cc236e879d63ac8b53c01aee6b9098de774c8aad8428f60ddc4ec7d",
       "phase": "toolchain-contract",
@@ -460,7 +460,7 @@
     {
       "id": "TC01-2-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "2.2 Paths",
       "heading_anchor": "2-2-paths",
       "line_start": 102,
@@ -523,7 +523,7 @@
     {
       "id": "TC01-2-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "2.3 PackageId y aliases",
       "heading_anchor": "2-3-packageid-y-aliases",
       "line_start": 120,
@@ -586,7 +586,7 @@
     {
       "id": "TC01-2-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "2.3 PackageId y aliases",
       "heading_anchor": "2-3-packageid-y-aliases",
       "line_start": 125,
@@ -649,7 +649,7 @@
     {
       "id": "TC01-3-1-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 319,
@@ -709,7 +709,7 @@
     {
       "id": "TC01-3-1-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 323,
@@ -769,7 +769,7 @@
     {
       "id": "TC01-3-1-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 329,
@@ -829,7 +829,7 @@
     {
       "id": "TC01-3-1-R004",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 366,
@@ -889,11 +889,11 @@
     {
       "id": "TC01-3-2-1-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.2.1 Explicit network target configuration",
       "heading_anchor": "3-2-1-explicit-network-target-configuration",
-      "line_start": 421,
-      "line_end": 426,
+      "line_start": 429,
+      "line_end": 434,
       "text": "When `network` is selected, `[target.network]` must be supplied and accepts only `resolver_servers = [\"IP:port\", ...]`. Its ordered list contains 1..8 distinct numeric endpoints with positive ports, no host names or IPv6 scope/flow IDs, and at most 64 bytes per endpoint. The table is forbidden without `network`. Its complete ordered contents enter the canonical internal manifest and build identity. Unknown keys are rejected.",
       "text_sha256": "e715e50a9552d3f30a8370108acd1d0b824304d4d792efbeedc641acff8db38a",
       "phase": "cli",
@@ -901,7 +901,7 @@
       "status": "toolchain-limit",
       "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:421#3-2-1-explicit-network-target-configuration"
+        "TONDO_TOOLCHAIN_SPEC.md:429#3-2-1-explicit-network-target-configuration"
       ],
       "dimensions": {
         "positive": {
@@ -933,19 +933,19 @@
     {
       "id": "TC01-3-2-1-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.2.1 Explicit network target configuration",
       "heading_anchor": "3-2-1-explicit-network-target-configuration",
-      "line_start": 428,
-      "line_end": 431,
-      "text": "The runtime must use only the explicitly declared resolver configuration and must not substitute system DNS settings. This schema does not by itself activate an unsupported network target. The provider and promotion boundary are defined by [`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md).",
-      "text_sha256": "f53aeca24e56aa2f43922149f5fe5e5f8afb8719ce7de77bc40ee44173740269",
+      "line_start": 436,
+      "line_end": 440,
+      "text": "The runtime must use only the explicitly declared resolver configuration and must not substitute system DNS settings. This schema does not by itself grant capability or activate a native networking target. The provider and promotion boundary are defined by [`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md).",
+      "text_sha256": "73c36f7bc1d0ed84565fb2b2ec4c4bc5af03a3b81cc504f8f2833b9ad83d9937",
       "phase": "cli",
       "risk": "high",
       "status": "toolchain-limit",
       "classification_reason": "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.",
       "evidence": [
-        "TONDO_TOOLCHAIN_SPEC.md:428#3-2-1-explicit-network-target-configuration"
+        "TONDO_TOOLCHAIN_SPEC.md:436#3-2-1-explicit-network-target-configuration"
       ],
       "dimensions": {
         "positive": {
@@ -977,11 +977,11 @@
     {
       "id": "TC01-3-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.3 Raíz",
       "heading_anchor": "3-3-raíz",
-      "line_start": 435,
-      "line_end": 437,
+      "line_start": 444,
+      "line_end": 446,
       "text": "`root.package` debe nombrar exactamente un elemento de `packages`. `root.source` debe ser uno de sus `physical_path`. `root.form` es exactamente uno de:",
       "text_sha256": "7449c2e78f7164a0602c4392aedf534948851628f7afb1c3e06cad75be66cd0f",
       "phase": "cli",
@@ -1038,11 +1038,11 @@
     {
       "id": "TC01-3-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.3 Raíz",
       "heading_anchor": "3-3-raíz",
-      "line_start": 445,
-      "line_end": 446,
+      "line_start": 454,
+      "line_end": 455,
       "text": "La fuente raíz debe pertenecer a un source set activo. Una raíz declarada pero inactiva es error del proyecto.",
       "text_sha256": "748114edd22f965f50df41290b66c38d13519b216337d569adfe09f8dab12615",
       "phase": "cli",
@@ -1099,11 +1099,11 @@
     {
       "id": "TC01-3-4-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.4 Paquetes",
       "heading_anchor": "3-4-paquetes",
-      "line_start": 469,
-      "line_end": 471,
+      "line_start": 478,
+      "line_end": 480,
       "text": "El grafo resultante debe ser cerrado y acíclico. Toda dependencia debe existir en `packages`; no hay búsqueda por nombre, directorio ni registry durante la compilación.",
       "text_sha256": "821000d0fa4813297f6fe434158619b89162b229f9106342035c44306ac9ae8c",
       "phase": "cli",
@@ -1160,11 +1160,11 @@
     {
       "id": "TC01-3-5-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3.5 Grafo meta",
       "heading_anchor": "3-5-grafo-meta",
-      "line_start": 525,
-      "line_end": 529,
+      "line_start": 534,
+      "line_end": 538,
       "text": "Cada elemento de `derive_providers` usa la misma forma expandida del lockfile y debe llevar `origin: \"standard\"`. El lector actual expone este contrato como `StandardDescriptor`; `ProjectPlanDraft::parse` exige que `standard`, `meta_standard` y todos los providers estándar del lockfile coincidan con él antes de enumerar fuentes.",
       "text_sha256": "4ea27eae8a4d4b33c229efe576edc6f7d2c9d083d1d98d81eec126f07f999707",
       "phase": "cli",
@@ -1220,7 +1220,7 @@
     {
       "id": "TC01-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3. Proyectos convencionales y configuración humana",
       "heading_anchor": "3-proyectos-convencionales-y-configuración-humana",
       "line_start": 152,
@@ -1281,7 +1281,7 @@
     {
       "id": "TC01-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3. Proyectos convencionales y configuración humana",
       "heading_anchor": "3-proyectos-convencionales-y-configuración-humana",
       "line_start": 159,
@@ -1342,7 +1342,7 @@
     {
       "id": "TC01-3-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "3. Proyectos convencionales y configuración humana",
       "heading_anchor": "3-proyectos-convencionales-y-configuración-humana",
       "line_start": 198,
@@ -1403,11 +1403,11 @@
     {
       "id": "TC01-4-1-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.1 Condición",
       "heading_anchor": "4-1-condición",
-      "line_start": 555,
-      "line_end": 557,
+      "line_start": 564,
+      "line_end": 566,
       "text": "Una misma capacidad o feature no puede aparecer a la vez en `requires_*` y `excludes_*`. Un target, perfil o capacidad desconocido se rechaza aunque la condición no fuera a activar el set.",
       "text_sha256": "8b3b4e095b2866b249ca249f2fd31d195d4b6d844502d284911f18af129e4709",
       "phase": "cli",
@@ -1464,11 +1464,11 @@
     {
       "id": "TC01-4-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.2 Selección preléxica",
       "heading_anchor": "4-2-selección-preléxica",
-      "line_start": 579,
-      "line_end": 581,
+      "line_start": 588,
+      "line_end": 590,
       "text": "El `source-set-id` local es kebab-case ASCII. Dos fuentes activas del mismo paquete no pueden compartir `logical_path`. Cada `physical_path` de fuente declarado es único en todo el manifiesto, activo o no.",
       "text_sha256": "440119b2af49cd2895a521bcba081672cedcafa7bf56c2ba6656c56f49d23777",
       "phase": "cli",
@@ -1525,11 +1525,11 @@
     {
       "id": "TC01-4-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.3 Plan cerrado de testing",
       "heading_anchor": "4-3-plan-cerrado-de-testing",
-      "line_start": 651,
-      "line_end": 661,
+      "line_start": 660,
+      "line_end": 670,
       "text": "`class` es exactamente `production`, `unit-test` o `integration-test`. Cada fuente pertenece a una única clase, tiene un nombre de input único y debe estar cubierta por una raíz explícita de la misma clase; nunca se deduce una raíz por common-prefix. Las fuentes `production` deben coincidir byte a byte en path físico con los source sets activos del `ProjectPlan`. Una fuente de integración puede usar un `PackageId` sintético; las demás deben pertenecer al grafo cerrado. Los paths del record son lógicos, relativos, slash-separated y no pueden escapar de la raíz del repositorio. El valor canónico de `repository_root` es la cadena vacía, que representa la raíz; un source root también puede usar la cadena vacía para representar todo el repositorio. `.` se acepta solo como entrada y se normaliza a `\"\"`.",
       "text_sha256": "1e172e3f9fd1135be28556acfa51c1729648d2032ee1f832ee8725134997e04c",
       "phase": "cli",
@@ -1590,11 +1590,11 @@
     {
       "id": "TC01-4-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.3 Plan cerrado de testing",
       "heading_anchor": "4-3-plan-cerrado-de-testing",
-      "line_start": 663,
-      "line_end": 667,
+      "line_start": 672,
+      "line_end": 676,
       "text": "Las dependencias de desarrollo contienen `alias`, `PackageId`, path de interfaz y SHA-256. Son una lista separada de las dependencias de producción y no pueden aparecer en el artefacto de producción. Su materialización y la clasificación de inputs públicos o secretos pertenecen a `UTEST-INPUTS-PLAN-001`; el plan solo fija sus nombres y referencias.",
       "text_sha256": "45b010b4e47e7fe541a9aff8d63e035a7bf78d83fba220581d327c4291a301b3",
       "phase": "cli",
@@ -1655,11 +1655,11 @@
     {
       "id": "TC01-4-3-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.3 Plan cerrado de testing",
       "heading_anchor": "4-3-plan-cerrado-de-testing",
-      "line_start": 677,
-      "line_end": 688,
+      "line_start": 686,
+      "line_end": 697,
       "text": "La política fija `jobs > 0`, `repeat > 0`, `retry >= 0`, `allow_empty` y `fail_fast`. Reporters son un conjunto no vacío de `human`, `json` y `junit`. Los argumentos de una invocación pueden sobreescribir selector, shard, orden/seed, jobs, retry, repeat y la presentación/salida de la campaña sin modificar este record. Los reporters estructurales, techos de recursos, target, capabilities, dependencias y formatos de stores no se pueden ampliar mediante esos overrides. El artifact store es siempre content-addressed; snapshot stores tienen nombre, path, flag de actualización y límite independiente. El target, capabilities y features deben coincidir exactamente con el proyecto y el catálogo temporal único de esta edición es `std.time@monotonic-v1`. Todos los límites de trabajo, memoria, output, artifacts, snapshots y timers son enteros positivos.",
       "text_sha256": "3f4e8fd07604792af9ae2b561443e39e71f8c72acabc992e648c29efabc656a9",
       "phase": "cli",
@@ -1720,11 +1720,11 @@
     {
       "id": "TC01-4-4-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
-      "line_start": 740,
-      "line_end": 744,
+      "line_start": 749,
+      "line_end": 753,
       "text": "`test_plan_sha256` es el SHA-256 con prefijo `sha256:` de los bytes internos compactos y canónicos de `TestProjectPlan`. `inputs` se ordena por `name` y cada nombre es único, no vacío y no contiene saltos de línea ni barras invertidas. Toda referencia `source.input` del plan de proyecto debe tener exactamente un descriptor; no se aceptan descriptores huérfanos o duplicados.",
       "text_sha256": "7c09dfccba9b65ce6ee65c4718b29d674f24efe7c490bacf0199e95bfd1a91d0",
       "phase": "cli",
@@ -1781,11 +1781,11 @@
     {
       "id": "TC01-4-4-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
-      "line_start": 746,
-      "line_end": 756,
+      "line_start": 755,
+      "line_end": 765,
       "text": "Un input `public` debe proporcionar `sha256` válido y no puede proporcionar `provider`, `descriptor` ni `version`. Ese hash es la identidad pública del contenido y participa en `public_sha256`, calculado sobre la lista canónica de `(name, source, profile, sha256, capability)`. Un input `secret` debe dejar `sha256` en `null` y proporcionar `provider` y `descriptor` no vacíos; `version` es opcional. La descripción secreta participa en `secret_profile_sha256`, calculado sobre `(name, source, profile, provider, descriptor, version, capability)`, pero el valor nunca aparece en el plan ni en ningún hash derivado de contenido. Una capability, si se declara, debe pertenecer al registro y estar habilitada por el target del plan de test.",
       "text_sha256": "848ecd090216361b6eedcc6397900bde2320196823dbf276c1691cc6672c925c",
       "phase": "cli",
@@ -1842,11 +1842,11 @@
     {
       "id": "TC01-4-4-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
-      "line_start": 758,
-      "line_end": 763,
+      "line_start": 767,
+      "line_end": 772,
       "text": "`secret_count` debe coincidir con el número de inputs secretos. La reproducibilidad es `closed` cuando no hay secretos, `secret-dependent-versioned` cuando todos los secretos tienen versión y `secret-dependent-unversioned` en cualquier otro caso. Los dos digests secundarios se expresan como 64 dígitos hexadecimales sin el prefijo `sha256:`; el digest secreto es `null` cuando no existen secretos.",
       "text_sha256": "61491f188d9f2e832496bcf4f11b1932d79da6830e0e5d2fe09a96021337c93d",
       "phase": "cli",
@@ -1903,11 +1903,11 @@
     {
       "id": "TC01-4-4-R004",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
-      "line_start": 765,
-      "line_end": 771,
+      "line_start": 774,
+      "line_end": 780,
       "text": "`TestInputPlan::parse` rechaza campos desconocidos, hashes inválidos, deriva del plan, capability no habilitada, mezcla de metadatos públicos y secretos, conteos/digests incorrectos y estados de reproducibilidad falsos. `canonical_bytes()` vuelve a emitir únicamente esta forma normalizada. No contiene valores de inputs, secretos, paths de host, CODEOWNERS ni resultados. La materialización, revocación y aislamiento de valores pertenecen a `UTEST-INPUTS-001` y deben ocurrir exclusivamente dentro del worker.",
       "text_sha256": "285954cfce5cc627cb4ab3ea1bb3f356bd7d9da0f913beedf8221c1305cb55a6",
       "phase": "cli",
@@ -1964,11 +1964,11 @@
     {
       "id": "TC01-5-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "5.2 Correspondencia exacta",
       "heading_anchor": "5-2-correspondencia-exacta",
-      "line_start": 885,
-      "line_end": 898,
+      "line_start": 894,
+      "line_end": 907,
       "text": "The hosted bootstrap reader keeps optional `test.packages` records separate from the production lock graph. Each record contains `id`, `local_name`, `edition`, `content_hash`, `dependencies`, `sources` and a required `interface`. Source and interface fields use the ordinary locked package schema. The default test plan uses each locked `local_name` as its alias and carries every interface pin; an advanced plan may choose different aliases for the same closed package set. Test-only projects have no production lock records and may use a lockfile containing only `test`. The reader removes the `test` section before calculating the production lock identity and does not read its files for a normal build. Testing validates those records and all pinned source/interface bytes before selection, then compiles them only into test consumers. The production compilation is sealed first; its interface and artifact cannot depend on these records. See `docs/contracts/test-dependencies.md` for the executable integration boundary.",
       "text_sha256": "c56ae4733b7fd3867ab7e4a25cc910f43e389c1252db03e1502e29caae8163a9",
       "phase": "resolution",
@@ -2029,11 +2029,11 @@
     {
       "id": "TC01-5-2-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "5.2 Correspondencia exacta",
       "heading_anchor": "5-2-correspondencia-exacta",
-      "line_start": 900,
-      "line_end": 903,
+      "line_start": 909,
+      "line_end": 912,
       "text": "`manifest_hash` es SHA-256 de los bytes exactos del manifiesto. Los conjuntos de paquetes runtime y meta, fuentes, dependencies, generator inputs, generators, derive providers y unidades privilegiadas del lockfile deben coincidir exactamente con el plan expandido:",
       "text_sha256": "f06503b9da714a79736739611e5789e04a174720dbbd79da817369039268ed54",
       "phase": "resolution",
@@ -2092,11 +2092,11 @@
     {
       "id": "TC01-5-2-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "5.2 Correspondencia exacta",
       "heading_anchor": "5-2-correspondencia-exacta",
-      "line_start": 913,
-      "line_end": 917,
+      "line_start": 922,
+      "line_end": 926,
       "text": "`meta_standard` debe ser exactamente el companion declarado por el descriptor de `standard`. Los `derive_providers` con `origin: \"standard\"` deben coincidir con ese mismo descriptor; los de `origin: \"manifest\"` deben coincidir con la lista del proyecto. Un origen distinto, una repetición entre orígenes o una entrada alterada se rechaza antes de lexear.",
       "text_sha256": "3d30ae67f43e5156f88ddb9cdb329b45fb4a7538b2f4768ddf410208e64f664b",
       "phase": "resolution",
@@ -2155,11 +2155,11 @@
     {
       "id": "TC01-5-2-R004",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "5.2 Correspondencia exacta",
       "heading_anchor": "5-2-correspondencia-exacta",
-      "line_start": 919,
-      "line_end": 924,
+      "line_start": 928,
+      "line_end": 933,
       "text": "La raíz runtime no consume su propia interfaz. Todo paquete runtime no raíz y no estándar debe tener una interfaz fijada. Los `meta_packages` se compilan desde las fuentes fijadas en este build y no aceptan una interfaz sustitutiva; así, el programa que produce `provider_hash` siempre forma parte de la entrada cerrada. El hash de una interfaz runtime participa además en el hash de contenido de su paquete.",
       "text_sha256": "4307d4d676aae033d2888762b2398d671c8034d86c29d3fac71baad3efde98a0",
       "phase": "resolution",
@@ -2218,11 +2218,11 @@
     {
       "id": "TC01-6-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "6.3 Target `tondo-meta`",
       "heading_anchor": "6-3-target-tondo-meta",
-      "line_start": 1016,
-      "line_end": 1018,
+      "line_start": 1025,
+      "line_end": 1027,
       "text": "Un paquete meta no puede contener `derive`, declarar otro generador ni depender de una interfaz producida por generación en el mismo build. Sus entry points tienen exactamente una de estas firmas lógicas:",
       "text_sha256": "ea8ce1b71ebe319e1fe1e0d7041ee311ed8ea8c00e7b179753bc51f08dc4c27a",
       "phase": "resolution",
@@ -2279,11 +2279,11 @@
     {
       "id": "TC01-6-5-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@ccb3038c53b3693b",
+      "revision": "0.1@d9a0344859876e47",
       "heading": "6.5 Una sola ronda",
       "heading_anchor": "6-5-una-sola-ronda",
-      "line_start": 1071,
-      "line_end": 1075,
+      "line_start": 1080,
+      "line_end": 1084,
       "text": "Todos los snapshots se derivan de la misma base pre-generación; cada producer recibe únicamente la clausura de sus roots y ninguno observa outputs de otro. La fuente generada no puede contener `derive` ni solicitar otra ronda. Un path ausente, adicional o colisionante produce `E2106`; fuente inválida o una expansión fuera de su autorización produce `E2105`.",
       "text_sha256": "203d585a64adb4de8d4469854c8c060cdabe8ddc12e549d80836ff9c25657eaa",
       "phase": "resolution",

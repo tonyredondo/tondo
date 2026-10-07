@@ -391,7 +391,7 @@ threads
 Un nombre fuera de este registro es error, incluso si no se utiliza. Un target
 solo puede seleccionar capacidades que implemente realmente.
 
-The hosted bootstrap supports this target/profile combination:
+The hosted bootstrap supports this base target/profile combination:
 
 ~~~text
 target       = tondo-vm-hosted
@@ -402,8 +402,16 @@ capabilities = clock, civil-clock, console, entropy, environment, filesystem, pr
 A request may select a subset of these supported capabilities. The default
 hosted source set selects the list above except `threads`; thread operations
 require its explicit selection. Registered but unsupported capabilities such
-as `network` remain target configuration errors. This hosted support does not
-establish native ABI or AOT support for the same operations.
+as `dynamic-linking` remain target configuration errors. This hosted support
+does not establish native ABI or AOT support for the same operations.
+
+`network` is additionally supported by `tondo-vm-hosted` when explicitly
+selected with valid `[target.network]` configuration. It is absent from the
+default hosted source set. Configuring resolver endpoints makes the capability
+available to a request; configuration alone neither selects it nor starts I/O.
+Importing `std.net` without the selected capability is an `E1008` error.
+The production hosted provider is verified by `STD-NET-HOST-001`; native
+networking ABI/AOT and portable promotion remain separate.
 
 Capability checks follow the owner's source-set contract. Missing `console`
 or `process` prevents importing the corresponding module with `E1008`.
@@ -427,8 +435,9 @@ identity. Unknown keys are rejected.
 
 The runtime must use only the explicitly declared resolver configuration and
 must not substitute system DNS settings. This schema does not by itself
-activate an unsupported network target. The provider and promotion boundary
-are defined by [`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md).
+grant capability or activate a native networking target. The provider and
+promotion boundary are defined by
+[`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md).
 
 ### 3.3 Raíz
 

@@ -139,5 +139,7 @@ only outer test scheduling is qualified. The cause of the first failure remains
 unconfirmed and no production fix is claimed. Failed profiles/logs and focused
 diagnostics are retained separately from the successful fresh counters.
 
-The full functional gate and exact-SHA publication CI remain pending. This
-local proof does not change the register's `adapter-ready` promotion state.
+All 354 named functional-gate steps pass in one clean-source invocation on
+`59351222`, including 2,799 Rust tests in 76 suites, 206 draft cases and 96
+exact async/select observations. Publication and exact-SHA CI remain pending.
+This local proof does not change the register's `adapter-ready` promotion state.
