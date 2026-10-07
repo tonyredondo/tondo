@@ -116,3 +116,28 @@ mutants, the complete functional gate, clean capture and exact-SHA publication
 CI. `verified-public-hosted-vm-and-native-kernel-process` records only that
 qualified boundary. SIMD, dispatch variants, code size, portable networking and
 native Tondo ABI/AOT are not promoted. The next owner is `STD-NET-DOC-001`.
+
+## Local source-bound proof
+
+Clean source `85b57677` captures all 41 common, 15 VM-only and six static
+observations with complete prerequisite execution. Its quality source tree is
+`a2897eec3813650adc630c2458bd522da0cda78bfbf24854b5d0c3882d113392`, with 1,393
+inputs. One complete fresh-counter campaign runs 2,799 Rust tests in 76 suites
+using `--test-threads=4`. It measures 302,099/330,048 lines (91.531838%),
+19,876/22,657 functions (87.725648%) and 444,170/493,830 regions (89.943908%).
+Every global/risk floor passes and all six critical mutants are caught, with
+zero missed, timed-out or unviable mutants and a successful unmutated baseline.
+Before/after source bindings match; the supported ratchet verifies the joint
+evidence. The LLVM report contains no example/support fixture paths: adapter
+execution is established separately, without an example line-coverage claim.
+
+The first parallel instrumented attempt stopped in the existing CLI interrupt
+test with exit 3 instead of 4. The unchanged instrumented binary then passes
+that exact test three times and all 162 CLI tests with four harness threads.
+The successful campaign preserves every case, assertion and real grace period;
+only outer test scheduling is qualified. The cause of the first failure remains
+unconfirmed and no production fix is claimed. Failed profiles/logs and focused
+diagnostics are retained separately from the successful fresh counters.
+
+The full functional gate and exact-SHA publication CI remain pending. This
+local proof does not change the register's `adapter-ready` promotion state.
