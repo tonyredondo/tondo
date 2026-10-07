@@ -124,3 +124,42 @@ transitions, and `scripts/stdlib-net-performance.sh` for complete capture.
 These scripts require the caller's delegated process scope for executable
 process checks. Normal capture requires a clean committed probe;
 `TONDO_STDLIB_NET_PERF_ALLOW_DIRTY=1` only marks local reports as development.
+
+## Retained local evidence
+
+Clean source `62baf842e5b95b2ee95df4ac6f70eb0234410309` supplies all 567
+measurements, probe SHA-256
+`24cd509e391ab68aa8ce4941454fdf8953421883b8f54ca60c37ea3dbac64ae4`
+and quality input tree
+`06bee215915baf8caead882b81d449c5046625a9dad4b5e91ca30a8097a5c408`.
+The complete retained report has SHA-256
+`046f18734a7674067ca249ef55f2fb761006f2da14510cfc1a413858a1f3d9cb`.
+These selected observations describe this controlled host and unoptimized
+profile; they guarantee neither production latency nor a performance speedup.
+
+| Route | Median ms | P95 ms | P99 ms |
+| --- | ---: | ---: | ---: |
+| tcp-connect-accept | 0.198950 | 0.216310 | 0.377700 |
+| tcp-read-chunked | 0.588690 | 0.607700 | 0.612581 |
+| tcp-write-backpressure | 56.850729 | 57.488329 | 57.541659 |
+| dns-ordered | 0.542690 | 0.593800 | 0.594051 |
+| dns-delay | 10.575755 | 10.731835 | 11.225106 |
+| tls12-echo | 43.039372 | 43.073231 | 43.080991 |
+| tls13-echo | 43.036672 | 43.061792 | 43.116891 |
+| pending-accept-cancel | 0.042450 | 0.053150 | 0.116530 |
+
+Backpressure retains seven median partial replies and 57,917,990 selected
+copy bytes for 8,388,608 useful bytes. Submitted remainders explain the extra
+copies; this is baseline evidence, not a corrected or optimized write route.
+Every sample ends with zero host handles, jobs, pending slots and budget bytes.
+
+Twenty Python report tests and eighteen focused Rust tests pass. The complete
+instrumented workspace executes 2,767 tests in 74 suites and attests 196 layers.
+Current-source quality measures 302,082/330,048 lines (91.526687%), preserves
+all global/risk line, function and region floors and catches the same six
+critical mutants, with no misses, timeouts or unviable mutations. The 25-minute
+capture budget ended after joint quality verification and before ratchet
+generation completed. A separate bounded metadata-only run generated and
+verified the ratchet from those unchanged reports; no coverage or mutation
+capture was repeated for that step. Functional-gate and publication/CI closure
+remain pending acceptance steps.
