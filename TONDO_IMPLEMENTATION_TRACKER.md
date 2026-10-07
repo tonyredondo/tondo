@@ -7139,8 +7139,12 @@ estas leaves.
   The boundary is the admitted private hosted bridge in the pinned test
   profile; VM interpreter, native ABI/AOT, SIMD, code size and portable
   performance remain unmeasured. Next: `STD-NET-CONF-001`.
-- [ ] **STD-NET-CONF-001 — Conformar networking.** Ejecutar casos portables,
-  capability-gated y de integración sobre targets reales VM/nativos.
+- [ ] **STD-NET-CONF-001 — Qualify hosted networking conformance.** Execute
+  public VM programs, static capability refusals and controlled integration;
+  compare the finite common subset with a fresh native Rust kernel process.
+  Register: [stdlib-net-conformance.json](testing/stdlib-net-conformance.json);
+  [contract](docs/contracts/stdlib-net-conformance.md). Native Tondo provider
+  ABI/AOT and unexecuted portable targets remain outside this owner promotion.
 - [ ] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
   partial I/O, DNS/TLS, timeout, cancelación, errores, costes y ejemplos.
 

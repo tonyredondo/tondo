@@ -3048,6 +3048,13 @@ connections, partial I/O, backpressure, explicit DNS/TLS, cancellation and
 bounded refusal. Resource counters are selected logical observations; VM
 interpreter, native ABI/AOT, SIMD and code-size timing are not promoted.
 
+The public hosted networking conformance register is
+[testing/stdlib-net-conformance.json](testing/stdlib-net-conformance.json), with
+its bounded native Rust reference and VM-only integration boundary in
+[stdlib-net-conformance.md](docs/contracts/stdlib-net-conformance.md). Its
+`adapter-ready` state does not close quality, clean capture or publication CI.
+No native Tondo networking target is supplied by that reference process.
+
 #### 14.4.7 `std.encoding`
 
 `std.encoding` es el owner único de los encodings binario-texto de STD-0.1B.

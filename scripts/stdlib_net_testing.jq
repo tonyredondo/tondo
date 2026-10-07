@@ -58,6 +58,24 @@ def net_measurement_progression:
       then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
   end;
 
+def net_conformance_progression:
+  .conformance as $conformance
+  | if $conformance == null then true else
+    .measurement.status == "verified-hosted-scalar-baseline"
+    and .model.status == "verified" and .host.status == "verified-production-hosted"
+    and ($conformance | del(.status,.quality_gate)) == {
+      task:"STD-NET-CONF-001",register:"testing/stdlib-net-conformance.json",
+      contract:"docs/contracts/stdlib-net-conformance.md",
+      target:"x86_64-unknown-linux-gnu",public_api:"compiled-public-tondo-net-through-production-host",
+      native_reference:"rust-stdlib-kernel-process-with-finite-model-admission",
+      common_observations:41,vm_only_observations:15,vm_capability_checks:6,
+      native_abi:"not-implemented",native_aot:"not-claimed"}
+    and ($conformance.status == "adapter-ready"
+      or $conformance.status == "verified-public-hosted-vm-and-native-kernel-process")
+    and $conformance.quality_gate == (if $conformance.status == "adapter-ready"
+      then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
+  end;
+
 def net_owner_progression:
   .host as $host | .model as $model
   | ($host.status == "implementation-in-progress" or $host.status == "verified-production-hosted")
@@ -73,10 +91,13 @@ def net_owner_progression:
         and $host.status == "verified-production-hosted"))
   end)
   and net_measurement_progression
+  and net_conformance_progression
   and .promotion.next_blocks == (if .implementation.status == "ready-kernel-private-provider"
     then ["STD-NET-IMPL-001"]
     elif $host.status == "implementation-in-progress" then ["STD-NET-HOST-001"]
     elif $model.status == "verified" then
       (if .measurement.status == "verified-hosted-scalar-baseline"
-        then ["STD-NET-CONF-001"] else ["STD-NET-PERF-001"] end)
+        then (if .conformance.status == "verified-public-hosted-vm-and-native-kernel-process"
+          then ["STD-NET-DOC-001"] else ["STD-NET-CONF-001"] end)
+        else ["STD-NET-PERF-001"] end)
     else ["STD-NET-TEST-001"] end);

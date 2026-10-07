@@ -258,6 +258,12 @@ run_step stdlib-net-performance-contract-tests \
     scripts/stdlib-net-performance-test.sh
 run_step stdlib-net-performance \
     scripts/stdlib-net-performance.sh
+run_step stdlib-net-conformance-contract \
+    scripts/stdlib-net-conformance-check.sh
+run_step stdlib-net-conformance-contract-tests \
+    scripts/stdlib-net-conformance-test.sh
+run_step stdlib-net-conformance \
+    scripts/stdlib-net-conformance.sh
 run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
 run_step stdlib-civil-time-contract-tests \

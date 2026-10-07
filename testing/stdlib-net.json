@@ -89,6 +89,21 @@
     "native_abi": "not-measured",
     "native_aot": "not-measured"
   },
+  "conformance": {
+    "task": "STD-NET-CONF-001",
+    "register": "testing/stdlib-net-conformance.json",
+    "contract": "docs/contracts/stdlib-net-conformance.md",
+    "status": "adapter-ready",
+    "quality_gate": "pending-80-percent-per-scope",
+    "target": "x86_64-unknown-linux-gnu",
+    "public_api": "compiled-public-tondo-net-through-production-host",
+    "native_reference": "rust-stdlib-kernel-process-with-finite-model-admission",
+    "common_observations": 41,
+    "vm_only_observations": 15,
+    "vm_capability_checks": 6,
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed"
+  },
   "surface": {
     "types": [
       "HostName",

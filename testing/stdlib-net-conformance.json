@@ -1,0 +1,110 @@
+{
+  "format": "tondo-stdlib-net-conformance/1",
+  "edition": "0.1",
+  "owner": "std.net",
+  "phase": "STD-0.1B",
+  "task": "STD-NET-CONF-001",
+  "status": "adapter-ready",
+  "parent": "testing/stdlib-net.json",
+  "document": "docs/contracts/stdlib-net-conformance.md",
+  "sources": [
+    "crates/tondo-reliability/examples/net_conformance_vm.rs",
+    "crates/tondo-native-runtime/examples/net_conformance.rs",
+    "crates/tondo-stdlib/examples/support/net_conformance_cases.rs",
+    "crates/tondo-reliability/tests/fixtures/net-cases.json",
+    "crates/tondo-stdlib/src/net.rs",
+    "crates/tondo-reliability/src/net_model.rs",
+    "crates/tondo-reliability/src/net_model/admission.rs",
+    "crates/tondo-reliability/src/net_model/stream.rs",
+    "crates/tondo-reliability/src/net_model/tls.rs",
+    "crates/tondo-reliability/tests/net_kernel_models.rs",
+    "crates/tondo-reliability/tests/net_corpus.rs",
+    "crates/tondo-reliability/tests/net_hosted_models.rs",
+    "crates/tondo-compiler/src/driver.rs",
+    "crates/tondo-compiler/src/package.rs",
+    "crates/tondo-compiler/src/process_host.rs",
+    "crates/tondo-compiler/src/process_host/net.rs",
+    "crates/tondo-compiler/src/test_control.rs",
+    "crates/tondo-compiler/src/net_provider.rs",
+    "crates/tondo-compiler/src/net_provider/executor.rs",
+    "crates/tondo-compiler/src/net_provider/dns_runtime.rs",
+    "crates/tondo-compiler/src/net_provider/transport.rs",
+    "crates/tondo-compiler/src/net_provider/tls_transport.rs",
+    "crates/tondo-compiler/src/net_provider/fixtures/localhost-cert.pem",
+    "crates/tondo-compiler/src/net_provider/fixtures/localhost-test-key.pem",
+    "crates/tondo-vm/src/bytecode.rs",
+    "crates/tondo-vm/src/bytecode/verify.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "crates/tondo-vm/src/runtime/heap.rs",
+    "crates/tondo-vm/src/runtime/worker_import.rs",
+    "crates/tondo-native-runtime/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "crates/tondo-reliability/Cargo.toml",
+    "crates/tondo-native-runtime/Cargo.toml",
+    "crates/tondo-compiler/Cargo.toml",
+    "crates/tondo-stdlib/Cargo.toml",
+    "crates/tondo-vm/Cargo.toml",
+    "scripts/stdlib_net_conformance.py"
+  ],
+  "boundary": {
+    "vm": "compiled-public-tondo-net-through-production-host",
+    "native": "rust-stdlib-kernel-process-with-finite-model-admission",
+    "compiler_api": "inherited-verified-production-hosted",
+    "production_host": "inherited-verified-production-hosted",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed",
+    "native_network_provider": "not-implemented-no-native-tondo-network-target",
+    "tls_reference": "VM-only-real-local-TLS-and-independent-verdict-owner-model",
+    "runtime_objects": "table-counter-only-no-native-network-managed-objects",
+    "vm_heap_metrics": "not-measured",
+    "simd": "not-measured-no-optimized-route"
+  },
+  "rules": {
+    "fresh_process_per_adapter": true,
+    "same_compiled_fixture_bytes": true,
+    "capture_budget_seconds": 480,
+    "independent_model_before_vm": true,
+    "full_reference_vectors": 40,
+    "common_observations": 41,
+    "vm_only_observations": 15,
+    "vm_static_capability_checks": 6,
+    "vm_missing_capability_refusals": 3,
+    "vm_capability_acceptances": 3,
+    "providers": "controlled-loopback-no-external-service",
+    "resolver_configuration": "explicit-per-fixture-endpoint-no-system-fallback",
+    "ephemeral_address_normalization": "after-exact-address-and-payload-law-checks",
+    "TLS": [
+      "1.2",
+      "1.3"
+    ],
+    "peer_wait_seconds": 5,
+    "process_scope": "explicit-delegated-scope",
+    "kernel_only_controls": "malformed-provider-reports-and-internal-deadline-domains-retained-in-40-case-prerequisite",
+    "envelope_closed_after_execution": true,
+    "partial_failed_capture_promotes": false
+  },
+  "cases": [
+    {
+      "id": "values-and-keys",
+      "observations": 28
+    },
+    {
+      "id": "tcp-transcript",
+      "observations": 7
+    },
+    {
+      "id": "udp-transcript",
+      "observations": 4
+    },
+    {
+      "id": "dns-transcript",
+      "observations": 2
+    }
+  ],
+  "report": "target/reliability/evidence/stdlib-net-conformance.json",
+  "next_blocks": [
+    "STD-NET-DOC-001"
+  ]
+}

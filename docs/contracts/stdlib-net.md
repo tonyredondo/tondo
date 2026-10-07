@@ -369,6 +369,12 @@ The verified hosted performance baseline is
 loopback routes and 27 retained samples per route. It measures admitted private
 host calls and owner polling, without bytecode VM or native runtime/AOT timing.
 
+Public hosted conformance is being qualified in
+[stdlib-net-conformance.md](stdlib-net-conformance.md): four common finite
+groups compare actual public VM calls with a fresh native Rust kernel process,
+while real TLS, selection, listener/address and deadline observations remain
+explicitly VM-only. This is not a native Tondo network provider or AOT claim.
+
 ## Diagnóstico, cleanup y portabilidad
 
 El runtime puede emitir eventos privados en `std.net`: `resolve.start`,
