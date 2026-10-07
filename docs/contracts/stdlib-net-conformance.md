@@ -120,11 +120,12 @@ native Tondo ABI/AOT are not promoted. The next owner is `STD-NET-DOC-001`.
 ## Local source-bound proof
 
 Clean source `85b57677` captures all 41 common, 15 VM-only and six static
-observations with complete prerequisite execution. Its quality source tree is
-`a2897eec3813650adc630c2458bd522da0cda78bfbf24854b5d0c3882d113392`, with 1,393
-inputs. One complete fresh-counter campaign runs 2,799 Rust tests in 76 suites
-using `--test-threads=4`. It measures 302,099/330,048 lines (91.531838%),
-19,876/22,657 functions (87.725648%) and 444,170/493,830 regions (89.943908%).
+observations with complete prerequisite execution. After synchronizing the
+toolchain contract and its audit expectation, source `6e9bef79` has quality tree
+`495a66b86a6d3b2e47fb35c07d0a25498577f7784826cfe75bdb21c0c76fa7fa`, with 1,393
+inputs. One complete fresh-counter workspace campaign runs 2,799 Rust tests in
+76 suites using `--test-threads=4`. It measures 302,112/330,178 lines (91.499737%),
+19,878/22,667 functions (87.695769%) and 444,184/494,148 regions (89.888859%).
 Every global/risk floor passes and all six critical mutants are caught, with
 zero missed, timed-out or unviable mutants and a successful unmutated baseline.
 Before/after source bindings match; the supported ratchet verifies the joint
@@ -138,6 +139,16 @@ The successful campaign preserves every case, assertion and real grace period;
 only outer test scheduling is qualified. The cause of the first failure remains
 unconfirmed and no production fix is claimed. Failed profiles/logs and focused
 diagnostics are retained separately from the successful fresh counters.
+
+The toolchain prose correction changes the pinned draft manifest and therefore
+invalidates the earlier quality identity. The interrupted capture and the
+stale audit-list refusal are retained as failed or partial evidence. The narrow
+audit fix passes all 101 reliability library tests and explicitly preserves
+the network requirement's `toolchain-limit` trace status. The corrected-source
+coverage completes before the combined phase reaches its time cap during the
+mutation baseline build. A subsequent bounded mutation-only phase catches all
+six mutants on the same source; joint binding and ratchet verification pass.
+No coverage counters are repeated or rebound for that narrower phase.
 
 All 354 named functional-gate steps pass in one clean-source invocation on
 `59351222`, including 2,799 Rust tests in 76 suites, 206 draft cases and 96
