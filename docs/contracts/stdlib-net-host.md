@@ -1,9 +1,9 @@
 # Public hosted networking boundary
 
 `STD-NET-HOST-001` integrates the locked networking surface through compiler
-checking, MIR, verified bytecode and the hosted VM. Promotion remains pending
-until the current source passes the joint selection prerequisite, the complete
-repository gate, coverage in every locked scope and publication CI.
+checking, MIR, verified bytecode and the hosted VM. The joint selection
+prerequisite, all local repository-gate checks and current-source quality pass.
+Promotion remains pending until exact-SHA publication CI is verified.
 
 The registry contains 40 operations and 15 network value types: three address
 records and twelve private host carriers. `NetError`, `TlsError`,

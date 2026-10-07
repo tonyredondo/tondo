@@ -3,8 +3,9 @@
 `STD-NET-TEST-001` covers an independent finite reference, retained exact
 kernel regressions and controlled public hosted execution. The register is
 [stdlib-net-test.json](../../testing/stdlib-net-test.json). The implementation
-is ready for joint current-source quality and publication validation; this
-document does not close the tracker owner or promote native networking.
+passes the local functional checks and current-source quality. Exact-SHA
+publication CI remains required before closing the tracker owner; native
+networking is not promoted.
 
 ## Independent domain
 
@@ -100,20 +101,20 @@ the separate portable conformance and usage owners.
 ## Retained local quality
 
 The measured source tree is
-`4cd509734355904c9ee97ca681ec8c96be2b5805aab6fa4e2a823616064cc92b`:
+`2427723c1cdec079bf19d6081d6bfc59253b92dec16f77f2dcf37873f8955deb`:
 1,379 inputs with set digest
 `27c42b5b0760a8f97f67e6cc7c5cf9008d146cb0e7937e4bb1e9251c31578519`.
-It matches the executable inputs of implementation commit
-`2bf6d47ca59797d8edc1a33b01d40bb0c53fc409`. All 2,749 Rust tests in 74 suites
+It matches the executable inputs of corrective commit
+`5a4702ac952336cd247675c31226dfe6f2d9dadb`. All 2,749 Rust tests in 74 suites
 passed and generated 196 source-bound layer observations. The corrected-source
 campaign reused instrumented binaries, cleared all previous raw counters and
 ran the complete workspace/all-target test command with four Cargo jobs.
 
 | Metric | Observed |
 | --- | --- |
-| Lines | 301,119 / 329,050 (91.511624%) |
+| Lines | 301,116 / 329,050 (91.510713%) |
 | Functions | 19,822 / 22,605 (87.688564%) |
-| Regions | 442,189 / 491,842 (89.904685%) |
+| Regions | 442,183 / 491,842 (89.903465%) |
 | Critical mutation selection | 6 / 6 caught; no missed, timed-out or unviable mutants |
 
 Fresh coverage/mutation bindings, every locked 80% global/risk floor and the
@@ -121,5 +122,12 @@ supported ratchet generation/verification passed. The retained ratchet is
 [conformance-ratchet.json](../../testing/conformance-ratchet.json). No baseline
 or mutation selection was weakened. The earlier stale determinism pin and
 interrupted compilation runs are not successful quality measurements.
-Complete functional-gate and publication CI closure remain separate required
-proof; these local metrics alone do not promote either HOST or TEST.
+All 348 functional-gate checks pass across dependency-aware runs rather than
+one uninterrupted invocation. The final authored selection manifest pin was
+synchronized after the supported standard-bundle regeneration; the complete
+206-case suite and all 96 exact selection observations pass. The strict CI
+budget repair changes no commands, samples or quality floors. Its inclusion
+in source provenance required this fresh capture; the earlier `4cd509` proof
+remains historical evidence in commit `1116374` and retained local archives.
+Publication CI closure remains separate required proof; these local results
+alone do not promote either HOST or TEST.
