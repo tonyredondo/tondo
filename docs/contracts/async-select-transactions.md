@@ -50,16 +50,23 @@ forced-winner cancellation, rejected bytecode and result-memory refusal.
 The independent finite rendezvous model runs 4,096 deterministic seeds.
 
 The joint selection/network quality campaign passes 2,726 Rust tests and
-196 layer observations. It covers 300,340 of 328,050 lines (91.553117%),
-87.760902% of functions and 89.939382% of regions, preserves every global and
+196 layer observations. It covers 300,343 of 328,050 lines (91.554031%),
+87.760902% of functions and 89.940606% of regions, preserves every global and
 risk-scope 80% floor, and catches all six critical mutants without survivors,
 timeouts or unviable cases. The current ratchet binds both reports to source
-tree `564b55f0a44dd73bce16b242e9c4dcfe54df069d2b7a95fa188230ab778c22a3`.
+tree `e2eb54c57ee988d1ab984ff872efbe821b18d05d8e80cf0cfac3df2d4d52e907`.
 Every functional-gate step passes across the retained, dependency-aware local
 continuations; the final draft run passes all 206 cases and three selected
 cases with 32 exact observations each. This is complete local step coverage,
 not a single uninterrupted gate invocation. Exact-source publication CI still
 precedes tracker closure.
+
+The first publication CI run checked out `f1b9c8a` and passed its Rust suites,
+then stopped because two new contract checkers required unavailable ripgrep.
+The correction uses the existing portable `grep` dependency. Both checkers
+pass with a PATH containing their declared utilities and no ripgrep; both
+refuse validation when `grep` is absent. The renewed campaign above uses fresh
+raw counters and retains all six mutation checks after that script correction.
 
 This contract promotes hosted VM execution only. It does not establish native
 ABI, Cranelift AOT, performance, physical-thread equivalence or a release.

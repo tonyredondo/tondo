@@ -20,9 +20,9 @@ match the pinned hash in `testing/async-select-conformance.json`. The report is
 written to `target/reliability/evidence/async-select-conformance.json` and is
 not a release artifact.
 
-This is a VM-hosted conformance claim only. Native lowering remains pending in
-`NATIVE-SELECT-001`; a native backend cannot inherit this result without running
-the same corpus and proving semantic equivalence.
+This is a VM-hosted conformance claim only. Native core selection has its own
+`NATIVE-SELECT-001` evidence; this VM campaign does not revalidate that lowering
+or establish native support for the general hosted compositions added later.
 
 The historical three-case campaign does not establish source adapters, mixed
 network/channel arms or joint rendezvous ownership. Those compositions have
