@@ -68,7 +68,11 @@ the native Rust kernel reference process after the full local gate, source-bound
 quality, publication and exact-SHA CI confirmation.
 `STD-UUID-DOC-001` verifies the executable public hosted usage guide after the
 full local gate, source-bound quality, publication and exact-SHA CI confirmation.
-The next owner leaf is `STD-NET-IMPL-001` for portable networking.
+`STD-NET-IMPL-001` verifies the scalar Rust kernel and private nonblocking
+DNS/TCP/UDP/TLS provider after source-bound quality, the full local gate,
+publication and exact-SHA CI confirmation. Public compiler/VM registration,
+target activation, VM heap admission and production scope cleanup remain
+`STD-NET-HOST-001`, the next owner leaf.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -7027,12 +7031,42 @@ estas leaves.
 
 #### 21.3.12 `std.net`
 
-- [ ] **STD-NET-IMPL-001 — Implementar networking portable.** Publicar
-  direcciones, DNS, streams, datagrams y frontera TLS con partial I/O,
-  deadlines y cancelación sobre `std.io`/executor.
-- [ ] **STD-NET-HOST-001 — Implementar adaptadores de red.** Enlazar sockets,
-  resolver y proveedor TLS declarados por target, sin I/O por import, fallback
-  bloqueante oculto ni errores crudos del SO.
+- [x] **STD-NET-IMPL-001 — Implement the networking kernel and private provider.**
+  Verify checked addresses, limits, explicit monotonic options and nominal
+  errors, controlled DNS without retries/failover, nonblocking TCP/UDP and
+  authenticated TLS 1.2/1.3 through the adopted pinned private dependencies.
+  Explicit `[target.network]` resolver endpoints enter the project identity.
+  Prepared losing reads/receives/accepts preserve data and connections; bounded
+  operations retire provider state before cancellation/timeout replies and
+  retain committed progress after late cancellation. The selected route is
+  `scalar-rust-kernel-and-private-nonblocking-provider`; public registration,
+  static capability/affine checks, VM heap admission, production scope cleanup,
+  native ABI/AOT, independent model/fuzz and performance are not promoted.
+  Evidence: [implementation contract](docs/contracts/stdlib-net-implementation.md)
+  and [owner register](testing/stdlib-net.json); 39 focused tests, 48 invalid
+  states and both local promotion states pass. Fresh quality runs 2,689 Rust
+  tests and 196 layer observations, measures 296,733/323,815 covered lines
+  (91.6366%), preserves every global/risk 80% floor and catches all six critical
+  mutants. The complete local gate passes 348 steps, including 383 documentation
+  fences, 630 Cranelift scalar cases, 70 traps, 75 rejected evidence changes,
+  all 206 draft cases and three select cases with 32 exact observations each.
+  Signed implementation/repair/evidence commits end at
+  `a298e5e66579c21cacd11aad5acaa15269cf7929`, normally published to `origin/main`.
+  Exact-source push CI run `37546843900`, attempt 1, strict Linux job
+  `112552778846` passes in 42m20s. Its actual checkout and full gate prove the
+  same focused, native and draft/select boundaries. All paginated checks,
+  statuses, PRs, runs and main refs remain unchanged after 143 seconds of quiet
+  confirmation. Separate portable/fuzz jobs are expected normal-push skips;
+  this does not establish portable or native networking promotion.
+  Next: `STD-NET-HOST-001`.
+- [ ] **STD-NET-HOST-001 — Integrate the public hosted networking API.**
+  Register the 39 locked compiler/VM calls and nominal types, forward the
+  declared target resolver configuration, enforce capability and affine rules,
+  and connect typed heap admission, selector preparation/commit/rollback and
+  production scope cleanup to the private provider. Verify sealed controlled
+  providers through public Tondo calls, with no import effects, hidden blocking
+  fallback or raw OS errors. Native ABI/AOT remains a separate unpromoted
+  boundary unless executable target evidence establishes it.
 - [ ] **STD-NET-TEST-001 — Modelar y endurecer networking.** Cubrir fragmentación,
   backpressure, DNS, half-close, cancelación, timeouts, TLS boundary, teardown,
   límites y fallos host reproducibles.
