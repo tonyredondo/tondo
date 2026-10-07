@@ -2,6 +2,8 @@
 set -euo pipefail
 root="$(cd "${BASH_SOURCE[0]%/*}/.." && pwd)"
 cd "$root"
+contract="${TONDO_STDLIB_NET_TEST_CONTRACT:-testing/stdlib-net-test.json}"
+parent="${TONDO_STDLIB_NET_CONTRACT:-testing/stdlib-net.json}"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/tondo-net-test-contract.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 reject() {
@@ -10,9 +12,21 @@ reject() {
     fi
 }
 bash scripts/stdlib-net-test-check.sh
+# State mutations need a valid ready fixture even after the live owner closes.
+# Mutating an already verified value to itself cannot be a negative test.
+jq '.model.status="ready" | .model.quality_gate="pending-current-source-proof"
+    | .promotion.next_blocks=(if .host.status=="implementation-in-progress"
+      then ["STD-NET-HOST-001"] else ["STD-NET-TEST-001"] end)
+    ' "$parent" > "$tmp/ready-parent.json"
+jq '.status="ready" | .quality_gate="pending-current-source-proof"
+    | .promotion.test_boundary_promoted=false
+    ' "$contract" > "$tmp/ready-child.json"
+env TONDO_STDLIB_NET_CONTRACT="$tmp/ready-parent.json" \
+    TONDO_STDLIB_NET_TEST_CONTRACT="$tmp/ready-child.json" bash scripts/stdlib-net-test-check.sh
 while IFS= read -r mutation; do
-    jq "$mutation" testing/stdlib-net-test.json > "$tmp/invalid.json"
-    reject env TONDO_STDLIB_NET_TEST_CONTRACT="$tmp/invalid.json" bash scripts/stdlib-net-test-check.sh
+    jq "$mutation" "$tmp/ready-child.json" > "$tmp/invalid.json"
+    reject env TONDO_STDLIB_NET_CONTRACT="$tmp/ready-parent.json" \
+        TONDO_STDLIB_NET_TEST_CONTRACT="$tmp/invalid.json" bash scripts/stdlib-net-test-check.sh
 done <<'MUTATIONS'
 .model.production_imports = true
 .model.os_dns_tls_packet_parser = true
