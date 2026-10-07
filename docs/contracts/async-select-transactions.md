@@ -50,13 +50,16 @@ forced-winner cancellation, rejected bytecode and result-memory refusal.
 The independent finite rendezvous model runs 4,096 deterministic seeds.
 
 The joint selection/network quality campaign passes 2,726 Rust tests and
-196 layer observations. It covers 300,345 of 328,050 lines (91.554641%),
-87.760902% of functions and 89.941218% of regions, preserves every global and
+196 layer observations. It covers 300,340 of 328,050 lines (91.553117%),
+87.760902% of functions and 89.939382% of regions, preserves every global and
 risk-scope 80% floor, and catches all six critical mutants without survivors,
 timeouts or unviable cases. The current ratchet binds both reports to source
-tree `0e3204de1b7fd4c9a127dc5f4f8c9b4651b2c064be14895f610565f3442bbaa7`.
-The complete functional gate and exact-source publication CI still precede
-tracker closure.
+tree `564b55f0a44dd73bce16b242e9c4dcfe54df069d2b7a95fa188230ab778c22a3`.
+Every functional-gate step passes across the retained, dependency-aware local
+continuations; the final draft run passes all 206 cases and three selected
+cases with 32 exact observations each. This is complete local step coverage,
+not a single uninterrupted gate invocation. Exact-source publication CI still
+precedes tracker closure.
 
 This contract promotes hosted VM execution only. It does not establish native
 ABI, Cranelift AOT, performance, physical-thread equivalence or a release.
