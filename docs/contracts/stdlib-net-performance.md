@@ -161,5 +161,9 @@ critical mutants, with no misses, timeouts or unviable mutations. The 25-minute
 capture budget ended after joint quality verification and before ratchet
 generation completed. A separate bounded metadata-only run generated and
 verified the ratchet from those unchanged reports; no coverage or mutation
-capture was repeated for that step. Functional-gate and publication/CI closure
-remain pending acceptance steps.
+capture was repeated for that step. All 351 named functional-gate checks pass
+in one uninterrupted clean-source invocation on `e11af1b5`, including 206
+draft cases and 96 exact async/select observations. The existing scalar native
+route passes 630 Cranelift cases, 70 arithmetic traps and 75 negative evidence
+records; these establish no native networking. Publication and exact-SHA CI
+closure remain pending acceptance steps.
