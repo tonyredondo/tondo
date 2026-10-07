@@ -101,20 +101,20 @@ the separate portable conformance and usage owners.
 ## Retained local quality
 
 The measured source tree is
-`2427723c1cdec079bf19d6081d6bfc59253b92dec16f77f2dcf37873f8955deb`:
+`1ac015b840637f6237a78054f3d4d99203d6599ad453aaaef3e4ed0a2a4689f4`:
 1,379 inputs with set digest
 `27c42b5b0760a8f97f67e6cc7c5cf9008d146cb0e7937e4bb1e9251c31578519`.
 It matches the executable inputs of corrective commit
-`5a4702ac952336cd247675c31226dfe6f2d9dadb`. All 2,749 Rust tests in 74 suites
+`d342547d043e6309ae4620bedba462009c587488`. All 2,749 Rust tests in 74 suites
 passed and generated 196 source-bound layer observations. The corrected-source
 campaign reused instrumented binaries, cleared all previous raw counters and
 ran the complete workspace/all-target test command with four Cargo jobs.
 
 | Metric | Observed |
 | --- | --- |
-| Lines | 301,116 / 329,050 (91.510713%) |
+| Lines | 301,122 / 329,050 (91.512536%) |
 | Functions | 19,822 / 22,605 (87.688564%) |
-| Regions | 442,183 / 491,842 (89.903465%) |
+| Regions | 442,194 / 491,842 (89.905701%) |
 | Critical mutation selection | 6 / 6 caught; no missed, timed-out or unviable mutants |
 
 Fresh coverage/mutation bindings, every locked 80% global/risk floor and the
@@ -129,5 +129,10 @@ synchronized after the supported standard-bundle regeneration; the complete
 budget repair changes no commands, samples or quality floors. Its inclusion
 in source provenance required this fresh capture; the earlier `4cd509` proof
 remains historical evidence in commit `1116374` and retained local archives.
-Publication CI closure remains separate required proof; these local results
-alone do not promote either HOST or TEST.
+Source commit `9e4580f` additionally passed exact-checkout CI run `37637316609`,
+strict Linux job `112846816426`, with all 348 checks and a stable final refresh.
+The promotion harness then received a separate correction: state-negative
+mutations now start from validated ready fixtures, including when the live
+owner is verified. Complete focused execution passes in both promotion states.
+This renewed capture binds that script change; its publication CI remains
+required before either owner closes.
