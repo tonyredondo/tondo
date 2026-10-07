@@ -360,11 +360,11 @@ and bounded-fuzz boundary is `verified` in
 current-source quality, all local checks and exact-checkout Linux CI. The
 register's `implementation` and `private_provider_draft` retain the original
 private checkpoint, including its originally required follow-ups. Live owner
-progression belongs to `host`, `model` and `promotion.next_blocks`; its next
-leaf is `STD-NET-PERF-001`. Native ABI/AOT and complete API conformance/promotion
+progression belongs to `host`, `model`, `measurement` and `promotion.next_blocks`;
+its next leaf is `STD-NET-CONF-001`. Native ABI/AOT and complete API conformance/promotion
 remain outside these hosted/test boundaries.
 
-The measurement-ready hosted protocol is
+The verified hosted performance baseline is
 [stdlib-net-performance.md](stdlib-net-performance.md), with 21 controlled
 loopback routes and 27 retained samples per route. It measures admitted private
 host calls and owner polling, without bytecode VM or native runtime/AOT timing.

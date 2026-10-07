@@ -59,7 +59,8 @@ The earlier selection source proof is retained in
 HOST/TEST measurements and source-bound ratchet are recorded in
 [the networking test contract](stdlib-net-test.md#retained-local-quality).
 `STD-NET-TEST-001` is verified by that joint source proof and its independent
-model/corpus/fuzz contract. Performance, portable conformance, native runtime
+model/corpus/fuzz contract. The hosted performance boundary is verified in
+[stdlib-net-performance.md](stdlib-net-performance.md). Portable conformance, native runtime
 ABI, Cranelift AOT and complete public API promotion remain separate owner
 boundaries. Normal-push portable and deterministic-fuzz jobs are expected skips;
-they do not establish portable networking. The next owner is `STD-NET-PERF-001`.
+they do not establish portable networking. The next owner is `STD-NET-CONF-001`.

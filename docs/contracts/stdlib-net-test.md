@@ -143,4 +143,6 @@ complete focused network testing script. It contains no error annotations.
 All paginated checks, statuses, runs, PRs and main references remain stable
 after more than 60 seconds of quiet confirmation. The separate portable and
 deterministic-fuzz jobs are expected normal-push skips, not portable proof.
-HOST and TEST are verified; the next owner is `STD-NET-PERF-001`.
+HOST and TEST are verified. The subsequent hosted performance boundary is
+verified in [stdlib-net-performance.md](stdlib-net-performance.md); the next
+owner is `STD-NET-CONF-001`.

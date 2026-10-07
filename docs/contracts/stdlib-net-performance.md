@@ -2,7 +2,8 @@
 
 `STD-NET-PERF-001` records a target-qualified hosted baseline. The register is
 [stdlib-net-performance.json](../../testing/stdlib-net-performance.json).
-The protocol is measurement-ready; development samples do not promote it.
+The protocol is verified as a hosted scalar baseline; development samples
+cannot promote it. The next owner is `STD-NET-CONF-001`.
 
 The selected route is `hosted-scalar`, target
 `x86_64-unknown-linux-gnu`, backend `rust-hosted-bridge`, Cargo `test` profile
@@ -165,5 +166,11 @@ capture was repeated for that step. All 351 named functional-gate checks pass
 in one uninterrupted clean-source invocation on `e11af1b5`, including 206
 draft cases and 96 exact async/select observations. The existing scalar native
 route passes 630 Cranelift cases, 70 arithmetic traps and 75 negative evidence
-records; these establish no native networking. Publication and exact-SHA CI
-closure remain pending acceptance steps.
+records; these establish no native networking. Published source `cba5e826`
+passes [CI run 37670512681](https://github.com/tonyredondo/tondo/actions/runs/37670512681),
+strict Linux job `112960769304`, in 47m10s. Its log proves the actual checkout
+twice, all 351 named checks and 2,767 Rust tests in 74 suites, without error
+annotations. All paginated checks, statuses, runs, PRs and main references
+remain unchanged after more than 60 seconds of quiet confirmation. Portable
+and deterministic-fuzz jobs are expected normal-push skips and establish no
+new portable evidence. Tracker promotion records this exact hosted boundary.

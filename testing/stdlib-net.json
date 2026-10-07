@@ -78,8 +78,8 @@
     "task": "STD-NET-PERF-001",
     "register": "testing/stdlib-net-performance.json",
     "contract": "docs/contracts/stdlib-net-performance.md",
-    "status": "measurement-ready",
-    "quality_gate": "pending-80-percent-per-scope",
+    "status": "verified-hosted-scalar-baseline",
+    "quality_gate": "verified-80-percent-per-scope",
     "target": "x86_64-unknown-linux-gnu",
     "backend": "rust-hosted-bridge",
     "profile": "test",
@@ -336,7 +336,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-NET-PERF-001"],
+    "next_blocks": ["STD-NET-CONF-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

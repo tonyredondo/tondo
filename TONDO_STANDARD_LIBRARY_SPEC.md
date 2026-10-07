@@ -3034,13 +3034,13 @@ and scope cleanup described in
 boundary is verified after the joint selection, current-source quality,
 complete functional checks and exact-source publication CI. The independent
 model, regression and bounded-fuzz testing boundary is also verified.
-Performance, portable conformance, usage documentation and native ABI/AOT
-remain separate `STD-NET-*` owner leaves. The independent bounded test register
+Portable conformance, usage documentation and native ABI/AOT remain separate
+`STD-NET-*` owner leaves. The independent bounded test register
 is [`testing/stdlib-net-test.json`](testing/stdlib-net-test.json), with its exact
 model, controlled hosted replay and fuzz scope in
 [`stdlib-net-test.md`](docs/contracts/stdlib-net-test.md).
 
-The measurement-ready networking protocol is registered in
+The verified hosted networking performance baseline is registered in
 [testing/stdlib-net-performance.json](testing/stdlib-net-performance.json) and
 [stdlib-net-performance.md](docs/contracts/stdlib-net-performance.md). It covers
 21 controlled hosted bridge workloads and 27 retained samples each, including

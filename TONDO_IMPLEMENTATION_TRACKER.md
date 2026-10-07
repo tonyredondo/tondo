@@ -13,7 +13,7 @@ memory design remains hybrid ARC with cycle collection. Native promotion for
 to the production runtime. LLVM remains an experimental comparison. ARM64,
 macOS and Windows probes do not promote additional product targets.
 
-**Last updated:** 2026-10-06
+**Last updated:** 2026-10-07
 
 **Normative specifications:**
 
@@ -76,7 +76,11 @@ by `STD-NET-HOST-001`. `STD-NET-TEST-001` verifies the independent finite model,
 exact regression corpus, controlled public hosted replay and bounded fuzz.
 Their joint source `d130e2b` preserves every 80% global/risk coverage floor,
 catches all six critical mutants and passes all 348 named checks in exact-source
-Linux CI run `37645341442`. The next networking owner is `STD-NET-PERF-001`.
+Linux CI run `37645341442`. `STD-NET-PERF-001` verifies 21 controlled hosted
+bridge routes with 27 retained samples each, exact lifecycle observations and
+source-bound quality. Published `cba5e826` passes all 351 named checks in
+exact-source Linux CI run `37670512681`, with stable final confirmation.
+The next networking owner is `STD-NET-CONF-001`.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -7117,8 +7121,24 @@ estas leaves.
   normal-push skips. The verified boundary is independent tests and hosted
   regressions; native ABI/AOT, performance and conformant API promotion remain
   separate. Next: `STD-NET-PERF-001`.
-- [ ] **STD-NET-PERF-001 — Medir networking.** Fijar throughput, tail, memoria,
-  allocations, conexiones y cancelación con loopback/provider controlado.
+- [x] **STD-NET-PERF-001 — Measure controlled hosted networking.** Fix a
+  target-qualified baseline for connections, partial TCP/UDP I/O, backpressure,
+  explicit DNS, TLS 1.2/1.3, cancellation and bounded refusal.
+  Evidence: [performance contract](docs/contracts/stdlib-net-performance.md)
+  and [register](testing/stdlib-net-performance.json); 21 routes, three
+  independent processes and 27 retained samples per route, with monotonic
+  median/P95/P99 latency and selected logical resource observations. All
+  samples retire host handles, jobs, slots and shared charges. Twenty Python
+  report tests, eighteen focused Rust tests and 2,767 workspace tests in 74
+  suites pass. Source-bound quality measures 302,082/330,048 lines (91.526687%),
+  preserves every 80% global/risk floor and catches all six critical mutants.
+  Published `cba5e826` passes all 351 named checks in CI run `37670512681`,
+  strict Linux job `112960769304`; actual checkout and complete logs are
+  inspected, and all paginated checks/statuses/runs/PRs and main refs remain
+  stable after more than 60 seconds. Portable/fuzz jobs are expected skips.
+  The boundary is the admitted private hosted bridge in the pinned test
+  profile; VM interpreter, native ABI/AOT, SIMD, code size and portable
+  performance remain unmeasured. Next: `STD-NET-CONF-001`.
 - [ ] **STD-NET-CONF-001 — Conformar networking.** Ejecutar casos portables,
   capability-gated y de integración sobre targets reales VM/nativos.
 - [ ] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
