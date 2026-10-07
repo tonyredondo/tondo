@@ -30,6 +30,6 @@ jq -e --slurpfile parent testing/stdlib-net.json '
 while IFS= read -r path; do test -f "$path"; done < <(jq -r '.fixtures[], .contract' "$contract")
 while IFS= read -r anchor; do
     path="${anchor%%::*}"; name="${anchor##*::}"
-    rg -Fq "fn $name(" "$path"
+    grep -Fq "fn $name(" "$path"
 done < <(jq -r '.tests[]' "$contract")
 echo 'std.net public hosted contract: OK'

@@ -24,7 +24,7 @@ jq -e '
 ' "$contract" >/dev/null
 while IFS= read -r anchor; do
     path="${anchor%%::*}"; name="${anchor##*::}"
-    rg -Fq "fn $name(" "$path"
+    grep -Fq "fn $name(" "$path"
 done < <(jq -r '.tests[], (.model.source + "::" + .model.test)' "$contract")
 test -f "$(jq -r '.contract' "$contract")"
 echo 'hosted selection transaction contract: OK'
