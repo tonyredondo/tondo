@@ -87,6 +87,38 @@ pub enum TlsError {
     Transport(NetError),
 }
 
+impl TlsError {
+    pub const fn variant(self) -> u32 {
+        match self {
+            Self::InvalidServerName => 0,
+            Self::InvalidCertificate => 1,
+            Self::CertificateRejected => 2,
+            Self::HandshakeFailed => 3,
+            Self::Unsupported => 4,
+            Self::ResourceLimit => 5,
+            Self::Timeout => 6,
+            Self::Cancelled => 7,
+            Self::Closed => 8,
+            Self::Transport(_) => 9,
+        }
+    }
+}
+
+pub const TLS_ERROR_VARIANTS: &[&str] = &[
+    "InvalidServerName",
+    "InvalidCertificate",
+    "CertificateRejected",
+    "HandshakeFailed",
+    "Unsupported",
+    "ResourceLimit",
+    "Timeout",
+    "Cancelled",
+    "Closed",
+    "Transport",
+];
+pub const TLS_VERIFICATION_VARIANTS: &[&str] = &["PlatformRoots", "PinnedCertificate"];
+pub const SHUTDOWN_VARIANTS: &[&str] = &["Read", "Write", "Both"];
+
 impl fmt::Display for TlsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{self:?}")

@@ -238,6 +238,14 @@ run_step stdlib-net-implementation \
     scripts/stdlib-net-implementation-check.sh
 run_step stdlib-net-implementation-tests \
     scripts/stdlib-net-implementation-test.sh
+run_step async-select-transactions \
+    scripts/async-select-transactions-check.sh
+run_step async-select-transactions-tests \
+    scripts/async-select-transactions-test.sh
+run_step stdlib-net-host \
+    scripts/stdlib-net-host-check.sh
+run_step stdlib-net-host-tests \
+    scripts/stdlib-net-host-test.sh
 run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
 run_step stdlib-civil-time-contract-tests \

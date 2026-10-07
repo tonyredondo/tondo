@@ -29,7 +29,9 @@ connection into one listener-owned slot, which remains available after a
 losing preparation; it does not publish a stream before commit. A single
 consumer permit per endpoint prevents replacement or concurrent consumption
 of prepared state. Dropping a pending wait or prepared lease releases that
-permit. These private leases are not yet integrated into the public VM selector.
+permit. At this private implementation gate, those leases were not integrated
+into the public VM selector. Their current hosted integration and its promotion
+criteria are recorded in [stdlib-net-host.md](stdlib-net-host.md).
 
 Each TCP transport owns its Tokio descriptor and a safe duplicated standard
 descriptor for read/both shutdown. They name one transport and close with its
@@ -73,13 +75,13 @@ with the same target/features and discarded all previous raw counters before
 rerunning every workspace target. No historical counters enter this report.
 The source tree is
 `04d1514617d51586119b155dcd8702d4dd3e1c3b599225a8d9a3bba16ee8f0b7`;
-the generated [ratchet](../../testing/conformance-ratchet.json) binds both
-reports to that tree and the exact input set. The complete functional gate
-and exact-source publication CI remain required before tracker closure.
+the [retained implementation ratchet](https://github.com/tonyredondo/tondo/blob/2b53f5d73d8ae35767ae8f96ab7cda3a914039cc/testing/conformance-ratchet.json)
+binds both reports to that tree and the exact input set. That historical gate
+is separate from the current joint selection/network quality campaign.
 
 Public Tondo compiler registration, static capability/affine checking, VM host
 admission, production scope cleanup, sealed VM provider controls and target
-activation remain `STD-NET-HOST-001`. Independent model/fuzz, performance,
+activation belong to [STD-NET-HOST-001](stdlib-net-host.md). Independent model/fuzz, performance,
 conformance and executable public usage remain their separate owner leaves.
 Native ABI/AOT and portability promotion are not established by these Linux
-x86_64 Rust tests. The tracker stays open until the required evidence is current.
+x86_64 Rust tests. Each later owner leaf requires its own current evidence.

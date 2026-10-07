@@ -1,0 +1,56 @@
+import std.net
+import std.bytes
+import std.io
+
+fn value[T](result: T ! net.NetError): T {
+    match result {
+        ok(payload) => payload
+        err(_) => panic("network operation failed")
+    }
+}
+
+fn receive(reader: net.TcpReadHalf, options: net.NetOptions): Int {
+    let result = value(reader.read(1024, options))
+    net.TcpReadHalf.close(reader)
+    match result {
+        io.ReadResult.Data(data) => data.length()
+        io.ReadResult.Eof => 0
+    }
+}
+
+fn send(writer: net.TcpWriteHalf, data: bytes.Bytes, options: net.NetOptions): Int {
+    let count = value(writer.write(data, options))
+    net.TcpWriteHalf.close(writer)
+    count
+}
+
+fn main() {
+    let ip = value(net.IpAddress.parse("127.0.0.1"))
+    let address = value(net.socketAddress(ip, 0))
+    let options = value(net.options(none, value(net.NetLimits.create(1024, 512, 16))))
+    let listener = value(net.listen(address, 4))
+    let client = value(net.connect(value(listener.localAddress()), options))
+    let server = value(listener.accept(options))
+    let (clientReader, clientWriter) = net.TcpStream.split(client)
+    let (serverReader, serverWriter) = net.TcpStream.split(server)
+    let data = match bytes.Bytes("hello") {
+        ok(payload) => payload
+        err(_) => panic("bytes construction failed")
+    }
+    scope {
+        let job = spawn thread receive(serverReader, options)
+        assert(value(clientWriter.write(data, options)) == 5)
+        assert(await job == 5)
+    }
+    scope {
+        let reply = spawn thread send(serverWriter, data, options)
+        match value(clientReader.read(1024, options)) {
+            io.ReadResult.Data(payload) => assert(payload.equal(data))
+            _ => panic("thread reply was lost")
+        }
+        assert(await reply == 5)
+    }
+    net.TcpReadHalf.close(clientReader)
+    net.TcpWriteHalf.close(clientWriter)
+    net.TcpListener.close(listener)
+}

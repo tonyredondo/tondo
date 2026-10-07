@@ -98,9 +98,18 @@ pub struct DeclaredBuildInputs {
     dependency_interfaces: BTreeMap<PackageId, CompiledInterface>,
     require_dependency_interfaces: bool,
     generation: Vec<crate::toolchain::GenerationRecord>,
+    network: Option<crate::toolchain::NetworkTarget>,
 }
 
 impl DeclaredBuildInputs {
+    pub(crate) fn with_network_target(
+        mut self,
+        network: Option<crate::toolchain::NetworkTarget>,
+    ) -> Self {
+        self.network = network;
+        self
+    }
+
     pub(crate) fn with_generation(
         mut self,
         mut records: Vec<crate::toolchain::GenerationRecord>,
@@ -447,9 +456,15 @@ pub struct BuildArtifact {
     reproducible: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     generation: Vec<crate::toolchain::GenerationRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    network: Option<crate::toolchain::NetworkTarget>,
 }
 
 impl BuildArtifact {
+    pub fn network_target(&self) -> Option<&crate::toolchain::NetworkTarget> {
+        self.network.as_ref()
+    }
+
     pub fn generation(&self) -> &[crate::toolchain::GenerationRecord] {
         &self.generation
     }
@@ -576,6 +591,11 @@ impl BuildArtifact {
         require_sorted_unique("capabilities", &self.capabilities)?;
         require_sorted_unique("features", &self.features)?;
         require_sorted_unique("source sets", &self.source_sets)?;
+        crate::toolchain::validate_network_selection(
+            self.capabilities.iter().map(String::as_str),
+            self.network.as_ref(),
+        )
+        .map_err(|error| ArtifactError::InvalidArtifact(error.to_string()))?;
         for source_set in &self.source_sets {
             SourceSetId::new(source_set.clone())?;
         }
@@ -676,6 +696,7 @@ impl BuildArtifact {
             source_hashes: &self.source_hashes,
             interface_hash: &self.interface_hash,
             generation: &self.generation,
+            network: self.network.as_ref(),
         };
         let bytes = serde_json::to_vec(&fingerprint)
             .map_err(|error| ArtifactError::Serialization(error.to_string()))?;
@@ -943,6 +964,7 @@ pub(crate) fn build_products(
         build_hash: String::new(),
         reproducible: true,
         generation: inputs.generation.clone(),
+        network: inputs.network.clone(),
     };
     artifact.build_hash = artifact.calculated_build_hash()?;
     artifact.validate()?;
@@ -1619,6 +1641,8 @@ struct BuildFingerprint<'a> {
     interface_hash: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     generation: &'a Vec<crate::toolchain::GenerationRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    network: Option<&'a crate::toolchain::NetworkTarget>,
 }
 
 fn validate_generation(
@@ -1841,9 +1865,69 @@ mod tests {
             build_hash: String::new(),
             reproducible: true,
             generation: Vec::new(),
+            network: None,
         };
         artifact.build_hash = artifact.calculated_build_hash().unwrap();
         artifact
+    }
+
+    #[test]
+    fn network_configuration_is_bound_and_validated_in_artifact_identity() {
+        let mut artifact = valid_artifact();
+        assert!(
+            !String::from_utf8(artifact.encode().unwrap())
+                .unwrap()
+                .contains("\"network\"")
+        );
+        artifact.capabilities.push("network".into());
+        artifact.capabilities.sort();
+        artifact.network = Some(crate::toolchain::NetworkTarget {
+            resolver_servers: vec!["192.0.2.53:53".into(), "[2001:db8::53]:53".into()],
+        });
+        artifact.build_hash = artifact.calculated_build_hash().unwrap();
+        let first_hash = artifact.build_hash.clone();
+        let bytes = artifact.encode().unwrap();
+        assert_eq!(BuildArtifact::decode(&bytes).unwrap(), artifact);
+
+        artifact
+            .network
+            .as_mut()
+            .unwrap()
+            .resolver_servers
+            .reverse();
+        assert!(
+            matches!(artifact.encode(), Err(ArtifactError::InvalidArtifact(message))
+            if message.contains("does not match"))
+        );
+        artifact.build_hash = artifact.calculated_build_hash().unwrap();
+        assert_ne!(artifact.build_hash, first_hash);
+        assert_eq!(
+            BuildArtifact::decode(&artifact.encode().unwrap()).unwrap(),
+            artifact
+        );
+
+        for network in [
+            None,
+            Some(crate::toolchain::NetworkTarget {
+                resolver_servers: vec![],
+            }),
+        ] {
+            let mut invalid = artifact.clone();
+            invalid.network = network;
+            invalid.build_hash = invalid.calculated_build_hash().unwrap();
+            assert!(matches!(
+                invalid.encode(),
+                Err(ArtifactError::InvalidArtifact(_))
+            ));
+        }
+        artifact
+            .capabilities
+            .retain(|capability| capability != "network");
+        artifact.build_hash = artifact.calculated_build_hash().unwrap();
+        assert!(matches!(
+            artifact.encode(),
+            Err(ArtifactError::InvalidArtifact(_))
+        ));
     }
 
     #[test]
@@ -2353,6 +2437,7 @@ mod tests {
             build_hash: String::new(),
             reproducible: true,
             generation: Vec::new(),
+            network: None,
         };
         artifact.build_hash = artifact.calculated_build_hash().unwrap();
         let bytes = artifact.encode().unwrap();

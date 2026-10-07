@@ -504,6 +504,7 @@ impl<'a> VmHostReturnBudget<'a> {
 /// typed run-local token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RuntimeHostValueKind {
+    Network(crate::network::NetworkType),
     /// Immutable artifact metadata; no external host registry owns this token.
     Reflection(crate::reflection::ReflectionDescriptorKind, [u8; 32]),
     Command,

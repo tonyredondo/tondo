@@ -22,7 +22,13 @@
     "deadline_without_clock": "static-capability-error"
   },
   "host": {
-    "status": "required-after-native-gate",
+    "status": "implementation-in-progress",
+    "register": "testing/stdlib-net-host.json",
+    "contract": "docs/contracts/stdlib-net-host.md",
+    "quality_gate": "pending-current-source-proof",
+    "prerequisite": "ASYNC-SELECT-ATOMIC-001",
+    "public_api_promoted": false,
+    "native_abi_or_aot": false,
     "reason": "std.net needs target-declared resolver, socket readiness, bounded host buffers and a declared TLS provider; it must not block cooperative workers or read ambient proxy, certificate or retry policy"
   },
   "target_configuration": {
@@ -92,6 +98,7 @@
       {"id":"connect","signature":"pub fn connect(address: SocketAddress, options: NetOptions): TcpStream ! NetError suspends","kind":"tcp-connect","effect":"suspends"},
       {"id":"listen","signature":"pub fn listen(address: SocketAddress, backlog: Int): TcpListener ! NetError","kind":"tcp-listener","effect":"sync"},
       {"id":"listener-accept","signature":"pub fn TcpListener.accept(self, options: NetOptions): TcpStream ! NetError selectable","kind":"tcp-accept","effect":"selectable"},
+      {"id":"listener-local","signature":"pub fn TcpListener.localAddress(self): SocketAddress ! NetError","kind":"tcp-local-address","effect":"sync"},
       {"id":"listener-close","signature":"pub fn TcpListener.close(listener: TcpListener): Unit","kind":"tcp-listener-terminal","effect":"sync"},
       {"id":"tcp-split","signature":"pub fn TcpStream.split(stream: TcpStream): (TcpReadHalf, TcpWriteHalf)","kind":"tcp-half-split","effect":"sync"},
       {"id":"tcp-local","signature":"pub fn TcpStream.localAddress(self): SocketAddress ! NetError","kind":"tcp-local-address","effect":"sync"},

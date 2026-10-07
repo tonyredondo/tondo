@@ -104,6 +104,7 @@ impl fmt::Display for ScalarType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntrinsicType {
+    Network(tondo_vm::network::NetworkType),
     Reflection(tondo_vm::reflection::ReflectionDescriptorKind),
     Array,
     Map,
@@ -214,6 +215,7 @@ impl IntrinsicType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Reflection(kind) => kind.name(),
+            Self::Network(kind) => kind.name(),
             Self::Array => "Array",
             Self::Map => "Map",
             Self::Set => "Set",
@@ -327,7 +329,7 @@ impl IntrinsicType {
 
     pub fn arity(self) -> usize {
         match self {
-            Self::Reflection(_) => 0,
+            Self::Reflection(_) | Self::Network(_) => 0,
             Self::Map | Self::Join | Self::Group | Self::Once | Self::Waiter | Self::Completer => 2,
             Self::Array
             | Self::Set

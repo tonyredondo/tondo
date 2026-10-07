@@ -1,0 +1,55 @@
+{
+  "format": "tondo-stdlib-host-boundary/1",
+  "owner": "std.net",
+  "task": "STD-NET-HOST-001",
+  "prerequisite": "ASYNC-SELECT-ATOMIC-001",
+  "parent": "testing/stdlib-net.json",
+  "contract": "docs/contracts/stdlib-net-host.md",
+  "status": "implementation-in-progress",
+  "quality_gate": "pending-current-source-proof",
+  "selected_route": "hosted-scalar",
+  "target": "tondo-vm-hosted",
+  "public_api_promoted": false,
+  "native_abi_or_aot": false,
+  "surface": {"operations": 40, "value_types": 15, "host_carriers": 12, "address_records": 3, "suspendible": 15, "selectable": 3},
+  "providers": {
+    "scheduler": "tondo-cooperative-owner-polled-private-tokio-reactor",
+    "resolver": "explicit-ordered-target-endpoints-no-ambient-config",
+    "tls_versions": ["1.2", "1.3"],
+    "roots": "versioned-webpki-roots-bundle",
+    "import_effects": false,
+    "blocking_fallback": false,
+    "physical_worker": "synchronous-BlockingPool-only",
+    "hosted_spawn_thread": "cooperative-reference"
+  },
+  "admission": {
+    "known_error": "fixed-envelope-before-success-workspace",
+    "tls_consumes_tcp_on_error": true,
+    "shared_account": "receiving-test-owner",
+    "scope_cleanup": "retire-reactor-before-response-and-scope-exit",
+    "memory_metric": "logical-not-rss-or-os-allocation-count"
+  },
+  "fixtures": [
+    "crates/tondo-compiler/tests/fixtures/net-values.to",
+    "crates/tondo-compiler/tests/fixtures/net-transports.to",
+    "crates/tondo-compiler/tests/fixtures/net-thread.to",
+    "crates/tondo-compiler/tests/fixtures/net-blocking-sync.to"
+  ],
+  "tests": [
+    "crates/tondo-compiler/src/driver.rs::network_configuration_survives_direct_requests_and_input_replacement",
+    "crates/tondo-compiler/src/driver.rs::network_frontend_registers_public_effects_and_consuming_operations",
+    "crates/tondo-compiler/src/driver.rs::network_frontend_rejects_missing_capability_and_terminal_misuse",
+    "crates/tondo-compiler/src/driver.rs::network_hosted_values_preserve_content_keys_and_bounded_errors",
+    "crates/tondo-compiler/src/driver.rs::network_public_tcp_udp_and_ephemeral_listener_execute",
+    "crates/tondo-compiler/src/driver.rs::network_public_handles_transfer_to_thread_and_return_from_parent_provider",
+    "crates/tondo-compiler/src/driver.rs::network_synchronous_listener_returns_from_real_blocking_worker",
+    "crates/tondo-compiler/src/driver.rs::network_blocking_pool_callable_contract_is_checked",
+    "crates/tondo-compiler/src/process_host/net.rs::network_import_does_not_create_provider_or_registry_state",
+    "crates/tondo-compiler/src/process_host/net.rs::network_panic_retires_affine_socket_and_shared_account",
+    "crates/tondo-compiler/src/process_host/net.rs::network_public_validation_precedes_expired_deadline_without_dns_io",
+    "crates/tondo-compiler/src/process_host/net.rs::network_cancelled_accept_retires_reactor_wait_before_response",
+    "crates/tondo-compiler/src/process_host/net.rs::network_public_dns_uses_declared_server_and_preserves_whole_ordered_values",
+    "crates/tondo-compiler/src/process_host/net.rs::network_public_tls12_tls13_exchange_and_shutdown_use_sealed_peer",
+    "crates/tondo-compiler/src/process_host/net.rs::network_tls_expired_deadline_closes_consumed_tcp_without_handshake_storage"
+  ]
+}

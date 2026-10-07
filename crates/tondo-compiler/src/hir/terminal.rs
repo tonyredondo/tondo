@@ -29,6 +29,7 @@ pub enum HirTerminalOperation {
     JoinAwait,
     ProcessFinish,
     TimerFinish,
+    NetworkClose,
 }
 
 /// The closed fallback used only while unwinding a direct intrinsic root.
@@ -37,6 +38,7 @@ pub enum HirTerminalUnwindAction {
     JoinTeardown,
     ProcessCleanup,
     TimerCleanup,
+    NetworkCleanup,
 }
 
 /// The complete language-owned contract for one direct terminal root.
@@ -79,6 +81,12 @@ const TIMER_CONTRACT: HirTerminalContract = HirTerminalContract {
     unwind_may_suspend: false,
 };
 
+const NETWORK_CONTRACT: HirTerminalContract = HirTerminalContract {
+    operation: HirTerminalOperation::NetworkClose,
+    unwind: HirTerminalUnwindAction::NetworkCleanup,
+    unwind_may_suspend: false,
+};
+
 /// This match is the language-owned terminal registry. Source declarations
 /// cannot extend it. Privileged opaque library entries will be supplied by the
 /// future standard-library interface catalog rather than by a user trait.
@@ -86,6 +94,13 @@ pub(crate) const fn intrinsic_terminal_contract(
     constructor: IntrinsicType,
 ) -> Option<HirTerminalContract> {
     match constructor {
+        IntrinsicType::Network(kind) => {
+            if kind.owns_transport() {
+                Some(NETWORK_CONTRACT)
+            } else {
+                None
+            }
+        }
         IntrinsicType::Join => Some(JOIN_CONTRACT),
         IntrinsicType::ProcessHandle => Some(PROCESS_HANDLE_CONTRACT),
         IntrinsicType::Timer => Some(TIMER_CONTRACT),
@@ -509,6 +524,7 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set | IntrinsicType::Range => {
             dependent(arguments)
         }
+        IntrinsicType::Network(_) => fixed(HirTerminalStatus::Absent),
         IntrinsicType::Reflection(_)
         | IntrinsicType::Ref
         | IntrinsicType::Pointer

@@ -24,6 +24,7 @@ mod check;
 mod const_eval;
 mod lower;
 mod regions;
+mod selectable;
 mod terminal;
 mod termination;
 mod traits;
@@ -177,6 +178,9 @@ pub(crate) fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Opt
             "YamlWriter" => IntrinsicType::YamlWriter,
             _ => return None,
         }),
+        "net" => {
+            tondo_vm::network::NetworkType::from_name(name.as_str()).map(IntrinsicType::Network)
+        }
         "messagepack" => Some(match name.as_str() {
             "MessagePackLimits" => IntrinsicType::MessagePackLimits,
             "MessagePackDecodeOptions" => IntrinsicType::MessagePackDecodeOptions,
@@ -2755,6 +2759,7 @@ impl HirSelectArm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
+    Network(tondo_vm::network::NetworkOperation),
     Reflection(tondo_vm::reflection::ReflectionOperation),
     UuidNil,
     UuidMax,
@@ -3293,6 +3298,7 @@ impl HirBootstrapHostFunction {
 
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Network(operation) => operation.name(),
             Self::Reflection(operation) => operation.name(),
             Self::ConsolePrint => "std.console.print",
             Self::ConsolePrintln => "std.console.println",
@@ -3834,6 +3840,9 @@ impl HirBootstrapHostFunction {
     }
 
     pub const fn is_async(self) -> bool {
+        if let Self::Network(operation) = self {
+            return operation.suspends();
+        }
         matches!(
             self,
             Self::ConsoleFlush
@@ -3948,6 +3957,9 @@ impl HirBootstrapHostFunction {
 
     /// Host operations with an atomic prepare/register/commit protocol.
     pub const fn is_selectable(self) -> bool {
+        if let Self::Network(operation) = self {
+            return operation.selectable();
+        }
         matches!(
             self,
             Self::AsyncWaiterWait

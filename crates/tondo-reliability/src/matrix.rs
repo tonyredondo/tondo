@@ -1491,7 +1491,10 @@ Mustard, shallow, cancellation and `must_use` describe no obligation.\n\n\
             .iter()
             .filter(|requirement| audited_language.contains(requirement.id.as_str()))
         {
-            if matches!(requirement.id.as_str(), "TL01-11-10-R003") {
+            if matches!(
+                requirement.id.as_str(),
+                "TL01-11-10-R003" | "TL01-11-10-R008"
+            ) {
                 assert_eq!(requirement.status, "toolchain-limit", "{}", requirement.id);
                 for (name, dimension) in claim_dimensions(&requirement.dimensions) {
                     assert!(

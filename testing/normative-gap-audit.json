@@ -5,7 +5,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "317cb2a2c68d44bedd77b21a406f052421293d61a3d8cb41e8c7caf57185041e"
+      "sha256": "83957f254599ef6deb97efeecc81306f67cde2a4d7323e18c18b011fe41add9a"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -17,10 +17,10 @@
     }
   ],
   "summary": {
-    "total": 385,
+    "total": 386,
     "by_outcome": {
       "absent": 15,
-      "implemented-without-trace": 368,
+      "implemented-without-trace": 369,
       "not-applicable": 2
     }
   },
@@ -820,6 +820,25 @@
       "implementation": [],
       "tests": [],
       "follow_up": "CONF-GAP-IMPL-001:TL01-11-10-R005"
+    },
+    {
+      "requirement": "TL01-11-10-R008",
+      "text_sha256": "7ec633f5120ddbde5e5098603f2666185484d6eda9bbfbee5d01bf8bff41e6eb",
+      "outcome": "implemented-without-trace",
+      "reason": "TL01-11-10-R008 has hosted source checkpoints, bytecode prefix proof, sealed rendezvous and transferred-owner cancellation regressions. Its complete normative trace and native/AOT boundary remain unpromoted; ASYNC-SELECT-ATOMIC-001 owns the current-source gate.",
+      "implementation": [
+        "crates/tondo-compiler/src/hir/selectable.rs",
+        "crates/tondo-compiler/src/process_host.rs",
+        "crates/tondo-vm/src/bytecode/verify.rs",
+        "crates/tondo-vm/src/runtime/execute.rs"
+      ],
+      "tests": [
+        "rust:tondo-compiler:src::bytecode::lower:select_bytecode_rejects_forged_selectable_host_effect_prefix",
+        "rust:tondo-compiler:src::hir::check:selectable_prefix_proof_checks_named_closure_branch_and_helper_effects",
+        "rust:tondo-compiler:src::process_host::net:network_select_forced_source_winner_cancellation_retires_affine_arguments",
+        "rust:tondo-compiler:src::process_host::net:network_select_pure_checkpoint_runs_only_winning_continuation"
+      ],
+      "follow_up": null
     },
     {
       "requirement": "TL01-11-11-R001",

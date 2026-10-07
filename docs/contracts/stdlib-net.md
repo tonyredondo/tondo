@@ -7,6 +7,11 @@ normativa se enlaza desde [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDAR
 Este cierre fija la frontera de red, pero no afirma que el runtime público de
 sockets, DNS o TLS ya esté implementado.
 
+The public hosted implementation is tracked separately in
+[`stdlib-net-host.md`](stdlib-net-host.md). Its current-source promotion is
+pending the general selection prerequisite, joint quality gate and exact-SHA CI.
+The private-provider register retains its original kernel-only boundary.
+
 `std.net` solo aparece cuando el target selecciona la capability `network`.
 Importar el módulo no abre sockets, consulta DNS, lee proxies o certificados,
 crea tasks ni toca el entorno. Las operaciones de red son explícitas y usan el
@@ -88,6 +93,7 @@ pub fn resolve(host: HostName, port: Int, options: NetOptions): Array[SocketAddr
 pub fn connect(address: SocketAddress, options: NetOptions): TcpStream ! NetError suspends
 pub fn listen(address: SocketAddress, backlog: Int): TcpListener ! NetError
 pub fn TcpListener.accept(self, options: NetOptions): TcpStream ! NetError selectable
+pub fn TcpListener.localAddress(self): SocketAddress ! NetError
 pub fn TcpListener.close(listener: TcpListener): Unit
 
 pub fn TcpStream.split(stream: TcpStream): (TcpReadHalf, TcpWriteHalf)
@@ -144,6 +150,10 @@ entre `0` y `65535`. El puerto cero solo es válido para `listen`/`bind` y pide
 un puerto efímero; `connect`, `resolve` y `sendTo` requieren un puerto
 positivo. Ninguna operación normaliza, hace IDNA, interpreta un path Unix o
 convierte silenciosamente texto inválido.
+
+`TcpListener.localAddress` returns the bound address, including the port assigned
+by the operating system after `listen` with port zero. The query borrows the
+listener and neither accepts a connection nor consumes the listener.
 
 `hostName` acepta nombres DNS ASCII de hasta 253 bytes, con labels de 1 a 63
 bytes, sin NUL, espacios, barras ni un punto inicial. El caller debe convertir

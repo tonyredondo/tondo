@@ -147,6 +147,12 @@ impl Verifier<'_> {
             ));
         }
         self.verify_capability_statuses()?;
+        if let Some(span) = super::selectable::findings(self.program).first() {
+            return Err(HirInvariantError::new(
+                "selectable preparation",
+                format!("unproved atomic prefix at {}", span.range()),
+            ));
+        }
         if self.program.terminal_statuses.len() != self.program.interner.len() {
             return Err(HirInvariantError::new(
                 "terminal types",
@@ -606,6 +612,7 @@ impl Verifier<'_> {
                         | IntrinsicType::ProtoReader
                         | IntrinsicType::ProtoWriter
                         | IntrinsicType::Reflection(_)
+                        | IntrinsicType::Network(_)
                         | IntrinsicType::UnknownFields => None,
                     };
                     if let Some((required, capability, reason)) = requirement {

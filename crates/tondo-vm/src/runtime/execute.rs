@@ -155,6 +155,18 @@ pub trait VmHost {
     /// retain the account that admitted them when another task becomes active.
     fn set_test_memory_budget(&mut self, _budget: Option<VmMemoryBudget>) {}
 
+    /// Opts an ordinary execution into one account shared by VM storage and
+    /// provider payloads. This does not enable test phases or instruction limits.
+    fn requires_shared_memory_budget(&self) -> bool {
+        false
+    }
+
+    /// An owned worker inherits its caller's account instead of creating a
+    /// separate allowance for its heap and provider resources.
+    fn shared_memory_budget(&self) -> Option<VmMemoryBudget> {
+        None
+    }
+
     /// Test hosts may reclaim registry payloads from the complete typed root
     /// graph. Ordinary hosts do not pay for this additional tracing pass.
     fn tracks_host_roots(&self) -> bool {
@@ -280,6 +292,39 @@ pub trait VmHost {
 
     /// Requests cancellation without reporting completion before cleanup ends.
     fn cancel_async(&mut self, _call: u64) -> Result<(), VmError> {
+        Ok(())
+    }
+
+    /// A provider reservation becomes ready without consuming its endpoint.
+    /// Only the selector's winner commits; rollback retires the losing wait.
+    fn reserve_select_async(&mut self, _call: u64, _selection: u64) -> Result<bool, VmError> {
+        Ok(false)
+    }
+    /// A rendezvous can atomically select the peer's arm as well as the caller.
+    /// The peer must observe that claim before considering another alternative.
+    fn select_async_committed(&self, _call: u64) -> bool {
+        false
+    }
+    fn seal_select_async(&mut self, _selection: u64) -> Result<(), VmError> {
+        Ok(())
+    }
+    fn finish_select(&mut self, _selection: u64) -> Result<(), VmError> {
+        Ok(())
+    }
+    fn select_async_ready(&self, _call: u64) -> bool {
+        false
+    }
+    fn commit_select_async(
+        &mut self,
+        call: u64,
+        admission: &mut super::VmHostImportAdmission<'_>,
+    ) -> Result<Option<VmHostReturn>, VmError> {
+        self.poll_async_with_import_admission(call, admission)
+    }
+    fn rollback_select_async(&mut self, call: u64) -> Result<(), VmError> {
+        self.cancel_async(call)
+    }
+    fn finish_select_async(&mut self, _call: u64) -> Result<(), VmError> {
         Ok(())
     }
 
@@ -683,6 +728,45 @@ struct CallContinuation {
     once: Option<OnceContinuation>,
 }
 
+#[derive(Debug)]
+struct SelectAdapterReturn {
+    value: Value,
+    continuation: CallContinuation,
+    outcome: BytecodeTypeId,
+    span: BytecodeSpan,
+}
+
+#[derive(Debug, Clone)]
+enum SelectIntrinsic {
+    OneShot {
+        id: u64,
+        outcome: BytecodeTypeId,
+    },
+    GroupNext {
+        id: u64,
+        outcome: BytecodeTypeId,
+    },
+    ActorSend {
+        actor: u64,
+        message: Value,
+        outcome: BytecodeTypeId,
+    },
+    Join {
+        child: usize,
+        frame: usize,
+        owner: BytecodePlace,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct SelectAdapterWait {
+    operation: SelectIntrinsic,
+    frame: usize,
+    destination: BytecodePlace,
+    target: BytecodeBlockId,
+    unwind: BytecodeBlockId,
+}
+
 #[derive(Debug, Clone)]
 struct OnceContinuation {
     id: u64,
@@ -899,10 +983,16 @@ struct RuntimeSelectRegion {
     capacity: u32,
     registered: u32,
     arms: Vec<RuntimeSelectArm>,
+    registration: u64,
+    winner: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
 enum RuntimeSelectReservation {
+    HostCall {
+        call: u64,
+    },
+    Intrinsic(SelectIntrinsic),
     ActorSend {
         actor: u64,
         message: Value,
@@ -917,6 +1007,7 @@ struct RuntimeSelectArm {
     owned: bool,
     owner: Option<BytecodePlace>,
     reservation: Option<RuntimeSelectReservation>,
+    moves: Vec<BytecodePlace>,
 }
 
 impl RuntimeSelectRegion {
@@ -1239,6 +1330,9 @@ enum BlockingCompletion {
 
 #[derive(Debug)]
 enum BlockingHostOperation {
+    Cleanup {
+        value: RuntimeValue,
+    },
     Call {
         name: String,
         arguments: Vec<RuntimeValue>,
@@ -1623,8 +1717,21 @@ struct BlockingWorkerHost {
 }
 
 impl VmHost for BlockingWorkerHost {
+    fn shared_memory_budget(&self) -> Option<VmMemoryBudget> {
+        self.memory.clone()
+    }
     fn set_test_memory_budget(&mut self, budget: Option<VmMemoryBudget>) {
         self.memory = budget;
+    }
+
+    fn cleanup(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        self.request(
+            BlockingHostOperation::Cleanup {
+                value: value.clone(),
+            },
+            self.memory.clone(),
+        )
+        .map(|_| ())
     }
 
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
@@ -1813,7 +1920,11 @@ fn blocking_worker_loop(
             }
         };
         let mut host = BlockingWorkerHost {
-            memory: None,
+            memory: job
+                .arguments
+                .memory
+                .as_ref()
+                .map(|memory| memory.budget().clone()),
             worker,
             sender: host_sender.clone(),
             state: Arc::clone(&state),
@@ -2175,6 +2286,10 @@ struct Engine<'program, 'host> {
     callable_names: Vec<String>,
     nominal_names: Vec<String>,
     select_rotation: u64,
+    next_select_registration: u64,
+    select_probe_tasks: BTreeMap<usize, u64>,
+    select_adapter_returns: BTreeMap<usize, SelectAdapterReturn>,
+    select_adapter_waits: BTreeMap<usize, SelectAdapterWait>,
 }
 
 #[derive(Clone)]
@@ -2208,9 +2323,10 @@ impl<'program, 'host> Engine<'program, 'host> {
         } else {
             limits.max_steps
         };
-        let entry_test_memory = host
-            .has_test_participation()
-            .then(|| VmMemoryBudget::new(limits.max_heap_bytes));
+        let entry_test_memory = host.shared_memory_budget().or_else(|| {
+            (host.has_test_participation() || host.requires_shared_memory_budget())
+                .then(|| VmMemoryBudget::new(limits.max_heap_bytes))
+        });
         let mut heap = Heap::new(limits, trace.types);
         heap.set_budget(entry_test_memory.clone());
         host.set_test_memory_budget(entry_test_memory.clone());
@@ -2275,6 +2391,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .map(|nominal| nominal.name.clone())
                 .collect(),
             select_rotation: 0,
+            next_select_registration: 1,
+            select_probe_tasks: BTreeMap::new(),
+            select_adapter_returns: BTreeMap::new(),
+            select_adapter_waits: BTreeMap::new(),
         }
     }
 
@@ -2588,6 +2708,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         let prepared = self.prepare_host_return_import(name, arguments, outcome)?;
         if self.current_test_memory().is_none() {
             let call = self.dispatch_host_async(name, arguments, Some(frame))?;
+            if let Some(selection) = self.select_probe_tasks.get(&self.current_task)
+                && !self.host.reserve_select_async(call, *selection)?
+            {
+                self.host.cancel_async(call)?;
+                return Err(VmError::invariant(
+                    "selectable adapter called a host without selection entry",
+                ));
+            }
             return Ok((call, prepared));
         }
         self.tasks[self.current_task].prepared_host_import = prepared;
@@ -2600,6 +2728,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         // provider admitted its result but before it could retain the call.
         let prepared = self.tasks[self.current_task].prepared_host_import.take();
         let call = result?;
+        if let Some(selection) = self.select_probe_tasks.get(&self.current_task)
+            && !self.host.reserve_select_async(call, *selection)?
+        {
+            self.host.cancel_async(call)?;
+            return Err(VmError::invariant(
+                "selectable adapter called a host without selection entry",
+            ));
+        }
         self.record_sync(
             self.current_task,
             DiagnosticSynchronization::HostStart,
@@ -2743,6 +2879,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                     BlockingHostOperation::Call { arguments, .. } => {
                         self.prepare_host_collection(arguments)
                     }
+                    BlockingHostOperation::Cleanup { value } => {
+                        self.prepare_host_collection(std::slice::from_ref(value))
+                    }
                     BlockingHostOperation::Collect => self.prepare_host_collection(&[]),
                 };
                 self.host.set_execution_unit(
@@ -2750,6 +2889,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                 );
                 self.host.set_test_memory_budget(request.memory.clone());
                 let result = result.and_then(|()| match request.operation {
+                    BlockingHostOperation::Cleanup { value } => self
+                        .host
+                        .cleanup(&value)
+                        .and_then(|()| VmHostReturn::admit(RuntimeValue::Unit, None)),
                     BlockingHostOperation::Call {
                         name,
                         arguments,
@@ -3843,6 +3986,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                 if self.tasks[self.current_task].cancel_requested
                     || self.current_scope_has_unobserved_panic(frame)?
                 {
+                    self.select_adapter_returns.remove(&self.current_task);
+                    self.select_adapter_waits.remove(&self.current_task);
                     self.begin_cancel(frame, unwind)?;
                 }
                 Ok(true)
@@ -4459,8 +4604,19 @@ impl<'program, 'host> Engine<'program, 'host> {
                     // owner performs the core three-phase selection.
                     break;
                 }
+            } else if self.host.select_async_ready(call) {
+                let waiters = self.tasks[task].waiters.clone();
+                for waiter in waiters {
+                    if matches!(
+                        self.tasks[waiter].status,
+                        TaskStatus::Waiting(TaskWait::Select { .. })
+                    ) {
+                        self.wake_task(waiter)?;
+                    }
+                }
             }
         }
+        self.wake_ready_select_intrinsics()?;
         Ok(())
     }
 
@@ -4853,6 +5009,9 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn complete_task(&mut self, task: usize, completion: TaskCompletion) -> Result<(), VmError> {
+        self.select_probe_tasks.remove(&task);
+        self.select_adapter_returns.remove(&task);
+        self.select_adapter_waits.remove(&task);
         if let Some(record) = self.tasks.get_mut(task) {
             record.prepared_host_import = None;
         }
@@ -6913,11 +7072,17 @@ impl<'program, 'host> Engine<'program, 'host> {
                         + u64::from(*capacity) * super::TEST_SELECT_ARM_BYTES,
                     &[],
                 )?;
+                let registration = self.next_select_registration;
+                self.next_select_registration = registration.checked_add(1).ok_or_else(|| {
+                    VmError::invariant("selection registration identity exhausted")
+                })?;
                 self.frames[frame].select = Some(RuntimeSelectRegion {
                     _memory: memory,
                     capacity: *capacity,
                     registered: 0,
                     arms: Vec::with_capacity(*capacity as usize),
+                    registration,
+                    winner: None,
                 });
                 self.statistics.select_frame_allocations =
                     self.statistics.select_frame_allocations.saturating_add(1);
@@ -6946,6 +7111,31 @@ impl<'program, 'host> Engine<'program, 'host> {
         span_id: crate::bytecode::BytecodeSpanId,
     ) -> Result<(), VmError> {
         let span = self.resolve_span(frame, span_id)?;
+        let selection = self.frames[frame]
+            .select
+            .as_ref()
+            .ok_or_else(|| VmError::invariant("arm registration has no selection identity"))?
+            .registration;
+        let moves = match registration {
+            BytecodeSelectRegistration::Call(operation)
+                if self.select_preserves_moves(operation) =>
+            {
+                let BytecodeOperationKind::Call {
+                    callee, arguments, ..
+                } = &operation.kind
+                else {
+                    unreachable!()
+                };
+                std::iter::once(callee)
+                    .chain(arguments.iter().map(|argument| &argument.value))
+                    .filter_map(|operand| match &operand.kind {
+                        BytecodeOperandKind::Move(place) => Some(place.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
         let (registered, capacity) = {
             let region = self.frames[frame]
                 .select
@@ -6998,7 +7188,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                         arguments,
                     } => {
                         let scope = self.select_task_scope(frame)?;
-                        self.spawn_task_with_scope(function, arguments, scope)?
+                        let arguments =
+                            self.snapshot_select_arguments(function, arguments, operation)?;
+                        let task = self.spawn_task_with_scope(function, arguments, scope)?;
+                        self.select_probe_tasks.insert(task, selection);
+                        task
                     }
                     OperationResult::HostAsync {
                         name,
@@ -7006,7 +7200,23 @@ impl<'program, 'host> Engine<'program, 'host> {
                         outcome,
                     } => {
                         let scope = self.select_task_scope(frame)?;
-                        self.start_host_task(&name, arguments, outcome, frame, scope)?
+                        let task = self.start_host_task(&name, arguments, outcome, frame, scope)?;
+                        let TaskStatus::Waiting(TaskWait::HostTask { call, .. }) =
+                            self.tasks[task].status
+                        else {
+                            return Err(VmError::invariant(
+                                "select host registration lost its pending call",
+                            ));
+                        };
+                        if self.host.reserve_select_async(call, selection)? {
+                            reservation = Some(RuntimeSelectReservation::HostCall { call });
+                        } else {
+                            self.host.cancel_async(call)?;
+                            return Err(VmError::UnsupportedHostCall(format!(
+                                "{name}: atomic selection"
+                            )));
+                        }
+                        task
                     }
                     OperationResult::AsyncIteratorCollect {
                         cursor,
@@ -7020,23 +7230,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                         )?
                     }
                     OperationResult::OneShotWait { id, outcome } => {
-                        let scope = self.select_task_scope(frame)?;
-                        let cancelled = self
-                            .oneshots
-                            .get(&id)
-                            .ok_or_else(|| {
-                                VmError::invariant("select one-shot references an unknown id")
-                            })?
-                            .completion
-                            .as_ref()
-                            .is_some_and(|completion| {
-                                matches!(completion, OneShotCompletion::Cancelled)
-                            });
-                        if cancelled {
-                            self.spawn_cancelled_task_with_scope(scope)?
-                        } else {
-                            self.spawn_oneshot_task_with_scope(id, outcome, scope)?
-                        }
+                        reservation = Some(RuntimeSelectReservation::Intrinsic(
+                            SelectIntrinsic::OneShot { id, outcome },
+                        ));
+                        self.spawn_select_value_task(Value::Unit)?
                     }
                     OperationResult::GroupWait {
                         id,
@@ -7048,8 +7245,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 "only Group.next can be registered in select",
                             ));
                         }
-                        let scope = self.select_task_scope(frame)?;
-                        self.spawn_group_task_with_scope(id, operation, outcome, scope, true)?
+                        reservation = Some(RuntimeSelectReservation::Intrinsic(
+                            SelectIntrinsic::GroupNext { id, outcome },
+                        ));
+                        self.spawn_select_value_task(Value::Unit)?
                     }
                     OperationResult::ActorSend {
                         actor,
@@ -7139,6 +7338,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             owned,
             owner,
             reservation,
+            moves,
         });
         region.registered += 1;
         self.statistics.select_registrations =
@@ -7153,20 +7353,48 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn select_preserves_moves(&self, operation: &BytecodeOperation) -> bool {
-        let BytecodeOperationKind::Call { callee, .. } = &operation.kind else {
+        let BytecodeOperationKind::Call { signature, .. } = &operation.kind else {
             return false;
         };
-        let BytecodeOperandKind::Function { callable, .. } = callee.kind else {
-            return false;
-        };
-        let Some(callable) = self.program.callable(callable) else {
-            return false;
-        };
-        callable
-            .name
-            .split_once('[')
-            .map_or(callable.name.as_str(), |(name, _)| name)
-            == "std.executor.ActorRef.send"
+        self.program.ty(*signature).is_some_and(|ty|
+            matches!(&ty.kind, BytecodeTypeKind::Function(signature) if signature.is_selectable)
+        )
+    }
+
+    fn snapshot_select_arguments(
+        &mut self,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        operation: &BytecodeOperation,
+    ) -> Result<Vec<Value>, VmError> {
+        let metadata = self
+            .program
+            .function(function)
+            .and_then(|function| self.program.callable(function.callable))
+            .ok_or_else(|| VmError::invariant("selection source adapter has no callable"))?;
+        let preserve_environment = metadata.closure.is_some()
+            && matches!(&operation.kind, BytecodeOperationKind::Call { callee, .. }
+                if !matches!(callee.kind, BytecodeOperandKind::Move(_)));
+        let marker = self.temporary_roots.len();
+        self.temporary_roots.extend(arguments.iter().cloned());
+        let strategy = std::mem::replace(&mut self.copy_strategy, ValueCopyStrategy::Eager);
+        let result = arguments
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let value =
+                    if matches!(value, Value::Loan(_)) || (index == 0 && preserve_environment) {
+                        value
+                    } else {
+                        self.copy_value(&value)?
+                    };
+                self.temporary_roots.push(value.clone());
+                Ok(value)
+            })
+            .collect();
+        self.copy_strategy = strategy;
+        self.temporary_roots.truncate(marker);
+        result
     }
 
     fn capture_defer(
@@ -7468,6 +7696,11 @@ impl<'program, 'host> Engine<'program, 'host> {
         fallback: RuntimeFallback,
     ) -> Result<(), VmError> {
         let owner = self.take_place(frame, &fallback.owner)?;
+        if self.select_probe_tasks.contains_key(&self.current_task) {
+            // Before commitment a source adapter observes its caller's affine
+            // arguments. Unwinding its tentative frame cannot close those owners.
+            return Ok(());
+        }
         self.execute_terminal_value(fallback.owner.ty, owner)
     }
 
@@ -7686,7 +7919,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                         }
                         self.replace_fallback_object(handle, object)?;
                     }
-                    BytecodeIntrinsicType::Reflection(_)
+                    BytecodeIntrinsicType::Network(_)
+                    | BytecodeIntrinsicType::Reflection(_)
                     | BytecodeIntrinsicType::Ref
                     | BytecodeIntrinsicType::Pointer
                     | BytecodeIntrinsicType::Group
@@ -8344,12 +8578,18 @@ impl<'program, 'host> Engine<'program, 'host> {
             return Ok(());
         }
 
-        let (capacity, registered, runtime_arms) = {
+        let (capacity, registered, runtime_arms, locked_winner, selection) = {
             let region = self.frames[frame]
                 .select
                 .as_ref()
                 .ok_or_else(|| VmError::invariant("commit reached with no open selection"))?;
-            (region.capacity, region.registered, region.arms.clone())
+            (
+                region.capacity,
+                region.registered,
+                region.arms.clone(),
+                region.winner,
+                region.registration,
+            )
         };
         if arms.len() as u32 != capacity
             || registered != capacity
@@ -8360,20 +8600,60 @@ impl<'program, 'host> Engine<'program, 'host> {
             ));
         }
 
+        self.host.seal_select_async(selection)?;
+        // Probe all registered provider reservations before choosing an else
+        // arm. A probe retains readiness and cannot consume its endpoint.
+        for arm in &runtime_arms {
+            if locked_winner.is_none()
+                && let Some(call) = self.select_arm_host_call(arm)
+                && let Err(error) = self.with_host_import_admission(|host, admission| {
+                    host.poll_async_with_import_admission(call, admission)
+                })
+            {
+                self.complete_host_outcome(call, Err(error))?;
+            }
+        }
+
         let start = if runtime_arms.is_empty() {
             0
         } else {
             (self.select_rotation as usize) % runtime_arms.len()
         };
-        let mut winner = None;
+        let mut winner = locked_winner.or_else(|| {
+            runtime_arms.iter().position(|arm| {
+                self.select_arm_host_call(arm)
+                    .is_some_and(|call| self.host.select_async_committed(call))
+            })
+        });
         // A panic is always observable by the owning scope. Prefer a ready
         // panic over a value so a sibling cannot hide structured failure.
         for panic_only in [true, false] {
+            if winner.is_some() {
+                break;
+            }
             for offset in 0..runtime_arms.len() {
                 let index = (start + offset) % runtime_arms.len();
                 let task = runtime_arms[index].task;
                 self.statistics.select_arm_scans =
                     self.statistics.select_arm_scans.saturating_add(1);
+                if !panic_only && self.select_adapter_returns.contains_key(&task) {
+                    winner = Some(index);
+                    break;
+                }
+                if let Some(operation) = self.select_arm_intrinsic(&runtime_arms[index]) {
+                    if !panic_only && self.select_intrinsic_ready(&operation)? {
+                        winner = Some(index);
+                        break;
+                    }
+                    continue;
+                }
+                if !panic_only && let Some(call) = self.select_arm_host_call(&runtime_arms[index]) {
+                    if self.host.select_async_ready(call) {
+                        winner = Some(index);
+                        break;
+                    }
+                    continue;
+                }
                 let Some(TaskStatus::Complete(Some(completion))) =
                     self.tasks.get(task).map(|record| &record.status)
                 else {
@@ -8406,10 +8686,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .ok_or_else(|| VmError::invariant("select region disappeared at else"))?;
                 for arm in region.arms {
                     if arm.owned {
-                        self.discard_task_completion(arm.task)?;
+                        self.retire_select_arm(arm)?;
                     }
                 }
                 self.select_rotation = self.select_rotation.wrapping_add(1);
+                self.host.finish_select(selection)?;
                 self.jump(frame, target);
                 return Ok(());
             }
@@ -8419,6 +8700,136 @@ impl<'program, 'host> Engine<'program, 'host> {
             return Ok(());
         };
 
+        let mut moves_committed = locked_winner.is_some();
+        if locked_winner.is_none()
+            && let Some(operation) = self.select_arm_intrinsic(&runtime_arms[winner_index])
+        {
+            let task = runtime_arms[winner_index].task;
+            let join = match &operation {
+                SelectIntrinsic::Join { child, owner, .. } => {
+                    Some((*child, self.join_error_type(owner.ty)?))
+                }
+                _ => None,
+            };
+            let completion = if self.select_adapter_waits.contains_key(&task) {
+                self.with_task_context(task, |engine| engine.commit_select_intrinsic(operation))?
+            } else {
+                self.commit_select_intrinsic(operation)?
+            };
+            self.commit_select_moves(frame, &runtime_arms[winner_index])?;
+            moves_committed = true;
+            self.select_probe_tasks.remove(&task);
+            self.frames[frame]
+                .select
+                .as_mut()
+                .expect("active selection")
+                .winner = Some(winner_index);
+            if let Some(checkpoint) = self.select_adapter_waits.remove(&task) {
+                self.with_task_context(task, |engine| {
+                    if let Some((child, error)) = join {
+                        engine.apply_join_completion(
+                            checkpoint.frame,
+                            completion,
+                            &checkpoint.destination,
+                            checkpoint.target,
+                            checkpoint.unwind,
+                            error,
+                            engine.executor_job_tasks.contains(&child),
+                        )?;
+                        return Ok::<(), VmError>(());
+                    }
+                    match completion {
+                        TaskCompletion::Returned(value) => {
+                            engine.write_place(checkpoint.frame, &checkpoint.destination, value)?;
+                            engine.jump(checkpoint.frame, checkpoint.target);
+                        }
+                        TaskCompletion::Panicked(panic) => engine.begin_propagated_panic(
+                            checkpoint.frame,
+                            panic,
+                            checkpoint.unwind,
+                        )?,
+                        TaskCompletion::Cancelled => {
+                            engine.begin_cancel(checkpoint.frame, checkpoint.unwind)?
+                        }
+                    }
+                    Ok::<(), VmError>(())
+                })?;
+                self.wake_task(task)?;
+            } else {
+                self.tasks[task].status = TaskStatus::Complete(Some(completion));
+            }
+        }
+        if locked_winner.is_none()
+            && let Some(call) = self.select_arm_host_call(&runtime_arms[winner_index])
+        {
+            let result = self.with_host_import_admission(|host, admission| {
+                host.commit_select_async(call, admission)
+            });
+            let result = match result {
+                Ok(Some(value)) => Ok(value),
+                Ok(None) => return Ok(()),
+                Err(error) => Err(error),
+            };
+            self.complete_host_outcome(call, result)?;
+            self.commit_select_moves(frame, &runtime_arms[winner_index])?;
+            moves_committed = true;
+            self.host.finish_select_async(call)?;
+            self.frames[frame]
+                .select
+                .as_mut()
+                .expect("active selection")
+                .winner = Some(winner_index);
+            self.select_probe_tasks
+                .remove(&runtime_arms[winner_index].task);
+        }
+        if locked_winner.is_none()
+            && let Some(checkpoint) = self
+                .select_adapter_returns
+                .remove(&runtime_arms[winner_index].task)
+        {
+            let task = runtime_arms[winner_index].task;
+            self.commit_select_moves(frame, &runtime_arms[winner_index])?;
+            moves_committed = true;
+            self.select_probe_tasks.remove(&task);
+            self.frames[frame]
+                .select
+                .as_mut()
+                .expect("active selection")
+                .winner = Some(winner_index);
+            self.with_task_context(task, |engine| {
+                let marker = engine.temporary_roots.len();
+                engine.retain_temporary(&checkpoint.value);
+                let result = engine.continue_function_return(
+                    checkpoint.value,
+                    checkpoint.continuation,
+                    checkpoint.outcome,
+                    checkpoint.span,
+                );
+                engine.temporary_roots.truncate(marker);
+                result
+            })?;
+            self.wake_task(task)?;
+        }
+        if !matches!(
+            self.tasks[runtime_arms[winner_index].task].status,
+            TaskStatus::Complete(_)
+        ) {
+            // A source adapter resumes only after its underlying operation won.
+            // Retire its siblings before running the adapter's continuation.
+            for (index, arm) in runtime_arms.iter().enumerate() {
+                if index != winner_index
+                    && arm.owned
+                    && !matches!(self.tasks[arm.task].status, TaskStatus::Complete(_))
+                {
+                    self.retire_select_arm(arm.clone())?;
+                }
+            }
+            self.park_current(
+                TaskWait::Select { unwind },
+                &[runtime_arms[winner_index].task],
+            )?;
+            return Ok(());
+        }
         let region = self.frames[frame]
             .select
             .take()
@@ -8427,6 +8838,9 @@ impl<'program, 'host> Engine<'program, 'host> {
             region.arms.get(winner_index).cloned().ok_or_else(|| {
                 VmError::invariant("select winner index is outside its arm table")
             })?;
+        if !moves_committed {
+            self.commit_select_moves(frame, &winner_arm)?;
+        }
         let reservation = winner_arm.reservation.clone();
         let join_error = winner_arm
             .owner
@@ -8436,7 +8850,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         let executor_job = self.executor_job_tasks.contains(&winner_arm.task);
         for (index, arm) in region.arms.into_iter().enumerate() {
             if index != winner_index && arm.owned {
-                self.discard_task_completion(arm.task)?;
+                self.retire_select_arm(arm)?;
             }
         }
         if let Some(owner) = winner_arm.owner.as_ref() {
@@ -8447,6 +8861,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 ));
             }
         }
+        self.host.finish_select(selection)?;
         self.select_rotation = self.select_rotation.wrapping_add(1);
         let parent_scope = self.tasks[winner_arm.task].parent_scope;
         let completion = self
@@ -8469,7 +8884,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 "actor send readiness task returned a payload",
                             ));
                         }
-                        let message = if let Some(place) = message_place {
+                        let message = if let Some(place) = message_place
+                            && !winner_arm.moves.contains(&place)
+                        {
                             let message = self.take_place(frame, &place)?;
                             self.disarm_cleanup(frame, &place)?;
                             message
@@ -8482,7 +8899,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                         Some(error) => self.logical_join_value(value, error)?,
                         None => value,
                     },
-                    None => value,
+                    None
+                    | Some(RuntimeSelectReservation::HostCall { .. })
+                    | Some(RuntimeSelectReservation::Intrinsic(_)) => value,
                 };
                 if let Some(payload) = arm.payload() {
                     self.write_place(frame, payload, value)?;
@@ -8509,9 +8928,212 @@ impl<'program, 'host> Engine<'program, 'host> {
             return Ok(());
         };
         for arm in region.arms {
-            if arm.owned {
-                self.discard_task_completion(arm.task)?;
+            if self
+                .select_arm_host_call(&arm)
+                .is_some_and(|call| self.host.select_async_committed(call))
+            {
+                self.commit_select_moves(frame, &arm)?;
+                // A rendezvous peer has already committed this adapter. Its
+                // cancellation now owns the transferred arguments and must
+                // execute their terminal fallbacks instead of tentative ones.
+                self.select_probe_tasks.remove(&arm.task);
             }
+            if arm.owned {
+                self.retire_select_arm(arm)?;
+            }
+        }
+        self.host.finish_select(region.registration)?;
+        Ok(())
+    }
+
+    fn retire_select_arm(&mut self, arm: RuntimeSelectArm) -> Result<(), VmError> {
+        if let Some(RuntimeSelectReservation::HostCall { call }) = arm.reservation {
+            self.host.rollback_select_async(call)?;
+            self.tasks[arm.task].prepared_host_import.take();
+            self.tasks[arm.task].discard_completion = true;
+            self.complete_task(arm.task, TaskCompletion::Cancelled)
+        } else {
+            self.discard_task_completion(arm.task)
+        }
+    }
+
+    fn commit_select_moves(&mut self, frame: usize, arm: &RuntimeSelectArm) -> Result<(), VmError> {
+        for place in &arm.moves {
+            self.take_place(frame, place)?;
+            self.disarm_cleanup(frame, place)?;
+        }
+        Ok(())
+    }
+
+    fn select_arm_host_call(&self, arm: &RuntimeSelectArm) -> Option<u64> {
+        if let Some(RuntimeSelectReservation::HostCall { call }) = arm.reservation {
+            return Some(call);
+        }
+        if self.select_probe_tasks.contains_key(&arm.task)
+            && let TaskStatus::Waiting(TaskWait::HostCall { call, .. }) =
+                self.tasks[arm.task].status
+        {
+            return Some(call);
+        }
+        None
+    }
+
+    fn select_arm_intrinsic(&self, arm: &RuntimeSelectArm) -> Option<SelectIntrinsic> {
+        if let Some(RuntimeSelectReservation::Intrinsic(operation)) = &arm.reservation {
+            return Some(operation.clone());
+        }
+        self.select_adapter_waits
+            .get(&arm.task)
+            .map(|wait| wait.operation.clone())
+    }
+
+    fn select_intrinsic_ready(&self, operation: &SelectIntrinsic) -> Result<bool, VmError> {
+        Ok(match operation {
+            SelectIntrinsic::OneShot { id, .. } => self
+                .oneshots
+                .get(id)
+                .ok_or_else(|| VmError::invariant("select waiter references an unknown one-shot"))?
+                .completion
+                .is_some(),
+            SelectIntrinsic::GroupNext { id, .. } => {
+                let group = self
+                    .groups
+                    .get(id)
+                    .ok_or_else(|| VmError::invariant("select references an unknown Group"))?;
+                group.children.is_empty()
+                    || group.children.iter().any(|child| {
+                        matches!(self.tasks[child.task].status, TaskStatus::Complete(Some(_)))
+                    })
+                    || group
+                        .children
+                        .iter()
+                        .all(|child| matches!(self.tasks[child.task].status, TaskStatus::Consumed))
+            }
+            SelectIntrinsic::ActorSend { actor, .. } => self.actor_select_send_ready(*actor)?,
+            SelectIntrinsic::Join { child, .. } => {
+                matches!(self.tasks[*child].status, TaskStatus::Complete(Some(_)))
+            }
+        })
+    }
+
+    fn commit_select_intrinsic(
+        &mut self,
+        operation: SelectIntrinsic,
+    ) -> Result<TaskCompletion, VmError> {
+        match operation {
+            SelectIntrinsic::OneShot { id, outcome } => {
+                let state = self
+                    .oneshots
+                    .get(&id)
+                    .ok_or_else(|| VmError::invariant("select waiter disappeared"))?;
+                if state.waiter_consumed {
+                    return Err(VmError::invariant("one-shot waiter was consumed twice"));
+                }
+                let completion = state
+                    .completion
+                    .clone()
+                    .ok_or_else(|| VmError::invariant("unready waiter committed"))?;
+                let result = match completion {
+                    OneShotCompletion::Ok(value) => {
+                        TaskCompletion::Returned(self.oneshot_result(outcome, Ok(value))?)
+                    }
+                    OneShotCompletion::Err(value) => {
+                        TaskCompletion::Returned(self.oneshot_result(outcome, Err(value))?)
+                    }
+                    OneShotCompletion::Cancelled => TaskCompletion::Cancelled,
+                };
+                self.oneshots
+                    .get_mut(&id)
+                    .expect("checked one-shot")
+                    .waiter_consumed = true;
+                Ok(result)
+            }
+            SelectIntrinsic::GroupNext { id, outcome } => {
+                match self.poll_group_operation(id, RuntimeGroupOperation::Next, outcome)? {
+                    GroupPoll::Ready(value) => Ok(TaskCompletion::Returned(value)),
+                    GroupPoll::Panic(panic) => Ok(TaskCompletion::Panicked(panic)),
+                    GroupPoll::Pending => Err(VmError::invariant("unready Group committed")),
+                }
+            }
+            SelectIntrinsic::ActorSend {
+                actor,
+                message,
+                outcome,
+            } => {
+                let value = self
+                    .executor_actor_send_wait(actor, message, outcome)?
+                    .ok_or_else(|| VmError::invariant("unready actor send committed"))?;
+                Ok(TaskCompletion::Returned(value))
+            }
+            SelectIntrinsic::Join {
+                child,
+                frame,
+                owner,
+            } => {
+                let consumed = self.consume_join_owner(frame, &owner)?;
+                if consumed.task != child {
+                    return Err(VmError::invariant("adapter Join changed child identity"));
+                }
+                let completion = self
+                    .take_task_completion(child)?
+                    .ok_or_else(|| VmError::invariant("unready adapter Join committed"))?;
+                if let Some(scope) = self.tasks[child].parent_scope
+                    && self.task_scopes.get(scope).is_some_and(Option::is_some)
+                {
+                    self.release_task_scope_if_consumed(scope)?;
+                }
+                Ok(completion)
+            }
+        }
+    }
+
+    fn wake_ready_select_intrinsics(&mut self) -> Result<(), VmError> {
+        let mut wake = Vec::new();
+        for (task, record) in self.tasks.iter().enumerate() {
+            if !matches!(record.status, TaskStatus::Waiting(TaskWait::Select { .. })) {
+                continue;
+            }
+            for frame in &record.frames {
+                if let Some(region) = &frame.select {
+                    for arm in &region.arms {
+                        if let Some(operation) = self.select_arm_intrinsic(arm)
+                            && self.select_intrinsic_ready(&operation)?
+                        {
+                            wake.push(task);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        for task in wake {
+            self.wake_task(task)?;
+        }
+        Ok(())
+    }
+
+    fn park_select_adapter(
+        &mut self,
+        operation: SelectIntrinsic,
+        frame: usize,
+        destination: &BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    ) -> Result<(), VmError> {
+        self.select_adapter_waits.insert(
+            self.current_task,
+            SelectAdapterWait {
+                operation,
+                frame,
+                destination: destination.clone(),
+                target,
+                unwind,
+            },
+        );
+        self.park_current(TaskWait::Select { unwind }, &[])?;
+        let waiters = self.tasks[self.current_task].waiters.clone();
+        for waiter in waiters {
+            self.wake_task(waiter)?;
         }
         Ok(())
     }
@@ -8698,7 +9320,48 @@ impl<'program, 'host> Engine<'program, 'host> {
                 let span = self.resolve_span(frame, terminator.span)?;
                 match awaitable {
                     BytecodeAwaitable::Call(operation) => {
-                        match self.evaluate_operation(frame, operation, span)? {
+                        let result = self.evaluate_operation(frame, operation, span)?;
+                        if self.select_probe_tasks.contains_key(&self.current_task) {
+                            let intrinsic = match &result {
+                                OperationResult::OneShotWait { id, outcome } => {
+                                    Some(SelectIntrinsic::OneShot {
+                                        id: *id,
+                                        outcome: *outcome,
+                                    })
+                                }
+                                OperationResult::GroupWait {
+                                    id,
+                                    operation: RuntimeGroupOperation::Next,
+                                    outcome,
+                                } => Some(SelectIntrinsic::GroupNext {
+                                    id: *id,
+                                    outcome: *outcome,
+                                }),
+                                OperationResult::ActorSend {
+                                    actor,
+                                    message,
+                                    outcome,
+                                    wait: true,
+                                    ..
+                                } => Some(SelectIntrinsic::ActorSend {
+                                    actor: *actor,
+                                    message: message.clone(),
+                                    outcome: *outcome,
+                                }),
+                                _ => None,
+                            };
+                            if let Some(intrinsic) = intrinsic {
+                                self.park_select_adapter(
+                                    intrinsic,
+                                    frame,
+                                    destination,
+                                    *target,
+                                    *unwind,
+                                )?;
+                                return Ok(None);
+                            }
+                        }
+                        match result {
                             OperationResult::Value(value) => {
                                 self.write_place(frame, destination, value)?;
                                 self.jump(frame, *target);
@@ -9083,6 +9746,20 @@ impl<'program, 'host> Engine<'program, 'host> {
                             ));
                         }
                         let parent_scope = task.parent_scope;
+                        if self.select_probe_tasks.contains_key(&self.current_task) {
+                            self.park_select_adapter(
+                                SelectIntrinsic::Join {
+                                    child: join.task,
+                                    frame,
+                                    owner: owner.clone(),
+                                },
+                                frame,
+                                destination,
+                                *target,
+                                *unwind,
+                            )?;
+                            return Ok(None);
+                        }
                         if matches!(task.status, TaskStatus::Complete(_)) {
                             let consumed = self.consume_join_owner(frame, owner)?;
                             debug_assert_eq!(consumed, join);
@@ -9595,64 +10272,40 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .slot(function.return_slot)
                     .ok_or_else(|| VmError::invariant("return slot is missing"))?
                     .ty;
+                let selectable = self.program.callable(function.callable)
+                    .and_then(|callable| self.program.ty(callable.function_type))
+                    .is_some_and(|ty| matches!(&ty.kind, BytecodeTypeKind::Function(signature) if signature.is_selectable));
                 let return_span = self.resolve_span(frame, terminator.span)?;
-                let mut value = self.take_slot(frame, function.return_slot)?;
+                let value = self.take_slot(frame, function.return_slot)?;
                 let finished = self
                     .frames
                     .pop()
                     .ok_or_else(|| VmError::invariant("return could not pop the current frame"))?;
                 if let Some(continuation) = finished.continuation {
-                    if let Some(once) = continuation.once.as_ref() {
-                        value = self.finish_once_initializer_return(once, value)?;
-                    }
-                    if continuation.target.is_none()
-                        && self.frames.is_empty()
-                        && self.tasks[self.current_task].async_collect.is_some()
-                        && continuation.once.is_none()
-                    {
-                        self.finish_async_collect_next(value)?;
-                        return Ok(None);
-                    }
-                    if continuation.target.is_none()
-                        && self.frames.is_empty()
-                        && continuation.once.is_some()
-                    {
-                        self.complete_current_task(TaskCompletion::Returned(value))?;
-                        return Ok(None);
-                    }
-                    let caller = self.frames.len().checked_sub(1).ok_or_else(|| {
-                        VmError::invariant("callee returned without its caller frame")
-                    })?;
-                    if let Some(boundary) = &continuation.test_boundary {
-                        let outcome =
-                            self.test_boundary_outcome(&value, outcome_type, return_span)?;
-                        // The runner consumes the hidden entry's error channel;
-                        // its enclosing suite continues with a Unit-valued call.
-                        value = Value::Unit;
-                        let timed_out = self.timed_out_test_boundaries.remove(&boundary.id);
-                        if timed_out {
-                            self.interrupt_unwind_pending.remove(&self.current_task);
-                            self.tasks[self.current_task].cancel_requested = false;
-                        }
-                        self.finish_test_boundary(
-                            boundary,
-                            if timed_out {
-                                VmTestNodeOutcome::TimedOut
-                            } else {
-                                outcome
+                    if selectable && self.select_probe_tasks.contains_key(&self.current_task) {
+                        let unwind = continuation.unwind;
+                        self.select_adapter_returns.insert(
+                            self.current_task,
+                            SelectAdapterReturn {
+                                value,
+                                continuation,
+                                outcome: outcome_type,
+                                span: return_span,
                             },
-                        )?;
+                        );
+                        self.park_current(TaskWait::Select { unwind }, &[])?;
+                        let waiters = self.tasks[self.current_task].waiters.clone();
+                        for waiter in waiters {
+                            if matches!(
+                                self.tasks[waiter].status,
+                                TaskStatus::Waiting(TaskWait::Select { .. })
+                            ) {
+                                self.wake_task(waiter)?;
+                            }
+                        }
+                        return Ok(None);
                     }
-                    if let Some(controller) = &continuation.virtual_time {
-                        self.host.finish_virtual_time(controller)?;
-                    }
-                    if let Some(destination) = &continuation.destination {
-                        self.write_place(caller, destination, value)?;
-                    }
-                    let target = continuation.target.ok_or_else(|| {
-                        VmError::invariant("returning call has no normal successor")
-                    })?;
-                    self.jump(caller, target);
+                    self.continue_function_return(value, continuation, outcome_type, return_span)?;
                 } else {
                     return Ok(Some(TaskCompletion::Returned(value)));
                 }
@@ -10218,8 +10871,80 @@ impl<'program, 'host> Engine<'program, 'host> {
         }
     }
 
+    fn continue_function_return(
+        &mut self,
+        mut value: Value,
+        continuation: CallContinuation,
+        outcome_type: BytecodeTypeId,
+        return_span: BytecodeSpan,
+    ) -> Result<(), VmError> {
+        if let Some(once) = continuation.once.as_ref() {
+            value = self.finish_once_initializer_return(once, value)?;
+        }
+        if continuation.target.is_none()
+            && self.frames.is_empty()
+            && self.tasks[self.current_task].async_collect.is_some()
+            && continuation.once.is_none()
+        {
+            self.finish_async_collect_next(value)?;
+            return Ok(());
+        }
+        if continuation.target.is_none() && self.frames.is_empty() && continuation.once.is_some() {
+            self.complete_current_task(TaskCompletion::Returned(value))?;
+            return Ok(());
+        }
+        let caller = self
+            .frames
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| VmError::invariant("callee returned without its caller frame"))?;
+        if let Some(boundary) = &continuation.test_boundary {
+            let outcome = self.test_boundary_outcome(&value, outcome_type, return_span)?;
+            // The runner consumes the hidden entry's error channel;
+            // its enclosing suite continues with a Unit-valued call.
+            value = Value::Unit;
+            let timed_out = self.timed_out_test_boundaries.remove(&boundary.id);
+            if timed_out {
+                self.interrupt_unwind_pending.remove(&self.current_task);
+                self.tasks[self.current_task].cancel_requested = false;
+            }
+            self.finish_test_boundary(
+                boundary,
+                if timed_out {
+                    VmTestNodeOutcome::TimedOut
+                } else {
+                    outcome
+                },
+            )?;
+        }
+        if let Some(controller) = &continuation.virtual_time {
+            self.host.finish_virtual_time(controller)?;
+        }
+        if let Some(destination) = &continuation.destination {
+            self.write_place(caller, destination, value)?;
+        }
+        let target = continuation
+            .target
+            .ok_or_else(|| VmError::invariant("returning call has no normal successor"))?;
+        self.jump(caller, target);
+        Ok(())
+    }
+
     fn roots(&self, extra: &[Value]) -> Result<Vec<Value>, VmError> {
         let mut roots = extra.to_vec();
+        roots.extend(
+            self.select_adapter_returns
+                .values()
+                .map(|checkpoint| checkpoint.value.clone()),
+        );
+        roots.extend(
+            self.select_adapter_waits
+                .values()
+                .filter_map(|wait| match &wait.operation {
+                    SelectIntrinsic::ActorSend { message, .. } => Some(message.clone()),
+                    _ => None,
+                }),
+        );
         roots.extend(self.temporary_roots.iter().cloned());
         for frame in &self.import_frames {
             frame.trace_values(&mut roots);
@@ -10391,6 +11116,7 @@ fn runtime_host_kind(
     reflection_tag: [u8; 32],
 ) -> Option<RuntimeHostValueKind> {
     Some(match constructor {
+        BytecodeIntrinsicType::Network(kind) => RuntimeHostValueKind::Network(kind),
         BytecodeIntrinsicType::Reflection(kind) => {
             RuntimeHostValueKind::Reflection(kind, reflection_tag)
         }
@@ -13490,7 +14216,12 @@ impl Engine<'_, '_> {
             BytecodeOperationKind::Call {
                 callee, arguments, ..
             } => {
-                let callee = self.evaluate_operand(frame, callee)?;
+                let callee =
+                    if preserve_moves && let BytecodeOperandKind::Move(place) = &callee.kind {
+                        self.read_place(frame, place)?
+                    } else {
+                        self.evaluate_operand(frame, callee)?
+                    };
                 self.prepare_call_with_mode(frame, callee, arguments, preserve_moves)
             }
             BytecodeOperationKind::Display { argument } => Ok(OperationResult::Value(
@@ -16077,7 +16808,8 @@ impl Engine<'_, '_> {
                     ));
                 }
             }
-            let result = self.prepare_evaluated_call(callee, evaluated)?;
+            let result =
+                self.prepare_evaluated_call_with_mode(callee, evaluated, preserve_moves)?;
             match result {
                 OperationResult::ActorSend {
                     actor,
@@ -16104,7 +16836,7 @@ impl Engine<'_, '_> {
                         message_place: preserved_moves.into_iter().next(),
                     })
                 }
-                _ if !preserved_moves.is_empty() => Err(VmError::invariant(
+                _ if !preserve_moves && !preserved_moves.is_empty() => Err(VmError::invariant(
                     "a selectable call retained a move operand without a transaction",
                 )),
                 result => Ok(result),
@@ -16118,6 +16850,15 @@ impl Engine<'_, '_> {
         &mut self,
         callee: Value,
         arguments: Vec<(BytecodeCallArgumentTarget, Value)>,
+    ) -> Result<OperationResult, VmError> {
+        self.prepare_evaluated_call_with_mode(callee, arguments, false)
+    }
+
+    fn prepare_evaluated_call_with_mode(
+        &mut self,
+        callee: Value,
+        arguments: Vec<(BytecodeCallArgumentTarget, Value)>,
+        preserve_moves: bool,
     ) -> Result<OperationResult, VmError> {
         let marker = self.temporary_roots.len();
         self.temporary_roots.push(callee.clone());
@@ -16396,7 +17137,11 @@ impl Engine<'_, '_> {
                     }
                     return self.new_group(metadata.outcome);
                 }
-                if let Some(result) = self.prepare_oneshot_method(&metadata, &values)? {
+                if let Some(result) = self.prepare_oneshot_method_with_mode(
+                    &metadata,
+                    &values,
+                    preserve_moves || self.select_probe_tasks.contains_key(&self.current_task),
+                )? {
                     return Ok(result);
                 }
                 if let Some(result) = self.prepare_group_method(&metadata, &values)? {
@@ -16857,10 +17602,20 @@ impl Engine<'_, '_> {
         }
     }
 
+    #[cfg(test)]
     fn prepare_oneshot_method(
         &mut self,
         metadata: &BytecodeCallable,
         values: &[Value],
+    ) -> Result<Option<OperationResult>, VmError> {
+        self.prepare_oneshot_method_with_mode(metadata, values, false)
+    }
+
+    fn prepare_oneshot_method_with_mode(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+        preserve_waiter: bool,
     ) -> Result<Option<OperationResult>, VmError> {
         let name = metadata.name.as_str();
         if !matches!(
@@ -16888,6 +17643,12 @@ impl Engine<'_, '_> {
                 .ok_or_else(|| VmError::invariant("waiter references an unknown one-shot"))?;
             if state.waiter_consumed {
                 return Err(VmError::invariant("one-shot waiter was consumed twice"));
+            }
+            if preserve_waiter {
+                return Ok(Some(OperationResult::OneShotWait {
+                    id,
+                    outcome: metadata.outcome,
+                }));
             }
             state.waiter_consumed = true;
             let completion = state.completion.clone();
@@ -17605,6 +18366,37 @@ impl Engine<'_, '_> {
                     )?))
                 };
             };
+            // Admit the complete typed result before removing a child or its
+            // completion. A denied allocation must leave the group retryable.
+            let prepared = match &self.tasks[winner.task].status {
+                TaskStatus::Complete(Some(TaskCompletion::Panicked(panic))) => {
+                    Some(GroupPoll::Panic(panic.clone()))
+                }
+                TaskStatus::Complete(Some(TaskCompletion::Cancelled)) => None,
+                TaskStatus::Complete(Some(TaskCompletion::Returned(value))) => {
+                    let value = value.clone();
+                    let result_ty = self.result_type_id(winner.success, winner.error)?;
+                    let result = self.split_group_value(&value, winner.error)?;
+                    let result = self.oneshot_result(result_ty, result)?;
+                    let completion_ty = match &self
+                        .program
+                        .ty(outcome)
+                        .ok_or_else(|| VmError::invariant("Group next outcome is missing"))?
+                        .kind
+                    {
+                        BytecodeTypeKind::Option(item) => *item,
+                        _ => return Err(VmError::invariant("Group.next outcome is not Option")),
+                    };
+                    let completion =
+                        self.completion_nominal_value(completion_ty, winner.index, result)?;
+                    Some(GroupPoll::Ready(self.allocate(
+                        outcome,
+                        HeapObject::OptionSome(Some(completion.clone())),
+                        &[completion],
+                    )?))
+                }
+                _ => return Err(VmError::invariant("Group winner has no completion")),
+            };
             if let Some(state) = self.groups.get_mut(&id) {
                 let position = state
                     .children
@@ -17624,8 +18416,7 @@ impl Engine<'_, '_> {
                     )?;
                 }
             }
-            let completion = self
-                .take_task_completion(winner.task)?
+            self.take_task_completion(winner.task)?
                 .ok_or_else(|| VmError::invariant("Group winner has no completion"))?;
             let parent_scope = self.tasks[winner.task].parent_scope;
             if let Some(scope) = parent_scope
@@ -17633,35 +18424,9 @@ impl Engine<'_, '_> {
             {
                 self.release_task_scope_if_consumed(scope)?;
             }
-            return match completion {
-                TaskCompletion::Panicked(panic) => Ok(GroupPoll::Panic(panic)),
-                TaskCompletion::Cancelled => self.poll_group_operation(id, operation, outcome),
-                TaskCompletion::Returned(value) => {
-                    let (success, error) = self
-                        .groups
-                        .get(&id)
-                        .map(|_| (winner.success, winner.error))
-                        .ok_or_else(|| VmError::invariant("Group disappeared after next"))?;
-                    let result_ty = self.result_type_id(success, error)?;
-                    let result = self.split_group_value(&value, error)?;
-                    let result = self.oneshot_result(result_ty, result)?;
-                    let completion_ty = match &self
-                        .program
-                        .ty(outcome)
-                        .ok_or_else(|| VmError::invariant("Group next outcome is missing"))?
-                        .kind
-                    {
-                        BytecodeTypeKind::Option(item) => *item,
-                        _ => return Err(VmError::invariant("Group.next outcome is not Option")),
-                    };
-                    let completion =
-                        self.completion_nominal_value(completion_ty, winner.index, result)?;
-                    Ok(GroupPoll::Ready(self.allocate(
-                        outcome,
-                        HeapObject::OptionSome(Some(completion.clone())),
-                        &[completion],
-                    )?))
-                }
+            return match prepared {
+                Some(result) => Ok(result),
+                None => self.poll_group_operation(id, operation, outcome),
             };
         }
 
@@ -26911,17 +27676,21 @@ mod tests {
             TaskCompletion::Returned(Value::Integer(2)),
         ))));
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 2,
             registered: 2,
             arms: vec![
                 RuntimeSelectArm {
+                    moves: Vec::new(),
                     task: 1,
                     owned: true,
                     owner: None,
                     reservation: None,
                 },
                 RuntimeSelectArm {
+                    moves: Vec::new(),
                     task: 2,
                     owned: true,
                     owner: None,
@@ -26963,17 +27732,21 @@ mod tests {
         ))));
         engine.select_rotation = 1;
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 2,
             registered: 2,
             arms: vec![
                 RuntimeSelectArm {
+                    moves: Vec::new(),
                     task: 1,
                     owned: true,
                     owner: None,
                     reservation: None,
                 },
                 RuntimeSelectArm {
+                    moves: Vec::new(),
                     task: 2,
                     owned: true,
                     owner: None,
@@ -27007,10 +27780,13 @@ mod tests {
         engine.tasks.push(scheduler_task(TaskStatus::Running));
         engine.tasks.push(scheduler_task(TaskStatus::Runnable));
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
+                moves: Vec::new(),
                 task: 1,
                 owned: true,
                 owner: None,
@@ -27038,10 +27814,13 @@ mod tests {
         engine.tasks.push(scheduler_task(TaskStatus::Running));
         engine.tasks.push(scheduler_task(TaskStatus::Runnable));
         engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
+                moves: Vec::new(),
                 task: 1,
                 owned: true,
                 owner: None,
@@ -27071,10 +27850,13 @@ mod tests {
         else_engine
             .frames
             .push(select_test_frame(RuntimeSelectRegion {
+                registration: 1,
+                winner: None,
                 _memory: None,
                 capacity: 1,
                 registered: 1,
                 arms: vec![RuntimeSelectArm {
+                    moves: Vec::new(),
                     task: 1,
                     owned: true,
                     owner: None,
@@ -27111,10 +27893,13 @@ mod tests {
         cancelled_engine
             .frames
             .push(select_test_frame(RuntimeSelectRegion {
+                registration: 1,
+                winner: None,
                 _memory: None,
                 capacity: 1,
                 registered: 1,
                 arms: vec![RuntimeSelectArm {
+                    moves: Vec::new(),
                     task: 1,
                     owned: true,
                     owner: None,
@@ -27146,10 +27931,13 @@ mod tests {
         winner_engine
             .frames
             .push(select_test_frame(RuntimeSelectRegion {
+                registration: 1,
+                winner: None,
                 _memory: None,
                 capacity: 1,
                 registered: 1,
                 arms: vec![RuntimeSelectArm {
+                    moves: Vec::new(),
                     task: 1,
                     owned: false,
                     owner: None,
@@ -27183,6 +27971,8 @@ mod tests {
             .tasks
             .push(scheduler_task(TaskStatus::Running));
         let mut detached_frame = select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 1,
             registered: 0,
@@ -27309,10 +28099,13 @@ mod tests {
             },
         );
         let mut frame = select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
+                moves: Vec::new(),
                 task: 1,
                 owned: true,
                 owner: None,
@@ -27367,10 +28160,13 @@ mod tests {
     fn selectable_actor_send_roots_and_probe_creation_are_explicit() {
         let (program, types) = executor_program();
         let region = RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
+                moves: Vec::new(),
                 task: 0,
                 owned: true,
                 owner: None,
@@ -27456,10 +28252,13 @@ mod tests {
             },
         );
         let mut frame = select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 1,
             registered: 1,
             arms: vec![RuntimeSelectArm {
+                moves: Vec::new(),
                 task: 1,
                 owned: true,
                 owner: None,
@@ -27595,6 +28394,8 @@ mod tests {
         engine.tasks[1].join_consumed = false;
         engine.frames.push({
             let mut frame = select_test_frame(RuntimeSelectRegion {
+                registration: 1,
+                winner: None,
                 _memory: None,
                 capacity: 2,
                 registered: 0,
@@ -27688,6 +28489,8 @@ mod tests {
             closed: false,
         }));
         let mut frame = select_test_frame(RuntimeSelectRegion {
+            registration: 1,
+            winner: None,
             _memory: None,
             capacity: 1,
             registered: 0,
@@ -35369,6 +36172,95 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn select_intrinsic_denied_result_preserves_waiter_and_group_completion() {
+        let (program, types) = group_program();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            derive_trace_metadata(&program).unwrap(),
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.oneshots.insert(
+            1,
+            OneShotState {
+                completion: Some(OneShotCompletion::Ok(Value::Integer(7))),
+                ..OneShotState::default()
+            },
+        );
+        engine.entry_test_memory = Some(VmMemoryBudget::new(0));
+        engine.restore_test_heap_budget();
+        assert!(
+            engine
+                .commit_select_intrinsic(super::SelectIntrinsic::OneShot {
+                    id: 1,
+                    outcome: types.result
+                })
+                .unwrap_err()
+                .is_resource_limit()
+        );
+        assert!(!engine.oneshots[&1].waiter_consumed);
+        assert!(matches!(
+            engine.oneshots[&1].completion,
+            Some(OneShotCompletion::Ok(Value::Integer(7)))
+        ));
+        engine.entry_test_memory = Some(VmMemoryBudget::new(1_048_576));
+        engine.restore_test_heap_budget();
+        let group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(Value::Host(RuntimeValue::Host { id, .. })) => id,
+            _ => panic!("group"),
+        };
+        let payload = engine
+            .oneshot_result(types.result, Ok(Value::Integer(33)))
+            .unwrap();
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(payload),
+        ))));
+        engine.completion_order.insert(1, 1);
+        engine
+            .groups
+            .get_mut(&group)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: 1,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        engine.entry_test_memory = Some(VmMemoryBudget::new(0));
+        engine.restore_test_heap_budget();
+        assert!(
+            engine
+                .commit_select_intrinsic(super::SelectIntrinsic::GroupNext {
+                    id: group,
+                    outcome: types.next
+                })
+                .unwrap_err()
+                .is_resource_limit()
+        );
+        assert_eq!(engine.groups[&group].children.len(), 1);
+        assert!(matches!(
+            engine.tasks[1].status,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(_)))
+        ));
+        engine.entry_test_memory = Some(VmMemoryBudget::new(1_048_576));
+        engine.restore_test_heap_budget();
+        assert!(matches!(
+            engine
+                .commit_select_intrinsic(super::SelectIntrinsic::GroupNext {
+                    id: group,
+                    outcome: types.next
+                })
+                .unwrap(),
+            TaskCompletion::Returned(_)
+        ));
+        assert!(engine.groups[&group].children.is_empty());
     }
 
     #[test]

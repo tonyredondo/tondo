@@ -38,6 +38,7 @@ use crate::test_control::{ControlError, EnvelopeHandle};
 use crate::test_temporaries::TempError;
 
 mod filesystem;
+mod net;
 mod uuid;
 
 const INT_MIN: i128 = i64::MIN as i128;
@@ -505,6 +506,7 @@ struct YamlOptionsInput {
 }
 
 enum HostValue {
+    Network(net::NetworkValue),
     Command(ProcessPlan),
     Pipeline(ProcessPlan),
     Bytes(Vec<u8>),
@@ -991,6 +993,7 @@ struct TimeJob {
     completion: Option<RuntimeValue>,
     counts_resource: bool,
     kind: TimeJobKind,
+    timer_owner: Option<(u64, u64, i128)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1149,6 +1152,10 @@ pub(crate) struct BootstrapHost {
     ready_console_jobs: BTreeSet<u64>,
     sync_waiters: BTreeMap<u64, PendingSync>,
     sync_queues: BTreeMap<SyncResource, VecDeque<u64>>,
+    select_calls: BTreeMap<u64, u64>,
+    select_winners: BTreeMap<u64, u64>,
+    select_sealed: BTreeSet<u64>,
+    select_committing: Option<u64>,
     channels: BTreeMap<u64, ChannelState>,
     /// Receiver endpoints that entered the compiler-owned `AsyncIterator`
     /// view. Their pending values may be discarded by terminal cleanup.
@@ -1170,6 +1177,9 @@ pub(crate) struct BootstrapHost {
     testing_participation: Option<TestParticipation>,
     testing_stack: Vec<Option<EnvelopeHandle>>,
     testing_control: Option<String>,
+    network_target: Option<crate::toolchain::NetworkTarget>,
+    network_clock: bool,
+    network: net::NetworkState,
 }
 
 impl BootstrapHost {
@@ -1237,6 +1247,10 @@ impl BootstrapHost {
             ready_fs_jobs: BTreeSet::new(),
             ready_console_jobs: BTreeSet::new(),
             sync_waiters: BTreeMap::new(),
+            select_calls: BTreeMap::new(),
+            select_winners: BTreeMap::new(),
+            select_sealed: BTreeSet::new(),
+            select_committing: None,
             sync_queues: BTreeMap::new(),
             channels: BTreeMap::new(),
             channel_iterator_receivers: BTreeSet::new(),
@@ -1257,11 +1271,23 @@ impl BootstrapHost {
             testing_participation: None,
             testing_stack: Vec::new(),
             testing_control: None,
+            network_target: None,
+            network_clock: false,
+            network: net::NetworkState::default(),
         }
     }
 
     pub(crate) fn install_testing_envelope(&mut self, envelope: EnvelopeHandle) {
         self.testing = Some(envelope);
+    }
+
+    pub(crate) fn install_network_target(
+        &mut self,
+        network: Option<crate::toolchain::NetworkTarget>,
+        clock: bool,
+    ) {
+        self.network_target = network;
+        self.network_clock = clock;
     }
 
     pub(crate) fn install_testing_participation(&mut self, participation: TestParticipation) {
@@ -1846,6 +1872,92 @@ impl BootstrapHost {
         Ok((*id, channel))
     }
 
+    fn claim_select_call(&mut self, call: u64) {
+        if let Some(selection) = self.select_calls.get(&call) {
+            let winner = self.select_winners.entry(*selection).or_insert(call);
+            debug_assert_eq!(*winner, call, "one selection cannot commit two arms");
+        }
+    }
+
+    fn select_channel_peer_available(&self, call: u64) -> bool {
+        let Some(selection) = self.select_calls.get(&call) else {
+            return true;
+        };
+        if !self.select_sealed.contains(selection) {
+            return false;
+        }
+        if self
+            .select_winners
+            .get(selection)
+            .is_some_and(|winner| *winner != call)
+        {
+            return false;
+        }
+        let Some(committing) = self.select_committing else {
+            return true;
+        };
+        committing == call || self.select_calls.get(&committing) != Some(selection)
+    }
+
+    fn select_channel_ready(&self, call: u64) -> bool {
+        let Some(pending) = self.sync_waiters.get(&call) else {
+            return false;
+        };
+        let SyncResource::Channel(channel) = pending.resource else {
+            return false;
+        };
+        if !self.channel_waiter_is_oldest(channel, call, pending.kind) {
+            return false;
+        }
+        let Some(state) = self.channels.get(&channel) else {
+            return false;
+        };
+        let counterpart = match pending.kind {
+            SyncWaitKind::ChannelSend => {
+                if state.receiver_closed
+                    || state
+                        .capacity
+                        .is_none_or(|capacity| state.queue.len() < capacity)
+                {
+                    return true;
+                }
+                SyncWaitKind::ChannelReceive
+            }
+            SyncWaitKind::ChannelReceive => {
+                if !state.queue.is_empty() || state.sender_closed || state.receiver_closed {
+                    return true;
+                }
+                SyncWaitKind::ChannelSend
+            }
+            _ => return false,
+        };
+        self.sync_queues
+            .get(&pending.resource)
+            .is_some_and(|queue| {
+                queue.iter().any(|peer| {
+                    if *peer == call
+                        || !self
+                            .sync_waiters
+                            .get(peer)
+                            .is_some_and(|pending| pending.kind == counterpart)
+                    {
+                        return false;
+                    }
+                    match self.select_calls.get(peer) {
+                        None => true,
+                        Some(selection) => {
+                            self.select_calls.get(&call) != Some(selection)
+                                && self.select_sealed.contains(selection)
+                                && self
+                                    .select_winners
+                                    .get(selection)
+                                    .is_none_or(|winner| *winner == *peer)
+                        }
+                    }
+                })
+            })
+    }
+
     fn channel_waiting_call(&self, channel: u64, kind: SyncWaitKind) -> Option<u64> {
         self.sync_queues
             .get(&SyncResource::Channel(channel))
@@ -1854,6 +1966,7 @@ impl BootstrapHost {
                     self.sync_waiters
                         .get(call)
                         .is_some_and(|pending| pending.kind == kind)
+                        && self.select_channel_peer_available(*call)
                 })
             })
     }
@@ -1919,6 +2032,11 @@ impl BootstrapHost {
         let (Some(send), Some(receive)) = (send, receive) else {
             return Ok(None);
         };
+        if self.select_calls.contains_key(&send)
+            && self.select_calls.get(&send) == self.select_calls.get(&receive)
+        {
+            return Ok(None);
+        }
         let acknowledgement = admission
             .prepare(send, VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))
             .and_then(|import| {
@@ -1955,6 +2073,8 @@ impl BootstrapHost {
             }
         };
         admission.commit(&mut [send_import, receive_import])?;
+        self.claim_select_call(send);
+        self.claim_select_call(receive);
         Self::commit_pending_response(&mut self.async_memory, send, acknowledgement);
         Self::commit_pending_response(&mut self.async_memory, receive, delivery);
         let payload = self
@@ -2000,6 +2120,7 @@ impl BootstrapHost {
                         .prepare_current(VmHostReturnPreview::ResultOk(&RuntimeValue::Unit))?;
                     response.reserve(64, [])?;
                     admission.commit(&mut [caller_import, peer_import])?;
+                    self.claim_select_call(receive);
                     Self::commit_pending_response(&mut self.async_memory, receive, delivery);
                     self.remove_sync_waiter(receive, SyncResource::Channel(channel));
                     self.ready_jobs.insert(
@@ -2050,6 +2171,7 @@ impl BootstrapHost {
         let caller_import = admission.prepare_current(result.preview(payload))?;
         response.reserve(result.framing(), [payload])?;
         admission.commit(&mut [caller_import, peer_import])?;
+        self.claim_select_call(send);
         Self::commit_pending_response(&mut self.async_memory, send, acknowledgement);
         let payload = self
             .sync_waiters
@@ -3293,6 +3415,34 @@ impl BootstrapHost {
     }
 
     fn cancel_sync_waiter(&mut self, call: u64) -> Result<bool, VmError> {
+        if let Some(pending) = self.sync_waiters.get(&call)
+            && matches!(
+                pending.kind,
+                SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive
+            )
+        {
+            let resource = pending.resource;
+            let value = if pending.kind == SyncWaitKind::ChannelSend {
+                let payload = self
+                    .sync_waiters
+                    .get_mut(&call)
+                    .and_then(|pending| pending.arguments.pop())
+                    .ok_or_else(|| {
+                        VmError::Invariant("cancelled channel sender has no payload".into())
+                    })?;
+                Self::channel_send_result_error(0, payload)
+            } else {
+                RuntimeValue::OptionNone
+            };
+            if let Some(memory) = self.async_memory.get_mut(&call) {
+                // Reuse the admitted request, including its retained payload,
+                // rather than allocating an unbudgeted cancellation envelope.
+                memory.response = Some(memory.request.split_off(memory.request.bytes())?);
+            }
+            self.remove_sync_waiter(call, resource);
+            self.ready_jobs.insert(call, Ok(value));
+            return Ok(true);
+        }
         let Some(mut pending) = self.sync_waiters.get(&call).cloned() else {
             return Ok(false);
         };
@@ -3884,6 +4034,9 @@ impl BootstrapHost {
         arguments: &[RuntimeValue],
         admission: &mut VmHostImportAdmission<'_>,
     ) -> Result<u64, VmError> {
+        if tondo_vm::network::NetworkOperation::from_name(name).is_some() {
+            return self.start_network(name, arguments);
+        }
         let base_name = name.split_once('[').map_or(name, |(base, _)| base);
         let memory = self
             .test_memory
@@ -4113,7 +4266,12 @@ impl BootstrapHost {
                 self.values.remove(id);
                 let completion = (domain != self.clock_domain)
                     .then(|| self.clock_result_error("timer belongs to another clock domain"));
-                return self.start_time_job(deadline, completion, true);
+                let call = self.start_time_job(deadline, completion, true)?;
+                self.time_jobs
+                    .get_mut(&call)
+                    .expect("new timer wait")
+                    .timer_owner = Some((*id, domain, deadline));
+                return Ok(call);
             }
             let mode =
                 Self::mode(name).ok_or_else(|| VmError::UnsupportedHostCall(name.to_owned()))?;
@@ -4188,7 +4346,9 @@ impl BootstrapHost {
         if let Some(maximum) = maximum {
             response.reserve(maximum, [])?;
         }
-        let value = if base_name.starts_with("std.uuid.Uuid.") {
+        let value = if base_name.starts_with("std.net.") {
+            self.invoke_network_admitted(base_name, arguments, &mut response, admission)?
+        } else if base_name.starts_with("std.uuid.Uuid.") {
             self.invoke_uuid_admitted(base_name, arguments, &mut response, admission)?
         } else if base_name == "std.console.readLine" {
             let [reader] = arguments else {
@@ -7462,6 +7622,7 @@ impl BootstrapHost {
                 completion,
                 counts_resource,
                 kind: TimeJobKind::Ordinary,
+                timer_owner: None,
             },
         );
         Ok(id)
@@ -7503,6 +7664,7 @@ impl BootstrapHost {
                 completion: Some(RuntimeValue::Unit),
                 counts_resource: false,
                 kind,
+                timer_owner: None,
             },
         );
         Ok(id)
@@ -7664,6 +7826,7 @@ impl BootstrapHost {
         teardown: bool,
     ) -> Result<(), VmError> {
         let mut pending = roots.clone();
+        self.trace_network(&mut pending);
         for value in self
             .ready_jobs
             .values()
@@ -7752,6 +7915,7 @@ impl BootstrapHost {
         let mut dead = Vec::new();
         for id in self.buffer_memory.keys() {
             let kind = match self.values.get(id) {
+                Some(HostValue::Network(value)) => RuntimeHostValueKind::Network(value.kind()),
                 Some(HostValue::Reader { .. }) => RuntimeHostValueKind::Reader,
                 Some(HostValue::Writer { .. }) => RuntimeHostValueKind::Writer,
                 Some(HostValue::Bytes(_)) => RuntimeHostValueKind::Bytes,
@@ -7922,6 +8086,9 @@ impl Default for BootstrapHost {
 }
 
 impl VmHost for BootstrapHost {
+    fn requires_shared_memory_budget(&self) -> bool {
+        self.network_target.is_some()
+    }
     fn preview_return<'a>(
         &'a self,
         name: &str,
@@ -8159,6 +8326,7 @@ impl VmHost for BootstrapHost {
             || Self::is_console_output(base)
             || base == "std.console.readLine"
             || base.starts_with("std.uuid.Uuid.")
+            || base.starts_with("std.net.")
         {
             return self.invoke_admitted_with_import(name, &arguments, budget, admission);
         }
@@ -8331,6 +8499,14 @@ impl VmHost for BootstrapHost {
         // host contract is owned by the unspecialized function name.
         let specialized_name = name;
         let name = name.split_once('[').map_or(name, |(base, _)| base);
+        if name.starts_with("std.net.") {
+            return self.invoke_network_admitted(
+                name,
+                arguments,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            );
+        }
         if name.starts_with("std.uuid.Uuid.") {
             return self.invoke_uuid_admitted(
                 name,
@@ -13665,6 +13841,17 @@ impl VmHost for BootstrapHost {
         call: u64,
         admission: &mut VmHostImportAdmission<'_>,
     ) -> Result<Option<VmHostReturn>, VmError> {
+        if self.select_calls.contains_key(&call) && self.select_committing != Some(call) {
+            if self.network_pending(call) {
+                return self.poll_network(call, admission);
+            }
+            // Channel and timer probes inspect readiness through the selection
+            // entry. Ordinary polling must not remove data from a losing arm.
+            return Ok(None);
+        }
+        if self.network_pending(call) {
+            return self.poll_network(call, admission);
+        }
         let owner = self
             .async_memory
             .get(&call)
@@ -13692,6 +13879,7 @@ impl VmHost for BootstrapHost {
                             }
                             TimeJobKind::Settle => {
                                 self.jobs.is_empty()
+                                    && !self.network_has_pending()
                                     && self.time_jobs.iter().all(|(id, candidate)| {
                                         *id == call
                                             || !matches!(candidate.kind, TimeJobKind::Ordinary)
@@ -13699,6 +13887,7 @@ impl VmHost for BootstrapHost {
                             }
                             TimeJobKind::Advance { target } => {
                                 self.jobs.is_empty()
+                                    && !self.network_has_pending()
                                     && self.time_jobs.iter().all(|(id, candidate)| {
                                         *id == call
                                             || !matches!(candidate.kind, TimeJobKind::Ordinary)
@@ -13792,6 +13981,7 @@ impl VmHost for BootstrapHost {
             for call in calls {
                 let result = match self.poll_async_with_import_admission(*call, admission) {
                     Ok(Some(value)) => Ok(value),
+                    Ok(None) if self.select_async_ready(*call) => return Ok(None),
                     Ok(None) => continue,
                     Err(error) => Err(error),
                 };
@@ -13828,7 +14018,7 @@ impl VmHost for BootstrapHost {
                         TimeJobKind::Ordinary => None,
                     })
                 });
-                if controller.is_some() && !self.jobs.is_empty() {
+                if controller.is_some() && (!self.jobs.is_empty() || self.network_has_pending()) {
                     return Err(VmError::Host(
                         "P2003: virtual-time quiescence is blocked by an external wait".into(),
                     ));
@@ -13868,6 +14058,17 @@ impl VmHost for BootstrapHost {
     }
 
     fn cancel_async(&mut self, call: u64) -> Result<(), VmError> {
+        let committed = self.select_async_committed(call);
+        self.finish_select_async(call)?;
+        if self.network_pending(call) {
+            self.cancel_network(call);
+            return Ok(());
+        }
+        if committed {
+            // A rendezvous has already transferred the value. Cancellation
+            // unwinds the task after receiving that admitted completion.
+            return Ok(());
+        }
         if self.sync_waiters.contains_key(&call) {
             self.cancel_sync_waiter(call)?;
             if !self.sync_waiters.contains_key(&call) && !self.ready_jobs.contains_key(&call) {
@@ -13934,11 +14135,124 @@ impl VmHost for BootstrapHost {
         Ok(())
     }
 
+    fn reserve_select_async(&mut self, call: u64, selection: u64) -> Result<bool, VmError> {
+        let selected = self.reserve_network(call)
+            || self.sync_waiters.get(&call).is_some_and(|pending| {
+                matches!(
+                    pending.kind,
+                    SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive
+                )
+            })
+            || self.time_jobs.contains_key(&call);
+        if selected {
+            if let Some(job) = self.time_jobs.get_mut(&call)
+                && let Some((id, domain, deadline)) = job.timer_owner
+            {
+                self.values
+                    .entry(id)
+                    .or_insert(HostValue::Timer { domain, deadline });
+                job.counts_resource = false;
+            }
+            self.select_calls.insert(call, selection);
+        }
+        Ok(selected)
+    }
+    fn select_async_ready(&self, call: u64) -> bool {
+        let Some(selection) = self.select_calls.get(&call) else {
+            return false;
+        };
+        if let Some(winner) = self.select_winners.get(selection) {
+            return *winner == call;
+        }
+        self.network_ready(call)
+            || self.select_channel_ready(call)
+            || self.time_jobs.get(&call).is_some_and(|job| {
+                job.cancellation
+                    || job.completion.is_some()
+                    || self.clock.now().is_ok_and(|now| now >= job.deadline)
+            })
+    }
+    fn select_async_committed(&self, call: u64) -> bool {
+        self.select_calls
+            .get(&call)
+            .is_some_and(|selection| self.select_winners.get(selection) == Some(&call))
+    }
+    fn seal_select_async(&mut self, selection: u64) -> Result<(), VmError> {
+        self.select_sealed.insert(selection);
+        Ok(())
+    }
+    fn finish_select(&mut self, selection: u64) -> Result<(), VmError> {
+        self.select_sealed.remove(&selection);
+        self.select_winners.remove(&selection);
+        Ok(())
+    }
+    fn commit_select_async(
+        &mut self,
+        call: u64,
+        admission: &mut VmHostImportAdmission<'_>,
+    ) -> Result<Option<VmHostReturn>, VmError> {
+        if let Some(selection) = self.select_calls.get(&call)
+            && self
+                .select_winners
+                .get(selection)
+                .is_some_and(|winner| *winner != call)
+        {
+            return Ok(None);
+        }
+        let timer_owner = self.time_jobs.get(&call).and_then(|job| job.timer_owner);
+        if let Some((id, _, _)) = timer_owner
+            && !self.values.contains_key(&id)
+        {
+            return Err(VmError::Invariant("selected timer lost its owner".into()));
+        }
+        let previous = self.select_committing.replace(call);
+        let result = if self.network_pending(call) {
+            self.commit_network(call, admission)
+        } else {
+            self.poll_async_with_import_admission(call, admission)
+        };
+        self.select_committing = previous;
+        if matches!(result, Ok(Some(_))) {
+            if let Some((id, _, _)) = timer_owner {
+                self.values.remove(&id);
+                self.release_time_resource();
+            }
+            self.claim_select_call(call);
+        }
+        result
+    }
+    fn rollback_select_async(&mut self, call: u64) -> Result<(), VmError> {
+        self.rollback_network(call);
+        if let Some(pending) = self.sync_waiters.get(&call) {
+            let resource = pending.resource;
+            self.remove_sync_waiter(call, resource);
+        }
+        if let Some(job) = self.time_jobs.remove(&call)
+            && job.counts_resource
+        {
+            self.release_time_resource();
+        }
+        self.ready_jobs.remove(&call);
+        self.async_memory.remove(&call);
+        self.select_calls.remove(&call);
+        self.select_winners.retain(|_, winner| *winner != call);
+        Ok(())
+    }
+    fn finish_select_async(&mut self, call: u64) -> Result<(), VmError> {
+        self.select_calls.remove(&call);
+        self.select_winners.retain(|_, winner| *winner != call);
+        Ok(())
+    }
+
     fn cleanup(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
         let RuntimeValue::Host { kind, id } = value else {
             return Ok(());
         };
         match kind {
+            RuntimeHostValueKind::Network(kind) if kind.owns_transport() => {
+                self.values.remove(id);
+                self.buffer_memory.remove(id);
+            }
             RuntimeHostValueKind::Reader | RuntimeHostValueKind::Writer => {
                 self.values.remove(id);
                 self.buffer_memory.remove(id);
@@ -14548,9 +14862,27 @@ fn compile_host_admission_source(
     tondo_vm::bytecode::BytecodeProgram,
     tondo_vm::bytecode::BytecodeFunctionId,
 ) {
+    compile_host_admission_source_with_target(
+        source,
+        capabilities,
+        operation,
+        crate::driver::BuildTarget::vm_hosted(),
+    )
+}
+
+#[cfg(test)]
+fn compile_host_admission_source_with_target(
+    source: &str,
+    capabilities: BTreeSet<crate::driver::CapabilityName>,
+    operation: crate::driver::Operation,
+    target: crate::driver::BuildTarget,
+) -> (
+    tondo_vm::bytecode::BytecodeProgram,
+    tondo_vm::bytecode::BytecodeFunctionId,
+) {
     use crate::driver::{
-        BuildTarget, CompilationRequest, DiagnosticFormat, Edition, HostProfile, Operation,
-        ResourceLimits, SourceForm, compile,
+        CompilationRequest, DiagnosticFormat, Edition, HostProfile, Operation, ResourceLimits,
+        SourceForm, compile,
     };
     use crate::package::PackageGraph;
     use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
@@ -14567,7 +14899,7 @@ fn compile_host_admission_source(
     let request = CompilationRequest::new(
         operation,
         Edition::V0_1,
-        BuildTarget::vm_hosted(),
+        target,
         HostProfile::Hosted,
         capabilities,
         DiagnosticFormat::Json,
@@ -25364,6 +25696,26 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
     }
 
     #[test]
+    fn select_readiness_excludes_unregistered_virtual_quiescence_calls() {
+        let mut host = BootstrapHost::with_virtual_time(Vec::new(), 1).unwrap();
+        let settle = host
+            .start_virtual_control_job(super::TimeJobKind::Settle)
+            .unwrap();
+        assert!(!host.select_async_ready(settle));
+        let sleep = host
+            .start_async("std.time.sleep", &[RuntimeValue::Integer(0)])
+            .unwrap();
+        assert!(!host.select_async_ready(sleep));
+        assert!(host.reserve_select_async(sleep, 1).unwrap());
+        host.seal_select_async(1).unwrap();
+        assert!(host.select_async_ready(sleep));
+        host.rollback_select_async(sleep).unwrap();
+        host.finish_select(1).unwrap();
+        host.time_jobs.remove(&settle);
+        assert_eq!(host.time_resources, 0);
+    }
+
+    #[test]
     fn virtual_time_completes_timers_only_after_the_deadline_and_supports_cancel() {
         let mut host = BootstrapHost::with_virtual_time(Vec::new(), 10).unwrap();
         assert!(host.advance_virtual_time(-1).is_err());
@@ -28311,6 +28663,7 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 completion: Some(buffers[5].clone()),
                 counts_resource: false,
                 kind: TimeJobKind::Ordinary,
+                timer_owner: None,
             },
         );
         let mut roots = tondo_vm::runtime::VmHostRoots::new();

@@ -36,7 +36,10 @@ jq -e '
   and .capabilities.import_effect == "none"
   and .capabilities.missing_network == "static-capability-error"
   and .capabilities.deadline_without_clock == "static-capability-error"
-  and .host.status == "required-after-native-gate"
+  and (.host.status == "implementation-in-progress" or .host.status == "verified-production-hosted")
+  and .host.register == "testing/stdlib-net-host.json"
+  and .host.prerequisite == "ASYNC-SELECT-ATOMIC-001"
+  and .host.public_api_promoted == false and .host.native_abi_or_aot == false
   and .target_configuration.manifest == "tondo.toml"
   and .target_configuration.table == "target.network"
   and .target_configuration.key == "resolver_servers"
@@ -63,8 +66,8 @@ jq -e '
   and .private_provider_draft.public_runtime_registered == false
   and .private_provider_draft.native_abi_or_aot == false
   and .surface.types[0:5] == ["HostName", "IpAddress", "SocketAddress", "NetLimits", "NetOptions"]
-  and (.surface.signatures | length) == 39
-  and ([.surface.signatures[].id] | unique | length) == 39
+  and (.surface.signatures | length) == 40
+  and ([.surface.signatures[].id] | unique | length) == 40
   and any(.surface.signatures[]; .id == "tcp-shutdown" and .signature == "pub fn TcpStream.shutdown(self, how: Shutdown, options: NetOptions): Unit ! NetError suspends")
   and all(.surface.signatures[]; (.signature | type == "string" and length > 0) and (.kind | type == "string" and length > 0) and (.effect | type == "string" and length > 0))
   and .surface.direct_call_waits == true
@@ -168,6 +171,7 @@ for marker in \
     'pub type TcpStream' \
     'pub fn resolve(host: HostName, port: Int, options: NetOptions): Array[SocketAddress] ! NetError suspends' \
     'pub fn TcpListener.accept(self, options: NetOptions): TcpStream ! NetError selectable' \
+    'pub fn TcpListener.localAddress(self): SocketAddress ! NetError' \
     'pub fn TcpReadHalf.read(self, max: Int, options: NetOptions): ReadResult ! NetError selectable' \
     'pub fn UdpSocket.receiveFrom(self, options: NetOptions): Datagram ! NetError selectable' \
     'PlatformRoots' \

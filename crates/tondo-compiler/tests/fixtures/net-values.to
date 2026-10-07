@@ -1,0 +1,53 @@
+import std.net
+
+fn main(): !net.NetError {
+    let first = net.hostName("Example.COM.")?
+    let second = net.hostName("Example.COM.")?
+    let lower = net.hostName("example.com.")?
+    assert(first == second)
+    assert(first != lower)
+    let hosts: Map[net.HostName, Int] = [first: 17]
+    assert(hosts[second] == some(17))
+
+    let ipv4 = net.IpAddress.parse("127.0.0.1")?
+    let ipv4Again = net.IpAddress.parse("127.0.0.1")?
+    let mapped = net.IpAddress.parse("::ffff:127.0.0.1")?
+    assert(ipv4 == ipv4Again)
+    assert(ipv4 != mapped)
+    let addresses = Set[ipv4, ipv4Again, mapped]
+    assert(addresses == Set[ipv4, mapped])
+    let socket = net.socketAddress(ipv4, 8080)?
+    let same = net.socketAddress(ipv4Again, 8080)?
+    assert(socket == same)
+    assert(socket != net.socketAddress(ipv4, 8081)?)
+    let sockets: Map[net.SocketAddress, Int] = [socket: 23]
+    assert(sockets[same] == some(23))
+    _ = net.socketAddress(ipv4, 0)?
+
+    let defaults = net.NetLimits.defaults()
+    let limits = net.NetLimits.create(1024, 512, 16)?
+    let options = net.options(none, limits)?
+    let copied = options
+    _ = [options, copied, net.options(none, defaults)?]
+
+    match net.hostName("") {
+        err(net.NetError.InvalidHostName) => ()
+        _ => panic("invalid host name was admitted")
+    }
+    match net.IpAddress.parse("example.com") {
+        err(net.NetError.InvalidAddress) => ()
+        _ => panic("numeric address performed a name lookup")
+    }
+    match net.socketAddress(ipv4, 65536) {
+        err(net.NetError.InvalidPort) => ()
+        _ => panic("invalid port was admitted")
+    }
+    match net.NetLimits.create(0, 1, 1) {
+        err(net.NetError.InvalidLimit) => ()
+        _ => panic("invalid limit was admitted")
+    }
+    match net.NetLimits.create(67108865, 1, 1) {
+        err(net.NetError.ResourceLimit) => ()
+        _ => panic("target ceiling was not enforced")
+    }
+}

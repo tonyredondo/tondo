@@ -73,6 +73,10 @@ DNS/TCP/UDP/TLS provider after source-bound quality, the full local gate,
 publication and exact-SHA CI confirmation. Public compiler/VM registration,
 target activation, VM heap admission and production scope cleanup remain
 `STD-NET-HOST-001`, the next owner leaf.
+`ASYNC-SELECT-ATOMIC-001` is its active prerequisite after public integration
+reproduced losing data through source adapters and mixed channel/network arms.
+Both current hosted implementations remain unpromoted until their joint
+quality gate, complete functional gate and exact-SHA publication CI pass.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -2446,6 +2450,18 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   ganador, cancela/descarte las tareas que pertenecen al selector y deja los
   `Join` perdedores awaitables. Se validan además los tipos de registration y
   payload en MIR/bytecode y se conserva la afinidad en pánico/cancelación.
+
+- [ ] **ASYNC-SELECT-ATOMIC-001 — Repair hosted selection transactions.**
+  Public network integration reproduces losing datagram consumption through a
+  source `selectable` forwarder and losing channel-message consumption in a
+  mixed channel/network selection. Keep `STD-NET-HOST-001` unpromoted until
+  registration, readiness, winner commitment and rollback share one protocol
+  across source adapters and standard operations. Verify affine payload
+  ownership, buffered and rendezvous channels, fairness, `else`, cancellation,
+  panic and result admission before effects. Check `E1614` for bodies that
+  cannot preserve the atomic contract. Earlier bounded selection evidence
+  does not establish these compositions. Tony approved this prerequisite
+  repair before resuming network HOST promotion.
 
 - [x] **ASYNC-SELECT-TEST-001 — Modelar, probar y fuzzear el núcleo de
   selección.** `SelectModel` en `crates/tondo-reliability/tests/models.rs`
@@ -7060,7 +7076,7 @@ estas leaves.
   this does not establish portable or native networking promotion.
   Next: `STD-NET-HOST-001`.
 - [ ] **STD-NET-HOST-001 — Integrate the public hosted networking API.**
-  Register the 39 locked compiler/VM calls and nominal types, forward the
+  Register the 40 locked compiler/VM calls and nominal types, forward the
   declared target resolver configuration, enforce capability and affine rules,
   and connect typed heap admission, selector preparation/commit/rollback and
   production scope cleanup to the private provider. Verify sealed controlled

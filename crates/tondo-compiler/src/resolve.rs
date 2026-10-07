@@ -1383,6 +1383,48 @@ impl Resolver<'_> {
         self.install_bootstrap_module_nominals(
             file,
             program,
+            "net",
+            &[
+                (
+                    "HostName",
+                    SymbolKind::Type,
+                    BootstrapNominalShape::Record(&["text"]),
+                ),
+                (
+                    "IpAddress",
+                    SymbolKind::Type,
+                    BootstrapNominalShape::Record(&["family", "high", "low"]),
+                ),
+                (
+                    "SocketAddress",
+                    SymbolKind::Type,
+                    BootstrapNominalShape::Record(&["ip", "port"]),
+                ),
+                (
+                    "NetError",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::net::ERROR_VARIANTS),
+                ),
+                (
+                    "TlsError",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::net::TLS_ERROR_VARIANTS),
+                ),
+                (
+                    "TlsVerification",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::net::TLS_VERIFICATION_VARIANTS),
+                ),
+                (
+                    "Shutdown",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::net::SHUTDOWN_VARIANTS),
+                ),
+            ],
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
             "encoding",
             &bootstrap_encoding_nominals(),
         )?;
@@ -1544,7 +1586,8 @@ impl Resolver<'_> {
                 },
                 synthetic: true,
             });
-            let private_uuid_fields = module_name == "uuid" && name.as_str() == "Uuid";
+            let private_fields =
+                (module_name == "uuid" && name.as_str() == "Uuid") || module_name == "net";
             program
                 .bootstrap_nominals
                 .insert((module.clone(), name), id);
@@ -1567,7 +1610,7 @@ impl Resolver<'_> {
                             MemberOwner::Type(id),
                             field,
                             MemberKind::RecordField,
-                            if private_uuid_fields {
+                            if private_fields {
                                 Visibility::Private
                             } else {
                                 Visibility::Public

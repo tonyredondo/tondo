@@ -1767,6 +1767,8 @@ struct WorkerInput {
     target: String,
     temporary_filesystem: bool,
     process_isolation: bool,
+    network: Option<tondo_compiler::toolchain::NetworkTarget>,
+    clock: bool,
     program: tondo_vm::bytecode::BytecodeProgram,
     entry: tondo_vm::bytecode::BytecodeFunctionId,
     limits: tondo_vm::runtime::VmLimits,
@@ -1823,6 +1825,11 @@ impl WorkerInput {
                 .capabilities()
                 .iter()
                 .any(|value| value.as_str() == "process"),
+            network: request.target().network_target().cloned(),
+            clock: request
+                .capabilities()
+                .iter()
+                .any(|value| value.as_str() == "clock"),
             program,
             entry,
             limits: request.runtime_limits(),
@@ -1882,6 +1889,9 @@ impl WorkerInput {
             ));
         }
         input.limits.validate().map_err(|error| error.to_string())?;
+        if let Some(network) = &input.network {
+            network.validate().map_err(|error| error.to_string())?;
+        }
         input
             .envelope_limits()
             .profile()
@@ -3032,7 +3042,7 @@ fn execute_test_worker(
     if let Some(root) = temporary_root {
         participation = participation.with_temporary_root(root);
     }
-    let execution = tondo_compiler::test_backend::execute_compiled_with_environment(
+    let execution = tondo_compiler::test_backend::execute_compiled_with_environment_and_network(
         &input.program,
         input.entry,
         input.limits,
@@ -3040,6 +3050,8 @@ fn execute_test_worker(
         (!diagnostic_context.profiles.is_empty())
             .then(tondo_vm::runtime::DiagnosticConfig::default),
         environment,
+        input.network.as_ref(),
+        input.clock,
     );
     materialized.revoke().map_err(|error| error.to_string())?;
     let execution = execution.map_err(|error| error.to_string())?;
@@ -5642,6 +5654,8 @@ mod tests {
             target: BuildTarget::vm_hosted().name().into(),
             temporary_filesystem: false,
             process_isolation: false,
+            network: None,
+            clock: false,
             program: tondo_vm::bytecode::BytecodeProgram {
                 reflection: Default::default(),
                 types: Vec::new(),
@@ -5664,6 +5678,38 @@ mod tests {
         let hash = tondo_compiler::artifact::sha256(&bytes);
         let read = WorkerInput::read(bytes.as_slice(), &hash, bytes.len()).unwrap();
         assert_eq!(read.encode().unwrap(), bytes);
+        let mut configured = WorkerInput::read(bytes.as_slice(), &hash, bytes.len()).unwrap();
+        configured.network = Some(tondo_compiler::toolchain::NetworkTarget {
+            resolver_servers: vec!["192.0.2.53:53".into(), "[2001:db8::53]:53".into()],
+        });
+        configured.clock = true;
+        let configured_bytes = configured.encode().unwrap();
+        let configured_hash = tondo_compiler::artifact::sha256(&configured_bytes);
+        assert_ne!(configured_hash, hash);
+        assert!(
+            WorkerInput::read(configured_bytes.as_slice(), &hash, configured_bytes.len()).is_err()
+        );
+        let decoded = WorkerInput::read(
+            configured_bytes.as_slice(),
+            &configured_hash,
+            configured_bytes.len(),
+        )
+        .unwrap();
+        assert_eq!(decoded.network, configured.network);
+        assert!(decoded.clock);
+        configured
+            .network
+            .as_mut()
+            .unwrap()
+            .resolver_servers
+            .clear();
+        let invalid = configured.encode().unwrap();
+        let invalid_hash = tondo_compiler::artifact::sha256(&invalid);
+        assert!(
+            WorkerInput::read(invalid.as_slice(), &invalid_hash, invalid.len())
+                .unwrap_err()
+                .contains("1..8")
+        );
         for (field, expected) in [
             ("max_steps", "invalid VM limit `max_steps`"),
             ("virtual_timers", "virtual-timers budget must be positive"),

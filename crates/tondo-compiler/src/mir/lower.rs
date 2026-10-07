@@ -534,10 +534,10 @@ impl<'a> FunctionBuilder<'a> {
         self.lower_storage_boundaries()?;
         self.infer_region_releases()?;
         let mut blocks = Vec::with_capacity(self.blocks.len());
-        for block in self.blocks {
+        for (index, block) in self.blocks.into_iter().enumerate() {
             let terminator = block.terminator.ok_or_else(|| MirError::Construction {
                 span: self.span,
-                message: "a generated basic block has no terminator".into(),
+                message: format!("generated basic block #{index} has no terminator"),
             })?;
             blocks.push(MirBasicBlock {
                 kind: block.kind,
@@ -3328,7 +3328,20 @@ impl<'a> FunctionBuilder<'a> {
         block: MirBlockId,
     ) -> Result<Option<(MirBlockId, MirOperation)>, MirError> {
         let span = self.expression(callee)?.span();
-        let Some((mut current, callee)) = self.lower_callee(callee, protocol, block)? else {
+        let lowered_callee = if preserve_place_moves
+            && protocol == HirCallProtocol::CallOnce
+            && self.expression(callee)?.category() == HirValueCategory::Place
+        {
+            self.lower_place(callee, block)?
+                .map(|(block, place)| {
+                    self.transfer_place(place, span)
+                        .map(|operand| (block, operand))
+                })
+                .transpose()?
+        } else {
+            self.lower_callee(callee, protocol, block)?
+        };
+        let Some((mut current, callee)) = lowered_callee else {
             return Ok(None);
         };
         let loan_depth = self.active_loans.len();
@@ -4920,6 +4933,7 @@ impl<'a> FunctionBuilder<'a> {
             },
         )?;
 
+        let mut completing = false;
         for (index, piece) in arms.iter().enumerate() {
             let payload = payload_places[index].clone();
             let mut arm_block = body_blocks[index];
@@ -4971,18 +4985,23 @@ impl<'a> FunctionBuilder<'a> {
             let Some(body_end) =
                 self.lower_expression(piece.body(), destination.clone(), arm_block)?
             else {
-                return Ok(None);
+                continue;
             };
             self.terminate(body_end, span, MirTerminatorKind::Goto { target: join })?;
+            completing = true;
         }
 
         if let Some(else_body) = else_body {
             let block = else_target.expect("else target allocated with an else body");
-            let Some(body_end) = self.lower_expression(else_body, destination.clone(), block)?
-            else {
-                return Ok(None);
-            };
-            self.terminate(body_end, span, MirTerminatorKind::Goto { target: join })?;
+            if let Some(body_end) = self.lower_expression(else_body, destination.clone(), block)? {
+                self.terminate(body_end, span, MirTerminatorKind::Goto { target: join })?;
+                completing = true;
+            }
+        }
+
+        if !completing {
+            self.terminate(join, span, MirTerminatorKind::Unreachable)?;
+            return Ok(None);
         }
 
         self.register_fallback(join, span, destination)?;
@@ -5027,20 +5046,22 @@ impl<'a> FunctionBuilder<'a> {
 
     fn select_preserves_moves(&self, expression: HirExpressionId) -> Result<bool, MirError> {
         let expression = self.expression(expression)?;
-        let callee = match expression.kind() {
-            HirExpressionKind::Call { callee, .. }
-            | HirExpressionKind::AsyncCall { callee, .. } => *callee,
+        let signature = match expression.kind() {
+            HirExpressionKind::Call { signature, .. }
+            | HirExpressionKind::AsyncCall { signature, .. } => *signature,
             _ => return Ok(false),
         };
-        let host = match self.expression(callee)?.kind() {
-            HirExpressionKind::Function(HirCallableId::Host(function))
-            | HirExpressionKind::SpecializedFunction {
-                callable: HirCallableId::Host(function),
-                ..
-            } => *function,
-            _ => return Ok(false),
-        };
-        Ok(host == HirBootstrapHostFunction::ExecutorActorSend)
+        let kind = self
+            .hir
+            .interner()
+            .kind(signature)
+            .map_err(|error| MirError::Construction {
+                span: expression.span(),
+                message: error.to_string(),
+            })?;
+        Ok(matches!(kind,
+            TypeKind::Function(function) if function.is_selectable()
+        ))
     }
 
     fn lower_propagate_option(

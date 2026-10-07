@@ -563,30 +563,23 @@ fn select_registration_moves_defer_guard(
     })
 }
 
-/// Select registration prepares an actor message without consuming it.  The
-/// message is consumed only on the commit edge of the winning arm; all other
-/// arms must retain the caller-owned value for rollback or `else` execution.
-fn select_actor_send_move_places(operation: &MirOperation) -> Vec<LocalAccess> {
+/// Selection observes affine inputs during registration and moves them only
+/// on the winning edge. This applies to every verified selectable call.
+fn select_call_move_places(operation: &MirOperation) -> Vec<LocalAccess> {
     let MirOperationKind::Call {
         callee, arguments, ..
     } = operation.kind()
     else {
         return Vec::new();
     };
-    let MirOperandKind::Function {
-        callable: HirCallableId::Host(function),
-        ..
-    } = callee.kind()
-    else {
-        return Vec::new();
-    };
-    if *function != HirBootstrapHostFunction::ExecutorActorSend {
-        return Vec::new();
-    }
-    arguments
-        .iter()
-        .filter(|argument| argument.mode() == ParameterMode::Value)
-        .filter_map(|argument| match argument.value().kind() {
+    std::iter::once(callee)
+        .chain(
+            arguments
+                .iter()
+                .filter(|argument| argument.mode() == ParameterMode::Value)
+                .map(|argument| argument.value()),
+        )
+        .filter_map(|operand| match operand.kind() {
             MirOperandKind::Move(place) => Some(LocalAccess::from_place(place)),
             _ => None,
         })
@@ -625,6 +618,7 @@ fn preceding_assignment_copies_complete_sum_payload(
 fn terminator_moves_defer_guard(terminator: &MirTerminatorKind, guard: &LocalAccess) -> bool {
     let operation = match terminator {
         MirTerminatorKind::Invoke { operation, .. }
+        | MirTerminatorKind::Spawn { operation, .. }
         | MirTerminatorKind::Await {
             awaitable: MirAwaitable::Call(operation),
             ..
@@ -7942,7 +7936,7 @@ impl Verifier<'_> {
                     &events[predecessor.0 as usize],
                     local,
                 );
-                for access in select_actor_send_moves_on_edge(function, *predecessor, edge)
+                for access in select_call_moves_on_edge(function, *predecessor, edge)
                     .into_iter()
                     .filter(|access| access.local == local)
                 {
@@ -9187,7 +9181,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
     }
 }
 
-fn select_actor_send_moves_on_edge(
+fn select_call_moves_on_edge(
     function: &MirFunction,
     predecessor: MirBlockId,
     edge: &SuccessorEdge,
@@ -9213,7 +9207,7 @@ fn select_actor_send_moves_on_edge(
         })
         .nth(index);
     match registration {
-        Some(MirSelectRegistration::Call(operation)) => select_actor_send_move_places(operation),
+        Some(MirSelectRegistration::Call(operation)) => select_call_move_places(operation),
         _ => Vec::new(),
     }
 }
@@ -9786,7 +9780,7 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
 }
 
 fn push_select_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>) {
-    let preserved_moves = select_actor_send_move_places(operation);
+    let preserved_moves = select_call_move_places(operation);
     if preserved_moves.is_empty() {
         push_operation_events(operation, events);
         return;

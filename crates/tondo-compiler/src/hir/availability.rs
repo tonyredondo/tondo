@@ -786,7 +786,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             } => {
                 let host_function = self.host_function(*callee);
                 let baseline = handoff_baseline(&state);
-                let callee_demand = if *protocol == HirCallProtocol::CallOnce {
+                let preserve_move = self.preserve_select_moves && self.select_preserves_moves(id);
+                let callee_demand = if *protocol == HirCallProtocol::CallOnce && !preserve_move {
                     Demand::Transfer
                 } else {
                     Demand::Observe
@@ -815,8 +816,6 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     .map(|state| state.loans.keys().copied().collect::<BTreeSet<_>>())
                     .unwrap_or_default();
                 for (argument, live_after) in arguments.iter().zip(&argument_live_after) {
-                    let preserve_move = self.preserve_select_moves
-                        && host_function == Some(HirBootstrapHostFunction::ExecutorActorSend);
                     let demand = if argument.mode() == ParameterMode::Value && !preserve_move {
                         Demand::Transfer
                     } else {
@@ -1453,7 +1452,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let mut accumulated = AvailabilityFlow::default();
         let mut current = state;
         let mut join_owners = Vec::with_capacity(arms.len());
-        let mut actor_send_arms = Vec::with_capacity(arms.len());
+        let mut transactional_arms = Vec::with_capacity(arms.len());
         for piece in arms {
             // Registration must not consume a pending `Join`: descend past
             // propagate wrappers and observe the operand instead of letting
@@ -1474,9 +1473,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 let Some(next) = next else { break };
                 root = next;
             }
-            let actor_send = self.select_preserves_moves(root);
+            let transactional_call = self.select_preserves_moves(root);
             let previous_preserve = self.preserve_select_moves;
-            self.preserve_select_moves = actor_send;
+            self.preserve_select_moves = transactional_call;
             let operation_flow = match self
                 .program
                 .expression(root)
@@ -1485,22 +1484,20 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 Some(HirExpressionKind::Await { operation }) => {
                     self.expression(*operation, current, Demand::Observe, &BTreeSet::new())
                 }
-                _ => self.expression(
-                    piece.operation(),
-                    current,
-                    Demand::Observe,
-                    &BTreeSet::new(),
-                ),
+                _ => self.expression(root, current, Demand::Observe, &BTreeSet::new()),
             };
             self.preserve_select_moves = previous_preserve;
             let mut operation_flow = operation_flow?;
-            let Some(next) = operation_flow.normal.take() else {
+            let Some(mut next) = operation_flow.normal.take() else {
                 accumulated.merge(operation_flow);
                 return Ok(accumulated);
             };
+            // Registration has no returned value yet. Its terminal outcome
+            // belongs only to the winning branch, after commitment.
+            next.terminal_live.remove(&TerminalOwner::Temporary(root));
             accumulated.merge(operation_flow);
             current = next;
-            actor_send_arms.push(actor_send);
+            transactional_arms.push(transactional_call);
             join_owners.push(
                 match self
                     .program
@@ -1512,8 +1509,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 },
             );
         }
-        for ((piece, join_owner), actor_send) in arms.iter().zip(join_owners).zip(actor_send_arms) {
-            let branch_entry = if let Some(join_owner) = join_owner {
+        for ((piece, join_owner), transactional_call) in
+            arms.iter().zip(join_owners).zip(transactional_arms)
+        {
+            let mut branch_entry = if let Some(join_owner) = join_owner {
                 let transfer_flow = self.expression(
                     join_owner,
                     current.clone(),
@@ -1527,7 +1526,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         continue;
                     }
                 }
-            } else if actor_send {
+            } else if transactional_call {
                 let previous_preserve = self.preserve_select_moves;
                 self.preserve_select_moves = false;
                 let transfer_flow = self.expression(
@@ -1548,8 +1547,27 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             } else {
                 current.clone()
             };
-            let body_flow =
+            let mut terminal_owners = Vec::new();
+            if let Some(pattern) = piece.pattern() {
+                self.activate_match_pattern_terminals(
+                    pattern,
+                    &mut branch_entry,
+                    &mut terminal_owners,
+                )?;
+            } else {
+                let operation = self
+                    .program
+                    .expression(piece.operation())
+                    .expect("checked selection operation");
+                if self.is_terminal(operation.ty())? {
+                    let owner = TerminalOwner::Temporary(piece.operation());
+                    branch_entry.terminal_live.insert(owner, operation.span());
+                    terminal_owners.push(owner);
+                }
+            }
+            let mut body_flow =
                 self.expression(piece.body(), branch_entry, Demand::Transfer, live_after)?;
+            self.finish_terminal_owners_scope(&mut body_flow, &terminal_owners);
             accumulated.merge(body_flow);
         }
         if let Some(else_body) = else_body {
@@ -3793,9 +3811,11 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             return false;
         };
         match expression.kind() {
-            HirExpressionKind::Call { callee, .. }
-            | HirExpressionKind::AsyncCall { callee, .. } => {
-                self.host_function(*callee) == Some(HirBootstrapHostFunction::ExecutorActorSend)
+            HirExpressionKind::Call { signature, .. }
+            | HirExpressionKind::AsyncCall { signature, .. } => {
+                self.program.interner().kind(*signature).is_ok_and(
+                    |kind| matches!(kind, TypeKind::Function(function) if function.is_selectable()),
+                )
             }
             HirExpressionKind::PropagateOption { value }
             | HirExpressionKind::PropagateResult { value, .. } => {

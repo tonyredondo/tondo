@@ -196,6 +196,9 @@ fn check_expressions_pass<'a>(
     checker.check_constants()?;
     checker.check_callables()?;
     checker.check_inferred_implementation_effects()?;
+    for span in super::selectable::findings(&checker.program) {
+        checker.emit(span, "E1614", "selectable preparation must remain reversible until a selectable call or Join await commits", Vec::new(), None)?;
+    }
     checker.check_ownership_availability()?;
     checker.check_constant_collection_diagnostics()?;
     checker.check_reachability_warnings()?;
@@ -1154,6 +1157,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::ProtoReader
                         | IntrinsicType::ProtoWriter
                         | IntrinsicType::Reflection(_)
+                        | IntrinsicType::Network(_)
                         | IntrinsicType::UnknownFields => None,
                     };
                     if let Some((required, capability, context)) = requirement {
@@ -5319,6 +5323,48 @@ impl<'a> ExpressionChecker<'a> {
                 file,
                 node.range(),
                 value,
+                expected,
+                context,
+            );
+        }
+        let network_path = node
+            .child_tokens()
+            .filter(|token| token.kind() == TokenKind::Identifier)
+            .collect::<Vec<_>>();
+        if let [module_token, type_token, function_token] = network_path.as_slice()
+            && let Some(reference) = self.resolved.reference(file, module_token.range())
+            && let ResolvedEntity::Module(module) = reference.entity()
+            && module.package().as_str() == "toolchain:std:0.1-bootstrap"
+            && module.path().as_str() == "net"
+            && let Some(operation) = type_token
+                .token()
+                .normalized_identifier()
+                .zip(function_token.token().normalized_identifier())
+                .and_then(|(owner, name)| {
+                    tondo_vm::network::NetworkOperation::associated(owner, name)
+                })
+        {
+            if node
+                .child_nodes()
+                .any(|child| child.kind() == SyntaxKind::BracketPostfix)
+            {
+                self.emit(
+                    self.sources.span(file, node.range())?,
+                    "E1104",
+                    "std.net functions do not accept explicit type arguments",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, node.range());
+            }
+            let callee = self.bootstrap_host_callee(
+                HirBootstrapHostFunction::Network(operation),
+                self.sources.span(file, node.range())?,
+            )?;
+            return self.close_contextual_function_value(
+                file,
+                node.range(),
+                callee,
                 expected,
                 context,
             );
@@ -15656,6 +15702,16 @@ impl<'a> ExpressionChecker<'a> {
         let (module_token, function_token, static_type) = match identifiers.as_slice() {
             [module_token, function_token] => (module_token, function_token, 0_u8),
             [module_token, type_token, function_token]
+                if type_token
+                    .token()
+                    .normalized_identifier()
+                    .and_then(tondo_vm::network::NetworkType::from_name)
+                    .is_some()
+                    || type_token.token().normalized_identifier() == Some("IpAddress") =>
+            {
+                (module_token, function_token, 33_u8)
+            }
+            [module_token, type_token, function_token]
                 if type_token.token().normalized_identifier() == Some("Uuid") =>
             {
                 (module_token, function_token, 32_u8)
@@ -15837,7 +15893,25 @@ impl<'a> ExpressionChecker<'a> {
             // call. Leave it for the nominal-constructor checker below.
             return Ok(None);
         }
-        let host_function = if static_type == 32 {
+        let host_function = if module.path().as_str() == "net" && static_type == 0 {
+            let Some(operation) =
+                function_name.and_then(tondo_vm::network::NetworkOperation::module_function)
+            else {
+                return Ok(None);
+            };
+            HirBootstrapHostFunction::Network(operation)
+        } else if static_type == 33 {
+            if module.path().as_str() != "net" {
+                return Ok(None);
+            }
+            let owner = identifiers[1].token().normalized_identifier().unwrap();
+            let Some(operation) = function_name
+                .and_then(|name| tondo_vm::network::NetworkOperation::associated(owner, name))
+            else {
+                return Ok(None);
+            };
+            HirBootstrapHostFunction::Network(operation)
+        } else if static_type == 32 {
             if module.path().as_str() != "uuid" {
                 return Ok(None);
             }
@@ -19883,6 +19957,16 @@ impl<'a> ExpressionChecker<'a> {
             .normalized_identifier()
             .unwrap_or(self.token_text(file, member_token)?);
         let function = match self.program.interner.kind(receiver_type)? {
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Network(kind),
+                ..
+            } => {
+                let Some(operation) = tondo_vm::network::NetworkOperation::member(*kind, member)
+                else {
+                    return Ok(None);
+                };
+                HirBootstrapHostFunction::Network(operation)
+            }
             TypeKind::Scalar(ScalarType::String) => match member {
                 "length" => HirBootstrapHostFunction::TextLength,
                 "byteLength" => HirBootstrapHostFunction::TextByteLength,
@@ -25407,6 +25491,35 @@ mod tests {
                 .expressions()
                 .any(|expression| matches!(expression.kind(), HirExpressionKind::Await { .. }))
         );
+    }
+
+    #[test]
+    fn selectable_prefix_proof_checks_named_closure_branch_and_helper_effects() {
+        for source in [
+            "import std.console\nfn effect(): Unit selectable {\n_ = console.println(\"early\")\n}",
+            "import std.console\nfn helper() {\n_ = console.println(\"early\")\n}\nfn effect(): Unit selectable { helper() }",
+            "import std.console\nfn ready(): Unit selectable {}\nfn effect(flag: Bool): Unit selectable { if flag { ready() }\n_ = console.println(\"early\")\n}",
+            "import std.console\nfn main() {\nlet effect = (): Unit selectable {\n_ = console.println(\"early\")\n}\n}",
+        ] {
+            let (_, _, output) = check(source);
+            assert!(
+                codes(&output).contains(&"E1614"),
+                "{source}: {:?}",
+                output.diagnostics()
+            );
+        }
+        let (_, _, output) = check(
+            "import std.console\nfn ready(): Unit selectable {}\nfn effect(flag: Bool): Unit selectable { if flag { ready() } else { ready() }\n_ = console.println(\"committed\")\n}",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:?}",
+            output.diagnostics()
+        );
+        let (_, _, local) = check(
+            "fn ready(): Unit selectable {}\nfn calculate(): Int {\nvar n = 1\nn += 2\nn\n}\nfn prepared(): Unit selectable {\nlet n = calculate()\nvar copy = 0\ncopy = n\nready()\n}\n",
+        );
+        assert!(local.diagnostics().is_empty(), "{:?}", local.diagnostics());
     }
 
     #[test]

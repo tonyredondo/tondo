@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "../src/executor_model.rs"]
 mod executor_model;
@@ -203,6 +203,55 @@ fn select_model_preserves_single_commit_and_structured_cleanup() {
                     .all(|(index, arm)| index == winner || !arm.owned || arm.cancelled)
             );
         }
+    }
+}
+
+#[test]
+fn select_transaction_model_seals_pairs_and_preserves_uncommitted_payloads() {
+    // Independent finite transition model: registration has no payload effect;
+    // admission and both endpoint seals precede a joint rendezvous commitment.
+    for seed in 0..4_096_u64 {
+        let mut generator = Generator::new(0x5e1e_c700 + seed);
+        let send_group = generator.choose(4);
+        let receive_group = generator.choose(4);
+        let send_sealed = generator.choose(2) == 0;
+        let receive_sealed = generator.choose(2) == 0;
+        let admitted = generator.choose(2) == 0;
+        let cancelled = generator.choose(2) == 0;
+        let previous_winner = generator.choose(3) == 0;
+        let payload = seed;
+        let mut sender_owner = Some(payload);
+        let mut delivered = None;
+        let mut winners = BTreeMap::new();
+        if previous_winner {
+            winners.insert(send_group, 1_u8);
+        }
+        let eligible = send_group != receive_group
+            && send_sealed
+            && receive_sealed
+            && admitted
+            && !cancelled
+            && !previous_winner;
+        if eligible {
+            winners.insert(send_group, 0);
+            winners.insert(receive_group, 0);
+            delivered = sender_owner.take();
+        }
+        if eligible {
+            assert_eq!(delivered, Some(payload));
+            assert!(sender_owner.is_none());
+            assert_eq!(winners.len(), 2);
+            assert_eq!(winners[&send_group], 0);
+            assert_eq!(winners[&receive_group], 0);
+        } else {
+            assert_eq!(sender_owner, Some(payload));
+            assert!(delivered.is_none());
+            assert_eq!(winners.len(), usize::from(previous_winner));
+        }
+        // Rollback is idempotent and may not erase a completed pair's owners.
+        let committed = delivered.take();
+        assert_eq!(committed.is_some(), eligible);
+        assert!(delivered.take().is_none());
     }
 }
 

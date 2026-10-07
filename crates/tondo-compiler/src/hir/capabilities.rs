@@ -589,6 +589,20 @@ fn intrinsic_node(
         )
     };
     match constructor {
+        IntrinsicType::Network(kind) => {
+            let possible = match capability {
+                HirCapability::Send => true,
+                HirCapability::Copy | HirCapability::Discard | HirCapability::Share => {
+                    !kind.owns_transport()
+                }
+                HirCapability::Equatable | HirCapability::Key => false,
+            };
+            fixed(if possible {
+                HirCapabilityStatus::Satisfied
+            } else {
+                HirCapabilityStatus::Unsatisfied
+            })
+        }
         IntrinsicType::Reflection(kind) => {
             if matches!(
                 capability,

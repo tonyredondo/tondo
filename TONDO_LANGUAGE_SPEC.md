@@ -3909,6 +3909,16 @@ antes del primer punto de suspensión, pero no formar parte del frame. La
 inferencia no convierte una función suspendible en una función síncrona ni
 introduce una variante local del modelo.
 
+Source adapters preserve a reversible prefix until their first selectable call
+or Join await. Nested pure selectable returns pause before the caller continues.
+The source and executable-artifact verifiers inspect that prefix; a function
+flag alone is insufficient proof. Foreign rendezvous pairing requires sealed
+registrations and joint admission and winner claims for both selections. A
+selection cannot pair its own send and receive arms. After a peer commits a
+winner, cancellation cleans up the transferred owners. The hosted evidence and
+its explicit native boundary are recorded in
+[`async-select-transactions.md`](docs/contracts/async-select-transactions.md).
+
 ### 11.11 `await`
 
 `await operation` consume una operación pendiente representada por un

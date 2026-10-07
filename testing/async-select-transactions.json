@@ -1,0 +1,48 @@
+{
+  "format": "tondo-selection-transactions/1",
+  "task": "ASYNC-SELECT-ATOMIC-001",
+  "contract": "docs/contracts/async-select-transactions.md",
+  "status": "implementation-in-progress",
+  "quality_gate": "pending-current-source-proof",
+  "target": "tondo-vm-hosted",
+  "native_abi_or_aot": false,
+  "protocol": {
+    "registration_identity": true,
+    "seal_before_foreign_rendezvous": true,
+    "self_rendezvous": false,
+    "joint_result_admission": true,
+    "joint_winner_claim": true,
+    "loser_consumes_payload": false,
+    "affine_transfer": "winner-edge-only",
+    "source_checkpoint": "before-continuation",
+    "source_prefix_diagnostic": "E1614",
+    "artifact_prefix_verification": true,
+    "forced_winner_cancel": "terminal-cleanup-of-transferred-owners",
+    "memory_metric": "logical-not-rss-or-os-allocation-count"
+  },
+  "model": {
+    "source": "crates/tondo-reliability/tests/models.rs",
+    "test": "select_transaction_model_seals_pairs_and_preserves_uncommitted_payloads",
+    "seeds": 4096
+  },
+  "tests": [
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_preserves_losing_channel_message",
+    "crates/tondo-compiler/src/process_host/net.rs::network_selectable_forwarder_preserves_losing_datagram",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_rendezvous_claims_both_selectors_and_forbids_self_pairing",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_source_sender_rolls_back_affine_argument",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_source_aggregate_rollback_restores_all_fields",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_source_closure_rollback_restores_capture",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_winning_send_transfers_affine_argument_once",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_losing_timer_remains_waitable",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_waiter_rollback_preserves_ready_completion",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_group_rollback_preserves_ready_completion",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_join_adapter_rollback_preserves_join_owner",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_pure_checkpoint_runs_only_winning_continuation",
+    "crates/tondo-compiler/src/process_host/net.rs::network_select_forced_source_winner_cancellation_retires_affine_arguments",
+    "crates/tondo-compiler/src/bytecode/lower.rs::select_runtime_actor_send_adapter_preserves_message_until_rollback",
+    "crates/tondo-compiler/src/bytecode/lower.rs::select_bytecode_rejects_forged_selectable_host_effect_prefix",
+    "crates/tondo-compiler/src/hir/check.rs::selectable_prefix_proof_checks_named_closure_branch_and_helper_effects",
+    "crates/tondo-vm/src/runtime/execute.rs::select_intrinsic_denied_result_preserves_waiter_and_group_completion",
+    "crates/tondo-compiler/src/process_host.rs::select_readiness_excludes_unregistered_virtual_quiescence_calls"
+  ]
+}

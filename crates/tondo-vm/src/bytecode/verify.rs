@@ -629,6 +629,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::ProtoReader
                 | BytecodeIntrinsicType::ProtoWriter
                 | BytecodeIntrinsicType::Reflection(_)
+                | BytecodeIntrinsicType::Network(_)
                 | BytecodeIntrinsicType::UnknownFields => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
@@ -1148,6 +1149,13 @@ fn intrinsic_capability(
     capability: ClosedCapability,
 ) -> CapabilityNode {
     match constructor {
+        BytecodeIntrinsicType::Network(kind) => fixed_capability(match capability {
+            ClosedCapability::Send => true,
+            ClosedCapability::Copy | ClosedCapability::Discard | ClosedCapability::Share => {
+                !kind.owns_transport()
+            }
+            ClosedCapability::Equatable | ClosedCapability::Key => false,
+        }),
         BytecodeIntrinsicType::Reflection(kind) => fixed_capability(
             matches!(
                 capability,
@@ -1703,7 +1711,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set
         | BytecodeIntrinsicType::Range => dependent_terminal(arguments.to_vec()),
-        BytecodeIntrinsicType::Reflection(_)
+        BytecodeIntrinsicType::Network(_)
+        | BytecodeIntrinsicType::Reflection(_)
         | BytecodeIntrinsicType::Ref
         | BytecodeIntrinsicType::Pointer
         | BytecodeIntrinsicType::Group
@@ -2030,6 +2039,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::ProtoReader
                 | BytecodeIntrinsicType::ProtoWriter
                 | BytecodeIntrinsicType::Reflection(_)
+                | BytecodeIntrinsicType::Network(_)
                 | BytecodeIntrinsicType::UnknownFields => None,
             };
             if let Some((required, capability, label)) = requirement {
@@ -2514,6 +2524,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.console.readLine")
                 && !callable.name.starts_with("std.io.Reader.read")
                 && !callable.name.starts_with("std.io.Writer.")
+                && crate::network::NetworkOperation::from_name(&callable.name)
+                    .is_none_or(|operation| operation.receiver().is_none())
                 && !callable.name.starts_with("std.io.readAll")
                 && !callable.name.starts_with("std.io.writeAll")
                 && !callable.name.starts_with("std.fs.File.")
@@ -3492,8 +3504,186 @@ impl Verifier<'_> {
         self.verify_select_flow(function, &context)?;
         self.verify_task_scope_flow(function, &context)?;
         self.verify_suspension_liveness(function, &context)?;
+        if matches!(&self.ty(callable.function_type, &context)?.kind, BytecodeTypeKind::Function(signature) if signature.is_selectable)
+        {
+            self.verify_selectable_prefix(id, true, &mut BTreeSet::new(), &context)?;
+        }
         self.verify_runtime_unwind_entry(function, &context)?;
         Ok(())
+    }
+
+    fn verify_selectable_prefix(
+        &self,
+        id: BytecodeFunctionId,
+        checkpoints: bool,
+        calls: &mut BTreeSet<BytecodeFunctionId>,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        if calls.len() >= 256 || !calls.insert(id) {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "selectable prefix has no finite purity proof",
+            ));
+        }
+        let function = self
+            .program
+            .function(id)
+            .ok_or_else(|| operation_error(context))?;
+        let mut pending = vec![function.entry];
+        let mut seen = BTreeSet::new();
+        while let Some(block_id) = pending.pop() {
+            self.consume_dataflow_step(context)?;
+            if !seen.insert(block_id) {
+                continue;
+            }
+            let block = self.block(function, block_id, context)?;
+            if block.kind == BytecodeBlockKind::Cleanup {
+                continue;
+            }
+            for instruction in &block.instructions {
+                match &instruction.kind {
+                    BytecodeInstructionKind::RegisterDefer { action, .. } => {
+                        self.verify_prefix_operation(action, calls, context)?
+                    }
+                    BytecodeInstructionKind::BeginSelect { .. }
+                    | BytecodeInstructionKind::RegisterSelectArm { .. } => {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "selectable prefix registers an effect before commit",
+                        ));
+                    }
+                    BytecodeInstructionKind::Store { destination, .. } => {
+                        if destination.source_loan.is_some() {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "selectable prefix mutates a borrowed alias",
+                            ));
+                        }
+                        if let BytecodeSlotKind::Parameter { index } =
+                            self.slot(function, destination.slot, context)?.kind
+                        {
+                            let callable = self.callable(function.callable, context)?;
+                            let environment = usize::from(callable.closure.is_some());
+                            let external = (environment == 1 && index == 0)
+                                || (index as usize)
+                                    .checked_sub(environment)
+                                    .and_then(|index| callable.parameters.get(index))
+                                    .is_some_and(|parameter| {
+                                        parameter.mode != BytecodeParameterMode::Value
+                                    });
+                            if external {
+                                return Err(BytecodeVerificationError::new(
+                                    context,
+                                    "selectable prefix mutates a borrowed argument or closure environment",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match &block.terminator.kind {
+                BytecodeTerminatorKind::Await {
+                    awaitable: BytecodeAwaitable::Join(_),
+                    ..
+                } if checkpoints => continue,
+                BytecodeTerminatorKind::Await {
+                    awaitable: BytecodeAwaitable::Call(operation),
+                    ..
+                } => {
+                    if let BytecodeOperationKind::Call { signature, .. } = &operation.kind
+                        && matches!(&self.ty(*signature, context)?.kind, BytecodeTypeKind::Function(signature) if signature.is_selectable)
+                        && checkpoints
+                    {
+                        continue;
+                    }
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "selectable prefix suspends without a commit checkpoint",
+                    ));
+                }
+                BytecodeTerminatorKind::Invoke { operation, .. } => {
+                    self.verify_prefix_operation(operation, calls, context)?
+                }
+                BytecodeTerminatorKind::Spawn { .. }
+                | BytecodeTerminatorKind::CommitSelect { .. }
+                | BytecodeTerminatorKind::Await { .. } => {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "selectable prefix starts unreserved work",
+                    ));
+                }
+                _ => {}
+            }
+            for edge in successor_edges(&block.terminator.kind) {
+                pending.push(edge.target);
+            }
+        }
+        calls.remove(&id);
+        Ok(())
+    }
+
+    fn verify_prefix_operation(
+        &self,
+        operation: &BytecodeOperation,
+        calls: &mut BTreeSet<BytecodeFunctionId>,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        match &operation.kind {
+            BytecodeOperationKind::Call { callee, .. } => {
+                self.verify_prefix_callable(callee, calls, context)?
+            }
+            BytecodeOperationKind::Format {
+                display: Some(display),
+                ..
+            }
+            | BytecodeOperationKind::JoinFormat {
+                display: Some(display),
+                ..
+            } => self.verify_prefix_callable(display, calls, context)?,
+            BytecodeOperationKind::BootstrapHostCall { function, .. }
+                if !pure_select_prefix_host(function.name()) =>
+            {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "selectable prefix invokes an unreserved host effect",
+                ));
+            }
+            // These operations validate or construct VM-owned values. A panic
+            // is observable structured failure and remains prior to value arms.
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn verify_prefix_callable(
+        &self,
+        callee: &BytecodeOperand,
+        calls: &mut BTreeSet<BytecodeFunctionId>,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let callable = match callee.kind {
+            BytecodeOperandKind::Function { callable, .. } => {
+                Some(self.callable(callable, context)?)
+            }
+            _ => self.concrete_callable_for_type(callee.ty, context)?.1,
+        }
+        .ok_or_else(|| {
+            BytecodeVerificationError::new(
+                context,
+                "selectable prefix calls an unproved dynamic function",
+            )
+        })?;
+        if let Some(function) = callable.implementation {
+            self.verify_selectable_prefix(function, false, calls, context)
+        } else if pure_select_prefix_host(&callable.name) {
+            Ok(())
+        } else {
+            Err(BytecodeVerificationError::new(
+                context,
+                "selectable prefix invokes an unreserved host effect",
+            ))
+        }
     }
 
     fn verify_runtime_unwind_entry(
@@ -9441,10 +9631,9 @@ impl Verifier<'_> {
                     &events[predecessor.index() as usize],
                     slot,
                 );
-                for access in
-                    select_actor_send_moves_on_edge(self.program, function, *predecessor, edge)
-                        .into_iter()
-                        .filter(|access| access.slot == slot)
+                for access in select_call_moves_on_edge(self.program, function, *predecessor, edge)
+                    .into_iter()
+                    .filter(|access| access.slot == slot)
                 {
                     if !edge_state.live || !path_is_available(&edge_state.unavailable, &access.path)
                     {
@@ -10753,11 +10942,35 @@ fn select_registration_moves_defer_guard(
     })
 }
 
-/// Select registration prepares an actor message without consuming it.  The
-/// message is consumed only on the commit edge of the winning arm; all other
-/// arms must retain the caller-owned value for rollback or `else` execution.
-fn select_actor_send_move_places(
-    program: &BytecodeProgram,
+/// Selection observes affine inputs during registration and moves them only
+/// on the winning edge. This applies to every verified selectable call.
+fn pure_select_prefix_host(name: &str) -> bool {
+    if let Some(operation) = crate::network::NetworkOperation::from_name(
+        name.split_once('[').map_or(name, |(base, _)| base),
+    ) {
+        return operation.reversible_setup();
+    }
+    matches!(
+        name.split_once('[').map_or(name, |(base, _)| base),
+        "std.uuid.nil"
+            | "std.uuid.max"
+            | "std.uuid.parse"
+            | "std.uuid.fromBytes"
+            | "std.uuid.Uuid.toBytes"
+            | "std.uuid.Uuid.toString"
+            | "std.uuid.Uuid.version"
+            | "std.uuid.Uuid.variant"
+            | "std.uuid.Uuid.isNil"
+            | "std.uuid.Uuid.isMax"
+            | "std.uuid.Uuid.compare"
+            | "std.uuid.v5"
+            | "std.io.defaultLimits"
+            | "std.io.limits"
+    )
+}
+
+fn select_call_move_places(
+    _program: &BytecodeProgram,
     operation: &BytecodeOperation,
 ) -> Vec<LocalAccess> {
     let BytecodeOperationKind::Call {
@@ -10766,23 +10979,14 @@ fn select_actor_send_move_places(
     else {
         return Vec::new();
     };
-    let BytecodeOperandKind::Function { callable, .. } = callee.kind else {
-        return Vec::new();
-    };
-    let Some(callable) = program.callable(callable) else {
-        return Vec::new();
-    };
-    let name = callable
-        .name
-        .split_once('[')
-        .map_or(callable.name.as_str(), |(base, _)| base);
-    if name != "std.executor.ActorRef.send" {
-        return Vec::new();
-    }
-    arguments
-        .iter()
-        .filter(|argument| argument.mode == BytecodeParameterMode::Value)
-        .filter_map(|argument| match &argument.value.kind {
+    std::iter::once(callee)
+        .chain(
+            arguments
+                .iter()
+                .filter(|argument| argument.mode == BytecodeParameterMode::Value)
+                .map(|argument| &argument.value),
+        )
+        .filter_map(|operand| match &operand.kind {
             BytecodeOperandKind::Move(place) => Some(LocalAccess::from_place(place)),
             _ => None,
         })
@@ -10821,6 +11025,7 @@ fn preceding_store_copies_complete_sum_payload(
 fn terminator_moves_defer_guard(terminator: &BytecodeTerminatorKind, guard: &LocalAccess) -> bool {
     let operation = match terminator {
         BytecodeTerminatorKind::Invoke { operation, .. }
+        | BytecodeTerminatorKind::Spawn { operation, .. }
         | BytecodeTerminatorKind::Await {
             awaitable: BytecodeAwaitable::Call(operation),
             ..
@@ -11333,7 +11538,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
     }
 }
 
-fn select_actor_send_moves_on_edge(
+fn select_call_moves_on_edge(
     program: &BytecodeProgram,
     function: &BytecodeFunction,
     predecessor: BytecodeBlockId,
@@ -11361,7 +11566,7 @@ fn select_actor_send_moves_on_edge(
         .nth(index);
     match registration {
         Some(BytecodeSelectRegistration::Call(operation)) => {
-            select_actor_send_move_places(program, operation)
+            select_call_move_places(program, operation)
         }
         _ => Vec::new(),
     }
@@ -12707,7 +12912,7 @@ fn push_select_operation_events(
     operation: &BytecodeOperation,
     events: &mut Vec<LocalEvent>,
 ) {
-    let preserved_moves = select_actor_send_move_places(program, operation);
+    let preserved_moves = select_call_move_places(program, operation);
     if preserved_moves.is_empty() {
         push_operation_events(operation, events);
         return;
@@ -16143,6 +16348,15 @@ mod tests {
                 BytecodeIntrinsicType::Reflection(
                     crate::reflection::ReflectionDescriptorKind::TypeId,
                 ) => all,
+                BytecodeIntrinsicType::Network(kind) => match kind {
+                    crate::network::NetworkType::NetLimits
+                    | crate::network::NetworkType::NetOptions
+                    | crate::network::NetworkType::Datagram
+                    | crate::network::NetworkType::TlsConfig => {
+                        [true, true, false, false, true, true]
+                    }
+                    _ => [false, false, false, false, true, false],
+                },
                 BytecodeIntrinsicType::Reflection(_) => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::Array
                 | BytecodeIntrinsicType::Map

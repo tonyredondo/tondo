@@ -1,0 +1,24 @@
+import std.net
+import std.executor
+
+fn value[T](result: T ! net.NetError): T {
+    match result {
+        ok(payload) => payload
+        err(_) => panic("network operation failed")
+    }
+}
+
+fn main() {
+    let pool = match executor.blockingPool(1, 1) {
+        ok(opened) => opened
+        err(_) => panic("blocking pool creation failed")
+    }
+    let address = value(net.socketAddress(value(net.IpAddress.parse("127.0.0.1")), 0))
+    let make: fn(): net.TcpListener ! net.NetError = () {
+        net.listen(address, 4)
+    }
+    let listener = value(pool.run(make))
+    assert(value(listener.localAddress()) != address)
+    net.TcpListener.close(listener)
+    pool.shutdown()
+}

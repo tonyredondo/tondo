@@ -4550,6 +4550,7 @@ fn scalar_type(value: ScalarType) -> bc::BytecodeScalarType {
 
 fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
     match value {
+        IntrinsicType::Network(kind) => bc::BytecodeIntrinsicType::Network(kind),
         IntrinsicType::Reflection(kind) => bc::BytecodeIntrinsicType::Reflection(kind),
         IntrinsicType::Array => bc::BytecodeIntrinsicType::Array,
         IntrinsicType::Map => bc::BytecodeIntrinsicType::Map,
@@ -5696,6 +5697,67 @@ fn optional(): reflect.TypeInfo { reflect.typeInfo[Int?]() }
             host.begin_test_suite_cleanup(),
             Err(VmError::UnsupportedHostCall(name)) if name == "test suite cleanup"
         ));
+    }
+
+    #[test]
+    fn select_bytecode_rejects_forged_selectable_host_effect_prefix() {
+        let mut program = lowered(
+            "import std.console\nfn effect() {\n_ = console.println(\"early\")\n}\nfn run() {}\n",
+        );
+        bc::verify_bytecode(&program).unwrap();
+        let function = function_id(&program, "effect");
+        let callable = &program.callables[program.functions[function.index() as usize]
+            .callable
+            .index() as usize];
+        let ty = callable.function_type;
+        let bc::BytecodeTypeKind::Function(signature) =
+            &mut program.types[ty.index() as usize].kind
+        else {
+            panic!("function");
+        };
+        signature.is_async = true;
+        signature.is_selectable = true;
+        program.types[ty.index() as usize].name = "fn(): Unit selectable".into();
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(error.message().contains("selectable prefix"), "{error}");
+    }
+
+    #[test]
+    fn select_runtime_actor_send_adapter_preserves_message_until_rollback() {
+        let program = lowered(
+            "import std.executor\n\
+             fn step(state: mut Int, message: String): Unit ! String suspends {\n\
+                 let _ = message\n\
+                 state += 1\n\
+             }\n\
+             fn forward(actor: ref executor.ActorRef[String], message: String): Unit ! executor.ActorSendError[String] selectable { actor.send(message) }\n\
+             fn run(): Bool ! (executor.ExecutorError | String) {\n\
+                 let pool = executor.pool(1, 1)?\n\
+                 let actor = pool.actor(0, 0, step)?\n\
+                 let reference = actor.ref()\n\
+                 let selected = select {\n\
+                     forward(ref reference, \"payload\") => false\n\
+                     else => true\n\
+                 }\n\
+                 actor.stop()?\n\
+                 selected\n\
+             }\n",
+        );
+        bc::verify_bytecode(&program).unwrap();
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            function_id(&program, "run"),
+            &mut host,
+            VmLimits {
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(execution.outcome, VmOutcome::Returned(RuntimeValue::ResultOk(value)) if *value == RuntimeValue::Bool(true))
+        );
     }
 
     #[test]

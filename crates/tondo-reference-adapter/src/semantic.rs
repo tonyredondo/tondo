@@ -2726,6 +2726,7 @@ fn terminal_operation_name(operation: HirTerminalOperation) -> &'static str {
         HirTerminalOperation::JoinAwait => "join-await",
         HirTerminalOperation::ProcessFinish => "process-finish",
         HirTerminalOperation::TimerFinish => "timer-finish",
+        HirTerminalOperation::NetworkClose => "network-close",
     }
 }
 
@@ -2734,6 +2735,7 @@ fn terminal_unwind_name(action: HirTerminalUnwindAction) -> &'static str {
         HirTerminalUnwindAction::JoinTeardown => "join-teardown",
         HirTerminalUnwindAction::ProcessCleanup => "process-cleanup",
         HirTerminalUnwindAction::TimerCleanup => "timer-cleanup",
+        HirTerminalUnwindAction::NetworkCleanup => "network-cleanup",
     }
 }
 

@@ -242,11 +242,15 @@ pub(crate) struct PreparedRead {
 
 impl PreparedRead {
     pub(crate) fn commit(mut self) -> Result<Option<ReadResult>, NetError> {
+        self.try_commit()
+    }
+
+    pub(crate) fn try_commit(&mut self) -> Result<Option<ReadResult>, NetError> {
         let size = self.bytes.len();
         match self.transport.socket.try_read(&mut self.bytes) {
             Ok(length) => {
                 self.bytes.truncate(length);
-                tcp_read_result(self.bytes, size, length == 0).map(Some)
+                tcp_read_result(std::mem::take(&mut self.bytes), size, length == 0).map(Some)
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
             Err(error) => Err(io_error(&error)),
@@ -359,13 +363,23 @@ pub(crate) struct PreparedDatagram {
 
 impl PreparedDatagram {
     pub(crate) fn commit(mut self) -> Result<Option<Datagram>, NetError> {
+        self.try_commit()
+    }
+
+    pub(crate) fn try_commit(&mut self) -> Result<Option<Datagram>, NetError> {
         match self.socket.try_recv_from(&mut self.bytes) {
             Ok((length, source)) => {
                 if length > self.limits.max_datagram() {
                     return Err(NetError::DatagramTooLarge);
                 }
                 self.bytes.truncate(length);
-                Datagram::receive(self.bytes, tondo_address(source)?, length, self.limits).map(Some)
+                Datagram::receive(
+                    std::mem::take(&mut self.bytes),
+                    tondo_address(source)?,
+                    length,
+                    self.limits,
+                )
+                .map(Some)
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
             Err(error) => Err(io_error(&error)),

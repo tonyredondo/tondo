@@ -340,6 +340,7 @@ pub enum BytecodeScalarType {
 )]
 #[serde(deny_unknown_fields)]
 pub enum BytecodeIntrinsicType {
+    Network(crate::network::NetworkType),
     Reflection(crate::reflection::ReflectionDescriptorKind),
     Array,
     Map,
@@ -541,6 +542,7 @@ pub enum BytecodeTerminalOperation {
     JoinAwait,
     ProcessFinish,
     TimerFinish,
+    NetworkClose,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -549,6 +551,7 @@ pub enum BytecodeTerminalUnwindAction {
     JoinTeardown,
     ProcessCleanup,
     TimerCleanup,
+    NetworkCleanup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -562,7 +565,7 @@ pub struct BytecodeTerminalContract {
 impl BytecodeIntrinsicType {
     pub const fn arity(self) -> usize {
         match self {
-            Self::Reflection(_) => 0,
+            Self::Reflection(_) | Self::Network(_) => 0,
             Self::Map | Self::Join | Self::Group | Self::Once | Self::Waiter | Self::Completer => 2,
             Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
             Self::Array
@@ -668,6 +671,17 @@ impl BytecodeIntrinsicType {
     /// status is derived from the values they own.
     pub const fn terminal_contract(self) -> Option<BytecodeTerminalContract> {
         match self {
+            Self::Network(kind) => {
+                if kind.owns_transport() {
+                    Some(BytecodeTerminalContract {
+                        operation: BytecodeTerminalOperation::NetworkClose,
+                        unwind: BytecodeTerminalUnwindAction::NetworkCleanup,
+                        unwind_may_suspend: false,
+                    })
+                } else {
+                    None
+                }
+            }
             Self::Reflection(_) => None,
             Self::Join => Some(BytecodeTerminalContract {
                 operation: BytecodeTerminalOperation::JoinAwait,

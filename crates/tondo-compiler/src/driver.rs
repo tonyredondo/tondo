@@ -178,6 +178,7 @@ pub struct BuildTarget {
     diagnostic_source_id: SourceId,
     profiles: BTreeSet<HostProfile>,
     supported_capabilities: BTreeSet<CapabilityName>,
+    network: Option<crate::toolchain::NetworkTarget>,
 }
 
 impl BuildTarget {
@@ -193,6 +194,7 @@ impl BuildTarget {
                 .expect("the built-in target source ID is valid"),
             profiles: BTreeSet::from([HostProfile::Hosted]),
             supported_capabilities,
+            network: None,
         }
     }
 
@@ -204,7 +206,32 @@ impl BuildTarget {
                 .expect("the built-in meta target source ID is valid"),
             profiles: BTreeSet::from([HostProfile::Meta]),
             supported_capabilities: BTreeSet::new(),
+            network: None,
         }
+    }
+
+    /// Configures explicit hosted resolver endpoints. This does not initialize
+    /// an I/O reactor or select the capability on a compilation request.
+    pub fn with_network_target(
+        mut self,
+        network: crate::toolchain::NetworkTarget,
+    ) -> Result<Self, DriverError> {
+        if self.name != "tondo-vm-hosted" {
+            return Err(DriverError::InvalidNetworkTarget(
+                "network configuration requires the hosted target".into(),
+            ));
+        }
+        network
+            .validate()
+            .map_err(|error| DriverError::InvalidNetworkTarget(error.to_string()))?;
+        self.supported_capabilities
+            .insert(CapabilityName::new("network")?);
+        self.network = Some(network);
+        Ok(self)
+    }
+
+    pub fn network_target(&self) -> Option<&crate::toolchain::NetworkTarget> {
+        self.network.as_ref()
     }
 
     pub fn name(&self) -> &str {
@@ -389,6 +416,13 @@ impl CompilationRequest {
                 capability: capability.as_str().to_owned(),
             });
         }
+        crate::toolchain::validate_network_selection(
+            capabilities.iter().map(CapabilityName::as_str),
+            target.network_target(),
+        )
+        .map_err(|error| DriverError::InvalidNetworkTarget(error.to_string()))?;
+        let build_inputs =
+            DeclaredBuildInputs::default().with_network_target(target.network_target().cloned());
         packages.select_bootstrap_standard_modules(|required| {
             capabilities
                 .iter()
@@ -421,7 +455,7 @@ impl CompilationRequest {
             sources,
             root,
             program_arguments: Vec::new(),
-            build_inputs: DeclaredBuildInputs::default(),
+            build_inputs,
             documentation_fixture: false,
             warning_profiles: BTreeSet::new(),
             diagnostic_profiles: BTreeSet::new(),
@@ -489,7 +523,9 @@ impl CompilationRequest {
     }
 
     pub fn with_declared_build_inputs(mut self, inputs: DeclaredBuildInputs) -> Self {
-        self.build_inputs = inputs;
+        // Target policy is owned by the validated request, including when a
+        // test overlay or caller replaces the remaining declared inputs.
+        self.build_inputs = inputs.with_network_target(self.target.network_target().cloned());
         self
     }
 
@@ -1116,7 +1152,7 @@ impl CompilationRequest {
             };
         }
         self.packages = packages;
-        self.build_inputs = build_inputs;
+        self.build_inputs = build_inputs.with_network_target(self.target.network_target().cloned());
         Ok(self)
     }
 
@@ -1439,6 +1475,7 @@ impl CompilationOutput {
 #[derive(Debug)]
 pub enum DriverError {
     InvalidCapability(String),
+    InvalidNetworkTarget(String),
     UnsupportedTargetProfile {
         target: String,
         profile: &'static str,
@@ -1468,6 +1505,9 @@ impl fmt::Display for DriverError {
         match self {
             Self::InvalidCapability(capability) => {
                 write!(formatter, "invalid capability name `{capability}`")
+            }
+            Self::InvalidNetworkTarget(message) => {
+                write!(formatter, "invalid network target: {message}")
             }
             Self::UnsupportedTargetProfile { target, profile } => {
                 write!(
@@ -2531,6 +2571,13 @@ fn execute_pipeline(
                     request.program_arguments.clone(),
                     request.limits.max_vm_heap_bytes,
                 );
+                host.install_network_target(
+                    request.target.network_target().cloned(),
+                    request
+                        .capabilities
+                        .iter()
+                        .any(|capability| capability.as_str() == "clock"),
+                );
                 if let Some(envelope) = request.test_envelope.clone() {
                     host.install_testing_envelope(envelope);
                 }
@@ -2670,6 +2717,9 @@ fn install_selected_standard_sources(
     let filesystem_available = packages
         .module(packages.standard(), &crate::source::ModulePath::new("fs")?)
         .is_some();
+    let network_available = packages
+        .module(packages.standard(), &crate::source::ModulePath::new("net")?)
+        .is_some();
     let standard_source = packages
         .package(packages.standard())
         .expect("the package graph contains its selected standard package")
@@ -2690,11 +2740,13 @@ fn install_selected_standard_sources(
         b"std.messagepack",
         b"std.protobuf",
         b"std.json",
+        b"std.net",
     ]
     .iter()
     .any(|module| {
         (*module != b"std.console" || console_available)
             && (*module != b"std.fs" || filesystem_available)
+            && (*module != b"std.net" || network_available)
             && imports(module)
     });
     let console_selected = console_available && imports(b"std.console");
@@ -5210,6 +5262,403 @@ mod tests {
         );
         assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
         assert!(output.stdout().is_empty());
+    }
+
+    #[test]
+    fn network_configuration_survives_direct_requests_and_input_replacement() {
+        let build = |servers: Vec<String>, capabilities: BTreeSet<CapabilityName>| {
+            let baseline = operation_request_with_capabilities(
+                Operation::Check,
+                b"fn main() {}\n",
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            );
+            CompilationRequest::new(
+                Operation::Check,
+                Edition::V0_1,
+                BuildTarget::vm_hosted().with_network_target(crate::toolchain::NetworkTarget {
+                    resolver_servers: servers,
+                })?,
+                HostProfile::Hosted,
+                capabilities,
+                DiagnosticFormat::Json,
+                SourceForm::Module,
+                ResourceLimits::default(),
+                baseline.packages,
+                baseline.sources,
+                baseline.root,
+            )
+        };
+        let servers = vec!["192.0.2.53:53".into(), "192.0.2.54:53".into()];
+        let network = BTreeSet::from([CapabilityName::new("network").unwrap()]);
+        let first = execute(
+            build(servers.clone(), network.clone())
+                .unwrap()
+                .with_declared_build_inputs(DeclaredBuildInputs::default()),
+        )
+        .unwrap();
+        let mut reversed = servers.clone();
+        reversed.reverse();
+        let second = execute(build(reversed, network).unwrap()).unwrap();
+        assert_eq!(first.status(), CompilationStatus::Success);
+        let artifact = first.artifact().unwrap();
+        assert_eq!(artifact.network_target().unwrap().resolver_servers, servers);
+        assert_ne!(
+            artifact.build_hash(),
+            second.artifact().unwrap().build_hash()
+        );
+        assert!(matches!(
+            build(servers, BTreeSet::new()),
+            Err(DriverError::InvalidNetworkTarget(_))
+        ));
+        assert!(matches!(
+            BuildTarget::tondo_meta().with_network_target(crate::toolchain::NetworkTarget {
+                resolver_servers: vec!["192.0.2.53:53".into()],
+            }),
+            Err(DriverError::InvalidNetworkTarget(_))
+        ));
+        assert!(
+            !BuildTarget::vm_hosted_capabilities()
+                .iter()
+                .any(|capability| capability.as_str() == "network")
+        );
+    }
+
+    fn network_request(operation: Operation, source: &[u8]) -> CompilationRequest {
+        network_request_with_capabilities(
+            operation,
+            source,
+            BTreeSet::from([CapabilityName::new("network").unwrap()]),
+        )
+    }
+
+    fn network_request_with_capabilities(
+        operation: Operation,
+        source: &[u8],
+        capabilities: BTreeSet<CapabilityName>,
+    ) -> CompilationRequest {
+        let baseline = operation_request_with_capabilities(
+            operation,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        );
+        let packages = PackageGraph::loose(&baseline.sources, baseline.root).unwrap();
+        CompilationRequest::new(
+            operation,
+            Edition::V0_1,
+            BuildTarget::vm_hosted()
+                .with_network_target(crate::toolchain::NetworkTarget {
+                    resolver_servers: vec!["192.0.2.53:53".into()],
+                })
+                .unwrap(),
+            HostProfile::Hosted,
+            capabilities,
+            DiagnosticFormat::Json,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            packages,
+            baseline.sources,
+            baseline.root,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn network_frontend_registers_public_effects_and_consuming_operations() {
+        for (label, source) in [
+            ("import", "import std.net\nfn main() {}\n"),
+            (
+                "associated parse",
+                "import std.net\nfn main() {\n let parse = net.IpAddress.parse\n }\n",
+            ),
+            (
+                "associated defaults",
+                "import std.net\nfn main() {\n let defaults = net.NetLimits.defaults\n }\n",
+            ),
+            (
+                "associated close",
+                "import std.net\nfn main() {\n let close = net.TcpStream.close\n }\n",
+            ),
+            (
+                "consuming close",
+                "import std.net\nfn consume(reader: net.TcpReadHalf) { net.TcpReadHalf.close(reader) }\nfn main() {}\n",
+            ),
+            (
+                "shared read",
+                "import std.net\nfn consume(reader: net.TcpReadHalf, options: net.NetOptions) { _ = reader.read(1, options)\n net.TcpReadHalf.close(reader) }\nfn main() {}\n",
+            ),
+        ] {
+            let probe = execute(network_request(Operation::Check, source.as_bytes())).unwrap();
+            assert_eq!(
+                probe.status(),
+                CompilationStatus::Success,
+                "{label}: {}",
+                probe.diagnostics().human()
+            );
+        }
+        let output = execute(network_request(
+            Operation::Check,
+            b"import std.net\n\
+            fn readAndClose(reader: net.TcpReadHalf, options: net.NetOptions) {\n\
+             _ = reader.read(1, options)\n net.TcpReadHalf.close(reader)\n }\n\
+            fn main() {\n let parse = net.IpAddress.parse\n\
+             let defaults = net.NetLimits.defaults\n let close = net.TcpStream.close\n }\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let hir = output.semantic_model().unwrap().hir().unwrap();
+        let functions = hir
+            .callables()
+            .filter_map(|callable| match callable.id() {
+                crate::hir::HirCallableId::Host(crate::hir::HirBootstrapHostFunction::Network(
+                    operation,
+                )) => Some((operation, callable)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(functions.len(), 40);
+        assert_eq!(
+            functions
+                .iter()
+                .filter(|(operation, _)| operation.selectable())
+                .count(),
+            3
+        );
+        for (operation, callable) in functions {
+            let crate::types::TypeKind::Function(function) =
+                hir.interner().kind(callable.function_type()).unwrap()
+            else {
+                panic!("network callable is not a function");
+            };
+            assert_eq!(function.suspends(), operation.suspends());
+            assert_eq!(function.selectable(), operation.selectable());
+            if operation.receiver().is_some() {
+                assert!(callable.parameters()[0].is_receiver());
+                assert_eq!(
+                    callable.parameters()[0].mode(),
+                    crate::types::ParameterMode::Ref
+                );
+            } else {
+                assert!(
+                    callable
+                        .parameters()
+                        .iter()
+                        .all(|parameter| parameter.mode() == crate::types::ParameterMode::Value)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn network_frontend_rejects_missing_capability_and_terminal_misuse() {
+        let unavailable = execute(operation_request_with_capabilities(
+            Operation::Check,
+            b"import std.net\nfn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(unavailable.status(), CompilationStatus::Rejected);
+        assert!(
+            unavailable
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "E1008"
+                    && diagnostic
+                        .message()
+                        .contains("capability `network` is missing"))
+        );
+        for body in [
+            "fn misuse(stream: net.TcpStream) {}",
+            "fn misuse(stream: net.TcpStream) { let duplicate = stream\n net.TcpStream.close(stream)\n net.TcpStream.close(duplicate) }",
+            "fn misuse(stream: net.TcpStream) { net.TcpStream.close(stream)\n net.TcpStream.close(stream) }",
+            "fn misuse(stream: net.TcpStream) { let halves = net.TcpStream.split(stream)\n net.TcpStream.close(stream) }",
+            "fn misuse(): net.HostName { net.HostName { text: \"forged\" } }",
+        ] {
+            let source = format!("import std.net\n{body}\nfn main() {{}}\n");
+            let output = execute(network_request(Operation::Check, source.as_bytes())).unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Rejected,
+                "{body}: {}",
+                output.diagnostics().human()
+            );
+            assert!(!output.diagnostics().diagnostics().is_empty(), "{body}");
+            assert!(
+                output
+                    .diagnostics()
+                    .diagnostics()
+                    .iter()
+                    .all(|diagnostic| diagnostic.code() != "E0004"),
+                "{body}: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn network_hosted_values_preserve_content_keys_and_bounded_errors() {
+        let output = execute(network_request(
+            Operation::Run,
+            include_bytes!("../tests/fixtures/net-values.to"),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+        assert!(output.stdout().is_empty());
+    }
+
+    #[test]
+    fn network_public_tcp_udp_and_ephemeral_listener_execute() {
+        let output = execute(network_request(
+            Operation::Run,
+            include_bytes!("../tests/fixtures/net-transports.to"),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+        assert!(output.stdout().is_empty());
+    }
+
+    #[test]
+    fn network_public_handles_transfer_to_thread_and_return_from_parent_provider() {
+        let output = execute(network_request_with_capabilities(
+            Operation::Run,
+            include_bytes!("../tests/fixtures/net-thread.to"),
+            BTreeSet::from([
+                CapabilityName::new("network").unwrap(),
+                CapabilityName::new("threads").unwrap(),
+            ]),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+        assert!(output.stdout().is_empty());
+    }
+
+    #[test]
+    fn network_synchronous_listener_returns_from_real_blocking_worker() {
+        let output = execute(network_request_with_capabilities(
+            Operation::Run,
+            include_bytes!("../tests/fixtures/net-blocking-sync.to"),
+            BTreeSet::from([
+                CapabilityName::new("network").unwrap(),
+                CapabilityName::new("threads").unwrap(),
+            ]),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+    }
+
+    #[test]
+    fn network_blocking_pool_callable_contract_is_checked() {
+        let source = br#"import std.net
+import std.executor
+
+fn main() {
+    let pool = match executor.blockingPool(1, 1) {
+        ok(opened) => opened
+        err(_) => panic("pool")
+    }
+    _ = pool.run(waitForConnection)
+    pool.shutdown()
+}
+
+fn waitForConnection(): !net.NetError {
+    let ip = net.IpAddress.parse("127.0.0.1")?
+    let address = net.socketAddress(ip, 0)?
+    let options = net.options(none, net.NetLimits.defaults())?
+    let listener = net.listen(address, 1)?
+    let incoming = listener.accept(options)
+    net.TcpListener.close(listener)
+    match incoming {
+        ok(stream) => net.TcpStream.close(stream)
+        err(_) => ()
+    }
+}
+"#;
+        let output = execute(network_request_with_capabilities(
+            Operation::Check,
+            source,
+            BTreeSet::from([
+                CapabilityName::new("network").unwrap(),
+                CapabilityName::new("threads").unwrap(),
+            ]),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Rejected,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "E1102"),
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.code() != "E0004"),
+            "{}",
+            output.diagnostics().human()
+        );
+        let source = std::str::from_utf8(source).unwrap().replace(
+            "    let incoming = listener.accept(options)\n", "").replace(
+            "    match incoming {\n        ok(stream) => net.TcpStream.close(stream)\n        err(_) => ()\n    }\n", "");
+        let accepted = execute(network_request_with_capabilities(
+            Operation::Check,
+            source.as_bytes(),
+            BTreeSet::from([
+                CapabilityName::new("network").unwrap(),
+                CapabilityName::new("threads").unwrap(),
+            ]),
+        ))
+        .unwrap();
+        assert_eq!(
+            accepted.status(),
+            CompilationStatus::Success,
+            "{}",
+            accepted.diagnostics().human()
+        );
     }
 
     #[test]

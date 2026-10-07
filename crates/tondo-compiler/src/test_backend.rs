@@ -51,10 +51,41 @@ pub fn execute_compiled_with_environment(
     diagnostics: Option<tondo_vm::runtime::DiagnosticConfig>,
     environment: BTreeMap<Vec<u8>, Vec<u8>>,
 ) -> Result<tondo_vm::runtime::VmExecution, tondo_vm::runtime::VmError> {
+    execute_compiled_with_environment_and_network(
+        program,
+        entry,
+        limits,
+        participation,
+        diagnostics,
+        environment,
+        None,
+        false,
+    )
+}
+
+/// Executes the coordinator's explicit network policy in a fresh worker.
+/// Resolver configuration is data only; provider I/O starts at a public call.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_compiled_with_environment_and_network(
+    program: &tondo_vm::bytecode::BytecodeProgram,
+    entry: tondo_vm::bytecode::BytecodeFunctionId,
+    limits: tondo_vm::runtime::VmLimits,
+    participation: TestParticipation,
+    diagnostics: Option<tondo_vm::runtime::DiagnosticConfig>,
+    environment: BTreeMap<Vec<u8>, Vec<u8>>,
+    network: Option<&crate::toolchain::NetworkTarget>,
+    clock: bool,
+) -> Result<tondo_vm::runtime::VmExecution, tondo_vm::runtime::VmError> {
+    if let Some(network) = network {
+        network
+            .validate()
+            .map_err(|error| tondo_vm::runtime::VmError::Host(error.to_string()))?;
+    }
     let mut host = crate::process_host::BootstrapHost::with_test_environment(
         environment,
         limits.max_heap_bytes,
     );
+    host.install_network_target(network.cloned(), clock);
     host.install_testing_participation(participation);
     tondo_vm::runtime::execute_with_limits_and_copy_strategy_and_diagnostics(
         program,

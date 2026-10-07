@@ -1,0 +1,104 @@
+import std.net
+import std.bytes
+import std.io
+
+fn value[T](result: T ! net.NetError): T {
+    match result {
+        ok(payload) => payload
+        err(_) => panic("network operation failed")
+    }
+}
+
+fn main() {
+    let ip = value(net.IpAddress.parse("127.0.0.1"))
+    let ephemeral = value(net.socketAddress(ip, 0))
+    let options = value(net.options(none, value(net.NetLimits.create(1024, 512, 16))))
+    let listener = value(net.listen(ephemeral, 4))
+    let destination = value(listener.localAddress())
+    assert(destination != ephemeral)
+    let client = value(net.connect(destination, options))
+    assert(value(client.peerAddress()) == destination)
+    let server = value(listener.accept(options))
+    assert(value(server.localAddress()) == destination)
+    assert(value(server.peerAddress()) == value(client.localAddress()))
+    let (clientRead, clientWrite) = net.TcpStream.split(client)
+    let (serverRead, serverWrite) = net.TcpStream.split(server)
+    let payload = match bytes.Bytes("hello") {
+        ok(data) => data
+        err(_) => panic("bytes construction failed")
+    }
+    assert(value(clientWrite.write(payload, options)) == 5)
+    value(clientWrite.flush(options))
+    match value(serverRead.read(1024, options)) {
+        io.ReadResult.Data(data) => assert(data.equal(payload))
+        io.ReadResult.Eof => panic("unexpected TCP EOF")
+    }
+    assert(value(clientWrite.write(payload, options)) == 5)
+    assert(value(serverWrite.write(payload, options)) == 5)
+    let selectedRead = select {
+        let result = clientRead.read(1024, options) => {
+            match value(result) {
+                io.ReadResult.Data(data) => assert(data.equal(payload))
+                _ => panic("selected client read lost its data")
+            }
+            0
+        }
+        let result = serverRead.read(1024, options) => {
+            match value(result) {
+                io.ReadResult.Data(data) => assert(data.equal(payload))
+                _ => panic("selected server read lost its data")
+            }
+            1
+        }
+    }
+    let remainingRead = if selectedRead == 0 { value(serverRead.read(1024, options)) } else { value(clientRead.read(1024, options)) }
+    match remainingRead {
+        io.ReadResult.Data(data) => assert(data.equal(payload))
+        _ => panic("losing TCP read consumed its data")
+    }
+    value(clientWrite.shutdown(options))
+    match value(serverRead.read(1024, options)) {
+        io.ReadResult.Eof => ()
+        _ => panic("TCP shutdown did not deliver EOF")
+    }
+    net.TcpReadHalf.close(clientRead)
+    net.TcpWriteHalf.close(clientWrite)
+    net.TcpReadHalf.close(serverRead)
+    net.TcpWriteHalf.close(serverWrite)
+    net.TcpListener.close(listener)
+
+    let sender = value(net.bind(ephemeral))
+    let receiver = value(net.bind(ephemeral))
+    let source = value(sender.localAddress())
+    let destinationUdp = value(receiver.localAddress())
+    value(sender.sendTo(payload, destinationUdp, options))
+    let datagram = value(receiver.receiveFrom(options))
+    assert(datagram.source() == source)
+    assert(datagram.bytes().equal(payload))
+    let secondReceiver = value(net.bind(ephemeral))
+    value(sender.sendTo(payload, destinationUdp, options))
+    value(sender.sendTo(payload, value(secondReceiver.localAddress()), options))
+    let selectedDatagram = select {
+        let result = receiver.receiveFrom(options) => {
+            assert(value(result).bytes().equal(payload))
+            0
+        }
+        let result = secondReceiver.receiveFrom(options) => {
+            assert(value(result).bytes().equal(payload))
+            1
+        }
+    }
+    let remainingDatagram = if selectedDatagram == 0 { value(secondReceiver.receiveFrom(options)) } else { value(receiver.receiveFrom(options)) }
+    assert(remainingDatagram.bytes().equal(payload))
+    let empty = select {
+        let result = receiver.receiveFrom(options) => {
+            _ = value(result)
+            false
+        }
+        else => true
+    }
+    assert(empty)
+    net.UdpSocket.close(secondReceiver)
+    net.UdpSocket.close(sender)
+    net.UdpSocket.close(receiver)
+}

@@ -588,7 +588,7 @@ impl ProjectPlan {
 
         Ok(ResolvedProject {
             edition: self.packages[&self.root.package].edition,
-            target: BuildTarget::vm_hosted(),
+            target: self.target.build_target()?,
             profile: self.target.profile,
             capabilities: self.target.capabilities.clone(),
             source_form: self.root.form,
@@ -1203,6 +1203,14 @@ struct PlannedTarget {
 }
 
 impl PlannedTarget {
+    fn build_target(&self) -> Result<BuildTarget, DriverError> {
+        let target = BuildTarget::vm_hosted();
+        match &self.network {
+            Some(network) => target.with_network_target(network.clone()),
+            None => Ok(target),
+        }
+    }
+
     fn from_wire(target: TargetWire) -> Result<Self, ProjectError> {
         if target.name != BuildTarget::vm_hosted().name() {
             return Err(ProjectError::UnsupportedTarget(target.name));
@@ -1219,12 +1227,16 @@ impl PlannedTarget {
             .into_iter()
             .map(CapabilityName::new)
             .collect::<Result<BTreeSet<_>, _>>()?;
-        let supported = BuildTarget::vm_hosted().supported_capabilities().clone();
         crate::toolchain::validate_network_selection(
             capabilities.iter().map(CapabilityName::as_str),
             target.network.as_ref(),
         )
         .map_err(|error| ProjectError::InvalidManifest(error.to_string()))?;
+        let hosted = match &target.network {
+            Some(network) => BuildTarget::vm_hosted().with_network_target(network.clone())?,
+            None => BuildTarget::vm_hosted(),
+        };
+        let supported = hosted.supported_capabilities();
         if let Some(capability) = capabilities
             .iter()
             .find(|capability| !supported.contains(*capability))
@@ -1960,6 +1972,36 @@ mod tests {
             "{:#?}",
             output.diagnostics().diagnostics()
         );
+    }
+
+    #[test]
+    fn network_configuration_reaches_compilation_and_build_identity() {
+        let (manifest, lockfile, supplied) = root_project(b"fn main() {}\n", b"unused");
+        let mut manifest: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        manifest["target"]["capabilities"] = json!(["network"]);
+        manifest["target"]["network"] = json!({
+            "resolver_servers": ["192.0.2.53:53", "[2001:db8::53]:53"]
+        });
+        let manifest = serde_json::to_vec(&manifest).unwrap();
+        let mut lockfile: serde_json::Value = serde_json::from_slice(&lockfile).unwrap();
+        lockfile["manifest_hash"] = json!(sha256(&manifest));
+        let lockfile = serde_json::to_vec(&lockfile).unwrap();
+        let plan = ProjectPlan::parse(&manifest, &lockfile).unwrap();
+        let expected = plan.network_target().unwrap().clone();
+        let request = plan
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Check,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        assert_eq!(request.target().network_target(), Some(&expected));
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.artifact().unwrap().network_target(), Some(&expected));
+        assert_eq!(output.artifact().unwrap().capabilities(), ["network"]);
     }
 
     #[test]

@@ -3026,10 +3026,14 @@ El contrato normativo y el registro único son
 Los handles son afines, no se copian ni se comparten; `close` es explícito y la
 conformance comprueba ownership, commit/rollback, límites, cancelación,
 diagnóstico privado y ausencia de efectos por import. La superficie queda
-`contract-locked`, pero sus adaptadores VM/host, implementación, tests de
-conformance, benchmarks y documentación de uso siguen pendientes de las leaves
-`STD-NET-*` posteriores a `NATIVE-001`; este contrato no promociona aún símbolos
-runtime.
+`contract-locked`. The scalar kernel/private provider is verified separately
+from the public hosted integration. The latter implements the 40 operations,
+nominal types, explicit resolver configuration, receiving-account admission
+and scope cleanup described in
+[`stdlib-net-host.md`](docs/contracts/stdlib-net-host.md); its promotion remains
+pending the joint selection and current-source quality gates. Networking test,
+performance, portable conformance, usage documentation and native ABI/AOT
+remain separate `STD-NET-*` owner leaves.
 
 #### 14.4.7 `std.encoding`
 

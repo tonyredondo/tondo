@@ -497,6 +497,7 @@ impl PackageGraph {
             "time" => has_capability("clock"),
             "env" => has_capability("environment"),
             "fs" => has_capability("filesystem"),
+            "net" => has_capability("network"),
             // A custom pinned standard package may contain capability-free
             // modules in addition to the compiler-owned bootstrap pair.
             _ => true,
@@ -685,6 +686,7 @@ impl PackageGraph {
                     "time" => Some("clock"),
                     "env" => Some("environment"),
                     "fs" => Some("filesystem"),
+                    "net" => Some("network"),
                     _ => None,
                 };
                 if let Some(capability) = capability {
@@ -743,6 +745,7 @@ pub(crate) fn bootstrap_standard_modules() -> Result<Vec<ModulePath>, PackageGra
         "json",
         "yaml",
         "uuid",
+        "net",
         "encoding",
         "messagepack",
         "protobuf",

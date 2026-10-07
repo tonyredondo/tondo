@@ -383,6 +383,7 @@ impl<'a> TypeLowerer<'a> {
         }
         self.lower_bootstrap_testing_nominal_declarations()?;
         self.lower_bootstrap_uuid_nominal_declarations()?;
+        self.lower_bootstrap_net_declarations()?;
         self.lower_bootstrap_yaml_nominal_declarations()?;
         self.lower_bootstrap_encoding_nominal_declarations()?;
         self.lower_bootstrap_serialization_nominal_declarations()?;
@@ -395,6 +396,213 @@ impl<'a> TypeLowerer<'a> {
         self.lower_reflection_nominals()?;
         self.lower_bootstrap_fs_nominal_declarations()?;
         self.lower_bootstrap_console_nominal_declarations()
+    }
+
+    fn lower_bootstrap_net_declarations(&mut self) -> Result<(), HirError> {
+        use tondo_vm::network::{NetworkOperation as Operation, NetworkType as Kind};
+        let path = ModulePath::new("net")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let name = Name::new("NetError").unwrap();
+        let Some(symbol) = self.resolved.bootstrap_nominal(&module, &name) else {
+            return Ok(());
+        };
+        let span = self.resolved.symbol(symbol).unwrap().span();
+        let error = self.bootstrap_nominal_type(&module, "NetError")?;
+        let tls_error = self.bootstrap_nominal_type(&module, "TlsError")?;
+        let verification = self.bootstrap_nominal_type(&module, "TlsVerification")?;
+        let shutdown = self.bootstrap_nominal_type(&module, "Shutdown")?;
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let hostname = self.bootstrap_nominal_type(&module, "HostName")?;
+        let ip = self.bootstrap_nominal_type(&module, "IpAddress")?;
+        let address = self.bootstrap_nominal_type(&module, "SocketAddress")?;
+        let string = self.interner.scalar(ScalarType::String);
+        let int = self.interner.scalar(ScalarType::Int);
+        let uint = self.interner.scalar(ScalarType::UInt64);
+        // Addresses are protected value records. Their equality and Key
+        // behavior depend on their content, never on a host registry token.
+        for (name, self_type, fields) in [
+            ("HostName", hostname, vec![("text", string)]),
+            (
+                "IpAddress",
+                ip,
+                vec![("family", int), ("high", uint), ("low", uint)],
+            ),
+            ("SocketAddress", address, vec![("ip", ip), ("port", int)]),
+        ] {
+            let symbol = self
+                .resolved
+                .bootstrap_nominal(&module, &Name::new(name).unwrap())
+                .unwrap();
+            let fields = fields
+                .into_iter()
+                .map(|(name, ty)| self.bootstrap_field(symbol, name, ty))
+                .collect();
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span,
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape: HirNominalShape::Record { fields },
+                    }),
+                },
+            );
+        }
+        for (name, names) in [
+            ("NetError", tondo_stdlib::net::ERROR_VARIANTS),
+            ("TlsError", tondo_stdlib::net::TLS_ERROR_VARIANTS),
+            (
+                "TlsVerification",
+                tondo_stdlib::net::TLS_VERIFICATION_VARIANTS,
+            ),
+            ("Shutdown", tondo_stdlib::net::SHUTDOWN_VARIANTS),
+        ] {
+            let symbol = self
+                .resolved
+                .bootstrap_nominal(&module, &Name::new(name).unwrap())
+                .unwrap();
+            let declaration = self.resolved.symbol(symbol).unwrap();
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let variants = names
+                .iter()
+                .map(|variant| {
+                    let payload = match (name, *variant) {
+                        ("TlsError", "Transport") => vec![error],
+                        ("TlsVerification", "PinnedCertificate") => vec![bytes],
+                        _ => Vec::new(),
+                    };
+                    self.bootstrap_variant(symbol, variant, payload)
+                })
+                .collect();
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape: HirNominalShape::Enum { variants },
+                    }),
+                },
+            );
+        }
+        let mut types = BTreeMap::new();
+        for kind in Kind::ALL {
+            types.insert(
+                kind,
+                self.interner
+                    .intrinsic(IntrinsicType::Network(kind), Vec::new())?,
+            );
+        }
+        let limits = types[&Kind::NetLimits];
+        let options = types[&Kind::NetOptions];
+        let listener = types[&Kind::TcpListener];
+        let tcp = types[&Kind::TcpStream];
+        let read = types[&Kind::TcpReadHalf];
+        let write = types[&Kind::TcpWriteHalf];
+        let udp = types[&Kind::UdpSocket];
+        let datagram = types[&Kind::Datagram];
+        let tls_config = types[&Kind::TlsConfig];
+        let tls = types[&Kind::TlsStream];
+        let tls_read = types[&Kind::TlsReadHalf];
+        let tls_write = types[&Kind::TlsWriteHalf];
+        let int = self.interner.scalar(ScalarType::Int);
+        let string = self.interner.scalar(ScalarType::String);
+        let unit = self.interner.scalar(ScalarType::Unit);
+        let instant = self
+            .interner
+            .intrinsic(IntrinsicType::Instant, Vec::new())?;
+        let deadline = self.interner.option(instant)?;
+        let read_result = self.standard_io_type("ReadResult")?;
+        let addresses = self
+            .interner
+            .intrinsic(IntrinsicType::Array, vec![address])?;
+        let tcp_halves = self.interner.tuple(vec![read, write])?;
+        let tls_halves = self.interner.tuple(vec![tls_read, tls_write])?;
+        for operation in Operation::ALL {
+            let (parameters, success, failure) = match operation {
+                Operation::HostName => (vec![string], hostname, Some(error)),
+                Operation::IpParse => (vec![string], ip, Some(error)),
+                Operation::SocketAddress => (vec![ip, int], address, Some(error)),
+                Operation::LimitsCreate => (vec![int, int, int], limits, Some(error)),
+                Operation::LimitsDefaults => (vec![], limits, None),
+                Operation::Options => (vec![deadline, limits], options, Some(error)),
+                Operation::Resolve => (vec![hostname, int, options], addresses, Some(error)),
+                Operation::Connect => (vec![address, options], tcp, Some(error)),
+                Operation::Listen => (vec![address, int], listener, Some(error)),
+                Operation::ListenerAccept => (vec![listener, options], tcp, Some(error)),
+                Operation::ListenerLocal => (vec![listener], address, Some(error)),
+                Operation::ListenerClose => (vec![listener], unit, None),
+                Operation::TcpSplit => (vec![tcp], tcp_halves, None),
+                Operation::TcpLocal | Operation::TcpPeer => (vec![tcp], address, Some(error)),
+                Operation::TcpShutdown => (vec![tcp, shutdown, options], unit, Some(error)),
+                Operation::TcpClose => (vec![tcp], unit, None),
+                Operation::TcpRead => (vec![read, int, options], read_result, Some(error)),
+                Operation::TcpReadClose => (vec![read], unit, None),
+                Operation::TcpWrite => (vec![write, bytes, options], int, Some(error)),
+                Operation::TcpFlush | Operation::TcpWriteShutdown => {
+                    (vec![write, options], unit, Some(error))
+                }
+                Operation::TcpWriteClose => (vec![write], unit, None),
+                Operation::Bind => (vec![address], udp, Some(error)),
+                Operation::UdpSend => (vec![udp, bytes, address, options], unit, Some(error)),
+                Operation::UdpReceive => (vec![udp, options], datagram, Some(error)),
+                Operation::UdpLocal => (vec![udp], address, Some(error)),
+                Operation::UdpClose => (vec![udp], unit, None),
+                Operation::DatagramBytes => (vec![datagram], bytes, None),
+                Operation::DatagramSource => (vec![datagram], address, None),
+                Operation::TlsConfig => (vec![verification], tls_config, Some(tls_error)),
+                Operation::TlsConnect => (
+                    vec![tcp, hostname, tls_config, options],
+                    tls,
+                    Some(tls_error),
+                ),
+                Operation::TlsSplit => (vec![tls], tls_halves, None),
+                Operation::TlsClose => (vec![tls], unit, None),
+                Operation::TlsRead => (vec![tls_read, int, options], read_result, Some(tls_error)),
+                Operation::TlsReadClose => (vec![tls_read], unit, None),
+                Operation::TlsWrite => (vec![tls_write, bytes, options], int, Some(tls_error)),
+                Operation::TlsFlush | Operation::TlsShutdown => {
+                    (vec![tls_write, options], unit, Some(tls_error))
+                }
+                Operation::TlsWriteClose => (vec![tls_write], unit, None),
+            };
+            let outcome = match failure {
+                Some(error) => self.interner.result(success, error)?,
+                None => success,
+            };
+            let parameters = parameters
+                .into_iter()
+                .enumerate()
+                .map(|(index, ty)| {
+                    let receiver = index == 0 && operation.receiver().is_some();
+                    (
+                        ty,
+                        if receiver {
+                            ParameterMode::Ref
+                        } else {
+                            ParameterMode::Value
+                        },
+                        receiver,
+                    )
+                })
+                .collect();
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::Network(operation),
+                parameters,
+                None,
+                outcome,
+            )?;
+        }
+        Ok(())
     }
 
     fn lower_bootstrap_uuid_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -10656,6 +10864,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::ProtoReader
                         | IntrinsicType::ProtoWriter
                         | IntrinsicType::Reflection(_)
+                        | IntrinsicType::Network(_)
                         | IntrinsicType::UnknownFields => values.push(true),
                     },
                 },
