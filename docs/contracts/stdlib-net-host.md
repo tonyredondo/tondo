@@ -48,7 +48,9 @@ a prerequisite rather than evidence inherited from older bounded campaigns.
 
 The source fixtures and tests are registered in
 [`testing/stdlib-net-host.json`](../../testing/stdlib-net-host.json).
-The joint local quality measurements and their source-bound ratchet are
-recorded in [the selection contract](async-select-transactions.md).
+The earlier selection source proof is retained in
+[the selection contract](async-select-transactions.md). The renewed joint
+HOST/TEST measurements and source-bound ratchet are recorded in
+[the networking test contract](stdlib-net-test.md#retained-local-quality).
 `STD-NET-TEST-001`, performance, portable conformance, native runtime ABI,
 Cranelift AOT and public API promotion remain separate owner boundaries.

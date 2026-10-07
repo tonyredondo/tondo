@@ -96,3 +96,30 @@ coverage at every 80% global/risk floor, the unchanged mutation selection,
 generated inventories/matrix/ratchet, inspected signed publication and exact-SHA
 CI. Hosted execution does not establish native ABI, native AOT, performance or
 the separate portable conformance and usage owners.
+
+## Retained local quality
+
+The measured source tree is
+`4cd509734355904c9ee97ca681ec8c96be2b5805aab6fa4e2a823616064cc92b`:
+1,379 inputs with set digest
+`27c42b5b0760a8f97f67e6cc7c5cf9008d146cb0e7937e4bb1e9251c31578519`.
+It matches the executable inputs of implementation commit
+`2bf6d47ca59797d8edc1a33b01d40bb0c53fc409`. All 2,749 Rust tests in 74 suites
+passed and generated 196 source-bound layer observations. The corrected-source
+campaign reused instrumented binaries, cleared all previous raw counters and
+ran the complete workspace/all-target test command with four Cargo jobs.
+
+| Metric | Observed |
+| --- | --- |
+| Lines | 301,119 / 329,050 (91.511624%) |
+| Functions | 19,822 / 22,605 (87.688564%) |
+| Regions | 442,189 / 491,842 (89.904685%) |
+| Critical mutation selection | 6 / 6 caught; no missed, timed-out or unviable mutants |
+
+Fresh coverage/mutation bindings, every locked 80% global/risk floor and the
+supported ratchet generation/verification passed. The retained ratchet is
+[conformance-ratchet.json](../../testing/conformance-ratchet.json). No baseline
+or mutation selection was weakened. The earlier stale determinism pin and
+interrupted compilation runs are not successful quality measurements.
+Complete functional-gate and publication CI closure remain separate required
+proof; these local metrics alone do not promote either HOST or TEST.
