@@ -353,6 +353,17 @@ execution and conformant promotion are not established by this private
 implementation checkpoint. Each tracker owner requires its complete
 functional gate and publication CI.
 
+The live production hosted boundary is `verified-production-hosted` in
+[stdlib-net-host.md](stdlib-net-host.md), and the independent model, regression
+and bounded-fuzz boundary is `verified` in
+[stdlib-net-test.md](stdlib-net-test.md). Their joint source `d130e2b` passes
+current-source quality, all local checks and exact-checkout Linux CI. The
+register's `implementation` and `private_provider_draft` retain the original
+private checkpoint, including its originally required follow-ups. Live owner
+progression belongs to `host`, `model` and `promotion.next_blocks`; its next
+leaf is `STD-NET-PERF-001`. Native ABI/AOT and complete API conformance/promotion
+remain outside these hosted/test boundaries.
+
 ## Diagnóstico, cleanup y portabilidad
 
 El runtime puede emitir eventos privados en `std.net`: `resolve.start`,

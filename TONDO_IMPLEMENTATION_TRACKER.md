@@ -71,15 +71,19 @@ full local gate, source-bound quality, publication and exact-SHA CI confirmation
 `STD-NET-IMPL-001` verifies the scalar Rust kernel and private nonblocking
 DNS/TCP/UDP/TLS provider after source-bound quality, the full local gate,
 publication and exact-SHA CI confirmation. Public compiler/VM registration,
-target activation, VM heap admission and production scope cleanup remain
-`STD-NET-HOST-001`, the next owner leaf.
+target activation, VM heap admission and production scope cleanup are verified
+by `STD-NET-HOST-001`. `STD-NET-TEST-001` verifies the independent finite model,
+exact regression corpus, controlled public hosted replay and bounded fuzz.
+Their joint source `d130e2b` preserves every 80% global/risk coverage floor,
+catches all six critical mutants and passes all 348 named checks in exact-source
+Linux CI run `37645341442`. The next networking owner is `STD-NET-PERF-001`.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
 pass on published `adfd5bf`; exact-source CI run `37614412926` is stable.
-The networking implementation has the same executable proof; its owner remains
-open while the spec's temporal promotion statement is aligned and the next
-networking TEST boundary is prepared for consolidated validation.
+The networking HOST/TEST closure has the later joint proof recorded above;
+performance, portable conformance, native integration and usage promotion
+remain separate owner leaves.
 The kernel evidence does not imply
 a public compiler API, production host registration, native ABI or AOT lowering.
 Project manifests remain a separate TOML owner.
@@ -7083,7 +7087,7 @@ estas leaves.
   confirmation. Separate portable/fuzz jobs are expected normal-push skips;
   this does not establish portable or native networking promotion.
   Next: `STD-NET-HOST-001`.
-- [ ] **STD-NET-HOST-001 — Integrate the public hosted networking API.**
+- [x] **STD-NET-HOST-001 — Integrate the public hosted networking API.**
   Register the 40 locked compiler/VM calls and nominal types, forward the
   declared target resolver configuration, enforce capability and affine rules,
   and connect typed heap admission, selector preparation/commit/rollback and
@@ -7091,9 +7095,28 @@ estas leaves.
   providers through public Tondo calls, with no import effects, hidden blocking
   fallback or raw OS errors. Native ABI/AOT remains a separate unpromoted
   boundary unless executable target evidence establishes it.
-- [ ] **STD-NET-TEST-001 — Modelar y endurecer networking.** Cubrir fragmentación,
-  backpressure, DNS, half-close, cancelación, timeouts, TLS boundary, teardown,
-  límites y fallos host reproducibles.
+  Evidence: [host contract](docs/contracts/stdlib-net-host.md) and
+  [host register](testing/stdlib-net-host.json). Joint source `d130e2b` passes
+  all 348 named gate checks, current-source quality and exact-checkout CI run
+  `37645341442`, strict Linux job `112874519399`. Scope retirement, affine
+  ownership, mixed selection and explicit DNS/TLS providers are exercised
+  through real public hosted calls. Portable/native networking is not promoted.
+- [x] **STD-NET-TEST-001 — Verify independent networking models and regressions.**
+  Cover finite admission/stream/TLS ownership models, fragmentation, partial
+  writes, DNS, half-close, cancellation, deadlines, teardown, limits and
+  controlled host failures without importing production code into the oracle.
+  Evidence: [test contract](docs/contracts/stdlib-net-test.md) and
+  [test register](testing/stdlib-net-test.json); 14 independent unit tests,
+  nine integration tests, 40 authored corpus rows, 4,096 deterministic seeds
+  and 128 sanitized fuzz runs. Joint quality executes 2,749 Rust tests in 74
+  suites, measures 301,122/329,050 lines (91.512536%), preserves every locked
+  80% global/risk floor and catches all six critical mutants. Exact source
+  `d130e2b` passes all 348 named CI checks in run `37645341442`; all paginated
+  checks, statuses, runs, PRs and main refs remain stable after more than 60
+  seconds of quiet confirmation. Separate portable/fuzz jobs are expected
+  normal-push skips. The verified boundary is independent tests and hosted
+  regressions; native ABI/AOT, performance and conformant API promotion remain
+  separate. Next: `STD-NET-PERF-001`.
 - [ ] **STD-NET-PERF-001 — Medir networking.** Fijar throughput, tail, memoria,
   allocations, conexiones y cancelación con loopback/provider controlado.
 - [ ] **STD-NET-CONF-001 — Conformar networking.** Ejecutar casos portables,

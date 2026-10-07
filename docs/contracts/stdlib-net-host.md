@@ -3,7 +3,13 @@
 `STD-NET-HOST-001` integrates the locked networking surface through compiler
 checking, MIR, verified bytecode and the hosted VM. The joint selection
 prerequisite, all local repository-gate checks and current-source quality pass.
-Promotion remains pending until exact-SHA publication CI is verified.
+Source commit `d130e2b4edbd8849614abbc6a1c44c0aba8dd5be` passes exact-checkout
+[CI run 37645341442](https://github.com/tonyredondo/tondo/actions/runs/37645341442),
+strict Linux job `112874519399`, with all 348 named checks and the separate
+source-provenance capture. Final paginated checks, statuses, runs, PRs and main
+references remain unchanged after more than 60 seconds of quiet confirmation.
+This verifies the production hosted boundary; complete API/conformance and
+native promotion remain separate.
 
 The registry contains 40 operations and 15 network value types: three address
 records and twelve private host carriers. `NetError`, `TlsError`,
@@ -52,5 +58,8 @@ The earlier selection source proof is retained in
 [the selection contract](async-select-transactions.md). The renewed joint
 HOST/TEST measurements and source-bound ratchet are recorded in
 [the networking test contract](stdlib-net-test.md#retained-local-quality).
-`STD-NET-TEST-001`, performance, portable conformance, native runtime ABI,
-Cranelift AOT and public API promotion remain separate owner boundaries.
+`STD-NET-TEST-001` is verified by that joint source proof and its independent
+model/corpus/fuzz contract. Performance, portable conformance, native runtime
+ABI, Cranelift AOT and complete public API promotion remain separate owner
+boundaries. Normal-push portable and deterministic-fuzz jobs are expected skips;
+they do not establish portable networking. The next owner is `STD-NET-PERF-001`.

@@ -4,8 +4,8 @@
 kernel regressions and controlled public hosted execution. The register is
 [stdlib-net-test.json](../../testing/stdlib-net-test.json). The implementation
 passes the local functional checks and current-source quality. Exact-SHA
-publication CI remains required before closing the tracker owner; native
-networking is not promoted.
+publication CI is verified for source `d130e2b`; the independent testing
+boundary is promoted. Native networking remains outside this proof.
 
 ## Independent domain
 
@@ -134,5 +134,13 @@ strict Linux job `112846816426`, with all 348 checks and a stable final refresh.
 The promotion harness then received a separate correction: state-negative
 mutations now start from validated ready fixtures, including when the live
 owner is verified. Complete focused execution passes in both promotion states.
-This renewed capture binds that script change; its publication CI remains
-required before either owner closes.
+This renewed capture binds that script change. Source
+`d130e2b4edbd8849614abbc6a1c44c0aba8dd5be` passes exact-checkout
+[CI run 37645341442](https://github.com/tonyredondo/tondo/actions/runs/37645341442),
+strict Linux job `112874519399`, in 47m48s. The log proves all 348 named checks,
+the separate source-provenance capture, 2,749 Rust tests in 74 suites and the
+complete focused network testing script. It contains no error annotations.
+All paginated checks, statuses, runs, PRs and main references remain stable
+after more than 60 seconds of quiet confirmation. The separate portable and
+deterministic-fuzz jobs are expected normal-push skips, not portable proof.
+HOST and TEST are verified; the next owner is `STD-NET-PERF-001`.

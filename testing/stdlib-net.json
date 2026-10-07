@@ -22,10 +22,10 @@
     "deadline_without_clock": "static-capability-error"
   },
   "host": {
-    "status": "implementation-in-progress",
+    "status": "verified-production-hosted",
     "register": "testing/stdlib-net-host.json",
     "contract": "docs/contracts/stdlib-net-host.md",
-    "quality_gate": "pending-current-source-proof",
+    "quality_gate": "verified-80-percent-per-scope",
     "prerequisite": "ASYNC-SELECT-ATOMIC-001",
     "public_api_promoted": false,
     "native_abi_or_aot": false,
@@ -70,8 +70,8 @@
     "task": "STD-NET-TEST-001",
     "register": "testing/stdlib-net-test.json",
     "contract": "docs/contracts/stdlib-net-test.md",
-    "status": "ready",
-    "quality_gate": "pending-current-source-proof",
+    "status": "verified",
+    "quality_gate": "verified-80-percent-per-scope",
     "selected_route": "independent-reference-and-public-hosted-regression-boundary"
   },
   "surface": {
@@ -321,7 +321,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-NET-HOST-001"],
+    "next_blocks": ["STD-NET-PERF-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

@@ -4,8 +4,8 @@
   "edition": "0.1",
   "phase": "STD-0.1B",
   "task": "STD-NET-TEST-001",
-  "status": "ready",
-  "quality_gate": "pending-current-source-proof",
+  "status": "verified",
+  "quality_gate": "verified-80-percent-per-scope",
   "contract": "docs/contracts/stdlib-net-test.md",
   "parent_contract": "testing/stdlib-net.json",
   "target": "independent-reference-and-public-hosted-regression-boundary",
@@ -67,7 +67,7 @@
     "minimal_dependency_graph": "stdlib-only-no-compiler-vm-conformance-or-reliability-cli"
   },
   "promotion": {
-    "test_boundary_promoted": false,
+    "test_boundary_promoted": true,
     "public_api_promoted": false,
     "native_abi": "not-claimed",
     "native_aot": "not-claimed",
