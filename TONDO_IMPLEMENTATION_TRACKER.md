@@ -13,7 +13,7 @@ memory design remains hybrid ARC with cycle collection. Native promotion for
 to the production runtime. LLVM remains an experimental comparison. ARM64,
 macOS and Windows probes do not promote additional product targets.
 
-**Last updated:** 2026-10-07
+**Last updated:** 2026-10-08
 
 **Normative specifications:**
 
@@ -48,7 +48,7 @@ Unicode 16 Rust kernel with local priorities, captures, literal replacement
 and fallible lazy iteration. `STD-REGEX-TEST-001` verifies the independent model
 and seeded fuzz; `STD-REGEX-PERF-001` verifies nineteen target-qualified kernel
 routes. `STD-REGEX-CONF-001` verifies seven shared private VM/native Rust
-process groups, clean-source comparison and the full local/CI gates. The current workspace
+process groups, clean-source comparison and the full local/CI gates. That regex
 campaign measures 91.6289% global lines and preserves the 80% floor in every
 global and risk-scope coverage dimension, with all six critical mutants caught.
 `STD-REGEX-DOC-001` verifies the canonical executable Rust-kernel guide after
@@ -80,7 +80,10 @@ Linux CI run `37645341442`. `STD-NET-PERF-001` verifies 21 controlled hosted
 bridge routes with 27 retained samples each, exact lifecycle observations and
 source-bound quality. Published `cba5e826` passes all 351 named checks in
 exact-source Linux CI run `37670512681`, with stable final confirmation.
-The next networking owner is `STD-NET-CONF-001`.
+`STD-NET-CONF-001` and `STD-NET-DOC-001` subsequently verify the qualified
+public hosted conformance and usage boundaries recorded in their owner leaves.
+`STD-CHANNEL-OWNERSHIP-001` verifies the consuming endpoint and iterator
+prerequisite; the next explicit owner is `STD-LOG-IMPL-001`.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -6461,24 +6464,27 @@ estas leaves.
 
 #### 21.3.3 `std.channel`
 
-- [ ] **STD-CHANNEL-OWNERSHIP-001 — Enforce unique channel endpoint ownership.**
-  Repair the reproduced compiler gap: bootstrap Sender/Receiver nominal
-  placeholders derived Copy from Unit and lost Receiver's terminal obligation.
-  Focused hosted repairs pass; full quality and publication remain pending.
-  Seal endpoint capabilities by exact standard identity in HIR and
-  the independent bytecode verifier; propagate them through aggregates and
-  generics, execute endpoint unwind cleanup and preserve current owner state
-  in affine defer. Repair Copy-dependent iterator fixtures, reserve private
-  close scopes for for exits and make collect consume and close on every
-  outcome, including zero and invalid limits. The adopted AsyncIterator
-  protocol adds explicit consuming close; Copy cursor cleanup observes final
-  state while ordinary source defers keep snapshots. Direct and spawned
-  collection share the same verified MIR loop. Verify forbidden copies/discards,
-  explicit fork/close, normal/error/panic/cancellation paths and ordinary
-  hosted projects. The
-  previously verified transport/model/ABI scopes remain bounded; they do not
-  prove this missing compiler ownership contract. This prerequisite blocks
-  the generic logger. Native channel AOT and release remain unclaimed.
+- [x] **STD-CHANNEL-OWNERSHIP-001 — Enforce unique channel endpoint ownership.**
+  Repaired the bootstrap Unit placeholder gap that granted Copy to endpoints
+  and lost Receiver's terminal obligation. HIR and the independent bytecode
+  verifier seal capabilities by exact standard identity and propagate them
+  through aggregates and generics. Hosted cleanup preserves affine owner state
+  and handles normal exits, errors, panic and cancellation. Consuming iteration
+  reserves private close scopes; collect closes on every outcome, including
+  zero and invalid limits. Explicit AsyncIterator close observes final Copy
+  cursor state, while ordinary source defers retain snapshots. Direct and
+  spawned collect share the verified MIR loop. Public projects and regression
+  tests verify fork/close, forbidden copies/discards and exact caller handoff.
+  Source tree `16ae4881` passes 2,846 Rust tests in 77 suites; coverage measures
+  91.596689% lines, 87.867357% functions and 89.992606% regions, preserving every
+  80% global/risk floor. All six selected critical mutants are caught. The 360
+  local functional steps pass as a composed proof, including 206 draft cases,
+  96 select observations and S1A refusal. Published `02eae742` passes the
+  uninterrupted 360-step Linux gate in run `37826292533`, actual-checkout job
+  `113479901934`, with 2,846 Rust tests, no error annotations and 94 seconds of
+  stable final confirmation. Portable and independent fuzz are expected
+  normal-push skips. Transport/model/ABI scopes remain bounded. This closes
+  the generic logger prerequisite; native channel AOT and release are pending.
 - [x] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Cerrada la
   superficie nominal de `Sender[T]`/`Receiver[T]` en compiler, VM hosted y ABI
   nativo privado: `bounded(0/N)`, `unbounded` explícito, FIFO, backpressure,

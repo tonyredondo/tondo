@@ -5,7 +5,8 @@ cerrada por `STD-CHANNEL-DOC-001`. El registro machine-readable está en
 [`testing/stdlib-channel.json`](../../testing/stdlib-channel.json) y la
 superficie canónica completa en
 [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
-Este cierre fija la semántica; no afirma que el runtime público exista todavía.
+This parent fixes the shared semantics. The qualified public hosted ownership
+boundary is recorded separately below; native AOT channel execution is pending.
 La semántica base quedó sellada por `STD-CONC-001`; esta hoja añade la guía
 ejecutable sin cambiar ese contrato.
 
@@ -20,14 +21,15 @@ los símbolos como API pública ni afirma lowering AOT genérico de canales.
 
 ## Frontera de implementación verificada
 
-Compiler endpoint ownership is under repair in `STD-CHANNEL-OWNERSHIP-001`,
+Compiler endpoint ownership is verified by `STD-CHANNEL-OWNERSHIP-001`,
 tracked by [the ownership contract](stdlib-channel-ownership.md). A reproduced
 bootstrap gap previously granted `Copy` to `Receiver[Int]` and its enclosing
 records, so defer captured an old snapshot instead of reserving the live owner.
-Focused repairs reject those capabilities and exercise latest-state defer;
-their full quality and publication gates remain pending. The verified
-transport, bounded model and private native ABI evidence below do not prove
-the missing endpoint capability and terminal-cleanup contract. The prescribed
+The repair rejects those capabilities and exercises latest-state defer,
+consuming iteration and exactly-once protocol close. Source-bound quality,
+the full functional gate and actual-checkout publication CI verify this
+public hosted ownership boundary. Transport, bounded model and private native
+ABI evidence below retain their separate scopes. The prescribed
 non-Copy endpoints, explicit fork and terminal receiver close remain normative.
 
 Estado de host: `verified-scheduler-and-native-bridge`; estado nativo:

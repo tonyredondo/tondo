@@ -910,8 +910,8 @@ normativo fuente es [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-a
 negative collect limits, cancellation and unwind. Implementations provide an
 explicit close method; Copy cursors retain ordinary by-value Copy semantics.
 Affine cursors cannot be reused after consumption; retained channel access
-requires an explicit `fork`. Verification of the ownership repair is tracked
-by `STD-CHANNEL-OWNERSHIP-001` before its hosted promotion.
+requires an explicit `fork`. `STD-CHANNEL-OWNERSHIP-001` verifies this public
+hosted ownership boundary with source-bound quality and exact-checkout CI.
 
 ### 9.4 Coordinación de múltiples operaciones
 
@@ -2336,11 +2336,12 @@ sender. `Receiver[T]` conserva una obligación terminal porque puede ser el
 
 The compiler ownership repair is tracked separately by
 [`STD-CHANNEL-OWNERSHIP-001`](./docs/contracts/stdlib-channel-ownership.md).
-Its focused hosted tests enforce these existing capabilities by exact standard
+Its hosted tests enforce these existing capabilities by exact standard
 identity, independently rederive them in bytecode, and preserve current owner
 state in affine defer. The consuming iterator correction covers private close
 scopes and collection at every limit; a retained receiver must be an explicit
-fork. This repair's quality and publication are still pending. Previous
+fork. Source-bound quality, all 360 functional steps and exact-checkout Linux
+CI verify this public hosted ownership repair. Previous
 transport and private native ABI evidence keep their original scopes.
 
 El último sender cerrado hace que `receive` produzca `none` después de drenar

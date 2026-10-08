@@ -180,7 +180,7 @@
   "testing": "testing/stdlib-channel-test.json",
   "ownership_verification": {
     "task": "STD-CHANNEL-OWNERSHIP-001",
-    "status": "implementation-in-progress",
+    "status": "verified-public-hosted-ownership",
     "contract": "testing/stdlib-channel-ownership.json",
     "document": "docs/contracts/stdlib-channel-ownership.md",
     "native_aot": "not-claimed"
