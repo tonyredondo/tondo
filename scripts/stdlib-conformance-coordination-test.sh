@@ -44,8 +44,12 @@ jq '.owners[0].evidence.refs = []' testing/stdlib-conformance-coordination.json 
 expect_failure missing-ref env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/missing-ref.json" \
     scripts/stdlib-conformance-coordination-check.sh
 
-jq -e --slurpfile evidence testing/stdlib-owner-evidence.json '
+jq -e --slurpfile evidence testing/stdlib-owner-evidence.json \
+  --slurpfile api testing/stdlib-public-api.json '
   . as $root
+  | [$api[0].rows[] | select(.owner == "std.async"
+      and (.symbol | IN("std.async.AsyncIterator.next",
+        "std.async.AsyncIterator.close", "std.async.AsyncIterator.collect"))) | .id] as $iterator
   | $root.status == "planned"
   and $root.promotion.status == "pending"
   and $root.summary.verified_rows + $root.summary.partial_rows + $root.summary.pending_rows == $root.summary.rows
@@ -55,7 +59,10 @@ jq -e --slurpfile evidence testing/stdlib-owner-evidence.json '
     else .status != "verified" end)
   and any($root.owners[]; .id == "std.reflect"
     and (.evidence.cases | index("reflect-public")) != null)
-  and any($root.owners[]; .id == "std.async" and .status == "pending" and (.rows | length) == 12)
+  and ($iterator | length) == 3
+  and any($root.owners[]; . as $owner | .id == "std.async" and .status == "pending"
+    and (.rows | length) == 15 and (.public_signatures | length) == 8
+    and all($iterator[]; . as $id | ($owner.public_signatures | index($id)) != null))
   and all(["std.serialization", "std.json", "std.messagepack", "std.protobuf"][];
     . as $owner_id
     | any($root.owners[]; .id == $owner_id and (.evidence.cases | length) > 0)
