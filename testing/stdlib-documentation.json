@@ -2206,24 +2206,24 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.time:44",
-            "std.time:45",
-            "std.time:46",
-            "std.time:47",
-            "std.time:49",
-            "std.time:50",
-            "std.time:51",
-            "std.time:52"
+            "std.time:62",
+            "std.time:63",
+            "std.time:64",
+            "std.time:65",
+            "std.time:67",
+            "std.time:68",
+            "std.time:69",
+            "std.time:70"
           ],
           "verified_signatures": [
-            "std.time:44",
-            "std.time:45",
-            "std.time:46",
-            "std.time:47",
-            "std.time:49",
-            "std.time:50",
-            "std.time:51",
-            "std.time:52"
+            "std.time:62",
+            "std.time:63",
+            "std.time:64",
+            "std.time:65",
+            "std.time:67",
+            "std.time:68",
+            "std.time:69",
+            "std.time:70"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

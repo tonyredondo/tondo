@@ -5550,14 +5550,14 @@
       "status": "pending",
       "reason": "The conformance registry declares cases; current execution has not been promoted",
       "public_signatures": [
-        "std.time:44",
-        "std.time:45",
-        "std.time:46",
-        "std.time:47",
-        "std.time:49",
-        "std.time:50",
-        "std.time:51",
-        "std.time:52"
+        "std.time:62",
+        "std.time:63",
+        "std.time:64",
+        "std.time:65",
+        "std.time:67",
+        "std.time:68",
+        "std.time:69",
+        "std.time:70"
       ],
       "requirements": [
         "requirement:std.time:capability-and-conformance",
@@ -5623,7 +5623,7 @@
           ]
         },
         {
-          "id": "signature:std.time:44",
+          "id": "signature:std.time:62",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5632,7 +5632,7 @@
           ]
         },
         {
-          "id": "signature:std.time:45",
+          "id": "signature:std.time:63",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5641,7 +5641,7 @@
           ]
         },
         {
-          "id": "signature:std.time:46",
+          "id": "signature:std.time:64",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5650,7 +5650,7 @@
           ]
         },
         {
-          "id": "signature:std.time:47",
+          "id": "signature:std.time:65",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5659,7 +5659,7 @@
           ]
         },
         {
-          "id": "signature:std.time:49",
+          "id": "signature:std.time:67",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5668,7 +5668,7 @@
           ]
         },
         {
-          "id": "signature:std.time:50",
+          "id": "signature:std.time:68",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5677,7 +5677,7 @@
           ]
         },
         {
-          "id": "signature:std.time:51",
+          "id": "signature:std.time:69",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5686,7 +5686,7 @@
           ]
         },
         {
-          "id": "signature:std.time:52",
+          "id": "signature:std.time:70",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
