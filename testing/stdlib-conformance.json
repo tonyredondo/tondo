@@ -14,7 +14,7 @@
   "runner": {
     "lineage": "draft",
     "manifest": "conformance/0.1/manifest.json",
-    "manifest_sha256": "94be3d5c4c39fb0bb56f9baa22f2540f81d90fec6d2949653b5518e6490635b4",
+    "manifest_sha256": "ed2ff84658e36f718e154370335d7163d5ca7e0e2f7839928f9517721afa3a5a",
     "full_suite_case_count": 206,
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
@@ -1261,14 +1261,14 @@
       "status": "pending",
       "reason": "Declared cases require a current execution report; generation does not observe execution",
       "public_signatures": [
-        "signature:std.time:44",
-        "signature:std.time:45",
-        "signature:std.time:46",
-        "signature:std.time:47",
-        "signature:std.time:49",
-        "signature:std.time:50",
-        "signature:std.time:51",
-        "signature:std.time:52"
+        "signature:std.time:62",
+        "signature:std.time:63",
+        "signature:std.time:64",
+        "signature:std.time:65",
+        "signature:std.time:67",
+        "signature:std.time:68",
+        "signature:std.time:69",
+        "signature:std.time:70"
       ],
       "requirements": [
         "requirement:std.time:capability-and-conformance",

@@ -1,10 +1,10 @@
 # `std.time` monotonic time contract
 
-**Status:** implementation evidence is covered in the hosted VM and the
-distribution/conformance identity is promoted for the unpublished Tondo 0.1
-draft; the S1A seal remains open. La ABI ejecutable publica `sleep` y `Timer.wait` como
-`selectable`: una llamada directa sigue esperando implícitamente y ambas
-operaciones pueden registrarse como brazos de `select`.
+**Status:** the hosted monotonic implementation and bounded provider corpus are
+covered for the unpublished Tondo 0.1 draft. The full distribution identity,
+owner conformance promotion and S1A seal remain open. `sleep` and `Timer.wait`
+are `selectable`: ordinary calls wait implicitly and both operations can
+register as `select` arms.
 
 This contract describes the monotonic `std.time` slice (STD-0.1A). Civil dates,
 wall-clock time, time zones, and calendar conversion are defined separately in
@@ -30,6 +30,24 @@ values.
 Terminal cleanup also removes an abandoned timer from the host registry.
 
 ## Public surface
+
+Importing `std.time` and naming its value types requires no clock capability.
+All twelve `Duration` constructors, conversions, arithmetic and predicates are
+pure and usable without `clock`, including function references and deferred
+calls. Civil values and pure calendar conversions follow the same rule in the
+separate civil contract; this does not establish their implementation.
+
+The operations below and all five `Instant` methods require `clock`, because
+they read or use the monotonic provider and its opaque registry. So do
+`testing.withVirtualTime`, `VirtualTime.settle` and `VirtualTime.advance`:
+selecting a virtual provider does not grant a capability. The compiler checks
+the resolved host operation before execution, including references, aliases,
+deferred calls and intermediate function bodies. Missing `clock` produces
+`E1008`. Names alone never confer or require a capability.
+
+The civil provider separately requires `civil-clock`; an anchor sampling both
+providers requires `civil-clock` and `clock`. Neither is needed to import the
+module. This rule does not enable an ambient provider or add a second time API.
 
 ~~~tondo
 pub enum DurationError { Overflow }
@@ -101,8 +119,12 @@ ties, negative delays, virtual deadline boundaries and atomic resource-limit
 release. The runtime fixture `tests/runtime/m10-std-time-001.to` exercises
 resolution, `now`, a deadline, zero-duration suspension, and a one-shot timer
 end to end through parser, type-checker, bytecode verifier, VM, and console
-output. The target capability test proves that importing `std.time` without
-`clock` is rejected with `E1008`.
+output. Target capability tests execute all twelve pure operations and aliased
+constructors without `clock`, including a handled deferred conversion. They
+accept all thirteen monotonic provider operations only with `clock`, reject
+their use without it with `E1008`, and cover function references, intermediate
+bodies, virtual-provider selection without importing `std.time`, and explicit
+type-argument refusals.
 
 The final conformance gate still requires the reproducible source-set,
 interface, privileged-unit and virtual-provider hashes described in the

@@ -7165,6 +7165,15 @@ estas leaves.
 
 #### 21.3.13 `std.log`
 
+- [ ] **STD-TIME-CAP-001 — Enforce time capabilities per operation.** Make
+  `std.time` import and pure `Duration` values usable without a clock. Require
+  `clock` for resolved monotonic and virtual provider operations, including
+  references, aliases, deferred calls and intermediate bodies; retain the
+  separate `civil-clock` policy. Support the existing associated time
+  functions as values. Synchronize the owner contract, negative checks and
+  generated evidence. Current-source quality and publication CI remain
+  pending. This prerequisite does not implement civil calendar values, zones,
+  a civil provider or logging timestamps.
 - [ ] **STD-LOG-IMPL-001 — Implementar logging estructurado.** Publicar eventos,
   niveles, fields, filters y sinks explícitos con backpressure/fallo visible y
   sin globals ambientales.

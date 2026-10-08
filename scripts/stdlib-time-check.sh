@@ -28,7 +28,24 @@ jq -e '
   and .profile == "time"
   and .api == "tondo-std-time-0.1/1"
   and .source.path == "crates/tondo-compiler/src/process_host.rs"
-  and .capabilities.required == ["clock"]
+  and .capabilities.scope == "operation"
+  and .capabilities.required == []
+  and .capabilities.optional == ["clock"]
+  and .capabilities.pure == [
+    "std.time.Duration.fromNanoseconds", "std.time.Duration.fromMicroseconds",
+    "std.time.Duration.fromMilliseconds", "std.time.Duration.fromSeconds",
+    "std.time.Duration.toNanoseconds", "std.time.Duration.add",
+    "std.time.Duration.subtract", "std.time.Duration.multiply",
+    "std.time.Duration.negate", "std.time.Duration.isZero",
+    "std.time.Duration.isNegative", "std.time.Duration.isLessThan"
+  ]
+  and .capabilities.operations == {clock:[
+    "std.time.now", "std.time.resolution", "std.time.deadline", "std.time.sleep",
+    "std.time.Instant.add", "std.time.Instant.subtract", "std.time.Instant.durationSince",
+    "std.time.Instant.isBefore", "std.time.Instant.isAfter",
+    "std.time.Timer.after", "std.time.Timer.at", "std.time.Timer.wait", "std.time.Timer.cancel",
+    "std.testing.withVirtualTime", "std.testing.VirtualTime.settle", "std.testing.VirtualTime.advance"
+  ]}
   and ((.capabilities.forbidden | index("clock")) == null)
   and ((.capabilities.forbidden | index("ambient-host")) != null)
   and ((.capabilities.forbidden | index("runtime-value-reflection")) != null)
@@ -42,6 +59,12 @@ jq -e '
     "real-provider", "timers-and-cancellation", "virtual-provider"
   ]
   and all(.test_matrix[]; .required == true and (.observables | length) > 0)
+  and (first(.test_matrix[] | select(.id == "capability-and-conformance")).observables
+    | index("pure-values-without-clock")) != null
+  and (first(.test_matrix[] | select(.id == "capability-and-conformance")).observables
+    | index("clock-per-operation")) != null
+  and (first(.test_matrix[] | select(.id == "capability-and-conformance")).observables
+    | index("references-aliases-and-defer")) != null
   and ([.corpora[].id] | unique) == [
     "provider-equivalence", "time-arithmetic-boundaries", "timer-lifecycle"
   ]

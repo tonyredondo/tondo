@@ -2332,7 +2332,7 @@ fn execute_pipeline(
         )?);
     }
 
-    for capability in ["civil-clock", "entropy"] {
+    for capability in ["clock", "civil-clock", "entropy"] {
         if request
             .capabilities
             .iter()
@@ -2350,9 +2350,16 @@ fn execute_pipeline(
                 | HirExpressionKind::BootstrapHostCall { function, .. } => *function,
                 _ => return None,
             };
-            (function == HirBootstrapHostFunction::UuidV7
-                || (capability == "entropy" && function == HirBootstrapHostFunction::UuidV4))
-                .then_some((expression, function))
+            let required = match capability {
+                "clock" => function.requires_clock(),
+                "civil-clock" => function == HirBootstrapHostFunction::UuidV7,
+                "entropy" => matches!(
+                    function,
+                    HirBootstrapHostFunction::UuidV4 | HirBootstrapHostFunction::UuidV7
+                ),
+                _ => false,
+            };
+            required.then_some((expression, function))
         }) {
             expression_diagnostics.push(Diagnostic::new(
                 Severity::Error,
@@ -5977,7 +5984,275 @@ fn waitForConnection(): !net.NetError {
     }
 
     #[test]
-    fn time_module_requires_the_explicit_clock_capability() {
+    fn time_values_and_deferred_arithmetic_run_without_clock() {
+        let source = br#"
+import std.time as chrono
+
+fn now(): Int { 7 }
+fn passInstant(value: chrono.Instant): chrono.Instant { value }
+fn passTimer(value: chrono.Timer): chrono.Timer { value }
+
+fn main(): !chrono.DurationError {
+    let fromNanos = chrono.Duration.fromNanoseconds
+    let fromMicros = chrono.Duration.fromMicroseconds
+    let fromMillis = chrono.Duration.fromMilliseconds
+    let fromSeconds = chrono.Duration.fromSeconds
+    let nanos = fromNanos(1)
+    let micros = fromMicros(1)?
+    let millis = fromMillis(1)?
+    let seconds = fromSeconds(1)?
+    assert(nanos.toNanoseconds() == 1)
+    assert(micros.toNanoseconds() == 1000)
+    assert(millis.toNanoseconds() == 1000000)
+    assert(seconds.toNanoseconds() == 1000000000)
+    assert(millis.add(micros)?.toNanoseconds() == 1001000)
+    assert(millis.subtract(micros)?.toNanoseconds() == 999000)
+    assert(micros.multiply(2)?.toNanoseconds() == 2000)
+    assert(micros.negate()?.isNegative())
+    assert(fromNanos(0).isZero())
+    assert(micros.isLessThan(millis))
+    assert(now() == 7)
+    defer {
+        match fromMillis(3) {
+            ok(value) => { assert(value.toNanoseconds() == 3000000) }
+            err(_) => panic("pure deferred conversion failed")
+        }
+    }
+}
+"#;
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn time_provider_capability_covers_every_monotonic_operation() {
+        for (parameters, operation) in [
+            ("", "_ = time.now()"),
+            ("", "_ = time.resolution()"),
+            ("", "_ = time.deadline(time.Duration.fromNanoseconds(0))"),
+            ("", "_ = time.sleep(time.Duration.fromNanoseconds(0))"),
+            (
+                "value: time.Instant",
+                "_ = value.add(time.Duration.fromNanoseconds(0))",
+            ),
+            (
+                "value: time.Instant",
+                "_ = value.subtract(time.Duration.fromNanoseconds(0))",
+            ),
+            ("value: time.Instant", "_ = value.durationSince(value)"),
+            ("value: time.Instant", "_ = value.isBefore(value)"),
+            ("value: time.Instant", "_ = value.isAfter(value)"),
+            (
+                "",
+                "match time.Timer.after(time.Duration.fromNanoseconds(0)) {\n ok(timer) => timer.cancel()\n err(_) => ()\n }",
+            ),
+            (
+                "value: time.Instant",
+                "match time.Timer.at(value) {\n ok(timer) => timer.cancel()\n err(_) => ()\n }",
+            ),
+            ("timer: time.Timer", "_ = timer.wait()"),
+            ("timer: time.Timer", "timer.cancel()"),
+        ] {
+            let source = format!(
+                "import std.time\nfn useProvider({parameters}) {{\n {operation}\n}}\nfn main() {{}}\n"
+            );
+            for granted in [false, true] {
+                let capabilities = if granted {
+                    BTreeSet::from([CapabilityName::new("clock").unwrap()])
+                } else {
+                    BTreeSet::new()
+                };
+                let output = execute(operation_request_with_capabilities(
+                    Operation::Check,
+                    source.as_bytes(),
+                    SourceForm::Module,
+                    ResourceLimits::default(),
+                    capabilities,
+                ))
+                .unwrap();
+                if granted {
+                    assert_eq!(
+                        output.status(),
+                        CompilationStatus::Success,
+                        "{source}: {}",
+                        output.diagnostics().human()
+                    );
+                } else {
+                    assert!(
+                        output.diagnostics().diagnostics().iter().any(|diagnostic| {
+                            diagnostic.code() == "E1008"
+                                && diagnostic
+                                    .message()
+                                    .contains("capability `clock` is missing")
+                        }),
+                        "{source}: {}",
+                        output.diagnostics().human()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn time_provider_references_defer_and_transitive_bodies_require_clock() {
+        for body in [
+            "let provider = time.now\n _ = provider()",
+            "let resolution = time.resolution\n _ = resolution()",
+            "let deadline = time.deadline\n _ = deadline(time.Duration.fromNanoseconds(0))",
+            "let sleep = time.sleep\n _ = sleep(time.Duration.fromNanoseconds(0))",
+            "let after = time.Timer.after\n match after(time.Duration.fromNanoseconds(0)) {\n ok(timer) => timer.cancel()\n err(_) => ()\n }",
+            "let at = time.Timer.at\n _ = at",
+            "let provider = time.now\n _ = provider",
+            "defer {\n _ = time.now()\n }",
+        ] {
+            let source = format!(
+                "import std.time\nfn useProvider() {{\n {body}\n}}\nfn middle() {{ useProvider() }}\nfn main() {{ middle() }}\n"
+            );
+            for granted in [false, true] {
+                let output = execute(operation_request_with_capabilities(
+                    Operation::Check,
+                    source.as_bytes(),
+                    SourceForm::Module,
+                    ResourceLimits::default(),
+                    if granted {
+                        BTreeSet::from([CapabilityName::new("clock").unwrap()])
+                    } else {
+                        BTreeSet::new()
+                    },
+                ))
+                .unwrap();
+                assert_eq!(
+                    output.status(),
+                    if granted {
+                        CompilationStatus::Success
+                    } else {
+                        CompilationStatus::Rejected
+                    },
+                    "{source}: {}",
+                    output.diagnostics().human()
+                );
+                if !granted {
+                    assert!(
+                        output.diagnostics().diagnostics().iter().any(|diagnostic| {
+                            diagnostic.code() == "E1008"
+                                && diagnostic
+                                    .message()
+                                    .contains("capability `clock` is missing")
+                        }),
+                        "{source}: {}",
+                        output.diagnostics().human()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn virtual_time_provider_requires_clock_even_without_importing_time() {
+        let source = b"import std.testing\ntest virtual_provider {\n _ = testing.withVirtualTime((clock) {\n clock.settle()\n })\n}\n";
+        for granted in [false, true] {
+            let base = operation_request_with_capabilities(
+                Operation::Test,
+                source,
+                SourceForm::Module,
+                ResourceLimits::default(),
+                if granted {
+                    BTreeSet::from([CapabilityName::new("clock").unwrap()])
+                } else {
+                    BTreeSet::new()
+                },
+            );
+            let entries = discover_tests(&base).unwrap();
+            let envelope = crate::test_control::EnvelopeHandle::new(
+                "virtual_provider",
+                crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+            );
+            envelope
+                .set_phase(crate::test_control::ExecutionPhase::Body)
+                .unwrap();
+            let output = execute(
+                base.for_test_entry(&entries[0])
+                    .unwrap()
+                    .with_test_envelope(envelope.clone()),
+            )
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                if granted {
+                    CompilationStatus::Success
+                } else {
+                    CompilationStatus::Rejected
+                },
+                "{}",
+                output.diagnostics().human()
+            );
+            if !granted {
+                assert!(
+                    output.diagnostics().diagnostics().iter().any(|diagnostic| {
+                        diagnostic.code() == "E1008"
+                            && diagnostic
+                                .message()
+                                .contains("capability `clock` is missing")
+                    }),
+                    "{}",
+                    output.diagnostics().human()
+                );
+            } else {
+                assert_eq!(output.exit_code(), 0);
+                assert!(envelope.report().unwrap().terminal().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn time_associated_functions_reject_explicit_type_arguments() {
+        for expression in [
+            "time.Duration.fromSeconds[Int]",
+            "time.Duration.fromSeconds[Int](1)",
+            "time.Timer.after[Int]",
+            "time.Timer.after[Int](time.Duration.fromNanoseconds(0))",
+        ] {
+            let source = format!("import std.time\nfn main() {{\n _ = {expression}\n}}\n");
+            let output = execute(operation_request(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Rejected,
+                "{source}: {}",
+                output.diagnostics().human()
+            );
+            assert!(
+                output
+                    .diagnostics()
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code() == "E1104"),
+                "{source}: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn time_provider_operation_requires_the_explicit_clock_capability() {
         let source =
             b"import std.time\nfn main(): !time.ClockError {\n    let instant = time.now()?\n}\n";
         let rejected = execute(operation_request_with_capabilities(

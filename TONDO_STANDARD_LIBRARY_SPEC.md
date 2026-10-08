@@ -1218,17 +1218,18 @@ conformance for the ten-function `std.math` surface.
 `STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
 `testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
-El owner capability-gated `std.time` queda cerrado para la evidencia de
-STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
-registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
-(`STD-A-TIME-EVIDENCE-001`). Sus seis requisitos separan el modelo de
-`Duration`/`Instant`/`Timer`, los providers real y virtual, errores y límites,
-ciclo de vida de timers y conformidad por capability. El provider real usa el
-reloj monotónico de `std::time::Instant`; el virtual está sellado en
-`std.testing`, avanza explícitamente y ejecuta el mismo corpus semántico. La
-capability `clock` se comprueba en el límite del módulo y el fixture
-`tests/runtime/m10-std-time-001.to` atraviesa parser, checker, bytecode, VM y
-host. `HOST` es `verified`.
+The `std.time` owner records its STD-0.1A component evidence in
+[`testing/stdlib-time.json`](testing/stdlib-time.json) and nine cells in
+[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
+(`STD-A-TIME-EVIDENCE-001`). Its six requirements distinguish the
+`Duration`/`Instant`/`Timer` model, real and virtual providers, errors and limits,
+timer lifecycle and capability checks. The real provider uses the monotonic
+`std::time::Instant`; the sealed virtual provider in `std.testing` advances
+explicitly and executes the same semantic corpus. `clock` is checked per
+resolved provider operation, including function references, aliases and
+`defer`; importing `std.time` and using pure `Duration` operations requires
+no clock. `tests/runtime/m10-std-time-001.to` runs through parser, checker,
+bytecode, VM and host. `HOST` is `verified`; owner conformance remains open.
 
 `STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
 `testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
@@ -2210,22 +2211,25 @@ distribución `toolchain:std:draft`. El plan cerrado debe contener, cada uno con
 su SHA-256 lowercase, los bytes de:
 
 1. el source set core que define `Duration` y `DurationError`;
-2. el source set gated `clock` que define `Instant`, `ClockError`, `Timer` y
-   sus firmas;
+2. the provider source set defining `Instant`, `ClockError`, `Timer` and their
+   signatures, with `clock` required by provider operations rather than module
+   availability;
 3. la interfaz pública `std.time` resultante;
 4. la unidad privilegiada del proveedor monotónico real, con sus hashes de
    firma, contrato de seguridad e implementación; y
 5. el descriptor y corpus del proveedor virtual usado por la conformidad,
    que pertenece al artefacto de test y no a un bridge ambiental del frontend.
 
-Estas entradas utilizan las categorías existentes de `tondo-toolchain` (`source`,
-`dependency-interface` y `privileged-unit`); no se añade un path físico ni una
-segunda identidad de `std.time`. El `content_hash` de la distribución y su
-`api_hash` cubren el slice completo. La implementación hosted ya materializa
-el proveedor real/virtual y la frontera suspendible descrita en
-`docs/contracts/stdlib-time.md`; mientras no existan los bytes y hashes
-reproducibles del plan cerrado, `STD-TIME-BASE-CONF-001` permanece pendiente y
-`std.time` no se anuncia como una superficie distribuida estable.
+These entries use the existing `tondo-toolchain` categories (`source`,
+`dependency-interface` and `privileged-unit`), without a physical path or a
+second `std.time` identity. Distribution `content_hash` and `api_hash` cover
+the whole slice. The hosted implementation provides the real/virtual provider
+and suspending boundary in `docs/contracts/stdlib-time.md`.
+`STD-TIME-BASE-CONF-001` records the completed
+bounded provider/model corpus; it does not establish the full distribution
+identity above. Until those reproducible bytes and hashes exist, the owner
+conformance and S1A promotion remain pending and `std.time` is not advertised
+as a stable distributed surface.
 
 #### 14.3.7 Calendario civil y zonas versionadas
 

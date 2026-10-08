@@ -3460,56 +3460,56 @@
       "contract": "testing/stdlib-time.json",
       "public_api": [
         {
-          "id": "std.time:44",
+          "id": "std.time:62",
           "symbol": "std.time.now",
           "signature": "pub fn now(): Instant ! ClockError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.time:45",
+          "id": "std.time:63",
           "symbol": "std.time.resolution",
           "signature": "pub fn resolution(): Duration ! ClockError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.time:46",
+          "id": "std.time:64",
           "symbol": "std.time.deadline",
           "signature": "pub fn deadline(after: Duration): Instant ! ClockError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.time:47",
+          "id": "std.time:65",
           "symbol": "std.time.sleep",
           "signature": "pub fn sleep(delay: Duration): Unit ! ClockError selectable",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.time:49",
+          "id": "std.time:67",
           "symbol": "std.time.Timer.after",
           "signature": "pub fn Timer.after(delay: Duration): Timer ! ClockError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.time:50",
+          "id": "std.time:68",
           "symbol": "std.time.Timer.at",
           "signature": "pub fn Timer.at(deadline: Instant): Timer ! ClockError",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.time:51",
+          "id": "std.time:69",
           "symbol": "std.time.Timer.wait",
           "signature": "pub fn Timer.wait(self): Unit ! ClockError selectable",
           "implementation_status": "verified",
           "missing": []
         },
         {
-          "id": "std.time:52",
+          "id": "std.time:70",
           "symbol": "std.time.Timer.cancel",
           "signature": "pub fn Timer.cancel(self): Unit",
           "implementation_status": "verified",

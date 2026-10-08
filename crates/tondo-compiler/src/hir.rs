@@ -3283,6 +3283,40 @@ pub enum HirBootstrapHostFunction {
 }
 
 impl HirBootstrapHostFunction {
+    pub(crate) fn time_static(owner: &str, name: &str) -> Option<Self> {
+        Some(match (owner, name) {
+            ("Duration", "fromNanoseconds") => Self::DurationFromNanoseconds,
+            ("Duration", "fromMicroseconds") => Self::DurationFromMicroseconds,
+            ("Duration", "fromMilliseconds") => Self::DurationFromMilliseconds,
+            ("Duration", "fromSeconds") => Self::DurationFromSeconds,
+            ("Timer", "after") => Self::TimerAfter,
+            ("Timer", "at") => Self::TimerAt,
+            _ => return None,
+        })
+    }
+
+    pub(crate) const fn requires_clock(self) -> bool {
+        matches!(
+            self,
+            Self::TimeNow
+                | Self::TimeResolution
+                | Self::TimeDeadline
+                | Self::TimeSleep
+                | Self::InstantAdd
+                | Self::InstantSubtract
+                | Self::InstantDurationSince
+                | Self::InstantIsBefore
+                | Self::InstantIsAfter
+                | Self::TimerAfter
+                | Self::TimerAt
+                | Self::TimerWait
+                | Self::TimerCancel
+                | Self::TestingWithVirtualTime
+                | Self::VirtualTimeSettle
+                | Self::VirtualTimeAdvance
+        )
+    }
+
     pub(crate) fn uuid_static(name: &str) -> Option<Self> {
         Some(match name {
             "nil" => Self::UuidNil,

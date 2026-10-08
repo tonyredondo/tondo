@@ -5327,11 +5327,45 @@ impl<'a> ExpressionChecker<'a> {
                 context,
             );
         }
-        let network_path = node
+        let associated_path = node
             .child_tokens()
             .filter(|token| token.kind() == TokenKind::Identifier)
             .collect::<Vec<_>>();
-        if let [module_token, type_token, function_token] = network_path.as_slice()
+        if let [module_token, type_token, function_token] = associated_path.as_slice()
+            && let Some(reference) = self.resolved.reference(file, module_token.range())
+            && let ResolvedEntity::Module(module) = reference.entity()
+            && module.package().as_str() == "toolchain:std:0.1-bootstrap"
+            && module.path().as_str() == "time"
+            && let Some(function) = type_token
+                .token()
+                .normalized_identifier()
+                .zip(function_token.token().normalized_identifier())
+                .and_then(|(owner, name)| HirBootstrapHostFunction::time_static(owner, name))
+        {
+            if node
+                .child_nodes()
+                .any(|child| child.kind() == SyntaxKind::BracketPostfix)
+            {
+                self.emit(
+                    self.sources.span(file, node.range())?,
+                    "E1104",
+                    "std.time operations do not declare generic parameters",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, node.range());
+            }
+            let callee =
+                self.bootstrap_host_callee(function, self.sources.span(file, node.range())?)?;
+            return self.close_contextual_function_value(
+                file,
+                node.range(),
+                callee,
+                expected,
+                context,
+            );
+        }
+        if let [module_token, type_token, function_token] = associated_path.as_slice()
             && let Some(reference) = self.resolved.reference(file, module_token.range())
             && let ResolvedEntity::Module(module) = reference.entity()
             && module.package().as_str() == "toolchain:std:0.1-bootstrap"
@@ -17119,7 +17153,7 @@ impl<'a> ExpressionChecker<'a> {
                     file,
                     range,
                     suffix,
-                    explicit_bracket,
+                    explicit_bracket.or(owner_bracket),
                     &tokens,
                     resolved_index,
                     &resolved,
@@ -17295,14 +17329,8 @@ impl<'a> ExpressionChecker<'a> {
             .token()
             .normalized_identifier()
             .unwrap_or(self.token_text(file, member_token)?);
-        let function = match (name.as_str(), member) {
-            ("Duration", "fromNanoseconds") => HirBootstrapHostFunction::DurationFromNanoseconds,
-            ("Duration", "fromMicroseconds") => HirBootstrapHostFunction::DurationFromMicroseconds,
-            ("Duration", "fromMilliseconds") => HirBootstrapHostFunction::DurationFromMilliseconds,
-            ("Duration", "fromSeconds") => HirBootstrapHostFunction::DurationFromSeconds,
-            ("Timer", "after") => HirBootstrapHostFunction::TimerAfter,
-            ("Timer", "at") => HirBootstrapHostFunction::TimerAt,
-            _ => return Ok(None),
+        let Some(function) = HirBootstrapHostFunction::time_static(name.as_str(), member) else {
+            return Ok(None);
         };
         if let Some(bracket) = explicit_bracket {
             self.emit(

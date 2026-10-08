@@ -494,7 +494,6 @@ impl PackageGraph {
         standard.modules.retain(|module| match module.as_str() {
             "console" => has_capability("console"),
             "process" => has_capability("process"),
-            "time" => has_capability("clock"),
             "env" => has_capability("environment"),
             "fs" => has_capability("filesystem"),
             "net" => has_capability("network"),
@@ -683,7 +682,6 @@ impl PackageGraph {
                 let capability = match module.path().as_str() {
                     "console" => Some("console"),
                     "process" => Some("process"),
-                    "time" => Some("clock"),
                     "env" => Some("environment"),
                     "fs" => Some("filesystem"),
                     "net" => Some("network"),
