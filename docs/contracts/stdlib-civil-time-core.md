@@ -62,8 +62,17 @@ The consolidated local campaign on source checkpoint `818407c4` passes all
 (90.032329%). The formal gate passes every 80% global/risk floor. All six
 selected critical mutants are caught, with no missed, timed-out or unviable
 mutants and a passing unmutated baseline. Supported ratchet generation and
-verification bind both fresh reports to that same tree. This is local proof;
-the complete functional gate and exact-checkout publication CI remain pending.
+verification bind both fresh reports to that same tree.
+
+All 358 canonical functional steps also pass as a composed local proof: 52
+unchanged steps on `ada7d603`, 240 on `a2e54f88` and the final 66 on `f8ea2c7b`.
+Seven authored shared-source pins were synchronized after their checkers
+rejected drift; protocols, sample counts and assertions remain unchanged.
+Each affected stage runs from a clean checkpoint, and every segment retains
+the measured source tree. The final segment passes all 206 draft cases and
+96 exact select observations. S1A readiness remains pending and its refusal
+is verified. This composition is not an uninterrupted local run.
+Exact-checkout publication CI remains pending.
 
 The implementation is in progress until those remaining checks pass. The full
 civil owner remains contract-locked. DateTime, UtcOffset, zones, the versioned timezone
