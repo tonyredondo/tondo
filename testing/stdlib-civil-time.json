@@ -6,6 +6,14 @@
   "phase": "STD-0.1B",
   "task": "STD-CIVIL-TIME-001",
   "status": "contract-locked",
+  "pure_core": {
+    "register": "testing/stdlib-civil-time-core.json",
+    "task": "STD-CIVIL-TIME-CORE-001",
+    "signatures": 24,
+    "status": "implementation-in-progress",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed"
+  },
   "contract": "docs/contracts/stdlib-civil-time.md",
   "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
   "language_spec": "TONDO_LANGUAGE_SPEC.md",

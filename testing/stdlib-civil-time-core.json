@@ -1,0 +1,209 @@
+{
+  "format": "tondo-stdlib-civil-core/1",
+  "owner": "std.time.civil",
+  "edition": "0.1",
+  "task": "STD-CIVIL-TIME-CORE-001",
+  "status": "implementation-in-progress",
+  "quality_gate": "pending-80-percent-per-scope",
+  "parent": "testing/stdlib-civil-time.json",
+  "contract": "docs/contracts/stdlib-civil-time-core.md",
+  "selected_route": "hosted-scalar-value-kernel",
+  "capabilities": {
+    "required": [],
+    "import_effect": "none",
+    "provider_reads": false
+  },
+  "surface": {
+    "types": [
+      "Date",
+      "Time",
+      "UtcDateTime",
+      "CivilError",
+      "MonthPolicy"
+    ],
+    "signatures": [
+      {
+        "id": "date-create",
+        "signature": "pub fn Date.create(year: Int, month: Int, day: Int): Date ! CivilError",
+        "kind": "date-constructor",
+        "effect": "pure"
+      },
+      {
+        "id": "date-parse",
+        "signature": "pub fn Date.parse(text: String): Date ! CivilError",
+        "kind": "date-parse",
+        "effect": "pure"
+      },
+      {
+        "id": "date-year",
+        "signature": "pub fn Date.year(self): Int",
+        "kind": "date-component",
+        "effect": "pure"
+      },
+      {
+        "id": "date-month",
+        "signature": "pub fn Date.month(self): Int",
+        "kind": "date-component",
+        "effect": "pure"
+      },
+      {
+        "id": "date-day",
+        "signature": "pub fn Date.day(self): Int",
+        "kind": "date-component",
+        "effect": "pure"
+      },
+      {
+        "id": "date-day-of-week",
+        "signature": "pub fn Date.dayOfWeek(self): Int",
+        "kind": "date-component",
+        "effect": "pure"
+      },
+      {
+        "id": "date-day-of-year",
+        "signature": "pub fn Date.dayOfYear(self): Int",
+        "kind": "date-component",
+        "effect": "pure"
+      },
+      {
+        "id": "date-add-days",
+        "signature": "pub fn Date.addDays(self, days: Int): Date ! CivilError",
+        "kind": "date-arithmetic",
+        "effect": "pure"
+      },
+      {
+        "id": "date-add-months",
+        "signature": "pub fn Date.addMonths(self, months: Int, policy: MonthPolicy): Date ! CivilError",
+        "kind": "date-arithmetic",
+        "effect": "pure"
+      },
+      {
+        "id": "date-add-years",
+        "signature": "pub fn Date.addYears(self, years: Int, policy: MonthPolicy): Date ! CivilError",
+        "kind": "date-arithmetic",
+        "effect": "pure"
+      },
+      {
+        "id": "date-format",
+        "signature": "pub fn Date.format(self): String",
+        "kind": "date-format",
+        "effect": "pure"
+      },
+      {
+        "id": "time-create",
+        "signature": "pub fn Time.create(hour: Int, minute: Int, second: Int, nanosecond: Int): Time ! CivilError",
+        "kind": "time-constructor",
+        "effect": "pure"
+      },
+      {
+        "id": "time-parse",
+        "signature": "pub fn Time.parse(text: String): Time ! CivilError",
+        "kind": "time-parse",
+        "effect": "pure"
+      },
+      {
+        "id": "time-hour",
+        "signature": "pub fn Time.hour(self): Int",
+        "kind": "time-component",
+        "effect": "pure"
+      },
+      {
+        "id": "time-minute",
+        "signature": "pub fn Time.minute(self): Int",
+        "kind": "time-component",
+        "effect": "pure"
+      },
+      {
+        "id": "time-second",
+        "signature": "pub fn Time.second(self): Int",
+        "kind": "time-component",
+        "effect": "pure"
+      },
+      {
+        "id": "time-nanosecond",
+        "signature": "pub fn Time.nanosecond(self): Int",
+        "kind": "time-component",
+        "effect": "pure"
+      },
+      {
+        "id": "time-format",
+        "signature": "pub fn Time.format(self): String",
+        "kind": "time-format",
+        "effect": "pure"
+      },
+      {
+        "id": "utc-create",
+        "signature": "pub fn UtcDateTime.create(date: Date, time: Time): UtcDateTime",
+        "kind": "utc-constructor",
+        "effect": "pure"
+      },
+      {
+        "id": "utc-parse",
+        "signature": "pub fn UtcDateTime.parse(text: String): UtcDateTime ! CivilError",
+        "kind": "utc-parse",
+        "effect": "pure"
+      },
+      {
+        "id": "utc-date",
+        "signature": "pub fn UtcDateTime.date(self): Date",
+        "kind": "utc-component",
+        "effect": "pure"
+      },
+      {
+        "id": "utc-time",
+        "signature": "pub fn UtcDateTime.time(self): Time",
+        "kind": "utc-component",
+        "effect": "pure"
+      },
+      {
+        "id": "utc-add",
+        "signature": "pub fn UtcDateTime.add(self, amount: Duration): UtcDateTime ! CivilError",
+        "kind": "utc-arithmetic",
+        "effect": "pure"
+      },
+      {
+        "id": "utc-format",
+        "signature": "pub fn UtcDateTime.format(self): String",
+        "kind": "utc-format",
+        "effect": "pure"
+      }
+    ],
+    "private_value_fields": true
+  },
+  "sources": {
+    "crates/tondo-stdlib/src/civil_time.rs": "sha256:e5edd9bb0bcf4ed45b640012e9d7376d0c531065da4b86e328c6bc13e681a901",
+    "crates/tondo-compiler/src/process_host/civil_time.rs": "sha256:a1f0387df62174a7e3991739a5b3f666fc2e475365c18d5549150139faabc986",
+    "crates/tondo-compiler/src/hir.rs": "sha256:547e9928d9f03ee336a7299e21a3f61aa4463ad691e403abc3f9f4caddd0fd6f",
+    "crates/tondo-compiler/src/hir/check.rs": "sha256:3df4e95c1dae759c9ef6d185f3bbbe2e5421e19e511f6a0627f1ffc7ac1780eb",
+    "crates/tondo-compiler/src/hir/lower.rs": "sha256:a44433ad2281cd6a373464dd0c46daad5cd6dca733c489476a2fda5791075349",
+    "crates/tondo-compiler/src/resolve.rs": "sha256:5f15795796869e9fb8340531d052d63664570b0caf3fa482c0d5a45d90eea7d1",
+    "crates/tondo-compiler/src/process_host.rs": "sha256:346e6e94ed57d009dc7ea0894cc63fb742ae8a182fb030b1d730efaa78f6e77d"
+  },
+  "model": {
+    "generator": "scripts/civil_core_oracle.py",
+    "fixture": "crates/tondo-reliability/tests/fixtures/civil-core-oracle.json",
+    "rust_test": "crates/tondo-reliability/tests/civil_core_models.rs",
+    "cases": 1272,
+    "case_limit": 2048,
+    "clock_reads": false,
+    "provider_reads": false
+  },
+  "public_project": "acceptance/projects/civil-core/tondo.toml",
+  "command": "scripts/stdlib-civil-time-core-check.sh",
+  "memory": {
+    "reply_descriptor_bound": 8,
+    "reply_payload_bound_bytes": 30,
+    "metric": "conservative-logical-construction-and-exact-transport-admission",
+    "os_allocations": "not-measured",
+    "rss": "not-measured"
+  },
+  "promotion": {
+    "compiler_api": "registered-public-hosted-pending-quality",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed",
+    "zones": "not-implemented",
+    "civil_provider": "not-implemented",
+    "full_owner": false,
+    "performance": "not-measured",
+    "full_civil_test_fuzz_conf_doc": "pending"
+  }
+}

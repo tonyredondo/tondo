@@ -2233,13 +2233,15 @@ as a stable distributed surface.
 
 #### 14.3.7 Calendario civil y zonas versionadas
 
-El contrato normativo de la segunda parte de `std.time` es
-[`docs/contracts/stdlib-civil-time.md`](./docs/contracts/stdlib-civil-time.md) y
-su registro único es
-[`testing/stdlib-civil-time.json`](./testing/stdlib-civil-time.json). El
-contrato está cerrado como `STD-CIVIL-TIME-001`, pero sus adaptadores y leaves
-de implementación siguen pendientes; cerrar la especificación no promociona
-los símbolos en el compilador actual.
+The normative civil contract for `std.time` is
+[stdlib-civil-time.md](docs/contracts/stdlib-civil-time.md), with the owner
+register [stdlib-civil-time.json](testing/stdlib-civil-time.json).
+The full contract is locked as `STD-CIVIL-TIME-001`. The shared
+[pure value core](docs/contracts/stdlib-civil-time-core.md) registers the 24
+specified Date, Time and UtcDateTime operations in the production hosted
+compiler/VM without clock capabilities. Its quality and publication gates
+remain pending. The complete civil owner, zones, civil providers and native
+ABI/AOT remain separate implementation and promotion boundaries.
 
 Esta superficie usa un calendario gregoriano proléptico con años `1..9999`, no
 admite leap seconds y mantiene `Date`, `Time`, `DateTime`, `UtcDateTime` y

@@ -147,6 +147,12 @@ The contract and its negative fixtures are checked by
 
 ## Per-operation capability implementation proof
 
+The separate [pure civil core](stdlib-civil-time-core.md) extends the same
+operation policy to the 24 specified Date, Time and UtcDateTime operations.
+Its own register and gates retain the full civil owner as pending. The twelve
+pure operations in this A0 register describe the Duration base; the additional
+pure owner is linked through `capabilities.pure_extensions`.
+
 `STD-TIME-CAP-001` implements the operation boundary in the compiler; it does
 not implement civil calendar values, zones, a civil provider or native time
 lowering. Source `66bb7fad` adds the boundary and six associated function

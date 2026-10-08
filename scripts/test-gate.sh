@@ -270,6 +270,10 @@ run_step stdlib-net-documentation-tests \
     scripts/stdlib-net-doc-test.sh
 run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
+run_step stdlib-civil-time-core \
+    scripts/stdlib-civil-time-core-check.sh
+run_step stdlib-civil-time-core-tests \
+    scripts/stdlib-civil-time-core-test.sh
 run_step stdlib-civil-time-contract-tests \
     scripts/stdlib-civil-time-test.sh
 run_step stdlib-encoding-contract \

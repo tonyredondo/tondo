@@ -6615,6 +6615,16 @@ estas leaves.
 
 #### 21.3.5 Calendario civil de `std.time`
 
+- [ ] **STD-CIVIL-TIME-CORE-001 — Implement the shared pure civil value core.**
+  Register the 24 specified Date, Time and UtcDateTime operations in the
+  hosted compiler/VM without clock capabilities. Preserve strict ASCII
+  parsing, Gregorian years 1..9999, explicit MonthPolicy, checked Duration
+  arithmetic, private fields and Copy/Discard/Send/Share/Equatable values.
+  Verify the finite kernel against an independent oracle, typed host memory
+  admission and ordinary public projects, including refusal and lifecycle
+  paths. This logging prerequisite does not promote zones, a civil provider,
+  native ABI/AOT or the complete civil owner. Quality and publication CI
+  remain pending.
 - [ ] **STD-CIVIL-TIME-IMPL-001 — Implementar calendario y zonas.** Publicar
   Date, Time, DateTime, parsing/formatting, aritmética y conversiones de zona
   sobre el time-base único, con reglas y errores versionados.

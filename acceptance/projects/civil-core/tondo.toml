@@ -1,0 +1,7 @@
+[package]
+name = "civil_core_pure"
+
+[target]
+name = "tondo-vm-hosted"
+profile = "hosted"
+capabilities = []

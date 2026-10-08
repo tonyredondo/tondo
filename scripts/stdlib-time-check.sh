@@ -31,6 +31,7 @@ jq -e '
   and .capabilities.scope == "operation"
   and .capabilities.required == []
   and .capabilities.optional == ["clock"]
+  and .capabilities.pure_extensions == ["testing/stdlib-civil-time-core.json"]
   and .capabilities.pure == [
     "std.time.Duration.fromNanoseconds", "std.time.Duration.fromMicroseconds",
     "std.time.Duration.fromMilliseconds", "std.time.Duration.fromSeconds",

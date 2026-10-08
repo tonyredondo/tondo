@@ -4,6 +4,7 @@
 //! contains only deterministic, allocation-bounded value transformations.
 
 pub mod cbor;
+pub mod civil_time;
 pub mod encoding;
 pub mod format;
 pub mod fs;

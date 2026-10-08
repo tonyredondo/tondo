@@ -5984,6 +5984,87 @@ fn waitForConnection(): !net.NetError {
     }
 
     #[test]
+    fn civil_core_public_fixture_runs_without_providers() {
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            include_bytes!("../../../acceptance/projects/civil-core/src/main.to"),
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn civil_core_values_satisfy_the_declared_value_capabilities() {
+        let source = br#"
+import std.time
+fn keep[T: Copy + Discard + Send + Share + Equatable](value: T): T { value }
+fn main(): !time.CivilError {
+    let date = time.Date.create(2024, 2, 29)?
+    let local = time.Time.create(23, 59, 59, 1)?
+    let utc = time.UtcDateTime.create(date, local)
+    assert(keep(date) == date)
+    assert(keep(local) == local)
+    assert(keep(utc) == utc)
+}
+"#;
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn civil_core_refuses_type_arguments_private_values_and_unspecified_surfaces() {
+        for source in [
+            "import std.time\nfn main() { let parse = time.Date.parse[Int]\n_ = parse(\"2024-02-29\") }",
+            "import std.time\nfn main() { _ = time.Date.create[Int](2024,2,29) }",
+            "import std.time\nfn main(): !time.CivilError { let date=time.Date.create(2024,2,29)?\n_ = date.addMonths(1) }",
+            "import std.time\nfn main(): !time.CivilError { let utc=time.UtcDateTime.parse(\"2024-02-29T00:00:00Z\")?\n_ = utc.add(1) }",
+            "import std.time\nfn inspect(value: time.Date): Int { value.yearValue }",
+            "import std.time\nfn inspect(value: time.Time): Int { value.nanosecondsValue }",
+            "import std.time\nfn inspect(value: time.UtcDateTime): time.Date { value.dateValue }",
+            "import std.time\nfn main() { _ = time.CivilClock.now() }",
+            "import std.time\nfn main() { _ = time.DateTime.parse(\"2024-02-29T00:00:00\") }",
+            "import std.time\nfn main() { _ = time.zoneDatabase() }",
+        ] {
+            let output = execute(operation_request_with_capabilities(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Rejected,
+                "unexpected acceptance: {source}"
+            );
+            assert!(!output.diagnostics().diagnostics().is_empty());
+        }
+    }
+
+    #[test]
     fn time_values_and_deferred_arithmetic_run_without_clock() {
         let source = br#"
 import std.time as chrono

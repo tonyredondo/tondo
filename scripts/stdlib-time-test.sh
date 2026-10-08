@@ -47,4 +47,6 @@ expect_failure forbidden-clock env TONDO_STDLIB_TIME_CONTRACT="$tmp_dir/forbidde
 jq '.kind = "intrinsic"' testing/stdlib-time.json > "$tmp_dir/intrinsic-kind.json"
 expect_failure capability-gated-kind env TONDO_STDLIB_TIME_CONTRACT="$tmp_dir/intrinsic-kind.json" scripts/stdlib-time-check.sh
 
+jq '.capabilities.pure_extensions = []' testing/stdlib-time.json > "$tmp_dir/missing-civil-core.json"
+expect_failure missing-civil-core env TONDO_STDLIB_TIME_CONTRACT="$tmp_dir/missing-civil-core.json" scripts/stdlib-time-check.sh
 echo "std.time owner tests: OK"

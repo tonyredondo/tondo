@@ -17308,20 +17308,38 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
-        let ResolvedName::External {
-            module,
-            namespace: Namespace::Type,
-            name,
-        } = resolved
-        else {
-            return Ok(None);
-        };
-        if module.package().as_str() != "toolchain:std:0.1-bootstrap"
-            || module.path().as_str() != "time"
-            || resolved_index + 2 != tokens.len()
-        {
+        if resolved_index + 2 != tokens.len() {
             return Ok(None);
         }
+        let owner = match resolved {
+            ResolvedName::External {
+                module,
+                namespace: Namespace::Type,
+                name,
+            } if module.package().as_str() == "toolchain:std:0.1-bootstrap"
+                && module.path().as_str() == "time" =>
+            {
+                name.as_str()
+            }
+            ResolvedName::Symbol(symbol) => {
+                let Some(symbol) = self.resolved.symbol(*symbol) else {
+                    return Ok(None);
+                };
+                let identity = symbol.identity();
+                if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+                    || identity.source_id().as_str() != "toolchain:std:0.1-bootstrap"
+                    || identity.module().as_str() != "time"
+                    || identity.namespace() != Namespace::Type
+                {
+                    return Ok(None);
+                }
+                let [name] = identity.declaration().names() else {
+                    return Ok(None);
+                };
+                name.as_str()
+            }
+            _ => return Ok(None),
+        };
         let member_token = *tokens
             .last()
             .expect("a qualified time operation has a member token");
@@ -17329,7 +17347,7 @@ impl<'a> ExpressionChecker<'a> {
             .token()
             .normalized_identifier()
             .unwrap_or(self.token_text(file, member_token)?);
-        let Some(function) = HirBootstrapHostFunction::time_static(name.as_str(), member) else {
+        let Some(function) = HirBootstrapHostFunction::time_static(owner, member) else {
             return Ok(None);
         };
         if let Some(bracket) = explicit_bracket {
@@ -19985,6 +20003,23 @@ impl<'a> ExpressionChecker<'a> {
             .normalized_identifier()
             .unwrap_or(self.token_text(file, member_token)?);
         let function = match self.program.interner.kind(receiver_type)? {
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } if arguments.is_empty()
+                && identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                && identity.source_id().as_str() == "toolchain:std:0.1-bootstrap"
+                && identity.module().as_str() == "time"
+                && identity.namespace() == Namespace::Type =>
+            {
+                let owner = identity.declaration().to_string();
+                let Some(operation) =
+                    tondo_stdlib::civil_time::CivilOperation::member(&owner, member)
+                else {
+                    return Ok(None);
+                };
+                HirBootstrapHostFunction::CivilTime(operation)
+            }
             TypeKind::Intrinsic {
                 constructor: IntrinsicType::Network(kind),
                 ..

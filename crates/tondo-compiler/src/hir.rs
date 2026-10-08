@@ -2759,6 +2759,7 @@ impl HirSelectArm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
+    CivilTime(tondo_stdlib::civil_time::CivilOperation),
     Network(tondo_vm::network::NetworkOperation),
     Reflection(tondo_vm::reflection::ReflectionOperation),
     UuidNil,
@@ -3284,6 +3285,9 @@ pub enum HirBootstrapHostFunction {
 
 impl HirBootstrapHostFunction {
     pub(crate) fn time_static(owner: &str, name: &str) -> Option<Self> {
+        if let Some(operation) = tondo_stdlib::civil_time::CivilOperation::associated(owner, name) {
+            return Some(Self::CivilTime(operation));
+        }
         Some(match (owner, name) {
             ("Duration", "fromNanoseconds") => Self::DurationFromNanoseconds,
             ("Duration", "fromMicroseconds") => Self::DurationFromMicroseconds,
@@ -3332,6 +3336,7 @@ impl HirBootstrapHostFunction {
 
     pub const fn name(self) -> &'static str {
         match self {
+            Self::CivilTime(operation) => operation.name(),
             Self::Network(operation) => operation.name(),
             Self::Reflection(operation) => operation.name(),
             Self::ConsolePrint => "std.console.print",

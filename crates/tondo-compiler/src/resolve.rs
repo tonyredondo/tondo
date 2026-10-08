@@ -1383,6 +1383,38 @@ impl Resolver<'_> {
         self.install_bootstrap_module_nominals(
             file,
             program,
+            "time",
+            &[
+                (
+                    "Date",
+                    SymbolKind::Type,
+                    BootstrapNominalShape::Record(&["yearValue", "monthValue", "dayValue"]),
+                ),
+                (
+                    "Time",
+                    SymbolKind::Type,
+                    BootstrapNominalShape::Record(&["nanosecondsValue"]),
+                ),
+                (
+                    "UtcDateTime",
+                    SymbolKind::Type,
+                    BootstrapNominalShape::Record(&["dateValue", "timeValue"]),
+                ),
+                (
+                    "CivilError",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::civil_time::ERROR_VARIANTS),
+                ),
+                (
+                    "MonthPolicy",
+                    SymbolKind::Enum,
+                    BootstrapNominalShape::Enum(tondo_stdlib::civil_time::MONTH_POLICIES),
+                ),
+            ],
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
             "net",
             &[
                 (
@@ -1586,8 +1618,10 @@ impl Resolver<'_> {
                 },
                 synthetic: true,
             });
-            let private_fields =
-                (module_name == "uuid" && name.as_str() == "Uuid") || module_name == "net";
+            let private_fields = (module_name == "uuid" && name.as_str() == "Uuid")
+                || module_name == "net"
+                || (module_name == "time"
+                    && matches!(name.as_str(), "Date" | "Time" | "UtcDateTime"));
             program
                 .bootstrap_nominals
                 .insert((module.clone(), name), id);

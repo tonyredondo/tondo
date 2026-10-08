@@ -283,10 +283,14 @@ consultas durante compilación. `std.time` tampoco crea una API paralela
 sincrónica/asíncrona: leer el reloj es síncrono y el resto de operaciones sigue
 el modelo único del lenguaje.
 
-La frontera permanece `contract-locked` hasta cerrar
+The full boundary remains `contract-locked` until
 `STD-CIVIL-TIME-IMPL-001`, `STD-CIVIL-TIME-HOST-001`,
 `STD-CIVIL-TIME-TEST-001`, `STD-CIVIL-TIME-PERF-001`,
-`STD-CIVIL-TIME-CONF-001` y `STD-CIVIL-TIME-DOC-001`. Esas leaves deben
-publicar el bundle hash-bound, demostrar equivalencia VM/nativo, medir parsing,
-lookup y conversiones, y mantener la separación monotónica/civil. El contrato
-no promociona todavía símbolos runtime ni cierra Gate S1.
+`STD-CIVIL-TIME-CONF-001` and `STD-CIVIL-TIME-DOC-001` close. Those leaves must
+publish the hash-bound bundle, demonstrate VM/native equivalence, measure
+parsing, lookup and conversions, and preserve monotonic/civil separation.
+This contract does not close Gate S1. The shared [pure value core](stdlib-civil-time-core.md)
+now registers the 24 Date, Time and UtcDateTime operations in the production
+hosted compiler/VM. Its quality and publication gates remain pending. This
+subset leaves DateTime, UtcOffset, zones, the versioned bundle, civil providers,
+native ABI/AOT and the complete civil owner outside its promotion boundary.

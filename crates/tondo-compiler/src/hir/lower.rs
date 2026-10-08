@@ -383,6 +383,7 @@ impl<'a> TypeLowerer<'a> {
         }
         self.lower_bootstrap_testing_nominal_declarations()?;
         self.lower_bootstrap_uuid_nominal_declarations()?;
+        self.lower_bootstrap_civil_time_declarations()?;
         self.lower_bootstrap_net_declarations()?;
         self.lower_bootstrap_yaml_nominal_declarations()?;
         self.lower_bootstrap_encoding_nominal_declarations()?;
@@ -600,6 +601,132 @@ impl<'a> TypeLowerer<'a> {
                 parameters,
                 None,
                 outcome,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn lower_bootstrap_civil_time_declarations(&mut self) -> Result<(), HirError> {
+        use tondo_stdlib::civil_time::CivilOperation as Operation;
+        let path = ModulePath::new("time")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let int = self.interner.scalar(ScalarType::Int);
+        let string = self.interner.scalar(ScalarType::String);
+        for name in ["Date", "Time", "UtcDateTime", "CivilError", "MonthPolicy"] {
+            let type_name = Name::new(name).expect("civil nominal name is valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                return Ok(());
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("civil nominal is indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name {
+                "Date" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "yearValue", int),
+                        self.bootstrap_field(symbol, "monthValue", int),
+                        self.bootstrap_field(symbol, "dayValue", int),
+                    ],
+                },
+                "Time" => HirNominalShape::Record {
+                    fields: vec![self.bootstrap_field(symbol, "nanosecondsValue", int)],
+                },
+                "UtcDateTime" => {
+                    let date = self.bootstrap_nominal_type(&module, "Date")?;
+                    let time = self.bootstrap_nominal_type(&module, "Time")?;
+                    HirNominalShape::Record {
+                        fields: vec![
+                            self.bootstrap_field(symbol, "dateValue", date),
+                            self.bootstrap_field(symbol, "timeValue", time),
+                        ],
+                    }
+                }
+                _ => HirNominalShape::Enum {
+                    variants: (if name == "CivilError" {
+                        tondo_stdlib::civil_time::ERROR_VARIANTS
+                    } else {
+                        tondo_stdlib::civil_time::MONTH_POLICIES
+                    })
+                    .iter()
+                    .map(|name| self.bootstrap_variant(symbol, name, Vec::new()))
+                    .collect(),
+                },
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        let date = self.bootstrap_nominal_type(&module, "Date")?;
+        let time = self.bootstrap_nominal_type(&module, "Time")?;
+        let utc = self.bootstrap_nominal_type(&module, "UtcDateTime")?;
+        let error = self.bootstrap_nominal_type(&module, "CivilError")?;
+        let policy = self.bootstrap_nominal_type(&module, "MonthPolicy")?;
+        let duration = self
+            .interner
+            .intrinsic(IntrinsicType::Duration, Vec::new())?;
+        let date_result = self.interner.result(date, error)?;
+        let time_result = self.interner.result(time, error)?;
+        let utc_result = self.interner.result(utc, error)?;
+        let symbol = self
+            .resolved
+            .bootstrap_nominal(&module, &Name::new("Date").unwrap())
+            .unwrap();
+        let span = self.resolved.symbol(symbol).unwrap().span();
+        for operation in Operation::ALL {
+            let (parameters, output) = match operation {
+                Operation::DateCreate => {
+                    (vec![(int, false), (int, false), (int, false)], date_result)
+                }
+                Operation::DateParse => (vec![(string, false)], date_result),
+                Operation::DateYear
+                | Operation::DateMonth
+                | Operation::DateDay
+                | Operation::DateDayOfWeek
+                | Operation::DateDayOfYear => (vec![(date, true)], int),
+                Operation::DateAddDays => (vec![(date, true), (int, false)], date_result),
+                Operation::DateAddMonths | Operation::DateAddYears => (
+                    vec![(date, true), (int, false), (policy, false)],
+                    date_result,
+                ),
+                Operation::DateFormat => (vec![(date, true)], string),
+                Operation::TimeCreate => (
+                    vec![(int, false), (int, false), (int, false), (int, false)],
+                    time_result,
+                ),
+                Operation::TimeParse => (vec![(string, false)], time_result),
+                Operation::TimeHour
+                | Operation::TimeMinute
+                | Operation::TimeSecond
+                | Operation::TimeNanosecond => (vec![(time, true)], int),
+                Operation::TimeFormat => (vec![(time, true)], string),
+                Operation::UtcCreate => (vec![(date, false), (time, false)], utc),
+                Operation::UtcParse => (vec![(string, false)], utc_result),
+                Operation::UtcDate => (vec![(utc, true)], date),
+                Operation::UtcTime => (vec![(utc, true)], time),
+                Operation::UtcAdd => (vec![(utc, true), (duration, false)], utc_result),
+                Operation::UtcFormat => (vec![(utc, true)], string),
+            };
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::CivilTime(operation),
+                parameters,
+                None,
+                output,
             )?;
         }
         Ok(())

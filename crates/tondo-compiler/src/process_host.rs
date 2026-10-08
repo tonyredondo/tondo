@@ -37,6 +37,7 @@ use crate::test_backend::{TestExecutionKind, TestParticipation};
 use crate::test_control::{ControlError, EnvelopeHandle};
 use crate::test_temporaries::TempError;
 
+mod civil_time;
 mod filesystem;
 mod net;
 mod uuid;
@@ -4346,7 +4347,9 @@ impl BootstrapHost {
         if let Some(maximum) = maximum {
             response.reserve(maximum, [])?;
         }
-        let value = if base_name.starts_with("std.net.") {
+        let value = if tondo_stdlib::civil_time::CivilOperation::from_name(base_name).is_some() {
+            self.invoke_civil_time_admitted(base_name, arguments, &mut response, admission)?
+        } else if base_name.starts_with("std.net.") {
             self.invoke_network_admitted(base_name, arguments, &mut response, admission)?
         } else if base_name.starts_with("std.uuid.Uuid.") {
             self.invoke_uuid_admitted(base_name, arguments, &mut response, admission)?
@@ -8326,6 +8329,7 @@ impl VmHost for BootstrapHost {
             || Self::is_console_output(base)
             || base == "std.console.readLine"
             || base.starts_with("std.uuid.Uuid.")
+            || tondo_stdlib::civil_time::CivilOperation::from_name(base).is_some()
             || base.starts_with("std.net.")
         {
             return self.invoke_admitted_with_import(name, &arguments, budget, admission);
@@ -8499,6 +8503,14 @@ impl VmHost for BootstrapHost {
         // host contract is owned by the unspecialized function name.
         let specialized_name = name;
         let name = name.split_once('[').map_or(name, |(base, _)| base);
+        if tondo_stdlib::civil_time::CivilOperation::from_name(name).is_some() {
+            return self.invoke_civil_time_admitted(
+                name,
+                arguments,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            );
+        }
         if name.starts_with("std.net.") {
             return self.invoke_network_admitted(
                 name,

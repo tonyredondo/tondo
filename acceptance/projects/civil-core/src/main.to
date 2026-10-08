@@ -1,0 +1,68 @@
+import std.time as civil
+
+fn echo(value: civil.UtcDateTime): civil.UtcDateTime suspends {
+    return value
+}
+
+fn main(): !civil.CivilError {
+    let createDate = civil.Date.create
+    let parseDate = civil.Date.parse
+    let date = createDate(2024, 2, 29)?
+    assert(date == parseDate("2024-02-29")?)
+    assert(date.year() == 2024)
+    assert(date.month() == 2)
+    assert(date.day() == 29)
+    assert(date.dayOfWeek() == 4)
+    assert(date.dayOfYear() == 60)
+    assert(date.format() == "2024-02-29")
+    assert(date.addDays(1)?.format() == "2024-03-01")
+    assert(date.addMonths(1, civil.MonthPolicy.Reject)?.format() == "2024-03-29")
+    assert(date.addYears(1, civil.MonthPolicy.Clamp)?.format() == "2025-02-28")
+    match date.addYears(1, civil.MonthPolicy.Reject) {
+        err(civil.CivilError.InvalidDate) => {}
+        _ => panic("missing explicit month rejection")
+    }
+    match date.addDays(-9223372036854775808) {
+        err(civil.CivilError.OutOfRange) => {}
+        _ => panic("date arithmetic escaped its finite range")
+    }
+    let createTime = civil.Time.create
+    let parseTime = civil.Time.parse
+    let time = createTime(23, 59, 59, 999999999)?
+    assert(time == parseTime("23:59:59.999999999")?)
+    assert(time.hour() == 23)
+    assert(time.minute() == 59)
+    assert(time.second() == 59)
+    assert(time.nanosecond() == 999999999)
+    assert(time.format() == "23:59:59.999999999")
+    match parseTime("23:59:60") {
+        err(civil.CivilError.InvalidTime) => {}
+        _ => panic("leap seconds were accepted")
+    }
+    let createUtc = civil.UtcDateTime.create
+    let parseUtc = civil.UtcDateTime.parse
+    let utc = createUtc(date, time)
+    assert(utc == parseUtc("2024-02-29T23:59:59.999999999Z")?)
+    assert(utc.date() == date)
+    assert(utc.time() == time)
+    assert(utc.format() == "2024-02-29T23:59:59.999999999Z")
+    assert(utc.add(civil.Duration.fromNanoseconds(1))?.format() == "2024-03-01T00:00:00Z")
+    let last = parseUtc("9999-12-31T23:59:59.999999999Z")?
+    match last.add(civil.Duration.fromNanoseconds(1)) {
+        err(civil.CivilError.OutOfRange) => {}
+        _ => panic("UTC arithmetic published an out-of-range value")
+    }
+    let optional: civil.UtcDateTime? = some(utc)
+    assert(optional == some(utc))
+    scope {
+        let child = spawn echo(utc)
+        assert(await child == utc)
+    }
+    assert(utc.date() == date)
+    defer {
+        match parseDate("0001-01-01") {
+            ok(first) => assert(first.dayOfWeek() == 1)
+            err(_) => panic("pure deferred parsing failed")
+        }
+    }
+}
