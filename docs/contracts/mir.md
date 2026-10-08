@@ -34,7 +34,9 @@ close witness. Trait loops and collect reserve it before the first poll in a
 compiler-owned scope. `MirDeferCapture::CurrentOwner` retains the final cursor
 state even for Copy cursors; source defers remain contextual snapshots. A
 current-owner reservation must be a guarded suspendible Unit call with exactly
-one matching complete owner. Ordinary Copy moves keep their existing checks.
+one matching complete owner. It can replace that owner's exact caller guard
+when consuming an iterator; a contextual source defer cannot replace an
+explicit guard. Ordinary Copy moves keep their existing checks.
 When collect is referenced, MIR includes its compiler-owned ordinary generic
 body in the exact verified function set. Direct and spawned collection share
 the same loop, next/close dispatch, limits and abnormal cleanup.

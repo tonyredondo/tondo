@@ -42,8 +42,11 @@ not an implementation or promotion of `std.log`.
 Every explicit AsyncIterator implementation supplies the consuming
 `close(iterator: Self) suspends` method. The compiler reserves that close in a
 private scope, retaining the final cursor state even when the cursor is Copy.
-Source defers keep their existing contextual Copy snapshot behavior. Direct
-and spawned collect share the same ordinary MIR body and guarded cleanup;
+Source defers keep their existing contextual Copy snapshot behavior. Consuming
+iteration transfers an existing exact caller guard to the protocol close;
+it does not execute both cleanups. Ordinary defers cannot replace another
+explicit guard. Direct and spawned collect share the same MIR loop lowering
+and guarded cleanup;
 the hosted provider's sealed receiver witness implements the same protocol.
 
 The sealed receiver iterator reserves its consuming close in a private scope.

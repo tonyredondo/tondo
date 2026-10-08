@@ -319,7 +319,9 @@ now-vacuous guard transitions, and re-verifies the complete bytecode program.
 reserved operand for a compiler-owned iterator close. Its call is suspendible
 and infallible Unit; the verifier checks the exact complete owner, argument
 types and single guarded reservation independently. Cleanup consumes the final
-cursor state, including Copy state. This does not permit ordinary Copy moves
+cursor state, including Copy state. Consuming iteration may replace the exact
+caller guard; other guards and contextual source defers keep their rejection
+rules. This does not permit ordinary Copy moves
 in contextual source defers. Generated collect bodies use ordinary verified
 frames and guarded cleanup; the bodyless VM collect route remains an internal
 bounded model and is not the public compiler route.

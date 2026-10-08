@@ -7061,15 +7061,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                 scope,
                 action,
                 guard,
-                ..
+                capture,
             } => {
                 let span = self.resolve_span(frame, instruction.span)?;
                 let marker = self.temporary_roots.len();
-                let deferred = self.capture_defer(frame, *scope, span, action, guard.as_ref());
+                let deferred =
+                    self.capture_defer(frame, *scope, span, action, guard.as_ref(), *capture);
                 let registration = match deferred {
                     Ok(deferred) => {
                         let replacement = match deferred.guard.as_ref() {
-                            Some(guard) => self.replace_fallback_with_explicit(frame, guard),
+                            Some(guard) => {
+                                self.replace_cleanup_with_explicit(frame, guard, *capture)
+                            }
                             None => Ok(()),
                         };
                         if replacement.is_ok() {
@@ -7439,6 +7442,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         span: BytecodeSpan,
         action: &BytecodeOperation,
         guard: Option<&BytecodePlace>,
+        capture: crate::bytecode::BytecodeDeferCapture,
     ) -> Result<RuntimeDefer, VmError> {
         let (values, text_bytes) = match &action.kind {
             BytecodeOperationKind::Call { arguments, .. } => (arguments.len() + 1, 0),
@@ -7540,7 +7544,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "defer guard does not identify exactly one invocation operand",
             ));
         }
-        if let Some(guard) = guard
+        if capture == crate::bytecode::BytecodeDeferCapture::Contextual
+            && let Some(guard) = guard
             && self.frames[frame].cleanups.iter().any(|cleanup| {
                 matches!(cleanup, RuntimeCleanup::Explicit(_)) && cleanup.guard() == Some(guard)
             })
@@ -7685,22 +7690,33 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(())
     }
 
-    fn replace_fallback_with_explicit(
+    fn replace_cleanup_with_explicit(
         &mut self,
         frame: usize,
         guard: &BytecodePlace,
+        capture: crate::bytecode::BytecodeDeferCapture,
     ) -> Result<(), VmError> {
         let mut replaced = Vec::new();
         for (index, cleanup) in self.frames[frame].cleanups.iter().enumerate() {
-            let RuntimeCleanup::Fallback(fallback) = cleanup else {
-                continue;
-            };
-            if place_contains(guard, &fallback.owner) {
-                replaced.push(index);
-            } else if place_contains(&fallback.owner, guard) {
-                return Err(VmError::invariant(
-                    "explicit cleanup guard is only part of an active terminal fallback",
-                ));
+            match cleanup {
+                RuntimeCleanup::Fallback(fallback) => {
+                    if place_contains(guard, &fallback.owner) {
+                        replaced.push(index);
+                    } else if place_contains(&fallback.owner, guard) {
+                        return Err(VmError::invariant(
+                            "explicit cleanup guard is only part of an active terminal fallback",
+                        ));
+                    }
+                }
+                RuntimeCleanup::Explicit(deferred)
+                    if capture == crate::bytecode::BytecodeDeferCapture::CurrentOwner
+                        && deferred.guard.as_ref() == Some(guard) =>
+                {
+                    // Consuming iteration replaces the caller's exact guarded
+                    // cleanup; it must not run again after the protocol close.
+                    replaced.push(index);
+                }
+                _ => {}
             }
         }
         if replaced.len() > 1 {
@@ -37988,6 +38004,7 @@ mod tests {
                     },
                     &invalid_defer,
                     None,
+                    crate::bytecode::BytecodeDeferCapture::Contextual,
                 )
                 .is_err()
         );
@@ -38012,7 +38029,11 @@ mod tests {
             .register_fallback(0, BytecodeScopeId::new(0), &place(types.job_result))
             .unwrap();
         engine
-            .replace_fallback_with_explicit(0, &place(types.job_result))
+            .replace_cleanup_with_explicit(
+                0,
+                &place(types.job_result),
+                crate::bytecode::BytecodeDeferCapture::Contextual,
+            )
             .unwrap();
         assert!(engine.frames[0].cleanups.is_empty());
         assert!(engine.reserve_loan(0, BytecodeLoanId::new(0)).is_err());

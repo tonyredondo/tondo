@@ -6372,6 +6372,75 @@ fn main(): !channel.ChannelError {{
     }
 
     #[test]
+    fn channel_endpoint_ownership_guarded_iteration_transfers_terminal_elements() {
+        for operation in [
+            "match cursor.collect(limit: 1) {\n ok(values) => {\n for value in values {\n assert(value.receive() == some(7))\n closeReceiver(value)\n }\n }\n err(_) => panic(\"collect\")\n }",
+            "for value in cursor {\n assert(value.receive() == some(7))\n closeReceiver(value)\n }",
+            "scope {\n let pending = spawn cursor.collect(limit: 1)\n match await pending {\n ok(values) => {\n for value in values {\n assert(value.receive() == some(7))\n closeReceiver(value)\n }\n }\n err(_) => panic(\"spawned collect\")\n }\n }",
+        ] {
+            let source = format!(
+                r#"
+import std.channel
+type Cursor = {{ source: channel.Receiver[channel.Receiver[Int]] }}
+fn closeReceiver(receiver: channel.Receiver[Int]) {{ _ = receiver.close()
+}}
+impl AsyncIterator[channel.Receiver[Int]] for Cursor {{
+    fn next(mut self): channel.Receiver[Int]? suspends {{ self.source.receive() }}
+    fn close(iterator: Cursor) suspends {{
+        let Cursor {{ source }} = iterator
+        for receiver in source.close() {{ closeReceiver(receiver) }}
+    }}
+}}
+fn callerCleanup(cursor: Cursor) {{
+    AsyncIterator[channel.Receiver[Int]].close(cursor)
+    panic("consumed caller cleanup ran")
+}}
+fn main(): !channel.ChannelError {{
+    let (innerSender, innerReceiver) = channel.bounded[Int](1)?
+    defer closeReceiver(innerReceiver)
+    match innerSender.trySend(7) {{
+        ok(_) => {{}}
+        err(_) => panic("inner send")
+    }}
+    innerSender.close()
+    let (sender, receiver) = channel.bounded[channel.Receiver[Int]](1)?
+    let cursor = Cursor {{ source: receiver }}
+    defer callerCleanup(cursor)
+    match sender.trySend(innerReceiver) {{
+        ok(_) => {{}}
+        err(error) => {{
+            match error {{
+                channel.TrySendError.Full(value) => closeReceiver(value)
+                channel.TrySendError.Closed(value) => closeReceiver(value)
+                channel.TrySendError.ResourceLimit(value) => closeReceiver(value)
+            }}
+            panic("outer send")
+        }}
+    }}
+    sender.close()
+    {operation}
+}}
+"#
+            );
+            let output = execute(operation_request_with_capabilities(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{}",
+                output.diagnostics().human()
+            );
+            assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+        }
+    }
+
+    #[test]
     fn channel_endpoint_ownership_iterator_requires_explicit_close_and_collect_send() {
         for close in ["", "fn close(self) suspends {}"] {
             let source = format!(

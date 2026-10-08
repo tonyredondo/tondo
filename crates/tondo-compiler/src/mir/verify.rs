@@ -6253,7 +6253,12 @@ impl Verifier<'_> {
                     match &statement.kind {
                         MirStatementKind::BeginSelect { .. }
                         | MirStatementKind::RegisterSelectArm { .. } => {}
-                        MirStatementKind::RegisterDefer { scope, guard, .. } => {
+                        MirStatementKind::RegisterDefer {
+                            scope,
+                            guard,
+                            capture,
+                            ..
+                        } => {
                             state.activate_scope(*scope, &statement_context)?;
                             let registration = (block_id, index);
                             if state
@@ -6279,13 +6284,18 @@ impl Verifier<'_> {
                                     &statement_context,
                                 )? != HirTerminalStatus::Absent;
                                 let guard = LocalAccess::from_place(guard);
+                                // Consuming iteration replaces the exact caller
+                                // guard; ordinary source defers cannot replace it.
                                 let replaced = state
                                     .guards
                                     .iter()
                                     .filter_map(|(existing, active)| {
-                                        (active.kind == CleanupEntryKind::Fallback
+                                        ((active.kind == CleanupEntryKind::Fallback
                                             && local_access_contains(&guard, existing))
-                                        .then_some((existing.clone(), *active))
+                                            || (*capture == MirDeferCapture::CurrentOwner
+                                                && active.kind == CleanupEntryKind::Explicit
+                                                && existing == &guard))
+                                            .then_some((existing.clone(), *active))
                                     })
                                     .collect::<Vec<_>>();
                                 if terminal && replaced.len() != 1 {
@@ -10130,6 +10140,58 @@ mod tests {
                 .unwrap_or_else(|| panic!("fixture has no function named {name}"))
                 .id(),
         )
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_current_cleanup_requires_exact_caller_handoff() {
+        let source = "import std.channel\n type Cursor = { receiver: channel.Receiver[Int] }\n\
+            fn cleanup(cursor: Cursor) {\n let Cursor { receiver } = cursor\n _ = receiver.close()\n }\n\
+            impl AsyncIterator[Int] for Cursor {\n\
+                fn next(mut self): Int? suspends { none }\n\
+                fn close(iterator: Cursor) suspends { cleanup(iterator) }\n\
+            }\n\
+            fn run(iterator: Cursor) {\n defer cleanup(iterator)\n\
+                for value in iterator {\n _ = value\n }\n }\n";
+        for mutation in ["contextual", "wrong-owner"] {
+            let (resolved, hir, mut mir) = checked_mir(source);
+            verify_mir(&resolved, &hir, &mir).unwrap();
+            let run = MirFunctionId::Callable(callable_named(&resolved, "run"));
+            let function = mir.functions.get_mut(&run).unwrap();
+            let original_owner = function.parameters[0];
+            let statement = function
+                .blocks
+                .iter_mut()
+                .flat_map(|block| &mut block.statements)
+                .find(|statement| {
+                    matches!(
+                        statement.kind,
+                        MirStatementKind::RegisterDefer {
+                            capture: MirDeferCapture::CurrentOwner,
+                            ..
+                        }
+                    )
+                })
+                .unwrap();
+            let MirStatementKind::RegisterDefer { capture, guard, .. } = &mut statement.kind else {
+                unreachable!()
+            };
+            if mutation == "contextual" {
+                *capture = MirDeferCapture::Contextual;
+            } else {
+                guard.as_mut().unwrap().local = original_owner;
+            }
+            let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+            if mutation == "contextual" {
+                assert!(
+                    error
+                        .message()
+                        .contains("does not replace exactly one fallback"),
+                    "{error}"
+                );
+            } else {
+                assert!(!error.message().is_empty());
+            }
+        }
     }
 
     #[test]

@@ -16925,8 +16925,13 @@ impl AsyncIterator[Int] for Cursor {{
         _ = console.print("closed")
     }}
 }}
+fn callerCleanup(cursor: Cursor) {{
+    AsyncIterator[Int].close(cursor)
+    panic("consumed caller cleanup ran")
+}}
 fn consume(receiver: channel.Receiver[Int]) {{
     let cursor = Cursor {{ receiver }}
+    defer callerCleanup(cursor)
     {action}
 }}
 fn main(): !channel.ChannelError {{

@@ -12,7 +12,7 @@
   "api": "tondo-std-bytes-0.1/1",
   "source": {
     "path": "crates/tondo-compiler/src/process_host.rs",
-    "sha256": "sha256:12153fcddd347f569bf067863c9a3f13846520ecd5addedbf83cbcbd4099117d"
+    "sha256": "sha256:371b27f91e50fe7b56723d976f729a2bd05caaac51701d6e7a5a169288cedda1"
   },
   "capabilities": {
     "required": [],

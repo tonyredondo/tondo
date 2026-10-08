@@ -6106,6 +6106,61 @@ fn optional(): reflect.TypeInfo { reflect.typeInfo[Int?]() }
     }
 
     #[test]
+    fn channel_endpoint_ownership_bytecode_current_cleanup_requires_exact_caller_handoff() {
+        let valid = lowered(
+            "import std.channel\n type Cursor = { receiver: channel.Receiver[Int] }\n\
+            fn cleanup(cursor: Cursor) {\n let Cursor { receiver } = cursor\n _ = receiver.close()\n }\n\
+            impl AsyncIterator[Int] for Cursor {\n\
+                fn next(mut self): Int? suspends { none }\n\
+                fn close(iterator: Cursor) suspends { cleanup(iterator) }\n\
+            }\n\
+            fn run(iterator: Cursor) {\n defer cleanup(iterator)\n\
+                for value in iterator {\n _ = value\n }\n }\n",
+        );
+        for mutation in ["contextual", "wrong-owner"] {
+            let mut invalid = valid.clone();
+            let run = function_id(&invalid, "run");
+            let function = &mut invalid.functions[run.index() as usize];
+            let original_owner = function.parameters[0];
+            let instruction = function
+                .blocks
+                .iter_mut()
+                .flat_map(|block| &mut block.instructions)
+                .find(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::RegisterDefer {
+                            capture: bc::BytecodeDeferCapture::CurrentOwner,
+                            ..
+                        }
+                    )
+                })
+                .unwrap();
+            let bc::BytecodeInstructionKind::RegisterDefer { capture, guard, .. } =
+                &mut instruction.kind
+            else {
+                unreachable!()
+            };
+            if mutation == "contextual" {
+                *capture = bc::BytecodeDeferCapture::Contextual;
+            } else {
+                guard.as_mut().unwrap().slot = original_owner;
+            }
+            let error = bc::verify_bytecode(&invalid).unwrap_err();
+            if mutation == "contextual" {
+                assert!(
+                    error
+                        .message()
+                        .contains("does not replace exactly one fallback"),
+                    "{error}"
+                );
+            } else {
+                assert!(!error.message().is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn channel_endpoint_ownership_bytecode_copy_cursor_close_requires_its_current_owner_guard() {
         let valid = lowered(
             "type Cursor = { value: Int }\n\

@@ -7898,7 +7898,12 @@ impl Verifier<'_> {
                         ));
                     }
                     match &instruction.kind {
-                        BytecodeInstructionKind::RegisterDefer { scope, guard, .. } => {
+                        BytecodeInstructionKind::RegisterDefer {
+                            scope,
+                            guard,
+                            capture,
+                            ..
+                        } => {
                             state.activate_scope(*scope, &instruction_context)?;
                             let registration = (block_id, index);
                             if state
@@ -7922,13 +7927,18 @@ impl Verifier<'_> {
                                     .terminal_status(guard.ty, &instruction_context)?
                                     == BytecodeTerminalStatus::Present;
                                 let guard = LocalAccess::from_place(guard);
+                                // Independently check the consuming iterator
+                                // handoff without admitting ordinary defer reuse.
                                 let replaced = state
                                     .guards
                                     .iter()
                                     .filter_map(|(existing, active)| {
-                                        (active.kind == CleanupEntryKind::Fallback
+                                        ((active.kind == CleanupEntryKind::Fallback
                                             && local_access_contains(&guard, existing))
-                                        .then_some((existing.clone(), *active))
+                                            || (*capture == BytecodeDeferCapture::CurrentOwner
+                                                && active.kind == CleanupEntryKind::Explicit
+                                                && existing == &guard))
+                                            .then_some((existing.clone(), *active))
                                     })
                                     .collect::<Vec<_>>();
                                 if terminal && replaced.len() != 1 {
