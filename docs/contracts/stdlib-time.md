@@ -170,6 +170,11 @@ its partial profiles remain separate from this successful fresh capture.
 Clean checkpoint `33d9223b` passes all 356 named functional steps, 2,804 Rust
 tests in 76 suites and all 206 draft conformance cases. The selection corpus
 retains its three selected cases with 32 exact observations each. Its
-exact-checkout publication CI remains pending.
+source publication `1509fb77` passes exact-checkout CI run `37744715050`,
+strict job `113203358076`. The actual checkout executes all 356 named steps
+and 2,804 Rust tests in 76 suites without error annotations. All paginated
+checks/statuses/runs/PRs and the remote main ref remain unchanged after a
+109-second quiet interval. Portable and deterministic fuzz jobs are expected
+normal-push skips, not newly executed portable evidence.
 These Rust percentages do not claim Python, shell or Tondo source coverage,
 nor do they promote the full civil, distribution or S1A boundaries.

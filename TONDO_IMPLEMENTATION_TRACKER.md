@@ -7172,7 +7172,7 @@ estas leaves.
 
 #### 21.3.13 `std.log`
 
-- [ ] **STD-TIME-CAP-001 — Enforce time capabilities per operation.** Make
+- [x] **STD-TIME-CAP-001 — Enforce time capabilities per operation.** Make
   `std.time` import and pure `Duration` values usable without a clock. Require
   `clock` for resolved monotonic and virtual provider operations, including
   references, aliases, deferred calls and intermediate bodies; retain the
@@ -7180,9 +7180,13 @@ estas leaves.
   functions as values. Synchronize the owner contract, negative checks and
   generated evidence. Source `33d9223b` passes all 356 functional steps,
   2,804 Rust tests in 76 suites, every 80% global/risk quality floor and all
-  six selected critical mutants. Its exact-checkout publication CI remains
-  pending. This prerequisite does not implement civil calendar values, zones,
-  a civil provider or logging timestamps.
+  six selected critical mutants. Source publication `1509fb77` passes
+  exact-checkout CI run `37744715050`, strict job `113203358076`, with all
+  356 named steps and 2,804 Rust tests in 76 suites. All paginated
+  checks/statuses/runs/PRs and the main ref remain stable for 109 seconds;
+  portable/fuzz are expected normal-push skips. This prerequisite does not
+  implement civil calendar values, zones, a civil provider or logging
+  timestamps. Next: the shared pure Date/Time/UTC core required by logging.
 - [ ] **STD-LOG-IMPL-001 — Implementar logging estructurado.** Publicar eventos,
   niveles, fields, filters y sinks explícitos con backpressure/fallo visible y
   sin globals ambientales.
