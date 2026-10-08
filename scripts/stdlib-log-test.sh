@@ -25,6 +25,21 @@ expect_failure global-logger env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/global.json
 jq '.capabilities.source_sets.timestamp = ["civil-clock"]' testing/stdlib-log.json > "$tmp_dir/pure-timestamp-clock.json"
 expect_failure pure-timestamp-clock env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/pure-timestamp-clock.json" scripts/stdlib-log-check.sh
 
+jq '.surface.signatures[] |= if .id == "file-sink-create" then .signature |= sub(" suspends$"; "") else . end' testing/stdlib-log.json > "$tmp_dir/file-constructor-effect.json"
+expect_failure file-constructor-effect env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/file-constructor-effect.json" scripts/stdlib-log-check.sh
+
+jq '.sinks.file.opening = "first-emit"' testing/stdlib-log.json > "$tmp_dir/deferred-open.json"
+expect_failure deferred-open env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/deferred-open.json" scripts/stdlib-log-check.sh
+
+jq '.implementation.status = "verified-public-hosted-core"' testing/stdlib-log.json > "$tmp_dir/verified-parent.json"
+jq '.status = "verified-public-hosted-core" | .quality_gate = "verified-80-percent-per-scope"' testing/stdlib-log-implementation.json > "$tmp_dir/verified-core.json"
+jq '.status = "implementation-in-progress"' testing/stdlib-log-implementation.json > "$tmp_dir/pending-core.json"
+env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/verified-parent.json" TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT="$tmp_dir/verified-core.json" scripts/stdlib-log-check.sh
+expect_failure mismatched-core-status env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/verified-parent.json" TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT="$tmp_dir/pending-core.json" scripts/stdlib-log-check.sh
+
+jq '.implementation.status = "fully-promoted"' testing/stdlib-log.json > "$tmp_dir/unmeasured-promotion.json"
+expect_failure unmeasured-promotion env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/unmeasured-promotion.json" scripts/stdlib-log-check.sh
+
 jq '.capabilities.forbidden = [.capabilities.forbidden[] | select(. != "unbounded-queue")]' testing/stdlib-log.json > "$tmp_dir/unbounded.json"
 expect_failure unbounded-queue env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/unbounded.json" scripts/stdlib-log-check.sh
 

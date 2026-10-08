@@ -128,6 +128,7 @@
       "type": "FileSink",
       "capability": "filesystem",
       "modes": ["Append", "Truncate"],
+      "opening": "immediate-constructor",
       "parent_creation": "forbidden",
       "rotation": "forbidden"
     },
@@ -192,7 +193,7 @@
       {"id": "sink-options-create", "signature": "pub fn SinkOptions.create(format: LogFormat, backpressure: Backpressure, capacity: Int, limits: LogLimits): SinkOptions ! LogError", "kind": "sink-options", "effect": "pure"},
       {"id": "logger-options-create", "signature": "pub fn LoggerOptions.create(minimumLevel: LogLevel): LoggerOptions", "kind": "logger-options", "effect": "pure"},
       {"id": "console-sink-create", "signature": "pub fn ConsoleSink.create(stream: ConsoleStream, options: SinkOptions): ConsoleSink ! LogError", "kind": "console-sink", "effect": "console"},
-      {"id": "file-sink-create", "signature": "pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError", "kind": "file-sink", "effect": "filesystem"},
+      {"id": "file-sink-create", "signature": "pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError suspends", "kind": "file-sink", "effect": "suspends"},
       {"id": "logger-create", "signature": "pub fn Logger[S: LogSink + Share].create(sink: S, options: LoggerOptions): Logger[S] ! LogError suspends", "kind": "logger-constructor", "effect": "suspends"},
       {"id": "logger-enabled", "signature": "pub fn Logger[S: LogSink + Share].enabled(self, level: LogLevel): Bool", "kind": "level-filter", "effect": "pure"},
       {"id": "logger-emit", "signature": "pub fn Logger[S: LogSink + Share].emit(self, event: LogEvent): LogReceipt ! LogError suspends", "kind": "event-submit", "effect": "suspends"},

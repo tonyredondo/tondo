@@ -158,7 +158,9 @@ pub trait LogSink {
 `ConsoleSink` escribe en `stdout` o `stderr` mediante la capability `console`.
 `FileSink` escribe a un `Path` explícito mediante `filesystem`; no crea padres,
 no consulta `HOME`, no cambia permisos ambientales y no rota archivos en este
-contrato. Un provider de red implementa `LogSink` sobre un `std.io.Writer` o
+contrato. Its suspendible constructor opens the file immediately and returns
+opening errors as LogError; opening is not deferred until the first event.
+Un provider de red implementa `LogSink` sobre un `std.io.Writer` o
 un transporte de `std.net` bajo `network`; `std.log` no hace DNS, TLS ni
 reconexión por debajo del protocolo.
 
@@ -194,7 +196,7 @@ pub fn SinkOptions.create(format: LogFormat, backpressure: Backpressure,
     capacity: Int, limits: LogLimits): SinkOptions ! LogError
 pub fn LoggerOptions.create(minimumLevel: LogLevel): LoggerOptions
 pub fn ConsoleSink.create(stream: ConsoleStream, options: SinkOptions): ConsoleSink ! LogError
-pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError
+pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError suspends
 pub fn Logger[S: LogSink + Share].create(sink: S, options: LoggerOptions): Logger[S] ! LogError suspends
 ```
 

@@ -1932,6 +1932,8 @@ actualizar esta especificación y el tracker antes de implementar.
   sustituto del reloj UTC.
 - `std.log` define eventos puros en core; cada sink declara sus capabilities y
   política de backpressure sin alterar silenciosamente el control del programa.
+  FileSink.create is suspends: it opens its explicit path in the constructor
+  and returns opening errors there. Host implementation remains a separate gate.
 - Los argumentos del programa se obtienen mediante
   `std.env.snapshot().arguments()`.
 - `std.env` solo expone un snapshot runtime explícito; no lee environment durante

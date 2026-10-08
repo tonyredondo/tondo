@@ -15,7 +15,7 @@ die() {
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "owner contract contains CR or trailing whitespace"
 
-jq -e '
+jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdlib-log-implementation.json}" '
   .format == "tondo-stdlib-owner-contract/1"
   and .owner == "std.log"
   and .parent_owner == "std"
@@ -86,6 +86,7 @@ jq -e '
   and .sinks.console.capability == "console"
   and .sinks.console.streams == ["Stdout", "Stderr"]
   and .sinks.file.capability == "filesystem"
+  and .sinks.file.opening == "immediate-constructor"
   and .sinks.file.modes == ["Append", "Truncate"]
   and .sinks.file.rotation == "forbidden"
   and .sinks.network.capability == "network"
@@ -114,7 +115,7 @@ jq -e '
   and ([.surface.signatures[] | select(.id == "logger-flush" and .effect == "suspends")] | length) == 1
   and ([.surface.signatures[] | select(.id == "logger-close" and .effect == "suspends")] | length) == 1
   and ([.surface.signatures[] | select(.id == "console-sink-create" and .effect == "console")] | length) == 1
-  and ([.surface.signatures[] | select(.id == "file-sink-create" and .effect == "filesystem")] | length) == 1
+  and ([.surface.signatures[] | select(.id == "file-sink-create" and .effect == "suspends") | .signature] == ["pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError suspends"])
   and ([.surface.signatures[] | select(.effect == "selectable")] | length) == 0
   and .surface.direct_call_waits == true
   and .surface.explicit_await_direct_call == "forbidden"
@@ -163,7 +164,11 @@ jq -e '
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
-  and .implementation.status == "core-implementation-in-progress"
+  and ((.implementation.status == "core-implementation-in-progress"
+    and $core[0].status == "implementation-in-progress")
+    or (.implementation.status == "verified-public-hosted-core"
+    and $core[0].status == "verified-public-hosted-core"
+    and $core[0].quality_gate == "verified-80-percent-per-scope"))
   and .implementation.public_api_promoted == false
   and .implementation.host == "pending-STD-LOG-HOST-001"
   and .implementation.core_register == "testing/stdlib-log-implementation.json"
