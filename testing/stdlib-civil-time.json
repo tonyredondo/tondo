@@ -10,7 +10,7 @@
     "register": "testing/stdlib-civil-time-core.json",
     "task": "STD-CIVIL-TIME-CORE-001",
     "signatures": 24,
-    "status": "implementation-in-progress",
+    "status": "verified-public-hosted-core",
     "native_abi": "not-implemented",
     "native_aot": "not-claimed"
   },

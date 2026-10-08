@@ -3,8 +3,8 @@
   "owner": "std.time.civil",
   "edition": "0.1",
   "task": "STD-CIVIL-TIME-CORE-001",
-  "status": "implementation-in-progress",
-  "quality_gate": "pending-80-percent-per-scope",
+  "status": "verified-public-hosted-core",
+  "quality_gate": "verified-80-percent-per-scope",
   "parent": "testing/stdlib-civil-time.json",
   "contract": "docs/contracts/stdlib-civil-time-core.md",
   "selected_route": "hosted-scalar-value-kernel",
@@ -197,7 +197,7 @@
     "rss": "not-measured"
   },
   "promotion": {
-    "compiler_api": "registered-public-hosted-pending-quality",
+    "compiler_api": "verified-public-hosted-core",
     "native_abi": "not-implemented",
     "native_aot": "not-claimed",
     "zones": "not-implemented",

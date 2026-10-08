@@ -5,8 +5,10 @@
 [`testing/stdlib-civil-time.json`](../../testing/stdlib-civil-time.json) y la
 integración normativa se enlaza desde
 [`TONDO_STANDARD_LIBRARY_SPEC.md`](../../TONDO_STANDARD_LIBRARY_SPEC.md).
-Este cierre define el calendario civil, pero no afirma que los adaptadores VM o
-nativos, ni la base de zonas, ya estén implementados.
+The full civil contract remains locked. The shared
+[pure core](stdlib-civil-time-core.md) verifies 24 Date, Time and UtcDateTime
+operations in the production hosted compiler/VM without clocks. DateTime,
+UtcOffset, zones, civil providers and native civil ABI/AOT remain pending.
 
 `std.time` conserva un único time-base (`single-duration`, `single-instant`).
 `Duration`, `Instant`, `Timer`,

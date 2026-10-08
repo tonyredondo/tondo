@@ -2239,8 +2239,10 @@ register [stdlib-civil-time.json](testing/stdlib-civil-time.json).
 The full contract is locked as `STD-CIVIL-TIME-001`. The shared
 [pure value core](docs/contracts/stdlib-civil-time-core.md) registers the 24
 specified Date, Time and UtcDateTime operations in the production hosted
-compiler/VM without clock capabilities. Its quality and publication gates
-remain pending. The complete civil owner, zones, civil providers and native
+compiler/VM without clock capabilities. Its source-bound quality preserves
+every global/risk 80% floor and catches all six selected critical mutants.
+Exact-checkout CI on `d5b52f96` passes all 358 functional steps and 2,817 Rust
+tests in 77 suites. The complete civil owner, zones, civil providers and native
 ABI/AOT remain separate implementation and promotion boundaries.
 
 Esta superficie usa un calendario gregoriano proléptico con años `1..9999`, no

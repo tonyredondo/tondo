@@ -72,9 +72,16 @@ Each affected stage runs from a clean checkpoint, and every segment retains
 the measured source tree. The final segment passes all 206 draft cases and
 96 exact select observations. S1A readiness remains pending and its refusal
 is verified. This composition is not an uninterrupted local run.
-Exact-checkout publication CI remains pending.
+Exact-source publication CI also passes on
+`d5b52f960034f27f83bb77f1e4946e343129ba81`:
+[run 37770705242](https://github.com/tonyredondo/tondo/actions/runs/37770705242),
+strict Linux x86_64 job `113289294834`. Its actual checkout executes all 358
+steps and 2,817 Rust tests in 77 suites without error annotations. All paginated
+checks, statuses, runs, open main PRs and the remote main ref remain unchanged
+through the final quiet confirmation. Portable and deterministic fuzz jobs are
+expected normal-push skips; this result does not establish global portable CI.
 
-The implementation is in progress until those remaining checks pass. The full
-civil owner remains contract-locked. DateTime, UtcOffset, zones, the versioned timezone
+The 24-operation public hosted core is verified. The full civil owner remains
+contract-locked. DateTime, UtcOffset, zones, the versioned timezone
 bundle, civil clock and anchors remain pending. This is not native Tondo civil
 ABI/AOT promotion, a full civil test/fuzz/conformance promotion or a release.

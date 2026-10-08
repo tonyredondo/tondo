@@ -6615,7 +6615,7 @@ estas leaves.
 
 #### 21.3.5 Calendario civil de `std.time`
 
-- [ ] **STD-CIVIL-TIME-CORE-001 — Implement the shared pure civil value core.**
+- [x] **STD-CIVIL-TIME-CORE-001 — Implement the shared pure civil value core.**
   Register the 24 specified Date, Time and UtcDateTime operations in the
   hosted compiler/VM without clock capabilities. Preserve strict ASCII
   parsing, Gregorian years 1..9999, explicit MonthPolicy, checked Duration
@@ -6623,8 +6623,15 @@ estas leaves.
   Verify the finite kernel against an independent oracle, typed host memory
   admission and ordinary public projects, including refusal and lifecycle
   paths. This logging prerequisite does not promote zones, a civil provider,
-  native ABI/AOT or the complete civil owner. Quality and publication CI
-  remain pending.
+  native ABI/AOT or the complete civil owner. The 1,272-case independent oracle,
+  public projects, typed memory refusal and lifecycle checks pass. Source-bound
+  quality measures 91.622776% line coverage, passes every global/risk 80% floor
+  and catches all six selected critical mutants. Exact-source CI `37770705242`,
+  job `113289294834`, checks out `d5b52f96` and passes all 358 functional steps
+  and 2,817 Rust tests in 77 suites. Paginated checks/statuses/runs/PRs and the
+  main ref remain stable through final quiet confirmation; portable/fuzz are
+  expected normal-push skips. Next prerequisite: enforce the existing unique
+  channel endpoint ownership contract before implementing the generic logger.
 - [ ] **STD-CIVIL-TIME-IMPL-001 — Implementar calendario y zonas.** Publicar
   Date, Time, DateTime, parsing/formatting, aritmética y conversiones de zona
   sobre el time-base único, con reglas y errores versionados.
