@@ -30,7 +30,7 @@
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "969aef7eed672b0363a05ef33baf03f358d1968ab6a9699fbb8c570d32f22471"
+      "sha256": "ba26b492664720d0bfe9653da588e1e4216322770e5a5412bc6d9ca1f8ee1bd9"
     }
   ],
   "summary": {
@@ -3115,7 +3115,7 @@
       ],
       "oracle": "exact-observation",
       "repetitions": 3,
-      "source_sha256": "378c58066ef0978284c4d31118ae10d27491d88ec98bfa0c36dfd631afe2c7c7",
+      "source_sha256": "1f10488b84926b2a72af8ce705efdf3eb01b95fd12b79f43a4df92133abef7d2",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
