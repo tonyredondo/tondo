@@ -12,7 +12,7 @@ expect_failure() {
 }
 for status in ready-kernel-private-provider verified-kernel-private-provider; do
     jq --arg status "$status" '
-      del(.measurement,.conformance) | .implementation.status = $status
+      del(.measurement,.conformance,.documentation) | .implementation.status = $status
       | .host.status = "implementation-in-progress"
       | .host.quality_gate = "pending-current-source-proof"
       | .model = null

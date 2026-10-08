@@ -104,6 +104,42 @@
     "native_abi": "not-implemented",
     "native_aot": "not-claimed"
   },
+  "documentation": {
+    "task": "STD-NET-DOC-001",
+    "status": "usage-ready",
+    "quality_gate": "pending-80-percent-per-scope",
+    "document": "docs/contracts/stdlib-net.md",
+    "project": "acceptance/projects/net-usage/tondo.toml",
+    "fixture": "acceptance/projects/net-usage/src/main.to",
+    "command": "scripts/stdlib-net-doc-check.sh",
+    "expected_stdout": "net-doc-ok",
+    "examples": [
+      "values-and-keys",
+      "tcp-roundtrip",
+      "atomic-datagrams",
+      "errors-and-deadlines",
+      "selection-keeps-datagrams",
+      "tls-configuration"
+    ],
+    "sections": [
+      "capabilities-and-explicit-configuration",
+      "values-and-keys",
+      "tcp-ownership-and-partial-io",
+      "udp-message-boundaries",
+      "errors-deadlines-and-cancellation",
+      "selection-keeps-losing-data",
+      "dns-and-tls",
+      "limits-and-costs",
+      "executable-verification",
+      "promotion-boundary"
+    ],
+    "target": "x86_64-unknown-linux-gnu",
+    "providers": "controlled-loopback-production-host",
+    "public_tondo_api": "verified-production-hosted",
+    "production_vm_registration": "verified-production-hosted",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed"
+  },
   "surface": {
     "types": [
       "HostName",

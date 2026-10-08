@@ -7155,6 +7155,13 @@ estas leaves.
   Full normative trace coverage is not promoted. Next: `STD-NET-DOC-001`.
 - [ ] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
   partial I/O, DNS/TLS, timeout, cancelación, errores, costes y ejemplos.
+  The six-path public hosted guide in [stdlib-net.md](docs/contracts/stdlib-net.md)
+  is bound to `acceptance/projects/net-usage` and runs through the ordinary
+  project CLI. `scripts/stdlib-net-doc-check.sh` verifies exact fragments,
+  explicit capabilities/resolver inputs and terminal output; its tests reject
+  documentary drift, missing capabilities, unconsumed owners and an actually
+  executed wrong assertion. Quality and publication CI remain pending;
+  native networking ABI/AOT and full normative trace are not promoted.
 
 #### 21.3.13 `std.log`
 

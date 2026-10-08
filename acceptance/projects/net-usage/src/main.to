@@ -1,0 +1,147 @@
+import std.bytes
+import std.console
+import std.io
+import std.net
+import std.time
+
+fn valuesAndKeys(): !net.NetError {
+    let host = net.hostName("EXample.test.")?
+    let hosts: Map[net.HostName, Int] = [host: 1]
+    assert(hosts[host] == some(1))
+    assert(host != net.hostName("example.test.")?)
+    let ip = net.IpAddress.parse("127.0.0.1")?
+    let addresses: Map[net.SocketAddress, Int] = [net.socketAddress(ip, 0)?: 2]
+    assert(addresses[net.socketAddress(ip, 0)?] == some(2))
+    match net.IpAddress.parse("example.test") {
+        err(net.NetError.InvalidAddress) => ()
+        _ => panic("IP parsing must not perform DNS")
+    }
+    match net.NetLimits.create(0, 1, 1) {
+        err(net.NetError.InvalidLimit) => ()
+        _ => panic("zero limit admitted")
+    }
+}
+
+fn tcpRoundtrip(): !(bytes.BytesError | net.NetError) {
+    let ip = net.IpAddress.parse("127.0.0.1")?
+    let options = net.options(none, net.NetLimits.defaults())?
+    let listener = net.listen(net.socketAddress(ip, 0)?, 1)?
+    defer net.TcpListener.close(listener)
+    let destination = listener.localAddress()?
+    let client = net.connect(destination, options)?
+    let (reader, writer) = net.TcpStream.split(client)
+    defer net.TcpReadHalf.close(reader)
+    defer net.TcpWriteHalf.close(writer)
+    let server = listener.accept(options)?
+    let (peerReader, peerWriter) = net.TcpStream.split(server)
+    defer net.TcpReadHalf.close(peerReader)
+    defer net.TcpWriteHalf.close(peerWriter)
+    let payload = bytes.Bytes("hello")?
+    var written = 0
+    for written < payload.length() {
+        let suffix = payload.slice(written, payload.length())?
+        let count = writer.write(suffix, options)?
+        assert(count > 0)
+        written += count
+    }
+    writer.flush(options)?
+    var received = 0
+    for received < payload.length() {
+        match peerReader.read(1, options)? {
+            io.ReadResult.Data(chunk) => {
+                assert(chunk.equal(payload.slice(received, received + 1)?))
+                received += 1
+            }
+            io.ReadResult.Eof => panic("early EOF")
+        }
+    }
+    writer.shutdown(options)?
+    match peerReader.read(1, options)? {
+        io.ReadResult.Eof => ()
+        _ => panic("shutdown lost EOF")
+    }
+}
+
+fn atomicDatagrams(): !(bytes.BytesError | net.NetError) {
+    let address = net.socketAddress(net.IpAddress.parse("127.0.0.1")?, 0)?
+    let sender = net.bind(address)?
+    defer net.UdpSocket.close(sender)
+    let receiver = net.bind(address)?
+    defer net.UdpSocket.close(receiver)
+    let destination = receiver.localAddress()?
+    let sendOptions = net.options(none, net.NetLimits.defaults())?
+    let readOptions = net.options(none, net.NetLimits.create(8, 4, 3)?)?
+    sender.sendTo(bytes.Bytes("12345")?, destination, sendOptions)?
+    match receiver.receiveFrom(readOptions) {
+        err(net.NetError.DatagramTooLarge) => ()
+        _ => panic("partial datagram published")
+    }
+    sender.sendTo(bytes.Bytes("")?, destination, sendOptions)?
+    let empty = receiver.receiveFrom(readOptions)?
+    assert(empty.source() == sender.localAddress()?)
+    assert(empty.bytes().length() == 0)
+    sender.sendTo(bytes.Bytes("ok")?, destination, sendOptions)?
+    let next = receiver.receiveFrom(readOptions)?
+    assert(next.bytes().equal(bytes.Bytes("ok")?))
+}
+
+fn errorsAndDeadlines(): !(time.ClockError | net.NetError) {
+    let options = net.options(some(time.now()?), net.NetLimits.defaults())?
+    let host = net.hostName("example.test")?
+    match net.resolve(host, 0, options) {
+        err(net.NetError.InvalidPort) => ()
+        _ => panic("validation lost precedence")
+    }
+    match net.resolve(host, 443, options) {
+        err(net.NetError.Timeout) => ()
+        _ => panic("expired deadline did not refuse")
+    }
+}
+
+fn selectionKeepsDatagrams(): !(bytes.BytesError | net.NetError) {
+    let address = net.socketAddress(net.IpAddress.parse("127.0.0.1")?, 0)?
+    let options = net.options(none, net.NetLimits.defaults())?
+    let sender = net.bind(address)?
+    defer net.UdpSocket.close(sender)
+    let first = net.bind(address)?
+    defer net.UdpSocket.close(first)
+    let second = net.bind(address)?
+    defer net.UdpSocket.close(second)
+    let payload = bytes.Bytes("x")?
+    sender.sendTo(payload, first.localAddress()?, options)?
+    sender.sendTo(payload, second.localAddress()?, options)?
+    let winner = select {
+        let result = first.receiveFrom(options) => {
+            assert(result?.bytes().equal(payload))
+            0
+        }
+        let result = second.receiveFrom(options) => {
+            assert(result?.bytes().equal(payload))
+            1
+        }
+    }
+    let retained = if winner == 0 {
+        second.receiveFrom(options)?
+    } else {
+        first.receiveFrom(options)?
+    }
+    assert(retained.bytes().equal(payload))
+}
+
+fn tlsConfiguration(): !(bytes.BytesError | net.TlsError) {
+    _ = net.tlsConfig(net.TlsVerification.PlatformRoots)?
+    match net.tlsConfig(net.TlsVerification.PinnedCertificate(bytes.Bytes("")?)) {
+        err(net.TlsError.InvalidCertificate) => ()
+        _ => panic("invalid certificate admitted")
+    }
+}
+
+fn main(): !(bytes.BytesError | net.NetError | net.TlsError | time.ClockError) {
+    valuesAndKeys()?
+    tcpRoundtrip()?
+    atomicDatagrams()?
+    errorsAndDeadlines()?
+    selectionKeepsDatagrams()?
+    tlsConfiguration()?
+    _ = console.println("net-doc-ok")
+}

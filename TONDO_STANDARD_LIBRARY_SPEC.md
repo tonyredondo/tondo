@@ -3058,6 +3058,15 @@ The next owner is `STD-NET-DOC-001`; public release and full normative trace
 coverage remain separate gates.
 No native Tondo networking target is supplied by that reference process.
 
+The executable public hosted usage guide in
+[stdlib-net.md](docs/contracts/stdlib-net.md) is bound to
+`acceptance/projects/net-usage` and checked by `scripts/stdlib-net-doc-check.sh`.
+It exercises six paths through the ordinary CLI: address values and keys,
+partial TCP I/O and EOF, whole UDP datagrams, errors/deadlines, losing selection
+arms and TLS configuration. Real TLS handshakes and successful DNS remain
+separate conformance fixtures. The `usage-ready` state leaves current-source
+quality and exact-checkout publication CI pending for `STD-NET-DOC-001`.
+
 #### 14.4.7 `std.encoding`
 
 `std.encoding` es el owner único de los encodings binario-texto de STD-0.1B.

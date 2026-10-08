@@ -76,6 +76,29 @@ def net_conformance_progression:
       then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
   end;
 
+def net_documentation_progression:
+  .documentation as $doc
+  | if $doc == null then true else
+    .host.status == "verified-production-hosted"
+    and .model.status == "verified"
+    and .measurement.status == "verified-hosted-scalar-baseline"
+    and .conformance.status == "verified-public-hosted-vm-and-native-kernel-process"
+    and ($doc | del(.status,.quality_gate)) == {
+      task:"STD-NET-DOC-001",document:"docs/contracts/stdlib-net.md",
+      project:"acceptance/projects/net-usage/tondo.toml",
+      fixture:"acceptance/projects/net-usage/src/main.to",
+      command:"scripts/stdlib-net-doc-check.sh",expected_stdout:"net-doc-ok",
+      examples:["values-and-keys","tcp-roundtrip","atomic-datagrams","errors-and-deadlines","selection-keeps-datagrams","tls-configuration"],
+      sections:["capabilities-and-explicit-configuration","values-and-keys","tcp-ownership-and-partial-io","udp-message-boundaries","errors-deadlines-and-cancellation","selection-keeps-losing-data","dns-and-tls","limits-and-costs","executable-verification","promotion-boundary"],
+      target:"x86_64-unknown-linux-gnu",providers:"controlled-loopback-production-host",
+      public_tondo_api:"verified-production-hosted",
+      production_vm_registration:"verified-production-hosted",
+      native_abi:"not-implemented",native_aot:"not-claimed"}
+    and ($doc.status == "usage-ready" or $doc.status == "verified-public-hosted-usage")
+    and $doc.quality_gate == (if $doc.status == "usage-ready"
+      then "pending-80-percent-per-scope" else "verified-80-percent-per-scope" end)
+  end;
+
 def net_owner_progression:
   .host as $host | .model as $model
   | ($host.status == "implementation-in-progress" or $host.status == "verified-production-hosted")
@@ -92,12 +115,15 @@ def net_owner_progression:
   end)
   and net_measurement_progression
   and net_conformance_progression
+  and net_documentation_progression
   and .promotion.next_blocks == (if .implementation.status == "ready-kernel-private-provider"
     then ["STD-NET-IMPL-001"]
     elif $host.status == "implementation-in-progress" then ["STD-NET-HOST-001"]
     elif $model.status == "verified" then
       (if .measurement.status == "verified-hosted-scalar-baseline"
         then (if .conformance.status == "verified-public-hosted-vm-and-native-kernel-process"
-          then ["STD-NET-DOC-001"] else ["STD-NET-CONF-001"] end)
+          then (if .documentation.status == "verified-public-hosted-usage"
+            then ["STD-LOG-IMPL-001"] else ["STD-NET-DOC-001"] end)
+          else ["STD-NET-CONF-001"] end)
         else ["STD-NET-PERF-001"] end)
     else ["STD-NET-TEST-001"] end);

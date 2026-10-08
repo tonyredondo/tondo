@@ -415,3 +415,348 @@ The owner order is `STD-NET-HOST-001`, followed by `STD-NET-TEST-001`,
 `STD-NET-PERF-001`, `STD-NET-CONF-001` and `STD-NET-DOC-001`. The contract can
 inform `DIAG-RUNTIME-001` and `NATIVE-001`; public runtime symbols require their
 own executable integration and gates.
+
+## Executable usage guide for `std.net`
+
+`STD-NET-DOC-001` qualifies usage of the production hosted provider. Tondo is
+an unpublished draft. These examples use the public compiler and ordinary
+hosted CLI; they do not establish native networking ABI/AOT or portable target
+promotion. The actual networking contract and signatures appear above.
+
+### Capabilities and explicit configuration
+
+Use an ordinary `tondo.toml` project. Its selected `network` capability requires
+an explicit resolver list; `clock` permits the deadline example and `console`
+permits its terminal output. The complete ordered resolver list enters build
+identity. No program environment variable or system resolver supplies it.
+
+<!-- net-project -->
+~~~toml
+[package]
+name = "net_usage"
+
+[target]
+name = "tondo-vm-hosted"
+profile = "hosted"
+capabilities = ["clock", "console", "network"]
+
+[target.network]
+resolver_servers = ["127.0.0.1:9"]
+~~~
+
+`127.0.0.1:9` is an unused endpoint in this closed loopback example, not a
+default DNS service. The only resolutions below fail validation or use an
+already expired deadline, before DNS I/O. Replace the list with deliberately
+chosen reachable DNS servers when resolving real names. Both A and AAAA use
+one declared endpoint; endpoint selection rotates between explicit calls.
+
+Importing `std.net` requires `network` even for address values. Import alone
+starts no I/O. Configuring an endpoint alone neither selects the capability
+nor starts an operation. Missing capabilities produce `E1008`.
+
+<!-- net-imports -->
+~~~tondo
+import std.bytes
+import std.console
+import std.io
+import std.net
+import std.time
+~~~
+
+### Values and keys
+
+`HostName` preserves the caller's ASCII spelling, including case and a trailing
+dot. It performs no IDNA conversion or case normalization. Convert IDNA before
+calling `hostName`. `IpAddress.parse` accepts numeric IPv4/IPv6, never DNS.
+These immutable address values are `Copy`, `Send`, `Share` and `Key`.
+
+Port zero requests an assigned port only for `listen` or `bind`; connecting,
+sending and resolving require a positive port. `localAddress()` observes the
+assigned address without accepting traffic or consuming the owner.
+
+<!-- net-doc:values-and-keys -->
+~~~tondo
+fn valuesAndKeys(): !net.NetError {
+    let host = net.hostName("EXample.test.")?
+    let hosts: Map[net.HostName, Int] = [host: 1]
+    assert(hosts[host] == some(1))
+    assert(host != net.hostName("example.test.")?)
+    let ip = net.IpAddress.parse("127.0.0.1")?
+    let addresses: Map[net.SocketAddress, Int] = [net.socketAddress(ip, 0)?: 2]
+    assert(addresses[net.socketAddress(ip, 0)?] == some(2))
+    match net.IpAddress.parse("example.test") {
+        err(net.NetError.InvalidAddress) => ()
+        _ => panic("IP parsing must not perform DNS")
+    }
+    match net.NetLimits.create(0, 1, 1) {
+        err(net.NetError.InvalidLimit) => ()
+        _ => panic("zero limit admitted")
+    }
+}
+~~~
+
+### TCP ownership and partial I/O
+
+Register terminal cleanup immediately after acquiring each affine handle.
+`TcpStream.split(stream)` consumes the stream; each half needs its own close.
+An early `?` still runs every registered `defer`. A stream is not `Copy` or
+`Share`; transfer ownership to a task rather than implicitly sharing a handle.
+
+TCP is a byte stream. A successful write may accept a prefix, so advance by
+the returned length and submit the remainder. Reads may return fewer bytes
+than requested; `ReadResult.Eof` is separate from a data chunk. A nonempty
+successful write makes positive progress. The example uses one-byte reads
+and verifies EOF after the writer's explicit shutdown.
+
+`flush` hands the provider buffer to the transport; it does not promise remote
+application processing. Writer shutdown emits FIN when the host supports it;
+terminal close retires the local owner. The last half close frees the transport.
+
+<!-- net-doc:tcp-roundtrip -->
+~~~tondo
+fn tcpRoundtrip(): !(bytes.BytesError | net.NetError) {
+    let ip = net.IpAddress.parse("127.0.0.1")?
+    let options = net.options(none, net.NetLimits.defaults())?
+    let listener = net.listen(net.socketAddress(ip, 0)?, 1)?
+    defer net.TcpListener.close(listener)
+    let destination = listener.localAddress()?
+    let client = net.connect(destination, options)?
+    let (reader, writer) = net.TcpStream.split(client)
+    defer net.TcpReadHalf.close(reader)
+    defer net.TcpWriteHalf.close(writer)
+    let server = listener.accept(options)?
+    let (peerReader, peerWriter) = net.TcpStream.split(server)
+    defer net.TcpReadHalf.close(peerReader)
+    defer net.TcpWriteHalf.close(peerWriter)
+    let payload = bytes.Bytes("hello")?
+    var written = 0
+    for written < payload.length() {
+        let suffix = payload.slice(written, payload.length())?
+        let count = writer.write(suffix, options)?
+        assert(count > 0)
+        written += count
+    }
+    writer.flush(options)?
+    var received = 0
+    for received < payload.length() {
+        match peerReader.read(1, options)? {
+            io.ReadResult.Data(chunk) => {
+                assert(chunk.equal(payload.slice(received, received + 1)?))
+                received += 1
+            }
+            io.ReadResult.Eof => panic("early EOF")
+        }
+    }
+    writer.shutdown(options)?
+    match peerReader.read(1, options)? {
+        io.ReadResult.Eof => ()
+        _ => panic("shutdown lost EOF")
+    }
+}
+~~~
+
+### UDP message boundaries
+
+UDP sends and receives whole datagrams. An oversized received datagram is
+discarded and returns `DatagramTooLarge`; no truncated message is published.
+Increasing the limit later cannot restore that discarded packet. The following
+empty and valid datagrams still make progress. An empty datagram is data, not
+stream EOF, and `Datagram.source()` identifies its sender.
+
+UDP does not promise delivery, ordering, uniqueness or automatic retries.
+
+<!-- net-doc:atomic-datagrams -->
+~~~tondo
+fn atomicDatagrams(): !(bytes.BytesError | net.NetError) {
+    let address = net.socketAddress(net.IpAddress.parse("127.0.0.1")?, 0)?
+    let sender = net.bind(address)?
+    defer net.UdpSocket.close(sender)
+    let receiver = net.bind(address)?
+    defer net.UdpSocket.close(receiver)
+    let destination = receiver.localAddress()?
+    let sendOptions = net.options(none, net.NetLimits.defaults())?
+    let readOptions = net.options(none, net.NetLimits.create(8, 4, 3)?)?
+    sender.sendTo(bytes.Bytes("12345")?, destination, sendOptions)?
+    match receiver.receiveFrom(readOptions) {
+        err(net.NetError.DatagramTooLarge) => ()
+        _ => panic("partial datagram published")
+    }
+    sender.sendTo(bytes.Bytes("")?, destination, sendOptions)?
+    let empty = receiver.receiveFrom(readOptions)?
+    assert(empty.source() == sender.localAddress()?)
+    assert(empty.bytes().length() == 0)
+    sender.sendTo(bytes.Bytes("ok")?, destination, sendOptions)?
+    let next = receiver.receiveFrom(readOptions)?
+    assert(next.bytes().equal(bytes.Bytes("ok")?))
+}
+~~~
+
+### Errors, deadlines and cancellation
+
+Errors are values: propagate them with `?` or inspect their nominal variant.
+Argument validation precedes cancellation, deadline and provider outcomes.
+The invalid port below is refused before an expired deadline is considered.
+
+`NetOptions` is an immutable snapshot. `none` requests no deadline and may
+wait indefinitely; it installs no ambient timeout. `some(instant)` uses an
+explicit monotonic `Instant` from the selected clock. A deadline covers the
+whole operation, including DNS, provider queue, TLS handshake or I/O. Cleanup
+finishes before a timeout is published. Cross-clock inputs are rejected.
+
+<!-- net-doc:errors-and-deadlines -->
+~~~tondo
+fn errorsAndDeadlines(): !(time.ClockError | net.NetError) {
+    let options = net.options(some(time.now()?), net.NetLimits.defaults())?
+    let host = net.hostName("example.test")?
+    match net.resolve(host, 0, options) {
+        err(net.NetError.InvalidPort) => ()
+        _ => panic("validation lost precedence")
+    }
+    match net.resolve(host, 443, options) {
+        err(net.NetError.Timeout) => ()
+        _ => panic("expired deadline did not refuse")
+    }
+}
+~~~
+
+Cancellation uses Tondo's ordinary structured task scopes. Direct suspension
+waits implicitly; `spawn` returns a `Join`, which is consumed by `await`.
+Cancellation observed before commit retires an operation without publishing
+partial state. Progress already committed remains the result even if later
+cancelled. Cleanup also applies to error, panic and abandoned execution.
+
+### Selection keeps losing data
+
+`TcpListener.accept`, `TcpReadHalf.read` and `UdpSocket.receiveFrom` are
+`selectable`. Losing an arm unregisters its wait without taking a connection,
+byte chunk or datagram. A timeout or cancellation before commit obeys the same
+ownership rule. The following ordinary program consumes the winner and then
+checks that the other socket still delivers its complete message.
+
+<!-- net-doc:selection-keeps-datagrams -->
+~~~tondo
+fn selectionKeepsDatagrams(): !(bytes.BytesError | net.NetError) {
+    let address = net.socketAddress(net.IpAddress.parse("127.0.0.1")?, 0)?
+    let options = net.options(none, net.NetLimits.defaults())?
+    let sender = net.bind(address)?
+    defer net.UdpSocket.close(sender)
+    let first = net.bind(address)?
+    defer net.UdpSocket.close(first)
+    let second = net.bind(address)?
+    defer net.UdpSocket.close(second)
+    let payload = bytes.Bytes("x")?
+    sender.sendTo(payload, first.localAddress()?, options)?
+    sender.sendTo(payload, second.localAddress()?, options)?
+    let winner = select {
+        let result = first.receiveFrom(options) => {
+            assert(result?.bytes().equal(payload))
+            0
+        }
+        let result = second.receiveFrom(options) => {
+            assert(result?.bytes().equal(payload))
+            1
+        }
+    }
+    let retained = if winner == 0 {
+        second.receiveFrom(options)?
+    } else {
+        first.receiveFrom(options)?
+    }
+    assert(retained.bytes().equal(payload))
+}
+~~~
+
+### DNS and TLS
+
+`resolve(host, port, options)` returns ordered, deduplicated socket addresses.
+Exceeding `maxResults` rejects the entire result, rather than exposing a partial
+list. DNS uses only declared numeric endpoints: no system fallback, cache,
+search domain, hosts file, hidden retry, failover or implicit TCP fallback.
+The provider's five-second response bound is `ResolveFailed`; an earlier
+explicit deadline is `Timeout`. Connecting a numeric socket address never
+performs another resolution or attempts other addresses automatically.
+
+`PlatformRoots` uses the target's fixed Mozilla root bundle, not a mutable
+system trust store. An explicit DER pin still requires normal certificate
+validity, chain, server-name and handshake verification. TLS 1.2 and 1.3 are
+supported by the selected hosted provider with its declared suites.
+
+The executable guide validates TLS configuration only:
+
+<!-- net-doc:tls-configuration -->
+~~~tondo
+fn tlsConfiguration(): !(bytes.BytesError | net.TlsError) {
+    _ = net.tlsConfig(net.TlsVerification.PlatformRoots)?
+    match net.tlsConfig(net.TlsVerification.PinnedCertificate(bytes.Bytes("")?)) {
+        err(net.TlsError.InvalidCertificate) => ()
+        _ => panic("invalid certificate admitted")
+    }
+}
+~~~
+
+For a connection, `TlsStream.connect(stream, server, config, options)` consumes
+the acquired TCP stream. Failure closes that transport, so the caller must not
+also retain a deferred TCP close for the consumed value. On success, split the
+TLS stream and register cleanup for both TLS halves. TLS reads and writes obey
+partial-I/O rules; writer shutdown attempts `close_notify`, while cancellation
+may close directly. TLS halves are suspendible and are not `selectable`.
+
+Real TLS 1.2/1.3 handshakes, wrong-name refusal, peer-observed EOF and DNS
+responses against a controlled resolver belong to the separate public
+conformance fixtures. This guide does not call an external service or claim a
+TLS handshake from the configuration-only example.
+
+### Limits and costs
+
+`NetLimits.defaults()` selects 64 KiB reads, 65,535-byte datagrams and 128 DNS
+results. Explicit limits must be positive; target ceilings are 64 MiB per read,
+65,535 bytes per datagram and 1,024 DNS results. Remaining runtime budgets can
+refuse smaller requests. TLS pins and outgoing provider buffers have separate
+64 KiB bounds. These limits do not measure RSS or OS allocator calls.
+
+`Bytes.slice` materializes a copy in the current hosted route. The TCP example
+copies each remaining suffix; do not infer a zero-copy API or throughput claim
+from its short demonstration. Networking performance evidence separately
+retains 27 samples for each of 21 admitted private hosted bridge routes. It
+does not measure the bytecode interpreter or native networking execution.
+
+### Executable verification
+
+Run the checked project with `tondo check --project acceptance/projects/net-usage`
+and `tondo run --project acceptance/projects/net-usage` from the repository root.
+Successful execution prints exactly `net-doc-ok` and closes every acquired
+handle. Repository checks use a delegated process scope and bounded command
+timeouts; the example itself installs only the explicit deadline shown above.
+
+The exact imports, TOML configuration, six functions and entrypoint are bound
+to the executable project fixture. The entrypoint must call every example and
+propagate failures; equal edits that skip a function are rejected.
+
+<!-- net-doc:entrypoint -->
+~~~tondo
+fn main(): !(bytes.BytesError | net.NetError | net.TlsError | time.ClockError) {
+    valuesAndKeys()?
+    tcpRoundtrip()?
+    atomicDatagrams()?
+    errorsAndDeadlines()?
+    selectionKeepsDatagrams()?
+    tlsConfiguration()?
+    _ = console.println("net-doc-ok")
+}
+~~~
+
+The guide checker refuses changed fragments or capabilities. Public CLI
+checks demonstrate the three missing-capability `E1008` cases and the affine
+listener diagnostic. Running a deliberately wrong assertion must fail, so
+matching documentary text alone cannot establish executable correctness.
+
+### Promotion boundary
+
+This usage owner inherits independently qualified HOST, TEST, PERF and CONF
+prerequisites. Its quality and publication gates remain separate. The boundary
+is the actual production hosted VM on Linux x86_64, with controlled loopback
+providers and no external service. Native networking ABI/AOT, unexecuted
+portable targets, SIMD and code size are not promoted. Full six-dimension
+normative requirement trace is not inferred from this guide.
+
+The next owner after verified usage is `STD-LOG-IMPL-001`.

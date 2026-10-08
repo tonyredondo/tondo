@@ -264,6 +264,10 @@ run_step stdlib-net-conformance-contract-tests \
     scripts/stdlib-net-conformance-test.sh
 run_step stdlib-net-conformance \
     scripts/stdlib-net-conformance.sh
+run_step stdlib-net-documentation \
+    scripts/stdlib-net-doc-check.sh
+run_step stdlib-net-documentation-tests \
+    scripts/stdlib-net-doc-test.sh
 run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
 run_step stdlib-civil-time-contract-tests \

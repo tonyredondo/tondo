@@ -14,7 +14,7 @@ reject() {
 bash scripts/stdlib-net-test-check.sh
 # State mutations need a valid ready fixture even after the live owner closes.
 # Mutating an already verified value to itself cannot be a negative test.
-jq 'del(.measurement,.conformance) | .model.status="ready" | .model.quality_gate="pending-current-source-proof"
+jq 'del(.measurement,.conformance,.documentation) | .model.status="ready" | .model.quality_gate="pending-current-source-proof"
     | .promotion.next_blocks=(if .host.status=="implementation-in-progress"
       then ["STD-NET-HOST-001"] else ["STD-NET-TEST-001"] end)
     ' "$parent" > "$tmp/ready-parent.json"
@@ -71,7 +71,7 @@ MUTATIONS
 for host in implementation-in-progress verified-production-hosted; do
     for model in ready verified; do
         jq --arg host "$host" --arg model "$model" '
-          del(.measurement,.conformance) | .host.status=$host | .host.quality_gate=(if $host=="implementation-in-progress"
+          del(.measurement,.conformance,.documentation) | .host.status=$host | .host.quality_gate=(if $host=="implementation-in-progress"
             then "pending-current-source-proof" else "verified-80-percent-per-scope" end)
           | .model.status=$model | .model.quality_gate=(if $model=="ready"
             then "pending-current-source-proof" else "verified-80-percent-per-scope" end)

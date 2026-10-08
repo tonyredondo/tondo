@@ -1,0 +1,10 @@
+[package]
+name = "net_usage"
+
+[target]
+name = "tondo-vm-hosted"
+profile = "hosted"
+capabilities = ["clock", "console", "network"]
+
+[target.network]
+resolver_servers = ["127.0.0.1:9"]
