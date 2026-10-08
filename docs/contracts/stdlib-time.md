@@ -33,8 +33,8 @@ Terminal cleanup also removes an abandoned timer from the host registry.
 
 Importing `std.time` and naming its value types requires no clock capability.
 All twelve `Duration` constructors, conversions, arithmetic and predicates are
-pure and usable without `clock`, including function references and deferred
-calls. Civil values and pure calendar conversions follow the same rule in the
+pure and usable without `clock`; constructors support references and pure calls
+may be deferred. Civil values and pure calendar conversions follow the rule in the
 separate civil contract; this does not establish their implementation.
 
 The operations below and all five `Instant` methods require `clock`, because
@@ -144,3 +144,29 @@ source without executing a provider; owner fuzz coverage remains partial while
 provider-scoped performance remains explicitly pending rather than inferred from unit-test timing.
 The contract and its negative fixtures are checked by
 `scripts/stdlib-time-check.sh` and `scripts/stdlib-time-test.sh`.
+
+## Per-operation capability implementation proof
+
+`STD-TIME-CAP-001` implements the operation boundary in the compiler; it does
+not implement civil calendar values, zones, a civil provider or native time
+lowering. Source `66bb7fad` adds the boundary and six associated function
+references. Metadata checkpoint `7c22532f` synchronizes the moved signature
+IDs in both conformance coordination and documentation. Seventy-three focused
+time tests, the UUID capability regression, the ordinary pure project without
+`clock`, and the six-path public networking guide pass. Workspace formatting,
+checking and Clippy also pass.
+
+A consolidated campaign uses 1,399 source inputs with quality tree
+`d7f424e6b4a74fbf0bb88917ed36579bf351a842af840070ec2e192323b556d1`.
+It executes all 2,804 Rust tests in 76 suites and records 196 layer observations.
+Coverage measures 302,358/330,070 lines (91.604205%), 19,891/22,643 functions
+(87.846133%) and 444,463/493,751 regions (90.017640%). Every global and risk
+scope's 80% line/function/region floor passes. All six selected critical mutants
+are caught; none are missed, timed out or unviable, and the unmutated baseline
+passes. Before/after bindings match and joint quality/ratchet verification
+passes. The initial capture correctly refused stale generated signature IDs;
+its partial profiles remain separate from this successful fresh capture.
+
+The full functional gate and exact-checkout publication CI remain pending.
+These Rust percentages do not claim Python, shell or Tondo source coverage,
+nor do they promote the full civil, distribution or S1A boundaries.
