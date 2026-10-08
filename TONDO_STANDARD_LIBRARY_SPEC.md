@@ -3052,7 +3052,10 @@ The public hosted networking conformance register is
 [testing/stdlib-net-conformance.json](testing/stdlib-net-conformance.json), with
 its bounded native Rust reference and VM-only integration boundary in
 [stdlib-net-conformance.md](docs/contracts/stdlib-net-conformance.md). Its
-`adapter-ready` state does not close quality, clean capture or publication CI.
+`verified-public-hosted-vm-and-native-kernel-process` state closes its qualified
+boundary using current-source quality, clean capture and exact-checkout CI.
+The next owner is `STD-NET-DOC-001`; public release and full normative trace
+coverage remain separate gates.
 No native Tondo networking target is supplied by that reference process.
 
 #### 14.4.7 `std.encoding`

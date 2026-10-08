@@ -4,7 +4,7 @@
   "owner": "std.net",
   "phase": "STD-0.1B",
   "task": "STD-NET-CONF-001",
-  "status": "adapter-ready",
+  "status": "verified-public-hosted-vm-and-native-kernel-process",
   "parent": "testing/stdlib-net.json",
   "document": "docs/contracts/stdlib-net-conformance.md",
   "sources": [

@@ -93,8 +93,8 @@
     "task": "STD-NET-CONF-001",
     "register": "testing/stdlib-net-conformance.json",
     "contract": "docs/contracts/stdlib-net-conformance.md",
-    "status": "adapter-ready",
-    "quality_gate": "pending-80-percent-per-scope",
+    "status": "verified-public-hosted-vm-and-native-kernel-process",
+    "quality_gate": "verified-80-percent-per-scope",
     "target": "x86_64-unknown-linux-gnu",
     "public_api": "compiled-public-tondo-net-through-production-host",
     "native_reference": "rust-stdlib-kernel-process-with-finite-model-admission",
@@ -351,7 +351,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-NET-CONF-001"],
+    "next_blocks": ["STD-NET-DOC-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

@@ -361,7 +361,7 @@ current-source quality, all local checks and exact-checkout Linux CI. The
 register's `implementation` and `private_provider_draft` retain the original
 private checkpoint, including its originally required follow-ups. Live owner
 progression belongs to `host`, `model`, `measurement` and `promotion.next_blocks`;
-its next leaf is `STD-NET-CONF-001`. Native ABI/AOT and complete API conformance/promotion
+its next leaf is `STD-NET-DOC-001`. Native ABI/AOT and complete API conformance/promotion
 remain outside these hosted/test boundaries.
 
 The verified hosted performance baseline is
@@ -369,11 +369,13 @@ The verified hosted performance baseline is
 loopback routes and 27 retained samples per route. It measures admitted private
 host calls and owner polling, without bytecode VM or native runtime/AOT timing.
 
-Public hosted conformance is being qualified in
+Public hosted conformance is verified in
 [stdlib-net-conformance.md](stdlib-net-conformance.md): four common finite
 groups compare actual public VM calls with a fresh native Rust kernel process,
 while real TLS, selection, listener/address and deadline observations remain
-explicitly VM-only. This is not a native Tondo network provider or AOT claim.
+explicitly VM-only. Clean source `4b42b1da` passes its complete local capture,
+current-source quality and exact-checkout CI. This is not a native Tondo
+network provider or AOT claim.
 
 ## Diagnóstico, cleanup y portabilidad
 

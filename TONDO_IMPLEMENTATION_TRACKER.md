@@ -7139,12 +7139,20 @@ estas leaves.
   The boundary is the admitted private hosted bridge in the pinned test
   profile; VM interpreter, native ABI/AOT, SIMD, code size and portable
   performance remain unmeasured. Next: `STD-NET-CONF-001`.
-- [ ] **STD-NET-CONF-001 — Qualify hosted networking conformance.** Execute
+- [x] **STD-NET-CONF-001 — Qualify hosted networking conformance.** Execute
   public VM programs, static capability refusals and controlled integration;
   compare the finite common subset with a fresh native Rust kernel process.
   Register: [stdlib-net-conformance.json](testing/stdlib-net-conformance.json);
   [contract](docs/contracts/stdlib-net-conformance.md). Native Tondo provider
   ABI/AOT and unexecuted portable targets remain outside this owner promotion.
+  Clean source `4b42b1da` captures 41 common, 15 VM-only and six static
+  observations. Current-source quality measures 302,112/330,178 lines
+  (91.499737%), preserves every 80% global/risk floor and catches all six
+  critical mutants. CI run `37695957389`, strict job `113047606843`, executes
+  the actual source checkout, all 354 named steps and 2,799 Rust tests in
+  76 suites. Complete paginated checks/statuses/runs/PRs and main refs remain
+  stable after more than 60 seconds; portable/fuzz are expected push skips.
+  Full normative trace coverage is not promoted. Next: `STD-NET-DOC-001`.
 - [ ] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
   partial I/O, DNS/TLS, timeout, cancelación, errores, costes y ejemplos.
 

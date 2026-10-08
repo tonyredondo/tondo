@@ -152,5 +152,13 @@ No coverage counters are repeated or rebound for that narrower phase.
 
 All 354 named functional-gate steps pass in one clean-source invocation on
 `59351222`, including 2,799 Rust tests in 76 suites, 206 draft cases and 96
-exact async/select observations. Publication and exact-SHA CI remain pending.
-This local proof does not change the register's `adapter-ready` promotion state.
+exact async/select observations. Published source `4b42b1da` also passes all
+354 named steps and 2,799 workspace tests in 76 suites in CI run `37695957389`,
+strict Linux job `113047606843`. The actual checkout appears twice in its
+complete log, with no error annotations. All paginated checks, statuses, runs,
+main PRs and the remote main ref remain stable after more than 60 seconds.
+Portable and fuzz jobs are expected normal-push skips, not portable execution.
+The clean capture on `4b42b1da` records all 41 common, 15 VM-only and six static
+observations on the corrected quality inputs. The register is now
+`verified-public-hosted-vm-and-native-kernel-process`; native Tondo networking
+ABI/AOT and full six-dimension normative trace coverage remain unclaimed.
