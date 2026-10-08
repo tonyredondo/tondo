@@ -760,3 +760,28 @@ portable targets, SIMD and code size are not promoted. Full six-dimension
 normative requirement trace is not inferred from this guide.
 
 The next owner after verified usage is `STD-LOG-IMPL-001`.
+
+## Local usage implementation proof
+
+Source `bd8cc018` executes the six guide paths through the ordinary project
+CLI. Seven Python fragment laws and 299 contract/public-diagnostic refusals
+pass, including matching but incorrect source/document assertions. Inherited
+network implementation, host, model, performance and conformance tests pass,
+as do workspace formatting, checking, Clippy and the documentation gate.
+The guide does not infer a TLS handshake from configuration validation.
+
+One consolidated fresh-counter campaign runs all 2,799 Rust tests in 76 suites
+with four harness threads and records 196 layer observations. Its 1,399 inputs
+have quality tree
+`329049cb5a05658b179c1dcd05365aafdd5a1edfbbbf878cac7f14b54024d133`.
+Coverage measures 302,116/330,178 lines (91.500948%), 19,878/22,667 functions
+(87.695769%) and 444,189/494,148 regions (89.889871%). Every global and risk
+scope's 80% line/function/region floor passes. All six critical mutants are
+caught, with zero missed, timed-out or unviable cases and a passing unmutated
+baseline. Before/after bindings agree and supported joint ratchet verification
+passes. The ordinary CLI guide is verified separately; these Rust coverage
+metrics do not claim coverage of Python, shell or Tondo source lines.
+
+The complete functional gate, clean source capture and exact-checkout
+publication CI still precede usage promotion. The register remains
+`usage-ready`; native networking ABI/AOT and public release remain unclaimed.
