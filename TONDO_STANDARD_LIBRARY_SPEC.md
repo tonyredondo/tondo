@@ -4558,6 +4558,18 @@ capacidad, `Reject` devuelve `LogError.Backpressure` sin consumir el evento y
 concurrentes se linearizan por orden de commit; `flush` y `close` conservan
 errores, cancelación y cleanup visibles.
 
+The protocol uses a plain `LogSink` trait. `Logger[S: LogSink + Share]`
+declares its bounds explicitly; the suspendible trait methods imply `Send`.
+`LogSink.close(sink: Self)` and `Logger[S].close(logger: Logger[S])` consume
+their values. `Logger[S].create` is `suspends`, including the cleanup of a
+sink when construction fails. Builtin sinks are affine; user sinks retain
+their own structural capabilities, and the logger owns one logical value.
+`LogReceipt.Filtered` identifies an event excluded by the minimum-level
+filter without sink or queue admission. Validation and formatting complete
+before any write. A later `Io` remains visible, can leave a physical prefix
+and makes the sink terminal. Cleanup errors remain visible through terminal
+logger close. These guarantees do not require transactional stdout or files.
+
 La superficie no duplica APIs async: `Logger.emit`, `flush` y `close` son
 `suspends` y una llamada directa espera automáticamente; no hay
 `logAsync`, polling ni `std.log.select`. El core de eventos no requiere host,

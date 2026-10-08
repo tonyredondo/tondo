@@ -1,0 +1,7 @@
+[package]
+name = "stdlib_log"
+
+[target]
+name = "tondo-vm-hosted"
+profile = "hosted"
+capabilities = []

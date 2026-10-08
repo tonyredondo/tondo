@@ -28,7 +28,7 @@ El contrato proporciona:
 5. sinks explícitos para console y filesystem, y el protocolo `LogSink` para
    un sink de red o uno definido por el target;
 6. backpressure visible (`Block`, `Reject` o `Drop`) y receipts que muestran
-   si un evento fue aceptado o descartado;
+   si un evento fue aceptado, filtrado o descartado;
 7. concurrencia linealizable, cierre terminal, flush y cancelación cooperativa;
 8. límites finitos, errores nominales, providers sellados para tests y una
    frontera scalar que un futuro fast path debe igualar.
@@ -61,9 +61,11 @@ hacer después.
 `LogEvent` contiene exactamente un `LogLevel`, un `target` no vacío, un
 `message` UTF-8, un conjunto ordenado de fields únicos y un
 `UtcDateTime?`. `none` en `timestamp` es legítimo: `std.log` nunca llama a
-`CivilClock.now()` por su cuenta. Si el caller necesita tiempo, lo obtiene de
-`std.time` bajo la capability `civil-clock` y lo pasa al constructor. El valor
-no contiene PID, task ID, dirección, path físico ni secreto del host.
+`CivilClock.now()` por su cuenta. Pure construction, parsing and supplied UTC
+timestamps require no clock capability. Reading the current UTC time through
+`std.time` requires `civil-clock`; the caller then supplies that value to
+the event constructor. The value contains no PID, task ID, address, physical
+path or host secret.
 
 `LogEvent` es inmutable, `Copy`, `Discard`, `Send` y `Share`. Sus copias son
 lógicas y están sujetas a los mismos presupuestos de fields, profundidad y
@@ -146,10 +148,10 @@ el caller recibe un `LogError`.
 El protocolo estático de sinks es:
 
 ```tondo
-pub trait LogSink: Send + Share {
+pub trait LogSink {
     fn write(var self, event: LogEvent): LogReceipt ! LogError suspends
     fn flush(var self): Unit ! LogError suspends
-    fn close(self): Unit ! LogError suspends
+    fn close(sink: Self): Unit ! LogError suspends
 }
 ```
 
@@ -170,7 +172,7 @@ pub type LogLimits
 pub type LoggerOptions
 pub type ConsoleSink
 pub type FileSink
-pub type Logger[S: LogSink]
+pub type Logger[S: LogSink + Share]
 ```
 
 `Block` espera hasta que el sink acepta el evento; la espera es el único punto
@@ -193,7 +195,7 @@ pub fn SinkOptions.create(format: LogFormat, backpressure: Backpressure,
 pub fn LoggerOptions.create(minimumLevel: LogLevel): LoggerOptions
 pub fn ConsoleSink.create(stream: ConsoleStream, options: SinkOptions): ConsoleSink ! LogError
 pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError
-pub fn Logger.create[S: LogSink](sink: S, options: LoggerOptions): Logger[S] ! LogError
+pub fn Logger[S: LogSink + Share].create(sink: S, options: LoggerOptions): Logger[S] ! LogError suspends
 ```
 
 `Logger` es el único owner del sink. `Logger.enabled` es una consulta pura;
@@ -205,18 +207,20 @@ close sigue siendo visible; nunca se ignora para hacer que el programa parezca
 haber registrado el evento.
 
 ```tondo
-pub fn Logger.enabled(ref self, level: LogLevel): Bool
-pub fn Logger.emit(ref self, event: LogEvent): LogReceipt ! LogError suspends
-pub fn Logger.flush(ref self): Unit ! LogError suspends
-pub fn Logger.close(self): Unit ! LogError suspends
+pub fn Logger[S: LogSink + Share].enabled(self, level: LogLevel): Bool
+pub fn Logger[S: LogSink + Share].emit(self, event: LogEvent): LogReceipt ! LogError suspends
+pub fn Logger[S: LogSink + Share].flush(self): Unit ! LogError suspends
+pub fn Logger[S: LogSink + Share].close(logger: Logger[S]): Unit ! LogError suspends
 ```
 
-`LogReceipt` tiene solo `Accepted` y `Dropped`. Un logger y un sink son
-shareable y sendable cuando el sink lo es; las llamadas concurrentes se
-linearizan por sink. El orden observable es el orden de commit, no el orden de
-creación de tasks ni el orden de un scheduler. `close` espera operaciones en
-vuelo, y las llamadas que llegan después reciben `Closed`. No hay locks,
-workers, queues ni handles host globales fuera de la identidad del logger.
+`LogReceipt` has `Accepted`, `Dropped` and `Filtered`. `Filtered` means that
+the minimum-level filter prevented any sink call or queue admission. It is
+distinct from backpressure dropping an eligible event. The logger requires
+`S: LogSink + Share`; `Send` follows from the suspendible sink methods. Calls
+linearize per sink. Commit order defines the observed records, independently
+of task creation or scheduler order. Terminal close waits for in-flight calls;
+later calls observe `Closed`. The logger identity owns its synchronization,
+queues and host handles; there is no global worker or queue.
 
 ## 6. Errores, límites y capabilities
 
@@ -242,9 +246,15 @@ Los defaults normativos son `maxEventBytes = 1 MiB`, `maxFields = 64`,
 `maxDepth = 16`, `maxFieldKeyBytes = 128`, `maxStringBytes = 64 KiB` y
 `maxQueueEntries = 1024`. `capacity` debe ser positiva y no superar el
 presupuesto del target; `0` no significa una cola ilimitada. Los límites se
-comprueban antes de reservar, formatear o llamar al host. Un error nunca
-publica un prefijo, cambia los fields parcialmente o deja un descriptor de
-sink abierto.
+comprueban antes de reservar, formatear o llamar al host. Validation and
+formatting finish before the first writer call; an admission error writes
+nothing and never changes fields partially. A later `Io` error can leave a
+physical prefix. It remains visible and makes the sink terminal so the next
+eligible record cannot be appended to that prefix. The logical event remains
+available to the caller; there is no partial-success receipt. Sink operations
+after that failure return `Closed`, and terminal cleanup errors remain visible
+through `Logger.close`. A filtered event still returns `Filtered` without
+reaching the sink.
 
 El core de eventos, values, fields, formats, filters y el protocolo de sink no
 requiere capability. `ConsoleSink` requiere `console`, `FileSink` requiere
@@ -259,12 +269,16 @@ No existe un provider de test visible para código ordinario.
 
 ## 7. Seguridad, ownership y rendimiento
 
-Events, fields y values no contienen referencias mutables. `Logger` no es
-`Copy` ni `Clone`; debe cerrarse explícitamente y puede transferirse a una
-task o thread que cumpla `Send`. Un `LogSink` es el único owner de su writer y
-no puede ser usado después de `close`. Un error antes de la linearización
-conserva el event lógico del caller; no se descarta un payload por un fallo de
-backpressure, cancelación o límite.
+Events, fields and values contain no mutable aliases. `Logger` is affine,
+must be closed explicitly and can transfer to a task or thread under `Send`.
+Builtin sink types are affine. A user sink
+keeps the structural capabilities of its declared fields; the logger owns
+one logical sink value and consumes it through `LogSink.close(sink: Self)`.
+`Logger.create` is `suspends` because failed construction must close the
+supplied sink, including waiting for its cleanup. A writer owned by a sink
+cannot be used after its terminal close. An error before linearization
+preserves the caller's logical event; backpressure, cancellation and limit
+errors never discard that value implicitly.
 
 El formatter scalar es el oracle: recorrido iterativo de fields, escapes
 tabulados y Base64 canónico sin usar la pila recursiva del host. Arrays y

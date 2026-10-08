@@ -1,0 +1,63 @@
+import std.channel
+import std.log
+
+type AffineSink = {
+    owner: channel.Receiver[Int]
+    report: channel.Sender[Int]
+    calls: Int
+}
+
+impl log.LogSink for AffineSink {
+    fn write(var self, event: log.LogEvent): log.LogReceipt ! log.LogError suspends {
+        self.calls +=
+            if event.message() == "2" {
+                2
+            } else {
+                3
+            }
+        log.LogReceipt.Accepted
+    }
+    fn flush(var self): !log.LogError suspends {
+        ()
+    }
+    fn close(sink: AffineSink): !log.LogError suspends {
+        match sink {
+            AffineSink { owner, report, calls } =>
+                {
+                    _ = owner.close()
+                    match report.trySend(calls) {
+                        ok(_) => {}
+                        err(_) => panic("affine sink close report failed")
+                    }
+                    report.close()
+                }
+        }
+    }
+}
+
+fn affineCase(): !log.LogError {
+    let (report, observation) = match channel.bounded[Int](1) {
+        ok(pair) => pair
+        err(_) => return err(log.LogError.ResourceLimit)
+    }
+    defer closeObservation(observation)
+    let (ownerSender, owner) = match channel.bounded[Int](1) {
+        ok(pair) => pair
+        err(_) => return err(log.LogError.ResourceLimit)
+    }
+    ownerSender.close()
+    let logger = log
+        .Logger[AffineSink]
+        .create(AffineSink { owner, report, calls: 0 }, log.LoggerOptions.create(log.LogLevel.Info))?
+    defer closeLogger(logger)
+    scope {
+        let first = spawn logger.emit(makeEvent(log.LogLevel.Info, "2")?)
+        let second = spawn logger.emit(makeEvent(log.LogLevel.Info, "3")?)
+        assert(await first? == log.LogReceipt.Accepted)
+        assert(await second? == log.LogReceipt.Accepted)
+    }
+    logger.flush()?
+    log.Logger[AffineSink].close(logger)?
+    assert(observation.receive() == some(5))
+    _ = observation.close()
+}

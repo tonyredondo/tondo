@@ -2058,6 +2058,71 @@ impl<'a> TypeLowerer<'a> {
         Ok(self.interner.nominal(identity, Vec::new())?)
     }
 
+    fn push_log_core_host_contracts(&mut self, span: Span) -> Result<(), HirError> {
+        use tondo_stdlib::log::LogOperation as Operation;
+        if !self.sources.iter().any(|(_, source)| {
+            source.source_id().as_str() == "toolchain:std:0.1-bootstrap"
+                && source.module().as_str() == "log"
+                && source.origin() == crate::source::SourceOrigin::GeneratedStandard
+        }) {
+            return Ok(());
+        }
+        let path = ModulePath::new("log")?;
+        let module = self
+            .packages
+            .module(self.packages.standard(), &path)
+            .expect("generated log source belongs to its declared module");
+        let mut nominal = |name| -> Result<TypeId, HirError> {
+            let identity = self.packages.symbol_identity(
+                module.clone(),
+                Namespace::Type,
+                DeclarationPath::single(Name::new(name).expect("closed log nominal name is valid")),
+            )?;
+            Ok(self.interner.nominal(identity, Vec::new())?)
+        };
+        let fields = nominal("Fields")?;
+        let value = nominal("LogValue")?;
+        let event = nominal("LogEvent")?;
+        let error = nominal("LogError")?;
+        let level = nominal("LogLevel")?;
+        let time_path = ModulePath::new("time")?;
+        let time_module = self
+            .packages
+            .module(self.packages.standard(), &time_path)
+            .expect("log's pure timestamp module is declared");
+        let utc = self.bootstrap_nominal_type(&time_module, "UtcDateTime")?;
+        let timestamp = self.interner.option(utc)?;
+        let fields_result = self.interner.result(fields, error)?;
+        let event_result = self.interner.result(event, error)?;
+        let string = self.interner.scalar(ScalarType::String);
+        for operation in Operation::ALL {
+            let (parameters, output) = match operation {
+                Operation::FieldsWithField => (
+                    vec![(fields, false), (string, false), (value, false)],
+                    fields_result,
+                ),
+                Operation::EventCreate => (
+                    vec![
+                        (level, false),
+                        (string, false),
+                        (string, false),
+                        (fields, false),
+                        (timestamp, false),
+                    ],
+                    event_result,
+                ),
+            };
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::Log(operation),
+                parameters,
+                None,
+                output,
+            )?;
+        }
+        Ok(())
+    }
+
     fn bootstrap_nominal_type(
         &mut self,
         module: &ModuleId,
@@ -2129,6 +2194,7 @@ impl<'a> TypeLowerer<'a> {
         // that does not import a hosted standard-library module.
         self.push_core_host_contracts(span)?;
         self.push_reflection_contracts(span)?;
+        self.push_log_core_host_contracts(span)?;
 
         let console = ModulePath::new("console")?;
         let io = ModulePath::new("io")?;

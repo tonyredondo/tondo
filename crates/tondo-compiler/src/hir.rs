@@ -2807,6 +2807,7 @@ impl HirSelectArm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
     CivilTime(tondo_stdlib::civil_time::CivilOperation),
+    Log(tondo_stdlib::log::LogOperation),
     Network(tondo_vm::network::NetworkOperation),
     Reflection(tondo_vm::reflection::ReflectionOperation),
     UuidNil,
@@ -3386,6 +3387,7 @@ impl HirBootstrapHostFunction {
     pub const fn name(self) -> &'static str {
         match self {
             Self::CivilTime(operation) => operation.name(),
+            Self::Log(operation) => operation.name(),
             Self::Network(operation) => operation.name(),
             Self::Reflection(operation) => operation.name(),
             Self::ConsolePrint => "std.console.print",

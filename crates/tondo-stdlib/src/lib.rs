@@ -10,6 +10,7 @@ pub mod format;
 pub mod fs;
 pub mod io;
 pub mod json;
+pub mod log;
 pub mod math;
 pub mod messagepack;
 pub mod net;

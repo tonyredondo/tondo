@@ -5335,6 +5335,34 @@ impl<'a> ExpressionChecker<'a> {
             && let Some(reference) = self.resolved.reference(file, module_token.range())
             && let ResolvedEntity::Module(module) = reference.entity()
             && module.package().as_str() == "toolchain:std:0.1-bootstrap"
+            && module.path().as_str() == "log"
+            && let Some(operation) = type_token
+                .token()
+                .normalized_identifier()
+                .zip(function_token.token().normalized_identifier())
+                .and_then(|(owner, member)| {
+                    tondo_stdlib::log::LogOperation::associated(owner, member)
+                })
+        {
+            if !self.log_operation_is_visible(file, node.range(), operation)? {
+                return self.recovery_expression(file, node.range());
+            }
+            let callee = self.bootstrap_host_callee(
+                HirBootstrapHostFunction::Log(operation),
+                self.sources.span(file, node.range())?,
+            )?;
+            return self.close_contextual_function_value(
+                file,
+                node.range(),
+                callee,
+                expected,
+                context,
+            );
+        }
+        if let [module_token, type_token, function_token] = associated_path.as_slice()
+            && let Some(reference) = self.resolved.reference(file, module_token.range())
+            && let ResolvedEntity::Module(module) = reference.entity()
+            && module.package().as_str() == "toolchain:std:0.1-bootstrap"
             && module.path().as_str() == "time"
             && let Some(function) = type_token
                 .token()
@@ -17177,6 +17205,19 @@ impl<'a> ExpressionChecker<'a> {
                 )? {
                     return Ok(Some(call));
                 }
+                if let Some(call) = self.check_qualified_log_call(
+                    file,
+                    range,
+                    suffix,
+                    explicit_bracket.or(owner_bracket),
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
                 if let Some(call) = self.check_qualified_path_or_env_call(
                     file,
                     range,
@@ -17308,6 +17349,106 @@ impl<'a> ExpressionChecker<'a> {
             );
         }
         Ok(None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_log_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        if resolved_index + 2 != tokens.len() {
+            return Ok(None);
+        }
+        let ResolvedName::Symbol(symbol) = resolved else {
+            return Ok(None);
+        };
+        let Some(symbol) = self.resolved.symbol(*symbol) else {
+            return Ok(None);
+        };
+        let identity = symbol.identity();
+        if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.source_id().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.module().as_str() != "log"
+            || identity.namespace() != Namespace::Type
+        {
+            return Ok(None);
+        }
+        let [owner] = identity.declaration().names() else {
+            return Ok(None);
+        };
+        let member_token = *tokens.last().expect("qualified log call has a member");
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let Some(operation) = tondo_stdlib::log::LogOperation::associated(owner.as_str(), member)
+        else {
+            return Ok(None);
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "std.log core operations do not declare generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        if !self.log_operation_is_visible(file, range, operation)? {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let callee = self.bootstrap_host_callee(
+            HirBootstrapHostFunction::Log(operation),
+            self.sources.span(file, member_token.range())?,
+        )?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            None,
+            None,
+            context,
+        )
+        .map(Some)
+    }
+
+    fn log_operation_is_visible(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        operation: tondo_stdlib::log::LogOperation,
+    ) -> Result<bool, HirError> {
+        let source = self.sources.get(file)?;
+        if source.origin() == crate::source::SourceOrigin::GeneratedStandard
+            && source.source_id().as_str() == "toolchain:std:0.1-bootstrap"
+            && source.module().as_str() == "log"
+        {
+            return Ok(true);
+        }
+        self.emit(
+            self.sources.span(file, range)?,
+            "E1004",
+            format!(
+                "`{}` is private to the selected standard implementation",
+                operation.name()
+            ),
+            Vec::new(),
+            None,
+        )?;
+        Ok(false)
     }
 
     #[allow(clippy::too_many_arguments)]

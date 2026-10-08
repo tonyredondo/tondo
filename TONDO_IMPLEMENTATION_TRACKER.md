@@ -7228,12 +7228,18 @@ estas leaves.
   portable/fuzz are expected normal-push skips. This prerequisite does not
   implement civil calendar values, zones, a civil provider or logging
   timestamps. Next: the shared pure Date/Time/UTC core required by logging.
-- [ ] **STD-LOG-IMPL-001 — Implementar logging estructurado.** Publicar eventos,
-  niveles, fields, filters y sinks explícitos con backpressure/fallo visible y
-  sin globals ambientales.
+- [ ] **STD-LOG-IMPL-001 — Implement structured logging core.** In progress:
+  19 ordinary Tondo public operations, the LogSink protocol, bounded scalar
+  event/field admission and formatting, and generic affine Logger ownership.
+  Custom sink concurrency, backpressure, cancellation and terminal Io are
+  executable. The [implementation register](testing/stdlib-log-implementation.json)
+  and [contract](docs/contracts/stdlib-log-implementation.md) retain quality,
+  full-gate and exact-source publication CI as pending prerequisites. Builtin
+  privileged sinks remain owned by STD-LOG-HOST-001; no native promotion.
 - [ ] **STD-LOG-HOST-001 — Implementar sinks capability-gated.** Enlazar
-  console, filesystem y network por unidades declaradas, con flush, rotación o
-  entrega exactamente según el contrato del sink.
+  console, filesystem y network por unidades declaradas, con flush, cierre y
+  entrega exactamente según el contrato del sink. Rotation is forbidden by
+  the locked logging contract, as are ambient providers and automatic retry.
 - [ ] **STD-LOG-TEST-001 — Probar logging.** Cubrir orden, concurrencia,
   backpressure, fallos, cancelación, redacción declarada, límites y teardown de
   sinks.

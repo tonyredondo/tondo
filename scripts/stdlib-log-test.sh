@@ -22,6 +22,9 @@ expect_failure fatal-level env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/fatal.json" s
 jq '.capabilities.forbidden = [.capabilities.forbidden[] | select(. != "global-logger")]' testing/stdlib-log.json > "$tmp_dir/global.json"
 expect_failure global-logger env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/global.json" scripts/stdlib-log-check.sh
 
+jq '.capabilities.source_sets.timestamp = ["civil-clock"]' testing/stdlib-log.json > "$tmp_dir/pure-timestamp-clock.json"
+expect_failure pure-timestamp-clock env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/pure-timestamp-clock.json" scripts/stdlib-log-check.sh
+
 jq '.capabilities.forbidden = [.capabilities.forbidden[] | select(. != "unbounded-queue")]' testing/stdlib-log.json > "$tmp_dir/unbounded.json"
 expect_failure unbounded-queue env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/unbounded.json" scripts/stdlib-log-check.sh
 
@@ -56,10 +59,10 @@ for marker in \
     'Reject' \
     'Drop' \
     'LogReceipt.Dropped' \
-    'Logger.enabled' \
-    'Logger.emit' \
-    'Logger.flush' \
-    'Logger.close' \
+    'Logger[S: LogSink + Share].enabled' \
+    'Logger[S: LogSink + Share].emit' \
+    'Logger[S: LogSink + Share].flush' \
+    'Logger[S: LogSink + Share].close' \
     'logger global' \
     'no se publica parcialmente' \
     'DropOldest' \
@@ -83,7 +86,7 @@ jq -e '
   and .surface.selectable_operations == []
   and ([.surface.signatures[] | select(.effect == "selectable")] | length) == 0
   and .ownership.logger_copyable == false
-  and .ownership.sink_copyable == false
+  and .ownership.sink_copyable == "custom-structural-builtin-false"
   and .values.float_policy == "finite-only"
   and .formats.json_lines.final_lf == true
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]

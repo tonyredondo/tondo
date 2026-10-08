@@ -1,0 +1,41 @@
+import std.log
+
+type ValueSink = {
+    calls: Int
+}
+
+impl log.LogSink for ValueSink {
+    fn write(var self, event: log.LogEvent): log.LogReceipt ! log.LogError suspends {
+        if event.message() == "2" {
+            assert(self.calls == 0)
+            self.calls += 2
+        } else {
+            assert(self.calls == 2)
+            self.calls += 3
+        }
+        log.LogReceipt.Accepted
+    }
+    fn flush(var self): !log.LogError suspends {
+        assert(self.calls == 5)
+    }
+    fn close(sink: ValueSink): !log.LogError suspends {
+        assert(sink.calls == 5)
+    }
+}
+
+fn copySink[T: Copy + Send + Share](value: T): T {
+    value
+}
+
+fn valueSinkCase(): !log.LogError {
+    let original = ValueSink { calls: 0 }
+    let logger = log
+        .Logger[ValueSink]
+        .create(copySink(original), log.LoggerOptions.create(log.LogLevel.Info))?
+    defer closeLogger(logger)
+    assert(logger.emit(makeEvent(log.LogLevel.Info, "2")?)? == log.LogReceipt.Accepted)
+    assert(logger.emit(makeEvent(log.LogLevel.Info, "3")?)? == log.LogReceipt.Accepted)
+    assert(original.calls == 0)
+    logger.flush()?
+    log.Logger[ValueSink].close(logger)?
+}

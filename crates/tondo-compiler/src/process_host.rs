@@ -39,6 +39,7 @@ use crate::test_temporaries::TempError;
 
 mod civil_time;
 mod filesystem;
+mod log;
 mod net;
 mod uuid;
 
@@ -4351,6 +4352,8 @@ impl BootstrapHost {
         }
         let value = if tondo_stdlib::civil_time::CivilOperation::from_name(base_name).is_some() {
             self.invoke_civil_time_admitted(base_name, arguments, &mut response, admission)?
+        } else if tondo_stdlib::log::LogOperation::from_name(base_name).is_some() {
+            self.invoke_log_admitted(base_name, arguments, &mut response, admission)?
         } else if base_name.starts_with("std.net.") {
             self.invoke_network_admitted(base_name, arguments, &mut response, admission)?
         } else if base_name.starts_with("std.uuid.Uuid.") {
@@ -8414,6 +8417,67 @@ impl VmHost for BootstrapHost {
         self.collect_host_values_with_teardown(roots, true)
     }
 
+    fn abort_execution(&mut self) -> Result<(), VmError> {
+        let virtual_elapsed = self.previous_clock.as_ref().map(|_| self.clock.now());
+        // The owning engine has failed. These calls and values cannot be
+        // returned to another language task. Reap workers first, then drop
+        // pending transports and detached payloads without allocating replies.
+        for job in self.jobs.values() {
+            job.cancellation.store(true, Ordering::Release);
+        }
+        let mut worker_failed = false;
+        for (_, mut job) in std::mem::take(&mut self.jobs) {
+            if let Some(worker) = job.worker.take() {
+                worker_failed |= worker.join().is_err();
+            }
+        }
+        self.abort_network();
+        self.ready_jobs.clear();
+        self.ready_fs_jobs.clear();
+        self.ready_console_jobs.clear();
+        self.sync_waiters.clear();
+        self.sync_queues.clear();
+        self.select_calls.clear();
+        self.select_winners.clear();
+        self.select_sealed.clear();
+        self.select_committing = None;
+        self.time_jobs.clear();
+        self.values.clear();
+        self.channels.clear();
+        self.channel_iterator_receivers.clear();
+        self.sync_generations.clear();
+        self.async_memory.clear();
+        self.buffer_memory.clear();
+        self.env_snapshot_id = None;
+        self.virtual_controller = None;
+        self.time_resources = 0;
+        let clock_cleanup = if let Some((clock, domain, timer_limit)) = self.previous_clock.take() {
+            self.clock = clock;
+            self.clock_domain = domain;
+            self.max_time_resources = timer_limit;
+            virtual_elapsed
+                .expect("active virtual clock has an elapsed result")
+                .and_then(|elapsed| {
+                    self.testing_envelope()?
+                        .finish_runtime_virtual_time(elapsed)
+                        .map_err(|error| VmError::Host(format!("{}: {error}", error.code())))
+                })
+        } else {
+            Ok(())
+        };
+        if worker_failed {
+            let additional = clock_cleanup
+                .err()
+                .map(|error| format!("; {error}"))
+                .unwrap_or_default();
+            Err(VmError::Host(format!(
+                "a process worker panicked during terminal cleanup{additional}"
+            )))
+        } else {
+            clock_cleanup
+        }
+    }
+
     fn has_test_participation(&self) -> bool {
         self.testing_participation.is_some()
     }
@@ -8529,6 +8593,14 @@ impl VmHost for BootstrapHost {
         let name = name.split_once('[').map_or(name, |(base, _)| base);
         if tondo_stdlib::civil_time::CivilOperation::from_name(name).is_some() {
             return self.invoke_civil_time_admitted(
+                name,
+                arguments,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            );
+        }
+        if tondo_stdlib::log::LogOperation::from_name(name).is_some() {
+            return self.invoke_log_admitted(
                 name,
                 arguments,
                 response,
@@ -17939,6 +18011,265 @@ fn main(): !channel.ChannelError {{
                 .is_err()
         );
         assert!(host.channels.is_empty());
+    }
+
+    #[test]
+    fn ordinary_fatal_heap_error_retires_channel_owners_without_logging() {
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+        let source = r#"
+import std.channel
+fn main(): Unit {
+    let (sender, receiver) = match channel.bounded[Int](1) {
+        ok(pair) => pair
+        err(_) => panic("channel admission failed")
+    }
+    sender.close()
+    let text = "a deliberately retained string that requires storage after publishing a terminal channel receiver"
+    assert(text != "")
+    _ = receiver.close()
+}
+"#;
+        let (program, entry) =
+            compile_host_admission_source(source, BTreeSet::new(), crate::driver::Operation::Run);
+        let mut refused = 0;
+        let mut succeeded = 0;
+        for max_heap_bytes in (1..=2049).step_by(64).chain(std::iter::once(65536)) {
+            let mut host = BootstrapHost::default();
+            let result = execute_with_limits(
+                &program,
+                entry,
+                &mut host,
+                VmLimits {
+                    max_heap_bytes,
+                    ..VmLimits::default()
+                },
+            );
+            match &result {
+                Ok(_) => succeeded += 1,
+                Err(error) if error.is_resource_limit() => refused += 1,
+                Err(error) => panic!("{max_heap_bytes}: {error:?}"),
+            }
+            assert!(host.values.is_empty(), "{max_heap_bytes}: {result:?}");
+            assert!(host.channels.is_empty(), "{max_heap_bytes}: {result:?}");
+        }
+        assert!(refused > 0 && succeeded > 0);
+    }
+
+    #[test]
+    fn ordinary_fatal_step_error_retires_parked_channel_wait_and_owner() {
+        use tondo_vm::runtime::{VmLimits, execute_with_limits};
+        let source = r#"
+import std.channel
+fn wait(receiver: channel.Receiver[Int]): Unit suspends {
+    _ = receiver.receive()
+    _ = receiver.close()
+}
+fn main(): Unit {
+    let (sender, receiver) = match channel.bounded[Int](1) {
+        ok(pair) => pair
+        err(_) => panic("channel admission failed")
+    }
+    scope {
+        let waiting = spawn wait(receiver)
+        var spins: Int = 0
+        for {
+            spins += 1
+            if spins == 1000000 {
+                break
+            }
+        }
+        _ = await waiting
+    }
+    sender.close()
+}
+"#;
+        let (program, entry) =
+            compile_host_admission_source(source, BTreeSet::new(), crate::driver::Operation::Run);
+        let mut host = BootstrapHost::default();
+        let error = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_steps: 1024,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            VmError::ResourceLimit {
+                resource: "instruction steps",
+                ..
+            }
+        ));
+        assert!(host.sync_waiters.is_empty());
+        assert!(host.sync_queues.is_empty());
+        assert!(host.ready_jobs.is_empty());
+        assert!(host.async_memory.is_empty());
+        assert!(host.values.is_empty());
+        assert!(host.channels.is_empty());
+    }
+
+    #[test]
+    fn ordinary_fatal_retirement_keeps_successfully_returned_host_ownership() {
+        use tondo_vm::runtime::{VmLimits, VmOutcome, execute_with_limits};
+        let source = r#"
+import std.channel
+fn retained(): channel.Receiver[Int] {
+    let (sender, receiver) = match channel.bounded[Int](1) {
+        ok(pair) => pair
+        err(_) => panic("channel admission failed")
+    }
+    sender.close()
+    receiver
+}
+fn main(): Unit {
+    _ = retained().close()
+}
+"#;
+        let (program, _) =
+            compile_host_admission_source(source, BTreeSet::new(), crate::driver::Operation::Run);
+        let entry = tondo_vm::bytecode::BytecodeFunctionId::new(
+            program
+                .functions
+                .iter()
+                .position(|function| {
+                    program
+                        .callable(function.callable)
+                        .unwrap()
+                        .name
+                        .ends_with("::value::retained")
+                })
+                .expect("reachable retained function") as u32,
+        );
+        let mut host = BootstrapHost::default();
+        let result = execute_with_limits(&program, entry, &mut host, VmLimits::default()).unwrap();
+        let VmOutcome::Returned(receiver) = result.outcome else {
+            panic!("the returned owner must remain usable");
+        };
+        assert_eq!(host.values.len(), 1);
+        assert_eq!(host.channels.len(), 1);
+        assert!(host.channel_close_receiver(&receiver).unwrap().is_empty());
+        assert!(host.values.is_empty());
+        assert!(host.channels.is_empty());
+    }
+
+    #[test]
+    fn ordinary_fatal_retirement_releases_ready_timer_and_parked_payload_charges() {
+        let budget = VmMemoryBudget::new(65536);
+        let mut host = BootstrapHost::default();
+        host.set_test_memory_budget(Some(budget.clone()));
+        let pair = ok(host
+            .invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let RuntimeValue::Tuple(mut endpoints) = pair else {
+            panic!("channel pair");
+        };
+        let receiver = endpoints.pop().unwrap();
+        let sender = endpoints.pop().unwrap();
+        let bytes = host.allocate_bytes(b"retained".to_vec()).unwrap();
+        let accepted = host
+            .start_async("std.channel.Sender.send", &[sender.clone(), bytes.clone()])
+            .unwrap();
+        assert!(host.poll_async_owned(accepted).unwrap().is_some());
+        host.start_async("std.channel.Sender.send", &[sender.clone(), bytes])
+            .unwrap();
+        let cancelled = host
+            .start_async(
+                "std.channel.Sender.send",
+                &[sender, RuntimeValue::Integer(7)],
+            )
+            .unwrap();
+        host.cancel_async(cancelled).unwrap();
+        host.start_async("std.time.sleep", &[RuntimeValue::Integer(1000000000)])
+            .unwrap();
+        assert!(!host.ready_jobs.is_empty());
+        assert!(!host.sync_waiters.is_empty());
+        assert!(!host.time_jobs.is_empty());
+        assert!(budget.live_bytes() > 0);
+        host.abort_execution().unwrap();
+        assert!(host.values.is_empty());
+        assert!(host.channels.is_empty());
+        assert!(host.ready_jobs.is_empty());
+        assert!(host.sync_waiters.is_empty());
+        assert!(host.sync_queues.is_empty());
+        assert!(host.time_jobs.is_empty());
+        assert!(host.async_memory.is_empty());
+        assert!(host.buffer_memory.is_empty());
+        assert_eq!(host.time_resources, 0);
+        assert_eq!(budget.live_bytes(), 0);
+        host.abort_execution().unwrap();
+        // The host remains reusable after its aborted invocation retires.
+        let pair = ok(host
+            .invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        assert!(matches!(pair, RuntimeValue::Tuple(_)));
+        assert!(!host.values.is_empty());
+        host.abort_execution().unwrap();
+        assert_eq!(budget.live_bytes(), 0);
+        _ = receiver;
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ordinary_fatal_retirement_reaps_owned_process_worker_and_started_handle() {
+        let mut host = BootstrapHost::default();
+        let plan = shell(&mut host, "exec sleep 30");
+        let handle = ok(host.invoke("std.process.Command.start", &[plan]).unwrap());
+        let RuntimeValue::Host { id, .. } = handle else {
+            panic!("process handle must be published");
+        };
+        let pid = match host.values.get(&id) {
+            Some(HostValue::ProcessHandle(group)) => group.children[0].id(),
+            _ => panic!("live process group must be retained"),
+        };
+        let plan = shell(&mut host, "exec sleep 30");
+        host.start_async("std.process.Command.output", &[plan])
+            .unwrap();
+        assert_eq!(host.jobs.len(), 1);
+        assert!(std::path::Path::new(&format!("/proc/{pid}")).exists());
+        let started = Instant::now();
+        host.abort_execution().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+        assert!(host.jobs.is_empty());
+        assert!(host.ready_jobs.is_empty());
+        assert!(host.values.is_empty());
+        assert!(host.async_memory.is_empty());
+        host.abort_execution().unwrap();
+    }
+
+    #[test]
+    fn ordinary_fatal_retirement_restores_virtual_clock_policy_and_closes_its_record() {
+        let envelope = EnvelopeHandle::new(
+            "fatal-virtual-time",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_envelope(envelope.clone());
+        let domain = host.clock_domain;
+        let limit = host.max_time_resources;
+        host.begin_virtual_time().unwrap();
+        host.start_async("std.time.sleep", &[RuntimeValue::Integer(10)])
+            .unwrap();
+        assert!(!host.time_jobs.is_empty());
+        host.abort_execution().unwrap();
+        assert_eq!(host.clock_domain, domain);
+        assert_eq!(host.time_resources, 0);
+        assert_eq!(host.max_time_resources, limit);
+        assert!(host.time_jobs.is_empty());
+        assert!(host.values.is_empty());
+        assert!(host.previous_clock.is_none());
+        assert!(host.virtual_controller.is_none());
+        let controller = host
+            .begin_virtual_time()
+            .expect("the previous virtual record must be closed");
+        host.finish_virtual_time(&controller).unwrap();
+        assert_eq!(envelope.report().unwrap().virtual_time().len(), 2);
     }
 
     fn compile_channel_admission_source(

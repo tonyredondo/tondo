@@ -2357,19 +2357,19 @@ fn strongly_connected_components(
             continue;
         }
         visited.insert(start.clone());
-        let mut stack = vec![(start.clone(), false)];
-        while let Some((node, expanded)) = stack.pop() {
-            if expanded {
-                finish.push(node);
-                continue;
-            }
-            stack.push((node.clone(), true));
-            if let Some(targets) = adjacency.get(&node) {
-                for target in targets.iter().rev() {
-                    if visited.insert(target.clone()) {
-                        stack.push((target.clone(), false));
-                    }
+        // Enter one child at a time. Marking all queued siblings visited
+        // would skip a sibling reached from this child's subtree, corrupting
+        // postorder and merging acyclic modules in the reverse traversal.
+        let targets = |node: &ModuleId| adjacency.get(node).into_iter().flatten();
+        let mut stack = vec![(start.clone(), targets(start))];
+        while let Some((_, outgoing)) = stack.last_mut() {
+            if let Some(target) = outgoing.next() {
+                if visited.insert(target.clone()) {
+                    stack.push((target.clone(), targets(target)));
                 }
+            } else {
+                let (node, _) = stack.pop().expect("the DFS frame was present");
+                finish.push(node);
             }
         }
     }
@@ -2800,6 +2800,66 @@ mod tests {
             codes(&sources, output),
             ["E1006", "E1007", "E1008", "E1007", "E1005"]
         );
+    }
+
+    #[test]
+    fn import_cycles_shared_dependency_is_acyclic_in_both_source_orders() {
+        let inputs = [
+            ("a", "a.to", "import app.b\nimport app.c\nfn first() {}\n"),
+            ("b", "b.to", "import app.c\nfn second() {}\n"),
+            ("c", "c.to", "fn third() {}\n"),
+        ];
+        for rows in [inputs, [inputs[2], inputs[1], inputs[0]]] {
+            let (sources, output) = resolve_sources(&rows, &["a", "b", "c"]);
+            assert!(codes(&sources, output).is_empty());
+        }
+    }
+
+    #[test]
+    fn import_cycles_components_match_reachability_for_all_four_node_graphs() {
+        let graph = test_graph(&["a", "b", "c", "d"]);
+        let nodes = ["a", "b", "c", "d"].map(|name| {
+            graph
+                .module(graph.root(), &ModulePath::new(name).unwrap())
+                .unwrap()
+        });
+        for mask in 0u32..1 << 16 {
+            let mut reach = [[false; 4]; 4];
+            let mut adjacency = BTreeMap::new();
+            for from in 0..4 {
+                reach[from][from] = true;
+                let mut targets = BTreeSet::new();
+                for to in 0..4 {
+                    if mask & (1 << (from * 4 + to)) != 0 {
+                        targets.insert(nodes[to].clone());
+                        reach[from][to] = true;
+                    }
+                }
+                adjacency.insert(nodes[from].clone(), targets);
+            }
+            // Independent fixed-size transitive closure: mutual reachability
+            // defines a component even for disconnected and self-loop graphs.
+            for via in 0..4 {
+                for from in 0..4 {
+                    for to in 0..4 {
+                        reach[from][to] |= reach[from][via] && reach[via][to];
+                    }
+                }
+            }
+            let actual = strongly_connected_components(&adjacency);
+            for from in 0..4 {
+                for to in 0..4 {
+                    let together = actual
+                        .iter()
+                        .any(|group| group.contains(&nodes[from]) && group.contains(&nodes[to]));
+                    assert_eq!(
+                        together,
+                        reach[from][to] && reach[to][from],
+                        "graph {mask:#x}, {from}/{to}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,50 @@
+import std.log
+import std.time
+
+fn checkCore(): !log.LogError {
+    let defaults = log.LogLimits.defaults()
+    _ = defaults
+    let limits = log.LogLimits.create(1048576, 64, 16, 128, 65536, 1024)?
+    _ = log.SinkOptions.create(log.LogFormat.JsonLines, log.Backpressure.Reject, 1, limits)?
+    assert(log.LogLimits.create(0, 64, 16, 128, 65536, 1024) == err(log.LogError.InvalidLimit))
+    var fields = log.Fields.empty()
+    assert(fields.count() == 0)
+    fields.put("nested", log.LogValue.Array([log.LogValue.Null, log.LogValue.Text("世界")]))?
+    let snapshot = fields
+    fields.put("redacted", log.LogValue.Redacted)?
+    assert(fields.put("redacted", log.LogValue.Null) == err(log.LogError.DuplicateField))
+    assert(fields.count() == 2)
+    assert(snapshot.count() == 1)
+    assert(fields.put("bad\tkey", log.LogValue.Null) == err(log.LogError.InvalidFieldKey))
+    assert(fields.put("nonfinite", log.LogValue.Float(0.0 / 0.0)) == err(log.LogError.NonFiniteValue))
+    assert(fields.count() == 2)
+    let tight = log.LogLimits.create(1048576, 64, 16, 128, 65536, 1)?
+    assert(
+            log.SinkOptions.create(log.LogFormat.Text, log.Backpressure.Block, 0, tight) ==
+                err(log.LogError.InvalidLimit),
+        )
+    assert(
+            log.SinkOptions.create(log.LogFormat.Text, log.Backpressure.Drop, 2, tight) ==
+                err(log.LogError.ResourceLimit),
+        )
+    match snapshot.get("redacted") {
+        none => {}
+        some(_) => panic("field snapshot changed")
+    }
+    let utc = match time.UtcDateTime.parse("2024-02-29T23:59:59.000000001Z") {
+        ok(value) => value
+        err(_) => return err(log.LogError.Host)
+    }
+    let create: fn(log.LogLevel, String, String, log.Fields, time.UtcDateTime?): log.LogEvent !
+        log.LogError = log.LogEvent.create
+    let event = create(log.LogLevel.Info, "app", "hello", fields, some(utc))?
+    assert(event.level() == log.LogLevel.Info)
+    assert(event.target() == "app")
+    assert(event.message() == "hello")
+    assert(event.fields().count() == 2)
+    assert(event.timestamp() == some(utc))
+    match log.LogEvent.create(log.LogLevel.Warn, "", "", fields, none) {
+        err(log.LogError.InvalidTarget) => {}
+        _ => panic("wrong target error")
+    }
+}

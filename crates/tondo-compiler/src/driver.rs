@@ -2757,6 +2757,12 @@ fn install_selected_standard_sources(
             && imports(module)
     });
     let console_selected = console_available && imports(b"std.console");
+    let log_selected = imports(b"std.log")
+        && !sources.iter().any(|(_, source)| {
+            source.source_id() == &standard_source
+                && source.module().as_str() == "log"
+                && source.origin() != crate::source::SourceOrigin::GeneratedStandard
+        });
     // An explicitly supplied fs source module (for example a documentation
     // fixture) owns its declarations and need not expose the hosted File API.
     let filesystem_selected = filesystem_available
@@ -2771,6 +2777,12 @@ fn install_selected_standard_sources(
     // Ordinary standard declarations and implementations retain their owning
     // module. Reuse only exact compiler-owned bytes from a sealed compilation.
     for (module, path, bytes, selected) in [
+        (
+            "log",
+            "compiler/log.to",
+            include_bytes!("bootstrap/log.to").as_slice(),
+            log_selected,
+        ),
         (
             "io",
             "compiler/io.to",
@@ -6555,6 +6567,158 @@ fn main() {
             output.diagnostics().human()
         );
         assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn logging_public_project_runs_all_core_and_custom_sink_paths_without_providers() {
+        let fixtures = [
+            include_str!("../../../acceptance/projects/stdlib-log/src/core.to"),
+            include_str!("../../../acceptance/projects/stdlib-log/src/main.to"),
+            include_str!("../../../acceptance/projects/stdlib-log/src/affine.to"),
+            include_str!("../../../acceptance/projects/stdlib-log/src/queue.to"),
+            include_str!("../../../acceptance/projects/stdlib-log/src/value-sink.to"),
+        ];
+        let mut imports = BTreeSet::new();
+        let mut body = String::new();
+        for fixture in fixtures {
+            for line in fixture.lines() {
+                if line.starts_with("import ") {
+                    imports.insert(line);
+                } else {
+                    body.push_str(line);
+                    body.push('\n');
+                }
+            }
+        }
+        let source = format!(
+            "{}\n{body}",
+            imports.into_iter().collect::<Vec<_>>().join("\n")
+        );
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            source.as_bytes(),
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+    }
+
+    #[test]
+    fn logging_pure_values_support_structured_value_capabilities() {
+        let source = br#"
+import std.log as logging
+fn keep[T: Copy + Discard + Send + Share](value: T): T { value }
+fn main(): !logging.LogError {
+    var fields = logging.Fields.empty()
+    fields.put("value", logging.LogValue.Int(7))?
+    let event = logging.LogEvent.create(logging.LogLevel.Info, "test", "pure", fields, none)?
+    let kept = keep(event)
+    assert(kept.message() == "pure")
+    assert(keep(fields).count() == 1)
+    assert(keep(logging.LogLimits.defaults()) == logging.LogLimits.defaults())
+    assert(keep(logging.LoggerOptions.create(logging.LogLevel.Info)) == logging.LoggerOptions.create(logging.LogLevel.Info))
+}
+"#;
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn logging_refuses_private_helpers_fields_wrong_arguments_and_pending_host_sinks() {
+        for (source, expected) in [
+            (
+                "import std.log\nfn main() { _ = log.Fields.__withField(log.Fields.empty(), \"a\", log.LogValue.Null)\n}",
+                "E1004",
+            ),
+            (
+                "import std.log\nfn main() { let helper = log.Fields.__withField\n_ = helper\n}",
+                "E1004",
+            ),
+            (
+                "import std.log\nfn main() { _ = log.LogEvent.__create(log.LogLevel.Info, \"t\", \"m\", log.Fields.empty(), none)\n}",
+                "E1004",
+            ),
+            (
+                "import std.log\nfn main() { let helper = log.LogEvent.__create\n_ = helper\n}",
+                "E1004",
+            ),
+            (
+                "import std.log\nfn view(value: log.Fields) { _ = value.entries\n}",
+                "E1501",
+            ),
+            (
+                "import std.log\nfn view(value: log.LogEvent) { _ = value.fieldsValue\n}",
+                "E1501",
+            ),
+            (
+                "import std.log\nfn main() { _ = log.LogEvent.create(log.LogLevel.Info, \"t\", \"m\", log.Fields.empty(), 7)\n}",
+                "E1102",
+            ),
+        ] {
+            let output = execute(operation_request_with_capabilities(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{source}");
+            assert!(
+                output.diagnostics().human().contains(expected),
+                "{}",
+                output.diagnostics().human()
+            );
+        }
+        for source in [
+            "import std.log\nfn main() { _ = log.Fields.empty[Int]()\n}",
+            "import std.log\nfn main() { _ = log.ConsoleSink.create(log.ConsoleStream.Stdout, 7)\n}",
+            "import std.log\nfn main() { _ = log.FileSink.create(7, log.FileMode.Append, 7)\n}",
+            "import std.log\nfn make[S: log.LogSink](sink: S, options: log.LoggerOptions): log.Logger[S] ! log.LogError suspends { log.Logger[S].create(sink, options) }",
+            "import std.log\nfn copyLogger[S: log.LogSink + Share](logger: log.Logger[S]): log.Logger[S] { let other = logger\n_ = logger\nother }",
+            "import std.log\nfn useClosed[S: log.LogSink + Share](logger: log.Logger[S]): Unit suspends { _ = log.Logger[S].close(logger)\n_ = logger.enabled(log.LogLevel.Info)\n}",
+        ] {
+            let output = execute(operation_request_with_capabilities(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Rejected,
+                "unexpected acceptance: {source}"
+            );
+            assert!(!output.diagnostics().diagnostics().is_empty());
+            assert!(
+                !output.diagnostics().human().contains("E0004"),
+                "invalid fixture: {}",
+                output.diagnostics().human()
+            );
+        }
     }
 
     #[test]

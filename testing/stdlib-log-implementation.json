@@ -1,0 +1,222 @@
+{
+  "format": "tondo-stdlib-log-implementation/1",
+  "owner": "std.log",
+  "edition": "0.1",
+  "task": "STD-LOG-IMPL-001",
+  "status": "implementation-in-progress",
+  "quality_gate": "pending-80-percent-per-scope",
+  "parent": "testing/stdlib-log.json",
+  "contract": "docs/contracts/stdlib-log-implementation.md",
+  "selected_route": "ordinary-tondo-core-and-hosted-scalar-value-kernel",
+  "capabilities": {
+    "required": [],
+    "import_effect": "none",
+    "provider_reads": false
+  },
+  "surface": {
+    "types": [
+      "LogLevel",
+      "LogValue",
+      "LogFormat",
+      "ConsoleStream",
+      "FileMode",
+      "Backpressure",
+      "LogReceipt",
+      "LogError",
+      "Fields",
+      "LogEvent",
+      "LogLimits",
+      "SinkOptions",
+      "LoggerOptions",
+      "LogSink",
+      "Logger[S]"
+    ],
+    "trait_methods": [
+      {
+        "id": "sink-write",
+        "signature": "fn LogSink.write(var self, event: LogEvent): LogReceipt ! LogError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "sink-flush",
+        "signature": "fn LogSink.flush(var self): Unit ! LogError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "sink-close",
+        "signature": "fn LogSink.close(sink: Self): Unit ! LogError suspends",
+        "effect": "suspends"
+      }
+    ],
+    "signatures": [
+      {
+        "id": "limits-defaults",
+        "signature": "pub fn LogLimits.defaults(): LogLimits",
+        "kind": "fixed-default-limits",
+        "effect": "pure"
+      },
+      {
+        "id": "limits-create",
+        "signature": "pub fn LogLimits.create(maxEventBytes: Int, maxFields: Int, maxDepth: Int, maxFieldKeyBytes: Int, maxStringBytes: Int, maxQueueEntries: Int): LogLimits ! LogError",
+        "kind": "limit-constructor",
+        "effect": "pure"
+      },
+      {
+        "id": "fields-empty",
+        "signature": "pub fn Fields.empty(): Fields",
+        "kind": "field-builder",
+        "effect": "pure"
+      },
+      {
+        "id": "fields-put",
+        "signature": "pub fn Fields.put(var self, key: String, value: LogValue): Unit ! LogError",
+        "kind": "field-insert",
+        "effect": "pure"
+      },
+      {
+        "id": "fields-get",
+        "signature": "pub fn Fields.get(self, key: String): LogValue?",
+        "kind": "field-lookup",
+        "effect": "pure"
+      },
+      {
+        "id": "fields-count",
+        "signature": "pub fn Fields.count(self): Int",
+        "kind": "field-count",
+        "effect": "pure"
+      },
+      {
+        "id": "event-create",
+        "signature": "pub fn LogEvent.create(level: LogLevel, target: String, message: String, fields: Fields, timestamp: UtcDateTime?): LogEvent ! LogError",
+        "kind": "event-constructor",
+        "effect": "pure"
+      },
+      {
+        "id": "event-level",
+        "signature": "pub fn LogEvent.level(self): LogLevel",
+        "kind": "event-accessor",
+        "effect": "pure"
+      },
+      {
+        "id": "event-target",
+        "signature": "pub fn LogEvent.target(self): String",
+        "kind": "event-accessor",
+        "effect": "pure"
+      },
+      {
+        "id": "event-message",
+        "signature": "pub fn LogEvent.message(self): String",
+        "kind": "event-accessor",
+        "effect": "pure"
+      },
+      {
+        "id": "event-fields",
+        "signature": "pub fn LogEvent.fields(self): Fields",
+        "kind": "event-accessor",
+        "effect": "pure"
+      },
+      {
+        "id": "event-timestamp",
+        "signature": "pub fn LogEvent.timestamp(self): UtcDateTime?",
+        "kind": "event-accessor",
+        "effect": "pure"
+      },
+      {
+        "id": "sink-options-create",
+        "signature": "pub fn SinkOptions.create(format: LogFormat, backpressure: Backpressure, capacity: Int, limits: LogLimits): SinkOptions ! LogError",
+        "kind": "sink-options",
+        "effect": "pure"
+      },
+      {
+        "id": "logger-options-create",
+        "signature": "pub fn LoggerOptions.create(minimumLevel: LogLevel): LoggerOptions",
+        "kind": "logger-options",
+        "effect": "pure"
+      },
+      {
+        "id": "logger-create",
+        "signature": "pub fn Logger[S: LogSink + Share].create(sink: S, options: LoggerOptions): Logger[S] ! LogError suspends",
+        "kind": "logger-constructor",
+        "effect": "suspends"
+      },
+      {
+        "id": "logger-enabled",
+        "signature": "pub fn Logger[S: LogSink + Share].enabled(self, level: LogLevel): Bool",
+        "kind": "level-filter",
+        "effect": "pure"
+      },
+      {
+        "id": "logger-emit",
+        "signature": "pub fn Logger[S: LogSink + Share].emit(self, event: LogEvent): LogReceipt ! LogError suspends",
+        "kind": "event-submit",
+        "effect": "suspends"
+      },
+      {
+        "id": "logger-flush",
+        "signature": "pub fn Logger[S: LogSink + Share].flush(self): Unit ! LogError suspends",
+        "kind": "sink-flush",
+        "effect": "suspends"
+      },
+      {
+        "id": "logger-close",
+        "signature": "pub fn Logger[S: LogSink + Share].close(logger: Logger[S]): Unit ! LogError suspends",
+        "kind": "logger-terminal",
+        "effect": "suspends"
+      }
+    ],
+    "private_value_fields": true,
+    "private_helpers": [
+      "std.log.Fields.__withField",
+      "std.log.LogEvent.__create"
+    ]
+  },
+  "memory": {
+    "validation_node_bytes": 8,
+    "construction_bound": "512+4*retained-argument-bytes+referenced-Bytes-lengths",
+    "transport": "exact-reply-after-bounded-construction",
+    "failed_admission": "no-published-value-no-builder-mutation-no-live-charge",
+    "metrics": "logical-not-RSS-or-OS-allocator-calls"
+  },
+  "lifecycle": {
+    "logger": "affine",
+    "custom_sink": "structural-capabilities-one-owned-logical-value",
+    "serialization": "bounded-single-owner-slot-and-guarded-lease",
+    "cancellation": "restore-owner-before-logger-drain",
+    "close": "consuming-and-exactly-once",
+    "Io": "visible-physical-prefix-permitted-terminal-sink",
+    "fatal_VM_error": "reap-pending-provider-work-and-release-owned-values-without-user-callbacks"
+  },
+  "sources": {
+    "crates/tondo-stdlib/src/log.rs": "sha256:cbd1ba7e3f90211a3cd3e864e9d109f62ea9e3443802e5134c263f611770792d",
+    "crates/tondo-compiler/src/bootstrap/log.to": "sha256:ca4b96bec33ec6504e14e0c99b2e73dbdd8ece398d87db35cfe2c6bd7e294adb",
+    "crates/tondo-compiler/src/driver.rs": "sha256:5bfba9ece78fe32e0815037b10dfeda9c3a3f177a11412f3891c7d161cd9c7f0",
+    "crates/tondo-compiler/src/package.rs": "sha256:752f3dab3bda1f70360c1fa5d8c8d35b67f7865027267dda8050429a5f8c9bb9",
+    "crates/tondo-compiler/src/hir.rs": "sha256:b8ffb2df971552e1dc6d7fb51c2f9488dcf814b5aa6b5d60aee220b30d8445e0",
+    "crates/tondo-compiler/src/hir/check.rs": "sha256:3c6819416c29e38015369a40ba85847785f8bfba2d58397d03d5eb6e930fc7af",
+    "crates/tondo-compiler/src/hir/lower.rs": "sha256:0f17e3d81725aa1c2f98597c109ad6a5f4c8b9727491d969e84cc964a1615f0a",
+    "crates/tondo-compiler/src/process_host.rs": "sha256:a5e79e02976cc7e2dd5de273190ef36121f1055e8939cd72f54615665ace78e4",
+    "crates/tondo-compiler/src/process_host/log.rs": "sha256:52a6a1a37807d002df702edbbc5a44633de795d4e41e6bc0c034539b255c2082",
+    "crates/tondo-compiler/src/process_host/net.rs": "sha256:e5661056098abd33190c3d96d25fcfd923f611c1046643bea51f12dfd7d70389",
+    "crates/tondo-compiler/src/resolve.rs": "sha256:26c4d8d5ba3f7e480933e50b3c0f81389753fdeab82e21b910ef6385f1401a00",
+    "crates/tondo-vm/src/runtime/execute.rs": "sha256:c9006df852498b1a74b67e8bb9bde7264949dce2d8821d64aa2d29ce5e4aaf85"
+  },
+  "public_project": "acceptance/projects/stdlib-log/tondo.toml",
+  "public_fixtures": [
+    "core.to",
+    "main.to",
+    "affine.to",
+    "queue.to",
+    "value-sink.to"
+  ],
+  "command": "scripts/stdlib-log-implementation-check.sh",
+  "promotion": {
+    "compiler_api": "registered-public-hosted-core-pending-quality",
+    "public_signatures": 19,
+    "host_sinks": "pending-STD-LOG-HOST-001",
+    "native_abi": "not-implemented",
+    "native_aot": "not-claimed",
+    "full_owner": false,
+    "performance": "not-measured",
+    "independent_model_fuzz_conf_doc": "pending-owner-blocks"
+  }
+}

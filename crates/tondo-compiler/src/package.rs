@@ -743,6 +743,7 @@ pub(crate) fn bootstrap_standard_modules() -> Result<Vec<ModulePath>, PackageGra
         "json",
         "yaml",
         "uuid",
+        "log",
         "net",
         "encoding",
         "messagepack",

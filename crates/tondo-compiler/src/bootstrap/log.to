@@ -1,0 +1,402 @@
+import std.bytes
+import std.channel
+import std.time
+
+pub enum LogLevel {
+    Trace
+    Debug
+    Info
+    Warn
+    Error
+}
+
+pub enum LogFormat {
+    Text
+    JsonLines
+}
+
+pub enum Backpressure {
+    Block
+    Reject
+    Drop
+}
+
+pub enum LogReceipt {
+    Accepted
+    Dropped
+    Filtered
+}
+
+pub enum LogError {
+    InvalidTarget
+    InvalidFieldKey
+    DuplicateField
+    InvalidLimit
+    ResourceLimit
+    NonFiniteValue
+    Backpressure
+    Closed
+    Cancelled
+    CapabilityMissing
+    UnsupportedFormat
+    Io
+    Host
+}
+
+pub enum LogValue {
+    Null
+    Bool(Bool)
+    Int(Int64)
+    UInt(UInt64)
+    Float(Float64)
+    Text(String)
+    Bytes(bytes.Bytes)
+    Array(Array[LogValue])
+    Object(Fields)
+    Redacted
+}
+
+pub type Fields = {
+    priv entries: Array[(String, LogValue)]
+}
+
+pub type LogEvent = {
+    priv levelValue: LogLevel
+    priv targetValue: String
+    priv messageValue: String
+    priv fieldsValue: Fields
+    priv timestampValue: time.UtcDateTime?
+}
+
+pub type LogLimits = {
+    priv maxEventBytes: Int
+    priv maxFields: Int
+    priv maxDepth: Int
+    priv maxFieldKeyBytes: Int
+    priv maxStringBytes: Int
+    priv maxQueueEntries: Int
+}
+
+pub type SinkOptions = {
+    priv format: LogFormat
+    priv backpressure: Backpressure
+    priv capacity: Int
+    priv limits: LogLimits
+}
+
+pub type LoggerOptions = {
+    priv minimumLevel: LogLevel
+}
+
+pub enum ConsoleStream {
+    Stdout
+    Stderr
+}
+
+pub enum FileMode {
+    Append
+    Truncate
+}
+
+pub fn LogLimits.defaults(): LogLimits {
+    LogLimits {
+        maxEventBytes: 1048576
+        maxFields: 64
+        maxDepth: 16
+        maxFieldKeyBytes: 128
+        maxStringBytes: 65536
+        maxQueueEntries: 1024
+    }
+}
+
+pub fn LogLimits.create(
+    maxEventBytes: Int,
+    maxFields: Int,
+    maxDepth: Int,
+    maxFieldKeyBytes: Int,
+    maxStringBytes: Int,
+    maxQueueEntries: Int,
+): LogLimits ! LogError {
+    if maxEventBytes <= 0 or
+        maxFields <= 0 or
+        maxDepth <= 0 or
+        maxFieldKeyBytes <= 0 or
+        maxStringBytes <= 0 or
+        maxQueueEntries <= 0 {
+        return err(LogError.InvalidLimit)
+    }
+    LogLimits { maxEventBytes, maxFields, maxDepth, maxFieldKeyBytes, maxStringBytes, maxQueueEntries }
+}
+
+pub fn SinkOptions.create(
+    format: LogFormat,
+    backpressure: Backpressure,
+    capacity: Int,
+    limits: LogLimits,
+): SinkOptions ! LogError {
+    if capacity <= 0 {
+        return err(LogError.InvalidLimit)
+    }
+    if capacity > limits.maxQueueEntries {
+        return err(LogError.ResourceLimit)
+    }
+    SinkOptions { format, backpressure, capacity, limits }
+}
+
+pub fn Fields.empty(): Fields {
+    Fields { entries: [] }
+}
+
+pub fn Fields.count(self): Int {
+    self.entries.length()
+}
+
+pub fn Fields.get(self, key: String): LogValue? {
+    for (name, value) in self.entries {
+        if name == key {
+            return some(value)
+        }
+    }
+    none
+}
+
+pub fn LogEvent.create(
+    level: LogLevel,
+    target: String,
+    message: String,
+    fields: Fields,
+    timestamp: time.UtcDateTime?,
+): LogEvent ! LogError {
+    LogEvent.__create(level, target, message, fields, timestamp)
+}
+
+pub fn LogEvent.level(self): LogLevel {
+    self.levelValue
+}
+
+pub fn LogEvent.target(self): String {
+    self.targetValue
+}
+
+pub fn LogEvent.message(self): String {
+    self.messageValue
+}
+
+pub fn LogEvent.fields(self): Fields {
+    self.fieldsValue
+}
+
+pub fn LogEvent.timestamp(self): time.UtcDateTime? {
+    self.timestampValue
+}
+
+pub fn LoggerOptions.create(minimumLevel: LogLevel): LoggerOptions {
+    LoggerOptions { minimumLevel }
+}
+
+fn severity(level: LogLevel): Int {
+    match level {
+        LogLevel.Trace => 0
+        LogLevel.Debug => 1
+        LogLevel.Info => 2
+        LogLevel.Warn => 3
+        LogLevel.Error => 4
+    }
+}
+
+pub trait LogSink {
+    fn write(var self, event: LogEvent): LogReceipt ! LogError suspends
+    fn flush(var self): !LogError suspends
+    fn close(sink: Self): !LogError suspends
+}
+
+pub fn Fields.put(var self, key: String, value: LogValue): !LogError {
+    let replacement = Fields.__withField(self, key, value)?
+    self = replacement
+}
+
+enum SinkSlot[S: LogSink + Share] {
+    Open(S)
+    Closed(LogError?)
+}
+
+pub type Logger[S: LogSink + Share] = {
+    priv sender: channel.Sender[SinkSlot[S]]
+    priv receiver: channel.Receiver[SinkSlot[S]]
+    priv options: LoggerOptions
+}
+
+type SinkLease[S: LogSink + Share] = {
+    sender: channel.Sender[SinkSlot[S]]
+    sink: S
+    terminal: Bool
+}
+
+fn SinkLease[S: LogSink + Share].markTerminal(var self) {
+    self.terminal = true
+}
+
+fn recoverSlot[S: LogSink + Share](error: channel.TrySendError[SinkSlot[S]]): SinkSlot[S] {
+    match error {
+        channel.TrySendError.Full(value) => value
+        channel.TrySendError.Closed(value) => value
+        channel.TrySendError.ResourceLimit(value) => value
+    }
+}
+
+fn closeSlot[S: LogSink + Share](state: SinkSlot[S]): !LogError suspends {
+    match state {
+        SinkSlot.Open(value) => LogSink.close[S](value)
+        SinkSlot.Closed(error) =>
+            match error {
+                some(failure) => err(failure)
+                none => ok(())
+            }
+    }
+}
+
+fn closeSlots[S: LogSink + Share](states: Array[SinkSlot[S]]): !LogError suspends {
+    var first: LogError? = none
+    for state in states {
+        match closeSlot(state) {
+            ok(_) => {}
+            err(error) =>
+                {
+                    if first == none {
+                        first = some(error)
+                    }
+                }
+        }
+    }
+    match first {
+        some(error) => err(error)
+        none => ok(())
+    }
+}
+
+pub fn Logger[S: LogSink + Share].create(sink: S, options: LoggerOptions): Logger[S] ! LogError suspends {
+    let (sender, receiver) = match channel.bounded[SinkSlot[S]](1) {
+        ok(endpoints) => endpoints
+        err(_) =>
+            {
+                LogSink.close[S](sink)?
+                return err(LogError.ResourceLimit)
+            }
+    }
+    match sender.trySend(SinkSlot[S].Open(sink)) {
+        ok(_) => {}
+        err(error) =>
+            {
+                let rejected = recoverSlot(error)
+                sender.close()
+                let drained = closeSlots(receiver.close())
+                let closed = closeSlot(rejected)
+                drained?
+                closed?
+                return err(LogError.ResourceLimit)
+            }
+    }
+    Logger[S] { sender, receiver, options }
+}
+
+pub fn Logger[S: LogSink + Share].enabled(self, level: LogLevel): Bool {
+    severity(level) >= severity(self.options.minimumLevel)
+}
+
+fn acquireSink[S: LogSink + Share](logger: ref Logger[S]): SinkLease[S] ! LogError suspends {
+    let returnSender = match logger.sender.fork() {
+        ok(endpoint) => endpoint
+        err(_) => return err(LogError.ResourceLimit)
+    }
+    let acquired = match logger.receiver.receive() {
+        some(available) => available
+        none =>
+            {
+                returnSender.close()
+                return err(LogError.Closed)
+            }
+    }
+    let sink = match acquired {
+        SinkSlot.Open(ownedSink) => ownedSink
+        SinkSlot.Closed(error) =>
+            {
+                match returnSender.trySend(SinkSlot[S].Closed(error)) {
+                    ok(_) => {}
+                    err(_) => panic("logging terminal state could not be restored")
+                }
+                returnSender.close()
+                return err(LogError.Closed)
+            }
+    }
+    SinkLease[S] { sender: returnSender, sink, terminal: false }
+}
+
+fn restoreSink[S: LogSink + Share](lease: SinkLease[S]) suspends {
+    match lease {
+        SinkLease { sender, sink, terminal } =>
+            {
+                let state = if terminal {
+                    let closeError: LogError? = match LogSink.close[S](sink) {
+                        ok(_) => none
+                        err(error) => some(error)
+                    }
+                    SinkSlot[S].Closed(closeError)
+                } else {
+                    SinkSlot[S].Open(sink)
+                }
+                match sender.trySend(state) {
+                    ok(_) => {}
+                    err(error) =>
+                        {
+                            let rejected = recoverSlot(error)
+                            match closeSlot(rejected) {
+                                ok(_) => {}
+                                err(_) => panic("logging sink cleanup failed")
+                            }
+                        }
+                }
+                sender.close()
+            }
+    }
+}
+
+pub fn Logger[S: LogSink + Share].emit(self, event: LogEvent): LogReceipt ! LogError suspends {
+    if not self.enabled(event.level()) {
+        return LogReceipt.Filtered
+    }
+    var lease = acquireSink(ref self)?
+    defer restoreSink(lease)
+    let outcome = lease.sink.write(event)
+    match outcome {
+        err(LogError.Io) =>
+            {
+                lease.markTerminal()
+            }
+        _ => {}
+    }
+    outcome
+}
+
+pub fn Logger[S: LogSink + Share].flush(self): !LogError suspends {
+    var lease = acquireSink(ref self)?
+    defer restoreSink(lease)
+    let outcome = lease.sink.flush()
+    match outcome {
+        err(LogError.Io) =>
+            {
+                lease.markTerminal()
+            }
+        _ => {}
+    }
+    outcome
+}
+
+pub fn Logger[S: LogSink + Share].close(logger: Logger[S]): !LogError suspends {
+    match logger {
+        Logger { sender, receiver, options: _ } =>
+            {
+                sender.close()
+                closeSlots(receiver.close())
+            }
+    }
+}

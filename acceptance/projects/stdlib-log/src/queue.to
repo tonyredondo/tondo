@@ -1,0 +1,89 @@
+import std.channel
+import std.log
+
+type QueueSink = {
+    sender: channel.Sender[log.LogEvent]
+    policy: log.Backpressure
+}
+
+impl log.LogSink for QueueSink {
+    fn write(var self, event: log.LogEvent): log.LogReceipt ! log.LogError suspends {
+        if self.policy == log.Backpressure.Block {
+            return match self.sender.send(event) {
+                ok(_) => log.LogReceipt.Accepted
+                err(channel.SendError.Closed(_)) => err(log.LogError.Closed)
+                err(channel.SendError.ResourceLimit(_)) => err(log.LogError.ResourceLimit)
+            }
+        }
+        match self.sender.trySend(event) {
+            ok(_) => log.LogReceipt.Accepted
+            err(channel.TrySendError.Full(_)) =>
+                {
+                    if self.policy == log.Backpressure.Drop {
+                        log.LogReceipt.Dropped
+                    } else {
+                        err(log.LogError.Backpressure)
+                    }
+                }
+            err(channel.TrySendError.Closed(_)) => err(log.LogError.Closed)
+            err(channel.TrySendError.ResourceLimit(_)) => err(log.LogError.ResourceLimit)
+        }
+    }
+    fn flush(var self): !log.LogError suspends {
+        ()
+    }
+    fn close(sink: QueueSink): !log.LogError suspends {
+        match sink {
+            QueueSink { sender, policy: _ } => sender.close()
+        }
+    }
+}
+
+fn closeEventReceiver(receiver: channel.Receiver[log.LogEvent]) {
+    _ = receiver.close()
+}
+
+fn expectEvent(receiver: ref channel.Receiver[log.LogEvent], message: String) suspends {
+    match receiver.receive() {
+        some(value) => assert(value.message() == message)
+        none => panic("missing accepted event")
+    }
+}
+
+fn queueCase(policy: log.Backpressure): !log.LogError {
+    let (sender, receiver) = match channel.bounded[log.LogEvent](1) {
+        ok(pair) => pair
+        err(_) => return err(log.LogError.ResourceLimit)
+    }
+    defer closeEventReceiver(receiver)
+    let logger = log
+        .Logger[QueueSink]
+        .create(QueueSink { sender, policy }, log.LoggerOptions.create(log.LogLevel.Info))?
+    defer closeLogger(logger)
+    let first = makeEvent(log.LogLevel.Info, "2")?
+    let second = makeEvent(log.LogLevel.Info, "3")?
+    assert(logger.emit(first)? == log.LogReceipt.Accepted)
+    if policy == log.Backpressure.Block {
+        scope {
+            let pending = spawn logger.emit(second)
+            expectEvent(ref receiver, "2")
+            assert(await pending? == log.LogReceipt.Accepted)
+            expectEvent(ref receiver, "3")
+        }
+    } else {
+        if policy == log.Backpressure.Drop {
+            assert(logger.emit(second)? == log.LogReceipt.Dropped)
+        } else {
+            assert(logger.emit(second) == err(log.LogError.Backpressure))
+        }
+        assert(second.message() == "3")
+        expectEvent(ref receiver, "2")
+    }
+    logger.flush()?
+    log.Logger[QueueSink].close(logger)?
+    match receiver.receive() {
+        none => {}
+        some(_) => panic("unexpected event after close")
+    }
+    _ = receiver.close()
+}

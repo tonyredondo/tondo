@@ -171,12 +171,12 @@
   },
   "sources": {
     "crates/tondo-stdlib/src/civil_time.rs": "sha256:e5edd9bb0bcf4ed45b640012e9d7376d0c531065da4b86e328c6bc13e681a901",
-    "crates/tondo-compiler/src/process_host/civil_time.rs": "sha256:a1f0387df62174a7e3991739a5b3f666fc2e475365c18d5549150139faabc986",
-    "crates/tondo-compiler/src/hir.rs": "sha256:ab54d74866f7434d20e12dd585b1ee03430eca9de03374c6d9b5b619e26675e0",
-    "crates/tondo-compiler/src/hir/check.rs": "sha256:5547515ec9a025057feddbb1f89f86e90d7a66e9eb427766567fa7b24c2e1efb",
-    "crates/tondo-compiler/src/hir/lower.rs": "sha256:819c6e80d6cd58050bfa2fd36bc6fb21bdeccc758bced35515b813b389fd7626",
-    "crates/tondo-compiler/src/resolve.rs": "sha256:5f15795796869e9fb8340531d052d63664570b0caf3fa482c0d5a45d90eea7d1",
-    "crates/tondo-compiler/src/process_host.rs": "sha256:371b27f91e50fe7b56723d976f729a2bd05caaac51701d6e7a5a169288cedda1"
+    "crates/tondo-compiler/src/process_host/civil_time.rs": "sha256:6d045b409feddd7fe2ff261be5f38734a8f9c5f9f1cfc1fb9c44964faedb3b33",
+    "crates/tondo-compiler/src/hir.rs": "sha256:b8ffb2df971552e1dc6d7fb51c2f9488dcf814b5aa6b5d60aee220b30d8445e0",
+    "crates/tondo-compiler/src/hir/check.rs": "sha256:3c6819416c29e38015369a40ba85847785f8bfba2d58397d03d5eb6e930fc7af",
+    "crates/tondo-compiler/src/hir/lower.rs": "sha256:0f17e3d81725aa1c2f98597c109ad6a5f4c8b9727491d969e84cc964a1615f0a",
+    "crates/tondo-compiler/src/resolve.rs": "sha256:26c4d8d5ba3f7e480933e50b3c0f81389753fdeab82e21b910ef6385f1401a00",
+    "crates/tondo-compiler/src/process_host.rs": "sha256:a5e79e02976cc7e2dd5de273190ef36121f1055e8939cd72f54615665ace78e4"
   },
   "model": {
     "generator": "scripts/civil_core_oracle.py",

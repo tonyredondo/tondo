@@ -1,0 +1,162 @@
+import std.channel
+import std.log
+
+type Counter = {
+    calls: Int
+    report: channel.Sender[Int]
+    fail: Bool
+    closeFail: Bool
+}
+
+impl log.LogSink for Counter {
+    fn write(var self, event: log.LogEvent): log.LogReceipt ! log.LogError suspends {
+        let amount = match event.message() {
+            "2" => 2
+            "3" => 3
+            _ => 100
+        }
+        self.calls += amount
+        if self.fail {
+            return err(log.LogError.Io)
+        }
+        log.LogReceipt.Accepted
+    }
+    fn flush(var self): !log.LogError suspends {
+        ()
+    }
+    fn close(sink: Counter): !log.LogError suspends {
+        match sink {
+            Counter { calls, report, closeFail, .. } =>
+                {
+                    match report.trySend(calls) {
+                        ok(_) => {}
+                        err(_) => panic("failed to report close")
+                    }
+                    report.close()
+                    if closeFail {
+                        return err(log.LogError.Io)
+                    }
+                }
+        }
+    }
+}
+
+fn closeObservation(receiver: channel.Receiver[Int]) {
+    _ = receiver.close()
+}
+
+fn closeLogger[S: log.LogSink + Share](logger: log.Logger[S]) suspends {
+    match log.Logger[S].close(logger) {
+        ok(_) => {}
+        err(_) => panic("close failed")
+    }
+}
+
+fn makeEvent(level: log.LogLevel, message: String): log.LogEvent ! log.LogError {
+    log.LogEvent.create(level, "test", message, log.Fields.empty(), none)
+}
+
+fn main(): !log.LogError {
+    checkCore()?
+    affineCase()?
+    valueSinkCase()?
+    for policy in [log.Backpressure.Block, log.Backpressure.Reject, log.Backpressure.Drop] {
+        queueCase(policy)?
+    }
+    let (report, observation) = match channel.bounded[Int](1) {
+        ok(endpoints) => endpoints
+        err(_) => return err(log.LogError.ResourceLimit)
+    }
+    defer closeObservation(observation)
+    let options = log.LoggerOptions.create(log.LogLevel.Info)
+    let constructor: fn(Counter, log.LoggerOptions): log.Logger[Counter] ! log.LogError suspends = log
+        .Logger[Counter]
+        .create
+    let logger = constructor(Counter { calls: 0, report, fail: false, closeFail: false }, options)?
+    defer closeLogger(logger)
+    assert(not logger.enabled(log.LogLevel.Debug))
+    assert(logger.enabled(log.LogLevel.Info))
+    assert(logger.emit(makeEvent(log.LogLevel.Debug, "100")?)? == log.LogReceipt.Filtered)
+    scope {
+        let first = spawn logger.emit(makeEvent(log.LogLevel.Info, "2")?)
+        let second = spawn logger.emit(makeEvent(log.LogLevel.Info, "3")?)
+        assert(await first? == log.LogReceipt.Accepted)
+        assert(await second? == log.LogReceipt.Accepted)
+    }
+    logger.flush()?
+    log.Logger[Counter].close(logger)?
+    assert(observation.receive() == some(5))
+    _ = observation.close()
+    ioCase()?
+    flushIoCase()?
+}
+
+fn ioCase(): !log.LogError {
+    let (report, observation) = match channel.bounded[Int](1) {
+        ok(endpoints) => endpoints
+        err(_) => return err(log.LogError.ResourceLimit)
+    }
+    defer closeObservation(observation)
+    let logger = log
+        .Logger[Counter]
+        .create(
+            Counter { calls: 0, report, fail: true, closeFail: true },
+            log.LoggerOptions.create(log.LogLevel.Info),
+        )?
+    defer closeLogger(logger)
+    scope {
+        let first = spawn logger.emit(makeEvent(log.LogLevel.Info, "2")?)
+        let second = spawn logger.emit(makeEvent(log.LogLevel.Info, "3")?)
+        assert(await first == err(log.LogError.Io))
+        assert(await second == err(log.LogError.Closed))
+    }
+    assert(logger.flush() == err(log.LogError.Closed))
+    assert(log.Logger[Counter].close(logger) == err(log.LogError.Io))
+    assert(observation.receive() == some(2))
+    _ = observation.close()
+}
+
+type FlushSink = {
+    report: channel.Sender[Int]
+}
+
+impl log.LogSink for FlushSink {
+    fn write(var self, event: log.LogEvent): log.LogReceipt ! log.LogError suspends {
+        _ = event
+        log.LogReceipt.Accepted
+    }
+    fn flush(var self): !log.LogError suspends {
+        err(log.LogError.Io)
+    }
+    fn close(sink: FlushSink): !log.LogError suspends {
+        match sink {
+            FlushSink { report } =>
+                {
+                    match report.trySend(1) {
+                        ok(_) => {}
+                        err(_) => panic("flush close report failed")
+                    }
+                    report.close()
+                }
+        }
+    }
+}
+
+fn flushIoCase(): !log.LogError {
+    let (report, observation) = match channel.bounded[Int](1) {
+        ok(endpoints) => endpoints
+        err(_) => return err(log.LogError.ResourceLimit)
+    }
+    defer closeObservation(observation)
+    let logger = log
+        .Logger[FlushSink]
+        .create(FlushSink { report }, log.LoggerOptions.create(log.LogLevel.Info))?
+    defer closeLogger(logger)
+    assert(logger.flush() == err(log.LogError.Io))
+    assert(logger.flush() == err(log.LogError.Closed))
+    assert(logger.emit(makeEvent(log.LogLevel.Info, "closed")?) == err(log.LogError.Closed))
+    log.Logger[FlushSink].close(logger)?
+    assert(observation.receive() == some(1))
+    assert(observation.receive() == none)
+    _ = observation.close()
+}

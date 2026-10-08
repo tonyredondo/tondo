@@ -21,7 +21,7 @@
       "console": ["console"],
       "file": ["filesystem"],
       "network": ["network"],
-      "timestamp": ["civil-clock"]
+      "timestamp": []
     },
     "import_effect": "none",
     "ambient_lookup": false,
@@ -96,6 +96,10 @@
       "extra_whitespace": "reject"
     }
   },
+  "receipts": {
+    "variants": ["Accepted", "Dropped", "Filtered"],
+    "filtered": "no-sink-no-queue-not-a-drop"
+  },
   "backpressure": {
     "policies": ["Block", "Reject", "Drop"],
     "block": "suspends-until-accepted-and-cancel-safe",
@@ -107,6 +111,9 @@
   },
   "sinks": {
     "protocol": "LogSink",
+    "logger_bounds": ["LogSink", "Share"],
+    "trait_header_bounds": [],
+    "self_send": "inferred-from-suspends-methods",
     "methods": ["write", "flush", "close"],
     "write": "linearizable-and-suspendible",
     "flush": "all-accepted-before-call-reach-writer",
@@ -167,7 +174,7 @@
     "trait_methods": [
       {"id": "sink-write", "signature": "fn LogSink.write(var self, event: LogEvent): LogReceipt ! LogError suspends", "effect": "suspends"},
       {"id": "sink-flush", "signature": "fn LogSink.flush(var self): Unit ! LogError suspends", "effect": "suspends"},
-      {"id": "sink-close", "signature": "fn LogSink.close(self): Unit ! LogError suspends", "effect": "suspends"}
+      {"id": "sink-close", "signature": "fn LogSink.close(sink: Self): Unit ! LogError suspends", "effect": "suspends"}
     ],
     "signatures": [
       {"id": "limits-defaults", "signature": "pub fn LogLimits.defaults(): LogLimits", "kind": "fixed-default-limits", "effect": "pure"},
@@ -186,11 +193,11 @@
       {"id": "logger-options-create", "signature": "pub fn LoggerOptions.create(minimumLevel: LogLevel): LoggerOptions", "kind": "logger-options", "effect": "pure"},
       {"id": "console-sink-create", "signature": "pub fn ConsoleSink.create(stream: ConsoleStream, options: SinkOptions): ConsoleSink ! LogError", "kind": "console-sink", "effect": "console"},
       {"id": "file-sink-create", "signature": "pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError", "kind": "file-sink", "effect": "filesystem"},
-      {"id": "logger-create", "signature": "pub fn Logger.create[S: LogSink](sink: S, options: LoggerOptions): Logger[S] ! LogError", "kind": "logger-constructor", "effect": "pure"},
-      {"id": "logger-enabled", "signature": "pub fn Logger.enabled(ref self, level: LogLevel): Bool", "kind": "level-filter", "effect": "pure"},
-      {"id": "logger-emit", "signature": "pub fn Logger.emit(ref self, event: LogEvent): LogReceipt ! LogError suspends", "kind": "event-submit", "effect": "suspends"},
-      {"id": "logger-flush", "signature": "pub fn Logger.flush(ref self): Unit ! LogError suspends", "kind": "sink-flush", "effect": "suspends"},
-      {"id": "logger-close", "signature": "pub fn Logger.close(self): Unit ! LogError suspends", "kind": "logger-terminal", "effect": "suspends"}
+      {"id": "logger-create", "signature": "pub fn Logger[S: LogSink + Share].create(sink: S, options: LoggerOptions): Logger[S] ! LogError suspends", "kind": "logger-constructor", "effect": "suspends"},
+      {"id": "logger-enabled", "signature": "pub fn Logger[S: LogSink + Share].enabled(self, level: LogLevel): Bool", "kind": "level-filter", "effect": "pure"},
+      {"id": "logger-emit", "signature": "pub fn Logger[S: LogSink + Share].emit(self, event: LogEvent): LogReceipt ! LogError suspends", "kind": "event-submit", "effect": "suspends"},
+      {"id": "logger-flush", "signature": "pub fn Logger[S: LogSink + Share].flush(self): Unit ! LogError suspends", "kind": "sink-flush", "effect": "suspends"},
+      {"id": "logger-close", "signature": "pub fn Logger[S: LogSink + Share].close(logger: Logger[S]): Unit ! LogError suspends", "kind": "logger-terminal", "effect": "suspends"}
     ],
     "direct_call_waits": true,
     "explicit_await_direct_call": "forbidden",
@@ -211,12 +218,13 @@
     "logger_shareable": true,
     "logger_copyable": false,
     "logger_cloneable": false,
-    "sink_affine": true,
-    "sink_copyable": false,
-    "sink_cloneable": false,
+    "custom_sink_capabilities": "structural-one-logical-value-owned-by-logger",
+    "sink_affine": "builtin-sinks-and-structurally-affine-user-sinks",
+    "sink_copyable": "custom-structural-builtin-false",
+    "sink_cloneable": "custom-explicit-builtin-false",
     "sink_close_terminal": true,
     "event_no_mutable_alias": true,
-    "failed_emit_event": "not-published-and-logical-owner-preserved",
+    "failed_emit_event": "logical-owner-preserved-admission-errors-no-write-Io-may-prefix",
     "close_waits_in_flight": true,
     "post_close_use": "compile-error"
   },
@@ -232,6 +240,9 @@
     "type": "LogError",
     "location": "event-field-format-sink-boundary",
     "partial_success": false,
+    "admission_atomic": true,
+    "physical_prefix_on_Io": true,
+    "Io_sink_terminal": true,
     "kinds": ["InvalidTarget", "InvalidFieldKey", "DuplicateField", "InvalidLimit", "ResourceLimit", "NonFiniteValue", "Backpressure", "Closed", "Cancelled", "CapabilityMissing", "UnsupportedFormat", "Io", "Host"]
   },
   "performance": {
@@ -299,9 +310,10 @@
     "next_blocks": ["DIAG-RUNTIME-001"]
   },
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "core-implementation-in-progress",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
+    "host": "pending-STD-LOG-HOST-001",
+    "core_register": "testing/stdlib-log-implementation.json",
     "required_follow_ups": ["STD-LOG-IMPL-001", "STD-LOG-HOST-001", "STD-LOG-TEST-001", "STD-LOG-PERF-001", "STD-LOG-CONF-001", "STD-LOG-DOC-001"]
   }
 }

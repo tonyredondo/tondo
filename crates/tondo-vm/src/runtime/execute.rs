@@ -190,6 +190,14 @@ pub trait VmHost {
         self.prepare_host_call(roots)
     }
 
+    /// Retires this engine's provider state after a fatal evaluator error.
+    /// Owning hosts must cancel and reap their pending operations before
+    /// releasing values. A worker publishes an empty detached root graph to
+    /// its parent. No user callback or additional VM allocation is required.
+    fn abort_execution(&mut self) -> Result<(), VmError> {
+        self.retire_host_values(&VmHostRoots::new())
+    }
+
     /// Identifies a compiler-owned test entry with independent user phases.
     fn has_test_participation(&self) -> bool {
         false
@@ -3093,6 +3101,41 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn run(
         mut self,
+        entry: BytecodeFunctionId,
+        arguments: Vec<Value>,
+    ) -> Result<CompletedExecution, VmError> {
+        let result = self.run_entry(entry, arguments);
+        if let Err(error) = result {
+            // Fatal limits are outside language panic/unwind. Retire owned
+            // workers and provider operations without running user bytecode
+            // or importing another reply into an exhausted heap.
+            let mut cleanup_error = None;
+            for bridge in self.blocking_bridges.values() {
+                if let Err(error) = bridge.cancel()
+                    && cleanup_error.is_none()
+                {
+                    cleanup_error = Some(error);
+                }
+            }
+            self.blocking_calls.clear();
+            self.blocking_bridges.clear();
+            if let Err(error) = self.host.abort_execution()
+                && cleanup_error.is_none()
+            {
+                cleanup_error = Some(error);
+            }
+            return Err(match cleanup_error {
+                None => error,
+                Some(cleanup) => VmError::Host(format!(
+                    "execution failed ({error}); terminal cleanup also failed ({cleanup})"
+                )),
+            });
+        }
+        result
+    }
+
+    fn run_entry(
+        &mut self,
         entry: BytecodeFunctionId,
         arguments: Vec<Value>,
     ) -> Result<CompletedExecution, VmError> {
@@ -21616,6 +21659,54 @@ mod tests {
             callables: Vec::new(),
             constants: Vec::new(),
             functions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn fatal_entry_error_preserves_primary_and_exposes_retirement_failure() {
+        struct RetiringHost {
+            fail: bool,
+            retired: usize,
+        }
+        impl VmHost for RetiringHost {
+            fn invoke(&mut self, name: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+            fn retire_host_values(
+                &mut self,
+                roots: &crate::runtime::VmHostRoots,
+            ) -> Result<(), VmError> {
+                assert!(roots.is_empty());
+                self.retired += 1;
+                if self.fail {
+                    Err(VmError::Host("retirement failed".into()))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let program = root_pressure_program();
+        for fail in [false, true] {
+            let mut host = RetiringHost { fail, retired: 0 };
+            let engine = Engine::new(
+                &program,
+                &mut host,
+                VmLimits::default(),
+                ValueCopyStrategy::default(),
+                derive_trace_metadata(&program).unwrap(),
+            );
+            let error = match engine.run(BytecodeFunctionId::new(99), Vec::new()) {
+                Err(error) => error,
+                Ok(_) => panic!("invalid entry must fail"),
+            };
+            assert_eq!(host.retired, 1);
+            if fail {
+                let text = error.to_string();
+                assert!(text.contains("unknown function 99"), "{text}");
+                assert!(text.contains("retirement failed"), "{text}");
+            } else {
+                assert!(matches!(error, VmError::InvalidEntry(_)));
+            }
         }
     }
 

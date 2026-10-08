@@ -36,7 +36,7 @@ jq -e '
   and .capabilities.source_sets.console == ["console"]
   and .capabilities.source_sets.file == ["filesystem"]
   and .capabilities.source_sets.network == ["network"]
-  and .capabilities.source_sets.timestamp == ["civil-clock"]
+  and .capabilities.source_sets.timestamp == []
   and .capabilities.import_effect == "none"
   and .capabilities.ambient_lookup == false
   and .capabilities.compile_time_query == false
@@ -68,6 +68,7 @@ jq -e '
   and .formats.json_lines.root_order == ["schema", "level", "target", "message", "time", "fields"]
   and .formats.json_lines.final_lf == true
   and .backpressure.policies == ["Block", "Reject", "Drop"]
+  and .receipts == {variants:["Accepted","Dropped","Filtered"],filtered:"no-sink-no-queue-not-a-drop"}
   and .backpressure.block == "suspends-until-accepted-and-cancel-safe"
   and .backpressure.reject == "LogError.Backpressure-no-consume"
   and .backpressure.drop == "LogReceipt.Dropped-observable"
@@ -75,6 +76,9 @@ jq -e '
   and .backpressure.queue == "finite-explicit-capacity"
   and .backpressure.unbounded == false
   and .sinks.protocol == "LogSink"
+  and .sinks.logger_bounds == ["LogSink", "Share"]
+  and .sinks.trait_header_bounds == []
+  and .sinks.self_send == "inferred-from-suspends-methods"
   and .sinks.methods == ["write", "flush", "close"]
   and .sinks.write == "linearizable-and-suspendible"
   and .sinks.flush == "all-accepted-before-call-reach-writer"
@@ -100,6 +104,10 @@ jq -e '
   and ([.surface.types[]] | sort) == ["Backpressure", "ConsoleSink", "ConsoleStream", "Fields", "FileMode", "FileSink", "LogError", "LogEvent", "LogFormat", "LogLevel", "LogLimits", "LogReceipt", "LogSink", "LogValue", "LoggerOptions", "Logger[S]", "SinkOptions"]
   and (.surface.trait_methods | length) == 3
   and ([.surface.trait_methods[].id] | unique | length) == 3
+  and ([.surface.trait_methods[] | select(.id == "sink-close") | .signature] == ["fn LogSink.close(sink: Self): Unit ! LogError suspends"])
+  and ([.surface.signatures[] | select(.id == "logger-create") | .signature] == ["pub fn Logger[S: LogSink + Share].create(sink: S, options: LoggerOptions): Logger[S] ! LogError suspends"])
+  and ([.surface.signatures[] | select(.id == "logger-create") | .effect] == ["suspends"])
+  and ([.surface.signatures[] | select(.id == "logger-close") | .signature] == ["pub fn Logger[S: LogSink + Share].close(logger: Logger[S]): Unit ! LogError suspends"])
   and ([.surface.signatures | length] | first) == 21
   and ([.surface.signatures[].id] | unique | length) == 21
   and ([.surface.signatures[] | select(.id == "logger-emit" and .effect == "suspends")] | length) == 1
@@ -120,17 +128,21 @@ jq -e '
   and .ownership.logger_shareable == true
   and .ownership.logger_copyable == false
   and .ownership.logger_cloneable == false
-  and .ownership.sink_affine == true
-  and .ownership.sink_copyable == false
-  and .ownership.sink_cloneable == false
+  and .ownership.sink_affine == "builtin-sinks-and-structurally-affine-user-sinks"
+  and .ownership.custom_sink_capabilities == "structural-one-logical-value-owned-by-logger"
+  and .ownership.sink_copyable == "custom-structural-builtin-false"
+  and .ownership.sink_cloneable == "custom-explicit-builtin-false"
   and .ownership.sink_close_terminal == true
   and .ownership.event_no_mutable_alias == true
-  and .ownership.failed_emit_event == "not-published-and-logical-owner-preserved"
+  and .ownership.failed_emit_event == "logical-owner-preserved-admission-errors-no-write-Io-may-prefix"
   and .ownership.close_waits_in_flight == true
   and ([.limits[].id] | sort) == ["max_depth", "max_event_bytes", "max_field_key_bytes", "max_fields", "max_queue_entries", "max_string_bytes"]
   and .errors.type == "LogError"
   and .errors.location == "event-field-format-sink-boundary"
   and .errors.partial_success == false
+  and .errors.admission_atomic == true
+  and .errors.physical_prefix_on_Io == true
+  and .errors.Io_sink_terminal == true
   and (.errors.kinds | length) == 13
   and ((.errors.kinds | unique | length) == (.errors.kinds | length))
   and ((.errors.kinds | index("Backpressure")) != null)
@@ -151,9 +163,10 @@ jq -e '
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "core-implementation-in-progress"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
+  and .implementation.host == "pending-STD-LOG-HOST-001"
+  and .implementation.core_register == "testing/stdlib-log-implementation.json"
   and .implementation.required_follow_ups == ["STD-LOG-IMPL-001", "STD-LOG-HOST-001", "STD-LOG-TEST-001", "STD-LOG-PERF-001", "STD-LOG-CONF-001", "STD-LOG-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.log contract"
 

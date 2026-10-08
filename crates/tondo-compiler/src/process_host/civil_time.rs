@@ -83,7 +83,7 @@ fn utc_value(utc: UtcDateTime) -> RuntimeValue {
     }
 }
 
-fn utc_input(value: &RuntimeValue) -> Result<UtcDateTime, VmError> {
+pub(super) fn utc_input(value: &RuntimeValue) -> Result<UtcDateTime, VmError> {
     let RuntimeValue::Record { name, values } = value else {
         return Err(VmError::Host("invalid UtcDateTime shape".into()));
     };

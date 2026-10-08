@@ -121,6 +121,60 @@ fn value[T](result: T ! net.NetError): T {
     }
 
     #[test]
+    fn network_fatal_step_error_retires_pending_accept_and_transport() {
+        let source = format!(
+            r#"import std.net
+{VALUES}
+fn waiting(listener: net.TcpListener, options: net.NetOptions): Unit suspends {{
+    let stream = value(listener.accept(options))
+    net.TcpStream.close(stream)
+    net.TcpListener.close(listener)
+}}
+fn main(): Unit {{
+    let ip = value(net.IpAddress.parse("127.0.0.1"))
+    let address = value(net.socketAddress(ip, 0))
+    let listener = value(net.listen(address, 1))
+    let options = value(net.options(none, net.NetLimits.defaults()))
+    scope {{
+        let child = spawn waiting(listener, options)
+        var spins: Int = 0
+        for {{
+            spins += 1
+            if spins == 1000000 {{
+                break
+            }}
+        }}
+        _ = await child
+    }}
+}}
+"#
+        );
+        let config = target("127.0.0.1:9".into());
+        let (program, entry) = compile(&source, &config, false);
+        let mut host = BootstrapHost::with_max_bytes(Vec::new(), 1048576);
+        host.install_network_target(Some(config), false);
+        let error = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_steps: 1024,
+                max_heap_bytes: 1048576,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            VmError::ResourceLimit {
+                resource: "instruction steps",
+                ..
+            }
+        ));
+        assert_retired(&host);
+    }
+
+    #[test]
     fn network_select_forced_source_winner_cancellation_retires_affine_arguments() {
         let source = format!(
             r#"import std.net
@@ -1977,6 +2031,12 @@ impl BootstrapHost {
 
     pub(super) fn network_has_pending(&self) -> bool {
         !self.network.jobs.is_empty()
+    }
+
+    pub(super) fn abort_network(&mut self) {
+        // Dropping each pending future releases its transport permit and
+        // readiness slot before its retained request/response reservations.
+        self.network.jobs.clear();
     }
 
     pub(super) fn reserve_network(&mut self, call: u64) -> bool {
