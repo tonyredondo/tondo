@@ -54,8 +54,18 @@ Run `scripts/stdlib-civil-time-core-check.sh` for this boundary. Regenerate the
 independent corpus with `python3 -B scripts/civil_core_oracle.py`; `--check`
 rejects documentary or generator drift rather than blessing old expectations.
 
-The implementation is in progress until source-bound quality, the complete
-functional gate and exact-checkout publication CI pass. The full civil owner
-remains contract-locked. DateTime, UtcOffset, zones, the versioned timezone
+The consolidated local campaign on source checkpoint `818407c4` passes all
+2,817 workspace Rust tests in 77 suites. Its immutable source tree is
+`92d77723f66c954140f7c91d90be91f438fa20bd9c39567ab34b183f5a7a07c5`
+(1,408 inputs). Coverage measures 303,385 of 331,124 lines (91.622776%),
+19,963 of 22,718 functions (87.873052%) and 446,139 of 495,532 regions
+(90.032329%). The formal gate passes every 80% global/risk floor. All six
+selected critical mutants are caught, with no missed, timed-out or unviable
+mutants and a passing unmutated baseline. Supported ratchet generation and
+verification bind both fresh reports to that same tree. This is local proof;
+the complete functional gate and exact-checkout publication CI remain pending.
+
+The implementation is in progress until those remaining checks pass. The full
+civil owner remains contract-locked. DateTime, UtcOffset, zones, the versioned timezone
 bundle, civil clock and anchors remain pending. This is not native Tondo civil
 ABI/AOT promotion, a full civil test/fuzz/conformance promotion or a release.
