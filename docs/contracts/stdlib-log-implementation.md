@@ -58,6 +58,10 @@ A fatal ordinary VM heap error also left a terminal channel endpoint live.
 Whole-engine failure now retires owned provider work and values without
 importing another response or executing user callbacks. This does not turn
 fatal OOM into a catchable language panic or guarantee user defers after OOM.
+Admission regressions inspect the real provider state immediately before this
+retirement, verify that rejected typed results committed no effect, then
+verify that terminal cleanup released all owned resources. Post-cleanup empty
+state alone cannot establish atomic admission.
 
 The ordinary project exercises every core operation, immutable snapshots,
 explicit timestamps, custom value and affine sinks, concurrency, all three

@@ -1129,6 +1129,9 @@ impl ChannelState {
     }
 }
 
+#[cfg(test)]
+type AbortObserver = Box<dyn FnOnce(&BootstrapHost) + Send>;
+
 pub(crate) struct BootstrapHost {
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
@@ -1139,6 +1142,8 @@ pub(crate) struct BootstrapHost {
     env_snapshot_id: Option<u64>,
     values: BTreeMap<u64, HostValue>,
     test_memory: Option<VmMemoryBudget>,
+    #[cfg(test)]
+    before_abort: Option<AbortObserver>,
     /// Owner charges for hosted payloads supported by the phase collector.
     buffer_memory: BTreeMap<u64, VmMemoryCharge>,
     /// Birth generations for the live structural members of each hosted
@@ -1240,6 +1245,8 @@ impl BootstrapHost {
             env_snapshot_id: None,
             values: BTreeMap::new(),
             test_memory: None,
+            #[cfg(test)]
+            before_abort: None,
             buffer_memory: BTreeMap::new(),
             sync_generations: BTreeMap::new(),
             next_sync_generation: 1,
@@ -8418,6 +8425,12 @@ impl VmHost for BootstrapHost {
     }
 
     fn abort_execution(&mut self) -> Result<(), VmError> {
+        // Admission tests inspect the real provider state before terminal
+        // retirement so cleanup cannot hide a prematurely committed effect.
+        #[cfg(test)]
+        if let Some(observe) = self.before_abort.take() {
+            observe(self);
+        }
         let virtual_elapsed = self.previous_clock.as_ref().map(|_| self.clock.now());
         // The owning engine has failed. These calls and values cannot be
         // returned to another language task. Reap workers first, then drop
@@ -18285,6 +18298,20 @@ fn main(): Unit {
         )
     }
 
+    fn observe_before_abort(
+        host: &mut BootstrapHost,
+        observe: impl FnOnce(&BootstrapHost) + Send + 'static,
+    ) -> Arc<AtomicBool> {
+        let observed = Arc::new(AtomicBool::new(false));
+        let completed = observed.clone();
+        assert!(host.before_abort.is_none());
+        host.before_abort = Some(Box::new(move |host| {
+            observe(host);
+            completed.store(true, Ordering::Release);
+        }));
+        observed
+    }
+
     #[test]
     fn console_protocol_adapters_preserve_read_all_preflight_after_specialization() {
         use tondo_vm::runtime::{VmLimits, execute_with_limits};
@@ -18396,6 +18423,12 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 BTreeMap::new(),
                 false,
             ));
+            let observed = observe_before_abort(&mut host, |host| {
+                let Some(HostValue::Reader { offset, .. }) = host.values.get(&0) else {
+                    panic!("the preexisting input must remain available after rejection");
+                };
+                assert_eq!(*offset, 0, "line consumed before typed result admission");
+            });
             let result = execute_with_limits(
                 &program,
                 entry,
@@ -18410,11 +18443,9 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 assert!(host.values.is_empty());
             } else {
                 assert!(result.unwrap_err().is_resource_limit());
-                let Some(HostValue::Reader { offset, .. }) = host.values.get(&0) else {
-                    panic!("the preexisting input must remain available after rejection");
-                };
-                assert_eq!(*offset, 0, "line consumed before typed result admission");
             }
+            assert_eq!(observed.load(Ordering::Acquire), !succeeds);
+            assert!(host.values.is_empty());
             assert!(host.ready_jobs.is_empty());
             assert!(host.ready_console_jobs.is_empty());
             assert!(host.async_memory.is_empty());
@@ -18894,8 +18925,8 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
             );
             let (program, entry) = compile_channel_admission_source(&source);
             // Affine call-form defer has no copied closure allocation. These
-            // measured bounds reject each typed result while retaining the
-            // already-buffered payload and both endpoint owners.
+            // measured bounds reject each typed result. Observe the buffered
+            // payload and both owners before fatal execution retirement.
             let rejected = if method == "receive" { 9900 } else { 9800 };
             for (memory, succeeds) in [(rejected, false), (16384, true)] {
                 let mut host = BootstrapHost::default();
@@ -18904,6 +18935,14 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                     BTreeMap::new(),
                     false,
                 ));
+                let observed = observe_before_abort(&mut host, move |host| {
+                    assert_eq!(host.channels.len(), 1, "{method}");
+                    assert_eq!(
+                        host.channels.values().next().unwrap().queue,
+                        [RuntimeValue::Integer(7)],
+                        "{method}: consumed before complete VM admission"
+                    );
+                });
                 let result = execute_with_limits(
                     &program,
                     entry,
@@ -18918,13 +18957,10 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                     assert!(host.channels.is_empty());
                 } else {
                     assert!(result.unwrap_err().is_resource_limit());
-                    assert_eq!(host.channels.len(), 1, "{method}");
-                    assert_eq!(
-                        host.channels.values().next().unwrap().queue,
-                        [RuntimeValue::Integer(7)],
-                        "{method}: consumed before complete VM admission"
-                    );
                 }
+                assert_eq!(observed.load(Ordering::Acquire), !succeeds, "{method}");
+                assert!(host.channels.is_empty());
+                assert!(host.values.is_empty());
                 assert!(host.sync_waiters.is_empty(), "{method}: retained waiter");
                 assert!(host.async_memory.is_empty(), "{method}: retained request");
                 let owner = host.test_memory.clone().unwrap();
@@ -19002,7 +19038,6 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
         use crate::test_control::EnvelopeLimits;
         use tondo_vm::runtime::{VmLimits, execute_with_limits};
 
-        let mut changed = Vec::new();
         for (operation, rejected) in [
             ("construct", 8896),
             ("close", 9600),
@@ -19048,21 +19083,7 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                     BTreeMap::new(),
                     false,
                 ));
-                let result = execute_with_limits(
-                    &program,
-                    entry,
-                    &mut host,
-                    VmLimits {
-                        max_heap_bytes: memory,
-                        ..VmLimits::default()
-                    },
-                );
-                if succeeds {
-                    assert!(result.is_ok(), "{operation}: {result:?}");
-                    assert!(host.channels.is_empty());
-                    assert!(host.values.is_empty());
-                } else {
-                    assert!(result.unwrap_err().is_resource_limit());
+                let observed = observe_before_abort(&mut host, move |host| {
                     let preserved = if operation == "construct" {
                         host.next_value == 0 && host.channels.is_empty() && host.values.is_empty()
                     } else {
@@ -19080,10 +19101,30 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                                     }
                             })
                     };
-                    if !preserved {
-                        changed.push(operation);
-                    }
+                    assert!(
+                        preserved,
+                        "{operation}: endpoint changed before complete VM admission"
+                    );
+                });
+                let result = execute_with_limits(
+                    &program,
+                    entry,
+                    &mut host,
+                    VmLimits {
+                        max_heap_bytes: memory,
+                        ..VmLimits::default()
+                    },
+                );
+                if succeeds {
+                    assert!(result.is_ok(), "{operation}: {result:?}");
+                    assert!(host.channels.is_empty());
+                    assert!(host.values.is_empty());
+                } else {
+                    assert!(result.unwrap_err().is_resource_limit());
                 }
+                assert_eq!(observed.load(Ordering::Acquire), !succeeds, "{operation}");
+                assert!(host.channels.is_empty());
+                assert!(host.values.is_empty());
                 assert!(host.sync_waiters.is_empty());
                 assert!(host.async_memory.is_empty());
                 let owner = host.test_memory.clone().unwrap();
@@ -19091,10 +19132,6 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 assert_eq!(owner.live_bytes(), 0);
             }
         }
-        assert!(
-            changed.is_empty(),
-            "endpoint state changed before complete VM admission: {changed:?}"
-        );
     }
 
     #[test]
@@ -19102,7 +19139,6 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
         use crate::test_control::EnvelopeLimits;
         use tondo_vm::runtime::{VmLimits, execute_with_limits};
 
-        let mut committed = Vec::new();
         for send in [false, true] {
             let start = if send {
                 "let pending = spawn receiver.receive()\n"
@@ -19133,6 +19169,29 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                     BTreeMap::new(),
                     false,
                 ));
+                let observed = observe_before_abort(&mut host, move |host| {
+                    // A peer may retire with its own resource failure, but no
+                    // success may publish before both typed results fit.
+                    assert!(
+                        !host.ready_jobs.values().any(Result::is_ok),
+                        "send={send}: successful peer completion before joint VM admission"
+                    );
+                    assert!(host.sync_waiters.len() <= 1);
+                    for pending in host.sync_waiters.values() {
+                        assert_eq!(
+                            pending.kind,
+                            if send {
+                                SyncWaitKind::ChannelReceive
+                            } else {
+                                SyncWaitKind::ChannelSend
+                            }
+                        );
+                        if !send {
+                            assert_eq!(pending.arguments.get(1), Some(&RuntimeValue::Integer(7)));
+                        }
+                    }
+                    assert!(host.channels.values().all(|state| state.queue.is_empty()));
+                });
                 let result = execute_with_limits(
                     &program,
                     entry,
@@ -19150,37 +19209,18 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                     assert!(host.ready_jobs.is_empty());
                 } else {
                     assert!(result.unwrap_err().is_resource_limit());
-                    // Rejecting a peer may retire it with its own resource
-                    // failure. It must never publish a successful delivery or
-                    // acknowledgement before both typed results fit.
-                    if host.ready_jobs.values().any(Result::is_ok) {
-                        committed.push(send);
-                    }
-                    assert!(host.sync_waiters.len() <= 1);
-                    for pending in host.sync_waiters.values() {
-                        assert_eq!(
-                            pending.kind,
-                            if send {
-                                SyncWaitKind::ChannelReceive
-                            } else {
-                                SyncWaitKind::ChannelSend
-                            }
-                        );
-                        if !send {
-                            assert_eq!(pending.arguments.get(1), Some(&RuntimeValue::Integer(7)));
-                        }
-                    }
-                    assert!(host.channels.values().all(|state| state.queue.is_empty()));
                 }
+                assert_eq!(observed.load(Ordering::Acquire), !succeeds, "send={send}");
+                assert!(host.channels.is_empty());
+                assert!(host.values.is_empty());
+                assert!(host.sync_waiters.is_empty());
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
                 let owner = host.test_memory.clone().unwrap();
                 drop(host);
                 assert_eq!(owner.live_bytes(), 0);
             }
         }
-        assert!(
-            committed.is_empty(),
-            "successful peer completion before joint VM admission: send={committed:?}"
-        );
     }
 
     #[test]
@@ -19188,7 +19228,6 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
         use crate::test_control::EnvelopeLimits;
         use tondo_vm::runtime::{VmLimits, execute_with_limits};
 
-        let mut committed = Vec::new();
         for (constructor, rejected) in [
             // Measured acknowledgement-admission rejection after replacing
             // the receiver's former copied closure with an affine defer guard.
@@ -19212,6 +19251,13 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                     BTreeMap::new(),
                     false,
                 ));
+                let observed = observe_before_abort(&mut host, move |host| {
+                    assert_eq!(host.channels.len(), 1);
+                    assert!(
+                        host.channels.values().next().unwrap().queue.is_empty(),
+                        "{constructor}: enqueued before complete VM admission"
+                    );
+                });
                 let result = execute_with_limits(
                     &program,
                     entry,
@@ -19226,14 +19272,10 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                     assert!(host.channels.is_empty());
                 } else {
                     assert!(result.unwrap_err().is_resource_limit());
-                    // Observe the live host before destruction, without a test
-                    // boundary or any reliance on user defers after a limit.
-                    assert_eq!(host.channels.len(), 1);
-                    let queue = &host.channels.values().next().unwrap().queue;
-                    if !queue.is_empty() {
-                        committed.push((constructor, memory, queue.clone()));
-                    }
                 }
+                assert_eq!(observed.load(Ordering::Acquire), !succeeds, "{constructor}");
+                assert!(host.channels.is_empty());
+                assert!(host.values.is_empty());
                 assert!(host.sync_waiters.is_empty());
                 assert!(host.async_memory.is_empty());
                 let owner = host.test_memory.clone().unwrap();
@@ -19241,10 +19283,6 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 assert_eq!(owner.live_bytes(), 0);
             }
         }
-        assert!(
-            committed.is_empty(),
-            "enqueued before complete VM admission: {committed:?}"
-        );
     }
 
     #[test]
@@ -19270,6 +19308,22 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 BTreeMap::new(),
                 false,
             ));
+            let observed = observe_before_abort(&mut host, |host| {
+                // Observe the real peer before terminal engine retirement.
+                assert_eq!(
+                    host.sync_waiters.len(),
+                    1,
+                    "transferred before both VM results fit"
+                );
+                let waiting = host.sync_waiters.values().next().unwrap();
+                assert!(matches!(
+                    waiting.kind,
+                    SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive
+                ));
+                if waiting.kind == SyncWaitKind::ChannelSend {
+                    assert_eq!(waiting.arguments.get(1), Some(&RuntimeValue::Integer(7)));
+                }
+            });
             let result = execute_with_limits(
                 &program,
                 entry,
@@ -19285,25 +19339,11 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 assert!(host.channels.is_empty());
             } else {
                 assert!(result.unwrap_err().is_resource_limit());
-                // This ordinary function has an entry memory account but no
-                // test boundary: the harness observes host state before its
-                // destruction, without relying on user cleanup after a limit.
-                // A rejected endpoint may retire its own request; its peer must
-                // still be waiting rather than having received/acknowledged.
-                assert_eq!(
-                    host.sync_waiters.len(),
-                    1,
-                    "transferred before both VM results fit"
-                );
-                let waiting = host.sync_waiters.values().next().unwrap();
-                assert!(matches!(
-                    waiting.kind,
-                    SyncWaitKind::ChannelSend | SyncWaitKind::ChannelReceive
-                ));
-                if waiting.kind == SyncWaitKind::ChannelSend {
-                    assert_eq!(waiting.arguments.get(1), Some(&RuntimeValue::Integer(7)));
-                }
             }
+            assert_eq!(observed.load(Ordering::Acquire), !succeeds);
+            assert!(host.sync_waiters.is_empty());
+            assert!(host.channels.is_empty());
+            assert!(host.values.is_empty());
             assert!(host.ready_jobs.is_empty());
             let owner = host.test_memory.clone().unwrap();
             drop(host);

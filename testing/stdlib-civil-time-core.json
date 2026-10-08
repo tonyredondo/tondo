@@ -176,7 +176,7 @@
     "crates/tondo-compiler/src/hir/check.rs": "sha256:3c6819416c29e38015369a40ba85847785f8bfba2d58397d03d5eb6e930fc7af",
     "crates/tondo-compiler/src/hir/lower.rs": "sha256:0f17e3d81725aa1c2f98597c109ad6a5f4c8b9727491d969e84cc964a1615f0a",
     "crates/tondo-compiler/src/resolve.rs": "sha256:26c4d8d5ba3f7e480933e50b3c0f81389753fdeab82e21b910ef6385f1401a00",
-    "crates/tondo-compiler/src/process_host.rs": "sha256:a5e79e02976cc7e2dd5de273190ef36121f1055e8939cd72f54615665ace78e4"
+    "crates/tondo-compiler/src/process_host.rs": "sha256:b14225de9dfc98a8725d228ab597b4bb0e0fc36514fd45a92ed29d67f9e78fd0"
   },
   "model": {
     "generator": "scripts/civil_core_oracle.py",
