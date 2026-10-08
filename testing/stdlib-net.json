@@ -106,8 +106,8 @@
   },
   "documentation": {
     "task": "STD-NET-DOC-001",
-    "status": "usage-ready",
-    "quality_gate": "pending-80-percent-per-scope",
+    "status": "verified-public-hosted-usage",
+    "quality_gate": "verified-80-percent-per-scope",
     "document": "docs/contracts/stdlib-net.md",
     "project": "acceptance/projects/net-usage/tondo.toml",
     "fixture": "acceptance/projects/net-usage/src/main.to",
@@ -387,7 +387,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-NET-DOC-001"],
+    "next_blocks": ["STD-LOG-IMPL-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

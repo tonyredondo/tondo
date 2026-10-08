@@ -167,6 +167,9 @@ passes. Before/after bindings match and joint quality/ratchet verification
 passes. The initial capture correctly refused stale generated signature IDs;
 its partial profiles remain separate from this successful fresh capture.
 
-The full functional gate and exact-checkout publication CI remain pending.
+Clean checkpoint `33d9223b` passes all 356 named functional steps, 2,804 Rust
+tests in 76 suites and all 206 draft conformance cases. The selection corpus
+retains its three selected cases with 32 exact observations each. Its
+exact-checkout publication CI remains pending.
 These Rust percentages do not claim Python, shell or Tondo source coverage,
 nor do they promote the full civil, distribution or S1A boundaries.

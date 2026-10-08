@@ -3058,8 +3058,9 @@ its bounded native Rust reference and VM-only integration boundary in
 [stdlib-net-conformance.md](docs/contracts/stdlib-net-conformance.md). Its
 `verified-public-hosted-vm-and-native-kernel-process` state closes its qualified
 boundary using current-source quality, clean capture and exact-checkout CI.
-The next owner is `STD-NET-DOC-001`; public release and full normative trace
-coverage remain separate gates.
+The verified usage guide below completes `STD-NET-DOC-001`; the next owner is
+`STD-LOG-IMPL-001`. Public release and full normative trace coverage remain
+separate gates.
 No native Tondo networking target is supplied by that reference process.
 
 The executable public hosted usage guide in
@@ -3068,8 +3069,10 @@ The executable public hosted usage guide in
 It exercises six paths through the ordinary CLI: address values and keys,
 partial TCP I/O and EOF, whole UDP datagrams, errors/deadlines, losing selection
 arms and TLS configuration. Real TLS handshakes and successful DNS remain
-separate conformance fixtures. The `usage-ready` state leaves current-source
-quality and exact-checkout publication CI pending for `STD-NET-DOC-001`.
+separate conformance fixtures. Its `verified-public-hosted-usage` state is
+supported by source-bound quality, the complete functional gate and
+exact-checkout publication CI. Native networking ABI/AOT and public release
+remain outside this usage promotion.
 
 #### 14.4.7 `std.encoding`
 

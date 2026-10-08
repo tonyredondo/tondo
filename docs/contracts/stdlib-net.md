@@ -361,7 +361,7 @@ current-source quality, all local checks and exact-checkout Linux CI. The
 register's `implementation` and `private_provider_draft` retain the original
 private checkpoint, including its originally required follow-ups. Live owner
 progression belongs to `host`, `model`, `measurement` and `promotion.next_blocks`;
-its next leaf is `STD-NET-DOC-001`. Native ABI/AOT and complete API conformance/promotion
+its next leaf is `STD-LOG-IMPL-001`. Native ABI/AOT and complete API conformance/promotion
 remain outside these hosted/test boundaries.
 
 The verified hosted performance baseline is
@@ -782,6 +782,19 @@ baseline. Before/after bindings agree and supported joint ratchet verification
 passes. The ordinary CLI guide is verified separately; these Rust coverage
 metrics do not claim coverage of Python, shell or Tondo source lines.
 
-The complete functional gate, clean source capture and exact-checkout
-publication CI still precede usage promotion. The register remains
-`usage-ready`; native networking ABI/AOT and public release remain unclaimed.
+Source checkpoint `b1766f69` passes exact-checkout CI run `37734141534`, strict
+job `113169755255`: all 356 named steps and 2,799 Rust tests in 76 suites.
+All paginated checks/statuses/runs/PRs and the remote main ref remain unchanged
+after a 100-second quiet interval. Portable and deterministic fuzz jobs are
+expected normal-push skips, not newly executed portable evidence.
+
+Regression checkpoint `33d9223b` also passes the complete 356-step functional
+gate, all 2,804 Rust tests in 76 suites and 206 draft conformance cases. Its
+current source-bound quality tree is
+`d7f424e6b4a74fbf0bb88917ed36579bf351a842af840070ec2e192323b556d1`,
+with 302,358/330,070 covered lines (91.604205%), every global/risk 80% floor
+preserved and all six selected critical mutants caught. The earlier figures
+above remain proof of the original usage source, not a replacement binding
+for this regression checkpoint. The register records
+`verified-public-hosted-usage`; native networking ABI/AOT, full normative trace
+and public release remain unclaimed.

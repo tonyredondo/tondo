@@ -7153,15 +7153,22 @@ estas leaves.
   76 suites. Complete paginated checks/statuses/runs/PRs and main refs remain
   stable after more than 60 seconds; portable/fuzz are expected push skips.
   Full normative trace coverage is not promoted. Next: `STD-NET-DOC-001`.
-- [ ] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
+- [x] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
   partial I/O, DNS/TLS, timeout, cancelación, errores, costes y ejemplos.
   The six-path public hosted guide in [stdlib-net.md](docs/contracts/stdlib-net.md)
   is bound to `acceptance/projects/net-usage` and runs through the ordinary
   project CLI. `scripts/stdlib-net-doc-check.sh` verifies exact fragments,
   explicit capabilities/resolver inputs and terminal output; its tests reject
   documentary drift, missing capabilities, unconsumed owners and an actually
-  executed wrong assertion. Quality and publication CI remain pending;
-  native networking ABI/AOT and full normative trace are not promoted.
+  executed wrong assertion. Source `b1766f69` passes exact-checkout CI run
+  `37734141534`, strict job `113169755255`: all 356 named steps and 2,799 Rust
+  tests in 76 suites. Complete paginated checks/statuses/runs/PRs and main refs
+  remain stable for 100 seconds; portable/fuzz are expected push skips.
+  Regression checkpoint `33d9223b` passes the complete 356-step gate and
+  2,804 Rust tests in 76 suites. Its source-bound quality measures
+  302,358/330,070 lines (91.604205%), preserves every 80% global/risk floor
+  and catches all six critical mutants. Native networking ABI/AOT, public
+  release and full normative trace are not promoted. Next: `STD-LOG-IMPL-001`.
 
 #### 21.3.13 `std.log`
 
@@ -7171,7 +7178,9 @@ estas leaves.
   references, aliases, deferred calls and intermediate bodies; retain the
   separate `civil-clock` policy. Support the existing associated time
   functions as values. Synchronize the owner contract, negative checks and
-  generated evidence. Current-source quality and publication CI remain
+  generated evidence. Source `33d9223b` passes all 356 functional steps,
+  2,804 Rust tests in 76 suites, every 80% global/risk quality floor and all
+  six selected critical mutants. Its exact-checkout publication CI remains
   pending. This prerequisite does not implement civil calendar values, zones,
   a civil provider or logging timestamps.
 - [ ] **STD-LOG-IMPL-001 — Implementar logging estructurado.** Publicar eventos,
