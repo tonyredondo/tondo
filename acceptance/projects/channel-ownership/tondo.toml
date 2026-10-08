@@ -1,0 +1,7 @@
+[package]
+name = "channel_endpoint_ownership"
+
+[target]
+name = "tondo-vm-hosted"
+profile = "hosted"
+capabilities = []

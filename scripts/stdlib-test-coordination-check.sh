@@ -35,7 +35,7 @@ jq -e '
   and (.owners | type == "array" and length == 22)
   and ([.owners[].id] | unique | length) == 22
   and (.summary.owners == 22)
-  and (.summary.public_signatures == 298)
+  and (.summary.public_signatures == 301)
   and (.summary.owner_requirements == 171)
   and (.summary.model_laws == 66)
   and (.summary.fuzz_verified == 0)
@@ -61,7 +61,7 @@ jq -e '
     and (.fuzz.refs | type == "array" and length > 0)
     and (.fuzz.reason | type == "string" and length > 0)
   )
-  and ([.owners[].public_api[].id] | unique | length) == 298
+  and ([.owners[].public_api[].id] | unique | length) == 301
   and ([.owners[].public_api[].id] | unique | sort) == ([.owners[].public_api[].id] | sort)
 ' "$coordination" >/dev/null || {
     echo "stdlib test coordination: invalid registry" >&2
@@ -114,4 +114,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].test.commands[]' "$coordination")
 
-echo "stdlib test coordination: OK (22 owners; 298 signatures; 171 requirements; 66 declared model laws; 9 bounded fuzz components; promotion open)"
+echo "stdlib test coordination: OK (22 owners; 301 signatures; 171 requirements; 66 declared model laws; 9 bounded fuzz components; promotion open)"

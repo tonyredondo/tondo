@@ -3,6 +3,9 @@ type Countdown = {
 }
 
 impl AsyncIterator[Int] for Countdown {
+    fn close(iterator: Countdown) suspends {
+        _ = iterator
+    }
     fn next(mut self): Int? suspends {
         if self.remaining == 0 {
             return none
@@ -18,6 +21,9 @@ type OneShot = {
 }
 
 impl AsyncIterator[Int] for OneShot {
+    fn close(iterator: OneShot) suspends {
+        _ = iterator
+    }
     fn next(mut self): Int? suspends {
         if self.first {
             self.first = false

@@ -29,6 +29,16 @@ This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
 remains normative.
 
+`STD-CHANNEL-OWNERSHIP-001` also gives AsyncIterator a consuming, suspendible
+close witness. Trait loops and collect reserve it before the first poll in a
+compiler-owned scope. `MirDeferCapture::CurrentOwner` retains the final cursor
+state even for Copy cursors; source defers remain contextual snapshots. A
+current-owner reservation must be a guarded suspendible Unit call with exactly
+one matching complete owner. Ordinary Copy moves keep their existing checks.
+When collect is referenced, MIR includes its compiler-owned ordinary generic
+body in the exact verified function set. Direct and spawned collection share
+the same loop, next/close dispatch, limits and abnormal cleanup.
+
 ## Admission boundary
 
 `verify_typed_hir` is the only admission path from semantic analysis to MIR.

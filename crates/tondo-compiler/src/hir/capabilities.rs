@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use tondo_vm::channel::ChannelEndpointKind;
 
 use crate::package::SymbolIdentity;
 use crate::resolve::{ResolvedProgram, SymbolId};
@@ -77,6 +78,28 @@ impl Default for CapabilityRequirement {
 struct CapabilityNode {
     floor: HirCapabilityStatus,
     dependencies: Vec<(TypeId, HirCapability)>,
+}
+
+pub(crate) fn channel_endpoint_kind(identity: &SymbolIdentity) -> Option<ChannelEndpointKind> {
+    if identity.package().as_str() != "toolchain:std:0.1-bootstrap" {
+        return None;
+    }
+    ChannelEndpointKind::from_identity(&identity.canonical_name(), 1)
+}
+
+fn channel_requirement(
+    kind: ChannelEndpointKind,
+    capability: HirCapability,
+) -> CapabilityRequirement {
+    let mut requirement = CapabilityRequirement::default();
+    match capability {
+        HirCapability::Send | HirCapability::Share => {
+            requirement.parameters.insert((0, HirCapability::Send));
+        }
+        HirCapability::Discard if kind.is_discardable() => {}
+        _ => requirement.floor = HirCapabilityStatus::Unsatisfied,
+    }
+    requirement
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +196,12 @@ impl CapabilityAnalysis {
         program: &HirProgram,
         by_identity: &BTreeMap<SymbolIdentity, SymbolId>,
     ) -> Result<BTreeMap<(SymbolId, HirCapability), CapabilityRequirement>, TypeError> {
+        let endpoints = by_identity
+            .iter()
+            .filter_map(|(identity, symbol)| {
+                channel_endpoint_kind(identity).map(|kind| (*symbol, kind))
+            })
+            .collect::<BTreeMap<_, _>>();
         let roots = program
             .declarations
             .iter()
@@ -211,13 +240,17 @@ impl CapabilityAnalysis {
             })
             .collect::<BTreeSet<_>>();
         while let Some(key @ (symbol, capability)) = pending.pop_first() {
-            let next = capability_requirement(
-                program,
-                &roots[&symbol],
-                capability,
-                by_identity,
-                &summaries,
-            )?;
+            let next = if let Some(kind) = endpoints.get(&symbol) {
+                channel_requirement(*kind, capability)
+            } else {
+                capability_requirement(
+                    program,
+                    &roots[&symbol],
+                    capability,
+                    by_identity,
+                    &summaries,
+                )?
+            };
             if summaries[&key] == next {
                 continue;
             }

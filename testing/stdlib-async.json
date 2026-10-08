@@ -34,7 +34,8 @@
     {"id":"completer-fail","signature":"pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},
     {"id":"completer-cancel","signature":"pub fn Completer.cancel(var self): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},
     {"id":"async-iterator-next","signature":"fn AsyncIterator.next(mut self): T? suspends","effect":"suspends","kind":"trait-method"},
-    {"id":"async-iterator-collect","signature":"pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends","effect":"suspends","kind":"materializer"}
+    {"id":"async-iterator-close","signature":"fn AsyncIterator.close(iterator: Self) suspends","effect":"suspends","kind":"trait-method"},
+    {"id":"async-iterator-collect","signature":"pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends","effect":"suspends","kind":"materializer"}
   ],
   "join": {
     "origin": ["spawn call()", "spawn thread call()"],
@@ -56,12 +57,14 @@
     "end": "none",
     "lazy": true,
     "backpressure": "one-next-at-a-time",
-    "close": "exactly-once-idempotent-before-terminal-outcome",
+    "close": "explicit-consuming-close-exactly-once-before-terminal-outcome",
+    "close_state": "final-owned-cursor-state-including-copy",
     "for_selection": "async-when-no-sync-protocol",
     "explicit_for_await": "forbidden",
     "channel_dependency": false
   },
   "collect": {
+    "ownership": "by-value-affine-cursor-consumption",
     "limit": "finite-non-negative-maximum-elements",
     "zero": "empty-array-and-close",
     "at_limit": "success-without-extra-next",
@@ -73,7 +76,8 @@
     "status": "verified",
     "routes": ["implicit-direct-wait", "spawn-hir-mir-bytecode-vm"],
     "cancellation": "structured-scope-cooperative",
-    "close": "owner-state-released-on-terminal-outcome",
+    "close": "explicit-close-with-final-owner-state",
+    "ownership_verification": "STD-CHANNEL-OWNERSHIP-001",
     "capacity_failure": "CollectionError-without-partial-publication"
   },
   "test_matrix": [

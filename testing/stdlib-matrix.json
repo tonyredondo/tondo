@@ -54,7 +54,10 @@
         "signature:std.async:39",
         "signature:std.async:40",
         "signature:std.async:41",
-        "signature:std.async:42"
+        "signature:std.async:42",
+        "signature:std.async:49",
+        "signature:std.async:50",
+        "signature:std.async:53"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -3301,6 +3304,80 @@
       },
       "status": "open-gaps",
       "symbol": "std.async.Completer.cancel"
+    },
+    {
+      "declaring_trait": "AsyncIterator[T]",
+      "dimensions_ref": "owner:std.async",
+      "id": "signature:std.async:49",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.async",
+      "scope": "STD-0.1A",
+      "signature": "fn next(mut self): T? suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.async:49",
+        "contract": "docs/contracts/stdlib-async.md",
+        "line": 49
+      },
+      "stage_refs": {
+        "CONF": "owner:std.async:CONF",
+        "DOC": "owner:std.async:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.async:49:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.async:49:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.async:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:49:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.async.AsyncIterator.next"
+    },
+    {
+      "declaring_trait": "AsyncIterator[T]",
+      "dimensions_ref": "owner:std.async",
+      "id": "signature:std.async:50",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.async",
+      "scope": "STD-0.1A",
+      "signature": "fn close(iterator: Self) suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.async:50",
+        "contract": "docs/contracts/stdlib-async.md",
+        "line": 50
+      },
+      "stage_refs": {
+        "CONF": "owner:std.async:CONF",
+        "DOC": "owner:std.async:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.async:50:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.async:50:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.async:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:50:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.async.AsyncIterator.close"
+    },
+    {
+      "dimensions_ref": "owner:std.async",
+      "id": "signature:std.async:53",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.async",
+      "scope": "STD-0.1A",
+      "signature": "pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.async:53",
+        "contract": "docs/contracts/stdlib-async.md",
+        "line": 53
+      },
+      "stage_refs": {
+        "CONF": "owner:std.async:CONF",
+        "DOC": "owner:std.async:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.async:53:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.async:53:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.async:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:53:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.async.AsyncIterator.collect"
     },
     {
       "dimensions_ref": "owner:std.bytes",
@@ -15062,34 +15139,34 @@
   },
   "status": "open-gaps",
   "summary": {
-    "open_rows": 469,
+    "open_rows": 472,
     "owners": 22,
     "requirements": 171,
-    "rows": 469,
-    "signatures": 298,
+    "rows": 472,
+    "signatures": 301,
     "stage_counts": {
       "CONF": {
         "partial": 6,
-        "pending": 399,
+        "pending": 402,
         "verified": 64
       },
       "DOC": {
         "partial": 6,
-        "verified": 463
+        "verified": 466
       },
       "IMPL/HOST": {
         "partial": 41,
-        "verified": 428
+        "verified": 431
       },
       "MODEL/TEST/FUZZ": {
-        "partial": 469
+        "partial": 472
       },
       "PERF": {
-        "not-applicable": 243,
+        "not-applicable": 246,
         "verified": 226
       },
       "SPEC": {
-        "verified": 469
+        "verified": 472
       }
     },
     "verified_rows": 0

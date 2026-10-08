@@ -4087,6 +4087,7 @@ impl BootstrapHost {
                 name,
                 "std.console.flush"
                     | "std.console.readLine"
+                    | "std.channel.Receiver.__asyncIteratorClose"
                     | "std.process.Command.start"
                     | "std.process.Pipeline.start"
                     | "std.io.Reader.read"
@@ -4165,6 +4166,7 @@ impl BootstrapHost {
                 || name.starts_with("std.channel.Sender.send")
                 || name.starts_with("std.channel.Receiver.receive")
                 || name.starts_with("std.channel.Receiver.__asyncIteratorNext")
+                || name.starts_with("std.channel.Receiver.__asyncIteratorClose")
                 || name.starts_with("std.sync.Array.get")
                 || name.starts_with("std.sync.Array.set")
                 || name.starts_with("std.sync.Array.compareExchange")
@@ -7916,7 +7918,22 @@ impl BootstrapHost {
             }
         }
         let mut dead = Vec::new();
-        for id in self.buffer_memory.keys() {
+        // Endpoint lifetime does not depend on a test-memory charge. Ordinary
+        // hosted execution must release a discarded sender before a receiver
+        // waits, even when no shared memory budget was installed.
+        let collectible = self
+            .buffer_memory
+            .keys()
+            .copied()
+            .chain(self.values.iter().filter_map(|(id, value)| {
+                matches!(
+                    value,
+                    HostValue::ChannelSender { .. } | HostValue::ChannelReceiver { .. }
+                )
+                .then_some(*id)
+            }))
+            .collect::<BTreeSet<_>>();
+        for id in &collectible {
             let kind = match self.values.get(id) {
                 Some(HostValue::Network(value)) => RuntimeHostValueKind::Network(value.kind()),
                 Some(HostValue::Reader { .. }) => RuntimeHostValueKind::Reader,
@@ -8373,7 +8390,14 @@ impl VmHost for BootstrapHost {
     }
 
     fn tracks_host_roots(&self) -> bool {
-        self.test_memory.is_some() || !self.buffer_memory.is_empty()
+        self.test_memory.is_some()
+            || !self.buffer_memory.is_empty()
+            || self.values.values().any(|value| {
+                matches!(
+                    value,
+                    HostValue::ChannelSender { .. } | HostValue::ChannelReceiver { .. }
+                )
+            })
     }
 
     fn collect_host_values(
@@ -13801,6 +13825,10 @@ impl VmHost for BootstrapHost {
                 self.channel_iterator_receivers.insert(endpoint);
                 Ok(RuntimeValue::Unit)
             }
+            ("std.channel.Receiver.__asyncIteratorClose", [receiver]) => {
+                self.channel_retire_receiver(receiver)?;
+                Ok(RuntimeValue::Unit)
+            }
             ("std.channel.Receiver.receive", [receiver])
             | ("std.channel.Receiver.__asyncIteratorNext", [receiver]) => {
                 self.channel_receive_now(receiver, response)
@@ -14254,6 +14282,23 @@ impl VmHost for BootstrapHost {
         self.select_calls.remove(&call);
         self.select_winners.retain(|_, winner| *winner != call);
         Ok(())
+    }
+
+    fn cleanup_terminal(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        if matches!(
+            value,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ChannelReceiver,
+                ..
+            }
+        ) {
+            // Unwind retires the endpoint without allocating a drain result.
+            // Subsequent root reconciliation releases its unreachable payloads;
+            // ordinary receiver discard still rejects pending terminal values.
+            self.channel_retire_receiver(value)
+        } else {
+            self.cleanup(value)
+        }
     }
 
     fn cleanup(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
@@ -14953,6 +14998,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    const CHANNEL_INT_RECEIVER_CLEANUP_SOURCE: &str =
+        "fn closeIntReceiver(receiver: channel.Receiver[Int]) {\n _ = receiver.close()\n }\n";
 
     #[test]
     fn interrupted_child_closes_its_phase_before_ancestor_timeout_finishes() {
@@ -16665,6 +16713,374 @@ mod tests {
     }
 
     #[test]
+    fn channel_endpoint_ownership_public_unwind_releases_endpoints_and_waiters() {
+        use tondo_vm::runtime::{VmLimits, VmOutcome, execute_with_limits};
+        let panic_source = "import std.channel\n fn main(): !channel.ChannelError {\n\
+            let (sender, receiver) = channel.bounded[Int](1)?\n\
+            _ = sender.trySend(7)\n sender.close()\n panic(\"endpoint panic\")\n }\n";
+        let error_source = "import std.channel\n\
+            fn close(receiver: channel.Receiver[Int]) {\n _ = receiver.close()\n }\n\
+            fn main(): !channel.ChannelError {\n\
+                let (sender, receiver) = channel.bounded[Int](1)?\n\
+                defer close(receiver)\n _ = sender.trySend(7)\n\
+                return err(channel.ChannelError.InvalidCapacity)\n }\n";
+        let nested_source = "import std.channel\n\
+            fn close(receiver: channel.Receiver[Int]) {\n _ = receiver.close()\n }\n\
+            fn main(): !channel.ChannelError {\n\
+                let (innerSender, innerReceiver) = channel.bounded[Int](1)?\n\
+                defer close(innerReceiver)\n _ = innerSender.trySend(7)\n\
+                let (sender, receiver) = channel.bounded[channel.Receiver[Int]](1)?\n\
+                innerSender.close()\n match sender.trySend(innerReceiver) {\n\
+                    ok(_) => {}\n err(error) => {\n match error {\n\
+                        channel.TrySendError.Full(value) => close(value)\n\
+                        channel.TrySendError.Closed(value) => close(value)\n\
+                        channel.TrySendError.ResourceLimit(value) => close(value)\n\
+                    }\n panic(\"nested setup\")\n }\n }\n\
+                sender.close()\n panic(\"endpoint nested panic\")\n }\n";
+        let cancellation_source = "import std.channel\n\
+            fn close(receiver: channel.Receiver[Int]) {\n _ = receiver.close()\n }\n\
+            fn failNow() {\n panic(\"endpoint cancellation\")\n }\n\
+            fn wait(receiver: channel.Receiver[Int], signal: channel.Sender[Int]) {\n\
+                _ = signal.send(1)\n signal.close()\n\
+                _ = receiver.receive()\n _ = receiver.close()\n }\n\
+            fn main(): !channel.ChannelError {\n\
+                let (sender, receiver) = channel.bounded[Int](1)?\n\
+                defer close(receiver)\n\
+                let (signal, ready) = channel.bounded[Int](1)?\n\
+                defer close(ready)\n\
+                scope {\n let pending = spawn wait(receiver, signal)\n\
+                    assert(ready.receive() == some(1))\n\
+                    failNow()\n await pending\n }\n }\n";
+        for (source, message) in [
+            (panic_source, Some("endpoint panic")),
+            (error_source, None),
+            (nested_source, Some("endpoint nested panic")),
+            (cancellation_source, Some("endpoint cancellation")),
+        ] {
+            let (program, entry) = compile_channel_admission_source(source);
+            for accounted in [false, true] {
+                let mut host = BootstrapHost::default();
+                if accounted {
+                    host.install_testing_participation(TestParticipation::new(
+                        crate::test_control::EnvelopeLimits::new(65536, 65536, 65536),
+                        BTreeMap::new(),
+                        false,
+                    ));
+                }
+                let result =
+                    execute_with_limits(&program, entry, &mut host, VmLimits::default()).unwrap();
+                match (message, result.outcome) {
+                    (Some(expected), VmOutcome::Panicked(panic)) => {
+                        assert_eq!(panic.message, expected);
+                        assert!(panic.suppressed.is_empty(), "{panic:?}");
+                    }
+                    (None, VmOutcome::Returned(RuntimeValue::ResultErr(error))) => {
+                        channel_variant(*error, "ChannelError", 0, None);
+                    }
+                    (expected, outcome) => panic!("{expected:?}: {outcome:?}"),
+                }
+                assert!(
+                    host.values.is_empty(),
+                    "{message:?}/{accounted}: retained endpoints"
+                );
+                assert!(
+                    host.channels.is_empty(),
+                    "{message:?}/{accounted}: retained channel"
+                );
+                assert!(
+                    host.sync_waiters.is_empty(),
+                    "{message:?}/{accounted}: retained waiter"
+                );
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                assert!(host.buffer_memory.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_blocking_worker_forwards_terminal_unwind() {
+        use tondo_vm::runtime::{VmLimits, VmOutcome, execute_with_limits};
+        let source = "import std.channel\n import std.executor\n\
+            fn work(): !channel.ChannelError {\n\
+                let (sender, receiver) = channel.bounded[Int](1)?\n\
+                _ = sender.trySend(7)\n sender.close()\n panic(\"worker endpoint panic\")\n }\n\
+            fn main(): !(executor.ExecutorError | channel.ChannelError) {\n\
+                let pool = executor.blockingPool(1, 1)?\n defer pool.shutdown()\n\
+                pool.run(work)?\n }\n";
+        let mut capabilities = crate::driver::BuildTarget::vm_hosted_capabilities();
+        capabilities.insert(crate::driver::CapabilityName::new("threads").unwrap());
+        let (program, entry) =
+            compile_host_admission_source(source, capabilities, crate::driver::Operation::Run);
+        for accounted in [false, true] {
+            let mut host = BootstrapHost::default();
+            if accounted {
+                host.install_testing_participation(TestParticipation::new(
+                    crate::test_control::EnvelopeLimits::new(65536, 65536, 65536),
+                    BTreeMap::new(),
+                    false,
+                ));
+            }
+            let result =
+                execute_with_limits(&program, entry, &mut host, VmLimits::default()).unwrap();
+            let VmOutcome::Panicked(panic) = result.outcome else {
+                panic!(
+                    "blocking work must propagate its primary panic: {:?}",
+                    result.outcome
+                )
+            };
+            assert_eq!(panic.message, "worker endpoint panic");
+            assert!(panic.suppressed.is_empty(), "{panic:?}");
+            assert!(host.values.is_empty());
+            assert!(host.channels.is_empty());
+            assert!(host.sync_waiters.is_empty());
+            assert!(host.ready_jobs.is_empty());
+            assert!(host.async_memory.is_empty());
+            assert!(host.buffer_memory.is_empty());
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_iterator_scope_preserves_outer_cleanup_and_releases_resources() {
+        use tondo_vm::runtime::{VmLimits, VmOutcome, execute_with_limits};
+        for action in [
+            "break",
+            "return",
+            "return err(channel.ChannelError.InvalidCapacity)",
+        ] {
+            let source = format!(
+                "import std.channel\n import std.console\n\
+                 fn cleanup() {{\n _ = console.println(\"outer cleanup\")\n }}\n\
+                 fn consume(receiver: channel.Receiver[Int]): !channel.ChannelError {{\n\
+                     defer cleanup()\n\
+                     for value in receiver {{\n assert(value == 1)\n {action}\n }}\n\
+                     _ = console.println(\"after loop\")\n }}\n\
+                 fn main(): !channel.ChannelError {{\n\
+                     let (sender, receiver) = channel.bounded[Int](2)?\n\
+                     _ = sender.trySend(1)\n _ = sender.trySend(2)\n _ = consume(receiver)\n\
+                     match sender.trySend(3) {{\n\
+                         err(channel.TrySendError.Closed(value)) => assert(value == 3)\n\
+                         err(_) => panic(\"wrong send error\")\n\
+                         ok(_) => panic(\"iterator receiver remained open\")\n }}\n\
+                     sender.close()\n }}\n"
+            );
+            let (program, entry) = compile_channel_admission_source(&source);
+            for accounted in [false, true] {
+                let budget = VmMemoryBudget::new(65536);
+                let mut host = BootstrapHost::default();
+                if accounted {
+                    host.set_test_memory_budget(Some(budget.clone()));
+                }
+                let result =
+                    execute_with_limits(&program, entry, &mut host, VmLimits::default()).unwrap();
+                assert!(
+                    matches!(
+                        result.outcome,
+                        VmOutcome::Returned(RuntimeValue::ResultOk(_))
+                    ),
+                    "{action}/{accounted}: {:?}",
+                    result.outcome
+                );
+                let expected = if action == "break" {
+                    b"after loop\nouter cleanup\n".as_slice()
+                } else {
+                    b"outer cleanup\n".as_slice()
+                };
+                assert_eq!(host.take_stdout(), expected, "{action}/{accounted}");
+                assert!(host.values.is_empty(), "{action}/{accounted}");
+                assert!(host.channels.is_empty());
+                assert!(host.channel_iterator_receivers.is_empty());
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                assert!(host.buffer_memory.is_empty());
+                assert_eq!(budget.live_bytes(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_user_cursor_closes_once_on_panic_and_cancellation() {
+        use tondo_vm::runtime::{VmLimits, VmOutcome, execute_with_limits};
+        for (action, panic) in [
+            ("_ = cursor.collect(limit: 0)", false),
+            (
+                "scope {\n let pending = spawn cursor.collect(limit: 1)\n return\n }",
+                false,
+            ),
+            ("_ = cursor.collect(limit: 1)", true),
+        ] {
+            let source = format!(
+                r#"
+import std.channel
+import std.console
+type Cursor = {{ receiver: channel.Receiver[Int] }}
+impl AsyncIterator[Int] for Cursor {{
+    fn next(mut self): Int? suspends {{
+        if {panic} {{ panic("cursor primary panic") }}
+        self.receiver.receive()
+    }}
+    fn close(iterator: Cursor) suspends {{
+        let Cursor {{ receiver }} = iterator
+        _ = receiver.close()
+        _ = console.print("closed")
+    }}
+}}
+fn consume(receiver: channel.Receiver[Int]) {{
+    let cursor = Cursor {{ receiver }}
+    {action}
+}}
+fn main(): !channel.ChannelError {{
+    let (sender, receiver) = channel.bounded[Int](1)?
+    consume(receiver)
+    match sender.trySend(9) {{
+        err(channel.TrySendError.Closed(value)) => assert(value == 9)
+        err(_) => panic("unexpected sender error")
+        ok(_) => panic("cancelled cursor remained open")
+    }}
+    sender.close()
+}}
+"#
+            );
+            let (program, entry) = compile_channel_admission_source(&source);
+            for accounted in [false, true] {
+                let budget = VmMemoryBudget::new(65536);
+                let mut host = BootstrapHost::default();
+                if accounted {
+                    host.set_test_memory_budget(Some(budget.clone()));
+                }
+                let result =
+                    execute_with_limits(&program, entry, &mut host, VmLimits::default()).unwrap();
+                if panic {
+                    let VmOutcome::Panicked(failure) = result.outcome else {
+                        panic!("primary panic must remain visible")
+                    };
+                    assert_eq!(failure.message, "cursor primary panic");
+                    assert!(failure.suppressed.is_empty());
+                } else {
+                    assert!(
+                        matches!(
+                            result.outcome,
+                            VmOutcome::Returned(RuntimeValue::ResultOk(_))
+                        ),
+                        "{action}: {:?}",
+                        result.outcome
+                    );
+                }
+                assert_eq!(host.take_stdout(), b"closed", "{action}/{accounted}");
+                assert!(host.values.is_empty());
+                assert!(host.channels.is_empty());
+                assert!(host.channel_iterator_receivers.is_empty());
+                assert!(host.ready_jobs.is_empty());
+                assert!(host.async_memory.is_empty());
+                assert!(host.buffer_memory.is_empty());
+                assert_eq!(budget.live_bytes(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_collects_without_a_memory_budget() {
+        for accounted in [false, true] {
+            let budget = VmMemoryBudget::new(8192);
+            let mut host = BootstrapHost::default();
+            if accounted {
+                host.set_test_memory_budget(Some(budget.clone()));
+            }
+            let (sender, receiver) = channel_endpoints(
+                host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+                    .unwrap(),
+            );
+            assert!(host.tracks_host_roots());
+            let fork = ok(host.invoke("std.channel.Sender.fork", &[sender]).unwrap());
+            let mut roots = tondo_vm::runtime::VmHostRoots::new();
+            receiver.trace_host_roots(&mut roots);
+            fork.trace_host_roots(&mut roots);
+            host.collect_host_values(&roots).unwrap();
+            channel_variant(
+                host.invoke(
+                    "std.channel.Receiver.tryReceive",
+                    std::slice::from_ref(&receiver),
+                )
+                .unwrap(),
+                "TryReceive",
+                1,
+                None,
+            );
+            roots.clear();
+            receiver.trace_host_roots(&mut roots);
+            host.collect_host_values(&roots).unwrap();
+            channel_variant(
+                host.invoke(
+                    "std.channel.Receiver.tryReceive",
+                    std::slice::from_ref(&receiver),
+                )
+                .unwrap(),
+                "TryReceive",
+                2,
+                None,
+            );
+            host.cleanup(&receiver).unwrap();
+            assert!(host.values.is_empty());
+            assert!(host.channels.is_empty());
+            assert!(host.ready_jobs.is_empty());
+            assert!(host.buffer_memory.is_empty());
+            assert_eq!(budget.live_bytes(), 0);
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_unwind_is_distinct_from_discard() {
+        for accounted in [false, true] {
+            let budget = VmMemoryBudget::new(8192);
+            let mut host = BootstrapHost::default();
+            if accounted {
+                host.set_test_memory_budget(Some(budget.clone()));
+            }
+            let (sender, receiver) = channel_endpoints(
+                host.invoke("std.channel.bounded", &[RuntimeValue::Integer(1)])
+                    .unwrap(),
+            );
+            ok(host
+                .invoke(
+                    "std.channel.Sender.trySend",
+                    &[sender.clone(), RuntimeValue::Integer(7)],
+                )
+                .unwrap());
+            assert!(
+                host.cleanup(&receiver)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("terminal obligation")
+            );
+            let (_, channel) = host.channel_receiver_id(&receiver).unwrap();
+            assert_eq!(
+                host.channels[&channel].queue.front(),
+                Some(&RuntimeValue::Integer(7))
+            );
+            host.cleanup_terminal(&receiver).unwrap();
+            assert!(host.channels[&channel].queue.is_empty());
+            let response = host
+                .invoke(
+                    "std.channel.Sender.trySend",
+                    &[sender.clone(), RuntimeValue::Integer(8)],
+                )
+                .unwrap();
+            let RuntimeValue::ResultErr(error) = response else {
+                panic!(
+                    "sending after terminal receiver cleanup must return the intact payload: {response:?}"
+                )
+            };
+            channel_variant(*error, "TrySendError", 1, Some(RuntimeValue::Integer(8)));
+            host.cleanup(&sender).unwrap();
+            assert!(host.values.is_empty());
+            assert!(host.channels.is_empty());
+            assert!(host.ready_jobs.is_empty());
+            assert!(host.buffer_memory.is_empty());
+            assert_eq!(budget.live_bytes(), 0);
+        }
+    }
+
+    #[test]
     fn hosted_channel_admission_and_queue_growth_preserve_the_original_owner() {
         let owner = VmMemoryBudget::new(1024);
         let caller = VmMemoryBudget::new(8192);
@@ -18133,15 +18549,19 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
 
         for method in ["receive", "tryReceive"] {
             let source = format!(
-                "import std.channel\nfn main(): !channel.ChannelError {{\n\
+                "import std.channel\n{CHANNEL_INT_RECEIVER_CLEANUP_SOURCE}fn main(): !channel.ChannelError {{\n\
                  var (sender, receiver) = channel.bounded[Int](1)?\n\
-                 defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+                 defer sender.close()\n defer closeIntReceiver(receiver)\n\
                  match sender.send(7) {{\n ok(_) => ()\n err(_) => panic(\"send failed\")\n }}\n let padding = \"{}\"\n\
                  assert(padding.length() == 6000)\n _ = receiver.{method}()\n }}\n",
                 "p".repeat(6000)
             );
             let (program, entry) = compile_channel_admission_source(&source);
-            for (memory, succeeds) in [(10206, false), (16384, true)] {
+            // Affine call-form defer has no copied closure allocation. These
+            // measured bounds reject each typed result while retaining the
+            // already-buffered payload and both endpoint owners.
+            let rejected = if method == "receive" { 9900 } else { 9800 };
+            for (memory, succeeds) in [(rejected, false), (16384, true)] {
                 let mut host = BootstrapHost::default();
                 host.install_testing_participation(TestParticipation::new(
                     EnvelopeLimits::new(65536, 65536, 65536),
@@ -18253,12 +18673,12 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
             ("fork-sender", 9280),
             ("fork-receiver", 9280),
         ] {
-            let existing = "var (sender, receiver) = channel.bounded[Int](1)?\n";
+            let existing = "var (sender, receiver) = channel.bounded[Int](1)?\n defer closeIntReceiver(receiver)\n";
             let before = match operation {
                 "construct" => "",
                 "close" => {
                     "var (sender, receiver) = channel.bounded[Int](1)?\n\
-                    defer sender.close()\n match sender.send(7) {\n ok(_) => ()\n\
+                    defer sender.close()\n defer closeIntReceiver(receiver)\n match sender.send(7) {\n ok(_) => ()\n\
                     err(_) => panic(\"send failed\")\n }\n"
                 }
                 _ => existing,
@@ -18279,7 +18699,7 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                 }
             };
             let source = format!(
-                "import std.channel\n fn main(): !channel.ChannelError {{\n\
+                "import std.channel\n{CHANNEL_INT_RECEIVER_CLEANUP_SOURCE}fn main(): !channel.ChannelError {{\n\
                  {before}let padding = \"{}\"\n assert(padding.length() == 6000)\n\
                  {after} }}\n",
                 "p".repeat(6000)
@@ -18362,9 +18782,9 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
                  match await pending {\n ok(_) => ()\n err(_) => panic(\"send failed\")\n }\n"
             };
             let source = format!(
-                "import std.channel\nfn main(): !channel.ChannelError {{\n\
+                "import std.channel\n{CHANNEL_INT_RECEIVER_CLEANUP_SOURCE}fn main(): !channel.ChannelError {{\n\
                  var (sender, receiver) = channel.bounded[Int](0)?\n\
-                 defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+                 defer sender.close()\n defer closeIntReceiver(receiver)\n\
                  scope {{\n {start}let padding = \"{}\"\n\
                  assert(padding.length() == 6000)\n {finish} }}\n }}\n",
                 "p".repeat(6000)
@@ -18434,13 +18854,15 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
 
         let mut committed = Vec::new();
         for (constructor, rejected) in [
-            ("channel.bounded[Int](1)", 10240),
-            ("channel.unbounded[Int]()", 10176),
+            // Measured acknowledgement-admission rejection after replacing
+            // the receiver's former copied closure with an affine defer guard.
+            ("channel.bounded[Int](1)", 9700),
+            ("channel.unbounded[Int]()", 9600),
         ] {
             let source = format!(
-                "import std.channel\nfn main(): !channel.ChannelError {{\n\
+                "import std.channel\n{CHANNEL_INT_RECEIVER_CLEANUP_SOURCE}fn main(): !channel.ChannelError {{\n\
                  var (sender, receiver) = {constructor}?\n\
-                 defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+                 defer sender.close()\n defer closeIntReceiver(receiver)\n\
                  let padding = \"{}\"\n assert(padding.length() == 6000)\n\
                  match sender.send(7) {{\n ok(_) => ()\n\
                  err(_) => panic(\"send failed\")\n }}\n }}\n",
@@ -18495,9 +18917,9 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
         use tondo_vm::runtime::{VmLimits, execute_with_limits};
 
         let source = format!(
-            "import std.channel\nfn main(): !channel.ChannelError {{\n\
+            "import std.channel\n{CHANNEL_INT_RECEIVER_CLEANUP_SOURCE}fn main(): !channel.ChannelError {{\n\
              var (sender, receiver) = channel.bounded[Int](0)?\n\
-             defer sender.close()\n defer {{\n _ = receiver.close()\n }}\n\
+             defer sender.close()\n defer closeIntReceiver(receiver)\n\
              scope {{\n let pending = spawn sender.send(7)\n\
              let padding = \"{}\"\n assert(padding.length() == 6000)\n\
              _ = receiver.receive()\n match await pending {{\n\
@@ -28693,6 +29115,12 @@ fn main(): !(console.ConsoleError | io.IoError | bytes.Utf8Error | bytes.BytesEr
         host.ready_jobs.clear();
         host.sync_waiters.clear();
         host.time_jobs.clear();
+        // This is an ordinary collection, so the terminal receiver must first
+        // return its queued owner instead of being implicitly discarded.
+        assert_eq!(
+            host.channel_close_receiver(&receiver).unwrap(),
+            vec![buffers[2].clone()]
+        );
         host.collect_host_values(&tondo_vm::runtime::VmHostRoots::new())
             .unwrap();
         assert_eq!(budget.live_bytes(), 0);

@@ -57,6 +57,27 @@
           "signature": "pub fn Completer.cancel(var self): Unit ! AlreadyCompleted",
           "implementation_status": "verified",
           "missing": []
+        },
+        {
+          "id": "std.async:49",
+          "symbol": "std.async.AsyncIterator.next",
+          "signature": "fn next(mut self): T? suspends",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.async:50",
+          "symbol": "std.async.AsyncIterator.close",
+          "signature": "fn close(iterator: Self) suspends",
+          "implementation_status": "verified",
+          "missing": []
+        },
+        {
+          "id": "std.async:53",
+          "symbol": "std.async.AsyncIterator.collect",
+          "signature": "pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends",
+          "implementation_status": "verified",
+          "missing": []
         }
       ],
       "requirements": [
@@ -3573,7 +3594,7 @@
   ],
   "summary": {
     "owners": 22,
-    "public_signatures": 298,
+    "public_signatures": 301,
     "owner_requirements": 171,
     "model_laws": 66,
     "fuzz_verified": 0,

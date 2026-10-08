@@ -13401,6 +13401,14 @@ impl<'a> ExpressionChecker<'a> {
                             } else {
                                 HirPreludeTraitMethod::IteratorNext
                             };
+                            if async_iteration {
+                                HirPreludeTraitMethod::AsyncIteratorClose
+                                    .function_type(
+                                        &mut self.program.interner,
+                                        &[element, source_type],
+                                    )?
+                                    .expect("async iterator close has element and Self arguments");
+                            }
                             let function_type = method
                                 .function_type(&mut self.program.interner, &[element, source_type])?
                                 .expect("iterator next has one trait argument and Self");
@@ -13922,6 +13930,13 @@ impl<'a> ExpressionChecker<'a> {
                 drained,
             ))?;
             let unit = self.program.interner.scalar(ScalarType::Unit);
+            self.program.interner.function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Value, source)],
+                None,
+                unit,
+            ))?;
             self.program.interner.function(FunctionType::new(
                 false,
                 false,
@@ -18368,6 +18383,12 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(None);
         }
         let member_token = *tokens.last().expect("a qualified call has a member token");
+        if name.as_str() == "AsyncIterator"
+            && member_token.token().normalized_identifier() == Some("close")
+        {
+            method_name = "close";
+            method = HirPreludeTraitMethod::AsyncIteratorClose;
+        }
         if matches!(name.as_str(), "Encoder" | "Decoder") {
             let Some(actual_name) = member_token.token().normalized_identifier() else {
                 return Ok(None);
@@ -19262,6 +19283,12 @@ impl<'a> ExpressionChecker<'a> {
         // their concrete `T` signatures while the checker still owns the
         // mutable type interner so MIR can refer to the exact same TypeIds
         // without introducing a parallel runtime collection API.
+        HirPreludeTraitMethod::AsyncIteratorNext
+            .function_type(&mut self.program.interner, &[element, receiver_type])?
+            .expect("async iterator next has one element argument and Self");
+        HirPreludeTraitMethod::AsyncIteratorClose
+            .function_type(&mut self.program.interner, &[element, receiver_type])?
+            .expect("async iterator close has one element argument and Self");
         for function in [
             HirBootstrapHostFunction::CollectionArrayWithCapacity,
             HirBootstrapHostFunction::CollectionArrayPush,
@@ -26138,6 +26165,9 @@ mod tests {
         let (_, _, output) = check(
             "type Counter = { value: Int }\n\
              impl AsyncIterator[Int] for Counter {\n\
+                 fn close(iterator: Counter) suspends {\n\
+                     _ = iterator\n\
+                 }\n\
                  fn next(mut self): Int? suspends { none }\n\
              }\n\
              fn consume(cursor: Counter) {\n\
@@ -26191,6 +26221,9 @@ mod tests {
         let (_, _, output) = check(
             "type Counter = { value: Int }\n\
              impl AsyncIterator[Int] for Counter {\n\
+                 fn close(iterator: Counter) suspends {\n\
+                     _ = iterator\n\
+                 }\n\
                  fn next(mut self): Int? suspends { none }\n\
              }\n\
              fn consume(cursor: Counter) {\n\
@@ -26227,6 +26260,9 @@ mod tests {
         let (_, _, output) = check(
             "type Counter = { value: Int }\n\
              impl AsyncIterator[Int] for Counter {\n\
+                 fn close(iterator: Counter) suspends {\n\
+                     _ = iterator\n\
+                 }\n\
                  fn next(mut self): Int? suspends { none }\n\
              }\n\
              fn first(cursor: Counter) {\n\

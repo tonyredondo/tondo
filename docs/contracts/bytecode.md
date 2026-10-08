@@ -311,10 +311,18 @@ edge-specific guard disarm as described below.
 Copy and move forms ordinarily come directly from verified MIR.
 Monomorphization preserves that source-generic decision: a move selected in a
 `T: Discard` body remains a move even when one concrete instantiation happens
-to substitute a `Copy` type. The one cleanup-specific exception is a guarded
-defer operand whose closed type gains `Copy`: lowering converts its exact
+to substitute a `Copy` type. For a contextual source defer whose guarded
+operand gains `Copy`, lowering converts its exact
 guarded `Move` into the required registration-time `Copy` snapshot, removes the
 now-vacuous guard transitions, and re-verifies the complete bytecode program.
+`BytecodeDeferCapture::CurrentOwner` instead preserves the exact guard and its
+reserved operand for a compiler-owned iterator close. Its call is suspendible
+and infallible Unit; the verifier checks the exact complete owner, argument
+types and single guarded reservation independently. Cleanup consumes the final
+cursor state, including Copy state. This does not permit ordinary Copy moves
+in contextual source defers. Generated collect bodies use ordinary verified
+frames and guarded cleanup; the bodyless VM collect route remains an internal
+bounded model and is not the public compiler route.
 The VM verifier independently rejects every forged `Copy` whose closed concrete
 type lacks `Copy`.
 
@@ -692,8 +700,10 @@ Before execution, the verifier proves:
   entries use the `Deferred` call context; `defer` entries use
   `DeferredAsync` (the internal tag for a suspendible defer) and therefore retain
   exactly one suspendible call signature. Both
-  snapshot all closed `Copy` operands, retain at most one complete affine guard
-  in a local or closure-capture owner slot, and belong to a live lexical scope;
+  snapshot closed `Copy` operands in contextual source defers. A current-owner
+  iterator cleanup retains its exact guard even for a Copy cursor. Every entry
+  retains at most one complete owner guard in a local or closure-capture slot
+  and belongs to a checked source or compiler-owned cleanup scope;
 - every concrete terminal entry parameter/capture and every terminal store,
   successful invocation result, and iterator-value edge has an immediate
   fallback or cleanup retarget;

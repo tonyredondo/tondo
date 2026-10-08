@@ -1,0 +1,63 @@
+{
+  "format": "tondo-stdlib-channel-ownership/1",
+  "owner": "std.channel",
+  "edition": "0.1",
+  "task": "STD-CHANNEL-OWNERSHIP-001",
+  "status": "implementation-in-progress",
+  "quality_gate": "pending-80-percent-per-scope",
+  "parent": "testing/stdlib-channel.json",
+  "contract": "docs/contracts/stdlib-channel-ownership.md",
+  "command": "scripts/stdlib-channel-ownership-check.sh",
+  "selected_route": "public-hosted-vm",
+  "target": "x86_64-unknown-linux-gnu",
+  "identity": {
+    "package": "toolchain:std:0.1-bootstrap",
+    "module": "channel",
+    "namespace": "type",
+    "generic_arity": 1,
+    "same_named_user_types": "ordinary-structural-derivation"
+  },
+  "capabilities": {
+    "sender": {"Copy": false, "Discard": true, "Equatable": false, "Key": false, "Send": "T: Send", "Share": "T: Send"},
+    "receiver": {"Copy": false, "Discard": false, "Equatable": false, "Key": false, "Send": "T: Send", "Share": "T: Send"},
+    "terminal": {"sender": false, "receiver": true},
+    "propagation": ["record", "generic", "option", "result", "array", "enum", "closure"],
+    "derivation": ["hir", "independent-bytecode"]
+  },
+  "lifecycle": {
+    "fork": "explicit-new-endpoint",
+    "close": "consumes-owner",
+    "sender_discard": "close-last-sender-with-or-without-test-memory-budget",
+    "receiver_abandonment": "compile-error",
+    "defer": "reserve-live-affine-owner-and-observe-current-state",
+    "mixed_aggregate": "consecutive-exact-cleanup-handoffs-with-unguarded-no-op-disarms",
+    "ordinary_receiver_discard": "reject-pending-values",
+    "terminal_unwind": "retire-without-drain-allocation",
+    "blocking_worker": "forward-terminal-cleanup-to-provider",
+    "iteration": "consumes-and-closes-in-private-scope",
+    "collect": "consumes-and-closes-on-every-outcome",
+    "paths": ["normal", "recoverable-error", "panic", "structured-cancellation"]
+  },
+  "public_projects": ["acceptance/projects/channel-ownership/tondo.toml", "acceptance/projects/channel-slot/tondo.toml"],
+  "iterator_protocol": {
+    "close": "fn close(iterator: Self) suspends",
+    "implementation": "explicit-or-sealed-standard-witness",
+    "state": "final-owner-including-copy-cursors",
+    "source_copy_defer": "registration-snapshot",
+    "collect_routes": "shared-ordinary-mir-loop-and-guarded-cleanup"
+  },
+  "sources": [
+    "crates/tondo-compiler/src/hir/availability.rs",
+    "crates/tondo-compiler/src/hir/check.rs",
+    "crates/tondo-compiler/src/hir/lower.rs",
+    "crates/tondo-compiler/src/hir/capabilities.rs",
+    "crates/tondo-compiler/src/hir/terminal.rs",
+    "crates/tondo-compiler/src/mir/verify.rs",
+    "crates/tondo-compiler/src/mir/lower.rs",
+    "crates/tondo-compiler/src/process_host.rs",
+    "crates/tondo-vm/src/channel.rs",
+    "crates/tondo-vm/src/bytecode/verify.rs",
+    "crates/tondo-vm/src/runtime/execute.rs"
+  ],
+  "promotion": {"native_runtime_abi": "unchanged-prior-transport-boundary", "native_aot": "not-claimed", "performance": "not-measured", "release": false}
+}

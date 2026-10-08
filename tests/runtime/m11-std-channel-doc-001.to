@@ -1,6 +1,10 @@
 import std.channel
 import std.console
 
+fn closeReceiver(receiver: channel.Receiver[Int]) {
+    _ = receiver.close()
+}
+
 fn send_one(sender: channel.Sender[Int], value: Int) suspends {
     var owned = sender
     match owned.send(value) {
@@ -10,9 +14,8 @@ fn send_one(sender: channel.Sender[Int], value: Int) suspends {
 }
 
 fn fan_out_fan_in(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](2)?
-    var sender = endpoints.0
-    let receiver = endpoints.1
+    var (sender, receiver) = channel.bounded[Int](2)?
+    defer closeReceiver(receiver)
     let second_sender = sender.fork()?
     scope {
         let first = spawn send_one(sender, 1)
@@ -54,12 +57,9 @@ fn double_stage(input: channel.Receiver[Int], output: channel.Sender[Int]) suspe
 }
 
 fn pipeline_backpressure(): !channel.ChannelError {
-    let input = channel.bounded[Int](1)?
-    let output = channel.bounded[Int](1)?
-    let producer = input.0
-    let source = input.1
-    let sink = output.0
-    let result = output.1
+    let (producer, source) = channel.bounded[Int](1)?
+    defer closeReceiver(source)
+    let (sink, result) = channel.bounded[Int](1)?
     scope {
         let stage = spawn double_stage(source, sink)
         match producer.send(3) {
@@ -97,9 +97,7 @@ fn waiting_send(sender: channel.Sender[Int], value: Int) suspends {
 }
 
 fn select_cancel_safe_multichannel_reference(): !channel.ChannelError {
-    let selected = channel.bounded[Int](1)?
-    let selected_sender = selected.0
-    let selected_receiver = selected.1
+    let (selected_sender, selected_receiver) = channel.bounded[Int](1)?
     match selected_sender.trySend(7) {
         ok(_) => ()
         err(_) => panic("select setup failed")
@@ -113,9 +111,7 @@ fn select_cancel_safe_multichannel_reference(): !channel.ChannelError {
     let selected_drained = selected_receiver.close()
     assert(selected_drained.length() == 0)
 
-    let empty = channel.bounded[Int](1)?
-    let empty_sender = empty.0
-    let empty_receiver = empty.1
+    let (empty_sender, empty_receiver) = channel.bounded[Int](1)?
     let empty_arm = select {
         empty_receiver.receive() => 1
         else => 2
@@ -125,9 +121,7 @@ fn select_cancel_safe_multichannel_reference(): !channel.ChannelError {
     let empty_drained = empty_receiver.close()
     assert(empty_drained.length() == 0)
 
-    let rendezvous = channel.bounded[Int](0)?
-    let blocked_sender = rendezvous.0
-    let blocked_receiver = rendezvous.1
+    let (blocked_sender, blocked_receiver) = channel.bounded[Int](0)?
     scope {
         let child = spawn waiting_send(blocked_sender, 9)
         yield_once()
@@ -138,9 +132,7 @@ fn select_cancel_safe_multichannel_reference(): !channel.ChannelError {
 }
 
 fn select_cancel_safe(): !channel.ChannelError {
-    let selected = channel.bounded[Int](1)?
-    let selected_sender = selected.0
-    let selected_receiver = selected.1
+    let (selected_sender, selected_receiver) = channel.bounded[Int](1)?
     let arm = select {
         selected_sender.send(7) => 1
     }
@@ -154,9 +146,7 @@ fn select_cancel_safe(): !channel.ChannelError {
     let selected_drained = selected_receiver.close()
     assert(selected_drained.length() == 0)
 
-    let rendezvous = channel.bounded[Int](0)?
-    let blocked_sender = rendezvous.0
-    let blocked_receiver = rendezvous.1
+    let (blocked_sender, blocked_receiver) = channel.bounded[Int](0)?
     scope {
         let child = spawn waiting_send(blocked_sender, 9)
         yield_once()
@@ -167,9 +157,8 @@ fn select_cancel_safe(): !channel.ChannelError {
 }
 
 fn close_and_drain(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](2)?
-    var receiver = endpoints.1
-    let sender = endpoints.0
+    var (sender, receiver) = channel.bounded[Int](2)?
+    defer closeReceiver(receiver)
     let other = receiver.fork()?
     match sender.trySend(11) {
         ok(_) => ()
@@ -187,9 +176,7 @@ fn close_and_drain(): !channel.ChannelError {
 }
 
 fn discardable_iteration(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](2)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](2)?
     match sender.trySend(1) {
         ok(_) => ()
         err(_) => panic("iteration setup failed")

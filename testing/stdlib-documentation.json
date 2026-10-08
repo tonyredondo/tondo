@@ -66,14 +66,20 @@
             "std.async:39",
             "std.async:40",
             "std.async:41",
-            "std.async:42"
+            "std.async:42",
+            "std.async:49",
+            "std.async:50",
+            "std.async:53"
           ],
           "verified_signatures": [
             "std.async:38",
             "std.async:39",
             "std.async:40",
             "std.async:41",
-            "std.async:42"
+            "std.async:42",
+            "std.async:49",
+            "std.async:50",
+            "std.async:53"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

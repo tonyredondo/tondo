@@ -35,8 +35,8 @@ jq -e '
   and .surface.explicit_await_handle == "required"
   and .surface.nosuspend_annotations == ["@sync", "@nosuspend"]
   and .types == ["Join[T, E]", "Waiter[T, E]", "Completer[T, E]", "AlreadyCompleted", "AsyncIterator[T]"]
-  and ([.signatures[].id] | unique) == ["async-iterator-collect", "async-iterator-next", "completer-cancel", "completer-complete", "completer-fail", "oneshot", "waiter-wait"]
-  and ([.signatures[] | select(.effect == "suspends") | .id] | sort) == ["async-iterator-collect", "async-iterator-next"]
+  and ([.signatures[].id] | unique) == ["async-iterator-close", "async-iterator-collect", "async-iterator-next", "completer-cancel", "completer-complete", "completer-fail", "oneshot", "waiter-wait"]
+  and ([.signatures[] | select(.effect == "suspends") | .id] | sort) == ["async-iterator-close", "async-iterator-collect", "async-iterator-next"]
   and ([.signatures[] | select(.effect == "selectable") | .id] | sort) == ["waiter-wait"]
   and all(.signatures[]; (.signature | type == "string" and length > 0) and (.kind | type == "string" and length > 0))
   and .join.origin == ["spawn call()", "spawn thread call()"]
@@ -54,10 +54,12 @@ jq -e '
   and .iterator.end == "none"
   and .iterator.lazy == true
   and .iterator.backpressure == "one-next-at-a-time"
-  and .iterator.close == "exactly-once-idempotent-before-terminal-outcome"
+  and .iterator.close == "explicit-consuming-close-exactly-once-before-terminal-outcome"
+  and .iterator.close_state == "final-owned-cursor-state-including-copy"
   and .iterator.explicit_for_await == "forbidden"
   and .iterator.channel_dependency == false
   and .collect.limit == "finite-non-negative-maximum-elements"
+  and .collect.ownership == "by-value-affine-cursor-consumption"
   and .collect.zero == "empty-array-and-close"
   and .collect.at_limit == "success-without-extra-next"
   and .collect.partial_publication == false
@@ -66,7 +68,8 @@ jq -e '
   and .implementation.status == "verified"
   and .implementation.routes == ["implicit-direct-wait", "spawn-hir-mir-bytecode-vm"]
   and .implementation.cancellation == "structured-scope-cooperative"
-  and .implementation.close == "owner-state-released-on-terminal-outcome"
+  and .implementation.close == "explicit-close-with-final-owner-state"
+  and .implementation.ownership_verification == "STD-CHANNEL-OWNERSHIP-001"
   and .implementation.capacity_failure == "CollectionError-without-partial-publication"
   and ([.test_matrix[].id] | unique | length) == 7
   and .promotion.implementation_pending == []

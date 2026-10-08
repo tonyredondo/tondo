@@ -147,8 +147,9 @@ fn instruction_text(instruction: &BytecodeInstructionKind) -> String {
             scope,
             action,
             guard,
+            capture,
         } => format!(
-            "register_defer scope{} {:?}:t{} guard={:?}",
+            "register_defer scope{} {:?}:t{} guard={:?} capture={capture:?}",
             scope.index(),
             action.kind,
             action.ty.index(),
@@ -408,6 +409,7 @@ mod tests {
                 scope: BytecodeScopeId::new(0),
                 action: operation(),
                 guard: Some(place()),
+                capture: BytecodeDeferCapture::Contextual,
             },
             BytecodeInstructionKind::RegisterFallback {
                 scope: BytecodeScopeId::new(0),

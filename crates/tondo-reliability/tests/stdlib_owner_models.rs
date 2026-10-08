@@ -71,7 +71,7 @@ fn every_public_signature_has_a_declared_model_law() {
         assert!(seen.insert(id.to_owned()), "duplicate model signature {id}");
     }
 
-    assert_eq!(seen.len(), 298);
+    assert_eq!(seen.len(), 301);
     assert_eq!(registry["summary"]["public_signatures"], seen.len());
 }
 

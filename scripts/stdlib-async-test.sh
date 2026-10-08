@@ -26,6 +26,12 @@ expect_failure partial-collect env TONDO_STDLIB_ASYNC_CONTRACT="$tmp_dir/partial
 jq '.iterator.channel_dependency = true' testing/stdlib-async.json > "$tmp_dir/channel-dependency.json"
 expect_failure channel-dependency env TONDO_STDLIB_ASYNC_CONTRACT="$tmp_dir/channel-dependency.json" scripts/stdlib-async-check.sh
 
+jq 'del(.signatures[] | select(.id == "async-iterator-close"))' testing/stdlib-async.json > "$tmp_dir/missing-close.json"
+expect_failure missing-close env TONDO_STDLIB_ASYNC_CONTRACT="$tmp_dir/missing-close.json" scripts/stdlib-async-check.sh
+
+jq '.iterator.close_state = "registration-snapshot"' testing/stdlib-async.json > "$tmp_dir/close-snapshot.json"
+expect_failure close-snapshot env TONDO_STDLIB_ASYNC_CONTRACT="$tmp_dir/close-snapshot.json" scripts/stdlib-async-check.sh
+
 for marker in \
     'pub type Join[T, E]' \
     'pub type Waiter[T, E]' \
@@ -33,7 +39,8 @@ for marker in \
     'pub fn Waiter.wait(var self): T ! E selectable' \
     'pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted' \
     'fn next(mut self): T? suspends' \
-    'pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends'; do
+    'fn close(iterator: Self) suspends' \
+    'pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends'; do
     grep -Fq "$marker" docs/contracts/stdlib-async.md
 done
 
@@ -44,6 +51,7 @@ for marker in \
     'AsyncCompleterFail' \
     'AsyncCompleterCancel' \
     'AsyncIteratorNext' \
+    'AsyncIteratorClose' \
     'AsyncIteratorCollect' \
     'lower_async_iterator_collect' \
     'CollectionArrayWithCapacity' \

@@ -20,6 +20,16 @@ los símbolos como API pública ni afirma lowering AOT genérico de canales.
 
 ## Frontera de implementación verificada
 
+Compiler endpoint ownership is under repair in `STD-CHANNEL-OWNERSHIP-001`,
+tracked by [the ownership contract](stdlib-channel-ownership.md). A reproduced
+bootstrap gap previously granted `Copy` to `Receiver[Int]` and its enclosing
+records, so defer captured an old snapshot instead of reserving the live owner.
+Focused repairs reject those capabilities and exercise latest-state defer;
+their full quality and publication gates remain pending. The verified
+transport, bounded model and private native ABI evidence below do not prove
+the missing endpoint capability and terminal-cleanup contract. The prescribed
+non-Copy endpoints, explicit fork and terminal receiver close remain normative.
+
 Estado de host: `verified-scheduler-and-native-bridge`; estado nativo:
 `verified-native-runtime-abi`.
 

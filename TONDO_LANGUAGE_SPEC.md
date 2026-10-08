@@ -3094,6 +3094,7 @@ elemento por llamada:
 ~~~tondo pseudocode
 trait AsyncIterator[T] {
     fn next(mut self): T? suspends
+    fn close(iterator: Self) suspends
 }
 
 fn consume(stream: impl AsyncIterator[Bytes]) {
@@ -3113,6 +3114,13 @@ finitud. `std.channel.Receiver[T]` se adapta a este protocolo cuando
 adaptación hosted está cerrada en `STD-CHANNEL-ASYNC-ITER-001`, con contrato en
 [`testing/stdlib-channel-async-iter.json`](./testing/stdlib-channel-async-iter.json);
 no reclama lowering AOT ni añade una forma `for await`.
+The compiler consumes the iterator and invokes its explicit `close` exactly
+once on exhaustion, break, return, propagation, cancellation or unwind. Cleanup
+receives the final cursor state, including when that state is Copy. `collect`
+uses the same consuming protocol for every limit, including zero and invalid
+negative limits. Affine channel access retained after consumption requires an
+explicit `fork`.
+
 `AsyncIterator` es distinto de `Iterator[T]`, aunque ambos conservan la regla de
 una implementación por target y elemento.
 
@@ -4133,7 +4141,10 @@ La librería ofrece `oneshot[T, E]` con dos capacidades: `Waiter` y `Completer`.
 `AsyncIterator[T]` es el protocolo lazy con backpressure:
 
 ~~~tondo pseudocode
-trait AsyncIterator[T] { fn next(mut self): T? suspends }
+trait AsyncIterator[T] {
+    fn next(mut self): T? suspends
+    fn close(iterator: Self) suspends
+}
 
 fn consume(stream: impl AsyncIterator[Bytes]) {
     for chunk in stream { use(chunk) }
@@ -4145,6 +4156,9 @@ si solo implementa `AsyncIterator[T]`, espera implícitamente un elemento por
 `next` y propaga el efecto de suspensión. No existe `for await`; si una fuente
 implementa ambos protocolos, `Iterator[T]` tiene precedencia. La iteración no materializa arrays.
 `break`, error, cancelación o salida del scope cierra el stream.
+The consuming `close(iterator: Self)` implementation receives the final cursor
+state exactly once before the terminal outcome. Copy cursors are passed by
+value under the ordinary Copy rules; affine cursor reuse is rejected.
 `collect(limit: ...)` es la operación explícita que materializa un `Array[T]`;
 exige límite si no se prueba finitud. `std.channel.Receiver[T]` se adapta a este
 protocolo cuando `T: Discard`; valores con obligación terminal conservan la API

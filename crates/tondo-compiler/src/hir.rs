@@ -744,6 +744,39 @@ impl HirProgram {
         self.expression_flows.get(id.0 as usize).copied()
     }
 
+    /// A compiler-owned cleanup scope, disjoint from source lexical scopes.
+    pub(crate) fn lowering_cleanup_scope(&self, owner: HirExpressionId) -> Option<HirScopeId> {
+        self.next_scope_id
+            .checked_add(owner.index())
+            .map(HirScopeId)
+    }
+
+    pub(crate) fn async_iterator_collect_body_source(&self) -> Option<HirExpressionId> {
+        self.expressions
+            .iter()
+            .enumerate()
+            .find_map(|(index, expression)| {
+                matches!(
+                    expression.kind(),
+                    HirExpressionKind::Function(HirCallableId::Host(
+                        HirBootstrapHostFunction::AsyncIteratorCollect
+                    )) | HirExpressionKind::SpecializedFunction {
+                        callable: HirCallableId::Host(
+                            HirBootstrapHostFunction::AsyncIteratorCollect
+                        ),
+                        ..
+                    }
+                )
+                .then(|| HirExpressionId(index as u32))
+            })
+    }
+
+    pub(crate) fn lowering_function_scope(&self) -> Option<HirScopeId> {
+        self.next_scope_id
+            .checked_add(u32::try_from(self.expressions.len()).ok()?)
+            .map(HirScopeId)
+    }
+
     pub fn expression_break_targets(&self, id: HirExpressionId) -> Option<&[HirLoopId]> {
         self.expression_breaks.get(id.0 as usize).map(Vec::as_slice)
     }
@@ -1350,6 +1383,7 @@ pub enum HirPreludeTraitMethod {
     Display,
     IteratorNext,
     AsyncIteratorNext,
+    AsyncIteratorClose,
     /// Compiler-sealed deterministic shrinking for the built-in shrinkable
     /// value shapes.  It is a prelude protocol rather than a user-defined
     /// dispatch point so the public testing helper can remain host-free and
@@ -1367,7 +1401,7 @@ impl HirPreludeTraitMethod {
             | "CallOnce" => &[],
             "Display" => &[Self::Display],
             "Iterator" => &[Self::IteratorNext],
-            "AsyncIterator" => &[Self::AsyncIteratorNext],
+            "AsyncIterator" => &[Self::AsyncIteratorNext, Self::AsyncIteratorClose],
             "Shrink" => &[Self::ShrinkCandidates],
             "Encode" => &[Self::Serialization(Encode)],
             "Decode" => &[Self::Serialization(Decode)],
@@ -1407,7 +1441,7 @@ impl HirPreludeTraitMethod {
         match self {
             Self::Display => "Display",
             Self::IteratorNext => "Iterator",
-            Self::AsyncIteratorNext => "AsyncIterator",
+            Self::AsyncIteratorNext | Self::AsyncIteratorClose => "AsyncIterator",
             Self::ShrinkCandidates => "Shrink",
             Self::Serialization(method) => match method {
                 HirSerializationTraitMethod::Encode => "Encode",
@@ -1444,6 +1478,7 @@ impl HirPreludeTraitMethod {
         match self {
             Self::Display => "display",
             Self::IteratorNext | Self::AsyncIteratorNext => "next",
+            Self::AsyncIteratorClose => "close",
             Self::ShrinkCandidates => "candidates",
             Self::Serialization(method) => match method {
                 HirSerializationTraitMethod::Encode => "encode",
@@ -1479,7 +1514,7 @@ impl HirPreludeTraitMethod {
     pub(crate) fn generic_arity(self) -> u32 {
         match self {
             Self::Display => 1,
-            Self::IteratorNext | Self::AsyncIteratorNext => 2,
+            Self::IteratorNext | Self::AsyncIteratorNext | Self::AsyncIteratorClose => 2,
             Self::ShrinkCandidates => 1,
             Self::Serialization(
                 HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
@@ -1491,18 +1526,20 @@ impl HirPreludeTraitMethod {
     pub(crate) fn has_receiver(self) -> bool {
         !matches!(
             self,
-            Self::Serialization(
-                HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode
-            )
+            Self::AsyncIteratorClose
+                | Self::Serialization(
+                    HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode
+                )
         )
     }
 
     pub(crate) fn query(self, arguments: &[TypeId]) -> Option<TraitQuery> {
         let (trait_arguments, target) = match (self, arguments) {
             (Self::Display, [target]) => (Vec::new(), *target),
-            (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
-                (vec![*element], *target)
-            }
+            (
+                Self::IteratorNext | Self::AsyncIteratorNext | Self::AsyncIteratorClose,
+                [element, target],
+            ) => (vec![*element], *target),
             (Self::ShrinkCandidates, [target]) => (Vec::new(), *target),
             (
                 Self::Serialization(
@@ -1511,7 +1548,10 @@ impl HirPreludeTraitMethod {
                 [codec, target, _, _],
             ) => (vec![*codec], *target),
             (Self::Serialization(_), [codec, error, target]) => (vec![*codec, *error], *target),
-            (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => {
+            (Self::Display, _)
+            | (Self::IteratorNext, _)
+            | (Self::AsyncIteratorNext, _)
+            | (Self::AsyncIteratorClose, _) => {
                 return None;
             }
             (Self::ShrinkCandidates, _) => return None,
@@ -1540,6 +1580,11 @@ impl HirPreludeTraitMethod {
             (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
                 (ParameterMode::Mut, *target, interner.option(*element)?)
             }
+            (Self::AsyncIteratorClose, [_, target]) => (
+                ParameterMode::Value,
+                *target,
+                interner.scalar(ScalarType::Unit),
+            ),
             (Self::ShrinkCandidates, [target]) => {
                 let array = interner.intrinsic(IntrinsicType::Array, vec![*target])?;
                 let generation_error = interner.nominal(
@@ -1697,6 +1742,7 @@ impl HirPreludeTraitMethod {
             (Self::Display, _)
             | (Self::IteratorNext, _)
             | (Self::AsyncIteratorNext, _)
+            | (Self::AsyncIteratorClose, _)
             | (Self::ShrinkCandidates, _) => {
                 return Ok(None);
             }
@@ -1704,7 +1750,7 @@ impl HirPreludeTraitMethod {
         };
         interner
             .function(FunctionType::new(
-                matches!(self, Self::AsyncIteratorNext),
+                matches!(self, Self::AsyncIteratorNext | Self::AsyncIteratorClose),
                 false,
                 vec![FunctionParameter::new(mode, receiver)],
                 None,
@@ -1730,6 +1776,7 @@ impl HirPreludeTraitMethod {
             (Self::Display, _)
             | (Self::IteratorNext, _)
             | (Self::AsyncIteratorNext, _)
+            | (Self::AsyncIteratorClose, _)
             | (Self::ShrinkCandidates, _)
             | (Self::Serialization(_), _) => false,
         })
@@ -2915,6 +2962,8 @@ pub enum HirBootstrapHostFunction {
     /// lowering. It transfers terminal cleanup of a receiver to the discardable
     /// iterator view without exposing a channel-specific public API.
     ChannelReceiverAsyncIteratorAdopt,
+    /// Consuming, allocation-free close after a proved discardable iteration.
+    ChannelReceiverAsyncIteratorClose,
     ChannelReceiverTryReceive,
     ChannelReceiverClose,
     ExecutorPool,
@@ -3466,6 +3515,7 @@ impl HirBootstrapHostFunction {
             Self::ChannelReceiverReceive => "std.channel.Receiver.receive",
             Self::ChannelReceiverAsyncIteratorNext => "std.channel.Receiver.__asyncIteratorNext",
             Self::ChannelReceiverAsyncIteratorAdopt => "std.channel.Receiver.__asyncIteratorAdopt",
+            Self::ChannelReceiverAsyncIteratorClose => "std.channel.Receiver.__asyncIteratorClose",
             Self::ChannelReceiverTryReceive => "std.channel.Receiver.tryReceive",
             Self::ChannelReceiverClose => "std.channel.Receiver.close",
             Self::ExecutorPool => "std.executor.pool",
@@ -3958,6 +4008,7 @@ impl HirBootstrapHostFunction {
                 | Self::ChannelSenderSend
                 | Self::ChannelReceiverReceive
                 | Self::ChannelReceiverAsyncIteratorNext
+                | Self::ChannelReceiverAsyncIteratorClose
                 | Self::ExecutorPoolSubmit
                 | Self::ExecutorPoolShutdown
                 | Self::ExecutorPoolCancel

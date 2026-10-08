@@ -1124,6 +1124,13 @@ pub struct BytecodeInstruction {
     pub kind: BytecodeInstructionKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BytecodeDeferCapture {
+    Contextual,
+    /// Preserve the guard even for a Copy cursor: cleanup reads its final state.
+    CurrentOwner,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum BytecodeInstructionKind {
@@ -1142,6 +1149,7 @@ pub enum BytecodeInstructionKind {
         scope: BytecodeScopeId,
         action: BytecodeOperation,
         guard: Option<BytecodePlace>,
+        capture: BytecodeDeferCapture,
     },
     RegisterFallback {
         scope: BytecodeScopeId,

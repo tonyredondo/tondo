@@ -1534,6 +1534,18 @@ impl Verifier<'_> {
                     }
                     _ => unreachable!("only open prelude traits reach this branch"),
                 };
+                if required.is_some()
+                    && matches!(&implementation.trait_reference.constructor,
+                        HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator")
+                    && !provided.contains(&HirTraitMethodKey::Prelude(
+                        super::HirPreludeTraitMethod::AsyncIteratorClose,
+                    ))
+                {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "required async iterator close is missing",
+                    ));
+                }
                 if let Some(required) = required
                     && !provided.contains(&required)
                 {
@@ -2031,6 +2043,7 @@ impl Verifier<'_> {
                     super::HirPreludeTraitMethod::Display => ("Display", "display"),
                     super::HirPreludeTraitMethod::IteratorNext => ("Iterator", "next"),
                     super::HirPreludeTraitMethod::AsyncIteratorNext => ("AsyncIterator", "next"),
+                    super::HirPreludeTraitMethod::AsyncIteratorClose => ("AsyncIterator", "close"),
                     super::HirPreludeTraitMethod::ShrinkCandidates => ("Shrink", "candidates"),
                     super::HirPreludeTraitMethod::Serialization(_) => {
                         unreachable!(
@@ -2061,6 +2074,10 @@ impl Verifier<'_> {
                         contract_interner
                             .option(implementation.trait_reference.arguments[0])
                             .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
+                    ),
+                    super::HirPreludeTraitMethod::AsyncIteratorClose => (
+                        ParameterMode::Value,
+                        contract_interner.scalar(ScalarType::Unit),
                     ),
                     super::HirPreludeTraitMethod::ShrinkCandidates => {
                         let array = match contract_interner
@@ -2099,7 +2116,11 @@ impl Verifier<'_> {
                 };
                 let expected_function = contract_interner
                     .function(FunctionType::new(
-                        matches!(method_key, super::HirPreludeTraitMethod::AsyncIteratorNext),
+                        matches!(
+                            method_key,
+                            super::HirPreludeTraitMethod::AsyncIteratorNext
+                                | super::HirPreludeTraitMethod::AsyncIteratorClose
+                        ),
                         false,
                         vec![FunctionParameter::new(mode, implementation.target)],
                         None,
@@ -2107,7 +2128,7 @@ impl Verifier<'_> {
                     ))
                     .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
                 if expected_function != contract.function_type
-                    || !contract.has_receiver
+                    || contract.has_receiver != method_key.has_receiver()
                     || !contract.generic_bounds.is_empty()
                 {
                     return Err(HirInvariantError::new(

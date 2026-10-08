@@ -2687,6 +2687,14 @@ impl MirStatement {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirDeferCapture {
+    /// Source defer: Copy specializations capture a snapshot.
+    Contextual,
+    /// Compiler-owned iterator cleanup consumes the final cursor state.
+    CurrentOwner,
+}
+
 #[derive(Debug, Clone)]
 pub enum MirStatementKind {
     StorageLive(MirLocalId),
@@ -2701,6 +2709,7 @@ pub enum MirStatementKind {
         scope: HirScopeId,
         action: MirOperation,
         guard: Option<MirPlace>,
+        capture: MirDeferCapture,
     },
     RegisterFallback {
         scope: HirScopeId,

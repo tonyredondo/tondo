@@ -1,10 +1,12 @@
 import std.channel
 import std.console
 
+fn closeReceiver(receiver: channel.Receiver[Int]) {
+    _ = receiver.close()
+}
+
 fn main(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](2)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](2)?
 
     match sender.trySend(1) {
         ok(_) => {}
@@ -57,9 +59,8 @@ fn main(): !channel.ChannelError {
     let drained = receiver.close()
     assert(drained.length() == 0)
 
-    let selected_receive_endpoints = channel.bounded[Int](1)?
-    let selected_receive_sender = selected_receive_endpoints.0
-    let selected_receive_receiver = selected_receive_endpoints.1
+    let (selected_receive_sender, selected_receive_receiver) = channel.bounded[Int](1)?
+    defer closeReceiver(selected_receive_receiver)
     match selected_receive_sender.trySend(5) {
         ok(_) => {}
         err(_) => assert(false)
@@ -70,9 +71,7 @@ fn main(): !channel.ChannelError {
     }
     assert(receive_arm == 1)
 
-    let selected_send_endpoints = channel.bounded[Int](1)?
-    let selected_send_sender = selected_send_endpoints.0
-    let selected_send_receiver = selected_send_endpoints.1
+    let (selected_send_sender, selected_send_receiver) = channel.bounded[Int](1)?
     let send_arm = select {
         selected_send_sender.send(6) => 3
         else => 4
@@ -82,5 +81,9 @@ fn main(): !channel.ChannelError {
         some(value) => assert(value == 6)
         none => assert(false)
     }
+    selected_receive_sender.close()
+    selected_send_sender.close()
+    _ = selected_receive_receiver.close()
+    _ = selected_send_receiver.close()
     _ = console.println("channel-ok")
 }

@@ -501,6 +501,9 @@ mod tests {
         let source = b"import std.async\n\
 type Counter = { remaining: Int }\n\
 impl AsyncIterator[Int] for Counter {\n\
+    fn close(iterator: Counter) suspends {\n\
+        _ = iterator\n\
+    }\n\
     fn next(mut self): Int? suspends {\n\
         tick()\n\
         if self.remaining == 0 {\n\

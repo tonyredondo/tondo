@@ -2619,6 +2619,18 @@ impl<'a> TypeLowerer<'a> {
                 ),
                 arguments: vec![async_element],
             };
+            let async_source_send = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(
+                    Name::new("Send").expect("prelude trait"),
+                ),
+                arguments: Vec::new(),
+            };
+            for method in [
+                HirPreludeTraitMethod::AsyncIteratorNext,
+                HirPreludeTraitMethod::AsyncIteratorClose,
+            ] {
+                method.function_type(&mut self.interner, &[async_element, async_source])?;
+            }
             self.push_bootstrap_generic_host_callable(
                 span,
                 HirBootstrapHostFunction::AsyncIteratorCollect,
@@ -2628,7 +2640,10 @@ impl<'a> TypeLowerer<'a> {
                 ],
                 async_result,
                 2,
-                vec![(1, vec![async_iterator_bound])],
+                vec![
+                    (0, vec![async_source_send.clone()]),
+                    (1, vec![async_iterator_bound, async_source_send]),
+                ],
             )?;
         }
 
@@ -3602,6 +3617,20 @@ impl<'a> TypeLowerer<'a> {
                 unit,
                 1,
                 send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ChannelReceiverAsyncIteratorClose,
+                vec![(receiver, ParameterMode::Value, false)],
+                unit,
+                1,
+                vec![(
+                    0,
+                    vec![
+                        self.prelude_trait_bound("Send"),
+                        self.prelude_trait_bound("Discard"),
+                    ],
+                )],
             )?;
             self.push_bootstrap_generic_host_callable(
                 span,
@@ -10028,6 +10057,35 @@ impl<'a> TypeLowerer<'a> {
             }
             return Ok(Some(expected));
         }
+        if name.as_str() == "AsyncIterator" {
+            let element = implementation
+                .trait_reference
+                .arguments
+                .first()
+                .copied()
+                .unwrap_or_else(|| self.interner.error());
+            let mut expected = Vec::new();
+            for key in [
+                HirPreludeTraitMethod::AsyncIteratorNext,
+                HirPreludeTraitMethod::AsyncIteratorClose,
+            ] {
+                let function_type = key
+                    .function_type(&mut self.interner, &[element, implementation.target])?
+                    .expect("async iterator methods have element and Self arguments");
+                expected.push(ExpectedTraitMethod {
+                    name: Name::new(key.method_name()).expect("prelude method names are valid"),
+                    key: HirTraitMethodKey::Prelude(key),
+                    declaration_span: None,
+                    has_default: false,
+                    requires_self_send: false,
+                    signature: ExpectedTraitMethodSignature::Concrete {
+                        function_type,
+                        has_receiver: key.has_receiver(),
+                    },
+                });
+            }
+            return Ok(Some(expected));
+        }
         let (method_name, key, mode, outcome) = match name.as_str() {
             "Display" => (
                 "display",
@@ -10038,19 +10096,6 @@ impl<'a> TypeLowerer<'a> {
             "Iterator" => (
                 "next",
                 HirPreludeTraitMethod::IteratorNext,
-                ParameterMode::Mut,
-                self.interner.option(
-                    implementation
-                        .trait_reference
-                        .arguments
-                        .first()
-                        .copied()
-                        .unwrap_or_else(|| self.interner.error()),
-                )?,
-            ),
-            "AsyncIterator" => (
-                "next",
-                HirPreludeTraitMethod::AsyncIteratorNext,
                 ParameterMode::Mut,
                 self.interner.option(
                     implementation
@@ -10076,7 +10121,7 @@ impl<'a> TypeLowerer<'a> {
             _ => return Ok(None),
         };
         let function_type = self.interner.function(FunctionType::new(
-            matches!(key, HirPreludeTraitMethod::AsyncIteratorNext),
+            false,
             false,
             vec![FunctionParameter::new(mode, implementation.target)],
             None,

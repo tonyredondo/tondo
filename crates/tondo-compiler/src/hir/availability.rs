@@ -1958,6 +1958,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     HirIterationProtocol::Intrinsic { cursor } => *cursor,
                     HirIterationProtocol::Trait { .. } => self.expression_type(*source),
                 };
+                let async_cleanup = matches!(
+                    protocol,
+                    HirIterationProtocol::Trait {
+                        async_iteration: true,
+                        ..
+                    }
+                );
                 let owning_intrinsic = matches!(
                     protocol,
                     HirIterationProtocol::Intrinsic { cursor }
@@ -2058,6 +2065,22 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     remove_loan_from_flow(&mut loop_flow, LoanIdentity::Iteration(id));
                 }
                 if let Some(owner) = terminal_owner {
+                    if async_cleanup {
+                        // The protocol reserves a consuming close before
+                        // polling, including return, propagation and loop exits.
+                        for state in loop_flow
+                            .normal
+                            .iter_mut()
+                            .chain(loop_flow.exits.iter_mut())
+                            .chain(loop_flow.breaks.values_mut())
+                            .chain(loop_flow.continues.values_mut())
+                        {
+                            state.terminal_live.remove(&owner);
+                            state.terminal_reserved.remove(&owner);
+                            state.defer_guards.remove(&owner);
+                            state.defer_reserved.remove(&owner);
+                        }
+                    }
                     self.finish_terminal_owner_scope(&mut loop_flow, owner);
                 }
                 source_flow.merge(loop_flow);

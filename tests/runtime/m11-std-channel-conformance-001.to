@@ -21,9 +21,7 @@ fn closed_sender(sender: channel.Sender[Int], value: Int) suspends {
 fn yield_once() suspends {}
 
 fn bounded_fifo_case(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](2)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](2)?
     match sender.trySend(1) {
         ok(_) => ()
         err(_) => assert(false)
@@ -57,9 +55,7 @@ fn bounded_fifo_case(): !channel.ChannelError {
 }
 
 fn rendezvous_case(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](0)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](0)?
     scope {
         let child = spawn rendezvous_sender(sender, 7)
         match receiver.receive() {
@@ -74,9 +70,7 @@ fn rendezvous_case(): !channel.ChannelError {
 }
 
 fn receiver_drain_case(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](2)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](2)?
     for value in [4, 5] {
         match sender.trySend(value) {
             ok(_) => ()
@@ -94,9 +88,7 @@ fn receiver_drain_case(): !channel.ChannelError {
 }
 
 fn closed_error_case(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](1)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](1)?
     let drained = receiver.close()
     assert(drained.length() == 0)
     match sender.trySend(9) {
@@ -111,7 +103,12 @@ fn closed_error_case(): !channel.ChannelError {
 
 fn invalid_capacity_case() {
     match channel.bounded[Int](-1) {
-        ok(_) => assert(false)
+        ok(endpoints) => {
+            let (sender, receiver) = endpoints
+            sender.close()
+            _ = receiver.close()
+            assert(false)
+        }
         err(channel.ChannelError.InvalidCapacity) => ()
         err(channel.ChannelError.ResourceLimit) => assert(false)
     }
@@ -119,9 +116,7 @@ fn invalid_capacity_case() {
 }
 
 fn select_case(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](1)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](1)?
     let arm = select {
         sender.send(6) => 1
         else => 2
@@ -138,9 +133,7 @@ fn select_case(): !channel.ChannelError {
 }
 
 fn closed_wakeup_case(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](0)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](0)?
     scope {
         let child = spawn closed_sender(sender, 42)
         yield_once()

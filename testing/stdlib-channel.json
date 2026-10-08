@@ -178,6 +178,13 @@
     "contract": "testing/stdlib-channel-async-iter.json"
   },
   "testing": "testing/stdlib-channel-test.json",
+  "ownership_verification": {
+    "task": "STD-CHANNEL-OWNERSHIP-001",
+    "status": "implementation-in-progress",
+    "contract": "testing/stdlib-channel-ownership.json",
+    "document": "docs/contracts/stdlib-channel-ownership.md",
+    "native_aot": "not-claimed"
+  },
   "fairness": {
     "waiter_order": "FIFO-registration-per-operation",
     "same_channel_tie": "oldest-compatible-registration",

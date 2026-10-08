@@ -1,0 +1,55 @@
+import std.channel
+
+type Owner = { calls: Int, receiver: channel.Receiver[Int] }
+
+fn Owner.bump(var self, amount: Int) {
+    self.calls += amount
+}
+
+fn cleanup(owner: Owner) {
+    match owner {
+        Owner { calls, receiver } => {
+            assert(calls == 5)
+            _ = receiver.close()
+        }
+    }
+}
+
+fn closeReceiver(receiver: channel.Receiver[Int]) {
+    _ = receiver.close()
+}
+
+fn verifyDeferredOwner(): !channel.ChannelError {
+    let (sender, receiver) = channel.bounded[Int](1)?
+    sender.close()
+    var owner = Owner { calls: 0, receiver }
+    defer cleanup(owner)
+    owner.bump(5)
+    assert(owner.calls == 5)
+}
+
+fn transfer[T: Send + Share](value: ref T) {}
+fn discard[T: Discard](value: T) {}
+
+fn verifyOwnedClosure(): !channel.ChannelError {
+    let (sender, receiver) = channel.bounded[Int](1)?
+    sender.close()
+    let finish = () {
+        _ = receiver.close()
+    }
+    finish()
+}
+
+fn main(): !channel.ChannelError {
+    verifyDeferredOwner()?
+    verifyOwnedClosure()?
+    let (sender, receiver) = channel.bounded[Int](1)?
+    defer closeReceiver(receiver)
+    transfer(ref sender)
+    transfer(ref receiver)
+    let forked = sender.fork()?
+    forked.close()
+    discard(sender)
+    assert(receiver.receive() == none)
+    assert(receiver.close().length() == 0)
+}

@@ -35,6 +35,7 @@ jq -e '
   and .surface.protocol == "AsyncIterator[T]"
   and .surface.bound == "T: Discard"
   and .surface.next_signature == "fn next(mut self): T? suspends"
+  and .surface.close_signature == "fn close(iterator: Self) suspends"
   and .surface.for_form == "for item in receiver"
   and .surface.selection == "async-only-when-no-sync-iterator"
   and .surface.one_element_per_next == true
@@ -51,6 +52,7 @@ jq -e '
   and .semantics.close_after_for == "compiler-owned-terminal-close"
   and .semantics.cancel_pending_next == "unregister-and-discard-on-cleanup"
   and .semantics.generic_collect == "uses-the-same-next-and-cleanup-boundary"
+  and .semantics.collect_ownership == "consumes-and-closes-on-every-outcome"
   and .semantics.no_array_intermediate == true
   and .ownership.receiver_affine == true
   and .ownership.payload_bound == "T: Send"
@@ -63,6 +65,7 @@ jq -e '
   and .runtime.hosted_vm.status == "verified"
   and .runtime.hosted_vm.next_host == "std.channel.Receiver.__asyncIteratorNext"
   and .runtime.hosted_vm.adopt_host == "std.channel.Receiver.__asyncIteratorAdopt"
+  and .runtime.hosted_vm.close_host == "std.channel.Receiver.__asyncIteratorClose"
   and .runtime.hosted_vm.scheduler == "reuses-receive-waiter-and-fifo"
   and .runtime.hosted_vm.cleanup_marker == "endpoint-local-discardable-iterator-view"
   and .runtime.hosted_vm.blocking == "cooperative-poll-and-scheduler-park"
@@ -127,6 +130,7 @@ done < <(jq -r '.implementation.tests[]' "$contract")
 for marker in \
     'ChannelReceiverAsyncIteratorNext' \
     'ChannelReceiverAsyncIteratorAdopt' \
+    'ChannelReceiverAsyncIteratorClose' \
     'channel_iterator_receivers' \
     'lower_async_iterator_collect' \
     'channel_host_async_iterator_next_reuses_receive_waiter_and_cleanup' \

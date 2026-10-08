@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
+use crate::channel::ChannelEndpointKind;
 use crate::literal;
 
 use super::*;
@@ -812,7 +813,21 @@ impl CapabilityAnalysis {
                 let nominal_id = BytecodeNominalId::new(index as u32);
                 let roots = nominal_type_roots(&nominal.shape);
                 for capability in ClosedCapability::ALL {
-                    let next = capability_requirement(program, &roots, capability, &summaries)?;
+                    let next = if let Some(kind) =
+                        ChannelEndpointKind::from_identity(&nominal.identity, nominal.generic_arity)
+                    {
+                        let mut requirement = CapabilityRequirement::default();
+                        match capability {
+                            ClosedCapability::Send | ClosedCapability::Share => {
+                                requirement.parameters.insert((0, ClosedCapability::Send));
+                            }
+                            ClosedCapability::Discard if kind.is_discardable() => {}
+                            _ => requirement.possible = false,
+                        }
+                        requirement
+                    } else {
+                        capability_requirement(program, &roots, capability, &summaries)?
+                    };
                     if summaries[&(nominal_id, capability)] != next {
                         changes.push(((nominal_id, capability), next));
                     }
@@ -1460,7 +1475,20 @@ impl TerminalAnalysis {
             for (index, nominal) in program.nominals.iter().enumerate() {
                 let nominal_id = BytecodeNominalId::new(index as u32);
                 let roots = nominal_type_roots(&nominal.shape);
-                let next = terminal_requirement(program, &roots, &summaries)?;
+                let next = if let Some(kind) =
+                    ChannelEndpointKind::from_identity(&nominal.identity, nominal.generic_arity)
+                {
+                    TerminalRequirement {
+                        floor: if kind.owns_terminal() {
+                            BytecodeTerminalStatus::Present
+                        } else {
+                            BytecodeTerminalStatus::Absent
+                        },
+                        parameters: BTreeSet::new(),
+                    }
+                } else {
+                    terminal_requirement(program, &roots, &summaries)?
+                };
                 if summaries[&nominal_id] != next {
                     changes.push((nominal_id, next));
                 }
@@ -2349,6 +2377,14 @@ impl Verifier<'_> {
                 return Err(BytecodeVerificationError::new(
                     context,
                     "nominal name or identity is empty or duplicated",
+                ));
+            }
+            if ChannelEndpointKind::from_identity(&nominal.identity, 1).is_some()
+                && nominal.generic_arity != 1
+            {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "sealed channel endpoint requires one generic parameter",
                 ));
             }
             match &nominal.shape {
@@ -3986,7 +4022,12 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            BytecodeInstructionKind::RegisterDefer { action, guard, .. } => {
+            BytecodeInstructionKind::RegisterDefer {
+                action,
+                guard,
+                capture,
+                ..
+            } => {
                 if block_kind != BytecodeBlockKind::Normal {
                     return Err(BytecodeVerificationError::new(
                         context,
@@ -4015,7 +4056,34 @@ impl Verifier<'_> {
                     }
                     _ => OperationContext::Deferred,
                 };
-                self.verify_operation(function, action, operation_context, context)?;
+                if *capture == BytecodeDeferCapture::CurrentOwner
+                    && (guard.is_none() || operation_context != OperationContext::DeferredAsync)
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "current-owner cleanup requires a guarded suspendible call",
+                    ));
+                }
+                let mut reserved_action;
+                let checked_action = if *capture == BytecodeDeferCapture::CurrentOwner
+                    && let Some(guard) = guard
+                    && self.capability(guard.ty, ClosedCapability::Copy, context)?
+                {
+                    reserved_action = action.clone();
+                    if let BytecodeOperationKind::Call { arguments, .. } = &mut reserved_action.kind
+                    {
+                        for argument in arguments {
+                            if matches!(&argument.value.kind, BytecodeOperandKind::Move(place) if place == guard)
+                            {
+                                argument.value.kind = BytecodeOperandKind::Copy(guard.clone());
+                            }
+                        }
+                    }
+                    &reserved_action
+                } else {
+                    action
+                };
+                self.verify_operation(function, checked_action, operation_context, context)?;
                 if !self.is_scalar(action.ty, BytecodeScalarType::Unit)
                     || !matches!(
                         action.kind,
@@ -4053,6 +4121,12 @@ impl Verifier<'_> {
                 let operands = operation_operands(action);
                 let mut affine = Vec::new();
                 for operand in &operands {
+                    if *capture == BytecodeDeferCapture::CurrentOwner
+                        && matches!(&operand.kind, BytecodeOperandKind::Move(place) if Some(place) == guard.as_ref())
+                    {
+                        affine.push(*operand);
+                        continue;
+                    }
                     if self.capability(operand.ty, ClosedCapability::Copy, context)? {
                         if matches!(operand.kind, BytecodeOperandKind::Move(_)) {
                             return Err(BytecodeVerificationError::new(
@@ -6520,10 +6594,11 @@ impl Verifier<'_> {
             return Err(operation_error(context));
         }
         let is_async_collect = match callee.kind {
-            BytecodeOperandKind::Function { callable, .. } => self
-                .callable(callable, context)?
-                .name
-                .starts_with("std.async.AsyncIterator.collect"),
+            BytecodeOperandKind::Function { callable, .. } => {
+                let callable = self.callable(callable, context)?;
+                callable.implementation.is_none()
+                    && callable.name.starts_with("std.async.AsyncIterator.collect")
+            }
             _ => false,
         };
         let mut visible_arguments = Vec::with_capacity(arguments.len());
@@ -7806,9 +7881,14 @@ impl Verifier<'_> {
                         BytecodeInstructionKind::RetargetCleanup { from, .. } => state
                             .pending_moves
                             .contains_key(&LocalAccess::from_place(from)),
-                        BytecodeInstructionKind::DisarmCleanup(place) => state
-                            .pending_moves
-                            .contains_key(&LocalAccess::from_place(place)),
+                        BytecodeInstructionKind::DisarmCleanup(place) => {
+                            let place = LocalAccess::from_place(place);
+                            // Aggregate operands include owners without a guard.
+                            // Their no-op disarms may precede an exact pending
+                            // handoff; they cannot satisfy or erase that handoff.
+                            state.pending_moves.contains_key(&place)
+                                || !state.guards.contains_key(&place)
+                        }
                         _ => false,
                     };
                     if !state.pending_moves.is_empty() && !advances_pending {
@@ -11036,6 +11116,7 @@ fn terminator_moves_defer_guard(terminator: &BytecodeTerminatorKind, guard: &Loc
         matches!(
             &operand.kind,
             BytecodeOperandKind::Move(place) if LocalAccess::from_place(place) == *guard
+                || local_access_is_complete_sum_payload(guard, &LocalAccess::from_place(place))
         )
     })
 }
@@ -16657,6 +16738,122 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.context(), "terminal graph");
         assert!(error.message().contains("unknown type"));
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_bytecode_rejects_invalid_sealed_arity() {
+        for name in ["Sender", "Receiver"] {
+            for generic_arity in [0, 2, u32::MAX] {
+                let mut program = terminal_program(false);
+                program.nominals.push(BytecodeNominal {
+                    name: name.into(),
+                    identity: format!("@27:toolchain:std:0.1-bootstrap::channel::type::{name}"),
+                    generic_arity,
+                    shape: BytecodeNominalShape::Newtype {
+                        underlying: BytecodeTypeId::new(0),
+                    },
+                });
+                let error = verify_bytecode(&program).unwrap_err();
+                assert!(
+                    error
+                        .message()
+                        .contains("sealed channel endpoint requires one generic parameter"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_bytecode_rederives_capabilities_and_terminal_status() {
+        let mut program = terminal_program(false);
+        let unit = push_type(
+            &mut program,
+            "Unit",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Unit),
+        );
+        let mut endpoints = Vec::new();
+        for name in ["Sender", "Receiver"] {
+            let identity = format!("@27:toolchain:std:0.1-bootstrap::channel::type::{name}");
+            let nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+            program.nominals.push(BytecodeNominal {
+                name: name.into(),
+                identity: identity.clone(),
+                generic_arity: 1,
+                shape: BytecodeNominalShape::Newtype { underlying: unit },
+            });
+            for (payload, sendable) in [
+                (BytecodeTypeId::new(0), true),
+                (BytecodeTypeId::new(3), false),
+            ] {
+                let endpoint = push_type(
+                    &mut program,
+                    format!("{name}[{}]", payload.index()),
+                    BytecodeTypeKind::Nominal {
+                        nominal: Some(nominal),
+                        identity: identity.clone(),
+                        arguments: vec![payload],
+                    },
+                );
+                endpoints.push((endpoint, name == "Sender", sendable));
+            }
+        }
+        let capabilities = CapabilityAnalysis::new(&program).unwrap();
+        let terminal = TerminalAnalysis::new(&program).unwrap();
+        for (endpoint, sender, sendable) in endpoints {
+            for (capability, expected) in [
+                (ClosedCapability::Copy, false),
+                (ClosedCapability::Discard, sender),
+                (ClosedCapability::Equatable, false),
+                (ClosedCapability::Key, false),
+                (ClosedCapability::Send, sendable),
+                (ClosedCapability::Share, sendable),
+            ] {
+                assert_eq!(
+                    capabilities.status(&program, endpoint, capability).unwrap(),
+                    expected,
+                    "type#{}/{capability:?}",
+                    endpoint.index()
+                );
+            }
+            assert_eq!(
+                terminal.status(&program, endpoint).unwrap(),
+                if sender {
+                    BytecodeTerminalStatus::Absent
+                } else {
+                    BytecodeTerminalStatus::Present
+                }
+            );
+            let option = push_type(
+                &mut program,
+                "Endpoint?",
+                BytecodeTypeKind::Option(endpoint),
+            );
+            let array = push_type(
+                &mut program,
+                "Array[Endpoint]",
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Array,
+                    arguments: vec![endpoint],
+                },
+            );
+            assert_eq!(
+                derive_copy_capabilities(&program, &[option, array]).unwrap(),
+                [false, false]
+            );
+            assert_eq!(
+                derive_discard_capabilities(&program, &[option, array]).unwrap(),
+                [sender, sender]
+            );
+            assert_eq!(
+                derive_terminal_statuses(&program, &[option, array]).unwrap(),
+                [if sender {
+                    BytecodeTerminalStatus::Absent
+                } else {
+                    BytecodeTerminalStatus::Present
+                }; 2]
+            );
+        }
     }
 
     #[test]

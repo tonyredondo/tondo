@@ -304,7 +304,9 @@ fn specialize_defer_guards(program: &mut bc::BytecodeProgram) -> Result<(), Byte
                     .iter()
                     .filter_map(|instruction| match &instruction.kind {
                         bc::BytecodeInstructionKind::RegisterDefer {
-                            guard: Some(guard), ..
+                            guard: Some(guard),
+                            capture: bc::BytecodeDeferCapture::Contextual,
+                            ..
                         } => Some(guard.ty),
                         _ => None,
                     })
@@ -329,7 +331,9 @@ fn specialize_defer_guards(program: &mut bc::BytecodeProgram) -> Result<(), Byte
             .flat_map(|block| &block.instructions)
             .filter_map(|instruction| match &instruction.kind {
                 bc::BytecodeInstructionKind::RegisterDefer {
-                    guard: Some(guard), ..
+                    guard: Some(guard),
+                    capture: bc::BytecodeDeferCapture::Contextual,
+                    ..
                 } if closed_copy_types.contains(&guard.ty) => Some(guard.ty),
                 _ => None,
             })
@@ -342,6 +346,7 @@ fn specialize_defer_guards(program: &mut bc::BytecodeProgram) -> Result<(), Byte
                 let bc::BytecodeInstructionKind::RegisterDefer {
                     action,
                     guard: Some(guard),
+                    capture: bc::BytecodeDeferCapture::Contextual,
                     ..
                 } = &mut instruction.kind
                 else {
@@ -1039,6 +1044,44 @@ fn resolve_prelude_trait_dispatch(
         query.arguments().to_vec(),
         concrete_trait_target(hir, interner, query.target())?,
     );
+    if matches!(
+        reference.method,
+        HirPreludeTraitMethod::AsyncIteratorNext | HirPreludeTraitMethod::AsyncIteratorClose
+    ) && let TypeKind::Nominal {
+        identity,
+        arguments,
+    } = interner
+        .kind(query.target())
+        .map_err(|error| monomorphization_type_error(error, None, "sealed channel iterator Self"))?
+        && arguments.len() == 1
+        && tondo_vm::channel::ChannelEndpointKind::from_identity(&identity.canonical_name(), 1)
+            == Some(tondo_vm::channel::ChannelEndpointKind::Receiver)
+        && arguments.as_slice() == query.arguments()
+    {
+        // The sealed receiver witness has no user implementation declaration.
+        // Select its host operation after substituting the concrete Self.
+        let target = CallableInstance {
+            callable: HirCallableId::Host(
+                if reference.method == HirPreludeTraitMethod::AsyncIteratorNext {
+                    HirBootstrapHostFunction::ChannelReceiverAsyncIteratorNext
+                } else {
+                    HirBootstrapHostFunction::ChannelReceiverAsyncIteratorClose
+                },
+            ),
+            arguments: arguments.clone(),
+        };
+        let span = hir
+            .callable(target.callable)
+            .ok_or_else(|| {
+                BytecodeError::construction(
+                    "trait dispatch",
+                    "sealed channel next is not registered",
+                )
+            })?
+            .span();
+        verify_prelude_dispatch_signature(hir, interner, reference, &target, span)?;
+        return Ok(target);
+    }
     let selection = select_implementation(interner, hir.implementations(), &query)
         .map_err(prelude_trait_dispatch_selection_error)?
         .ok_or_else(|| {
@@ -3265,9 +3308,14 @@ fn lower_statement(
             scope,
             action,
             guard,
+            capture,
         } => bc::BytecodeInstructionKind::RegisterDefer {
             scope: bc::BytecodeScopeId::new(scope.index()),
             action: lower_operation(action, true, context, type_map)?,
+            capture: match capture {
+                crate::mir::MirDeferCapture::Contextual => bc::BytecodeDeferCapture::Contextual,
+                crate::mir::MirDeferCapture::CurrentOwner => bc::BytecodeDeferCapture::CurrentOwner,
+            },
             guard: guard
                 .as_ref()
                 .map(|place| lower_place(place, context, type_map))
@@ -4110,11 +4158,8 @@ fn lower_operation(
     })
 }
 
-/// `collect` is lowered as an ordinary async call for the direct-await path.
-/// A spawned collect needs one extra, compiler-owned dispatch operand so the VM
-/// can invoke the concrete `AsyncIterator.next` implementation while retaining
-/// the original cursor.  Keeping it on the bytecode call preserves the normal
-/// call/Join protocol and avoids a second public runtime API.
+/// Legacy bodyless collect calls retain their private next dispatch. Public
+/// compiler calls use the generated ordinary MIR body and its guarded cleanup.
 fn lower_async_iterator_next_argument(
     operation: &MirOperation,
     context: &FunctionLoweringContext<'_>,
@@ -4133,6 +4178,20 @@ fn lower_async_iterator_next_argument(
     else {
         return Ok(None);
     };
+    let collect_instance = CallableInstance {
+        callable: HirCallableId::Host(HirBootstrapHostFunction::AsyncIteratorCollect),
+        arguments: generic_arguments
+            .iter()
+            .map(|argument| mapped_type(*argument, type_map))
+            .collect::<Result<_, _>>()?,
+    };
+    let collect_id = map_named_callable_instance(&collect_instance, context.callable_ids)?;
+    if context.callables[collect_id.index() as usize]
+        .implementation
+        .is_some()
+    {
+        return Ok(None);
+    }
     let element = match generic_arguments.first().copied() {
         Some(element) => element,
         None => {
@@ -6044,6 +6103,51 @@ fn optional(): reflect.TypeInfo { reflect.typeInfo[Int?]() }
                 )
             })
         }));
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_bytecode_copy_cursor_close_requires_its_current_owner_guard() {
+        let valid = lowered(
+            "type Cursor = { value: Int }\n\
+            impl AsyncIterator[Int] for Cursor {\n\
+                fn next(mut self): Int? suspends { none }\n\
+                fn close(iterator: Cursor) suspends {\n _ = iterator\n }\n\
+            }\n\
+            fn run(iterator: Cursor) {\n for value in iterator {\n _ = value\n }\n }\n",
+        );
+        let run = function_id(&valid, "run");
+        for mutation in ["snapshot", "missing-guard", "wrong-owner"] {
+            let mut invalid = valid.clone();
+            let function = &mut invalid.functions[run.index() as usize];
+            let original_owner = function.parameters[0];
+            let instruction = function
+                .blocks
+                .iter_mut()
+                .flat_map(|block| &mut block.instructions)
+                .find(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::RegisterDefer {
+                            capture: bc::BytecodeDeferCapture::CurrentOwner,
+                            ..
+                        }
+                    )
+                })
+                .expect("async for reserves current-owner close");
+            let bc::BytecodeInstructionKind::RegisterDefer { capture, guard, .. } =
+                &mut instruction.kind
+            else {
+                unreachable!()
+            };
+            match mutation {
+                "snapshot" => *capture = bc::BytecodeDeferCapture::Contextual,
+                "missing-guard" => *guard = None,
+                "wrong-owner" => guard.as_mut().unwrap().slot = original_owner,
+                _ => unreachable!(),
+            }
+            let error = bc::verify_bytecode(&invalid).unwrap_err();
+            assert!(!error.message().is_empty(), "{mutation}: {error}");
+        }
     }
 
     fn execute_outcome(source: &str, name: &str) -> VmOutcome {
@@ -12787,6 +12891,81 @@ fn execute(): String {
             ["second", "first"]
         );
         assert_eq!(host.output, "secondfirst");
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_bytecode_requires_exact_cleanup_handoff() {
+        let program = lowered(
+            "import std.channel\n\
+            type Endpoints = { sender: channel.Sender[Int], receiver: channel.Receiver[Int] }\n\
+            fn bundle(sender: channel.Sender[Int], receiver: channel.Receiver[Int]): Endpoints {\n\
+                Endpoints { sender, receiver }\n\
+            }\n",
+        );
+        bc::verify_bytecode(&program).unwrap();
+        let id = function_id(&program, "bundle");
+        for mutation in ["missing", "wrong-owner", "wrong-transition"] {
+            let mut invalid = program.clone();
+            let function = &mut invalid.functions[id.index() as usize];
+            let receiver_ty = function.slots[function.parameters[1].index() as usize].ty;
+            let sender_ty = function.slots[function.parameters[0].index() as usize].ty;
+            let block = function
+                .blocks
+                .iter_mut()
+                .find(|block| {
+                    block.instructions.iter().any(|instruction| {
+                    matches!(&instruction.kind, bc::BytecodeInstructionKind::DisarmCleanup(place)
+                        if place.ty == receiver_ty)
+                })
+                })
+                .expect("the receiver handoff has a disarm");
+            let index = block
+                .instructions
+                .iter()
+                .position(|instruction| {
+                    matches!(&instruction.kind, bc::BytecodeInstructionKind::DisarmCleanup(place)
+                    if place.ty == receiver_ty)
+                })
+                .unwrap();
+            let bc::BytecodeInstructionKind::DisarmCleanup(owner) = &block.instructions[index].kind
+            else {
+                unreachable!()
+            };
+            let owner = owner.clone();
+            let sender = block.instructions[..index]
+                .iter()
+                .rev()
+                .find_map(|instruction| match &instruction.kind {
+                    bc::BytecodeInstructionKind::DisarmCleanup(place) if place.ty == sender_ty => {
+                        Some(place.clone())
+                    }
+                    _ => None,
+                })
+                .expect("the unguarded sender disarm precedes the receiver transition");
+            match mutation {
+                "missing" => {
+                    block.instructions.remove(index);
+                }
+                "wrong-owner" => {
+                    block.instructions[index].kind =
+                        bc::BytecodeInstructionKind::DisarmCleanup(sender);
+                }
+                "wrong-transition" => {
+                    block.instructions[index].kind = bc::BytecodeInstructionKind::RetargetCleanup {
+                        from: owner.clone(),
+                        to: owner,
+                    };
+                }
+                _ => unreachable!(),
+            }
+            let error = bc::verify_bytecode(&invalid).unwrap_err();
+            let expected = if mutation == "wrong-transition" {
+                "terminal store result has no immediate fallback registration"
+            } else {
+                "guarded move"
+            };
+            assert!(error.message().contains(expected), "{mutation}: {error}");
+        }
     }
 
     #[test]

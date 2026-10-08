@@ -1,0 +1,126 @@
+import std.channel
+
+enum ProbeError { Closed, Write }
+trait ProbeSink {
+    fn write(var self, value: Int): Unit ! ProbeError suspends
+    fn count(self): Int
+    fn close(sink: Self): Unit suspends
+}
+type Counter = { calls: Int, owner: channel.Receiver[Int] }
+impl ProbeSink for Counter {
+    fn count(self): Int { self.calls }
+    fn write(var self, value: Int): Unit ! ProbeError suspends {
+        self.calls += value
+        ok(())
+    }
+    fn close(sink: Counter): Unit suspends {
+        match sink {
+            Counter { calls: _, owner } => {
+                _ = owner.close()
+            }
+        }
+    }
+}
+type Holder[S: ProbeSink + Share] = { sender: channel.Sender[S], receiver: channel.Receiver[S] }
+type Lease[S: ProbeSink + Share] = { sender: channel.Sender[S], sink: S }
+
+fn recover[S: ProbeSink + Share](error: channel.TrySendError[S]): S {
+    match error {
+        channel.TrySendError.Full(value) => value
+        channel.TrySendError.Closed(value) => value
+        channel.TrySendError.ResourceLimit(value) => value
+    }
+}
+
+fn create[S: ProbeSink + Share](sink: S): Holder[S] ! ProbeError {
+    let (sender, receiver) = match channel.bounded[S](1) {
+        ok(endpoints) => endpoints
+        err(_) => {
+            ProbeSink.close[S](sink)
+            return err(ProbeError.Closed)
+        }
+    }
+    match sender.trySend(sink) {
+        ok(_) => {}
+        err(error) => {
+            let value = recover(error)
+            ProbeSink.close[S](value)
+            sender.close()
+            for drained in receiver.close() { ProbeSink.close[S](drained) }
+            return err(ProbeError.Closed)
+        }
+    }
+    ok(Holder[S] { sender, receiver })
+}
+
+fn emit[S: ProbeSink + Share](holder: ref Holder[S], amount: Int): Unit ! ProbeError {
+    let returnSender = match holder.sender.fork() {
+        ok(endpoint) => endpoint
+        err(_) => return err(ProbeError.Closed)
+    }
+    var sink = match holder.receiver.receive() {
+        some(value) => value
+        none => {
+            returnSender.close()
+            return err(ProbeError.Closed)
+        }
+    }
+    var lease = Lease[S] { sender: returnSender, sink }
+    defer restore(lease)
+    let before = lease.sink.count()
+    let outcome = lease.sink.write(amount)
+    assert(lease.sink.count() == before + amount)
+    outcome
+}
+
+fn restore[S: ProbeSink + Share](lease: Lease[S]): Unit {
+    match lease {
+        Lease { sender, sink } => {
+            match sender.trySend(sink) {
+                ok(_) => {}
+                err(error) => {
+                    let value = recover(error)
+                    ProbeSink.close[S](value)
+                }
+            }
+            sender.close()
+        }
+    }
+}
+
+fn close[S: ProbeSink + Share](holder: Holder[S]): Unit {
+    match holder {
+        Holder { sender, receiver } => {
+            sender.close()
+            for value in receiver.close() { ProbeSink.close[S](value) }
+        }
+    }
+}
+
+fn main(): !ProbeError {
+    let constructor: fn(Counter): Holder[Counter] ! ProbeError suspends = create[Counter]
+    _ = constructor
+    let (ownerSender, ownerReceiver) = match channel.bounded[Int](1) {
+        ok(endpoints) => endpoints
+        err(_) => return err(ProbeError.Closed)
+    }
+    ownerSender.close()
+    let holder = create(Counter { calls: 0, owner: ownerReceiver })?
+    defer close(holder)
+    scope {
+        let first = spawn emit(ref holder, 2)
+        let second = spawn emit(ref holder, 3)
+        await first?
+        await second?
+    }
+    var counter = match holder.receiver.receive() {
+        some(value) => value
+        none => {
+            close(holder)
+            return err(ProbeError.Closed)
+        }
+    }
+    assert(counter.calls == 5, "calls={counter.calls}")
+    ProbeSink.close[Counter](counter)
+    close(holder)
+}

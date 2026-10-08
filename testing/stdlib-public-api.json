@@ -497,12 +497,12 @@
     {
       "id": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "section": "Superficie nominal",
+      "section": "*",
       "exact_surface_complete": true,
       "exact_signatures": [],
       "case": {
-        "path": "tests/runtime/m7-suspension-inferred.to",
-        "kind": "runtime",
+        "path": "crates/tondo-compiler/src/driver.rs",
+        "kind": "runner-source",
         "canonical_calls": [
           {
             "from": "oneshot",
@@ -523,6 +523,18 @@
           {
             "from": "Completer.cancel",
             "to": "cancel"
+          },
+          {
+            "from": "AsyncIterator.next",
+            "to": "cursor.next()"
+          },
+          {
+            "from": "AsyncIterator.close",
+            "to": "AsyncIterator[Int].close(cursor)"
+          },
+          {
+            "from": "AsyncIterator.collect",
+            "to": "cursor.collect(limit: 1)"
           }
         ]
       },
@@ -533,9 +545,10 @@
         "crates/tondo-compiler/src/hir/lower.rs"
       ],
       "runtime": {
-        "kind": "vm",
+        "kind": "vm-inline",
         "paths": [
-          "crates/tondo-vm/src/runtime/execute.rs"
+          "crates/tondo-vm/src/runtime/execute.rs",
+          "crates/tondo-compiler/src/mir/lower.rs"
         ],
         "reason": null,
         "symbols": {
@@ -553,11 +566,20 @@
           ],
           "std.async.Completer.cancel": [
             "std.async.Completer.cancel"
+          ],
+          "std.async.AsyncIterator.next": [
+            "async_iterator_next_signature"
+          ],
+          "std.async.AsyncIterator.close": [
+            "register_async_iterator_close"
+          ],
+          "std.async.AsyncIterator.collect": [
+            "lower_async_iterator_collect_values"
           ]
         }
       },
-      "signature_count": 5,
-      "verified_count": 5,
+      "signature_count": 8,
+      "verified_count": 8,
       "gap_count": 0,
       "owner_missing": [],
       "status": "verified"
@@ -998,9 +1020,10 @@
           ]
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
           ],
           "reason": null,
           "symbol": "std.async.oneshot",
@@ -1009,8 +1032,8 @@
           ]
         },
         "public_case": {
-          "path": "tests/runtime/m7-suspension-inferred.to",
-          "kind": "runtime",
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
           "call": "oneshot",
           "bootstrap_alias": false
         }
@@ -1046,9 +1069,10 @@
           ]
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
           ],
           "reason": null,
           "symbol": "std.async.Waiter.wait",
@@ -1057,8 +1081,8 @@
           ]
         },
         "public_case": {
-          "path": "tests/runtime/m7-suspension-inferred.to",
-          "kind": "runtime",
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
           "call": "wait",
           "bootstrap_alias": false
         }
@@ -1094,9 +1118,10 @@
           ]
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
           ],
           "reason": null,
           "symbol": "std.async.Completer.complete",
@@ -1105,8 +1130,8 @@
           ]
         },
         "public_case": {
-          "path": "tests/runtime/m7-suspension-inferred.to",
-          "kind": "runtime",
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
           "call": "complete",
           "bootstrap_alias": false
         }
@@ -1142,9 +1167,10 @@
           ]
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
           ],
           "reason": null,
           "symbol": "std.async.Completer.fail",
@@ -1153,8 +1179,8 @@
           ]
         },
         "public_case": {
-          "path": "tests/runtime/m7-suspension-inferred.to",
-          "kind": "runtime",
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
           "call": "fail",
           "bootstrap_alias": false
         }
@@ -1190,9 +1216,10 @@
           ]
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
-            "crates/tondo-vm/src/runtime/execute.rs"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
           ],
           "reason": null,
           "symbol": "std.async.Completer.cancel",
@@ -1201,9 +1228,158 @@
           ]
         },
         "public_case": {
-          "path": "tests/runtime/m7-suspension-inferred.to",
-          "kind": "runtime",
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
           "call": "cancel",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
+      "id": "std.async:49",
+      "owner": "std.async",
+      "contract": "docs/contracts/stdlib-async.md",
+      "line": 49,
+      "signature": "fn next(mut self): T? suspends",
+      "symbol": "std.async.AsyncIterator.next",
+      "operation": "next",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "next",
+          "symbols": [
+            "AsyncIteratorNext"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "next",
+          "symbols": [
+            "AsyncIteratorNext"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
+          ],
+          "reason": null,
+          "symbol": "std.async.AsyncIterator.next",
+          "symbols": [
+            "async_iterator_next_signature"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
+          "call": "cursor.next()",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "AsyncIterator[T]"
+    },
+    {
+      "id": "std.async:50",
+      "owner": "std.async",
+      "contract": "docs/contracts/stdlib-async.md",
+      "line": 50,
+      "signature": "fn close(iterator: Self) suspends",
+      "symbol": "std.async.AsyncIterator.close",
+      "operation": "close",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "close",
+          "symbols": [
+            "AsyncIteratorClose"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "close",
+          "symbols": [
+            "AsyncIteratorClose"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
+          ],
+          "reason": null,
+          "symbol": "std.async.AsyncIterator.close",
+          "symbols": [
+            "register_async_iterator_close"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
+          "call": "AsyncIterator[Int].close(cursor)",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified",
+      "declaring_trait": "AsyncIterator[T]"
+    },
+    {
+      "id": "std.async:53",
+      "owner": "std.async",
+      "contract": "docs/contracts/stdlib-async.md",
+      "line": 53,
+      "signature": "pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends",
+      "symbol": "std.async.AsyncIterator.collect",
+      "operation": "collect",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "collect",
+          "symbols": [
+            "AsyncIteratorCollect"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "collect",
+          "symbols": [
+            "AsyncIteratorCollect"
+          ]
+        },
+        "host_vm": {
+          "kind": "vm-inline",
+          "paths": [
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-compiler/src/mir/lower.rs"
+          ],
+          "reason": null,
+          "symbol": "std.async.AsyncIterator.collect",
+          "symbols": [
+            "lower_async_iterator_collect_values"
+          ]
+        },
+        "public_case": {
+          "path": "crates/tondo-compiler/src/driver.rs",
+          "kind": "runner-source",
+          "call": "cursor.collect(limit: 1)",
           "bootstrap_alias": false
         }
       },
@@ -15588,8 +15764,8 @@
   ],
   "summary": {
     "owners": 21,
-    "signatures": 298,
-    "verified": 298,
+    "signatures": 301,
+    "verified": 301,
     "signature_gaps": 0,
     "owner_gaps": 0,
     "gaps": 0

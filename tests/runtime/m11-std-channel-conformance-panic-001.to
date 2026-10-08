@@ -10,9 +10,7 @@ fn cleanup_receiver(receiver: channel.Receiver[Int]) {
 }
 
 fn main(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](1)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](1)?
     match sender.trySend(9) {
         ok(_) => ()
         err(_) => assert(false)

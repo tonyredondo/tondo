@@ -19,8 +19,8 @@ use crate::types::{
 
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind,
-    MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirFunctionId,
-    MirLoan, MirLoanId, MirLoanKind, MirLocal, MirLocalId, MirLocalKind, MirOperand,
+    MirBootstrapHostFunction, MirCallArgument, MirConstant, MirDeferCapture, MirError, MirFunction,
+    MirFunctionId, MirLoan, MirLoanId, MirLoanKind, MirLocal, MirLocalId, MirLocalKind, MirOperand,
     MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection,
     MirProjectionKind, MirRvalue, MirRvalueKind, MirSelectArm, MirSelectRegistration,
     MirSliceBounds, MirStatement, MirStatementKind, MirTag, MirTerminator, MirTerminatorKind,
@@ -71,7 +71,12 @@ pub fn lower_to_mir(
         .callables()
         .find(|callable| hir.body(callable.id()).is_some())
         .map(HirCallableSignature::span)
-        .or_else(|| hir.closures().next().map(HirClosure::span));
+        .or_else(|| hir.closures().next().map(HirClosure::span))
+        .or_else(|| {
+            hir.async_iterator_collect_body_source()
+                .and_then(|id| hir.expression(id))
+                .map(HirExpression::span)
+        });
     let capability_analysis = first_body_span
         .map(|span| {
             CapabilityAnalysis::new(hir, resolved).map_err(|error| MirError::Construction {
@@ -89,16 +94,21 @@ pub fn lower_to_mir(
         })
         .transpose()?;
     for callable in hir.callables() {
-        let Some(body) = hir.body(callable.id()) else {
+        let body = hir.body(callable.id());
+        let collect_source = (callable.id()
+            == HirCallableId::Host(HirBootstrapHostFunction::AsyncIteratorCollect))
+        .then(|| hir.async_iterator_collect_body_source())
+        .flatten();
+        if body.is_none() && collect_source.is_none() {
             continue;
-        };
+        }
         if functions.len() >= limits.max_functions as usize {
             return Err(MirError::NodeLimit {
                 span: callable.span(),
                 resource: "function",
             });
         }
-        let function = FunctionBuilder::new(
+        let builder = FunctionBuilder::new(
             resolved,
             hir,
             capability_analysis
@@ -109,8 +119,13 @@ pub fn lower_to_mir(
                 .expect("a callable body requires terminal analysis"),
             callable,
             limits,
-        )?
-        .lower(body.root())?;
+        )?;
+        let function = if let Some(body) = body {
+            builder.lower(body.root())?
+        } else {
+            builder
+                .lower_collect_body(collect_source.expect("compiler collect source was checked"))?
+        };
         functions.insert(MirFunctionId::Callable(callable.id()), function);
     }
     for closure in hir.closures() {
@@ -513,6 +528,42 @@ impl<'a> FunctionBuilder<'a> {
             let span = self.expression(root)?.span();
             self.terminate_return(end, span)?;
         }
+        self.finish()
+    }
+
+    fn lower_collect_body(mut self, source: HirExpressionId) -> Result<MirFunction, MirError> {
+        let span = self.span;
+        let scope = self
+            .hir
+            .lowering_function_scope()
+            .ok_or(MirError::NodeLimit {
+                span,
+                resource: "collect function scope",
+            })?;
+        self.lexical_scopes.push(scope);
+        self.record_storage_boundary(self.entry, span, StorageBoundaryKind::Enter(scope));
+        let iterator = self.parameters[0];
+        let limit = self.parameters[1];
+        // The extension's consuming receiver also needs the ordinary entry fallback.
+        self.register_fallback(self.entry, span, self.local_place(iterator))?;
+        let source_value = self.transfer_local(iterator, span)?;
+        let limit_value = self.copy_local(limit);
+        let destination = self.local_place(self.return_local);
+        if let Some(end) = self.lower_async_iterator_collect_values(
+            source_value,
+            limit_value,
+            source,
+            self.outcome,
+            span,
+            destination,
+            self.entry,
+        )? {
+            self.terminate_return(end, span)?;
+        }
+        self.finish()
+    }
+
+    fn finish(mut self) -> Result<MirFunction, MirError> {
         // Cancellation and phase limits can interrupt a pure infinite loop.
         // Such a body has no checked operation to create this edge lazily,
         // but its registered cleanup still needs a structural unwind entry.
@@ -1983,6 +2034,7 @@ impl<'a> FunctionBuilder<'a> {
                 scope,
                 action: operation,
                 guard,
+                capture: MirDeferCapture::Contextual,
             },
         )?;
         Ok(Some(current))
@@ -2699,6 +2751,7 @@ impl<'a> FunctionBuilder<'a> {
         body: HirExpressionId,
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
+        let source_expression = source;
         let Some((block, source)) = self.lower_value(source, block)? else {
             return Ok(None);
         };
@@ -2724,6 +2777,14 @@ impl<'a> FunctionBuilder<'a> {
             && self
                 .channel_receiver_element_type(source_type, span)?
                 .is_some_and(|actual| actual == element);
+        let cleanup_scope = async_iteration
+            .then(|| {
+                self.register_async_iterator_close(block, state, element, source_expression, span)
+            })
+            .transpose()?;
+        if let Some(scope) = cleanup_scope {
+            self.defer_scopes.push(scope);
+        }
         let channel_next_signature = channel_receiver
             .then(|| {
                 self.specialized_host_function_type(
@@ -2829,12 +2890,74 @@ impl<'a> FunctionBuilder<'a> {
         )?;
         let result =
             self.finish_iterating_for(span, id, pattern, item, body, header, body_start, exit)?;
-        if channel_receiver {
-            let close = self.channel_receiver_close_operation(state, element, span)?;
-            let drain = self.allocate_temporary(close.ty, span, exit)?;
-            return self.invoke(exit, span, Some(self.local_place(drain)), close);
+        if let Some(scope) = cleanup_scope {
+            debug_assert_eq!(self.defer_scopes.pop(), Some(scope));
+            return self
+                .drain_scopes_to_normal(exit, span, Vec::new(), vec![scope])
+                .map(Some);
         }
         Ok(result)
+    }
+
+    fn register_async_iterator_close(
+        &mut self,
+        block: MirBlockId,
+        state: MirLocalId,
+        element: TypeId,
+        source: HirExpressionId,
+        span: Span,
+    ) -> Result<HirScopeId, MirError> {
+        let scope = self
+            .hir
+            .lowering_cleanup_scope(source)
+            .ok_or(MirError::NodeLimit {
+                span,
+                resource: "iterator cleanup scope",
+            })?;
+        let source_type = self.local_place(state).ty;
+        let arguments = vec![element, source_type];
+        let close = HirPreludeTraitMethod::AsyncIteratorClose;
+        let mut interner = self.hir.interner().clone();
+        let signature = close
+            .function_type(&mut interner, &arguments)
+            .map_err(|error| MirError::Construction {
+                span,
+                message: error.to_string(),
+            })?
+            .expect("async iterator close has element and Self arguments");
+        self.push_statement(
+            block,
+            span,
+            MirStatementKind::RegisterDefer {
+                scope,
+                guard: Some(self.local_place(state)),
+                capture: MirDeferCapture::CurrentOwner,
+                action: MirOperation {
+                    ty: self.hir.interner().scalar(ScalarType::Unit),
+                    kind: MirOperationKind::Call {
+                        callee: MirOperand {
+                            ty: signature,
+                            kind: MirOperandKind::PreludeTraitFunction {
+                                method: close,
+                                arguments,
+                            },
+                        },
+                        arguments: vec![MirCallArgument {
+                            mode: ParameterMode::Value,
+                            target: crate::hir::HirCallArgumentTarget::Fixed(0),
+                            value: MirOperand {
+                                ty: source_type,
+                                kind: MirOperandKind::Move(self.local_place(state)),
+                            },
+                        }],
+                        signature,
+                        protocol: HirCallProtocol::Call,
+                        unsafe_call: false,
+                    },
+                },
+            },
+        )?;
+        Ok(scope)
     }
 
     fn channel_receiver_element_type(
@@ -2864,41 +2987,6 @@ impl<'a> FunctionBuilder<'a> {
             return Ok(None);
         }
         Ok(arguments.first().copied())
-    }
-
-    fn channel_receiver_close_operation(
-        &mut self,
-        state: MirLocalId,
-        element: TypeId,
-        span: Span,
-    ) -> Result<MirOperation, MirError> {
-        let callable = HirCallableId::Host(HirBootstrapHostFunction::ChannelReceiverClose);
-        let signature = self.specialized_host_function_type(
-            HirBootstrapHostFunction::ChannelReceiverClose,
-            &[element],
-            span,
-        )?;
-        let outcome = self.function_outcome(signature, span)?;
-        Ok(MirOperation {
-            ty: outcome,
-            kind: MirOperationKind::Call {
-                callee: MirOperand {
-                    ty: signature,
-                    kind: MirOperandKind::Function {
-                        callable,
-                        arguments: vec![element],
-                    },
-                },
-                arguments: vec![MirCallArgument {
-                    mode: ParameterMode::Value,
-                    target: crate::hir::HirCallArgumentTarget::Receiver,
-                    value: self.transfer_local(state, span)?,
-                }],
-                signature,
-                protocol: HirCallProtocol::Call,
-                unsafe_call: false,
-            },
-        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3612,7 +3700,9 @@ impl<'a> FunctionBuilder<'a> {
             };
             current = next;
             match argument.target() {
-                crate::hir::HirCallArgumentTarget::Receiver => source = Some(value),
+                crate::hir::HirCallArgumentTarget::Receiver => {
+                    source = Some((value, argument.value()))
+                }
                 crate::hir::HirCallArgumentTarget::Fixed(_) => limit = Some(value),
                 _ => {
                     return Err(MirError::Construction {
@@ -3622,7 +3712,7 @@ impl<'a> FunctionBuilder<'a> {
                 }
             }
         }
-        let source = source.ok_or_else(|| MirError::Construction {
+        let (source, source_expression) = source.ok_or_else(|| MirError::Construction {
             span,
             message: "AsyncIterator.collect has no source receiver".into(),
         })?;
@@ -3630,6 +3720,28 @@ impl<'a> FunctionBuilder<'a> {
             span,
             message: "AsyncIterator.collect has no limit".into(),
         })?;
+        self.lower_async_iterator_collect_values(
+            source,
+            limit,
+            source_expression,
+            outcome,
+            span,
+            destination,
+            current,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_async_iterator_collect_values(
+        &mut self,
+        source: MirOperand,
+        limit: MirOperand,
+        source_expression: HirExpressionId,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        mut current: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
         let TypeKind::Result {
             success: array,
             error,
@@ -3676,6 +3788,9 @@ impl<'a> FunctionBuilder<'a> {
         let remaining = self.allocate_temporary(remaining_ty, span, current)?;
         self.assign_operand(current, span, self.local_place(state), source)?;
         self.assign_operand(current, span, self.local_place(remaining), limit)?;
+
+        let cleanup_scope =
+            self.register_async_iterator_close(current, state, element, source_expression, span)?;
 
         if channel_receiver {
             // Generic `AsyncIterator.collect` may stop before the first
@@ -4088,11 +4203,8 @@ impl<'a> FunctionBuilder<'a> {
             },
         )?;
         self.terminate(limit_done, span, MirTerminatorKind::Goto { target: join })?;
-        self.push_statement(
-            exhausted,
-            span,
-            MirStatementKind::DisarmCleanup(self.local_place(next_result)),
-        )?;
+        // `none` transfers no payload. Keep its harmless structural fallback
+        // until frame cleanup instead of inventing a consuming handoff.
         self.assign(
             exhausted,
             span,
@@ -4106,7 +4218,8 @@ impl<'a> FunctionBuilder<'a> {
             },
         )?;
         self.terminate(exhausted, span, MirTerminatorKind::Goto { target: join })?;
-        Ok(Some(join))
+        self.drain_scopes_to_normal(join, span, Vec::new(), vec![cleanup_scope])
+            .map(Some)
     }
 
     fn function_outcome(&self, signature: TypeId, span: Span) -> Result<TypeId, MirError> {
@@ -7038,7 +7151,8 @@ impl<'a> FunctionBuilder<'a> {
         let destination = if target.is_some() { destination } else { None };
         let fallback_destination = destination.clone();
         for place in operation_move_places(&operation) {
-            self.push_statement(block, span, MirStatementKind::DisarmCleanup(place))?;
+            let owner = self.complete_sum_payload_owner(place);
+            self.push_statement(block, span, MirStatementKind::DisarmCleanup(owner))?;
         }
         let unwind = self.current_unwind(span)?;
         self.terminate(

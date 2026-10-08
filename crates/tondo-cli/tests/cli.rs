@@ -4924,6 +4924,9 @@ fn phase_async_collect_memory_cannot_be_caught_as_a_collection_error() {
         let source = format!(
             r#"type Countdown = {{ remaining: Int }}
 impl AsyncIterator[Int] for Countdown {{
+    fn close(iterator: Countdown) suspends {{
+        _ = iterator
+    }}
     fn next(mut self): Int? suspends {{
         if self.remaining == 0 {{
             return none
@@ -6131,6 +6134,8 @@ fn phase_concurrent_collection_growth_remains_a_nonretryable_runner_limit() {
     }
 }
 
+const CHANNEL_RECEIVER_CLEANUP_SOURCE: &str = "fn closeChannelReceiver[T: Send + Discard](receiver: channel.Receiver[T]) {\n _ = receiver.close()\n }\n";
+
 #[test]
 fn buffered_channel_results_preserve_generic_payloads_and_terminal_states() {
     for method in ["receive", "tryReceive"] {
@@ -6160,10 +6165,10 @@ fn buffered_channel_results_preserve_generic_payloads_and_terminal_states() {
                 ""
             };
             let source = format!(
-                "import std.channel\n type Envelope[T] = {{ values: Array[T] }}\n\
+                "import std.channel\n{CHANNEL_RECEIVER_CLEANUP_SOURCE}type Envelope[T] = {{ values: Array[T] }}\n\
                  test buffered {{\n scope {{\n\
                  var (sender, receiver) = channel.bounded[Envelope[String]](2)?\n\
-                 defer {{\n _ = receiver.close()\n }}\n {initial_empty}\
+                 defer closeChannelReceiver(receiver)\n {initial_empty}\
                  for text in [\"first\", \"é🦀\"] {{\n\
                    let item: Envelope[String] = Envelope {{ values: [text, \"tail\"] }}\n\
                    _ = sender.send(item)?\n }}\n\
@@ -6233,10 +6238,10 @@ fn rendezvous_results_preserve_generic_payloads_and_join_order() {
                 format!("{received}{sent}")
             };
             let source = format!(
-                "import std.channel\n type Envelope[T] = {{ values: Array[T] }}\n\
+                "import std.channel\n{CHANNEL_RECEIVER_CLEANUP_SOURCE}type Envelope[T] = {{ values: Array[T] }}\n\
                  test rendezvous {{\n scope {{\n\
                  var (sender, receiver) = channel.bounded[Envelope[String]](0)?\n\
-                 defer {{\n _ = receiver.close()\n }}\n\
+                 defer closeChannelReceiver(receiver)\n\
                  for expected in [\"first\", \"é🦀\"] {{\n\
                    let item: Envelope[String] = Envelope {{ values: [expected, \"tail\"] }}\n\
                    {start}{finish}\
@@ -6299,10 +6304,10 @@ fn synchronous_channel_peers_preserve_generic_values_and_terminal_states() {
             "match await pending {\n ok(_) => ()\n err(_) => assert(false)\n }\n"
         };
         let source = format!(
-            "import std.channel\n type Envelope[T] = {{ values: Array[T] }}\n\
+            "import std.channel\n{CHANNEL_RECEIVER_CLEANUP_SOURCE}type Envelope[T] = {{ values: Array[T] }}\n\
              test peers {{\n scope {{\n\
              var (sender, receiver) = channel.bounded[Envelope[String]](0)?\n\
-             defer {{\n _ = receiver.close()\n }}\n\
+             defer closeChannelReceiver(receiver)\n\
              match receiver.tryReceive() {{\n channel.TryReceive.Empty => ()\n _ => assert(false)\n }}\n\
              for expected in [\"first\", \"é🦀\"] {{\n\
                let item: Envelope[String] = Envelope {{ values: [expected, \"tail\"] }}\n\
@@ -6950,10 +6955,12 @@ fn channel_endpoint_results_preserve_generic_drain_and_fork_lifecycle() {
         "channel.unbounded[Envelope[String]]()",
     ] {
         let source = format!(
-            "import std.channel\n type Envelope[T] = {{ values: Array[T] }}\n\
+            "import std.channel\n{CHANNEL_RECEIVER_CLEANUP_SOURCE}type Envelope[T] = {{ values: Array[T] }}\n\
              test endpoints {{\n\
              var (sender, receiver) = {constructor}?\n\
+             defer closeChannelReceiver(receiver)\n\
              var sending = sender.fork()?\n var receiving = receiver.fork()?\n\
+             defer closeChannelReceiver(receiving)\n\
              sender.close()\n\
              for text in [\"first\", \"é🦀\"] {{\n\
                let item: Envelope[String] = Envelope {{ values: [text, \"tail\"] }}\n\
@@ -7004,11 +7011,13 @@ fn blocking_channel_results_preserve_generic_previews_forks_and_drain() {
         "channel.unbounded[Envelope[String]]()",
     ] {
         let source = format!(
-            "import std.channel\n import std.executor\n\
+            "import std.channel\n import std.executor\n{CHANNEL_RECEIVER_CLEANUP_SOURCE}\
              type Envelope[T] = {{ values: Array[T] }}\n\
              fn work(): Array[Envelope[String]] ! (channel.ChannelError | channel.TrySendError[Envelope[String]]) {{\n\
                var (sender, receiver) = {constructor}?\n\
+               defer closeChannelReceiver(receiver)\n\
                var sending = sender.fork()?\n var receiving = receiver.fork()?\n\
+               defer closeChannelReceiver(receiving)\n\
                sender.close()\n\
                let first: Envelope[String] = Envelope {{ values: [\"first\", \"tail\"] }}\n\
                _ = sending.trySend(first)?\n\
@@ -7087,9 +7096,7 @@ fn phase_channels_reserve_capacity_and_bound_retained_payloads() {
                     r#"let text = "{payload}"
 var (sender, receiver) = {constructor}?
 defer sender.close()
-defer {{
-    _ = receiver.close()
-}}
+defer closeChannelReceiver(receiver)
 for index in 0..{count} {{
     let result = sender.send(text)
     match result {{
@@ -7106,7 +7113,15 @@ for index in 0..{count} {{
     }
     for (body, expected) in cases {
         let source = format!(
-            "import std.channel\nsuite outer {{\n let (parentSender, parentReceiver) = channel.bounded[String](1)?\n defer parentSender.close()\n defer {{\n assert(parentReceiver.receive() == some(\"parent\"))\n _ = parentReceiver.close()\n }}\n parentSender.send(\"parent\")?\n test first {{}}\n test middle {{\n {body}\n }}\n test zlast {{\n let (sender, receiver) = channel.bounded[String](1)?\n sender.send(\"survived\")?\n assert(receiver.receive() == some(\"survived\"))\n sender.close()\n _ = receiver.close()\n }}\n}}\n"
+            "import std.channel\n{CHANNEL_RECEIVER_CLEANUP_SOURCE}\
+             fn verifyParent(receiver: channel.Receiver[String]) {{\n\
+                 assert(receiver.receive() == some(\"parent\"))\n _ = receiver.close()\n }}\n\
+             suite outer {{\n let (parentSender, parentReceiver) = channel.bounded[String](1)?\n\
+                 defer parentSender.close()\n defer verifyParent(parentReceiver)\n parentSender.send(\"parent\")?\n\
+                 test first {{}}\n test middle {{\n {body}\n }}\n\
+                 test zlast {{\n let (sender, receiver) = channel.bounded[String](1)?\n\
+                     defer closeChannelReceiver(receiver)\n sender.send(\"survived\")?\n\
+                     assert(receiver.receive() == some(\"survived\"))\n sender.close()\n _ = receiver.close()\n }}\n}}\n"
         );
         let directory = test_project(source.as_bytes());
         rewrite_test_plan(&directory, |plan| {

@@ -5984,6 +5984,511 @@ fn waitForConnection(): !net.NetError {
     }
 
     #[test]
+    fn channel_endpoint_ownership_public_project_runs() {
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            include_bytes!("../../../acceptance/projects/channel-ownership/src/main.to"),
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_generic_slot_restores_live_owner_state() {
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            include_bytes!("../../../acceptance/projects/channel-slot/src/main.to"),
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_rejects_structural_placeholder_capabilities() {
+        for (endpoint, capabilities) in [
+            ("sender", &["Copy", "Equatable", "Key"][..]),
+            ("receiver", &["Copy", "Discard", "Equatable", "Key"][..]),
+        ] {
+            for capability in capabilities {
+                for wrapped in [false, true] {
+                    let inspect = if wrapped {
+                        let endpoint_type = if endpoint == "sender" {
+                            "Sender"
+                        } else {
+                            "Receiver"
+                        };
+                        format!(
+                            "let wrapper = Wrapped[channel.{endpoint_type}[Int]] {{ endpoint: {endpoint} }}\n demand(ref wrapper)\n match wrapper {{\n Wrapped {{ endpoint: owned }} => {{"
+                        )
+                    } else {
+                        format!("demand(ref {endpoint})")
+                    };
+                    let close = if wrapped {
+                        if endpoint == "sender" {
+                            "owned.close()\n _ = receiver.close()\n }\n }"
+                        } else {
+                            "sender.close()\n _ = owned.close()\n }\n }"
+                        }
+                    } else {
+                        "sender.close()\n _ = receiver.close()"
+                    };
+                    let source = format!(
+                        "import std.channel\n type Wrapped[T] = {{ endpoint: T }}\n fn demand[T: {capability}](value: ref T) {{}}\n fn main(): !channel.ChannelError {{\n let (sender, receiver) = channel.bounded[Int](1)?\n {inspect}\n {close}\n }}\n"
+                    );
+                    let output = execute(operation_request_with_capabilities(
+                        Operation::Check,
+                        source.as_bytes(),
+                        SourceForm::Module,
+                        ResourceLimits::default(),
+                        BTreeSet::new(),
+                    ))
+                    .unwrap();
+                    assert_eq!(
+                        output.status(),
+                        CompilationStatus::Rejected,
+                        "accepted {capability} for {endpoint}, wrapped={wrapped}"
+                    );
+                    assert!(
+                        output
+                            .diagnostics()
+                            .diagnostics()
+                            .iter()
+                            .any(|diagnostic| diagnostic.code() == "E1105"),
+                        "{}",
+                        output.diagnostics().human()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_transfer_depends_on_payload_send() {
+        for endpoint in ["Sender", "Receiver"] {
+            for capability in ["Send", "Share"] {
+                for bound in ["", ": Send"] {
+                    let source = format!(
+                        "import std.channel\n\
+                        fn demand[T: {capability}](value: ref T) {{}}\n\
+                        fn inspect[T{bound}](endpoint: channel.{endpoint}[T]): channel.{endpoint}[T] {{\n\
+                            demand(ref endpoint)\n endpoint\n }}\n"
+                    );
+                    let output = execute(operation_request_with_capabilities(
+                        Operation::Check,
+                        source.as_bytes(),
+                        SourceForm::Module,
+                        ResourceLimits::default(),
+                        BTreeSet::new(),
+                    ))
+                    .unwrap();
+                    if bound.is_empty() {
+                        assert_eq!(output.status(), CompilationStatus::Rejected);
+                        assert!(
+                            output
+                                .diagnostics()
+                                .diagnostics()
+                                .iter()
+                                .any(|diagnostic| diagnostic.code() == "E1105"),
+                            "{endpoint}/{capability}: {}",
+                            output.diagnostics().human()
+                        );
+                    } else {
+                        assert_eq!(
+                            output.status(),
+                            CompilationStatus::Success,
+                            "{endpoint}/{capability}: {}",
+                            output.diagnostics().human()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_propagates_through_owned_shapes() {
+        for shape in [
+            "channel.Receiver[Int]?",
+            "channel.Receiver[Int] ! Unit",
+            "Array[channel.Receiver[Int]]",
+            "Envelope[channel.Receiver[Int]]",
+        ] {
+            for capability in ["Copy", "Discard", "Send", "Share"] {
+                let source = format!(
+                    "import std.channel\n enum Envelope[T] {{ Value(T) }}\n\
+                    fn demand[T: {capability}](value: ref T) {{}}\n\
+                    fn inspect(value: {shape}): {shape} {{\n demand(ref value)\n value\n }}\n"
+                );
+                let output = execute(operation_request_with_capabilities(
+                    Operation::Check,
+                    source.as_bytes(),
+                    SourceForm::Module,
+                    ResourceLimits::default(),
+                    BTreeSet::new(),
+                ))
+                .unwrap();
+                if matches!(capability, "Copy" | "Discard") {
+                    assert_eq!(output.status(), CompilationStatus::Rejected);
+                    assert!(
+                        output
+                            .diagnostics()
+                            .diagnostics()
+                            .iter()
+                            .any(|diagnostic| diagnostic.code() == "E1105"),
+                        "{shape}/{capability}: {}",
+                        output.diagnostics().human()
+                    );
+                } else {
+                    assert_eq!(
+                        output.status(),
+                        CompilationStatus::Success,
+                        "{shape}/{capability}: {}",
+                        output.diagnostics().human()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_iterator_consumes_receiver_before_returning() {
+        for action in [
+            "break",
+            "return",
+            "return err(channel.ChannelError.InvalidCapacity)",
+        ] {
+            let source = format!(
+                "import std.channel\n\
+                 fn consume(receiver: channel.Receiver[Int]): !channel.ChannelError {{\n\
+                     for value in receiver {{\n assert(value == 1)\n {action}\n }}\n }}\n\
+                 fn main(): !channel.ChannelError {{\n\
+                     let (sender, receiver) = channel.bounded[Int](2)?\n\
+                     _ = sender.trySend(1)\n _ = sender.trySend(2)\n\
+                     _ = consume(receiver)\n\
+                     match sender.trySend(3) {{\n\
+                         err(channel.TrySendError.Closed(value)) => assert(value == 3)\n\
+                         err(_) => panic(\"wrong send error\")\n\
+                         ok(_) => panic(\"iterator did not close its receiver\")\n\
+                     }}\n sender.close()\n }}\n"
+            );
+            let output = execute(operation_request_with_capabilities(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{action}: {}",
+                output.diagnostics().human()
+            );
+            assert_eq!(
+                output.exit_code(),
+                0,
+                "{action}: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_collect_closes_at_every_limit_and_rejects_reuse() {
+        for limit in [-1, 0, 1, 2, 3] {
+            let source = format!(
+                "import std.channel\n import std.async\n\
+                 fn main(): !channel.ChannelError {{\n\
+                     let (sender, receiver) = channel.bounded[Int](2)?\n\
+                     _ = sender.trySend(1)\n _ = sender.trySend(2)\n sender.close()\n\
+                     match receiver.collect(limit: {limit}) {{\n\
+                         ok(values) => {{\n assert({limit} >= 0)\n\
+                             assert(values.length() == {})\n }}\n\
+                         err(_) => assert({limit} < 0)\n }}\n }}\n",
+                limit.clamp(0, 2)
+            );
+            let output = execute(operation_request_with_capabilities(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{limit}: {}",
+                output.diagnostics().human()
+            );
+            assert_eq!(
+                output.exit_code(),
+                0,
+                "{limit}: {}",
+                output.diagnostics().human()
+            );
+        }
+        for operation in [
+            "_ = receiver.collect(limit: 0)",
+            "for value in receiver {\n _ = value\n }",
+        ] {
+            let source = format!(
+                "import std.channel\n import std.async\n\
+                 fn main(): !channel.ChannelError {{\n\
+                     let (sender, receiver) = channel.bounded[Int](1)?\n sender.close()\n\
+                     {operation}\n _ = receiver.close()\n }}\n"
+            );
+            let output = execute(operation_request_with_capabilities(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert!(
+                output
+                    .diagnostics()
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code() == "E1401"),
+                "{}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_generic_next_preserves_the_borrowed_receiver() {
+        let source = b"import std.channel\n\
+            fn poll[I: AsyncIterator[Int] + Send](cursor: mut I): Int? {\n cursor.next()\n }\n\
+            fn main(): !channel.ChannelError {\n\
+                var (sender, receiver) = channel.bounded[Int](2)?\n\
+                _ = sender.trySend(7)\n _ = sender.trySend(8)\n sender.close()\n\
+                assert(poll(mut receiver) == some(7))\n\
+                let drained = receiver.close()\n assert(drained == [8])\n }\n";
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_generic_collect_closes_user_and_sealed_cursors() {
+        for (cursor, collect) in [
+            ("receiver", "collect(cursor)"),
+            ("Cursor { receiver }", "collect(cursor)"),
+            (
+                "Cursor { receiver }",
+                "scope {\n let pending = spawn cursor.collect(limit: 1)\n _ = await pending\n }",
+            ),
+            ("Cursor { receiver }", "AsyncIterator[Int].close(cursor)"),
+        ] {
+            let source = format!(
+                r#"
+import std.channel
+import std.async
+type Cursor = {{ receiver: channel.Receiver[Int] }}
+impl AsyncIterator[Int] for Cursor {{
+    fn next(mut self): Int? suspends {{ self.receiver.receive() }}
+    fn close(iterator: Cursor) suspends {{
+        let Cursor {{ receiver }} = iterator
+        _ = receiver.close()
+    }}
+}}
+fn collect[I: AsyncIterator[Int] + Send](cursor: I) {{
+    match cursor.collect(limit: 1) {{
+        ok(values) => assert(values == [7])
+        err(_) => panic("generic collect failed")
+    }}
+}}
+fn main(): !channel.ChannelError {{
+    let (sender, receiver) = channel.bounded[Int](2)?
+    _ = sender.trySend(7)
+    _ = sender.trySend(8)
+    let cursor = {cursor}
+    {collect}
+    match sender.trySend(9) {{
+        err(channel.TrySendError.Closed(value)) => assert(value == 9)
+        err(_) => panic("unexpected send failure")
+        ok(_) => panic("collect did not close the owned receiver")
+    }}
+    sender.close()
+}}
+"#
+            );
+            let output = execute(operation_request_with_capabilities(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{cursor}: {}",
+                output.diagnostics().human()
+            );
+            assert_eq!(
+                output.exit_code(),
+                0,
+                "{cursor}: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_iterator_requires_explicit_close_and_collect_send() {
+        for close in ["", "fn close(self) suspends {}"] {
+            let source = format!(
+                "type Cursor = {{ value: Int }}\n\
+                impl AsyncIterator[Int] for Cursor {{\n\
+                    fn next(mut self): Int? suspends {{ none }}\n\
+                    {close}\n }}\n fn main() {{}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{close}");
+            assert!(output.artifact().is_none());
+        }
+        for (bound, expected) in [
+            ("", CompilationStatus::Rejected),
+            (" + Send", CompilationStatus::Success),
+        ] {
+            let source = format!(
+                "fn collect[T: Discard{bound}, I: AsyncIterator[T] + Send](cursor: I) {{\n\
+                _ = cursor.collect(limit: 1)\n }}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                expected,
+                "{}",
+                output.diagnostics().human()
+            );
+            if expected == CompilationStatus::Rejected {
+                assert!(output.diagnostics().human().contains("Send"));
+            }
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_rejects_abandonment_and_reuse() {
+        for (body, code) in [
+            ("sender.close()", "E1404"),
+            ("sender.close()\n _ = receiver", "E1105"),
+            (
+                "sender.close()\n sender.close()\n _ = receiver.close()",
+                "E1401",
+            ),
+            (
+                "sender.close()\n _ = receiver.close()\n _ = receiver.close()",
+                "E1401",
+            ),
+        ] {
+            let source = format!(
+                "import std.channel\n fn main(): !channel.ChannelError {{\n\
+                let (sender, receiver) = channel.bounded[Int](1)?\n {body}\n }}\n"
+            );
+            let output = execute(operation_request_with_capabilities(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                BTreeSet::new(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert!(
+                output
+                    .diagnostics()
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.code() == code),
+                "{body}: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_preserves_same_named_user_values() {
+        let source = br#"
+type Receiver = { value: Int }
+type Sender = { value: Int }
+fn copyValue[T: Copy + Discard + Send + Share + Equatable](value: T): T { value }
+fn main() {
+    let receiver = Receiver { value: 4 }
+    let copied = copyValue(receiver)
+    assert(receiver == copied)
+    let sender = Sender { value: 7 }
+    let copiedSender = copyValue(sender)
+    assert(sender == copiedSender)
+}
+"#;
+        let output = execute(operation_request_with_capabilities(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
     fn civil_core_public_fixture_runs_without_providers() {
         let output = execute(operation_request_with_capabilities(
             Operation::Run,
@@ -9964,6 +10469,9 @@ fn main() {
             Operation::Run,
             b"type Counter = { value: Int }\n\
               impl AsyncIterator[Int] for Counter {\n\
+                  fn close(iterator: Counter) suspends {\n\
+                      _ = iterator\n\
+                  }\n\
                   fn next(mut self): Int? suspends { none }\n\
               }\n\
               fn consume(cursor: Counter) {\n\
@@ -9985,8 +10493,13 @@ fn main() {
     fn async_iterator_collect_materializes_with_a_bound_without_an_extra_poll() {
         let output = execute(operation_request(
             Operation::Run,
-            b"type Counter = { remaining: Int }\n\
+            b"import std.console\n\
+              type Counter = { remaining: Int }\n\
               impl AsyncIterator[Int] for Counter {\n\
+                  fn close(iterator: Counter) suspends {\n\
+                      assert(iterator.remaining == 1)\n\
+                      _ = console.print(\"closed\")\n\
+                  }\n\
                   fn next(mut self): Int? suspends {\n\
                       if self.remaining == 0 {\n\
                           return none\n\
@@ -10016,6 +10529,7 @@ fn main() {
         );
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
+        assert_eq!(output.stdout(), b"closed");
     }
 
     #[test]
@@ -10025,6 +10539,9 @@ fn main() {
             b"import std.async\n\
               type Counter = { remaining: Int }\n\
               impl AsyncIterator[Int] for Counter {\n\
+                  fn close(iterator: Counter) suspends {\n\
+                      _ = iterator\n\
+                  }\n\
                   fn next(mut self): Int? suspends {\n\
                       tick()\n\
                       if self.remaining == 0 {\n\
@@ -10037,6 +10554,9 @@ fn main() {
               }\n\
               type Blocked = { waiter: async.Waiter[Int, String] }\n\
               impl AsyncIterator[Int] for Blocked {\n\
+                  fn close(iterator: Blocked) suspends {\n\
+                      let Blocked { waiter } = iterator\n\
+                  }\n\
                   fn next(mut self): Int? suspends {\n\
                       let result = self.waiter.wait()\n\
                       match result {\n\

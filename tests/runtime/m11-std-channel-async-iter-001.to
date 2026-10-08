@@ -3,18 +3,22 @@ import std.console
 import std.async
 
 fn collect_zero(receiver: channel.Receiver[Int]) {
+    let retained = match receiver.fork() {
+        ok(value) => value
+        err(_) => panic("zero-limit receiver fork failed")
+    }
     match receiver.collect(limit: 0) {
         ok(values) => assert(values.length() == 0)
         err(_) => assert(false)
     }
-    let drained = receiver.close()
+    let drained = retained.close()
     assert(drained.length() == 2)
+    assert(drained[0] == 30)
+    assert(drained[1] == 31)
 }
 
 fn main(): !channel.ChannelError {
-    let endpoints = channel.bounded[Int](2)?
-    let sender = endpoints.0
-    let receiver = endpoints.1
+    let (sender, receiver) = channel.bounded[Int](2)?
 
     match sender.trySend(1) {
         ok(_) => {}
@@ -32,9 +36,7 @@ fn main(): !channel.ChannelError {
     }
     assert(total == 3)
 
-    let early_endpoints = channel.bounded[Int](2)?
-    let early_sender = early_endpoints.0
-    let early_receiver = early_endpoints.1
+    let (early_sender, early_receiver) = channel.bounded[Int](2)?
     match early_sender.trySend(10) {
         ok(_) => {}
         err(_) => assert(false)
@@ -49,9 +51,7 @@ fn main(): !channel.ChannelError {
         break
     }
 
-    let collect_endpoints = channel.bounded[Int](2)?
-    let collect_sender = collect_endpoints.0
-    let collect_receiver = collect_endpoints.1
+    let (collect_sender, collect_receiver) = channel.bounded[Int](2)?
     match collect_sender.trySend(20) {
         ok(_) => {}
         err(_) => assert(false)
@@ -61,16 +61,18 @@ fn main(): !channel.ChannelError {
         err(_) => assert(false)
     }
     collect_sender.close()
+    let retained = match collect_receiver.fork() {
+        ok(value) => value
+        err(_) => panic("limited receiver fork failed")
+    }
     match collect_receiver.collect(limit: 2) {
         ok(values) => assert(values.length() == 2)
         err(_) => assert(false)
     }
-    let collect_drained = collect_receiver.close()
+    let collect_drained = retained.close()
     assert(collect_drained.length() == 0)
 
-    let zero_endpoints = channel.bounded[Int](2)?
-    let zero_sender = zero_endpoints.0
-    let zero_receiver = zero_endpoints.1
+    let (zero_sender, zero_receiver) = channel.bounded[Int](2)?
     match zero_sender.trySend(30) {
         ok(_) => {}
         err(_) => assert(false)

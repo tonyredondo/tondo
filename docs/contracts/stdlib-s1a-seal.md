@@ -22,7 +22,7 @@ seal consumes the tracked owner, API, matrix, conformance, performance,
 documentation, distribution and async/select registries. It also consumes
 fresh reports from the current clean Git revision:
 
-- `stdlib-conformance.json` (22 owners, 469 rows and 206 draft cases);
+- `stdlib-conformance.json` (22 owners, 472 rows and 206 draft cases);
 - `stdlib-performance-report.json` plus its promoted coordinator;
 - `async-select-conformance.json` and `async-select-performance.json`; and
 - the reproducible VM distribution evidence and archive.
@@ -31,7 +31,7 @@ The runner executes the contract checks and negative-test suites, then rejects
 the seal if any of these is true:
 
 - the working tree is dirty or a report is bound to another revision/tree;
-- the strict public API audit is not `298/298` with zero gaps;
+- the strict public API audit is not `301/301` with zero gaps;
 - the normative matrix contains an applicable open cell;
 - FUZZ has fewer than 22 verified owners, PERF has a deferred dimension, or
   CONF/DIST/async-select evidence is not passed and draft-only;

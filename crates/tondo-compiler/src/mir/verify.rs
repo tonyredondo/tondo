@@ -18,11 +18,11 @@ use crate::types::{
 };
 
 use super::{
-    MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction,
-    MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
-    MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
-    MirRvalue, MirRvalueKind, MirSelectRegistration, MirStatement, MirStatementKind, MirTag,
-    MirTerminatorKind,
+    MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind, MirDeferCapture,
+    MirFunction, MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand,
+    MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection,
+    MirProjectionKind, MirRvalue, MirRvalueKind, MirSelectRegistration, MirStatement,
+    MirStatementKind, MirTag, MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,7 +151,12 @@ pub(crate) fn verify_mir_with_capability_analysis(
 ) -> Result<(), MirInvariantError> {
     let expected = hir
         .callables()
-        .filter(|callable| hir.body(callable.id()).is_some())
+        .filter(|callable| {
+            hir.body(callable.id()).is_some()
+                || (callable.id()
+                    == HirCallableId::Host(HirBootstrapHostFunction::AsyncIteratorCollect)
+                    && hir.async_iterator_collect_body_source().is_some())
+        })
         .map(|callable| MirFunctionId::Callable(callable.id()))
         .chain(
             hir.closures()
@@ -629,6 +634,7 @@ fn terminator_moves_defer_guard(terminator: &MirTerminatorKind, guard: &LocalAcc
         matches!(
             operand.kind(),
             MirOperandKind::Move(place) if LocalAccess::from_place(place) == *guard
+                || local_access_is_complete_sum_payload(guard, &LocalAccess::from_place(place))
         )
     })
 }
@@ -1695,7 +1701,12 @@ impl Verifier<'_> {
                         ));
                     }
                 }
-                MirStatementKind::RegisterDefer { action, guard, .. } => {
+                MirStatementKind::RegisterDefer {
+                    action,
+                    guard,
+                    capture,
+                    ..
+                } => {
                     if block.kind != MirBlockKind::Normal {
                         return Err(MirInvariantError::new(
                             &context,
@@ -1724,7 +1735,42 @@ impl Verifier<'_> {
                         }
                         _ => MirOperationContext::Deferred,
                     };
-                    self.verify_operation(function, action, operation_context, &context)?;
+                    if *capture == MirDeferCapture::CurrentOwner
+                        && (guard.is_none()
+                            || operation_context != MirOperationContext::DeferredAsync)
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "current-owner cleanup requires a guarded suspendible call",
+                        ));
+                    }
+                    let mut reserved_action;
+                    let checked_action = if *capture == MirDeferCapture::CurrentOwner
+                        && let Some(guard) = guard
+                        && self.capability_status(
+                            function.id,
+                            guard.ty,
+                            HirCapability::Copy,
+                            &context,
+                        )? == HirCapabilityStatus::Satisfied
+                    {
+                        // Reservation is not an ordinary move. Check the call's types
+                        // while preserving the original guarded operand for the ledger.
+                        reserved_action = action.clone();
+                        if let MirOperationKind::Call { arguments, .. } = &mut reserved_action.kind
+                        {
+                            for argument in arguments {
+                                if matches!(&argument.value.kind, MirOperandKind::Move(place) if place == guard)
+                                {
+                                    argument.value.kind = MirOperandKind::Copy(guard.clone());
+                                }
+                            }
+                        }
+                        &reserved_action
+                    } else {
+                        action
+                    };
+                    self.verify_operation(function, checked_action, operation_context, &context)?;
                     if action.ty != self.hir.interner().scalar(ScalarType::Unit)
                         || !matches!(
                             action.kind,
@@ -6187,9 +6233,15 @@ impl Verifier<'_> {
                         MirStatementKind::RetargetCleanup { from, .. } => state
                             .pending_moves
                             .contains_key(&LocalAccess::from_place(from)),
-                        MirStatementKind::DisarmCleanup(place) => state
-                            .pending_moves
-                            .contains_key(&LocalAccess::from_place(place)),
+                        MirStatementKind::DisarmCleanup(place) => {
+                            let place = LocalAccess::from_place(place);
+                            // One aggregate can move guarded and unguarded owners.
+                            // The lowerer emits a disarm for each operand; a no-op
+                            // disarm must not interrupt the consecutive transition
+                            // sequence. Active guards still require exact handoffs.
+                            state.pending_moves.contains_key(&place)
+                                || !state.guards.contains_key(&place)
+                        }
                         _ => false,
                     };
                     if !state.pending_moves.is_empty() && !advances_pending {
@@ -6584,7 +6636,9 @@ impl Verifier<'_> {
                     } else if !overlaps.is_empty() {
                         return Err(MirInvariantError::new(
                             &block_context,
-                            "terminator moves an active defer guard without disarming it",
+                            format!(
+                                "terminator moves an active defer guard without disarming it: {access:?}; active guards: {overlaps:?}"
+                            ),
                         ));
                     }
                 }
@@ -10078,6 +10132,47 @@ mod tests {
         )
     }
 
+    #[test]
+    fn channel_endpoint_ownership_copy_cursor_close_requires_its_current_owner_guard() {
+        let source = "type Cursor = { value: Int }\n\
+            impl AsyncIterator[Int] for Cursor {\n\
+                fn next(mut self): Int? suspends { none }\n\
+                fn close(iterator: Cursor) suspends {\n _ = iterator\n }\n\
+            }\n\
+            fn run(iterator: Cursor) {\n for value in iterator {\n _ = value\n }\n }\n";
+        for mutation in ["snapshot", "missing-guard", "wrong-owner"] {
+            let (resolved, hir, mut invalid) = checked_mir(source);
+            let run = MirFunctionId::Callable(callable_named(&resolved, "run"));
+            let function = invalid.functions.get_mut(&run).unwrap();
+            let original_owner = function.parameters[0];
+            let statement = function
+                .blocks
+                .iter_mut()
+                .flat_map(|block| &mut block.statements)
+                .find(|statement| {
+                    matches!(
+                        statement.kind,
+                        MirStatementKind::RegisterDefer {
+                            capture: MirDeferCapture::CurrentOwner,
+                            ..
+                        }
+                    )
+                })
+                .expect("async for reserves current-owner close");
+            let MirStatementKind::RegisterDefer { capture, guard, .. } = &mut statement.kind else {
+                unreachable!()
+            };
+            match mutation {
+                "snapshot" => *capture = MirDeferCapture::Contextual,
+                "missing-guard" => *guard = None,
+                "wrong-owner" => guard.as_mut().unwrap().local = original_owner,
+                _ => unreachable!(),
+            }
+            let error = verify_mir(&resolved, &hir, &invalid).unwrap_err();
+            assert!(!error.message().is_empty(), "{mutation}: {error}");
+        }
+    }
+
     fn member_named(resolved: &ResolvedProgram, name: &str) -> crate::resolve::MemberId {
         resolved
             .members()
@@ -10094,6 +10189,78 @@ mod tests {
         verify_mir(&resolved, &hir, &mir).unwrap();
         mutate(&resolved, &hir, &mut mir);
         verify_mir(&resolved, &hir, &mir).unwrap_err()
+    }
+
+    #[test]
+    fn channel_endpoint_ownership_mixed_aggregate_requires_exact_cleanup_handoff() {
+        const SOURCE: &str = "import std.channel\n\
+            type Endpoints = { sender: channel.Sender[Int], receiver: channel.Receiver[Int] }\n\
+            fn bundle(sender: channel.Sender[Int], receiver: channel.Receiver[Int]): Endpoints {\n\
+                Endpoints { sender, receiver }\n\
+            }\n";
+        let (resolved, hir, mir) = checked_mir(SOURCE);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let id = MirFunctionId::Callable(callable_named(&resolved, "bundle"));
+        for mutation in ["missing", "wrong-owner", "wrong-transition"] {
+            let (resolved, hir, mut invalid) = checked_mir(SOURCE);
+            let function = invalid.functions.get_mut(&id).unwrap();
+            let receiver_ty = function.locals[function.parameters[1].index() as usize].ty;
+            let sender_ty = function.locals[function.parameters[0].index() as usize].ty;
+            let block = function
+                .blocks
+                .iter_mut()
+                .find(|block| {
+                    block.statements.iter().any(|statement| {
+                        matches!(&statement.kind, MirStatementKind::DisarmCleanup(place)
+                        if place.ty == receiver_ty)
+                    })
+                })
+                .expect("the receiver handoff has a disarm");
+            let index = block
+                .statements
+                .iter()
+                .position(|statement| {
+                    matches!(&statement.kind, MirStatementKind::DisarmCleanup(place)
+                    if place.ty == receiver_ty)
+                })
+                .unwrap();
+            let MirStatementKind::DisarmCleanup(owner) = &block.statements[index].kind else {
+                unreachable!()
+            };
+            let owner = owner.clone();
+            let sender = block.statements[..index]
+                .iter()
+                .rev()
+                .find_map(|statement| match &statement.kind {
+                    MirStatementKind::DisarmCleanup(place) if place.ty == sender_ty => {
+                        Some(place.clone())
+                    }
+                    _ => None,
+                })
+                .expect("the unguarded sender disarm precedes the receiver transition");
+            match mutation {
+                "missing" => {
+                    block.statements.remove(index);
+                }
+                "wrong-owner" => {
+                    block.statements[index].kind = MirStatementKind::DisarmCleanup(sender);
+                }
+                "wrong-transition" => {
+                    block.statements[index].kind = MirStatementKind::RetargetCleanup {
+                        from: owner.clone(),
+                        to: owner,
+                    };
+                }
+                _ => unreachable!(),
+            }
+            let error = verify_mir(&resolved, &hir, &invalid).unwrap_err();
+            let expected = if mutation == "wrong-transition" {
+                "terminal assignment result has no immediate fallback registration"
+            } else {
+                "guarded move"
+            };
+            assert!(error.message().contains(expected), "{mutation}: {error}");
+        }
     }
 
     #[test]
@@ -12328,6 +12495,7 @@ mod tests {
                         scope: task_scope,
                         action: spawn_operation,
                         guard: None,
+                        capture: MirDeferCapture::Contextual,
                     },
                 }],
                 terminator: unreachable(inspect),

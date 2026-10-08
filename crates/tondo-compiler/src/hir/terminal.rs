@@ -6,7 +6,7 @@ use crate::types::{
     CursorMode, IntrinsicType, TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
 };
 
-use super::capabilities::bounds_imply;
+use super::capabilities::{bounds_imply, channel_endpoint_kind};
 use super::{
     CapabilityAssumptions, HirCapability, HirCapabilityStatus, HirNominalShape, HirProgram,
     HirTypeDeclarationKind, HirVariantPayload,
@@ -406,6 +406,12 @@ fn compute_summaries(
     program: &HirProgram,
     by_identity: &BTreeMap<SymbolIdentity, SymbolId>,
 ) -> Result<BTreeMap<SymbolId, TerminalRequirement>, TypeError> {
+    let endpoints = by_identity
+        .iter()
+        .filter_map(|(identity, symbol)| {
+            channel_endpoint_kind(identity).map(|kind| (*symbol, kind))
+        })
+        .collect::<BTreeMap<_, _>>();
     let roots = program
         .declarations
         .iter()
@@ -424,7 +430,18 @@ fn compute_summaries(
     loop {
         let mut changes = Vec::new();
         for (symbol, roots) in &roots {
-            let next = terminal_requirement(program, roots, by_identity, &summaries)?;
+            let next = if let Some(kind) = endpoints.get(symbol) {
+                TerminalRequirement {
+                    floor: if kind.owns_terminal() {
+                        HirTerminalStatus::Present
+                    } else {
+                        HirTerminalStatus::Absent
+                    },
+                    parameters: BTreeSet::new(),
+                }
+            } else {
+                terminal_requirement(program, roots, by_identity, &summaries)?
+            };
             if summaries[symbol] != next {
                 changes.push((*symbol, next));
             }

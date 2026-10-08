@@ -14,7 +14,7 @@
   "runner": {
     "lineage": "draft",
     "manifest": "conformance/0.1/manifest.json",
-    "manifest_sha256": "43eba831d8bab228937ae97066f7e9f8493cba8637687afc43e00b08c5e6c7f6",
+    "manifest_sha256": "5b2ec4d18e9f50f0dfd435644d647ddbf7ae8ff0913f9969ccac895410c9ff7e",
     "full_suite_case_count": 206,
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
@@ -40,7 +40,10 @@
         "signature:std.async:39",
         "signature:std.async:40",
         "signature:std.async:41",
-        "signature:std.async:42"
+        "signature:std.async:42",
+        "signature:std.async:49",
+        "signature:std.async:50",
+        "signature:std.async:53"
       ],
       "requirements": [
         "requirement:std.async:async-iterator",
@@ -52,9 +55,9 @@
         "requirement:std.async:suspends-visibility"
       ],
       "rows": {
-        "signatures": 5,
+        "signatures": 8,
         "requirements": 7,
-        "total": 12
+        "total": 15
       },
       "owner_command": "scripts/stdlib-async-test.sh",
       "cases": [
@@ -1304,9 +1307,9 @@
   ],
   "summary": {
     "owners": 22,
-    "signatures": 298,
+    "signatures": 301,
     "requirements": 171,
-    "rows": 469,
+    "rows": 472,
     "cases": 34
   }
 }

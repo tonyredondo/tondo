@@ -126,6 +126,11 @@ fn value[T](result: T ! net.NetError): T {
             r#"import std.net
 import std.channel
 {VALUES}
+fn closeInbox(inbox: channel.Receiver[net.TcpListener]) {{
+    for listener in inbox.close() {{
+        net.TcpListener.close(listener)
+    }}
+}}
 fn forward(outbox: channel.Sender[net.TcpListener], listener: net.TcpListener): Unit ! channel.SendError[net.TcpListener] selectable {{
     let result = outbox.send(listener)
     outbox.close()
@@ -150,6 +155,7 @@ fn transfer() {{
         ok(pair) => pair
         err(_) => panic("channel")
     }}
+    defer closeInbox(inbox)
     scope {{
         let child = spawn producer(outbox, listener)
         match inbox.receive() {{

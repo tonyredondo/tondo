@@ -39,7 +39,10 @@
         "std.async:39",
         "std.async:40",
         "std.async:41",
-        "std.async:42"
+        "std.async:42",
+        "std.async:49",
+        "std.async:50",
+        "std.async:53"
       ],
       "requirements": [
         "requirement:std.async:async-iterator",
@@ -152,6 +155,33 @@
         },
         {
           "id": "signature:std.async:42",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.async:49",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.async:50",
+          "kind": "signature",
+          "status": "pending",
+          "reason": "The conformance registry declares cases; current execution has not been promoted",
+          "refs": [
+            "testing/stdlib-conformance.json"
+          ]
+        },
+        {
+          "id": "signature:std.async:53",
           "kind": "signature",
           "status": "pending",
           "reason": "The conformance registry declares cases; current execution has not been promoted",
@@ -5721,12 +5751,12 @@
   ],
   "summary": {
     "owners": 22,
-    "rows": 469,
-    "public_signatures": 298,
+    "rows": 472,
+    "public_signatures": 301,
     "requirements": 171,
     "verified_rows": 64,
     "partial_rows": 6,
-    "pending_rows": 399,
+    "pending_rows": 402,
     "owner_verified": 2,
     "owner_partial": 1,
     "owner_pending": 19

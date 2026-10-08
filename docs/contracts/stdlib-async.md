@@ -47,9 +47,10 @@ pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
 ```tondo
 pub trait AsyncIterator[T] {
     fn next(mut self): T? suspends
+    fn close(iterator: Self) suspends
 }
 
-pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends
+pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends
 ```
 
 `Join` no tiene constructor, poller ni callback público: solo nace de
@@ -68,8 +69,21 @@ thread que satisfaga `Send`.
 `AsyncIterator.next` produce como máximo un elemento por llamada. `none` es el
 fin normal. La operación es lazy, mantiene backpressure y no materializa una
 colección. Al terminar normalmente, por cancelación, por error o por salir de
-un `for`, el cursor se cierra exactamente una vez; el cierre es idempotente y
+un `for`, el cursor se cierra exactamente una vez y
 libera sus recursos antes de publicar el outcome terminal.
+
+Implementations explicitly provide the consuming `close(iterator: Self)`
+method. The compiler invokes it once with the final state of the owned cursor,
+including Copy cursors. Direct collection and spawned collection share the
+same MIR loop, guarded cleanup, suspension and structured cancellation rules.
+Ordinary source defers of Copy values continue to capture snapshots.
+Both the cursor and collected elements require Send: the accumulator and its
+terminal result remain live while next or consuming close may suspend.
+
+The source parameter is passed by value. Collection consumes that cursor;
+affine reuse afterward is rejected. Copy values keep their ordinary by-value
+semantics. A retained channel receiver must be an explicit
+fork, which remains an independent owner of the same channel.
 
 `collect(limit:)` es la única materialización estándar: `limit` es un máximo
 finito de elementos, debe ser no negativo y `0` devuelve un array vacío tras

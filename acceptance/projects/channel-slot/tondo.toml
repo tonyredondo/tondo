@@ -1,0 +1,7 @@
+[package]
+name = "channel_slot"
+
+[target]
+name = "tondo-vm-hosted"
+profile = "hosted"
+capabilities = []

@@ -333,6 +333,12 @@ pub trait VmHost {
         Ok(())
     }
 
+    /// Retires a terminal owner during panic or cancellation. Providers may
+    /// release queued payloads while preserving live roots, without callbacks.
+    fn cleanup_terminal(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        self.cleanup(value)
+    }
+
     /// Enters the single deterministic clock domain owned by a test attempt.
     fn begin_virtual_time(&mut self) -> Result<RuntimeValue, VmError> {
         Err(VmError::UnsupportedHostCall(
@@ -1332,6 +1338,7 @@ enum BlockingCompletion {
 enum BlockingHostOperation {
     Cleanup {
         value: RuntimeValue,
+        terminal_unwind: bool,
     },
     Call {
         name: String,
@@ -1728,6 +1735,18 @@ impl VmHost for BlockingWorkerHost {
         self.request(
             BlockingHostOperation::Cleanup {
                 value: value.clone(),
+                terminal_unwind: false,
+            },
+            self.memory.clone(),
+        )
+        .map(|_| ())
+    }
+
+    fn cleanup_terminal(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        self.request(
+            BlockingHostOperation::Cleanup {
+                value: value.clone(),
+                terminal_unwind: true,
             },
             self.memory.clone(),
         )
@@ -2674,6 +2693,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         result
     }
 
+    fn cleanup_terminal_host_value(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        let result = self.host.cleanup_terminal(value);
+        if result.is_ok() {
+            self.record_resource(value, DiagnosticResourceState::Released)?;
+        }
+        result
+    }
+
     fn dispatch_host_async(
         &mut self,
         name: &str,
@@ -2879,7 +2906,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     BlockingHostOperation::Call { arguments, .. } => {
                         self.prepare_host_collection(arguments)
                     }
-                    BlockingHostOperation::Cleanup { value } => {
+                    BlockingHostOperation::Cleanup { value, .. } => {
                         self.prepare_host_collection(std::slice::from_ref(value))
                     }
                     BlockingHostOperation::Collect => self.prepare_host_collection(&[]),
@@ -2889,10 +2916,17 @@ impl<'program, 'host> Engine<'program, 'host> {
                 );
                 self.host.set_test_memory_budget(request.memory.clone());
                 let result = result.and_then(|()| match request.operation {
-                    BlockingHostOperation::Cleanup { value } => self
-                        .host
-                        .cleanup(&value)
-                        .and_then(|()| VmHostReturn::admit(RuntimeValue::Unit, None)),
+                    BlockingHostOperation::Cleanup {
+                        value,
+                        terminal_unwind,
+                    } => {
+                        let cleanup = if terminal_unwind {
+                            self.host.cleanup_terminal(&value)
+                        } else {
+                            self.host.cleanup(&value)
+                        };
+                        cleanup.and_then(|()| VmHostReturn::admit(RuntimeValue::Unit, None))
+                    }
                     BlockingHostOperation::Call {
                         name,
                         arguments,
@@ -7027,6 +7061,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 scope,
                 action,
                 guard,
+                ..
             } => {
                 let span = self.resolve_span(frame, instruction.span)?;
                 let marker = self.temporary_roots.len();
@@ -8052,6 +8087,21 @@ impl<'program, 'host> Engine<'program, 'host> {
                             )
                         })?
                         .clone();
+                    if let Some(kind) = channel_host_kind(&metadata) {
+                        let Value::Host(value) = value else {
+                            return Err(VmError::invariant(
+                                "channel endpoint fallback found a non-host value",
+                            ));
+                        };
+                        if !matches!(&value, RuntimeValue::Host { kind: actual, .. } if *actual == kind)
+                        {
+                            return Err(VmError::invariant(
+                                "channel endpoint fallback found the wrong host kind",
+                            ));
+                        }
+                        self.cleanup_terminal_host_value(&value)?;
+                        continue;
+                    }
                     let substitutions = arguments
                         .into_iter()
                         .map(|argument| ty.child(argument))
@@ -11247,15 +11297,13 @@ fn sync_collection_host_kind(
 }
 
 fn channel_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<RuntimeHostValueKind> {
-    let kind = match nominal.name.as_str() {
-        "Sender" => RuntimeHostValueKind::ChannelSender,
-        "Receiver" => RuntimeHostValueKind::ChannelReceiver,
-        _ => return None,
-    };
-    let identity_suffix = format!("::channel::type::{}", nominal.name);
-    (nominal.identity.contains(":toolchain:std:0.1-bootstrap::")
-        && nominal.identity.ends_with(&identity_suffix))
-    .then_some(kind)
+    use crate::channel::ChannelEndpointKind;
+    Some(
+        match ChannelEndpointKind::from_identity(&nominal.identity, nominal.generic_arity)? {
+            ChannelEndpointKind::Sender => RuntimeHostValueKind::ChannelSender,
+            ChannelEndpointKind::Receiver => RuntimeHostValueKind::ChannelReceiver,
+        },
+    )
 }
 
 fn encoding_host_kind(nominal: &crate::bytecode::BytecodeNominal) -> Option<RuntimeHostValueKind> {
@@ -16972,7 +17020,9 @@ impl Engine<'_, '_> {
             {
                 return Ok(result);
             }
-            if metadata.name.starts_with("std.async.AsyncIterator.collect") {
+            if metadata.implementation.is_none()
+                && metadata.name.starts_with("std.async.AsyncIterator.collect")
+            {
                 let receiver_index = metadata
                     .parameters
                     .iter()
@@ -29366,6 +29416,86 @@ mod tests {
     }
 
     #[test]
+    fn channel_endpoint_ownership_fallback_checks_the_host_kind_and_terminal_route() {
+        #[derive(Default)]
+        struct CleanupHost {
+            terminal: Vec<RuntimeValue>,
+        }
+        impl VmHost for CleanupHost {
+            fn invoke(&mut self, name: &str, _: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+            fn cleanup(&mut self, _: &RuntimeValue) -> Result<(), VmError> {
+                panic!("terminal fallback must use the terminal provider route")
+            }
+            fn cleanup_terminal(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+                self.terminal.push(value.clone());
+                Ok(())
+            }
+        }
+        let mut program = terminal_fallback_program();
+        let unit = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Unit".into(),
+            kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Unit),
+        });
+        let nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        let identity = "@27:toolchain:std:0.1-bootstrap::channel::type::Receiver";
+        program.nominals.push(BytecodeNominal {
+            name: "Receiver".into(),
+            identity: identity.into(),
+            generic_arity: 1,
+            shape: BytecodeNominalShape::Newtype { underlying: unit },
+        });
+        let receiver = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Receiver[Unit]".into(),
+            kind: BytecodeTypeKind::Nominal {
+                nominal: Some(nominal),
+                identity: identity.into(),
+                arguments: vec![unit],
+            },
+        });
+        for (value, error) in [
+            (Value::Unit, Some("non-host value")),
+            (
+                Value::Host(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ChannelSender,
+                    id: 7,
+                }),
+                Some("wrong host kind"),
+            ),
+            (
+                Value::Host(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ChannelReceiver,
+                    id: 7,
+                }),
+                None,
+            ),
+        ] {
+            let trace = derive_trace_metadata(&program).unwrap();
+            let mut host = CleanupHost::default();
+            {
+                let mut engine = Engine::new(
+                    &program,
+                    &mut host,
+                    pressure_limits(),
+                    ValueCopyStrategy::default(),
+                    trace,
+                );
+                let fallback = install_fallback_frame(&mut engine, receiver, value);
+                let result = engine.execute_terminal_fallback(0, fallback);
+                if let Some(error) = error {
+                    assert!(result.unwrap_err().to_string().contains(error));
+                } else {
+                    result.unwrap();
+                }
+            }
+            assert_eq!(host.terminal.len(), usize::from(error.is_none()));
+        }
+    }
+
+    #[test]
     fn terminal_process_fallback_invokes_the_host_cleanup_boundary() {
         #[derive(Default)]
         struct CleanupHost {
@@ -37929,8 +38059,8 @@ mod tests {
         }
         let channel_sender = BytecodeNominal {
             name: "Sender".into(),
-            identity: "pkg:toolchain:std:0.1-bootstrap::channel::type::Sender".into(),
-            generic_arity: 0,
+            identity: "@27:toolchain:std:0.1-bootstrap::channel::type::Sender".into(),
+            generic_arity: 1,
             shape: BytecodeNominalShape::Newtype {
                 underlying: types.int,
             },

@@ -6461,6 +6461,24 @@ estas leaves.
 
 #### 21.3.3 `std.channel`
 
+- [ ] **STD-CHANNEL-OWNERSHIP-001 — Enforce unique channel endpoint ownership.**
+  Repair the reproduced compiler gap: bootstrap Sender/Receiver nominal
+  placeholders derived Copy from Unit and lost Receiver's terminal obligation.
+  Focused hosted repairs pass; full quality and publication remain pending.
+  Seal endpoint capabilities by exact standard identity in HIR and
+  the independent bytecode verifier; propagate them through aggregates and
+  generics, execute endpoint unwind cleanup and preserve current owner state
+  in affine defer. Repair Copy-dependent iterator fixtures, reserve private
+  close scopes for for exits and make collect consume and close on every
+  outcome, including zero and invalid limits. The adopted AsyncIterator
+  protocol adds explicit consuming close; Copy cursor cleanup observes final
+  state while ordinary source defers keep snapshots. Direct and spawned
+  collection share the same verified MIR loop. Verify forbidden copies/discards,
+  explicit fork/close, normal/error/panic/cancellation paths and ordinary
+  hosted projects. The
+  previously verified transport/model/ABI scopes remain bounded; they do not
+  prove this missing compiler ownership contract. This prerequisite blocks
+  the generic logger. Native channel AOT and release remain unclaimed.
 - [x] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Cerrada la
   superficie nominal de `Sender[T]`/`Receiver[T]` en compiler, VM hosted y ABI
   nativo privado: `bounded(0/N)`, `unbounded` explícito, FIFO, backpressure,

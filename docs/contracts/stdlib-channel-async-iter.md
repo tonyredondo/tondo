@@ -20,6 +20,7 @@ protocol:
 
 ```tondo
 fn next(mut self): T? suspends
+fn close(iterator: Self) suspends
 
 for item in receiver {
     use(item)
@@ -50,18 +51,22 @@ That path returns pending values instead of silently discarding them.
 
 Each `next` returns at most one committed value. A bounded channel keeps its
 existing backpressure and FIFO waiter order; a receiver reaches `none` only
-after the last sender is closed and the buffer is drained. The compiler emits
-an explicit `Receiver.close` on normal loop exit and on early `break`/scope
-cleanup. Pending values are discarded there only after the static `Discard`
-proof.
+after the last sender is closed and the buffer is drained. The compiler reserves
+an allocation-free consuming close in a private cleanup scope before the first
+poll. Normal exhaustion, `break`, `return`, propagation, panic and cancellation
+close that endpoint without draining unrelated user defers. Pending values are
+discarded only after the static `Discard` proof.
 
-The `collect(limit:)` lowering uses the same private `next` witness. Before
-capacity allocation or the first poll it marks a channel receiver as being in
-the discardable iterator view. This matters for `limit: 0` and for cancellation
-while a `next` is parked: terminal cleanup may then close the endpoint without
-violating the affine terminal obligation. A positive limit does not promise an
-implicit receiver close; callers that retain the receiver may close it
-explicitly and recover the remaining buffer.
+The `collect(limit:)` lowering uses the same private `next` and consuming close
+witnesses. Before capacity allocation or the first poll it reserves that close;
+the direct sealed route also marks the endpoint's discardable iterator view.
+The reserved close applies even at `limit: 0` and while a `next` is parked.
+Direct and spawned generic collection use the same MIR loop and cleanup rules.
+The extension consumes its source
+and closes it on every outcome, including zero, exhaustion and a reached limit.
+Access to another receiver requires an explicit `fork` before collecting.
+Closing the collected endpoint preserves the buffer for that distinct receiver;
+its consuming public close returns any remaining values.
 
 The marker is endpoint-local and private. Calling public `receive` does not set
 it, so a manually consumed affine channel still fails cleanup until the caller
@@ -75,6 +80,8 @@ The compiler-owned host names are not source-level APIs:
   shape but reuses the existing `receive` scheduler waiter and channel FIFO.
 - `std.channel.Receiver.__asyncIteratorAdopt[T]` is synchronous and marks the
   endpoint before generic `collect` enters its control flow.
+- `std.channel.Receiver.__asyncIteratorClose[T]` consumes the endpoint and
+  retires it without allocating a drain array, after the payload Discard proof.
 
 The hosted VM stores the marker in the endpoint table. Cancellation unregisters
 the waiter before commit; cleanup then closes the adopted receiver and discards
@@ -85,7 +92,8 @@ unchanged, and this leaf deliberately records `native_aot_lowering` as
 The fixture
 [`tests/runtime/m11-std-channel-async-iter-001.to`](../../tests/runtime/m11-std-channel-async-iter-001.to)
 covers buffered drain, early `break`, generic `collect(limit: 2)`, explicit
-post-limit close, and `collect(limit: 0)`. The negative fixture
+receiver forks and their post-limit close, and `collect(limit: 0)`. The negative
+fixture
 [`tests/compile-fail/m11-std-channel-async-iter-discard.to`](../../tests/compile-fail/m11-std-channel-async-iter-discard.to)
 pins the affine rejection to `E1105`. Host tests cover waiter reuse, adoption,
 manual receive isolation, cancellation and terminal cleanup.

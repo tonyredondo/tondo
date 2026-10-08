@@ -132,6 +132,10 @@ run_step stdlib-channel-implementation-contract-tests \
     scripts/stdlib-channel-implementation-test.sh
 run_step stdlib-channel-implementation \
     scripts/stdlib-channel-implementation.sh
+run_step stdlib-channel-ownership \
+    scripts/stdlib-channel-ownership-check.sh
+run_step stdlib-channel-ownership-contract-tests \
+    scripts/stdlib-channel-ownership-test.sh
 run_step stdlib-channel-async-iter-contract \
     scripts/stdlib-channel-async-iter-check.sh
 run_step stdlib-channel-async-iter-contract-tests \

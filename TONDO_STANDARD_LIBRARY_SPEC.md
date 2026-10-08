@@ -887,9 +887,10 @@ pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
 
 pub trait AsyncIterator[T] {
     fn next(mut self): T? suspends
+    fn close(iterator: Self) suspends
 }
 
-pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends
+pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends
 ~~~
 
 `Join` no expone constructor, poller ni callback: solo nace de `spawn` y se
@@ -903,6 +904,14 @@ segunda finalización no cambia el resultado de la primera y devuelve
 La superficie ejecutable y sus siete requisitos verificables están indexados en
 [`testing/stdlib-async.json`](./testing/stdlib-async.json) y el documento
 normativo fuente es [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
+
+`AsyncIterator.close(iterator: Self)` consumes the final cursor state. Both
+`for` and `collect` call it exactly once on every exit, including zero or
+negative collect limits, cancellation and unwind. Implementations provide an
+explicit close method; Copy cursors retain ordinary by-value Copy semantics.
+Affine cursors cannot be reused after consumption; retained channel access
+requires an explicit `fork`. Verification of the ownership repair is tracked
+by `STD-CHANNEL-OWNERSHIP-001` before its hosted promotion.
 
 ### 9.4 Coordinación de múltiples operaciones
 
@@ -2324,6 +2333,15 @@ misma identidad sin copiar ningún mensaje. Ambos son `Send + Share` cuando
 `T: Send`. `Sender[T]` cumple `Discard`: descartarlo equivale a cerrar ese
 sender. `Receiver[T]` conserva una obligación terminal porque puede ser el
 último owner de mensajes afines pendientes.
+
+The compiler ownership repair is tracked separately by
+[`STD-CHANNEL-OWNERSHIP-001`](./docs/contracts/stdlib-channel-ownership.md).
+Its focused hosted tests enforce these existing capabilities by exact standard
+identity, independently rederive them in bytecode, and preserve current owner
+state in affine defer. The consuming iterator correction covers private close
+scopes and collection at every limit; a retained receiver must be an explicit
+fork. This repair's quality and publication are still pending. Previous
+transport and private native ABI evidence keep their original scopes.
 
 El último sender cerrado hace que `receive` produzca `none` después de drenar
 el buffer. `Receiver.close` consume ese receiver; si era el último, cierra la
@@ -3895,7 +3913,7 @@ control terminal, virtual time y los fixtures de dogfooding del runner.
 `STD-A-FUZZ-001` remains partial; the exact component scope is recorded in
 `testing/stdlib-fuzz.json`. Performance and public conformance remain separate.
 
-`testing/stdlib-test-coordination.json` links 22 owners, 298 public signatures
+`testing/stdlib-test-coordination.json` links 22 owners, 301 public signatures
 and 171 requirements to 66 model laws and their test/campaign references. The
 generator preserves each signature's public implementation status and missing
 evidence separately from model coverage. A verified model law does not prove
@@ -3914,7 +3932,7 @@ their source contracts without promoting declared cases into observations.
 La coordinación `STD-CONF-001` queda registrada en
 `testing/stdlib-conformance-coordination.json`: contiene los 22 owners de
 `STD-0.1A` y una fila `CONF` explícita para cada firma o requisito de la matriz
-(298 firmas y 171 requisitos). Cada fila conserva el estado actual de la
+(301 firmas y 171 requisitos). Cada fila conserva el estado actual de la
 matriz, una razón obligatoria para `partial`/`pending`, referencias
 reproducibles y comandos. El registro cruza la matriz normativa, la auditoría
 de API, la evidencia de owners, la coordinación de modelos y el harness

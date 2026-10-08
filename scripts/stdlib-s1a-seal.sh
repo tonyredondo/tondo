@@ -92,17 +92,17 @@ async_perf="$evidence_root/async-select-performance.json"
 jq -e '
   .format == "tondo-stdlib-public-api-audit/1"
   and .status == "verified"
-  and .summary.signatures == 298
-  and .summary.verified == 298
+  and .summary.signatures == 301
+  and .summary.verified == 301
   and .summary.gaps == 0
-' "$public_api" >/dev/null || die "public API audit is not strict 298/298"
+' "$public_api" >/dev/null || die "public API audit is not strict 301/301"
 
 jq -e '
   .format == "tondo-stdlib-normative-matrix/1"
   and .status == "verified"
   and .summary.owners == 22
   and .summary.requirements == 171
-  and .summary.rows == 469
+  and .summary.rows == 472
   and .summary.open_rows == 0
   and all(.rows[]; .status == "verified")
   and all(.owners[].stages[]; .status == "verified" or .status == "not-applicable")
@@ -193,7 +193,7 @@ jq -e '
 jq -e '
   .format == "tondo-stdlib-conformance/1"
   and .status == "promoted"
-  and .summary == {owners:22,signatures:298,requirements:171,rows:469,cases:34}
+  and .summary == {owners:22,signatures:301,requirements:171,rows:472,cases:34}
 ' testing/stdlib-conformance.json >/dev/null || die "conformance registry is not promoted"
 
 stage="$work/tondo-stdlib-s1a"
