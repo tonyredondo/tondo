@@ -101,6 +101,8 @@ jobs:
           cargo install cargo-mutants --version 27.1.0 --locked
 
       - name: Measure and enforce quality baselines
+        env:
+          TONDO_TEST_TARGET: linux-x86_64
         run: bash scripts/ci-test-scope.sh bash scripts/quality-gate.sh
 
       - name: Upload quality reports
