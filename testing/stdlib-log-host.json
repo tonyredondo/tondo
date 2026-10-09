@@ -59,6 +59,7 @@
   "public_project": "acceptance/projects/stdlib-log-host/tondo.toml",
   "command_output": {
     "streams": "separate-selected-stdout-and-stderr",
+    "observations": ["wire-conformance", "reliability", "fixture-sidecars"],
     "runtime_error": "records-before-diagnostics",
     "vm_resource_failure": "preserve-completed-records-no-user-cleanup"
   },
@@ -67,7 +68,11 @@
     "crates/tondo-compiler/tests/fixtures/log-file.to",
     "crates/tondo-compiler/tests/fixtures/log-concurrent.to",
     "crates/tondo-compiler/tests/fixtures/log-network.to",
-    "crates/tondo-compiler/tests/fixtures/log-writer-probe.to"
+    "crates/tondo-compiler/tests/fixtures/log-writer-probe.to",
+    "tests/runtime/logging-streams.to",
+    "tests/runtime/logging-streams.stdout",
+    "tests/runtime/logging-streams.runtime-stderr",
+    "tests/runtime/logging-streams.exit"
   ],
   "tests": [
     "crates/tondo-compiler/src/driver.rs::logging_host_constructors_require_their_exact_capability_and_private_helpers_stay_sealed",
@@ -86,7 +91,10 @@
     "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_refuses_directories_and_invalid_modes_without_handles",
     "crates/tondo-cli/tests/cli.rs::logging_run_preserves_stdout_and_stderr_from_the_hosted_writer",
     "crates/tondo-cli/tests/cli.rs::logging_run_delivers_stderr_before_unhandled_main_error_diagnostics",
-    "crates/tondo-compiler/src/driver.rs::hosted_run_preserves_completed_console_records_on_vm_resource_exhaustion"
+    "crates/tondo-compiler/src/driver.rs::hosted_run_preserves_completed_console_records_on_vm_resource_exhaustion",
+    "crates/tondo-reference-adapter/src/lib.rs::logging_records_retain_both_streams_in_wire_observations",
+    "crates/tondo-reliability/src/harness.rs::logging_records_retain_both_streams_in_reliability_observations",
+    "crates/tondo-compiler/tests/bootstrap_harness.rs::repository_fixtures_match_their_sidecars"
   ],
   "promotion": {
     "independent_model_fuzz": "pending-STD-LOG-TEST-001",

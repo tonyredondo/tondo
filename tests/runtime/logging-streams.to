@@ -1,0 +1,20 @@
+import std.log
+
+fn closeLogger(logger: log.Logger[log.ConsoleSink]) suspends {
+    match log.Logger[log.ConsoleSink].close(logger) {
+        ok(_) => {}
+        err(_) => panic("close")
+    }
+}
+
+fn main(): !log.LogError {
+    for stream in [log.ConsoleStream.Stdout, log.ConsoleStream.Stderr] {
+        let options = log.SinkOptions.create(log.LogFormat.Text, log.Backpressure.Block, 1, log.LogLimits.defaults())?
+        let sink = log.ConsoleSink.create(stream, options)?
+        let logger = log.Logger[log.ConsoleSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+        defer closeLogger(logger)
+        let event = log.LogEvent.create(log.LogLevel.Info, "fixture", "stream", log.Fields.empty(), none)?
+        assert(logger.emit(event)? == log.LogReceipt.Accepted)
+        log.Logger[log.ConsoleSink].close(logger)?
+    }
+}

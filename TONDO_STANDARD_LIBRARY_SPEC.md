@@ -4616,12 +4616,15 @@ source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`;
 normal portable/fuzz skips do not establish global portable success.
 The scheduled nightly quality job at `040a93ca` omits the target flag and fails
 the final provenance ratchet after its measurements pass. `89130e3f` declares
-the target explicitly; its renewed source-bound quality passes, with exact
-publication/nightly follow-up still required.
+the target explicitly and its renewed source-bound quality passes. Exact
+publication `97eaa29a` passes strict run `37918455600` and all three jobs in
+manual nightly run `37918521272`, with checkout, provenance and final quiet
+confirmation verified. This qualifies the unchanged nightly workflow.
 HOST promotion is reopened after the CLI drops records captured on stderr.
 The local correction preserves separate command streams before runtime
-diagnostics and VM resource failure; three permanent regressions and all 25
-logging tests pass. That correction needs renewed source-bound quality and
+diagnostics and VM resource failure. Wire conformance, reliability observations
+and runtime fixtures also retain both streams. The driver/CLI regressions and
+all 25 logging tests pass. That correction needs renewed source-bound quality and
 exact publication CI before HOST is closed again.
 Independent model/fuzz, performance, common conformance and usage remain
 separate owner blocks: `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,

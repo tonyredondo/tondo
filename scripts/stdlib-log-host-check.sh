@@ -38,11 +38,12 @@ jq -e --slurpfile parent "${TONDO_STDLIB_LOG_CONTRACT:-testing/stdlib-log.json}"
     close:"typed-result-before-unconditional-writer-retirement",
     liveness:"Bytes-Path-Writer-File-roots-independent-of-test-account", metrics:"logical-not-RSS-or-OS-allocator-calls"}
   and .public_project == "acceptance/projects/stdlib-log-host/tondo.toml"
-  and (.fixtures | length) == 5 and (.fixtures | unique | length) == 5
+  and (.fixtures | length) == 9 and (.fixtures | unique | length) == 9
   and .command_output == {streams:"separate-selected-stdout-and-stderr",
+    observations:["wire-conformance","reliability","fixture-sidecars"],
     runtime_error:"records-before-diagnostics",
     vm_resource_failure:"preserve-completed-records-no-user-cleanup"}
-  and (.tests | length) == 17 and (.tests | unique | length) == 17
+  and (.tests | length) == 20 and (.tests | unique | length) == 20
   and .promotion == {independent_model_fuzz:"pending-STD-LOG-TEST-001", performance:"not-measured",
     common_conformance:"pending-STD-LOG-CONF-001", usage_documentation:"pending-STD-LOG-DOC-001", full_owner:false}
 ' "$contract" >/dev/null || die 'register differs from the hosted boundary'

@@ -112,7 +112,7 @@ impl Fixture {
                 .map_err(|error| error.to_string())?,
             human: output.diagnostics().human(),
             stdout: output.stdout().to_vec(),
-            stderr: Vec::new(),
+            stderr: output.stderr().to_vec(),
         })
     }
 

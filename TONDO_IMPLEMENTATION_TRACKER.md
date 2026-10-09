@@ -7273,7 +7273,11 @@ estas leaves.
   implementation source 96cd3c62 passes all 364 strict Linux checks in CI run
   37897332476, with actual
   checkout and final quiet confirmation verified. Metadata publication requires
-  same-session exact-SHA follow-up, including the actual nightly quality job.
+  same-session exact-SHA follow-up. Publication 97eaa29a passes strict run
+  37918455600 and every manual nightly job in 37918521272; actual checkout,
+  quality artifact provenance and final quiet confirmation are verified.
+  These results qualify the unchanged nightly workflow, not the later command
+  stream repair. Its wire, reliability and fixture consumers are also corrected.
   Rotation, ambient providers and automatic
   retry remain forbidden. Native logging and the full owner are not promoted.
 - [ ] **STD-LOG-TEST-001 — Probar logging.** Cubrir orden, concurrencia,

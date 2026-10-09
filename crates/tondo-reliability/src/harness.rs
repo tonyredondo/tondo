@@ -18,6 +18,7 @@ pub struct Observation {
     pub diagnostic_codes: Vec<String>,
     pub diagnostics_jsonl: String,
     pub stdout_hex: String,
+    pub stderr_hex: String,
 }
 
 pub fn observe(
@@ -68,6 +69,7 @@ pub fn observe(
             .json_lines()
             .map_err(|error| error.to_string())?,
         stdout_hex: encode_hex(output.stdout()),
+        stderr_hex: encode_hex(output.stderr()),
     })
 }
 
@@ -148,6 +150,34 @@ mod tests {
         assert_eq!(first.exit_code, 0);
         assert!(first.diagnostics_jsonl.is_empty());
         assert!(first.stdout_hex.is_empty());
+    }
+
+    #[test]
+    fn logging_records_retain_both_streams_in_reliability_observations() {
+        let observation = observe(
+            "log-streams",
+            Arc::<[u8]>::from(
+                include_bytes!("../../../tests/runtime/logging-streams.to").as_slice(),
+            ),
+            Operation::Run,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        )
+        .unwrap();
+        assert!(observation.accepted);
+        assert_eq!(observation.exit_code, 0);
+        assert!(observation.diagnostics_jsonl.is_empty());
+        for stream in [&observation.stdout_hex, &observation.stderr_hex] {
+            assert_eq!(
+                decode_hex(stream).unwrap(),
+                include_bytes!("../../../tests/runtime/logging-streams.stdout")
+            );
+        }
+        let encoded = serde_json::to_vec(&observation).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Observation>(&encoded).unwrap(),
+            observation
+        );
     }
 
     #[test]

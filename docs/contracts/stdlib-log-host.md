@@ -37,6 +37,9 @@ then retires the writer even if flushing fails; errors remain visible.
 
 Hosted command results retain stdout and stderr separately. The CLI delivers
 runtime stderr before compiler diagnostics, including an unhandled main error.
+Wire conformance, reliability observations and runtime fixture sidecars retain
+both streams through the public compiler output. A shared public fixture checks
+their exact bytes, including serialization of the reliability observation.
 VM resource failure retains bytes already committed by the writer and preserves
 `T0002`; it does not execute or manufacture user cleanup. The public CLI
 regressions and bounded VM exhaustion regression verify these paths. The
@@ -127,8 +130,11 @@ test gate and extended fuzz. Coverage and all six critical mutants pass, but
 the final quality ratchet fails because that job omits `TONDO_TEST_TARGET`.
 The failure is retained and is not called global green CI. Commit `89130e3f`
 declares `linux-x86_64` on the existing quality step, matching the full gate and
-the retained provenance. Publication follow-up must verify this correction on
-the new exact revision, including the actual nightly quality job.
+the retained provenance. Exact publication `97eaa29a` passes strict run
+`37918455600` and all three jobs in manual nightly run `37918521272`. Actual
+checkout, the complete quality artifact provenance and final quiet confirmation
+are verified. This qualifies the unchanged workflow; it does not measure the
+later command stream correction.
 
 The command output correction invalidates that quality identity for the new
 source. Current promotion awaits renewed quality and exact publication CI.

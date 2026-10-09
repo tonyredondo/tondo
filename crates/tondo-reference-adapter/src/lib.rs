@@ -352,7 +352,7 @@ pub(crate) fn observation_from_output(
         exit_code: i32::from(output.exit_code()),
         diagnostics,
         stdout_hex: tondo_conformance::encode_hex(&stdout),
-        stderr_hex: String::new(),
+        stderr_hex: tondo_conformance::encode_hex(output.stderr()),
         formatted_hex: formatted.map(|bytes| tondo_conformance::encode_hex(&bytes)),
         data,
     })
@@ -494,6 +494,40 @@ mod tests {
             tondo_conformance::decode_hex(&observation.stdout_hex).unwrap(),
             b"ok\n"
         );
+    }
+
+    #[test]
+    fn logging_records_retain_both_streams_in_wire_observations() {
+        let action = WireSourceAction {
+            operation: WireOperation::Run,
+            form: WireSourceForm::Module,
+            root: "main.to".into(),
+            sources: vec![WireSource {
+                source_id: "root:adapter-log-streams".into(),
+                module: "main".into(),
+                logical_path: "main.to".into(),
+                contents_hex: tondo_conformance::encode_hex(include_bytes!(
+                    "../../../tests/runtime/logging-streams.to"
+                )),
+            }],
+            warning_profiles: Vec::new(),
+            arguments: Vec::new(),
+            gc_threshold: None,
+            include_interface: false,
+        };
+        let response = ReferenceAdapter.handle(&request(AdapterAction::Source(action)));
+        let AdapterResult::Ok { observation } = response.result else {
+            panic!("reference adapter rejected the logging fixture");
+        };
+        assert_eq!(observation.compilation, CompilationState::Success);
+        assert_eq!(observation.exit_code, 0);
+        assert!(observation.diagnostics.is_empty());
+        for stream in [&observation.stdout_hex, &observation.stderr_hex] {
+            assert_eq!(
+                tondo_conformance::decode_hex(stream).unwrap(),
+                include_bytes!("../../../tests/runtime/logging-streams.stdout")
+            );
+        }
     }
 
     #[test]
