@@ -5341,16 +5341,14 @@ impl<'a> ExpressionChecker<'a> {
                 .normalized_identifier()
                 .zip(function_token.token().normalized_identifier())
                 .and_then(|(owner, member)| {
-                    tondo_stdlib::log::LogOperation::associated(owner, member)
+                    HirBootstrapHostFunction::log_private_associated(owner, member)
                 })
         {
             if !self.log_operation_is_visible(file, node.range(), operation)? {
                 return self.recovery_expression(file, node.range());
             }
-            let callee = self.bootstrap_host_callee(
-                HirBootstrapHostFunction::Log(operation),
-                self.sources.span(file, node.range())?,
-            )?;
+            let callee =
+                self.bootstrap_host_callee(operation, self.sources.span(file, node.range())?)?;
             return self.close_contextual_function_value(
                 file,
                 node.range(),
@@ -17389,7 +17387,8 @@ impl<'a> ExpressionChecker<'a> {
             .token()
             .normalized_identifier()
             .unwrap_or(self.token_text(file, member_token)?);
-        let Some(operation) = tondo_stdlib::log::LogOperation::associated(owner.as_str(), member)
+        let Some(operation) =
+            HirBootstrapHostFunction::log_private_associated(owner.as_str(), member)
         else {
             return Ok(None);
         };
@@ -17406,10 +17405,8 @@ impl<'a> ExpressionChecker<'a> {
         if !self.log_operation_is_visible(file, range, operation)? {
             return self.recovery_expression(file, range).map(Some);
         }
-        let callee = self.bootstrap_host_callee(
-            HirBootstrapHostFunction::Log(operation),
-            self.sources.span(file, member_token.range())?,
-        )?;
+        let callee =
+            self.bootstrap_host_callee(operation, self.sources.span(file, member_token.range())?)?;
         self.check_call(
             CallSite {
                 file,
@@ -17429,7 +17426,7 @@ impl<'a> ExpressionChecker<'a> {
         &mut self,
         file: FileId,
         range: TextRange,
-        operation: tondo_stdlib::log::LogOperation,
+        operation: HirBootstrapHostFunction,
     ) -> Result<bool, HirError> {
         let source = self.sources.get(file)?;
         if source.origin() == crate::source::SourceOrigin::GeneratedStandard

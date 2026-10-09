@@ -1,0 +1,58 @@
+import std.console
+
+pub type ConsoleSink = {
+    priv buffer: BufferedSink[console.Output]
+}
+
+pub fn ConsoleSink.create(stream: ConsoleStream, options: SinkOptions): ConsoleSink ! LogError {
+    let writer = match if stream == ConsoleStream.Stdout {
+        console.stdout()
+    } else {
+        console.stderr()
+    } {
+        ok(value) => value
+        err(_) => return err(LogError.ResourceLimit)
+    }
+    match bufferedSink(writer, options) {
+        ok(buffer) => ConsoleSink { buffer }
+        err(WriterFailure { writer: rejected, error: failure }) =>
+            {
+                ConsoleSink.__closeOutput(rejected)?
+                err(failure)
+            }
+    }
+}
+
+impl LogSink for ConsoleSink {
+    fn write(var self, event: LogEvent): LogReceipt ! LogError suspends {
+        self.buffer.write(event)
+    }
+    fn flush(var self): !LogError suspends {
+        self.buffer.flush()
+    }
+    fn close(sink: ConsoleSink): !LogError suspends {
+        let writers = match sink {
+            ConsoleSink { buffer } => finishBuffer(buffer)
+        }
+        var first: LogError? = none
+        for (writer, failure) in writers {
+            let closed = ConsoleSink.__closeOutput(writer)
+            if first == none {
+                first = failure
+            }
+            match closed {
+                ok(_) => {}
+                err(error) =>
+                    {
+                        if first == none {
+                            first = some(error)
+                        }
+                    }
+            }
+        }
+        match first {
+            some(error) => err(error)
+            none => ok(())
+        }
+    }
+}

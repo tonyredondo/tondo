@@ -41,7 +41,7 @@ jq -e --slurpfile parent testing/stdlib-log.json '
   and .public_project == "acceptance/projects/stdlib-log/tondo.toml"
   and .public_fixtures == ["core.to","main.to","affine.to","queue.to","value-sink.to"]
   and .command == "scripts/stdlib-log-implementation-check.sh"
-  and .promotion.public_signatures == 19 and .promotion.host_sinks == "pending-STD-LOG-HOST-001"
+  and .promotion.public_signatures == 19 and .promotion.host_sinks == $parent[0].implementation.host
   and .promotion.native_abi == "not-implemented" and .promotion.native_aot == "not-claimed"
   and .promotion.full_owner == false and .promotion.performance == "not-measured"
   and .promotion.independent_model_fuzz_conf_doc == "pending-owner-blocks"
@@ -71,4 +71,4 @@ target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" = /* ]] || target_dir="$root/$target_dir"
 timeout 60 "$target_dir/debug/tondo" check --project acceptance/projects/stdlib-log
 timeout 60 "$target_dir/debug/tondo" run --project acceptance/projects/stdlib-log
-echo 'logging implementation: OK (public core/custom sinks; host sinks and native promotion pending)'
+echo 'logging implementation: OK (public core/custom sinks; native promotion pending)'

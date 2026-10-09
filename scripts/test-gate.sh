@@ -476,6 +476,10 @@ run_step stdlib-log-implementation \
     scripts/stdlib-log-implementation-check.sh
 run_step stdlib-log-implementation-tests \
     scripts/stdlib-log-implementation-test.sh
+run_step stdlib-log-host \
+    scripts/stdlib-log-host-check.sh
+run_step stdlib-log-host-tests \
+    scripts/stdlib-log-host-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

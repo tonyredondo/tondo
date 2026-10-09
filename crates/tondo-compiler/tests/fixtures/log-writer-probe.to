@@ -1,0 +1,243 @@
+import std.async as jobs
+import std.bytes
+import std.channel
+import std.console
+import std.io
+
+// This provider is installed only by the Rust test as a sealed standard source.
+// Ordinary programs cannot access BufferedSink or the private release helpers.
+type ProbeWriter = {
+    output: console.Output
+    mode: Int
+    sent: Int
+    interrupted: Bool
+}
+
+impl io.Writer for ProbeWriter {
+    fn write(var self, data: bytes.Bytes): Int ! io.IoError suspends {
+        if self.mode == 1 and self.sent >= 2 {
+            return err(io.IoError.Host)
+        }
+        if (self.mode == 2 or self.mode == 6) and self.sent >= 2 and not self.interrupted {
+            self.interrupted = true
+            if self.mode == 2 {
+                return err(io.IoError.Cancelled)
+            }
+            return err(io.IoError.ResourceLimit)
+        }
+        if self.mode == 3 {
+            return 0
+        }
+        if self.mode == 4 {
+            return data.length() + 1
+        }
+        let count = if data.length() > 2 {
+            2
+        } else {
+            data.length()
+        }
+        let chunk = match data.slice(0, count) {
+            ok(value) => value
+            err(_) => return err(io.IoError.ResourceLimit)
+        }
+        let written = self.output.write(chunk)?
+        self.sent += written
+        written
+    }
+    fn flush(var self): !io.IoError suspends {
+        if self.mode == 5 {
+            return err(io.IoError.Host)
+        }
+        self.output.flush()
+    }
+}
+
+fn closeProbeBuffer(buffer: BufferedSink[ProbeWriter]) suspends {
+    for (writer, failure) in finishBuffer(buffer) {
+        match writer {
+            ProbeWriter { output, .. } =>
+                {
+                    match ConsoleSink.__closeOutput(output) {
+                        ok(_) => {}
+                        err(_) => panic("writer probe cleanup failed")
+                    }
+                }
+        }
+        assert(failure == none)
+    }
+}
+
+pub fn __writerProbe(): !LogError suspends {
+    let event = LogEvent.create(LogLevel.Info, "probe", "value", Fields.empty(), none)?
+    let options = SinkOptions.create(LogFormat.Text, Backpressure.Reject, 1, LogLimits.defaults())?
+    for mode in [0, 1, 2, 3, 4, 5, 6] {
+        let output = match console.stdout() {
+            ok(value) => value
+            err(_) => return err(LogError.ResourceLimit)
+        }
+        let buffer = match bufferedSink(
+                ProbeWriter { output, mode, sent: 0, interrupted: false },
+                options,
+            ) {
+            ok(value) => value
+            err(WriterFailure { writer: rejected, error: failure }) =>
+                {
+                    match rejected {
+                        ProbeWriter { output: rejectedOutput, .. } => ConsoleSink.__closeOutput(rejectedOutput)?
+                    }
+                    return err(failure)
+                }
+        }
+        defer closeProbeBuffer(buffer)
+        assert(buffer.write(event)? == LogReceipt.Accepted)
+        if mode == 0 {
+            buffer.flush()?
+        } else {
+            let expected = if mode == 2 {
+                LogError.Cancelled
+            } else {
+                if mode == 6 {
+                    LogError.ResourceLimit
+                } else {
+                    LogError.Io
+                }
+            }
+            assert(buffer.flush() == err(expected))
+            if mode == 2 or mode == 6 {
+                buffer.flush()?
+            } else {
+                assert(buffer.write(event) == err(LogError.Closed))
+                assert(buffer.flush() == err(LogError.Closed))
+            }
+        }
+        let closed = finishBuffer(buffer)
+        var count = 0
+        for (writer, failure) in closed {
+            count += 1
+            if mode == 0 or mode == 2 or mode == 6 {
+                assert(failure == none)
+            } else {
+                assert(failure == some(LogError.Io))
+            }
+            match writer {
+                ProbeWriter { output: ownedOutput, .. } => ConsoleSink.__closeOutput(ownedOutput)?
+            }
+        }
+        assert(count == 1)
+    }
+}
+
+type CancelWriter = {
+    output: console.Output
+    started: channel.Sender[Int]
+    gate: channel.Sender[Int]
+    sent: Int
+    waited: Bool
+}
+
+impl io.Writer for CancelWriter {
+    fn write(var self, data: bytes.Bytes): Int ! io.IoError suspends {
+        if self.sent >= 2 and not self.waited {
+            self.waited = true
+            match self.started.send(1) {
+                ok(_) => {}
+                err(_) => return err(io.IoError.Host)
+            }
+            match self.gate.send(1) {
+                ok(_) => {}
+                err(_) => return err(io.IoError.Host)
+            }
+        }
+        let count = if data.length() > 2 {
+            2
+        } else {
+            data.length()
+        }
+        let chunk = match data.slice(0, count) {
+            ok(value) => value
+            err(_) => return err(io.IoError.ResourceLimit)
+        }
+        let written = self.output.write(chunk)?
+        self.sent += written
+        written
+    }
+    fn flush(var self): !io.IoError suspends {
+        self.output.flush()
+    }
+}
+
+fn closeProbeReceiver(receiver: channel.Receiver[Int]) {
+    _ = receiver.close()
+}
+
+fn closeCancelWriter(writer: CancelWriter): !LogError {
+    match writer {
+        CancelWriter { output, started, gate, .. } =>
+            {
+                started.close()
+                gate.close()
+                ConsoleSink.__closeOutput(output)
+            }
+    }
+}
+
+fn closeCancelBuffer(buffer: BufferedSink[CancelWriter]) suspends {
+    for (writer, failure) in finishBuffer(buffer) {
+        match closeCancelWriter(writer) {
+            ok(_) => {}
+            err(_) => panic("cancel probe writer cleanup failed")
+        }
+        assert(failure == none)
+    }
+}
+
+pub fn __cancellationProbe(): !LogError suspends {
+    let (started, observation) = match channel.bounded[Int](1) {
+        ok(pair) => pair
+        err(_) => return err(LogError.ResourceLimit)
+    }
+    defer closeProbeReceiver(observation)
+    let (gate, gateReceiver) = match channel.bounded[Int](0) {
+        ok(pair) => pair
+        err(_) =>
+            {
+                started.close()
+                return err(LogError.ResourceLimit)
+            }
+    }
+    defer closeProbeReceiver(gateReceiver)
+    let output = match console.stdout() {
+        ok(value) => value
+        err(_) =>
+            {
+                started.close()
+                gate.close()
+                return err(LogError.ResourceLimit)
+            }
+    }
+    let options = SinkOptions.create(LogFormat.Text, Backpressure.Reject, 1, LogLimits.defaults())?
+    let buffer = match bufferedSink(
+            CancelWriter { output, started, gate, sent: 0, waited: false },
+            options,
+        ) {
+        ok(value) => value
+        err(WriterFailure { writer: rejected, error: failure }) =>
+            {
+                closeCancelWriter(rejected)?
+                return err(failure)
+            }
+    }
+    defer closeCancelBuffer(buffer)
+    let event = LogEvent.create(LogLevel.Info, "probe", "cancelled", Fields.empty(), none)?
+    assert(buffer.write(event)? == LogReceipt.Accepted)
+    scope {
+        var group = jobs.group[Unit, LogError]()
+        group.add(spawn buffer.flush())
+        assert(observation.receive() == some(1))
+        group.cancel()
+    }
+    buffer.flush()?
+    closeCancelBuffer(buffer)
+    assert(gateReceiver.close().length() == 0)
+    _ = observation.close()
+}

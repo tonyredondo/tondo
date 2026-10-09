@@ -160,6 +160,10 @@ pub trait LogSink {
 no consulta `HOME`, no cambia permisos ambientales y no rota archivos en este
 contrato. Its suspendible constructor opens the file immediately and returns
 opening errors as LogError; opening is not deferred until the first event.
+`FileMode.Append` creates a missing file and appends to an existing file in
+one open operation. `FileMode.Truncate` creates or truncates the file.
+Neither mode creates parent directories. This logging policy does not change
+the existing-only contract of `std.fs.OpenMode.Append`.
 Un provider de red implementa `LogSink` sobre un `std.io.Writer` o
 un transporte de `std.net` bajo `network`; `std.log` no hace DNS, TLS ni
 reconexión por debajo del protocolo.
@@ -185,6 +189,15 @@ aceptado. No existe una política `DropOldest`, porque destruir un evento ya
 aceptado sin un ack explícito rompe el orden y la causalidad. Todo buffer tiene
 capacidad finita; un sink no puede convertirse en una cola ilimitada por
 configuración.
+
+Builtin sinks admit one fully formatted record per `write` into their explicit
+bounded queue. `Accepted` means queue admission, not a completed physical write.
+`flush` and consuming `close` drain accepted records in commit order. When the
+queue is full, `Block` drains the oldest record before admitting the new one;
+`Reject` and `Drop` leave previously accepted records intact. Each record reaches
+the writer separately. There is no worker, implicit multi-record batch, or
+timer-based delivery. A short write advances the retained offset of that record;
+retrying after cooperative cancellation resumes at that offset.
 
 La superficie de construcción es:
 

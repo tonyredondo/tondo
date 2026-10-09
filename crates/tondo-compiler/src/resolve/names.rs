@@ -731,6 +731,9 @@ impl NameResolver<'_> {
                 );
             }
             (None, None) => {
+                if self.missing_log_sink(module, &name, token)? {
+                    return Ok(());
+                }
                 self.emit(
                     token.range(),
                     "E1001",
@@ -1026,6 +1029,9 @@ impl NameResolver<'_> {
             return Ok(());
         };
         let Some(symbol) = resolved_module.lookup(namespace, &name) else {
+            if self.missing_log_sink(module, &name, token)? {
+                return Ok(());
+            }
             self.emit(
                 token.range(),
                 "E1001",
@@ -1044,6 +1050,31 @@ impl NameResolver<'_> {
             ResolvedEntity::Name(ResolvedName::Symbol(symbol)),
         );
         Ok(())
+    }
+
+    fn missing_log_sink(
+        &mut self,
+        module: &ModuleId,
+        name: &Name,
+        token: SyntaxTokenRef<'_>,
+    ) -> Result<bool, ResolveError> {
+        if module.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || module.path().as_str() != "log"
+        {
+            return Ok(false);
+        }
+        let capability = match name.as_str() {
+            "ConsoleSink" => "console",
+            "FileSink" => "filesystem",
+            _ => return Ok(false),
+        };
+        self.emit(
+            token.range(),
+            "E1008",
+            format!("std.log.{name} requires target capability `{capability}`"),
+            None,
+        )?;
+        Ok(true)
     }
 
     fn lookup_name(&self, namespace: Namespace, name: &Name) -> Option<ResolvedName> {

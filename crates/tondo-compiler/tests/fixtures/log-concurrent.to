@@ -1,0 +1,29 @@
+import std.async as jobs
+import std.log
+
+fn closeConcurrentLogger(logger: log.Logger[log.ConsoleSink]) suspends {
+    match log.Logger[log.ConsoleSink].close(logger) {
+        ok(_) => {}
+        err(_) => panic("concurrent logger close failed")
+    }
+}
+
+fn main(): !log.LogError {
+    let options = log
+        .SinkOptions
+        .create(log.LogFormat.Text, log.Backpressure.Block, 2, log.LogLimits.defaults())?
+    let sink = log.ConsoleSink.create(log.ConsoleStream.Stdout, options)?
+    let logger = log.Logger[log.ConsoleSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+    defer closeConcurrentLogger(logger)
+    scope {
+        var group = jobs.group[log.LogReceipt, log.LogError]()
+        for message in ["0", "1", "2", "3", "4", "5", "6", "7"] {
+            let event = log.LogEvent.create(log.LogLevel.Info, "concurrent", message, log.Fields.empty(), none)?
+            group.add(spawn logger.emit(event))
+        }
+        for receipt in group.all()? {
+            assert(receipt == log.LogReceipt.Accepted)
+        }
+    }
+    log.Logger[log.ConsoleSink].close(logger)?
+}

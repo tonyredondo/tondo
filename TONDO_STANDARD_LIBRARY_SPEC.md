@@ -1934,6 +1934,11 @@ actualizar esta especificación y el tracker antes de implementar.
   política de backpressure sin alterar silenciosamente el control del programa.
   FileSink.create is suspends: it opens its explicit path in the constructor
   and returns opening errors there. Host implementation remains a separate gate.
+  Logging Append atomically creates a missing file or appends to an existing
+  file; Truncate creates or truncates. Neither mode creates parent directories.
+  The existing-only std.fs.OpenMode.Append contract is unchanged.
+  Builtin sinks admit explicit queued records, drained by flush, consuming close,
+  and Block on a full queue. Records are written separately without a worker.
 - Los argumentos del programa se obtienen mediante
   `std.env.snapshot().arguments()`.
 - `std.env` solo expone un snapshot runtime explícito; no lee environment durante

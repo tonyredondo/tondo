@@ -2808,6 +2808,10 @@ impl HirSelectArm {
 pub enum HirBootstrapHostFunction {
     CivilTime(tondo_stdlib::civil_time::CivilOperation),
     Log(tondo_stdlib::log::LogOperation),
+    LogFormatRecord,
+    LogFileOpen,
+    LogFileClose,
+    LogConsoleClose,
     Network(tondo_vm::network::NetworkOperation),
     Reflection(tondo_vm::reflection::ReflectionOperation),
     UuidNil,
@@ -3384,10 +3388,26 @@ impl HirBootstrapHostFunction {
         })
     }
 
+    pub fn log_private_associated(owner: &str, member: &str) -> Option<Self> {
+        tondo_stdlib::log::LogOperation::associated(owner, member)
+            .map(Self::Log)
+            .or(match (owner, member) {
+                ("LogEvent", "__format") => Some(Self::LogFormatRecord),
+                ("FileSink", "__openFile") => Some(Self::LogFileOpen),
+                ("FileSink", "__closeFile") => Some(Self::LogFileClose),
+                ("ConsoleSink", "__closeOutput") => Some(Self::LogConsoleClose),
+                _ => None,
+            })
+    }
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::CivilTime(operation) => operation.name(),
             Self::Log(operation) => operation.name(),
+            Self::LogFormatRecord => "std.log.LogEvent.__format",
+            Self::LogFileOpen => "std.log.FileSink.__openFile",
+            Self::LogFileClose => "std.log.FileSink.__closeFile",
+            Self::LogConsoleClose => "std.log.ConsoleSink.__closeOutput",
             Self::Network(operation) => operation.name(),
             Self::Reflection(operation) => operation.name(),
             Self::ConsolePrint => "std.console.print",
@@ -3936,7 +3956,8 @@ impl HirBootstrapHostFunction {
         }
         matches!(
             self,
-            Self::ConsoleFlush
+            Self::LogFileOpen
+                | Self::ConsoleFlush
                 | Self::ConsoleReadLine
                 | Self::ReaderRead
                 | Self::WriterWrite

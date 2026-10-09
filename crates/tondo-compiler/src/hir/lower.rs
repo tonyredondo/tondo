@@ -2085,6 +2085,9 @@ impl<'a> TypeLowerer<'a> {
         let event = nominal("LogEvent")?;
         let error = nominal("LogError")?;
         let level = nominal("LogLevel")?;
+        let format = nominal("LogFormat")?;
+        let limits = nominal("LogLimits")?;
+        let mode = nominal("FileMode")?;
         let time_path = ModulePath::new("time")?;
         let time_module = self
             .packages
@@ -2119,6 +2122,64 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 output,
             )?;
+        }
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let formatted = self.interner.result(bytes, error)?;
+        self.push_bootstrap_host_callable(
+            span,
+            HirBootstrapHostFunction::LogFormatRecord,
+            vec![(event, false), (format, false), (limits, false)],
+            None,
+            formatted,
+        )?;
+        let unit = self.interner.scalar(ScalarType::Unit);
+        let closed = self.interner.result(unit, error)?;
+        for (module_name, path, functions) in [
+            (
+                "fs",
+                "compiler/log_file.to",
+                vec![
+                    HirBootstrapHostFunction::LogFileOpen,
+                    HirBootstrapHostFunction::LogFileClose,
+                ],
+            ),
+            (
+                "console",
+                "compiler/log_console.to",
+                vec![HirBootstrapHostFunction::LogConsoleClose],
+            ),
+        ] {
+            if !self.sources.iter().any(|(_, source)| {
+                source.origin() == crate::source::SourceOrigin::GeneratedStandard
+                    && source.module().as_str() == "log"
+                    && source.path().as_str() == path
+            }) {
+                continue;
+            }
+            let module = self
+                .packages
+                .module(self.packages.standard(), &ModulePath::new(module_name)?)
+                .expect("selected sink provider module exists");
+            for function in functions {
+                let (parameters, output) = if function == HirBootstrapHostFunction::LogFileOpen {
+                    let path_type = self.interner.intrinsic(IntrinsicType::Path, Vec::new())?;
+                    let file = self.interner.intrinsic(IntrinsicType::File, Vec::new())?;
+                    let fs_error = self.bootstrap_nominal_type(&module, "FsError")?;
+                    (
+                        vec![(path_type, false), (mode, false)],
+                        self.interner.result(file, fs_error)?,
+                    )
+                } else {
+                    let constructor = if module_name == "fs" {
+                        IntrinsicType::File
+                    } else {
+                        IntrinsicType::Writer
+                    };
+                    let handle = self.interner.intrinsic(constructor, Vec::new())?;
+                    (vec![(handle, false)], closed)
+                };
+                self.push_bootstrap_host_callable(span, function, parameters, None, output)?;
+            }
         }
         Ok(())
     }

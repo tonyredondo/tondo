@@ -1,0 +1,70 @@
+import std.fs
+import std.path as paths
+
+pub type FileSink = {
+    priv buffer: BufferedSink[fs.File]
+}
+
+fn fileLogError(error: fs.FsError): LogError {
+    match error {
+        fs.FsError.ResourceLimit => LogError.ResourceLimit
+        fs.FsError.Cancelled => LogError.Cancelled
+        fs.FsError.Closed => LogError.Closed
+        fs.FsError.NotFound => LogError.Io
+        fs.FsError.PermissionDenied => LogError.Io
+        fs.FsError.AlreadyExists => LogError.Io
+        fs.FsError.InvalidPath => LogError.Io
+        fs.FsError.NotDirectory => LogError.Io
+        fs.FsError.IsDirectory => LogError.Io
+        fs.FsError.Io => LogError.Io
+    }
+}
+
+pub fn FileSink.create(path: paths.Path, mode: FileMode, options: SinkOptions): FileSink ! LogError suspends {
+    let writer = match FileSink.__openFile(path, mode) {
+        ok(value) => value
+        err(error) => return err(fileLogError(error))
+    }
+    match bufferedSink(writer, options) {
+        ok(buffer) => FileSink { buffer }
+        err(WriterFailure { writer: rejected, error: failure }) =>
+            {
+                FileSink.__closeFile(rejected)?
+                err(failure)
+            }
+    }
+}
+
+impl LogSink for FileSink {
+    fn write(var self, event: LogEvent): LogReceipt ! LogError suspends {
+        self.buffer.write(event)
+    }
+    fn flush(var self): !LogError suspends {
+        self.buffer.flush()
+    }
+    fn close(sink: FileSink): !LogError suspends {
+        let writers = match sink {
+            FileSink { buffer } => finishBuffer(buffer)
+        }
+        var first: LogError? = none
+        for (writer, failure) in writers {
+            let closed = FileSink.__closeFile(writer)
+            if first == none {
+                first = failure
+            }
+            match closed {
+                ok(_) => {}
+                err(error) =>
+                    {
+                        if first == none {
+                            first = some(error)
+                        }
+                    }
+            }
+        }
+        match first {
+            some(error) => err(error)
+            none => ok(())
+        }
+    }
+}

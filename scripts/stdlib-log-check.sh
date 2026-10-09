@@ -15,7 +15,8 @@ die() {
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "owner contract contains CR or trailing whitespace"
 
-jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdlib-log-implementation.json}" '
+jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdlib-log-implementation.json}" \
+  --slurpfile host "${TONDO_STDLIB_LOG_HOST_CONTRACT:-testing/stdlib-log-host.json}" '
   .format == "tondo-stdlib-owner-contract/1"
   and .owner == "std.log"
   and .parent_owner == "std"
@@ -74,6 +75,8 @@ jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdl
   and .backpressure.drop == "LogReceipt.Dropped-observable"
   and .backpressure.drop_oldest == "forbidden"
   and .backpressure.queue == "finite-explicit-capacity"
+  and .backpressure.builtin_delivery == "queue-admission-drain-on-flush-close-and-block-full"
+  and .backpressure.record_delivery == "one-record-at-a-time-retained-short-write-offset"
   and .backpressure.unbounded == false
   and .sinks.protocol == "LogSink"
   and .sinks.logger_bounds == ["LogSink", "Share"]
@@ -87,6 +90,8 @@ jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdl
   and .sinks.console.streams == ["Stdout", "Stderr"]
   and .sinks.file.capability == "filesystem"
   and .sinks.file.opening == "immediate-constructor"
+  and .sinks.file.append == "atomic-create-if-missing-append-if-existing"
+  and .sinks.file.truncate == "create-or-truncate"
   and .sinks.file.modes == ["Append", "Truncate"]
   and .sinks.file.rotation == "forbidden"
   and .sinks.network.capability == "network"
@@ -170,7 +175,12 @@ jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdl
     and $core[0].status == "verified-public-hosted-core"
     and $core[0].quality_gate == "verified-80-percent-per-scope"))
   and .implementation.public_api_promoted == false
-  and .implementation.host == "pending-STD-LOG-HOST-001"
+  and $core[0].promotion.host_sinks == .implementation.host
+  and ((.implementation.host == "pending-STD-LOG-HOST-001" and $host[0].status == "implementation-in-progress"
+    and $host[0].quality_gate == "pending-current-source-proof")
+    or (.implementation.host == "verified-production-hosted" and $host[0].status == "verified-production-hosted"
+    and $host[0].quality_gate == "verified-80-percent-per-scope"))
+  and .implementation.host_register == "testing/stdlib-log-host.json"
   and .implementation.core_register == "testing/stdlib-log-implementation.json"
   and .implementation.required_follow_ups == ["STD-LOG-IMPL-001", "STD-LOG-HOST-001", "STD-LOG-TEST-001", "STD-LOG-PERF-001", "STD-LOG-CONF-001", "STD-LOG-DOC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.log contract"

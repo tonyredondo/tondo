@@ -1,0 +1,46 @@
+import std.log
+
+fn closeLogger(logger: log.Logger[log.ConsoleSink]) suspends {
+    match log.Logger[log.ConsoleSink].close(logger) {
+        ok(_) => {}
+        err(_) => panic("console sink close failed")
+    }
+}
+
+fn main(): !log.LogError {
+    for policy in [log.Backpressure.Reject, log.Backpressure.Drop, log.Backpressure.Block] {
+        let options = log.SinkOptions.create(log.LogFormat.Text, policy, 1, log.LogLimits.defaults())?
+        let sink = log.ConsoleSink.create(log.ConsoleStream.Stdout, options)?
+        let logger = log.Logger[log.ConsoleSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+        defer closeLogger(logger)
+        let event = log.LogEvent.create(log.LogLevel.Info, "test", "first", log.Fields.empty(), none)?
+        assert(logger.emit(event)? == log.LogReceipt.Accepted)
+        let other = log.LogEvent.create(log.LogLevel.Info, "test", "second", log.Fields.empty(), none)?
+        if policy == log.Backpressure.Reject {
+            assert(logger.emit(other) == err(log.LogError.Backpressure))
+        } else {
+            let expected = if policy == log.Backpressure.Drop {
+                log.LogReceipt.Dropped
+            } else {
+                log.LogReceipt.Accepted
+            }
+            assert(logger.emit(other)? == expected)
+        }
+        assert(other.message() == "second")
+        logger.flush()?
+        log.Logger[log.ConsoleSink].close(logger)?
+    }
+    let options = log
+        .SinkOptions
+        .create(log.LogFormat.JsonLines, log.Backpressure.Reject, 2, log.LogLimits.defaults())?
+    let sink = log.ConsoleSink.create(log.ConsoleStream.Stderr, options)?
+    let logger = log.Logger[log.ConsoleSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+    defer closeLogger(logger)
+    let filtered = log
+        .LogEvent
+        .create(log.LogLevel.Debug, "test", "filtered", log.Fields.empty(), none)?
+    assert(logger.emit(filtered)? == log.LogReceipt.Filtered)
+    let accepted = log.LogEvent.create(log.LogLevel.Info, "test", "line\n世界", log.Fields.empty(), none)?
+    assert(logger.emit(accepted)? == log.LogReceipt.Accepted)
+    log.Logger[log.ConsoleSink].close(logger)?
+}

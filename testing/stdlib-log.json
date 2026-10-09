@@ -107,6 +107,8 @@
     "drop": "LogReceipt.Dropped-observable",
     "drop_oldest": "forbidden",
     "queue": "finite-explicit-capacity",
+    "builtin_delivery": "queue-admission-drain-on-flush-close-and-block-full",
+    "record_delivery": "one-record-at-a-time-retained-short-write-offset",
     "unbounded": false
   },
   "sinks": {
@@ -129,6 +131,8 @@
       "capability": "filesystem",
       "modes": ["Append", "Truncate"],
       "opening": "immediate-constructor",
+      "append": "atomic-create-if-missing-append-if-existing",
+      "truncate": "create-or-truncate",
       "parent_creation": "forbidden",
       "rotation": "forbidden"
     },
@@ -314,6 +318,7 @@
     "status": "verified-public-hosted-core",
     "public_api_promoted": false,
     "host": "pending-STD-LOG-HOST-001",
+    "host_register": "testing/stdlib-log-host.json",
     "core_register": "testing/stdlib-log-implementation.json",
     "required_follow_ups": ["STD-LOG-IMPL-001", "STD-LOG-HOST-001", "STD-LOG-TEST-001", "STD-LOG-PERF-001", "STD-LOG-CONF-001", "STD-LOG-DOC-001"]
   }

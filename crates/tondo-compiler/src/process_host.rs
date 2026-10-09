@@ -4108,6 +4108,7 @@ impl BootstrapHost {
                     | "std.encoding.HexOptions.encodeTo"
                     | "std.encoding.HexOptions.decodeFrom"
                     | "std.fs.open"
+                    | "std.log.FileSink.__openFile"
                     | "std.fs.openDirectory"
                     | "std.fs.readAll"
                     | "std.fs.writeAll"
@@ -4209,7 +4210,7 @@ impl BootstrapHost {
                         response = returned.memory;
                         returned.value
                     });
-                if name.starts_with("std.fs.") {
+                if name.starts_with("std.fs.") || name == "std.log.FileSink.__openFile" {
                     self.ready_fs_jobs.insert(call);
                 }
                 if name.starts_with("std.console.") {
@@ -4361,6 +4362,8 @@ impl BootstrapHost {
             self.invoke_civil_time_admitted(base_name, arguments, &mut response, admission)?
         } else if tondo_stdlib::log::LogOperation::from_name(base_name).is_some() {
             self.invoke_log_admitted(base_name, arguments, &mut response, admission)?
+        } else if Self::is_log_delivery_operation(base_name) {
+            self.invoke_log_delivery_admitted(base_name, arguments, &mut response, admission)?
         } else if base_name.starts_with("std.net.") {
             self.invoke_network_admitted(base_name, arguments, &mut response, admission)?
         } else if base_name.starts_with("std.uuid.Uuid.") {
@@ -4478,10 +4481,20 @@ impl BootstrapHost {
         )
     }
 
+    fn is_log_delivery_operation(name: &str) -> bool {
+        matches!(
+            name,
+            "std.log.LogEvent.__format"
+                | "std.log.FileSink.__closeFile"
+                | "std.log.ConsoleSink.__closeOutput"
+        )
+    }
+
     fn is_file_operation(name: &str) -> bool {
         matches!(
             name,
             "std.fs.open"
+                | "std.log.FileSink.__openFile"
                 | "std.fs.openDirectory"
                 | "std.fs.readAll"
                 | "std.fs.list"
@@ -4576,8 +4589,28 @@ impl BootstrapHost {
                 values[2] = RuntimeValue::Bool(metadata.permissions().readonly());
                 Ok(RuntimeValue::ResultOk(Box::new(snapshot)))
             }
-            ("std.fs.open", [receiver, mode]) => {
-                let mode = self.fs_open_mode(mode)?;
+            ("std.fs.open" | "std.log.FileSink.__openFile", [receiver, mode]) => {
+                // Logging append is create-if-missing. Keep the public fs
+                // mode existing-only and perform logging creation atomically
+                // in the same OS open, never as an exists/create/reopen pair.
+                let logging = name == "std.log.FileSink.__openFile";
+                let mode = if logging {
+                    match mode {
+                        RuntimeValue::Variant {
+                            name,
+                            variant: 0,
+                            values,
+                        } if name == "FileMode" && values.is_empty() => FsOpenMode::Append,
+                        RuntimeValue::Variant {
+                            name,
+                            variant: 1,
+                            values,
+                        } if name == "FileMode" && values.is_empty() => FsOpenMode::Create,
+                        _ => return Err(VmError::Host("logging FileMode is invalid".into())),
+                    }
+                } else {
+                    self.fs_open_mode(mode)?
+                };
                 let path_bytes = match self.path(receiver) {
                     Ok(path) => path.as_bytes().len() as u64,
                     Err(_) => return Ok(self.fs_result_error(FsError::InvalidPath)),
@@ -4604,7 +4637,7 @@ impl BootstrapHost {
                     Err(error) => return Ok(self.fs_result_error(error)),
                 };
                 let temporary = self.is_temporary_path(&path);
-                if matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew)
+                if (logging || matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew))
                     && let Err(error) = self.check_temporary_mutation(
                         &path,
                         crate::test_temporaries::Mutation::Write { length: 0 },
@@ -4617,7 +4650,10 @@ impl BootstrapHost {
                         return Ok(self.fs_result_error(FsError::IsDirectory));
                     }
                     Ok(_) => {}
-                    Err(error) if !matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew) => {
+                    Err(error)
+                        if !logging
+                            && !matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew) =>
+                    {
                         return Ok(self.fs_io_result_error(&error));
                     }
                     Err(_) => {}
@@ -4634,7 +4670,7 @@ impl BootstrapHost {
                         options.read(true).write(true);
                     }
                     FsOpenMode::Append => {
-                        options.append(true);
+                        options.append(true).create(logging);
                     }
                     FsOpenMode::Create => {
                         options.write(true).create(true).truncate(true);
@@ -7835,6 +7871,20 @@ impl BootstrapHost {
         ))))
     }
 
+    fn needs_buffer_liveness(value: &HostValue) -> bool {
+        // Ordinary VM execution also owns these buffers. Their lifetime must
+        // not depend on whether a test phase installed a memory account.
+        matches!(
+            value,
+            HostValue::Bytes(_)
+                | HostValue::Path(_)
+                | HostValue::Writer { .. }
+                | HostValue::File { .. }
+                | HostValue::ChannelSender { .. }
+                | HostValue::ChannelReceiver { .. }
+        )
+    }
+
     fn collect_host_values_with_teardown(
         &mut self,
         roots: &tondo_vm::runtime::VmHostRoots,
@@ -7935,13 +7985,11 @@ impl BootstrapHost {
             .buffer_memory
             .keys()
             .copied()
-            .chain(self.values.iter().filter_map(|(id, value)| {
-                matches!(
-                    value,
-                    HostValue::ChannelSender { .. } | HostValue::ChannelReceiver { .. }
-                )
-                .then_some(*id)
-            }))
+            .chain(
+                self.values
+                    .iter()
+                    .filter_map(|(id, value)| Self::needs_buffer_liveness(value).then_some(*id)),
+            )
             .collect::<BTreeSet<_>>();
         for id in &collectible {
             let kind = match self.values.get(id) {
@@ -8357,6 +8405,7 @@ impl VmHost for BootstrapHost {
             || base == "std.console.readLine"
             || base.starts_with("std.uuid.Uuid.")
             || tondo_stdlib::civil_time::CivilOperation::from_name(base).is_some()
+            || Self::is_log_delivery_operation(base)
             || base.starts_with("std.net.")
         {
             return self.invoke_admitted_with_import(name, &arguments, budget, admission);
@@ -8402,12 +8451,7 @@ impl VmHost for BootstrapHost {
     fn tracks_host_roots(&self) -> bool {
         self.test_memory.is_some()
             || !self.buffer_memory.is_empty()
-            || self.values.values().any(|value| {
-                matches!(
-                    value,
-                    HostValue::ChannelSender { .. } | HostValue::ChannelReceiver { .. }
-                )
-            })
+            || self.values.values().any(Self::needs_buffer_liveness)
     }
 
     fn collect_host_values(
@@ -8614,6 +8658,14 @@ impl VmHost for BootstrapHost {
         }
         if tondo_stdlib::log::LogOperation::from_name(name).is_some() {
             return self.invoke_log_admitted(
+                name,
+                arguments,
+                response,
+                &mut VmHostImportAdmission::disabled(),
+            );
+        }
+        if Self::is_log_delivery_operation(name) {
+            return self.invoke_log_delivery_admitted(
                 name,
                 arguments,
                 response,

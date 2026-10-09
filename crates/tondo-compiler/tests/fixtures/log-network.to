@@ -1,0 +1,189 @@
+import std.bytes
+import std.channel
+import std.io
+import std.log
+import std.net
+
+fn netValue[T](result: T ! net.NetError): T {
+    match result {
+        ok(value) => value
+        err(_) => panic("logging loopback transport failed")
+    }
+}
+
+// This caller-owned wire protocol sends only the explicitly supplied message.
+// It does not claim the builtin Text or JsonLines formatter.
+type MessageSink = {
+    sender: channel.Sender[net.TcpWriteHalf]
+    receiver: channel.Receiver[net.TcpWriteHalf]
+    options: net.NetOptions
+}
+
+type TransportLease = {
+    sender: channel.Sender[net.TcpWriteHalf]
+    writer: net.TcpWriteHalf
+}
+
+fn restoreTransport(lease: TransportLease) {
+    match lease {
+        TransportLease { sender, writer } =>
+            {
+                match sender.trySend(writer) {
+                    ok(_) => {}
+                    err(error) =>
+                        {
+                            let rejected = match error {
+                                channel.TrySendError.Full(value) => value
+                                channel.TrySendError.Closed(value) => value
+                                channel.TrySendError.ResourceLimit(value) => value
+                            }
+                            net.TcpWriteHalf.close(rejected)
+                            sender.close()
+                            panic("logging network writer was not restored")
+                        }
+                }
+                sender.close()
+            }
+    }
+}
+
+impl log.LogSink for MessageSink {
+    fn write(var self, event: log.LogEvent): log.LogReceipt ! log.LogError suspends {
+        let data = match bytes.Bytes(event.message()) {
+            ok(value) => value
+            err(_) => return err(log.LogError.ResourceLimit)
+        }
+        let returned = match self.sender.fork() {
+            ok(value) => value
+            err(_) => return err(log.LogError.ResourceLimit)
+        }
+        let writer = match self.receiver.receive() {
+            some(value) => value
+            none =>
+                {
+                    returned.close()
+                    return err(log.LogError.Closed)
+                }
+        }
+        let lease = TransportLease { sender: returned, writer }
+        defer restoreTransport(lease)
+        var offset = 0
+        for offset < data.length() {
+            let remaining = match data.slice(offset, data.length()) {
+                ok(value) => value
+                err(_) => return err(log.LogError.ResourceLimit)
+            }
+            let count = match lease.writer.write(remaining, self.options) {
+                ok(value) => value
+                err(_) => return err(log.LogError.Io)
+            }
+            if count <= 0 or count > data.length() - offset {
+                return err(log.LogError.Io)
+            }
+            offset += count
+        }
+        log.LogReceipt.Accepted
+    }
+    fn flush(var self): !log.LogError suspends {
+        ()
+    }
+    fn close(sink: MessageSink): !log.LogError suspends {
+        match sink {
+            MessageSink { sender, receiver, options: _ } =>
+                {
+                    sender.close()
+                    for writer in receiver.close() {
+                        net.TcpWriteHalf.close(writer)
+                    }
+                }
+        }
+    }
+}
+
+fn closeMessageLogger(logger: log.Logger[MessageSink]) suspends {
+    match log.Logger[MessageSink].close(logger) {
+        ok(_) => {}
+        err(_) => panic("logging network close failed")
+    }
+}
+
+fn main(): !log.LogError {
+    let options = netValue(net.options(none, netValue(net.NetLimits.create(1024, 512, 16))))
+    let ip = netValue(net.IpAddress.parse("127.0.0.1"))
+    let listener = netValue(net.listen(netValue(net.socketAddress(ip, 0)), 1))
+    defer net.TcpListener.close(listener)
+    let client = netValue(net.connect(netValue(listener.localAddress()), options))
+    let server = netValue(listener.accept(options))
+    let (readClient, writeClient) = net.TcpStream.split(client)
+    let (readServer, writeServer) = net.TcpStream.split(server)
+    defer net.TcpReadHalf.close(readServer)
+    net.TcpReadHalf.close(readClient)
+    net.TcpWriteHalf.close(writeServer)
+    let (sender, receiver) = match channel.bounded[net.TcpWriteHalf](1) {
+        ok(pair) => pair
+        err(_) =>
+            {
+                net.TcpWriteHalf.close(writeClient)
+                return err(log.LogError.ResourceLimit)
+            }
+    }
+    match sender.trySend(writeClient) {
+        ok(_) => {}
+        err(error) =>
+            {
+                let rejected = match error {
+                    channel.TrySendError.Full(value) => value
+                    channel.TrySendError.Closed(value) => value
+                    channel.TrySendError.ResourceLimit(value) => value
+                }
+                net.TcpWriteHalf.close(rejected)
+                sender.close()
+                for writer in receiver.close() {
+                    net.TcpWriteHalf.close(writer)
+                }
+                return err(log.LogError.ResourceLimit)
+            }
+    }
+    let logger = log
+        .Logger[MessageSink]
+        .create(
+            MessageSink { sender, receiver, options },
+            log.LoggerOptions.create(log.LogLevel.Info),
+        )?
+    defer closeMessageLogger(logger)
+    let disabled = log
+        .LogEvent
+        .create(log.LogLevel.Debug, "network", "filtered", log.Fields.empty(), none)?
+    assert(logger.emit(disabled)? == log.LogReceipt.Filtered)
+    let event = log.LogEvent.create(log.LogLevel.Info, "network", "supplied", log.Fields.empty(), none)?
+    assert(logger.emit(event)? == log.LogReceipt.Accepted)
+    logger.flush()?
+    log.Logger[MessageSink].close(logger)?
+    var collected = match bytes.builder() {
+        ok(value) => value
+        err(_) => panic("network bytes builder failed")
+    }
+    for {
+        match netValue(readServer.read(1024, options)) {
+            io.ReadResult.Eof => break
+            io.ReadResult.Data(data) =>
+                {
+                    match collected.append(data) {
+                        ok(_) => {}
+                        err(_) => panic("network record limit failed")
+                    }
+                }
+        }
+    }
+    let record = match collected.finish() {
+        ok(value) => value
+        err(_) => panic("network bytes finish failed")
+    }
+    let expected = match bytes.Bytes("supplied") {
+        ok(value) => value
+        err(_) => panic("expected network bytes failed")
+    }
+    assert(record.equal(expected))
+    net.TcpReadHalf.close(readServer)
+    net.TcpListener.close(listener)
+}

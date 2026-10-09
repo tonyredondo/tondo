@@ -1,0 +1,63 @@
+import std.fs
+import std.log
+import std.path
+
+fn size(location: path.Path): Int suspends {
+    match fs.metadata(location) {
+        ok(info) => info.size
+        err(_) => panic("file metadata failed")
+    }
+}
+
+fn closeFileLogger(logger: log.Logger[log.FileSink]) suspends {
+    match log.Logger[log.FileSink].close(logger) {
+        ok(_) => {}
+        err(_) => panic("file sink close failed")
+    }
+}
+
+fn main(): !log.LogError {
+    let location = match path.Path.fromString("LOG_FILE") {
+        ok(value) => value
+        err(_) => panic("file path failed")
+    }
+    let options = log
+        .SinkOptions
+        .create(log.LogFormat.Text, log.Backpressure.Reject, 1, log.LogLimits.defaults())?
+    for mode in [log.FileMode.Append, log.FileMode.Append, log.FileMode.Truncate] {
+        let constructor: fn(path.Path, log.FileMode, log.SinkOptions): log.FileSink ! log.LogError suspends = log
+            .FileSink
+            .create
+        let sink = constructor(location, mode, options)?
+        let before = size(location)
+        if mode == log.FileMode.Truncate {
+            assert(before == 0)
+        }
+        let logger = log.Logger[log.FileSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+        defer closeFileLogger(logger)
+        let event = log.LogEvent.create(log.LogLevel.Info, "file", "record", log.Fields.empty(), none)?
+        assert(logger.emit(event)? == log.LogReceipt.Accepted)
+        assert(size(location) == before)
+        logger.flush()?
+        assert(size(location) > before)
+        log.Logger[log.FileSink].close(logger)?
+    }
+    let limits = log.LogLimits.create(64, 2, 2, 8, 64, 2)?
+    let small = log.SinkOptions.create(log.LogFormat.Text, log.Backpressure.Reject, 1, limits)?
+    let sink = log.FileSink.create(location, log.FileMode.Append, small)?
+    let before = size(location)
+    let logger = log.Logger[log.FileSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+    defer closeFileLogger(logger)
+    let tooLarge = log
+        .LogEvent
+        .create(
+            log.LogLevel.Info,
+            "file",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            log.Fields.empty(),
+            none,
+        )?
+    assert(logger.emit(tooLarge) == err(log.LogError.ResourceLimit))
+    assert(size(location) == before)
+    log.Logger[log.FileSink].close(logger)?
+}

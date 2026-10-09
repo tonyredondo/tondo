@@ -1,0 +1,201 @@
+import std.bytes
+import std.channel
+import std.io
+
+type WriterState[W: io.Writer + Send + Discard] = {
+    writer: W
+    records: Array[bytes.Bytes]
+    offset: Int
+    terminal: LogError?
+}
+
+type BufferedSink[W: io.Writer + Send + Discard] = {
+    sender: channel.Sender[WriterState[W]]
+    receiver: channel.Receiver[WriterState[W]]
+    options: SinkOptions
+}
+
+type WriterLease[W: io.Writer + Send + Discard] = {
+    sender: channel.Sender[WriterState[W]]
+    state: WriterState[W]
+}
+
+type WriterFailure[W: io.Writer + Send + Discard] = {
+    writer: W
+    error: LogError
+}
+
+fn rejectedWriter[W: io.Writer + Send + Discard](error: channel.TrySendError[WriterState[W]]): WriterState[
+    W,
+] {
+    match error {
+        channel.TrySendError.Full(value) => value
+        channel.TrySendError.Closed(value) => value
+        channel.TrySendError.ResourceLimit(value) => value
+    }
+}
+
+fn takeWriter[W: io.Writer + Send + Discard](state: WriterState[W]): W {
+    match state {
+        WriterState { writer, records: _, offset: _, terminal: _ } => writer
+    }
+}
+
+fn bufferedSink[W: io.Writer + Send + Discard](writer: W, options: SinkOptions): BufferedSink[W] !
+    WriterFailure[W] {
+    let (sender, receiver) = match channel.bounded[WriterState[W]](1) {
+        ok(pair) => pair
+        err(_) => return err(WriterFailure[W] { writer, error: LogError.ResourceLimit })
+    }
+    match sender.trySend(WriterState[W] { writer, records: [], offset: 0, terminal: none }) {
+        ok(_) => {}
+        err(error) =>
+            {
+                let state = rejectedWriter(error)
+                sender.close()
+                _ = receiver.close()
+                return err(WriterFailure[W] { writer: takeWriter(state), error: LogError.ResourceLimit })
+            }
+    }
+    BufferedSink[W] { sender, receiver, options }
+}
+
+fn acquireWriter[W: io.Writer + Send + Discard](buffer: ref BufferedSink[W]): WriterLease[W] !
+    LogError suspends {
+    let sender = match buffer.sender.fork() {
+        ok(value) => value
+        err(_) => return err(LogError.ResourceLimit)
+    }
+    let state = match buffer.receiver.receive() {
+        some(value) => value
+        none =>
+            {
+                sender.close()
+                return err(LogError.Closed)
+            }
+    }
+    WriterLease[W] { sender, state }
+}
+
+fn restoreWriter[W: io.Writer + Send + Discard](lease: WriterLease[W]) {
+    match lease {
+        WriterLease { sender, state } =>
+            {
+                match sender.trySend(state) {
+                    ok(_) => {}
+                    err(error) =>
+                        {
+                            _ = rejectedWriter(error)
+                            sender.close()
+                            panic("logging writer state could not be restored")
+                        }
+                }
+                sender.close()
+            }
+    }
+}
+
+fn writerError(error: io.IoError): LogError {
+    match error {
+        io.IoError.Cancelled => LogError.Cancelled
+        io.IoError.ResourceLimit => LogError.ResourceLimit
+        io.IoError.Closed => LogError.Io
+        io.IoError.InvalidData => LogError.Io
+        io.IoError.Host => LogError.Io
+    }
+}
+
+fn WriterState[W: io.Writer + Send + Discard].failure(var self, error: io.IoError): LogError {
+    let failure = writerError(error)
+    if failure == LogError.Io {
+        self.terminal = some(failure)
+    }
+    failure
+}
+
+fn WriterState[W: io.Writer + Send + Discard].drainOne(var self): !LogError suspends {
+    let record = self.records[0]
+    let length = record.length()
+    for self.offset < length {
+        let remaining = match record.slice(self.offset, length) {
+            ok(value) => value
+            err(_) => return err(LogError.ResourceLimit)
+        }
+        let written = match self.writer.write(remaining) {
+            ok(count) => count
+            err(error) => return err(self.failure(error))
+        }
+        if written <= 0 or written > length - self.offset {
+            self.terminal = some(LogError.Io)
+            return err(LogError.Io)
+        }
+        self.offset += written
+    }
+    self.records = self.records[1:]
+    self.offset = 0
+}
+
+fn WriterState[W: io.Writer + Send + Discard].drain(var self): !LogError suspends {
+    if self.terminal != none {
+        return err(LogError.Closed)
+    }
+    for self.records.length() > 0 {
+        self.drainOne()?
+    }
+    match self.writer.flush() {
+        ok(_) => {}
+        err(error) => return err(self.failure(error))
+    }
+}
+
+fn BufferedSink[W: io.Writer + Send + Discard].write(self, event: LogEvent): LogReceipt ! LogError suspends {
+    var lease = acquireWriter(ref self)?
+    defer restoreWriter(lease)
+    if lease.state.terminal != none {
+        return err(LogError.Closed)
+    }
+    let record = LogEvent.__format(event, self.options.format, self.options.limits)?
+    if lease.state.records.length() == self.options.capacity {
+        match self.options.backpressure {
+            Backpressure.Reject => return err(LogError.Backpressure)
+            Backpressure.Drop => return LogReceipt.Dropped
+            Backpressure.Block => lease.state.drainOne()?
+        }
+    }
+    match lease.state.records.push(record) {
+        ok(_) => LogReceipt.Accepted
+        err(_) => err(LogError.ResourceLimit)
+    }
+}
+
+fn BufferedSink[W: io.Writer + Send + Discard].flush(self): !LogError suspends {
+    var lease = acquireWriter(ref self)?
+    defer restoreWriter(lease)
+    lease.state.drain()
+}
+
+fn finishBuffer[W: io.Writer + Send + Discard](buffer: BufferedSink[W]): Array[(W, LogError?)] suspends {
+    match buffer {
+        BufferedSink { sender, receiver, options: _ } =>
+            {
+                sender.close()
+                var writers: Array[(W, LogError?)] = []
+                for state in receiver.close() {
+                    var owned = state
+                    let failure: LogError? = if owned.terminal != none {
+                        owned.terminal
+                    } else {
+                        match owned.drain() {
+                            ok(_) => none
+                            err(error) => some(error)
+                        }
+                    }
+                    match writers.push((takeWriter(owned), failure)) {
+                        ok(_) => {}
+                        err(_) => panic("logging closed writer could not be retained")
+                    }
+                }
+                writers
+            }
+    }
+}

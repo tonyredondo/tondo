@@ -1,0 +1,90 @@
+{
+  "format": "tondo-stdlib-host-boundary/1",
+  "owner": "std.log",
+  "task": "STD-LOG-HOST-001",
+  "parent": "testing/stdlib-log.json",
+  "contract": "docs/contracts/stdlib-log-host.md",
+  "status": "implementation-in-progress",
+  "quality_gate": "pending-current-source-proof",
+  "selected_route": "ordinary-tondo-sinks-and-hosted-scalar-providers",
+  "target": "tondo-vm-hosted",
+  "public_api_promoted": false,
+  "native_abi_or_aot": false,
+  "surface": {
+    "builtin_types": ["ConsoleSink", "FileSink"],
+    "constructors": 2,
+    "sink_implementations": 2,
+    "private_delivery_helpers": [
+      "std.log.LogEvent.__format",
+      "std.log.FileSink.__openFile",
+      "std.log.FileSink.__closeFile",
+      "std.log.ConsoleSink.__closeOutput"
+    ],
+    "console_constructor": "non-suspendible-console",
+    "file_constructor": "suspends-immediate-open",
+    "missing_capability": "static-E1008",
+    "builtin_capabilities": ["Send", "Share"],
+    "builtin_copy_or_discard": false
+  },
+  "providers": {
+    "console": "explicit-stdout-or-stderr-existing-hosted-writer",
+    "filesystem": "explicit-path-existing-file-provider",
+    "append": "atomic-create-if-missing-append-if-existing",
+    "truncate": "create-or-truncate",
+    "parent_creation": false,
+    "network": "caller-owned-LogSink-explicit-transport-and-wire-protocol",
+    "ambient_lookup": false,
+    "hidden_worker": false,
+    "rotation_or_retry": false
+  },
+  "queue": {
+    "capacity": "SinkOptions.capacity-in-records",
+    "accepted": "fully-formatted-record-admitted",
+    "drain": ["flush", "consuming-close", "Block-full-oldest-record"],
+    "reject_or_drop": "full-queue-preserves-previously-accepted-records",
+    "batching": false,
+    "short_write": "advance-retained-record-offset",
+    "cancellation": "restore-guarded-owner-resume-without-replay",
+    "Io": "visible-possible-prefix-terminal-sink"
+  },
+  "admission": {
+    "error_bytes": 72,
+    "format_workspace": "core-construction-bound-plus-maxEventBytes",
+    "publication": "typed-Bytes-before-new-host-identity",
+    "file_open": "typed-file-result-and-path-storage-before-create-or-truncate",
+    "close": "typed-result-before-unconditional-writer-retirement",
+    "liveness": "Bytes-Path-Writer-File-roots-independent-of-test-account",
+    "metrics": "logical-not-RSS-or-OS-allocator-calls"
+  },
+  "public_project": "acceptance/projects/stdlib-log-host/tondo.toml",
+  "fixtures": [
+    "acceptance/projects/stdlib-log-host/src/main.to",
+    "crates/tondo-compiler/tests/fixtures/log-file.to",
+    "crates/tondo-compiler/tests/fixtures/log-concurrent.to",
+    "crates/tondo-compiler/tests/fixtures/log-network.to",
+    "crates/tondo-compiler/tests/fixtures/log-writer-probe.to"
+  ],
+  "tests": [
+    "crates/tondo-compiler/src/driver.rs::logging_host_constructors_require_their_exact_capability_and_private_helpers_stay_sealed",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_public_console_sinks_execute_all_policies_formats_and_consuming_close",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_public_file_constructor_opens_immediately_and_queue_limits_write_no_prefix",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_concurrent_public_emits_preserve_whole_unique_records_and_close_drains_the_tail",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_real_group_cancellation_restores_the_writer_and_resumes_after_the_written_prefix",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_sealed_writer_probe_preserves_offsets_short_writes_and_terminal_errors",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_public_network_sink_uses_only_the_callers_explicit_transport_and_wire_protocol",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_formatter_admits_workspace_and_payload_before_publishing_a_byte_identity",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_formatter_rejects_malformed_and_bounded_inputs_without_publishing_values",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_buffer_liveness_preserves_returned_bytes_without_a_test_account",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_private_close_admits_before_retirement_and_refuses_wrong_or_closed_handles",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_admits_storage_before_creation_or_truncation",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_creates_appends_and_truncates_without_creating_parents",
+    "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_refuses_directories_and_invalid_modes_without_handles"
+  ],
+  "promotion": {
+    "independent_model_fuzz": "pending-STD-LOG-TEST-001",
+    "performance": "not-measured",
+    "common_conformance": "pending-STD-LOG-CONF-001",
+    "usage_documentation": "pending-STD-LOG-DOC-001",
+    "full_owner": false
+  }
+}

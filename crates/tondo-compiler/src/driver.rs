@@ -2755,8 +2755,8 @@ fn install_selected_standard_sources(
             && (*module != b"std.fs" || filesystem_available)
             && (*module != b"std.net" || network_available)
             && imports(module)
-    });
-    let console_selected = console_available && imports(b"std.console");
+    }) || ((console_available || filesystem_available) && imports(b"std.log"));
+    let console_selected = console_available && (imports(b"std.console") || imports(b"std.log"));
     let log_selected = imports(b"std.log")
         && !sources.iter().any(|(_, source)| {
             source.source_id() == &standard_source
@@ -2766,7 +2766,7 @@ fn install_selected_standard_sources(
     // An explicitly supplied fs source module (for example a documentation
     // fixture) owns its declarations and need not expose the hosted File API.
     let filesystem_selected = filesystem_available
-        && imports(b"std.fs")
+        && (imports(b"std.fs") || imports(b"std.log"))
         && !sources.iter().any(|(_, source)| {
             source.source_id() == &standard_source && source.module().as_str() == "fs"
         });
@@ -2782,6 +2782,24 @@ fn install_selected_standard_sources(
             "compiler/log.to",
             include_bytes!("bootstrap/log.to").as_slice(),
             log_selected,
+        ),
+        (
+            "log",
+            "compiler/log_buffer.to",
+            include_bytes!("bootstrap/log_buffer.to").as_slice(),
+            log_selected && (console_selected || filesystem_selected),
+        ),
+        (
+            "log",
+            "compiler/log_console.to",
+            include_bytes!("bootstrap/log_console.to").as_slice(),
+            log_selected && console_selected,
+        ),
+        (
+            "log",
+            "compiler/log_file.to",
+            include_bytes!("bootstrap/log_file.to").as_slice(),
+            log_selected && filesystem_selected,
         ),
         (
             "io",
@@ -6645,7 +6663,7 @@ fn main(): !logging.LogError {
     }
 
     #[test]
-    fn logging_refuses_private_helpers_fields_wrong_arguments_and_pending_host_sinks() {
+    fn logging_refuses_private_helpers_fields_wrong_arguments_and_missing_sink_capabilities() {
         for (source, expected) in [
             (
                 "import std.log\nfn main() { _ = log.Fields.__withField(log.Fields.empty(), \"a\", log.LogValue.Null)\n}",
@@ -6716,6 +6734,75 @@ fn main(): !logging.LogError {
             assert!(
                 !output.diagnostics().human().contains("E0004"),
                 "invalid fixture: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn logging_host_constructors_require_their_exact_capability_and_private_helpers_stay_sealed() {
+        for (source, capabilities, expected) in [
+            (
+                "import std.log\nfn main() { let constructor = log.ConsoleSink.create\n_ = constructor\n}",
+                vec![],
+                "E1008",
+            ),
+            (
+                "import std.log\nfn main() { let constructor = log.FileSink.create\n_ = constructor\n}",
+                vec!["console"],
+                "E1008",
+            ),
+            (
+                "import std.log\nfn main() { let constructor = log.ConsoleSink.create\n_ = constructor\n}",
+                vec!["filesystem"],
+                "E1008",
+            ),
+            (
+                "import std.log\nfn main() { let helper = log.LogEvent.__format\n_ = helper\n}",
+                vec![],
+                "E1004",
+            ),
+            (
+                "import std.log\nfn main() { let helper = log.ConsoleSink.__closeOutput\n_ = helper\n}",
+                vec!["console"],
+                "E1004",
+            ),
+            (
+                "import std.log\nfn main() { let helper = log.FileSink.__openFile\n_ = helper\n}",
+                vec!["filesystem"],
+                "E1004",
+            ),
+            (
+                "import std.log\nfn main() { let helper = log.FileSink.__closeFile\n_ = helper\n}",
+                vec!["filesystem"],
+                "E1004",
+            ),
+            (
+                "import std.log\nfn copy(value: log.ConsoleSink): log.ConsoleSink { let other = value\n_ = value\nother\n}",
+                vec!["console"],
+                "E1401",
+            ),
+            (
+                "import std.log\nfn finish(logger: log.Logger[log.ConsoleSink]) suspends { _ = log.Logger[log.ConsoleSink].close(logger)\n}\nfn invalid(logger: log.Logger[log.ConsoleSink]): !log.LogError suspends {\ndefer finish(logger)\nscope {\nlet flushing = spawn logger.flush()\nlog.Logger[log.ConsoleSink].close(logger)?\nawait flushing?\n}\n}\nfn main() {}",
+                vec!["console"],
+                "E1403",
+            ),
+        ] {
+            let output = execute(operation_request_with_capabilities(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+                capabilities
+                    .into_iter()
+                    .map(|name| CapabilityName::new(name).unwrap())
+                    .collect(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected, "{source}");
+            assert!(
+                output.diagnostics().human().contains(expected),
+                "{source}: {}",
                 output.diagnostics().human()
             );
         }

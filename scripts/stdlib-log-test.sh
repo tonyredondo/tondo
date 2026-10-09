@@ -31,6 +31,21 @@ expect_failure file-constructor-effect env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/f
 jq '.sinks.file.opening = "first-emit"' testing/stdlib-log.json > "$tmp_dir/deferred-open.json"
 expect_failure deferred-open env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/deferred-open.json" scripts/stdlib-log-check.sh
 
+jq '.sinks.file.append = "existing-only"' testing/stdlib-log.json > "$tmp_dir/append-existing-only.json"
+expect_failure append-existing-only env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/append-existing-only.json" scripts/stdlib-log-check.sh
+
+jq '.sinks.file.append = "check-create-reopen"' testing/stdlib-log.json > "$tmp_dir/append-reopen.json"
+expect_failure append-reopen env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/append-reopen.json" scripts/stdlib-log-check.sh
+
+jq '.sinks.file.truncate = "existing-only"' testing/stdlib-log.json > "$tmp_dir/truncate-existing-only.json"
+expect_failure truncate-existing-only env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/truncate-existing-only.json" scripts/stdlib-log-check.sh
+
+jq '.backpressure.builtin_delivery = "hidden-worker"' testing/stdlib-log.json > "$tmp_dir/hidden-delivery.json"
+expect_failure hidden-delivery env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/hidden-delivery.json" scripts/stdlib-log-check.sh
+
+jq '.backpressure.record_delivery = "restart-from-zero"' testing/stdlib-log.json > "$tmp_dir/replayed-prefix.json"
+expect_failure replayed-prefix env TONDO_STDLIB_LOG_CONTRACT="$tmp_dir/replayed-prefix.json" scripts/stdlib-log-check.sh
+
 jq '.implementation.status = "verified-public-hosted-core"' testing/stdlib-log.json > "$tmp_dir/verified-parent.json"
 jq '.status = "verified-public-hosted-core" | .quality_gate = "verified-80-percent-per-scope"' testing/stdlib-log-implementation.json > "$tmp_dir/verified-core.json"
 jq '.status = "implementation-in-progress"' testing/stdlib-log-implementation.json > "$tmp_dir/pending-core.json"

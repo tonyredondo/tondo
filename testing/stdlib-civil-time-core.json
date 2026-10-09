@@ -172,11 +172,11 @@
   "sources": {
     "crates/tondo-stdlib/src/civil_time.rs": "sha256:e5edd9bb0bcf4ed45b640012e9d7376d0c531065da4b86e328c6bc13e681a901",
     "crates/tondo-compiler/src/process_host/civil_time.rs": "sha256:6d045b409feddd7fe2ff261be5f38734a8f9c5f9f1cfc1fb9c44964faedb3b33",
-    "crates/tondo-compiler/src/hir.rs": "sha256:b8ffb2df971552e1dc6d7fb51c2f9488dcf814b5aa6b5d60aee220b30d8445e0",
-    "crates/tondo-compiler/src/hir/check.rs": "sha256:3c6819416c29e38015369a40ba85847785f8bfba2d58397d03d5eb6e930fc7af",
-    "crates/tondo-compiler/src/hir/lower.rs": "sha256:0f17e3d81725aa1c2f98597c109ad6a5f4c8b9727491d969e84cc964a1615f0a",
+    "crates/tondo-compiler/src/hir.rs": "sha256:70e3fa4e6fc9c298055c846fee6ea26fc988b8e28273c43476e3eb9e6e961928",
+    "crates/tondo-compiler/src/hir/check.rs": "sha256:a306eeac3a660793d618233dc8a54219b3c226102ce51eed17b82d9e5afe694d",
+    "crates/tondo-compiler/src/hir/lower.rs": "sha256:7847f5d0807f0f23a720173af89d09fc7527391402137fabf878121688f8d3a7",
     "crates/tondo-compiler/src/resolve.rs": "sha256:26c4d8d5ba3f7e480933e50b3c0f81389753fdeab82e21b910ef6385f1401a00",
-    "crates/tondo-compiler/src/process_host.rs": "sha256:b14225de9dfc98a8725d228ab597b4bb0e0fc36514fd45a92ed29d67f9e78fd0"
+    "crates/tondo-compiler/src/process_host.rs": "sha256:cd78b3971423c76ca70bf04da2fa6c9ef445daf14da38ae02704c53bc0b75561"
   },
   "model": {
     "generator": "scripts/civil_core_oracle.py",
