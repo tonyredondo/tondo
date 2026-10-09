@@ -1,6 +1,8 @@
 # Capability-gated hosted logging sinks
 
-`STD-LOG-HOST-001` verifies the production hosted boundary. It implements ordinary Tondo
+`STD-LOG-HOST-001` defines the production hosted boundary. Promotion is reopened
+for command stream delivery until renewed quality and publication checks pass.
+It implements ordinary Tondo
 `ConsoleSink` and `FileSink` declarations and their `LogSink` implementations,
 the scalar formatting bridge and existing hosted I/O providers. It does not
 promote native ABI/AOT, the independent model/fuzz boundary, performance, common
@@ -33,6 +35,14 @@ lease and resumes from that offset. An Io error is visible, may leave a physical
 prefix, and makes the sink terminal. Closing drains and flushes accepted data,
 then retires the writer even if flushing fails; errors remain visible.
 
+Hosted command results retain stdout and stderr separately. The CLI delivers
+runtime stderr before compiler diagnostics, including an unhandled main error.
+VM resource failure retains bytes already committed by the writer and preserves
+`T0002`; it does not execute or manufacture user cleanup. The public CLI
+regressions and bounded VM exhaustion regression verify these paths. The
+previous CLI silently discarded the hosted stderr collector, despite the
+provider test proving its contents. This omission reopens HOST promotion.
+
 The formatter uses the existing iterative scalar Text/JsonLines oracle, including
 supplied UTC timestamps, byte-ordered JSON fields, explicit redaction, Base64 and
 one final LF. Decoding retains the core's fixed depth bound. Logical workspace
@@ -62,7 +72,7 @@ owners and terminal zero handles. The associated checks are
 
 ## Retained local verification
 
-The measured source is `76dc5dbb39a2485ea1e98162ebeb8bd5ec22d4ab1a450530a398fcacdc2b0b51`:
+The last retained measured source is `76dc5dbb39a2485ea1e98162ebeb8bd5ec22d4ab1a450530a398fcacdc2b0b51`:
 1,437 inputs with set digest
 `6cf078882cbdcee636aefc15946f0f3ade2df87118bf135bd761a9bf3c07f099`.
 It includes the promotion-check fixture correction in signed commit `151fbf9b`
@@ -120,6 +130,7 @@ declares `linux-x86_64` on the existing quality step, matching the full gate and
 the retained provenance. Publication follow-up must verify this correction on
 the new exact revision, including the actual nightly quality job.
 
-HOST is promoted only to `verified-production-hosted`; the next owner is
-`STD-LOG-TEST-001`. No timing, native logging execution or full owner promotion
-is claimed.
+The command output correction invalidates that quality identity for the new
+source. Current promotion awaits renewed quality and exact publication CI.
+The next owner after HOST verification is `STD-LOG-TEST-001`. No timing, native
+logging execution or full owner promotion is claimed.

@@ -12,6 +12,8 @@ for mutation in '.surface.constructors = 1' '.surface.file_constructor = "first-
     '.queue.batching = true' '.queue.short_write = "restart-from-zero"' \
     '.queue.drain = ["worker"]' '.admission.error_bytes = 0' \
     '.admission.liveness = "test-only"' '.native_abi_or_aot = true' \
+    '.command_output.streams = "stdout-only"' '.command_output.runtime_error = "discard-records"' \
+    '.command_output.vm_resource_failure = "run-user-cleanup"' \
     '.promotion.performance = "verified"' '.promotion.full_owner = true' \
     '.fixtures |= .[1:]' '.tests |= .[1:]' \
     '.status = "verified-production-hosted" | .quality_gate = "pending-current-source-proof"'; do

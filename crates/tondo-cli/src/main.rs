@@ -231,6 +231,9 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
             .write_all(output.stdout())
             .map_err(|error| format!("cannot write command output: {error}"))?;
     }
+    io::stderr()
+        .write_all(output.stderr())
+        .map_err(|error| format!("cannot write command stderr: {error}"))?;
     emit_products(&invocation, &output)?;
 
     let rendered = match invocation.diagnostic_format {

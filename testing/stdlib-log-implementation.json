@@ -189,7 +189,7 @@
   "sources": {
     "crates/tondo-stdlib/src/log.rs": "sha256:cbd1ba7e3f90211a3cd3e864e9d109f62ea9e3443802e5134c263f611770792d",
     "crates/tondo-compiler/src/bootstrap/log.to": "sha256:ca4b96bec33ec6504e14e0c99b2e73dbdd8ece398d87db35cfe2c6bd7e294adb",
-    "crates/tondo-compiler/src/driver.rs": "sha256:c01b9a5bf1ea646812f0eb45e97788ddafa2881b5ce19785c6495fcdb099e9ab",
+    "crates/tondo-compiler/src/driver.rs": "sha256:fb7df29868043fc09df968979866725838e1e8d2368c09368632c61348d7672c",
     "crates/tondo-compiler/src/package.rs": "sha256:752f3dab3bda1f70360c1fa5d8c8d35b67f7865027267dda8050429a5f8c9bb9",
     "crates/tondo-compiler/src/hir.rs": "sha256:70e3fa4e6fc9c298055c846fee6ea26fc988b8e28273c43476e3eb9e6e961928",
     "crates/tondo-compiler/src/hir/check.rs": "sha256:a306eeac3a660793d618233dc8a54219b3c226102ce51eed17b82d9e5afe694d",
@@ -212,7 +212,7 @@
   "promotion": {
     "compiler_api": "verified-public-hosted-core",
     "public_signatures": 19,
-    "host_sinks": "verified-production-hosted",
+    "host_sinks": "pending-STD-LOG-HOST-001",
     "native_abi": "not-implemented",
     "native_aot": "not-claimed",
     "full_owner": false,

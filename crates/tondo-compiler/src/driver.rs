@@ -1389,6 +1389,7 @@ pub struct CompilationOutput {
     exit_code: u8,
     diagnostics: DiagnosticReport,
     stdout: Vec<u8>,
+    stderr: Vec<u8>,
     diagnostic_trace: Option<DiagnosticTrace>,
     mir_summary: Option<MirSummary>,
     bytecode: Option<(
@@ -1414,6 +1415,11 @@ impl CompilationOutput {
 
     pub fn stdout(&self) -> &[u8] {
         &self.stdout
+    }
+
+    /// Captured standard error from hosted execution, separate from diagnostics.
+    pub fn stderr(&self) -> &[u8] {
+        &self.stderr
     }
 
     /// Returns the bounded runtime trace produced by an opted-in diagnostic
@@ -1688,6 +1694,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -1703,6 +1710,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -1763,6 +1771,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics: lexical_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -1805,6 +1814,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics: syntax_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -1825,6 +1835,7 @@ fn execute_pipeline(
             diagnostics: DiagnosticBag::new()
                 .resolve(request.edition.as_str(), &request.sources)?,
             stdout,
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -1851,6 +1862,7 @@ fn execute_pipeline(
                     exit_code: 1,
                     diagnostics,
                     stdout: Vec::new(),
+                    stderr: Vec::new(),
                     diagnostic_trace: None,
                     mir_summary: None,
                     bytecode: None,
@@ -1928,6 +1940,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -2024,6 +2037,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -2084,6 +2098,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -2156,6 +2171,7 @@ fn execute_pipeline(
                     exit_code: 1,
                     diagnostics,
                     stdout: Vec::new(),
+                    stderr: Vec::new(),
                     diagnostic_trace: None,
                     mir_summary: None,
                     bytecode: None,
@@ -2386,6 +2402,7 @@ fn execute_pipeline(
             exit_code: 1,
             diagnostics,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -2607,23 +2624,18 @@ fn execute_pipeline(
                     )
                 } {
                     Ok(execution) => execution,
-                    Err(VmError::InvalidLimits(resource)) => {
-                        return syntax_resource_output(
-                            &request,
-                            request.root,
-                            format!("VM {resource}"),
-                            0,
-                        );
+                    Err(error) => {
+                        let resource = match error {
+                            VmError::InvalidLimits(resource) => format!("VM {resource}"),
+                            error if error.is_resource_limit() => "VM execution resource".into(),
+                            error => return Err(error.into()),
+                        };
+                        let mut output =
+                            syntax_resource_output(&request, request.root, resource, 0)?;
+                        output.stdout = host.take_stdout();
+                        output.stderr = host.take_stderr();
+                        return Ok(output);
                     }
-                    Err(error) if error.is_resource_limit() => {
-                        return syntax_resource_output(
-                            &request,
-                            request.root,
-                            "VM execution resource",
-                            0,
-                        );
-                    }
-                    Err(error) => return Err(error.into()),
                 };
 
                 let runtime_trace = execution.diagnostics.clone();
@@ -2659,6 +2671,7 @@ fn execute_pipeline(
                     exit_code,
                     host.take_stdout(),
                 )?;
+                output.stderr = host.take_stderr();
                 output.diagnostic_trace = runtime_trace;
                 output.mir_summary = Some(mir_summary);
                 if retain_bytecode {
@@ -2690,6 +2703,7 @@ fn execute_pipeline(
         exit_code: 1,
         diagnostics: report,
         stdout: Vec::new(),
+        stderr: Vec::new(),
         diagnostic_trace: None,
         mir_summary: None,
         bytecode: None,
@@ -3073,6 +3087,7 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -3105,6 +3120,7 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            stderr: Vec::new(),
             diagnostic_trace: None,
             mir_summary: None,
             bytecode: None,
@@ -3453,6 +3469,7 @@ fn backend_diagnostic_output(
         exit_code: 1,
         diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
         stdout: Vec::new(),
+        stderr: Vec::new(),
         diagnostic_trace: None,
         mir_summary: None,
         bytecode: None,
@@ -3707,6 +3724,7 @@ fn semantic_output(
         exit_code,
         diagnostics,
         stdout,
+        stderr: Vec::new(),
         diagnostic_trace: None,
         mir_summary: None,
         bytecode: None,
@@ -3807,6 +3825,7 @@ fn syntax_resource_output(
         exit_code: 1,
         diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
         stdout: Vec::new(),
+        stderr: Vec::new(),
         diagnostic_trace: None,
         mir_summary: None,
         bytecode: None,
@@ -11247,6 +11266,58 @@ fn main() {
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
         assert_eq!(output.stdout(), b"Hello, world");
+    }
+
+    #[test]
+    fn hosted_run_preserves_completed_console_records_on_vm_resource_exhaustion() {
+        let source = r#"import std.log
+fn closeLogger(logger: log.Logger[log.ConsoleSink]) suspends {
+ match log.Logger[log.ConsoleSink].close(logger) {
+  ok(_) => {}
+  err(_) => panic("close")
+ }
+}
+fn main(): !log.LogError {
+ let options = log.SinkOptions.create(log.LogFormat.Text, log.Backpressure.Block, 1, log.LogLimits.defaults())?
+ let sink = log.ConsoleSink.create(log.ConsoleStream.STREAM, options)?
+ let logger = log.Logger[log.ConsoleSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+ defer closeLogger(logger)
+ let event = log.LogEvent.create(log.LogLevel.Info, "before", "limit", log.Fields.empty(), none)?
+ _ = logger.emit(event)?
+ log.Logger[log.ConsoleSink].close(logger)?
+ for {}
+}
+"#;
+        for stream in ["Stderr", "Stdout"] {
+            let source = source.replace("STREAM", stream);
+            let output = execute(operation_request_with_capabilities(
+                Operation::Run,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits {
+                    max_vm_steps: 100_000,
+                    ..ResourceLimits::default()
+                },
+                BTreeSet::from([CapabilityName::new("console").unwrap()]),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert_eq!(output.exit_code(), 1);
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0002");
+            assert!(
+                output.diagnostics().diagnostics()[0]
+                    .message()
+                    .contains("VM")
+            );
+            let expected = b"info \"before\" \"limit\"\n";
+            if stream == "Stderr" {
+                assert_eq!(output.stderr(), expected);
+                assert!(output.stdout().is_empty());
+            } else {
+                assert_eq!(output.stdout(), expected);
+                assert!(output.stderr().is_empty());
+            }
+        }
     }
 
     #[test]

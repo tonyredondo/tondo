@@ -84,9 +84,10 @@ exact-source Linux CI run `37670512681`, with stable final confirmation.
 public hosted conformance and usage boundaries recorded in their owner leaves.
 `STD-CHANNEL-OWNERSHIP-001` verifies the consuming endpoint and iterator
 prerequisite. `STD-LOG-IMPL-001` verifies the public hosted logging core and
-custom sink protocol. `STD-LOG-HOST-001` verifies the capability-gated hosted
-sinks after source-bound quality, every local check and exact-source Linux CI;
-the next explicit owner is `STD-LOG-TEST-001`.
+custom sink protocol. `STD-LOG-HOST-001` is reopened after the public CLI loses
+the stderr records already captured by its provider. The local stream delivery
+correction requires renewed quality and exact-source Linux CI; the next owner
+after that verification is `STD-LOG-TEST-001`.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -7244,7 +7245,13 @@ estas leaves.
   are verified. Builtin privileged sinks are separately verified by
   STD-LOG-HOST-001; the full owner and
   native ABI/AOT are not promoted.
-- [x] **STD-LOG-HOST-001 — Implement capability-gated sinks.** Verified:
+- [ ] **STD-LOG-HOST-001 — Implement capability-gated sinks.** Promotion
+  reopened: the CLI drops 115 stderr bytes from the existing public project,
+  despite successful execution and the provider's complete capture. The local
+  correction carries both streams to the CLI, preserves records before main
+  diagnostics and VM resource failure, and retains terminal cleanup rules.
+  Three permanent regressions and all 25 logging tests pass; renewed quality
+  and exact publication CI are pending. Previous source verification covers:
   public hosted ConsoleSink/FileSink, immediate atomic file opening, explicit
   bounded record queues, all three backpressure policies, short writes,
   cancellation-safe offsets, consuming close and caller-owned network sinks.

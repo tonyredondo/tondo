@@ -54,6 +54,7 @@ pub(super) fn validate(
                 exit_code: 1,
                 diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
                 stdout: Vec::new(),
+                stderr: Vec::new(),
                 diagnostic_trace: None,
                 mir_summary: None,
                 bytecode: None,

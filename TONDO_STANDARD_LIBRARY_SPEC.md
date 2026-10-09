@@ -1933,13 +1933,17 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.log` define eventos puros en core; cada sink declara sus capabilities y
   política de backpressure sin alterar silenciosamente el control del programa.
   FileSink.create is suspends: it opens its explicit path in the constructor
-  and returns opening errors there. STD-LOG-HOST-001 verifies the production
-  hosted sink boundary; native logging remains a separate gate.
+  and returns opening errors there. STD-LOG-HOST-001 implements the production
+  hosted sink boundary; command stream delivery repair awaits renewed
+  verification. Native logging remains a separate gate.
   Logging Append atomically creates a missing file or appends to an existing
   file; Truncate creates or truncates. Neither mode creates parent directories.
   The existing-only std.fs.OpenMode.Append contract is unchanged.
   Builtin sinks admit explicit queued records, drained by flush, consuming close,
   and Block on a full queue. Records are written separately without a worker.
+  Hosted commands preserve the selected stdout/stderr stream and previously
+  committed records before runtime diagnostics, including VM resource failure.
+  A terminal VM resource failure does not manufacture user cleanup.
 - Los argumentos del programa se obtienen mediante
   `std.env.snapshot().arguments()`.
 - `std.env` solo expone un snapshot runtime explícito; no lee environment durante
@@ -4602,10 +4606,10 @@ snapshots, generic affine ownership, backpressure, cancellation, terminal Io
 and bounded VM admission. Source-bound quality measures 306,695 of 334,764
 lines (91.6153%), preserves every global/risk 80% line/function/region floor
 and catches all six selected critical mutants; all 2,879 workspace Rust tests
-pass. `STD-LOG-HOST-001` now verifies public ConsoleSink/FileSink, explicit
+pass. `STD-LOG-HOST-001` implements public ConsoleSink/FileSink, explicit
 bounded record queues, short-write offsets, cancellation, terminal Io and
 caller-owned network sinks. Its [host register](./testing/stdlib-log-host.json)
-and [contract](./docs/contracts/stdlib-log-host.md) record 307,531 of 335,625
+and [contract](./docs/contracts/stdlib-log-host.md) retain 307,531 of 335,625
 covered lines (91.629348%), every global/risk 80% dimension, all six critical
 mutants caught and 2,893 workspace Rust tests passing. Exact implementation
 source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`;
@@ -4614,6 +4618,11 @@ The scheduled nightly quality job at `040a93ca` omits the target flag and fails
 the final provenance ratchet after its measurements pass. `89130e3f` declares
 the target explicitly; its renewed source-bound quality passes, with exact
 publication/nightly follow-up still required.
+HOST promotion is reopened after the CLI drops records captured on stderr.
+The local correction preserves separate command streams before runtime
+diagnostics and VM resource failure; three permanent regressions and all 25
+logging tests pass. That correction needs renewed source-bound quality and
+exact publication CI before HOST is closed again.
 Independent model/fuzz, performance, common conformance and usage remain
 separate owner blocks: `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
 `STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging

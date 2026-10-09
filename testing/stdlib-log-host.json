@@ -4,8 +4,8 @@
   "task": "STD-LOG-HOST-001",
   "parent": "testing/stdlib-log.json",
   "contract": "docs/contracts/stdlib-log-host.md",
-  "status": "verified-production-hosted",
-  "quality_gate": "verified-80-percent-per-scope",
+  "status": "implementation-in-progress",
+  "quality_gate": "pending-current-source-proof",
   "selected_route": "ordinary-tondo-sinks-and-hosted-scalar-providers",
   "target": "tondo-vm-hosted",
   "public_api_promoted": false,
@@ -57,6 +57,11 @@
     "metrics": "logical-not-RSS-or-OS-allocator-calls"
   },
   "public_project": "acceptance/projects/stdlib-log-host/tondo.toml",
+  "command_output": {
+    "streams": "separate-selected-stdout-and-stderr",
+    "runtime_error": "records-before-diagnostics",
+    "vm_resource_failure": "preserve-completed-records-no-user-cleanup"
+  },
   "fixtures": [
     "acceptance/projects/stdlib-log-host/src/main.to",
     "crates/tondo-compiler/tests/fixtures/log-file.to",
@@ -78,7 +83,10 @@
     "crates/tondo-compiler/src/process_host/log.rs::logging_private_close_admits_before_retirement_and_refuses_wrong_or_closed_handles",
     "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_admits_storage_before_creation_or_truncation",
     "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_creates_appends_and_truncates_without_creating_parents",
-    "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_refuses_directories_and_invalid_modes_without_handles"
+    "crates/tondo-compiler/src/process_host/log.rs::logging_file_open_refuses_directories_and_invalid_modes_without_handles",
+    "crates/tondo-cli/tests/cli.rs::logging_run_preserves_stdout_and_stderr_from_the_hosted_writer",
+    "crates/tondo-cli/tests/cli.rs::logging_run_delivers_stderr_before_unhandled_main_error_diagnostics",
+    "crates/tondo-compiler/src/driver.rs::hosted_run_preserves_completed_console_records_on_vm_resource_exhaustion"
   ],
   "promotion": {
     "independent_model_fuzz": "pending-STD-LOG-TEST-001",

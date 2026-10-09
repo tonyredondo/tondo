@@ -91,6 +91,68 @@ fn remove_json_nulls(value: &mut serde_json::Value) {
 }
 
 #[test]
+fn logging_run_preserves_stdout_and_stderr_from_the_hosted_writer() {
+    let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../acceptance/projects/stdlib-log-host");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--project"])
+        .arg(project)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"info \"test\" \"first\"\ninfo \"test\" \"first\"\ninfo \"test\" \"first\"\ninfo \"test\" \"second\"\n");
+    assert_eq!(output.stderr, "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"line\\n世界\",\"time\":null,\"fields\":{}}\n".as_bytes());
+}
+
+#[test]
+fn logging_run_delivers_stderr_before_unhandled_main_error_diagnostics() {
+    let project = project_with_source_and_threads(
+        br#"import std.log
+fn closeLogger(logger: log.Logger[log.ConsoleSink]) suspends {
+ match log.Logger[log.ConsoleSink].close(logger) {
+  ok(_) => {}
+  err(_) => panic("close")
+ }
+}
+fn main(): !log.LogError {
+ let options = log.SinkOptions.create(log.LogFormat.Text, log.Backpressure.Block, 1, log.LogLimits.defaults())?
+ let sink = log.ConsoleSink.create(log.ConsoleStream.Stderr, options)?
+ let logger = log.Logger[log.ConsoleSink].create(sink, log.LoggerOptions.create(log.LogLevel.Info))?
+ defer closeLogger(logger)
+ let event = log.LogEvent.create(log.LogLevel.Info, "before", "error", log.Fields.empty(), none)?
+ _ = logger.emit(event)?
+ log.Logger[log.ConsoleSink].close(logger)?
+ err(log.LogError.Host)
+}
+"#,
+    );
+    fs::write(
+        project.join("tondo.toml"),
+        "[package]\nname = \"loggingerror\"\n\n[target]\ncapabilities = [\"console\"]\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--diagnostic-format=json", "--project"])
+        .arg(&project)
+        .output()
+        .unwrap();
+    fs::remove_dir_all(project).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty());
+    let diagnostic = output
+        .stderr
+        .strip_prefix(b"info \"before\" \"error\"\n")
+        .unwrap_or_else(|| {
+            panic!("the accepted stderr record precedes the main diagnostic: {output:?}")
+        });
+    let diagnostic: serde_json::Value = serde_json::from_slice(diagnostic).unwrap();
+    assert_eq!(diagnostic["code"], "R0001");
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(message.starts_with("unhandled-main-error:"));
+    assert!(message.contains("LogError"));
+}
+
+#[test]
 fn missing_source_is_a_usage_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .arg("check")
