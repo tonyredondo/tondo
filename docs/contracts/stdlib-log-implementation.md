@@ -70,11 +70,17 @@ Focused hosted tests cover malformed private ABI payloads, depth and node
 limits, joint admission, cancellation and fatal resource retirement. Compiler
 tests enforce private fields/helpers, ownership and generic bounds.
 
-Source implementation and focused verification are in progress. Consolidated
-quality, the complete repository gate and exact-source publication CI remain
-required before promotion. Independent logging model/fuzz, performance,
-common conformance and user documentation remain separate owner blocks.
-Native Tondo logging ABI and AOT execution are not implemented or promoted.
+The public hosted core is verified. Source-bound quality covers 306,695 of
+334,764 lines (91.6153%), preserves every global and risk-scope 80% line,
+function and region floor, and catches all six selected critical mutants.
+All 2,879 workspace Rust tests pass. The complete 362-step functional gate
+is observed on source `cdc6ba0f` in strict Linux CI run `37856715781`;
+the subsequent parent/child checker changes also pass focused positive and
+negative verification. Publication follow-up must confirm the exact pushed
+revision. Normal-push portable and fuzz jobs are expected skips, not portable
+validation. Independent logging model/fuzz, performance, common conformance
+and user documentation remain separate owner blocks. Native Tondo logging
+ABI and AOT execution are not implemented or promoted.
 
 Run `scripts/stdlib-log-implementation-check.sh` through
 `scripts/test-process-scope.sh` inside an explicit delegated OS scope. Its

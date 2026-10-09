@@ -325,7 +325,10 @@ El contrato machine-readable y sus negativos ejecutables son
 [`testing/stdlib-log.json`](../../testing/stdlib-log.json),
 [`scripts/stdlib-log-check.sh`](../../scripts/stdlib-log-check.sh) y
 [`scripts/stdlib-log-test.sh`](../../scripts/stdlib-log-test.sh). El diseño B0
-queda cerrado por `STD-LOG-001`; la implementación, bridges de host, tests,
-fuzzing, rendimiento, conformance y documentación de uso quedan pendientes de
-`STD-LOG-IMPL-001`, `STD-LOG-HOST-001`, `STD-LOG-TEST-001`,
-`STD-LOG-PERF-001`, `STD-LOG-CONF-001` y `STD-LOG-DOC-001`.
+queda cerrado por `STD-LOG-001`. `STD-LOG-IMPL-001` verifies the public hosted
+core and custom sink protocol described in
+[stdlib-log-implementation.md](stdlib-log-implementation.md). Builtin
+capability-gated sinks, independent model/fuzz, performance, common conformance
+and usage documentation remain owned by `STD-LOG-HOST-001`,
+`STD-LOG-TEST-001`, `STD-LOG-PERF-001`, `STD-LOG-CONF-001` and
+`STD-LOG-DOC-001`. The full owner and native ABI/AOT are not promoted.

@@ -83,7 +83,8 @@ exact-source Linux CI run `37670512681`, with stable final confirmation.
 `STD-NET-CONF-001` and `STD-NET-DOC-001` subsequently verify the qualified
 public hosted conformance and usage boundaries recorded in their owner leaves.
 `STD-CHANNEL-OWNERSHIP-001` verifies the consuming endpoint and iterator
-prerequisite; the next explicit owner is `STD-LOG-IMPL-001`.
+prerequisite. `STD-LOG-IMPL-001` verifies the public hosted logging core and
+custom sink protocol; the next explicit owner is `STD-LOG-HOST-001`.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -7228,14 +7229,19 @@ estas leaves.
   portable/fuzz are expected normal-push skips. This prerequisite does not
   implement civil calendar values, zones, a civil provider or logging
   timestamps. Next: the shared pure Date/Time/UTC core required by logging.
-- [ ] **STD-LOG-IMPL-001 — Implement structured logging core.** In progress:
+- [x] **STD-LOG-IMPL-001 — Implement structured logging core.** Verified:
   19 ordinary Tondo public operations, the LogSink protocol, bounded scalar
   event/field admission and formatting, and generic affine Logger ownership.
   Custom sink concurrency, backpressure, cancellation and terminal Io are
   executable. The [implementation register](testing/stdlib-log-implementation.json)
-  and [contract](docs/contracts/stdlib-log-implementation.md) retain quality,
-  full-gate and exact-source publication CI as pending prerequisites. Builtin
-  privileged sinks remain owned by STD-LOG-HOST-001; no native promotion.
+  and [contract](docs/contracts/stdlib-log-implementation.md) record 306,695
+  of 334,764 covered lines (91.6153%), every global/risk 80% floor, all six
+  selected critical mutants caught and all 2,879 workspace Rust tests passing.
+  Source cdc6ba0f passes the actual 362-step strict Linux gate in CI run
+  37856715781; the subsequent checker changes pass focused refusal tests.
+  Publication follow-up must confirm the exact pushed revision. Builtin
+  privileged sinks remain owned by STD-LOG-HOST-001; the full owner and
+  native ABI/AOT are not promoted.
 - [ ] **STD-LOG-HOST-001 — Implementar sinks capability-gated.** Enlazar
   console, filesystem y network por unidades declaradas, con flush, cierre y
   entrega exactamente según el contrato del sink. Rotation is forbidden by

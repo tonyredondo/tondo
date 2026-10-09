@@ -311,7 +311,7 @@
     "next_blocks": ["DIAG-RUNTIME-001"]
   },
   "implementation": {
-    "status": "core-implementation-in-progress",
+    "status": "verified-public-hosted-core",
     "public_api_promoted": false,
     "host": "pending-STD-LOG-HOST-001",
     "core_register": "testing/stdlib-log-implementation.json",

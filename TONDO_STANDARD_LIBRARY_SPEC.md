@@ -3083,8 +3083,9 @@ its bounded native Rust reference and VM-only integration boundary in
 [stdlib-net-conformance.md](docs/contracts/stdlib-net-conformance.md). Its
 `verified-public-hosted-vm-and-native-kernel-process` state closes its qualified
 boundary using current-source quality, clean capture and exact-checkout CI.
-The verified usage guide below completes `STD-NET-DOC-001`; the next owner is
-`STD-LOG-IMPL-001`. Public release and full normative trace coverage remain
+The verified usage guide below completes `STD-NET-DOC-001`; the public hosted
+logging core is now verified and the next owner is `STD-LOG-HOST-001`.
+Public release and full normative trace coverage remain
 separate gates.
 No native Tondo networking target is supplied by that reference process.
 
@@ -4585,10 +4586,20 @@ El contrato machine-readable, la documentación normativa y los negativos son
 [`docs/contracts/stdlib-log.md`](./docs/contracts/stdlib-log.md),
 [`scripts/stdlib-log-check.sh`](./scripts/stdlib-log-check.sh) y
 [`scripts/stdlib-log-test.sh`](./scripts/stdlib-log-test.sh). El diseño B0
-queda cerrado por `STD-LOG-001`; implementación, bridges de host, tests,
-fuzzing, rendimiento, conformance y documentación de uso siguen pendientes de
-`STD-LOG-IMPL-001`, `STD-LOG-HOST-001`, `STD-LOG-TEST-001`,
-`STD-LOG-PERF-001`, `STD-LOG-CONF-001` y `STD-LOG-DOC-001`.
+queda cerrado por `STD-LOG-001`. `STD-LOG-IMPL-001` verifies 19 public ordinary
+Tondo core operations and the custom `LogSink` protocol, backed by two private
+pure construction helpers and bounded scalar formatting. Its
+[implementation register](./testing/stdlib-log-implementation.json) and
+[contract](./docs/contracts/stdlib-log-implementation.md) record immutable
+snapshots, generic affine ownership, backpressure, cancellation, terminal Io
+and bounded VM admission. Source-bound quality measures 306,695 of 334,764
+lines (91.6153%), preserves every global/risk 80% line/function/region floor
+and catches all six selected critical mutants; all 2,879 workspace Rust tests
+pass. Builtin capability-gated sinks, independent model/fuzz, performance,
+common conformance and usage remain separate owner blocks:
+`STD-LOG-HOST-001`, `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
+`STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging
+ABI/AOT are not promoted.
 
 ### 14.19 Reglas de rendimiento de codecs
 
