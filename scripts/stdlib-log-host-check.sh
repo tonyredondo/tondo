@@ -44,7 +44,7 @@ jq -e --slurpfile parent "${TONDO_STDLIB_LOG_CONTRACT:-testing/stdlib-log.json}"
     runtime_error:"records-before-diagnostics",
     vm_resource_failure:"preserve-completed-records-no-user-cleanup"}
   and (.tests | length) == 20 and (.tests | unique | length) == 20
-  and .promotion == {independent_model_fuzz:"pending-STD-LOG-TEST-001", performance:"not-measured",
+  and .promotion == {independent_model_fuzz:"testing/stdlib-log-test.json", performance:"not-measured",
     common_conformance:"pending-STD-LOG-CONF-001", usage_documentation:"pending-STD-LOG-DOC-001", full_owner:false}
 ' "$contract" >/dev/null || die 'register differs from the hosted boundary'
 while IFS= read -r path; do test -s "$path" || die "missing artifact: $path"; done < <(jq -r '.fixtures[],.contract,.public_project' "$contract")

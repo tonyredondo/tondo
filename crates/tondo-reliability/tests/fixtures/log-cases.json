@@ -1,0 +1,735 @@
+{
+  "format": "tondo-stdlib-log-corpus/1",
+  "scope": "bounded-values-and-format-regressions",
+  "cases": [
+    {
+      "id": "text-empty",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\"\n"
+    },
+    {
+      "id": "json-empty",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{}}\n"
+    },
+    {
+      "id": "text-unicode",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "κ世界",
+        "fields": [],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"κ世界\"\n"
+    },
+    {
+      "id": "json-unicode",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "κ世界",
+        "fields": [],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"κ世界\",\"time\":null,\"fields\":{}}\n"
+    },
+    {
+      "id": "text-scalars",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "z",
+            {
+              "kind": "Bool",
+              "value": true
+            }
+          ],
+          [
+            "n",
+            {
+              "kind": "Null"
+            }
+          ],
+          [
+            "i",
+            {
+              "kind": "Int",
+              "value": "-9223372036854775808"
+            }
+          ],
+          [
+            "u",
+            {
+              "kind": "UInt",
+              "value": "18446744073709551615"
+            }
+          ],
+          [
+            "f",
+            {
+              "kind": "Float",
+              "value": "1.25"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\" \"z\"=true \"n\"=null \"i\"=-9223372036854775808 \"u\"=18446744073709551615 \"f\"=1.25\n"
+    },
+    {
+      "id": "json-scalars",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "z",
+            {
+              "kind": "Bool",
+              "value": true
+            }
+          ],
+          [
+            "n",
+            {
+              "kind": "Null"
+            }
+          ],
+          [
+            "i",
+            {
+              "kind": "Int",
+              "value": "-9223372036854775808"
+            }
+          ],
+          [
+            "u",
+            {
+              "kind": "UInt",
+              "value": "18446744073709551615"
+            }
+          ],
+          [
+            "f",
+            {
+              "kind": "Float",
+              "value": "1.25"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{\"f\":1.25,\"i\":-9223372036854775808,\"n\":null,\"u\":18446744073709551615,\"z\":true}}\n"
+    },
+    {
+      "id": "text-byte-padding-one",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "data",
+            {
+              "kind": "Bytes",
+              "value": "ff"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\" \"data\"=b64:/w==\n"
+    },
+    {
+      "id": "json-empty-bytes",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "data",
+            {
+              "kind": "Bytes",
+              "value": ""
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{\"data\":{\"$bytes\":\"\"}}}\n"
+    },
+    {
+      "id": "json-byte-padding-two",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "data",
+            {
+              "kind": "Bytes",
+              "value": "ff00"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{\"data\":{\"$bytes\":\"/wA=\"}}}\n"
+    },
+    {
+      "id": "text-byte-three",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "data",
+            {
+              "kind": "Bytes",
+              "value": "000102"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\" \"data\"=b64:AAEC\n"
+    },
+    {
+      "id": "text-redacted",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "secret",
+            {
+              "kind": "Redacted"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\" \"secret\"=[REDACTED]\n"
+    },
+    {
+      "id": "json-redacted",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "secret",
+            {
+              "kind": "Redacted"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{\"secret\":{\"$redacted\":true}}}\n"
+    },
+    {
+      "id": "text-literal-token",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "text",
+            {
+              "kind": "Text",
+              "value": "[REDACTED]"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\" \"text\"=\"[REDACTED]\"\n"
+    },
+    {
+      "id": "json-no-heuristic",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "password",
+            {
+              "kind": "Text",
+              "value": "literal-password"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{\"password\":\"literal-password\"}}\n"
+    },
+    {
+      "id": "text-object-order",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "object",
+            {
+              "kind": "Object",
+              "value": [
+                [
+                  "z",
+                  {
+                    "kind": "Int",
+                    "value": "2"
+                  }
+                ],
+                [
+                  "a",
+                  {
+                    "kind": "Int",
+                    "value": "1"
+                  }
+                ]
+              ]
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\" \"object\"={\"z\":2,\"a\":1}\n"
+    },
+    {
+      "id": "json-object-order",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "object",
+            {
+              "kind": "Object",
+              "value": [
+                [
+                  "z",
+                  {
+                    "kind": "Int",
+                    "value": "2"
+                  }
+                ],
+                [
+                  "a",
+                  {
+                    "kind": "Int",
+                    "value": "1"
+                  }
+                ]
+              ]
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{\"object\":{\"a\":1,\"z\":2}}}\n"
+    },
+    {
+      "id": "text-array",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "array",
+            {
+              "kind": "Array",
+              "value": [
+                {
+                  "kind": "Null"
+                },
+                {
+                  "kind": "Bool",
+                  "value": true
+                },
+                {
+                  "kind": "Int",
+                  "value": "-1"
+                },
+                {
+                  "kind": "Text",
+                  "value": "a"
+                }
+              ]
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"\" \"array\"=[null,true,-1,\"a\"]\n"
+    },
+    {
+      "id": "json-array",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "array",
+            {
+              "kind": "Array",
+              "value": [
+                {
+                  "kind": "Null"
+                },
+                {
+                  "kind": "Bool",
+                  "value": true
+                },
+                {
+                  "kind": "Int",
+                  "value": "-1"
+                },
+                {
+                  "kind": "Text",
+                  "value": "a"
+                }
+              ]
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":null,\"fields\":{\"array\":[null,true,-1,\"a\"]}}\n"
+    },
+    {
+      "id": "text-controls",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "LF\nCR\rTab\tSlash\\Quote\"",
+        "fields": [],
+        "timestamp": null
+      },
+      "record": "info \"test\" \"LF\\nCR\\rTab\\tSlash\\\\Quote\\\"\"\n"
+    },
+    {
+      "id": "json-controls",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "LF\nCR\rTab\tSlash\\Quote\"",
+        "fields": [],
+        "timestamp": null
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"LF\\nCR\\rTab\\tSlash\\\\Quote\\\"\",\"time\":null,\"fields\":{}}\n"
+    },
+    {
+      "id": "empty-key",
+      "operation": "field",
+      "existing": [],
+      "key": "",
+      "value": {
+        "kind": "Null"
+      },
+      "error": "InvalidFieldKey"
+    },
+    {
+      "id": "nul-key",
+      "operation": "field",
+      "existing": [],
+      "key": "\u0000",
+      "value": {
+        "kind": "Null"
+      },
+      "error": "InvalidFieldKey"
+    },
+    {
+      "id": "duplicate-key",
+      "operation": "field",
+      "existing": [
+        [
+          "x",
+          {
+            "kind": "Int",
+            "value": "1"
+          }
+        ]
+      ],
+      "key": "x",
+      "value": {
+        "kind": "Int",
+        "value": "2"
+      },
+      "error": "DuplicateField"
+    },
+    {
+      "id": "nonfinite-nan",
+      "operation": "field",
+      "existing": [],
+      "key": "n",
+      "value": {
+        "kind": "Float",
+        "value": "NaN"
+      },
+      "error": "NonFiniteValue"
+    },
+    {
+      "id": "nonfinite-inf",
+      "operation": "field",
+      "existing": [],
+      "key": "n",
+      "value": {
+        "kind": "Float",
+        "value": "inf"
+      },
+      "error": "NonFiniteValue"
+    },
+    {
+      "id": "empty-target",
+      "operation": "event",
+      "event": {
+        "level": "Info",
+        "target": "",
+        "message": "",
+        "fields": [],
+        "timestamp": null
+      },
+      "error": "InvalidTarget"
+    },
+    {
+      "id": "field-count-limit",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "a",
+            {
+              "kind": "Null"
+            }
+          ],
+          [
+            "b",
+            {
+              "kind": "Null"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "error": "ResourceLimit",
+      "limits": {
+        "fields": 1
+      }
+    },
+    {
+      "id": "depth-limit",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "a",
+            {
+              "kind": "Array",
+              "value": [
+                {
+                  "kind": "Array",
+                  "value": []
+                }
+              ]
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "error": "ResourceLimit",
+      "limits": {
+        "depth": 1
+      }
+    },
+    {
+      "id": "key-byte-limit",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [
+          [
+            "long",
+            {
+              "kind": "Null"
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "error": "ResourceLimit",
+      "limits": {
+        "key": 1
+      }
+    },
+    {
+      "id": "string-byte-limit",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "t",
+        "message": "xx",
+        "fields": [],
+        "timestamp": null
+      },
+      "error": "ResourceLimit",
+      "limits": {
+        "string": 1
+      }
+    },
+    {
+      "id": "encoded-byte-limit",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "t",
+        "message": "",
+        "fields": [],
+        "timestamp": null
+      },
+      "error": "ResourceLimit",
+      "limits": {
+        "event": 11
+      }
+    },
+    {
+      "id": "empty-node-byte-limit",
+      "operation": "format",
+      "format": "Text",
+      "event": {
+        "level": "Info",
+        "target": "t",
+        "message": "",
+        "fields": [
+          [
+            "a",
+            {
+              "kind": "Array",
+              "value": [
+                {
+                  "kind": "Null"
+                },
+                {
+                  "kind": "Null"
+                }
+              ]
+            }
+          ]
+        ],
+        "timestamp": null
+      },
+      "error": "ResourceLimit",
+      "limits": {
+        "event": 16
+      }
+    },
+    {
+      "id": "utc-second",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [],
+        "timestamp": "2000-02-29T12:34:56Z"
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":\"2000-02-29T12:34:56Z\",\"fields\":{}}\n"
+    },
+    {
+      "id": "utc-fraction",
+      "operation": "format",
+      "format": "JsonLines",
+      "event": {
+        "level": "Info",
+        "target": "test",
+        "message": "",
+        "fields": [],
+        "timestamp": "2026-10-09T09:00:00.123456789Z"
+      },
+      "record": "{\"schema\":\"tondo-log-event-0.1/1\",\"level\":\"info\",\"target\":\"test\",\"message\":\"\",\"time\":\"2026-10-09T09:00:00.123456789Z\",\"fields\":{}}\n"
+    }
+  ]
+}

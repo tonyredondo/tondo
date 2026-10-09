@@ -312,7 +312,15 @@
       {"id": "performance", "requires": ["filtered-cost", "format-allocation-report", "queue-throughput-report", "target-qualified-report"]},
       {"id": "promote", "requires": ["explicit-redaction", "no-global-state", "no-hidden-control", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-LOG-TEST-001"]
+  },
+  "model": {
+    "task": "STD-LOG-TEST-001",
+    "register": "testing/stdlib-log-test.json",
+    "contract": "docs/contracts/stdlib-log-test.md",
+    "selected_route": "bounded-reference-kernel-and-public-hosted-sinks",
+    "status": "ready",
+    "quality_gate": "pending-current-source-proof"
   },
   "implementation": {
     "status": "verified-public-hosted-core",

@@ -217,6 +217,8 @@
     "native_aot": "not-claimed",
     "full_owner": false,
     "performance": "not-measured",
-    "independent_model_fuzz_conf_doc": "pending-owner-blocks"
+    "independent_model_fuzz": "testing/stdlib-log-test.json",
+    "common_conformance": "pending-STD-LOG-CONF-001",
+    "usage_documentation": "pending-STD-LOG-DOC-001"
   }
 }

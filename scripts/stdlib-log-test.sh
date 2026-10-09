@@ -101,7 +101,8 @@ for marker in \
         || { echo "std.log tests: missing marker $marker" >&2; exit 1; }
 done
 
-jq -e '
+jq -e -L scripts '
+  include "stdlib_log_testing";
   .task == "STD-LOG-001"
   and .event.levels == ["Trace", "Debug", "Info", "Warn", "Error"]
   and .event.fatal_level == "forbidden"
@@ -119,7 +120,7 @@ jq -e '
   and .ownership.sink_copyable == "custom-structural-builtin-false"
   and .values.float_policy == "finite-only"
   and .formats.json_lines.final_lf == true
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and log_owner_progression
   and .implementation.public_api_promoted == false
 ' testing/stdlib-log.json >/dev/null
 

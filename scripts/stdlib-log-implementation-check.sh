@@ -44,7 +44,9 @@ jq -e --slurpfile parent testing/stdlib-log.json '
   and .promotion.public_signatures == 19 and .promotion.host_sinks == $parent[0].implementation.host
   and .promotion.native_abi == "not-implemented" and .promotion.native_aot == "not-claimed"
   and .promotion.full_owner == false and .promotion.performance == "not-measured"
-  and .promotion.independent_model_fuzz_conf_doc == "pending-owner-blocks"
+  and .promotion.independent_model_fuzz == "testing/stdlib-log-test.json"
+  and .promotion.common_conformance == "pending-STD-LOG-CONF-001"
+  and .promotion.usage_documentation == "pending-STD-LOG-DOC-001"
 ' "$contract" >/dev/null || die 'register differs from the locked core boundary'
 while IFS=$'\t' read -r path hash; do
     test "sha256:$(sha256sum "$path" | cut -d ' ' -f 1)" = "$hash" || die "source differs: $path"

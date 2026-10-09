@@ -128,6 +128,14 @@ provenance and final quiet confirmation verified. This qualifies the unchanged
 nightly workflow; it does not measure the later command output correction.
 Normal portable/fuzz skips do not establish global portable success.
 
-Publication of the current correction requires same-session exact-SHA CI
-follow-up. The next owner is `STD-LOG-TEST-001`. No timing, native logging
-execution or full owner promotion is claimed.
+Exact publication `1891031ab59f303a15a893c2feea0acab1895ef3` passes
+[CI run 37937941039](https://github.com/tonyredondo/tondo/actions/runs/37937941039),
+strict Linux job `113844629271`/attempt 1, with all 364 named checks and 2,898 Rust
+tests in 77 suites. Its log proves the actual checkout. All paginated checks,
+statuses, main references and PR observations remain satisfactory after 74
+seconds of quiet confirmation, with no failure annotations. Two conformance
+manifest pins are synchronized after the earlier stale-plan refusal; no cases,
+observations or criteria change. Expected normal portable/fuzz skips are not
+portable proof. The next owner is `STD-LOG-TEST-001`, described in
+[stdlib-log-test.md](stdlib-log-test.md). No timing, native logging execution
+or full owner promotion is claimed.

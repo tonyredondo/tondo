@@ -84,10 +84,11 @@ exact-source Linux CI run `37670512681`, with stable final confirmation.
 public hosted conformance and usage boundaries recorded in their owner leaves.
 `STD-CHANNEL-OWNERSHIP-001` verifies the consuming endpoint and iterator
 prerequisite. `STD-LOG-IMPL-001` verifies the public hosted logging core and
-custom sink protocol. `STD-LOG-HOST-001` is reopened after the public CLI loses
-the stderr records already captured by its provider. The local stream delivery
-correction requires renewed quality and exact-source Linux CI; the next owner
-after that verification is `STD-LOG-TEST-001`.
+custom sink protocol. `STD-LOG-HOST-001` verifies the command stream delivery
+correction with renewed quality and exact-source Linux CI run `37937941039`
+at `1891031a`: all 364 named checks and 2,898 Rust tests pass. The active owner
+is `STD-LOG-TEST-001`; its bounded models, authored corpus and hosted replay
+remain pending consolidated quality and publication proof.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -7250,8 +7251,9 @@ estas leaves.
   both streams reach the CLI, wire conformance, reliability and fixture
   observations; records survive main diagnostics and VM resource failure
   without manufacturing user cleanup. Five permanent regressions, the shared
-  runtime corpus and all 25 logging tests pass. Publication requires the
-  same-session exact-SHA CI follow-up. The production hosted boundary covers:
+  runtime corpus and all 25 logging tests pass. Exact publication `1891031a`
+  passes Linux CI `37937941039` with all 364 checks, 2,898 Rust tests, actual
+  checkout and 74 seconds of quiet confirmation. The production hosted boundary covers:
   public hosted ConsoleSink/FileSink, immediate atomic file opening, explicit
   bounded record queues, all three backpressure policies, short writes,
   cancellation-safe offsets, consuming close and caller-owned network sinks.
@@ -7281,9 +7283,17 @@ estas leaves.
   stream repair. Its wire, reliability and fixture consumers are also corrected.
   Rotation, ambient providers and automatic
   retry remain forbidden. Native logging and the full owner are not promoted.
-- [ ] **STD-LOG-TEST-001 — Probar logging.** Cubrir orden, concurrencia,
-  backpressure, fallos, cancelación, redacción declarada, límites y teardown de
-  sinks.
+- [ ] **STD-LOG-TEST-001 — Verify logging models, regressions and fuzz.**
+  In progress: independent std-only values and finite queue transitions,
+  14 reference unit tests, nine integration tests and 34 authored corpus rows.
+  Public hosted replay covers both streams/formats, immutable snapshots,
+  explicit timestamps, capability/affine refusals, owned files, four producers,
+  queue policies and consuming close. Seven sealed writer profiles and actual
+  Group cancellation check retained-prefix resumption and terminal retirement.
+  The [testing register](testing/stdlib-log-test.json) and
+  [contract](docs/contracts/stdlib-log-test.md) bound the model and maintained
+  fuzz target. Current-source quality and exact publication CI remain pending;
+  no native ABI/AOT, performance or full-owner promotion follows from this leaf.
 - [ ] **STD-LOG-PERF-001 — Medir logging.** Fijar disabled/enabled cost,
   throughput, tail, allocations, buffers y presión de sinks.
 - [ ] **STD-LOG-CONF-001 — Conformar logging.** Verificar eventos core y sinks

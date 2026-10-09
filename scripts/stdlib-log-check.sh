@@ -15,8 +15,10 @@ die() {
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "owner contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "owner contract contains CR or trailing whitespace"
 
-jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdlib-log-implementation.json}" \
-  --slurpfile host "${TONDO_STDLIB_LOG_HOST_CONTRACT:-testing/stdlib-log-host.json}" '
+jq -e -L scripts --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdlib-log-implementation.json}" \
+  --slurpfile host "${TONDO_STDLIB_LOG_HOST_CONTRACT:-testing/stdlib-log-host.json}" \
+  --slurpfile testing "${TONDO_STDLIB_LOG_TEST_CONTRACT:-testing/stdlib-log-test.json}" '
+  include "stdlib_log_testing";
   .format == "tondo-stdlib-owner-contract/1"
   and .owner == "std.log"
   and .parent_owner == "std"
@@ -168,7 +170,11 @@ jq -e --slurpfile core "${TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT:-testing/stdl
   and all(.corpora[]; .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and log_owner_progression
+  and (if .model == null then true else
+    .model.status == $testing[0].status and .model.quality_gate == $testing[0].quality_gate
+    and .model.selected_route == $testing[0].target
+    and ($testing[0] | log_testing_boundary) end)
   and ((.implementation.status == "core-implementation-in-progress"
     and $core[0].status == "implementation-in-progress")
     or (.implementation.status == "verified-public-hosted-core"

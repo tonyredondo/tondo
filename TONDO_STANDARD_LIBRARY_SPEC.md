@@ -4624,8 +4624,16 @@ The command output correction preserves separate streams before runtime
 diagnostics and VM resource failure. Wire conformance, reliability observations
 and runtime fixtures also retain both streams. The driver/CLI regressions and
 all 25 logging tests pass. Fresh source-bound coverage and all six critical
-mutants verify the correction at `4e7a5bb0`; publication still requires the
-exact-SHA follow-up prescribed by the repository workflow.
+mutants verify the correction at `4e7a5bb0`. Exact publication `1891031a`
+passes Linux CI `37937941039` with all 364 named checks, 2,898 Rust tests,
+actual checkout and final quiet confirmation verified.
+The bounded independent values/queue reference, 34 authored rows, nine kernel
+and hosted integrations and maintained fuzz target are recorded in
+[testing/stdlib-log-test.json](testing/stdlib-log-test.json) and
+[stdlib-log-test.md](docs/contracts/stdlib-log-test.md). Reference-domain
+refusal is not Tondo ResourceLimit; finite float rendering shares a Rust
+primitive, and calendar/provider validation is not part of this oracle.
+The testing boundary awaits consolidated quality and exact publication CI.
 Independent model/fuzz, performance, common conformance and usage remain
 separate owner blocks: `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
 `STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging

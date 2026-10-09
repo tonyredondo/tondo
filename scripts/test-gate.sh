@@ -480,6 +480,12 @@ run_step stdlib-log-host \
     scripts/stdlib-log-host-check.sh
 run_step stdlib-log-host-tests \
     scripts/stdlib-log-host-test.sh
+run_step stdlib-log-testing-contract \
+    scripts/stdlib-log-test-check.sh
+run_step stdlib-log-testing-contract-tests \
+    scripts/stdlib-log-test-test.sh
+run_step stdlib-log-fuzz \
+    scripts/stdlib-log-fuzz.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

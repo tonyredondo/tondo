@@ -345,7 +345,13 @@ core and custom sink protocol described in
 explicit queue delivery and caller-owned network sink boundary in
 [stdlib-log-host.md](stdlib-log-host.md). Current-source quality preserves every
 80% global/risk floor and catches all six critical mutants; exact implementation
-source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`.
-Independent model/fuzz, performance, common conformance and usage documentation
-remain owned by `STD-LOG-TEST-001`, `STD-LOG-PERF-001`, `STD-LOG-CONF-001` and
-`STD-LOG-DOC-001`. The full owner and native ABI/AOT are not promoted.
+source `1891031a` passes all 364 strict Linux checks and 2,898 Rust tests in
+[CI run 37937941039](https://github.com/tonyredondo/tondo/actions/runs/37937941039),
+with actual checkout and final quiet confirmation verified.
+The bounded independent model, authored corpus, public/sealed hosted replay
+and maintained fuzz target are recorded in
+[stdlib-log-test.md](stdlib-log-test.md) and
+[testing/stdlib-log-test.json](../../testing/stdlib-log-test.json).
+`STD-LOG-TEST-001` remains pending consolidated current-source quality and
+exact publication proof. Performance, common conformance and usage remain
+separate owners. The full owner and native ABI/AOT are not promoted.

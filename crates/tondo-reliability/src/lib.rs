@@ -9,6 +9,8 @@ pub mod generator;
 pub mod harness;
 pub mod inventory;
 pub mod layer_evidence;
+pub mod log_fuzz;
+pub mod log_model;
 pub mod matrix;
 pub mod net_model;
 pub mod provenance;

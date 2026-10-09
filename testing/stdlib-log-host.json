@@ -97,7 +97,7 @@
     "crates/tondo-compiler/tests/bootstrap_harness.rs::repository_fixtures_match_their_sidecars"
   ],
   "promotion": {
-    "independent_model_fuzz": "pending-STD-LOG-TEST-001",
+    "independent_model_fuzz": "testing/stdlib-log-test.json",
     "performance": "not-measured",
     "common_conformance": "pending-STD-LOG-CONF-001",
     "usage_documentation": "pending-STD-LOG-DOC-001",
