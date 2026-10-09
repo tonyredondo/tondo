@@ -44,6 +44,18 @@ if [[ "${1:-}" == --plan ]]; then
 fi
 
 [[ -f "$evidence" ]] || die "missing execution evidence: ${evidence#"$root/"}"
+execution_mode="$(jq -r '.execution_mode // "standalone"' "$evidence")"
+case "$execution_mode" in
+    standalone) jq -e '.reuse == null' "$evidence" >/dev/null || die "standalone evidence has a reuse claim" ;;
+    current-gate-reuse)
+        observed_reuse="$(mktemp "${TMPDIR:-/tmp}/tondo-conformance-reuse-check.XXXXXX")"
+        trap 'rm -f "$generated" "$observed_reuse"' EXIT
+        python3 -B scripts/gate_reuse.py --evidence "$(dirname "$evidence")" --contract "$contract" --output "$observed_reuse"
+        jq -e --slurpfile current "$observed_reuse" '.reuse == $current[0]' "$evidence" >/dev/null \
+            || die "reused command observations differ from current worker receipts"
+        ;;
+    *) die "unknown execution mode" ;;
+esac
 revision="$(git rev-parse HEAD)"
 tree_sha256="$(cargo run -p tondo-reliability --locked -- quality provenance --root . | jq -r '.tree_sha256')"
 

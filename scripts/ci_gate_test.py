@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import ci_build_cache as cache
 import test_gate_partitions as gate
+import rust_suites_test
+import gate_reuse_test
 
 
 class PartitionTests(unittest.TestCase):
@@ -18,6 +20,8 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(len(steps), len(set(steps)))
         self.assertIn("test", plan["foundation"])
         self.assertIn("layer-evidence-before", plan["foundation"])
+        self.assertIn("conformance-run", plan["foundation"])
+        self.assertIn("conformance-validate", plan["foundation"])
         self.assertLess(plan["foundation"].index("conformance-standard-pin"), plan["foundation"].index("test"))
         self.assertIn("stdlib-log-performance", plan["stdlib"])
         self.assertIn("stdlib-channel-implementation", plan["runtime"])
@@ -44,7 +48,15 @@ class PartitionTests(unittest.TestCase):
                 file = root / "logs" / f"{step}.log"
                 file.write_text(f"fixture only: {step}\n")
                 entries.append({"name": step, "log_sha256": gate.digest(file)})
-            value = {"format": gate.FORMAT, "partition": name, "status": "passed", "source": source, "steps": entries}
+            artifacts = {}
+            if name == "foundation":
+                for path in gate.FOUNDATION_ARTIFACTS:
+                    artifact = root / path
+                    artifact.parent.mkdir(parents=True, exist_ok=True)
+                    artifact.write_text('{"fixture":true}\n')
+                    artifacts[path] = gate.digest(artifact)
+            value = {"format": gate.FORMAT, "partition": name, "status": "passed", "source": source, "steps": entries,
+                     "artifacts": artifacts}
             file = root / "gate-partitions" / f"{name}.json"
             file.write_text(json.dumps(value))
             receipts[name] = file
@@ -189,6 +201,12 @@ class BuildCacheTests(unittest.TestCase):
                 (root / "cache/manifest.json").write_text(json.dumps(value))
                 with self.assertRaises(ValueError): cache.restore(root / "target", root / "cache")
                 self.assertFalse((root / "target" / other["path"]).exists())
+
+
+def load_tests(loader, tests, pattern):
+    tests.addTests(loader.loadTestsFromModule(rust_suites_test))
+    tests.addTests(loader.loadTestsFromModule(gate_reuse_test))
+    return tests
 
 
 if __name__ == "__main__":

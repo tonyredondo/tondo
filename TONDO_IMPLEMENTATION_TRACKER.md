@@ -503,6 +503,16 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   91.67% global line coverage, every locked 80% risk floor and all six critical
   mutants. The existing quality floors and wave closure requirements are
   unchanged; documentary closure reuses unchanged quality bindings.
+  The next CI correction compiles all workspace test executables once and runs
+  four deterministic duration-balanced shards inside foundation, preserving
+  process isolation and exact suite/test coverage. A controlled local probe
+  preserves 80 suites and 2,939 tests and reduces execution from 458.37 seconds
+  to 141.19 seconds on the same four CPUs. Final aggregation requires receipt
+  format 2 and matching run/attempt, source, inputs, logs and corpus outputs
+  before reusing 22 completed owner commands and the draft corpus. Standalone
+  execution remains available; the canonical plan contains 374 steps. Integrated
+  hosted timing and current-source closure are pending, so this probe does not
+  establish a new CI completion claim.
 
 - [x] **DEC-019 — `suspends` visible sin duplicar APIs.** El efecto es postfix,
   forma parte del tipo y del hash ABI, y aparece siempre en interfaces y

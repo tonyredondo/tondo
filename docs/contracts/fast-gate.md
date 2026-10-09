@@ -75,6 +75,43 @@ Fresh checkout, current worker success and unchanged source remain required;
 cached reports or an old successful CI cannot satisfy these checks. Successful
 fast evidence also binds the exact checkout and executed command plan.
 
+Foundation compiles the complete workspace with `cargo test --workspace
+--all-targets --locked --no-run --message-format=json`, then executes its libtest
+binaries in four shards within that same runner. Cargo metadata and successful
+build messages must identify exactly the same target set, including example
+harnesses selected by `--all-targets`. Each child retains its package working
+directory and Cargo binary paths. Each suite has at most four test threads;
+existing delegated process isolation remains mandatory. Duration hints in
+`testing/rust-suite-durations.json` choose a deterministic longest-first
+assignment, with a one-second hint for new targets. Hints are scheduling data,
+never successful execution evidence. Refresh them from the per-suite `seconds`
+in a verified execution summary and retain its source/run reference.
+
+Discovery records every test name before execution. The runner requires every
+suite and every discovered test exactly once, a successful exit and terminal
+summary, and no ignored, filtered or failed tests. It hashes the binaries and
+retains individual raw logs, the complete plan and execution summary. Actual
+logs are replayed in stable order for layer attestation. Missing results,
+modified logs or changed source invalidate the aggregate.
+
+A controlled local probe on unchanged `c17a4532`, with the same 80 binaries,
+2,939 tests, four CPUs and 15 GiB, took 458.37 seconds serially and 141.19 seconds
+with four shards: 69.2% less execution time. Compilation was excluded from this
+comparison. This is feasibility evidence; hosted CI timing for the integrated
+runner remains pending.
+
+Partition receipt format `tondo-test-gate-partition/2` additionally binds the
+workflow run ID/attempt and foundation's corpus, layer and Rust-suite outputs.
+Foundation executes the 206-case draft corpus once. Final's explicit
+`stdlib-conformance.sh --reuse-current-gate` mode validates all four complete
+worker receipts and their actual logs before reusing the 22 identical owner
+commands and that corpus execution. Its report records the actual producer
+command and log hash. Commands with different inputs and cases without a
+completed exact producer still execute normally. A required producer that is
+missing, failed, from another attempt or altered causes failure; it never falls
+back to an old report. The ordinary standalone conformance path still executes
+its commands. The full canonical plan now has 374 steps, each owned exactly once.
+
 The `documentation` tier executes `scripts/documentation-gate.sh`. It validates
 typed fences, documentation conformance, normative evidence, tracker topology,
 the live draft manifest and standard-library contracts. It does not run the

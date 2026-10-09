@@ -73,6 +73,7 @@ jobs:
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "1"
+      RUST_TEST_THREADS: "4"
       TONDO_TEST_TARGET: linux-x86_64
     steps:
       - name: Check out source
@@ -154,6 +155,7 @@ jobs:
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "1"
+      RUST_TEST_THREADS: "4"
       TONDO_TEST_TARGET: linux-x86_64
     steps:
       - name: Require every selected worker

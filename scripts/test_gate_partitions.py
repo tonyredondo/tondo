@@ -13,7 +13,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ("foundation", "native", "runtime", "stdlib")
 PARTITIONS = (*WORKERS, "final")
-FORMAT = "tondo-test-gate-partition/1"
+FORMAT = "tondo-test-gate-partition/2"
+FOUNDATION_ARTIFACTS = ("conformance-result.json", "layer-evidence.json", "layer-evidence-before.json",
+                        "rust-suites/summary.json", "rust-suites/plan.json")
 
 
 def require(condition, message):
@@ -63,9 +65,11 @@ def identity():
         "git_tree": command("git", "rev-parse", "HEAD^{tree}"),
         "rustc": command("rustc", "--version", "--verbose"),
         "cargo": command("cargo", "--version"),
+        "run": {"id": os.environ.get("GITHUB_RUN_ID", os.environ.get("TONDO_GATE_RUN_ID", "")),
+                "attempt": os.environ.get("GITHUB_RUN_ATTEMPT", os.environ.get("TONDO_GATE_ATTEMPT", ""))},
         "inputs": {key: os.environ.get(key, "") for key in (
             "TONDO_TEST_TARGET", "TONDO_TEST_SEED", "CARGO_INCREMENTAL",
-            "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS")},
+            "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUST_TEST_THREADS")},
     }
 
 
@@ -84,12 +88,13 @@ def receipt(partition, evidence, before):
         log = evidence / "logs" / f"{name}.log"
         require(log.is_file(), f"missing execution log: {name}")
         entries.append({"name": name, "log_sha256": digest(log)})
+    artifacts = {path: digest(evidence / path) for path in FOUNDATION_ARTIFACTS} if partition == "foundation" else {}
     return {"format": FORMAT, "partition": partition, "status": "passed",
-            "source": current, "steps": entries}
+            "source": current, "steps": entries, "artifacts": artifacts}
 
 
 def validate_receipt(value, partition, root, expected_source):
-    require(type(value) is dict and set(value) == {"format", "partition", "status", "source", "steps"},
+    require(type(value) is dict and set(value) == {"format", "partition", "status", "source", "steps", "artifacts"},
             "receipt fields")
     require(value["format"] == FORMAT and value["partition"] == partition
             and value["status"] == "passed" and value["source"] == expected_source, "worker source/status")
@@ -98,6 +103,10 @@ def validate_receipt(value, partition, root, expected_source):
     for step in value["steps"]:
         require(set(step) == {"name", "log_sha256"}, "step fields")
         require(digest(root / "logs" / f"{step['name']}.log") == step["log_sha256"], "execution log changed")
+    expected = set(FOUNDATION_ARTIFACTS) if partition == "foundation" else set()
+    require(type(value["artifacts"]) is dict and set(value["artifacts"]) == expected, "worker output bindings")
+    for path, expected_hash in value["artifacts"].items():
+        require(digest(root / path) == expected_hash, "worker output changed")
 
 
 def merge(inputs, output, expected_source):

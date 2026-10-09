@@ -10,6 +10,12 @@ evidence_dir="${TONDO_STDLIB_EVIDENCE_DIR:-$target_dir/reliability/evidence}"
 logs_dir="$evidence_dir/stdlib-conformance-logs"
 result="$evidence_dir/stdlib-conformance.json"
 mkdir -p "$evidence_dir" "$logs_dir"
+reuse=0
+case "${1:-}" in
+    "") [[ $# == 0 ]] ;;
+    --reuse-current-gate) [[ $# == 1 ]]; reuse=1 ;;
+    *) echo 'usage: stdlib-conformance.sh [--reuse-current-gate]' >&2; exit 2 ;;
+esac
 
 die() {
     echo "stdlib conformance: $*" >&2
@@ -27,7 +33,13 @@ layer_tree_sha256="$(jq -r '.tree_sha256' "$evidence_dir/layer-evidence.json")"
 
 command_results="$(mktemp "$evidence_dir/stdlib-conformance-commands.XXXXXX")"
 case_results="$(mktemp "$evidence_dir/stdlib-conformance-cases.XXXXXX")"
-trap 'rm -f "$command_results" "$case_results"' EXIT
+reuse_plan="$(mktemp "$evidence_dir/stdlib-conformance-reuse.XXXXXX")"
+trap 'rm -f "$command_results" "$case_results" "$reuse_plan"' EXIT
+if (( reuse )); then
+    python3 -B scripts/gate_reuse.py --evidence "$evidence_dir" --contract "$contract" --output "$reuse_plan"
+else
+    printf '{"commands":{}}\n' > "$reuse_plan"
+fi
 
 record_command() {
     local id="$1"
@@ -50,6 +62,20 @@ run_logged() {
     local log="$logs_dir/$id.log"
     local command_text
     printf -v command_text '%q ' "$@"
+    if (( reuse )) && [[ "$id" == owner-* || "$id" == draft-* ]]; then
+        jq -e --arg id "$id" '.commands | has($id)' "$reuse_plan" >/dev/null || die "required current producer missing: $id"
+    fi
+    if (( reuse )) && jq -e --arg id "$id" '.commands | has($id)' "$reuse_plan" >/dev/null; then
+        local prior_log expected_hash
+        prior_log="$(jq -r --arg id "$id" '.commands[$id].log' "$reuse_plan")"
+        expected_hash="$(jq -r --arg id "$id" '.commands[$id].log_sha256' "$reuse_plan")"
+        [[ "$(sha256sum "$prior_log" | cut -d' ' -f1)" == "$expected_hash" ]] || die "producer log changed: $id"
+        cp "$prior_log" "$log"
+        command_text="$(jq -r --arg id "$id" '.commands[$id].command' "$reuse_plan")"
+        record_command "$id" "$log" "$command_text"
+        echo "stdlib conformance: verified current-run producer for $id"
+        return
+    fi
     if "$@" >"$log" 2>&1; then
         record_command "$id" "$log" "${command_text% }"
     else
@@ -166,6 +192,8 @@ jq -n \
     --arg manifest_sha256 "$manifest_sha256" \
     --arg result_sha256 "$result_sha256" \
     --arg contract_sha256 "$contract_sha256" \
+    --arg execution_mode "$([[ "$reuse" == 1 ]] && printf current-gate-reuse || printf standalone)" \
+    --slurpfile reuse "$reuse_plan" \
     --arg result_path "$evidence_dir/conformance-result.json" \
     --argjson commands "$commands_json" \
     --argjson cases "$cases_json" \
@@ -181,6 +209,8 @@ jq -n \
           public_row_coverage: "unverified",
           promotion: "pending",
           revision: $revision,
+          execution_mode: $execution_mode,
+          reuse: (if $execution_mode == "current-gate-reuse" then $reuse[0] else null end),
           tree_sha256: $current_tree_sha256,
           contract_sha256: $contract_sha256,
           manifest_sha256: $manifest_sha256,

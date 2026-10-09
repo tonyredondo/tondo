@@ -72,7 +72,7 @@ capture_layer_evidence_before() {
     cat "$evidence/layer-evidence-before.json"
 }
 run_step layer-evidence-before capture_layer_evidence_before
-run_step test cargo test --workspace --all-targets --locked
+run_step test python3 -B scripts/rust_suites.py --shards 4 --output "$evidence/rust-suites"
 run_step layer-evidence-attest \
     cargo run -p tondo-reliability --locked -- layer-evidence attest \
     --root . \
@@ -82,6 +82,17 @@ run_step layer-evidence-attest \
 run_step rustdoc env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps --locked
 run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
+run_step conformance-validate \
+    cargo run -p tondo-conformance --locked -- validate \
+    --root . --manifest conformance/draft/manifest.json --lineage draft
+run_step conformance-run \
+    cargo run -p tondo-conformance --locked -- run \
+    --root . \
+    --manifest conformance/draft/manifest.json \
+    --lineage draft \
+    --adapter "$cargo_target_dir/debug/tondo-reference-adapter" \
+    --evidence "$evidence/layer-evidence.json" \
+    --output "$evidence/conformance-result.json"
 run_step doc-test \
     scripts/doc-test.sh
 run_step doc-test-conformance-tests \
@@ -762,8 +773,14 @@ run_step stdlib-normative-matrix \
     scripts/stdlib-matrix-check.sh
 run_step stdlib-normative-matrix-tests \
     scripts/stdlib-matrix-test.sh
-run_step stdlib-conformance \
-    scripts/stdlib-conformance.sh
+run_current_stdlib_conformance() {
+    if [[ "$partition" == final ]]; then
+        scripts/stdlib-conformance.sh --reuse-current-gate
+    else
+        scripts/stdlib-conformance.sh
+    fi
+}
+run_step stdlib-conformance run_current_stdlib_conformance
 run_step stdlib-conformance-tests \
     scripts/stdlib-conformance-test.sh
 run_step stdlib-conformance-check \
@@ -799,14 +816,6 @@ run_step draft-lineage-validate \
     --root . \
     --manifest conformance/draft/manifest.json \
     --lineage draft
-run_step conformance-run \
-    cargo run -p tondo-conformance --locked -- run \
-    --root . \
-    --manifest conformance/draft/manifest.json \
-    --lineage draft \
-    --adapter "$cargo_target_dir/debug/tondo-reference-adapter" \
-    --evidence "$evidence/layer-evidence.json" \
-    --output "$evidence/conformance-result.json"
 run_step async-select-conformance \
     scripts/async-select-conformance.sh
 run_step async-select-conformance-contract-tests \
