@@ -96,6 +96,26 @@ class CurrentRunReuseTests(unittest.TestCase):
             path.write_text(json.dumps(receipt))
             with self.assertRaises(ValueError): reuse.collect(evidence, contract, source)
 
+    def test_copied_observations_must_match_the_exact_completed_producer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, source, contract, _ = self.fixture(Path(directory))
+            plan = reuse.collect(evidence, contract, source)
+            observation = {'reuse': plan, 'commands': [
+                {'id': identity, 'status': 'passed', 'command': producer['command'],
+                 'log_sha256': producer['log_sha256']}
+                for identity, producer in plan['commands'].items()]}
+            reuse.validate_observation(observation, plan)
+            for mutation in ('command', 'hash', 'status', 'missing', 'duplicate', 'reuse'):
+                with self.subTest(mutation=mutation):
+                    changed = copy.deepcopy(observation)
+                    if mutation == 'command': changed['commands'][0]['command'] += ' --other'
+                    elif mutation == 'hash': changed['commands'][0]['log_sha256'] = '0' * 64
+                    elif mutation == 'status': changed['commands'][0]['status'] = 'failed'
+                    elif mutation == 'missing': changed['commands'].pop(0)
+                    elif mutation == 'duplicate': changed['commands'].append(changed['commands'][0])
+                    else: changed['reuse']['source']['run']['attempt'] = 'another-attempt'
+                    with self.assertRaises(ValueError): reuse.validate_observation(changed, plan)
+
 
 if __name__ == '__main__':
     unittest.main()

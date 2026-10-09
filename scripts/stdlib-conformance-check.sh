@@ -50,7 +50,9 @@ case "$execution_mode" in
     current-gate-reuse)
         observed_reuse="$(mktemp "${TMPDIR:-/tmp}/tondo-conformance-reuse-check.XXXXXX")"
         trap 'rm -f "$generated" "$observed_reuse"' EXIT
-        python3 -B scripts/gate_reuse.py --evidence "$(dirname "$evidence")" --contract "$contract" --output "$observed_reuse"
+        worker_evidence="${TONDO_STDLIB_GATE_EVIDENCE_DIR:-$(dirname "$evidence")}"
+        python3 -B scripts/gate_reuse.py --evidence "$worker_evidence" --contract "$contract" \
+            --observation "$evidence" --output "$observed_reuse"
         jq -e --slurpfile current "$observed_reuse" '.reuse == $current[0]' "$evidence" >/dev/null \
             || die "reused command observations differ from current worker receipts"
         ;;

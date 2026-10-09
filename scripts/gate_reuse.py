@@ -103,13 +103,29 @@ def collect(evidence, contract, source):
     return {"format": "tondo-current-gate-reuse/1", "source": source, "commands": selected}
 
 
+def validate_observation(observation, plan):
+    gate.require(observation.get("reuse") == plan, "reuse claim differs from current producers")
+    rows = observation["commands"]
+    observed = {row["id"]: row for row in rows}
+    gate.require(len(observed) == len(rows), "duplicate command observation")
+    for identity, producer in plan["commands"].items():
+        row = observed.get(identity)
+        gate.require(row is not None and row.get("status") == "passed"
+                     and row.get("command") == producer["command"]
+                     and row.get("log_sha256") == producer["log_sha256"],
+                     "reused command observation differs from its producer")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--observation", type=Path)
     args = parser.parse_args()
     result = collect(args.evidence, json.loads(args.contract.read_text()), gate.identity())
+    if args.observation:
+        validate_observation(json.loads(args.observation.read_text()), result)
     gate.write_json(args.output, result)
 
 

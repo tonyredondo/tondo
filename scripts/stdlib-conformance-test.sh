@@ -32,6 +32,9 @@ if [[ "${1:-}" == --plan ]]; then
 fi
 scripts/stdlib-conformance-check.sh
 evidence="${TONDO_STDLIB_CONFORMANCE_EVIDENCE:-${CARGO_TARGET_DIR:-target}/reliability/evidence/stdlib-conformance.json}"
+# Negative report copies still use the original, validated producer directory.
+# Otherwise every malformed report could fail only because workers were absent.
+export TONDO_STDLIB_GATE_EVIDENCE_DIR="$(dirname "$evidence")"
 
 jq '.full_suite.cases -= 1' "$evidence" >"$tmp_dir/bad-evidence.json"
 expect_failure bad-evidence env TONDO_STDLIB_CONFORMANCE_EVIDENCE="$tmp_dir/bad-evidence.json" scripts/stdlib-conformance-check.sh
@@ -40,6 +43,7 @@ jq '.owners[0].rows.total = 0' "$evidence" >"$tmp_dir/missing-row.json"
 expect_failure missing-row env TONDO_STDLIB_CONFORMANCE_EVIDENCE="$tmp_dir/missing-row.json" scripts/stdlib-conformance-check.sh
 
 for mutation in \
+    '.execution_mode = "unknown"' \
     '.tree_sha256 = "stale"' \
     '.commands |= map(select(.id != "owner-core"))' \
     '.commands[0].log_sha256 = ("0" * 64)' \
@@ -52,5 +56,13 @@ for mutation in \
         TONDO_STDLIB_CONFORMANCE_EVIDENCE="$tmp_dir/invalid-observation.json" \
         scripts/stdlib-conformance-check.sh
 done
+
+if [[ "$(jq -r '.execution_mode // "standalone"' "$evidence")" == current-gate-reuse ]]; then
+    for mutation in '.commands[0].command += " --other"' '.reuse.source.run.attempt = "other"'; do
+        jq "$mutation" "$evidence" > "$tmp_dir/changed-reuse.json"
+        expect_failure changed-reuse env TONDO_STDLIB_CONFORMANCE_EVIDENCE="$tmp_dir/changed-reuse.json" \
+            scripts/stdlib-conformance-check.sh
+    done
+fi
 
 echo "stdlib conformance tests: OK"
