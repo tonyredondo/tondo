@@ -2,8 +2,8 @@
   "format": "tondo-stdlib-log-testing/1",
   "owner": "std.log",
   "task": "STD-LOG-TEST-001",
-  "status": "ready",
-  "quality_gate": "pending-current-source-proof",
+  "status": "verified",
+  "quality_gate": "verified-80-percent-per-scope",
   "parent": "testing/stdlib-log.json",
   "parent_contract": "docs/contracts/stdlib-log.md",
   "contract": "docs/contracts/stdlib-log-test.md",
@@ -76,7 +76,7 @@
     "rss_limit_mb": 4096
   },
   "promotion": {
-    "test_boundary_promoted": false,
+    "test_boundary_promoted": true,
     "public_api_promoted": false,
     "native_abi": "not-implemented",
     "native_aot": "not-claimed",

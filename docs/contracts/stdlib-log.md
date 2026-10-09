@@ -352,6 +352,8 @@ The bounded independent model, authored corpus, public/sealed hosted replay
 and maintained fuzz target are recorded in
 [stdlib-log-test.md](stdlib-log-test.md) and
 [testing/stdlib-log-test.json](../../testing/stdlib-log-test.json).
-`STD-LOG-TEST-001` remains pending consolidated current-source quality and
-exact publication proof. Performance, common conformance and usage remain
+`STD-LOG-TEST-001` passes consolidated current-source quality: 2,921 tests,
+91.657881% line coverage, every global/risk 80% dimension and all six critical
+mutants caught. The maintained 128-run smoke and both fuzz graphs pass.
+Exact publication proof remains required. Performance, common conformance and usage remain
 separate owners. The full owner and native ABI/AOT are not promoted.

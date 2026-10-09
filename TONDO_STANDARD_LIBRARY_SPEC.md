@@ -4633,9 +4633,12 @@ and hosted integrations and maintained fuzz target are recorded in
 [stdlib-log-test.md](docs/contracts/stdlib-log-test.md). Reference-domain
 refusal is not Tondo ResourceLimit; finite float rendering shares a Rust
 primitive, and calendar/provider validation is not part of this oracle.
-The testing boundary awaits consolidated quality and exact publication CI.
-Independent model/fuzz, performance, common conformance and usage remain
-separate owner blocks: `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
+The independent testing boundary passes consolidated source-bound quality:
+2,921 Rust tests in 80 suites, 308,646/336,737 covered lines (91.657881%), every
+global/risk 80% dimension and all six critical mutants caught. Both maintained
+fuzz graphs build; 128 runs pass with fixed seed 4113 and active sanitizers.
+Exact publication CI remains required. Performance, common conformance and
+usage remain separate owner blocks: `STD-LOG-PERF-001`,
 `STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging
 ABI/AOT are not promoted.
 

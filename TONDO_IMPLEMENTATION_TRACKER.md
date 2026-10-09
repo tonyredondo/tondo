@@ -88,7 +88,9 @@ custom sink protocol. `STD-LOG-HOST-001` verifies the command stream delivery
 correction with renewed quality and exact-source Linux CI run `37937941039`
 at `1891031a`: all 364 named checks and 2,898 Rust tests pass. The active owner
 is `STD-LOG-TEST-001`; its bounded models, authored corpus and hosted replay
-remain pending consolidated quality and publication proof.
+pass consolidated quality at source `d205cbdc`: 2,921 Rust tests, every 80%
+global/risk floor and all six critical mutants. Publication proof remains
+pending; the next owner after exact-source CI is `STD-LOG-PERF-001`.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -7283,8 +7285,8 @@ estas leaves.
   stream repair. Its wire, reliability and fixture consumers are also corrected.
   Rotation, ambient providers and automatic
   retry remain forbidden. Native logging and the full owner are not promoted.
-- [ ] **STD-LOG-TEST-001 — Verify logging models, regressions and fuzz.**
-  In progress: independent std-only values and finite queue transitions,
+- [x] **STD-LOG-TEST-001 — Verify logging models, regressions and fuzz.**
+  Locally verified: independent std-only values and finite queue transitions,
   14 reference unit tests, nine integration tests and 34 authored corpus rows.
   Public hosted replay covers both streams/formats, immutable snapshots,
   explicit timestamps, capability/affine refusals, owned files, four producers,
@@ -7292,8 +7294,14 @@ estas leaves.
   Group cancellation check retained-prefix resumption and terminal retirement.
   The [testing register](testing/stdlib-log-test.json) and
   [contract](docs/contracts/stdlib-log-test.md) bound the model and maintained
-  fuzz target. Current-source quality and exact publication CI remain pending;
-  no native ABI/AOT, performance or full-owner promotion follows from this leaf.
+  fuzz target passes 128 maintained runs with active sanitizers, fixed seed 4113
+  and both minimal/normal graphs built. Source `d205cbdc`/`207699f3` passes all 2,921
+  workspace tests in 80 suites, 308,646/336,737 covered lines (91.657881%), every
+  global/risk 80% dimension and all six unchanged critical mutants caught, with
+  no missed/timeouts/unviable results. Generated evidence and final ratchet
+  closure follow the actual report bindings. Exact publication CI remains
+  pending. No native ABI/AOT, performance or full-owner promotion follows
+  from this leaf; next owner after publication proof is STD-LOG-PERF-001.
 - [ ] **STD-LOG-PERF-001 — Medir logging.** Fijar disabled/enabled cost,
   throughput, tail, allocations, buffers y presión de sinks.
 - [ ] **STD-LOG-CONF-001 — Conformar logging.** Verificar eventos core y sinks

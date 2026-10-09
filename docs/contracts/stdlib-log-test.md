@@ -3,8 +3,9 @@
 `STD-LOG-TEST-001` covers an independent finite reference, authored exact
 kernel observations and compiled public hosted sink execution. The register is
 [stdlib-log-test.json](../../testing/stdlib-log-test.json). The model and testing
-boundary stays pending until focused checks, the maintained fuzz smoke, current
-source quality and exact-SHA publication CI are verified.
+boundary passes focused execution, the maintained fuzz smoke and consolidated
+current-source quality. Exact-SHA publication CI remains required before the
+owner block closes.
 
 ## Reference domain and independence
 
@@ -106,3 +107,38 @@ inventory/matrix/ratchet generation, inspected signed publication and exact-SHA
 CI. This boundary does not promote native ABI, native AOT, performance, common
 conformance or complete public owner readiness. The next owner block is
 `STD-LOG-PERF-001`.
+
+## Retained current-source quality
+
+Source checkpoint `d205cbdc1c0a22e5b9577129fc222559f9f0f93c` has quality tree
+`207699f3af42eaf209ba5226ffd983464e4429870361ec2feb861a2e78bb9019`,
+1,456 inputs and set digest
+`d3d7b35e341ae7b33f0c38a5fd5ed3336515efef7ec1acb2e67676ffdb5352a5`.
+Rust/Cargo 1.93.0, nonincremental builds and linux-x86_64 target flags match
+the before/after bindings. All 2,921 workspace tests in 80 suites pass without
+failed or ignored cases; 196 source-bound layer observations are attested.
+
+| Metric | Observed |
+| --- | --- |
+| Lines | 308,646 / 336,737 (91.657881%) |
+| Functions | 20,261 / 23,037 (87.949820%) |
+| Regions | 454,330 / 504,528 (90.050503%) |
+| Critical mutants | 6 / 6 caught; baseline success, no missed/timeouts/unviable |
+
+Every locked global/risk 80% dimension and the joint quality verifier pass.
+Raw counters and reports are archived and hash-verified before supported
+completed-cache cleanup. The six-mutant selection, timeouts and thresholds
+are unchanged. Parent progression and ready/verified negative fixtures refer
+to the testing register instead of preserving the already-completed historical
+DIAG-RUNTIME next leaf. The generated inventory contains 3,757 tests and 448
+requirements; no prior test ID is removed.
+
+The first focused run passes all 23 new tests but stops on Clippy's modulo
+style lint. The idiomatic expression passes the final focused suite and Clippy.
+The no-rg fixture initially omits its required env utility; the corrected
+positive fixture and missing-grep refusal pass. The first maintained smoke
+also passes, but two newly-unused model items lead to shared constructor
+comparisons; final 128-run execution and both graphs pass on that source.
+Only existing newer-nightly atomic deprecation warnings remain outside this
+block; the pinned stable compiler has clean Clippy. These earlier runs are
+retained separately and do not replace the final source-bound proof.
