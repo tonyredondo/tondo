@@ -30,12 +30,12 @@
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "7bdff3dc76dc80f5302a10caf55003d0c30c356a1b46563503bcc605e0d0b5cb"
+      "sha256": "921c0920962a0398ebd665ad79b1e912a33e7e36d8a2462f8e6511897f9c5683"
     }
   ],
   "summary": {
-    "logical_tests": 3760,
-    "repetitions": 4072,
+    "logical_tests": 3761,
+    "repetitions": 4073,
     "physical_sources": 677,
     "unique_source_hashes": 1029,
     "by_kind": {
@@ -44,13 +44,13 @@
       "draft-contract": 38,
       "fixture": 219,
       "fuzz-target": 19,
-      "rust-test": 2886,
+      "rust-test": 2887,
       "spec-fence": 319
     },
     "by_status": {
       "campaign": 19,
       "draft-pending": 38,
-      "executable": 3681,
+      "executable": 3682,
       "non-executable": 22
     },
     "by_phase": {
@@ -72,7 +72,7 @@
       "reliability": 248,
       "resolution": 33,
       "runtime": 445,
-      "semantic": 1431,
+      "semantic": 1432,
       "testing": 38,
       "tooling": 4
     }
@@ -3115,7 +3115,7 @@
       ],
       "oracle": "exact-observation",
       "repetitions": 3,
-      "source_sha256": "5c5e5394ee33387fa93677048946e7b685518e564b3b39b94a70e183e2dd0714",
+      "source_sha256": "0ecf3d4f92bc5f3e98aa2319adb58d8183fc7f3f2ed11eb247912e98430578be",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
@@ -56409,7 +56409,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bfe4a6ff3a5b5492de61bef741cb6b93900086fd9ff8d5011dc003a3bf27ac64",
+      "source_sha256": "a79aca993d98861cee6b0702c69cfb05fc813f7bc2370e885b50d765c192c327",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -56427,7 +56427,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bfe4a6ff3a5b5492de61bef741cb6b93900086fd9ff8d5011dc003a3bf27ac64",
+      "source_sha256": "a79aca993d98861cee6b0702c69cfb05fc813f7bc2370e885b50d765c192c327",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -56445,7 +56445,25 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "bfe4a6ff3a5b5492de61bef741cb6b93900086fd9ff8d5011dc003a3bf27ac64",
+      "source_sha256": "a79aca993d98861cee6b0702c69cfb05fc813f7bc2370e885b50d765c192c327",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "rust:tondo-reference-adapter:src::maintain:standard_pin_preflight_refuses_stale_missing_and_malformed_identities",
+      "kind": "rust-test",
+      "crate_name": "tondo-reference-adapter",
+      "phase": "semantic",
+      "source": "crates/tondo-reference-adapter/src/maintain.rs",
+      "fixture": null,
+      "group": "unit",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "a79aca993d98861cee6b0702c69cfb05fc813f7bc2370e885b50d765c192c327",
       "target": "host-rust",
       "document": null,
       "edition": "host",

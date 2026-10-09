@@ -117,16 +117,16 @@ jobs:
         if: matrix.partition != 'fast'
         run: bash scripts/ci-test-scope.sh bash scripts/test-gate.sh --partition "${{ matrix.partition }}"
       - name: Stage bounded dependency cache
-        if: success() && (matrix.partition == 'foundation' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
+        if: success() && (matrix.partition == 'native' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
         run: python3 -B scripts/ci_build_cache.py snapshot --target target --cache target/ci-cache-next
       - name: Publish cache staging directory
-        if: success() && (matrix.partition == 'foundation' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
+        if: success() && (matrix.partition == 'native' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
         run: |
           # Both paths are generated cache directories in this disposable runner.
           rm -rf -- target/ci-cache
           mv target/ci-cache-next target/ci-cache
       - name: Save bounded dependency cache
-        if: success() && (matrix.partition == 'foundation' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
+        if: success() && (matrix.partition == 'native' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |

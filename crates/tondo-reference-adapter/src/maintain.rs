@@ -37,8 +37,10 @@ fn main() -> ExitCode {
         [command] if command == "bless" => bless(),
         [command] if command == "refresh-pins" => refresh_draft_manifest(&workspace_root())
             .map(|()| "refreshed draft input pins without changing case expectations".into()),
+        [command] if command == "check-standard-pin" => check_standard_pin(&workspace_root())
+            .map(|()| "conformance standard package pin is current".into()),
         _ => {
-            eprintln!("usage: tondo-conformance-maintain bless|refresh-pins");
+            eprintln!("usage: tondo-conformance-maintain bless|refresh-pins|check-standard-pin");
             return ExitCode::from(2);
         }
     };
@@ -52,6 +54,30 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn check_standard_pin(root: &Path) -> Result<(), String> {
+    let path = root.join(ROOT).join("cases/determinism/project/Tondo.lock");
+    let bytes = fs::read(&path).map_err(io_error)?;
+    validate_standard_pin(&bytes, &bootstrap_standard_hash())
+}
+
+fn validate_standard_pin(bytes: &[u8], current_hash: &str) -> Result<(), String> {
+    let lock: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    if lock.pointer("/standard/package_id").and_then(Value::as_str)
+        != Some(BOOTSTRAP_STANDARD_PACKAGE)
+        || lock
+            .pointer("/standard/content_hash")
+            .and_then(Value::as_str)
+            != Some(current_hash)
+    {
+        return Err(
+            "the conformance standard package pin is stale or invalid; regenerate with \
+            tondo-conformance-maintain bless and inspect the identity changes"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn bless() -> Result<String, String> {
@@ -1134,6 +1160,26 @@ mod tests {
     use super::*;
 
     static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn standard_pin_preflight_refuses_stale_missing_and_malformed_identities() {
+        check_standard_pin(&workspace_root()).expect("the actual conformance pin must be current");
+        assert!(check_standard_pin(Path::new("/__tondo_missing_standard_fixture__")).is_err());
+        let hash = bootstrap_standard_hash();
+        let valid =
+            json!({"standard": {"package_id": BOOTSTRAP_STANDARD_PACKAGE, "content_hash": hash}});
+        assert!(validate_standard_pin(&serde_json::to_vec(&valid).unwrap(), &hash).is_ok());
+        for invalid in [
+            json!({"standard": {"package_id": BOOTSTRAP_STANDARD_PACKAGE, "content_hash": "stale"}}),
+            json!({"standard": {"package_id": "another-package", "content_hash": hash}}),
+            json!({"standard": {"package_id": BOOTSTRAP_STANDARD_PACKAGE}}),
+            json!({"standard": {"package_id": BOOTSTRAP_STANDARD_PACKAGE, "content_hash": false}}),
+            json!({}),
+        ] {
+            assert!(validate_standard_pin(&serde_json::to_vec(&invalid).unwrap(), &hash).is_err());
+        }
+        assert!(validate_standard_pin(b"not json", &hash).is_err());
+    }
 
     struct TemporaryWorkspace {
         path: PathBuf,

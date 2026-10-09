@@ -18,6 +18,7 @@ class PartitionTests(unittest.TestCase):
         self.assertEqual(len(steps), len(set(steps)))
         self.assertIn("test", plan["foundation"])
         self.assertIn("layer-evidence-before", plan["foundation"])
+        self.assertLess(plan["foundation"].index("conformance-standard-pin"), plan["foundation"].index("test"))
         self.assertIn("stdlib-log-performance", plan["stdlib"])
         self.assertIn("stdlib-channel-implementation", plan["runtime"])
         self.assertIn("native-source-scalars-tests", plan["native"])
@@ -96,14 +97,13 @@ class PartitionTests(unittest.TestCase):
             self.assertEqual((root / "output/metadata.json").read_text(), "preserve")
 
     def test_fast_closure_requires_one_current_completed_plan(self):
-        for mutation in ("none", "missing", "duplicate", "revision", "full", "boolean", "plan"):
+        for mutation in ("none", "duplicate", "revision", "full", "boolean", "plan"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 summary = root / "summary.json"
                 value = {"format": "tondo-fast-gate-evidence/1", "head": "current",
                          "scope": "impacted", "full_required": 0}
                 (root / "plan.txt").write_text("test-tondo-cli cargo test -p tondo-cli\n")
-                if mutation == "missing": continue
                 if mutation == "revision": value["head"] = "old"
                 elif mutation == "full": value["full_required"] = 1
                 elif mutation == "boolean": value["full_required"] = False

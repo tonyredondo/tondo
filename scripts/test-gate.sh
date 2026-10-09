@@ -62,6 +62,8 @@ cp conformance/draft/manifest.json \
 run_step fast-gate-contract-tests scripts/fast-gate-test.sh
 run_step ci-gate-contract-tests python3 -B scripts/ci_gate_test.py
 run_step fmt cargo fmt --all -- --check
+run_step conformance-standard-pin \
+    cargo run -p tondo-reference-adapter --bin tondo-conformance-maintain --locked -- check-standard-pin
 run_step check cargo check --workspace --all-targets --locked
 run_step clippy cargo clippy --workspace --all-targets --locked -- -D warnings
 capture_layer_evidence_before() {

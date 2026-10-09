@@ -20,6 +20,8 @@ libraries/test executables, incremental directories, coverage profiles,
 mutation builds and execution evidence are excluded. An unrestricted target
 tree is never cached. Cached dependency units still pass Cargo's normal
 freshness checks; a cache is not test proof.
+The native worker publishes the full-plan dependency cache, so other
+workers' failures do not discard a successfully validated dependency build.
 
 The selector runs before Linux execution. A fast plan gets one worker. A full
 plan gets four ordinary public Linux workers, followed by a dependent strict
@@ -45,6 +47,9 @@ test/build inputs. The strict closure validates all four receipts, refuses
 duplicate/missing steps, drifted sources and conflicting files, and merges
 evidence only after validation. Its final receipt must cover all remaining
 commands. The union must equal the complete canonical gate exactly once.
+Before workspace validation, a read-only standard package pin check catches
+stale conformance fixture identities. Regeneration remains explicit, with
+inspection of the generated changes; CI never approves its own expectations.
 Fresh checkout, current worker success and unchanged source remain required;
 cached reports or an old successful CI cannot satisfy these checks. Successful
 fast evidence also binds the exact checkout and executed command plan.
