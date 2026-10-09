@@ -7249,19 +7249,25 @@ estas leaves.
   bounded record queues, all three backpressure policies, short writes,
   cancellation-safe offsets, consuming close and caller-owned network sinks.
   The [host register](testing/stdlib-log-host.json) and
-  [contract](docs/contracts/stdlib-log-host.md) record 307,393 of 335,625
-  covered lines (91.588231%), every global/risk 80% dimension, all six critical
+  [contract](docs/contracts/stdlib-log-host.md) record 307,531 of 335,625
+  covered lines (91.629348%), every global/risk 80% dimension, all six critical
   mutants caught and 2,893 workspace Rust tests passing. Every local functional
   check passes across the unchanged prefix and canonical continuation; the
   initial native scalar timeout is retained as unreproduced after two complete
   successful repeats at the original bound. The promotion-check correction has
-  renewed source-bound quality: a CLI interruption failure is retained as
+  renewed source-bound quality: a prior CLI interruption failure is retained as
   unreproduced after focused and complete CLI repeats pass unchanged, and the
-  omitted process-argument target is restored before attestation. Exact
+  omitted process-argument target is restored before attestation. Fresh coverage
+  after the nightly target correction passes all 2,893 tests in 77 suites.
+  Scheduled nightly run 37908629083 passes its full gate and fuzz, but fails
+  the final quality ratchet because the target flag is absent; coverage and
+  all six mutants pass. Commit 89130e3f declares the target explicitly and
+  renews every quality binding without weakening the verifier. Exact
   implementation source 96cd3c62 passes all 364 strict Linux checks in CI run
   37897332476, with actual
   checkout and final quiet confirmation verified. Metadata publication requires
-  same-session exact-SHA follow-up. Rotation, ambient providers and automatic
+  same-session exact-SHA follow-up, including the actual nightly quality job.
+  Rotation, ambient providers and automatic
   retry remain forbidden. Native logging and the full owner are not promoted.
 - [ ] **STD-LOG-TEST-001 — Probar logging.** Cubrir orden, concurrencia,
   backpressure, fallos, cancelación, redacción declarada, límites y teardown de

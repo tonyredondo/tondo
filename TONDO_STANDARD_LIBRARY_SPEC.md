@@ -4605,11 +4605,15 @@ and catches all six selected critical mutants; all 2,879 workspace Rust tests
 pass. `STD-LOG-HOST-001` now verifies public ConsoleSink/FileSink, explicit
 bounded record queues, short-write offsets, cancellation, terminal Io and
 caller-owned network sinks. Its [host register](./testing/stdlib-log-host.json)
-and [contract](./docs/contracts/stdlib-log-host.md) record 307,393 of 335,625
-covered lines (91.588231%), every global/risk 80% dimension, all six critical
+and [contract](./docs/contracts/stdlib-log-host.md) record 307,531 of 335,625
+covered lines (91.629348%), every global/risk 80% dimension, all six critical
 mutants caught and 2,893 workspace Rust tests passing. Exact implementation
 source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`;
 normal portable/fuzz skips do not establish global portable success.
+The scheduled nightly quality job at `040a93ca` omits the target flag and fails
+the final provenance ratchet after its measurements pass. `89130e3f` declares
+the target explicitly; its renewed source-bound quality passes, with exact
+publication/nightly follow-up still required.
 Independent model/fuzz, performance, common conformance and usage remain
 separate owner blocks: `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
 `STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging

@@ -62,43 +62,41 @@ owners and terminal zero handles. The associated checks are
 
 ## Retained local verification
 
-The measured source is `0f9f7250e969be4e2a965d7550b478b5c7e10fb6e8fd3063a2d7600467649e52`:
+The measured source is `76dc5dbb39a2485ea1e98162ebeb8bd5ec22d4ab1a450530a398fcacdc2b0b51`:
 1,437 inputs with set digest
 `6cf078882cbdcee636aefc15946f0f3ade2df87118bf135bd761a9bf3c07f099`.
-It includes the promotion-check fixture correction in signed commit `151fbf9b`;
-the Rust implementation is unchanged from `96cd3c62`. The original fresh
-implementation campaign remains historical evidence. For the corrected source,
-all earlier raw counters are cleared. Cargo reuses current instrumented binaries
-and rebuilds artifacts required by the selected target/features. No earlier raw
-counters contribute to the renewed measurement.
+It includes the promotion-check fixture correction in signed commit `151fbf9b`
+and the explicit nightly quality target in `89130e3f`. The Rust implementation
+is unchanged from `96cd3c62`. Fresh canonical workspace/all-target coverage
+clears previous instrumented workspace binaries and raw counters. No earlier
+counters contribute to the current measurement.
 
-All 2,893 Rust tests in 77 suites pass across source-bound continuations: 53 CLI
-unit tests, nine acceptance tests, 162 CLI integration tests, 2,668 remaining
-workspace/all-target tests and the one CLI process-argument test. The initial
-CLI integration run reports lost isolation in an interruption case. Both a
-focused repeat and the complete 162-test repeat at the original four-thread
-setting pass without changing assertions or deadlines. That initial failure is
-retained as unreproduced and unclassified. Reconciliation detects the missing
-process-argument target before attestation; it is executed and included before
-the full report and 196 layer observations are generated. Successful log parts
-are retained verbatim with their producer hashes; neither failed run is
-rewritten into a pass.
+All 2,893 Rust tests in 77 suites pass in the fresh coverage execution, including
+the CLI process-argument target; the report attests 196 layer observations.
+An earlier campaign reports lost isolation in a CLI interruption case. Both a
+focused repeat and the complete CLI repeat pass unchanged. That failure remains
+unreproduced and unclassified; an omitted process-argument target in that
+earlier continuation was restored before attestation. Historical logs and
+profiles remain retained, and failed commands are not rewritten into passes.
 
 | Metric | Observed |
 | --- | --- |
-| Lines | 307,393 / 335,625 (91.588231%) |
+| Lines | 307,531 / 335,625 (91.629348%) |
 | Functions | 20,179 / 22,954 (87.910604%) |
-| Regions | 452,188 / 502,614 (89.967251%) |
+| Regions | 452,454 / 502,614 (90.020175%) |
 | Critical mutation selection | 6 / 6 caught; none missed, timed out or unviable |
 
 Fresh coverage/mutation bindings, every locked 80% global/risk dimension and
 supported ratchet generation/verification pass. No threshold or mutation
-selection is weakened. The canonical quality script's final check initially
-refuses the previous retained ratchet; supported regeneration then verifies the
-new measurement, without repeating the successful test executions. Current
-reports and raw profiles are archived and hash-verified before supported cleanup
-of completed instrumentation caches. Mutation uses a separate fresh scratch
-directory; its baseline passes and all six selected mutants are caught.
+selection is weakened. Mutation resumes the unchanged canonical selection in
+a fresh isolated directory after restricted source-copy traversal fails before
+its baseline. A continuation helper's relative runner lookup is corrected
+before the remaining checks execute. Both failures remain recorded; the
+baseline and all six scored mutants then pass their required classification.
+The final retained-ratchet check initially refuses the old source identity;
+supported regeneration verifies the new measurement without repeating the
+successful tests. Current reports and raw profiles are archived and
+hash-verified before supported cleanup of completed instrumentation caches.
 
 All 364 local functional checks pass across 238 unchanged prefix checks and
 126 canonical continuation checks. The first native scalar check times out;
@@ -112,7 +110,15 @@ and 2,893 Rust tests in strict Linux CI run `37897332476`, job `113711568377`,
 attempt 1. The actual checkout and logs are verified, with an 86-second final
 quiet confirmation and no failure annotations or open main PR. Portable and
 fuzz jobs are expected normal-push skips; this is not global portable proof.
-Publication follow-up must also confirm the metadata closure revision.
+Metadata closure `040a93ca` also passes all 364 checks and 2,893 Rust tests in
+strict Linux run `37907917225`, job `113745771559`, attempt 1, with actual
+checkout/log proof. Its scheduled nightly run `37908629083` passes the complete
+test gate and extended fuzz. Coverage and all six critical mutants pass, but
+the final quality ratchet fails because that job omits `TONDO_TEST_TARGET`.
+The failure is retained and is not called global green CI. Commit `89130e3f`
+declares `linux-x86_64` on the existing quality step, matching the full gate and
+the retained provenance. Publication follow-up must verify this correction on
+the new exact revision, including the actual nightly quality job.
 
 HOST is promoted only to `verified-production-hosted`; the next owner is
 `STD-LOG-TEST-001`. No timing, native logging execution or full owner promotion
