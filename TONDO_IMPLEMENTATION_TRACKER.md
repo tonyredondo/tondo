@@ -7245,21 +7245,22 @@ estas leaves.
   are verified. Builtin privileged sinks are separately verified by
   STD-LOG-HOST-001; the full owner and
   native ABI/AOT are not promoted.
-- [ ] **STD-LOG-HOST-001 — Implement capability-gated sinks.** Promotion
-  reopened: the CLI drops 115 stderr bytes from the existing public project,
-  despite successful execution and the provider's complete capture. The local
-  correction carries both streams to the CLI, preserves records before main
-  diagnostics and VM resource failure, and retains terminal cleanup rules.
-  Three permanent regressions and all 25 logging tests pass; renewed quality
-  and exact publication CI are pending. Previous source verification covers:
+- [x] **STD-LOG-HOST-001 — Implement capability-gated sinks.** Source-bound
+  local quality verifies the complete command stream correction at 4e7a5bb0:
+  both streams reach the CLI, wire conformance, reliability and fixture
+  observations; records survive main diagnostics and VM resource failure
+  without manufacturing user cleanup. Five permanent regressions, the shared
+  runtime corpus and all 25 logging tests pass. Publication requires the
+  same-session exact-SHA CI follow-up. The production hosted boundary covers:
   public hosted ConsoleSink/FileSink, immediate atomic file opening, explicit
   bounded record queues, all three backpressure policies, short writes,
   cancellation-safe offsets, consuming close and caller-owned network sinks.
   The [host register](testing/stdlib-log-host.json) and
-  [contract](docs/contracts/stdlib-log-host.md) record 307,531 of 335,625
-  covered lines (91.629348%), every global/risk 80% dimension, all six critical
-  mutants caught and 2,893 workspace Rust tests passing. Every local functional
-  check passes across the unchanged prefix and canonical continuation; the
+  [contract](docs/contracts/stdlib-log-host.md) record 307,658 of 335,744
+  covered lines (91.634698%), every global/risk 80% dimension, all six critical
+  mutants caught and 2,898 workspace Rust tests passing in 77 suites.
+  The earlier local functional campaign passes across its unchanged prefix and
+  canonical continuation; the
   initial native scalar timeout is retained as unreproduced after two complete
   successful repeats at the original bound. The promotion-check correction has
   renewed source-bound quality: a prior CLI interruption failure is retained as

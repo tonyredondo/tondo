@@ -1,7 +1,7 @@
 # Capability-gated hosted logging sinks
 
-`STD-LOG-HOST-001` defines the production hosted boundary. Promotion is reopened
-for command stream delivery until renewed quality and publication checks pass.
+`STD-LOG-HOST-001` defines the verified production hosted boundary. Current
+local quality passes; publication requires exact-SHA CI follow-up.
 It implements ordinary Tondo
 `ConsoleSink` and `FileSink` declarations and their `LogSink` implementations,
 the scalar formatting bridge and existing hosted I/O providers. It does not
@@ -44,7 +44,7 @@ VM resource failure retains bytes already committed by the writer and preserves
 `T0002`; it does not execute or manufacture user cleanup. The public CLI
 regressions and bounded VM exhaustion regression verify these paths. The
 previous CLI silently discarded the hosted stderr collector, despite the
-provider test proving its contents. This omission reopens HOST promotion.
+provider test proving its contents. The correction is included in current proof.
 
 The formatter uses the existing iterative scalar Text/JsonLines oracle, including
 supplied UTC timestamps, byte-ordered JSON fields, explicit redaction, Base64 and
@@ -75,68 +75,59 @@ owners and terminal zero handles. The associated checks are
 
 ## Retained local verification
 
-The last retained measured source is `76dc5dbb39a2485ea1e98162ebeb8bd5ec22d4ab1a450530a398fcacdc2b0b51`:
-1,437 inputs with set digest
-`6cf078882cbdcee636aefc15946f0f3ade2df87118bf135bd761a9bf3c07f099`.
-It includes the promotion-check fixture correction in signed commit `151fbf9b`
-and the explicit nightly quality target in `89130e3f`. The Rust implementation
-is unchanged from `96cd3c62`. Fresh canonical workspace/all-target coverage
-clears previous instrumented workspace binaries and raw counters. No earlier
-counters contribute to the current measurement.
+The current measured source is
+`226baed477deb081f04fc6cffd4128cc46366226a3743b982869226ae347724d`,
+with 1,441 inputs and set digest
+`4243ffecf056d9d254c4748e6130dc0c63b3120a0a9b8bdf4f0efe95cd537fe4`.
+Signed source checkpoints `1fd025c0`, `8e59ed8c` and `4e7a5bb0` complete
+command stream delivery, refresh the standard package identity and preserve
+both streams in every execution observation adapter.
 
-All 2,893 Rust tests in 77 suites pass in the fresh coverage execution, including
-the CLI process-argument target; the report attests 196 layer observations.
-An earlier campaign reports lost isolation in a CLI interruption case. Both a
-focused repeat and the complete CLI repeat pass unchanged. That failure remains
-unreproduced and unclassified; an omitted process-argument target in that
-earlier continuation was restored before attestation. Historical logs and
-profiles remain retained, and failed commands are not rewritten into passes.
+Fresh canonical workspace/all-target coverage clears instrumented workspace
+binaries and raw counters before execution. All 2,898 Rust tests in 77 suites
+pass without ignored cases, including the CLI process-argument target and the
+shared runtime stream fixture. The report attests 196 layer observations.
 
 | Metric | Observed |
 | --- | --- |
-| Lines | 307,531 / 335,625 (91.629348%) |
-| Functions | 20,179 / 22,954 (87.910604%) |
-| Regions | 452,454 / 502,614 (90.020175%) |
+| Lines | 307,658 / 335,744 (91.634698%) |
+| Functions | 20,184 / 22,959 (87.913237%) |
+| Regions | 452,624 / 502,775 (90.025160%) |
 | Critical mutation selection | 6 / 6 caught; none missed, timed out or unviable |
 
-Fresh coverage/mutation bindings, every locked 80% global/risk dimension and
-supported ratchet generation/verification pass. No threshold or mutation
-selection is weakened. Mutation resumes the unchanged canonical selection in
-a fresh isolated directory after restricted source-copy traversal fails before
-its baseline. A continuation helper's relative runner lookup is corrected
-before the remaining checks execute. Both failures remain recorded; the
-baseline and all six scored mutants then pass their required classification.
-The final retained-ratchet check initially refuses the old source identity;
-supported regeneration verifies the new measurement without repeating the
-successful tests. Current reports and raw profiles are archived and
-hash-verified before supported cleanup of completed instrumentation caches.
+The unchanged six-frontier mutation selection runs in a fresh isolated
+directory with cargo-mutants 27.1.0. Its baseline passes; all six changes are
+caught. Coverage and mutation provenance match the current source, flags and
+toolchain. Every locked global/risk 80% dimension and the joint quality gate
+pass. Reports and raw profiles are archived and hash-verified before supported
+cleanup of completed instrumentation caches.
 
-All 364 local functional checks pass across 238 unchanged prefix checks and
-126 canonical continuation checks. The first native scalar check times out;
-two complete subsequent runs pass its original two-second bound, including
-630 Cranelift cases, 70 arithmetic traps and 75 evidence refusals. The initial
-timeout is retained as unreproduced; it is not classified as an implementation
-repair or infrastructure fault. No native source or test limit changes.
+The incomplete command stream campaigns remain retained. The first refuses a
+missing explicit process cgroup; the second refuses a stale standard package
+hash in the determinism project. Supported generation changes only that hash,
+the still-identical permutation artifact hashes and their dependent pins.
+Another campaign is deliberately interrupted when inspection finds remaining
+observation consumers discarding stderr. All three consumers are corrected
+before the complete current campaign; no partial campaign is treated as proof.
+The new runtime fixture initially lacks its required exit sidecar; the complete
+fixture and conformance checks pass after that setup omission is corrected.
 
-Exact implementation source `96cd3c62` passes all 364 named functional checks
-and 2,893 Rust tests in strict Linux CI run `37897332476`, job `113711568377`,
-attempt 1. The actual checkout and logs are verified, with an 86-second final
-quiet confirmation and no failure annotations or open main PR. Portable and
-fuzz jobs are expected normal-push skips; this is not global portable proof.
-Metadata closure `040a93ca` also passes all 364 checks and 2,893 Rust tests in
-strict Linux run `37907917225`, job `113745771559`, attempt 1, with actual
-checkout/log proof. Its scheduled nightly run `37908629083` passes the complete
-test gate and extended fuzz. Coverage and all six critical mutants pass, but
-the final quality ratchet fails because that job omits `TONDO_TEST_TARGET`.
-The failure is retained and is not called global green CI. Commit `89130e3f`
-declares `linux-x86_64` on the existing quality step, matching the full gate and
-the retained provenance. Exact publication `97eaa29a` passes strict run
-`37918455600` and all three jobs in manual nightly run `37918521272`. Actual
-checkout, the complete quality artifact provenance and final quiet confirmation
-are verified. This qualifies the unchanged workflow; it does not measure the
-later command stream correction.
+Earlier source verification retains the initial native scalar timeout and CLI
+interruption failure as unreproduced after unchanged focused and complete
+repeats pass at their original limits. Those logs and profiles remain available.
+No test, deadline, coverage floor or mutation selection is weakened.
 
-The command output correction invalidates that quality identity for the new
-source. Current promotion awaits renewed quality and exact publication CI.
-The next owner after HOST verification is `STD-LOG-TEST-001`. No timing, native
-logging execution or full owner promotion is claimed.
+Exact earlier implementation `96cd3c62` passes all 364 strict Linux checks in
+run `37897332476`. Its metadata closure `040a93ca` also passes strict run
+`37907917225`, but scheduled nightly `37908629083` fails the final quality
+ratchet because that job omits `TONDO_TEST_TARGET`; its full test gate, fuzz,
+coverage and six mutants pass. Commit `89130e3f` declares the target explicitly.
+Exact publication `97eaa29a` passes strict run `37918455600` and all three
+jobs in manual nightly `37918521272`, with actual checkout, complete artifact
+provenance and final quiet confirmation verified. This qualifies the unchanged
+nightly workflow; it does not measure the later command output correction.
+Normal portable/fuzz skips do not establish global portable success.
+
+Publication of the current correction requires same-session exact-SHA CI
+follow-up. The next owner is `STD-LOG-TEST-001`. No timing, native logging
+execution or full owner promotion is claimed.

@@ -1934,8 +1934,8 @@ actualizar esta especificación y el tracker antes de implementar.
   política de backpressure sin alterar silenciosamente el control del programa.
   FileSink.create is suspends: it opens its explicit path in the constructor
   and returns opening errors there. STD-LOG-HOST-001 implements the production
-  hosted sink boundary; command stream delivery repair awaits renewed
-  verification. Native logging remains a separate gate.
+  hosted sink boundary, including both command streams and their observation
+  adapters. Native logging remains a separate gate.
   Logging Append atomically creates a missing file or appends to an existing
   file; Truncate creates or truncates. Neither mode creates parent directories.
   The existing-only std.fs.OpenMode.Append contract is unchanged.
@@ -4609,9 +4609,9 @@ and catches all six selected critical mutants; all 2,879 workspace Rust tests
 pass. `STD-LOG-HOST-001` implements public ConsoleSink/FileSink, explicit
 bounded record queues, short-write offsets, cancellation, terminal Io and
 caller-owned network sinks. Its [host register](./testing/stdlib-log-host.json)
-and [contract](./docs/contracts/stdlib-log-host.md) retain 307,531 of 335,625
-covered lines (91.629348%), every global/risk 80% dimension, all six critical
-mutants caught and 2,893 workspace Rust tests passing. Exact implementation
+and [contract](./docs/contracts/stdlib-log-host.md) retain 307,658 of 335,744
+covered lines (91.634698%), every global/risk 80% dimension, all six critical
+mutants caught and 2,898 workspace Rust tests passing. Exact earlier implementation
 source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`;
 normal portable/fuzz skips do not establish global portable success.
 The scheduled nightly quality job at `040a93ca` omits the target flag and fails
@@ -4620,12 +4620,12 @@ the target explicitly and its renewed source-bound quality passes. Exact
 publication `97eaa29a` passes strict run `37918455600` and all three jobs in
 manual nightly run `37918521272`, with checkout, provenance and final quiet
 confirmation verified. This qualifies the unchanged nightly workflow.
-HOST promotion is reopened after the CLI drops records captured on stderr.
-The local correction preserves separate command streams before runtime
+The command output correction preserves separate streams before runtime
 diagnostics and VM resource failure. Wire conformance, reliability observations
 and runtime fixtures also retain both streams. The driver/CLI regressions and
-all 25 logging tests pass. That correction needs renewed source-bound quality and
-exact publication CI before HOST is closed again.
+all 25 logging tests pass. Fresh source-bound coverage and all six critical
+mutants verify the correction at `4e7a5bb0`; publication still requires the
+exact-SHA follow-up prescribed by the repository workflow.
 Independent model/fuzz, performance, common conformance and usage remain
 separate owner blocks: `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
 `STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging

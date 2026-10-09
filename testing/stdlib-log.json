@@ -317,7 +317,7 @@
   "implementation": {
     "status": "verified-public-hosted-core",
     "public_api_promoted": false,
-    "host": "pending-STD-LOG-HOST-001",
+    "host": "verified-production-hosted",
     "host_register": "testing/stdlib-log-host.json",
     "core_register": "testing/stdlib-log-implementation.json",
     "required_follow_ups": ["STD-LOG-IMPL-001", "STD-LOG-HOST-001", "STD-LOG-TEST-001", "STD-LOG-PERF-001", "STD-LOG-CONF-001", "STD-LOG-DOC-001"]
