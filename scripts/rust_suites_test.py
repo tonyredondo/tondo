@@ -52,6 +52,13 @@ class SuiteProtocolTests(unittest.TestCase):
         for listing in ('one: test\none: test\n', 'one: benchmark\n'):
             with self.assertRaises(ValueError): suites.test_names(listing)
 
+    def test_expected_panic_annotation_preserves_the_discovered_test_identity(self):
+        suite = {'tests': ['module::one', 'module::two']}
+        output = self.output().replace('module::two ... ok', 'module::two - should panic ... ok')
+        self.assertEqual(suites.check_result(suite, output, 0), 2)
+        with self.assertRaises(ValueError):
+            suites.check_result(suite, output.replace('should panic', 'other annotation'), 0)
+
     def test_merge_refuses_missing_duplicate_failed_or_changed_suite_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

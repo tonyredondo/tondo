@@ -103,7 +103,8 @@ def check_result(suite, output, status):
     require(status == 0 and len(summaries) == 1, "suite failed or has no single terminal summary")
     summary = summaries[0]
     require(summary[0] == "ok" and all(int(n) == 0 for n in summary[2:6]), "failed, ignored, measured or filtered tests")
-    passed = sorted(match[1] for match in re.finditer(r"^test (.+) \.\.\. ok$", output, re.M))
+    passed = sorted(match[1].removesuffix(" - should panic")
+                    for match in re.finditer(r"^test (.+) \.\.\. ok$", output, re.M))
     require(passed == suite["tests"] and int(summary[1]) == len(passed), "suite test coverage differs from discovery")
     return len(passed)
 
