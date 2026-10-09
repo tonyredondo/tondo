@@ -22,41 +22,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  strict:
-    name: Strict gate (Linux x86_64)
+  plan:
+    name: Select gate
     runs-on: ubuntu-24.04
-    # Complete runs exhausted 45 minutes before the final conformance checks.
-    timeout-minutes: 55
+    timeout-minutes: 10
+    outputs:
+      full: ${{ steps.fast-tools.outputs.full }}
+      quality: ${{ steps.fast-tools.outputs.quality }}
+      fuzz: ${{ steps.fast-tools.outputs.fuzz }}
+      matrix: ${{ steps.fast-tools.outputs.matrix }}
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
           fetch-depth: 0
-
-      - name: Show toolchain
-        run: |
-          rustc --version
-          cargo --version
-
-      - name: Cache fast build
-        if: github.event_name != 'workflow_dispatch' || inputs.tier == 'fast'
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: tondo-fast-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            tondo-fast-${{ runner.os }}-${{ runner.arch }}-
-
       - name: Detect fast gate prerequisites
         id: fast-tools
-        if: github.event_name != 'workflow_dispatch' || inputs.tier == 'fast'
         env:
           TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || 'HEAD^' }}
+          TONDO_FORCE_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.tier == 'full' }}
         run: |
-          plan="$(bash scripts/fast-gate.sh --dry-run)"
+          args=(--dry-run)
+          if [[ "${TONDO_FORCE_FULL:-false}" == true ]]; then args+=(--full); fi
+          plan="$(bash scripts/fast-gate.sh "${args[@]}")"
           printf '%s\n' "$plan"
           if grep -Eq '^(changed-line-coverage|diff-mutation) ' <<< "$plan"; then
             echo "quality=true" >> "$GITHUB_OUTPUT"
@@ -65,57 +54,159 @@ jobs:
           fi
           if grep -q '^full-test-gate ' <<< "$plan"; then
             echo "fuzz=true" >> "$GITHUB_OUTPUT"
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo 'matrix={"partition":["foundation","native","runtime","stdlib"]}' >> "$GITHUB_OUTPUT"
           else
             echo "fuzz=false" >> "$GITHUB_OUTPUT"
+            echo "full=false" >> "$GITHUB_OUTPUT"
+            echo 'matrix={"partition":["fast"]}' >> "$GITHUB_OUTPUT"
           fi
 
+  gate:
+    name: Gate (${{ matrix.partition }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "1"
+      TONDO_TEST_TARGET: linux-x86_64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+      - name: Restore Cargo dependencies and bounded build cache
+        id: build-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/ci-cache
+          key: tondo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', 'scripts/ci_build_cache.py') }}-${{ github.sha }}
+          restore-keys: |
+            tondo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', 'scripts/ci_build_cache.py') }}-
+      - name: Restore validated dependency artifacts
+        run: python3 -B scripts/ci_build_cache.py restore --target target --cache target/ci-cache
       - name: Install fast quality tools
-        if: (github.event_name != 'workflow_dispatch' || inputs.tier == 'fast') && steps.fast-tools.outputs.quality == 'true'
+        if: matrix.partition == 'fast' && needs.plan.outputs.quality == 'true'
         run: |
           rustup component add llvm-tools-preview
           cargo install cargo-llvm-cov --version 0.8.7 --locked
           cargo install cargo-mutants --version 27.1.0 --locked
-
       - name: Install full-gate fuzz toolchain
-        if: (github.event_name == 'workflow_dispatch' && inputs.tier == 'full') || steps.fast-tools.outputs.fuzz == 'true'
+        if: matrix.partition == 'stdlib'
         run: |
           rustup toolchain install nightly-2026-07-28 --profile minimal
           cargo install cargo-fuzz --version 0.13.2 --locked
-
       - name: Run fast gate
-        if: github.event_name != 'workflow_dispatch' || inputs.tier == 'fast'
+        if: matrix.partition == 'fast'
         env:
-          TONDO_TEST_TARGET: linux-x86_64
           TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || 'HEAD^' }}
-          CARGO_INCREMENTAL: "1"
         run: bash scripts/ci-test-scope.sh bash scripts/fast-gate.sh
+      - name: Run full gate partition
+        if: matrix.partition != 'fast'
+        run: bash scripts/ci-test-scope.sh bash scripts/test-gate.sh --partition "${{ matrix.partition }}"
+      - name: Stage bounded dependency cache
+        if: success() && (matrix.partition == 'foundation' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
+        run: python3 -B scripts/ci_build_cache.py snapshot --target target --cache target/ci-cache-next
+      - name: Publish cache staging directory
+        if: success() && (matrix.partition == 'foundation' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
+        run: |
+          # Both paths are generated cache directories in this disposable runner.
+          rm -rf -- target/ci-cache
+          mv target/ci-cache-next target/ci-cache
+      - name: Save bounded dependency cache
+        if: success() && (matrix.partition == 'foundation' || matrix.partition == 'fast') && steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/ci-cache
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      - name: Retain partition execution evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate-partition-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.partition }}
+          path: |
+            target/reliability/evidence/
+            target/reliability/fast-gate/
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Run full strict gate
-        if: github.event_name == 'workflow_dispatch' && inputs.tier == 'full'
+  strict:
+    name: Strict gate (Linux x86_64)
+    if: always()
+    needs: [plan, gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "1"
+      TONDO_TEST_TARGET: linux-x86_64
+    steps:
+      - name: Require every selected worker
         env:
-          TONDO_TEST_TARGET: linux-x86_64
-        run: bash scripts/ci-test-scope.sh bash scripts/test-gate.sh
-
-      - name: Upload strict-gate evidence
-        if: failure() || (always() && github.event_name == 'workflow_dispatch' && inputs.tier == 'full')
+          PLAN_RESULT: ${{ needs.plan.result }}
+          GATE_RESULT: ${{ needs.gate.result }}
+        run: test "$PLAN_RESULT" = success && test "$GATE_RESULT" = success
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Retrieve current worker evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gate-partition-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: .tmp/ci-gate-inputs
+      - name: Confirm fast gate execution
+        if: needs.plan.outputs.full != 'true'
+        run: python3 -B scripts/test_gate_partitions.py verify-fast --inputs .tmp/ci-gate-inputs
+      - name: Restore Cargo dependencies and bounded build cache
+        if: needs.plan.outputs.full == 'true'
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/ci-cache
+          key: tondo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', 'scripts/ci_build_cache.py') }}-${{ github.sha }}
+          restore-keys: |
+            tondo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml', 'scripts/ci_build_cache.py') }}-
+      - name: Restore validated dependency artifacts
+        if: needs.plan.outputs.full == 'true'
+        run: python3 -B scripts/ci_build_cache.py restore --target target --cache target/ci-cache
+      - name: Merge complete source-bound worker evidence
+        if: needs.plan.outputs.full == 'true'
+        run: python3 -B scripts/test_gate_partitions.py merge --inputs .tmp/ci-gate-inputs --evidence target/reliability/evidence
+      - name: Run dependent full-gate closure
+        if: needs.plan.outputs.full == 'true'
+        run: bash scripts/ci-test-scope.sh bash scripts/test-gate.sh --partition final
+      - name: Confirm every canonical full-gate step
+        if: needs.plan.outputs.full == 'true'
+        run: python3 -B scripts/test_gate_partitions.py verify --evidence target/reliability/evidence
+      - name: Retain complete strict evidence
+        if: always() && needs.plan.outputs.full == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: strict-gate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/reliability/evidence/
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Upload fast-gate evidence
-        if: failure() && (github.event_name != 'workflow_dispatch' || inputs.tier == 'fast')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: fast-gate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: target/reliability/fast-gate/
-          if-no-files-found: warn
-          retention-days: 14
-
       - name: Retain draft conformance evidence
-        if: always()
+        if: always() && needs.plan.outputs.full == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: draft-conformance-${{ github.run_id }}-${{ github.run_attempt }}

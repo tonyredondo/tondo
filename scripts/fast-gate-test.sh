@@ -48,6 +48,20 @@ assert_contains "$test_only" "test-tondo-reliability"
 assert_not_contains "$test_only" "changed-line-coverage"
 assert_not_contains "$test_only" "diff-mutation"
 
+# Documentary records still get their own coherence checks when mixed with
+# tests; their regeneration is not itself a compiler/runtime frontier.
+mixed_metadata="$(TONDO_FAST_CHANGED_FILES=$'crates/tondo-cli/tests/cli.rs\nTONDO_IMPLEMENTATION_TRACKER.md\ntesting/inventory.json\ntesting/coverage-matrix.json\ntesting/tracker-graph.json' \
+    TONDO_FAST_GATE_DIR="$tmp_dir/mixed-metadata" bash scripts/fast-gate.sh --dry-run)"
+assert_contains "$mixed_metadata" "scope=impacted"
+assert_contains "$mixed_metadata" "documentation-gate"
+assert_contains "$mixed_metadata" "test-tondo-cli"
+assert_not_contains "$mixed_metadata" "full-test-gate"
+assert_not_contains "$mixed_metadata" "changed-line-coverage"
+
+mixed_frontier="$(TONDO_FAST_CHANGED_FILES=$'crates/tondo-compiler/src/hir/check.rs\ntesting/inventory.json' \
+    TONDO_FAST_GATE_DIR="$tmp_dir/mixed-frontier" bash scripts/fast-gate.sh --dry-run)"
+assert_contains "$mixed_frontier" "full-test-gate"
+
 impacted="$(TONDO_FAST_CHANGED_FILES=$'crates/tondo-stdlib/src/lib.rs\nscripts/fast-gate.sh' \
     TONDO_FAST_GATE_DIR="$tmp_dir/impacted" \
     bash scripts/fast-gate.sh --dry-run)"

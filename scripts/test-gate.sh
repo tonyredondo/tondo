@@ -4,11 +4,31 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-cargo_target_dir="${CARGO_TARGET_DIR:-target}"
+cargo_target_dir="${CARGO_TARGET_DIR:-$root/target}"
+[[ "$cargo_target_dir" = /* ]] || cargo_target_dir="$root/$cargo_target_dir"
+export CARGO_TARGET_DIR="$cargo_target_dir"
+
+partition=all
+case "${1:-}" in
+    "") ;;
+    --partition) partition="${2:?missing partition}"; [[ "$#" == 2 ]] ;;
+    *) echo 'usage: test-gate.sh [--partition foundation|native|runtime|stdlib|final]' >&2; exit 2 ;;
+esac
+declare -A selected_steps=()
+if [[ "$partition" != all ]]; then
+    plan="$(python3 -B scripts/test_gate_partitions.py plan --partition "$partition")"
+    while IFS= read -r step; do selected_steps["$step"]=1; done <<< "$plan"
+fi
 
 evidence="$cargo_target_dir/reliability/evidence"
 logs="$evidence/logs"
 mkdir -p "$logs"
+if [[ "$partition" != all ]]; then
+    mkdir -p "$evidence/gate-partitions"
+    before="$evidence/gate-partitions/$partition.before"
+    python3 -B scripts/test_gate_partitions.py before --before "$before"
+    : > "$evidence/gate-partitions/$partition.steps"
+fi
 
 sanitize() {
     sed "s#${root}/#./#g"
@@ -17,9 +37,13 @@ sanitize() {
 run_step() {
     local name="$1"
     shift
+    if [[ "$partition" != all && ! -v "selected_steps[$name]" ]]; then return; fi
     echo "::group::$name"
     "$@" 2>&1 | sanitize | tee "$logs/$name.log"
     echo "::endgroup::"
+    if [[ "$partition" != all ]]; then
+        printf '%s\n' "$name" >> "$evidence/gate-partitions/$partition.steps"
+    fi
 }
 
 jq -n \
@@ -36,14 +60,16 @@ cp conformance/draft/manifest.json \
     "$evidence/draft-manifest-$draft_manifest_hash.json"
 
 run_step fast-gate-contract-tests scripts/fast-gate-test.sh
+run_step ci-gate-contract-tests python3 -B scripts/ci_gate_test.py
 run_step fmt cargo fmt --all -- --check
 run_step check cargo check --workspace --all-targets --locked
 run_step clippy cargo clippy --workspace --all-targets --locked -- -D warnings
-echo "::group::layer-evidence-before"
-cargo run -p tondo-reliability --locked -- quality provenance --root . \
-    > "$evidence/layer-evidence-before.json"
-cat "$evidence/layer-evidence-before.json"
-echo "::endgroup::"
+capture_layer_evidence_before() {
+    cargo run -p tondo-reliability --locked -- quality provenance --root . \
+        > "$evidence/layer-evidence-before.json"
+    cat "$evidence/layer-evidence-before.json"
+}
+run_step layer-evidence-before capture_layer_evidence_before
 run_step test cargo test --workspace --all-targets --locked
 run_step layer-evidence-attest \
     cargo run -p tondo-reliability --locked -- layer-evidence attest \
@@ -787,3 +813,8 @@ run_step stdlib-s1a-payload-tests \
     python3 -B scripts/stdlib_s1a_payload_test.py
 run_step stdlib-s1a-readiness-and-seal \
     scripts/stdlib-s1a-gate.sh
+
+if [[ "$partition" != all ]]; then
+    python3 -B scripts/test_gate_partitions.py receipt --partition "$partition" \
+        --evidence "$evidence" --before "$before"
+fi

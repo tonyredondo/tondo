@@ -489,6 +489,14 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   release candidate o afirmación portable exige el tier `full`, que
   conserva test-gate, matriz portable, fuzzing y quality-gate. La evidencia de
   fast gate vive en `target/reliability/fast-gate/` y es siempre efímera.
+  The CI throughput correction exports one Cargo artifact directory and
+  bounds cached third-party build units to 4 GiB, excluding workspace/test
+  outputs and measurement evidence. The full Linux gate runs four disjoint
+  workers with a dependent strict closure that verifies the complete canonical
+  step set and current-source receipts. Mixed tracker/inventory regeneration
+  retains its documentation checks without independently forcing every owner
+  campaign. Current-source timing and publication proof remain pending; the
+  existing quality floors and wave closure requirements are unchanged.
 
 - [x] **DEC-019 — `suspends` visible sin duplicar APIs.** El efecto es postfix,
   forma parte del tipo y del hash ABI, y aparece siempre en interfaces y

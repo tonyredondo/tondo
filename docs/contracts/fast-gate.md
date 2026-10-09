@@ -11,16 +11,43 @@ derives an impact set from the diff and selects the smallest sufficient tier:
 - `shared-frontier`: compiler/runtime boundaries whose effects cross packages.
 
 The temporary evidence is written below `target/reliability/fast-gate/` (or the
-caller-provided `CARGO_TARGET_DIR`) and is deliberately ephemeral. CI caches
-only Cargo's registry and git sources; it does not archive `target/`, because
-generated build and mutation artifacts are unbounded and must never stall the
-feedback gate.
+caller-provided `CARGO_TARGET_DIR`) and is deliberately ephemeral. Every gate
+exports one explicit Cargo target directory, including nested scripts that
+previously defaulted to `target-fast`. CI caches downloaded sources and a
+bounded selection of compiled third-party dependencies through
+`scripts/ci_build_cache.py`. The artifact payload is at most 4 GiB; workspace
+libraries/test executables, incremental directories, coverage profiles,
+mutation builds and execution evidence are excluded. An unrestricted target
+tree is never cached. Cached dependency units still pass Cargo's normal
+freshness checks; a cache is not test proof.
 
-The strict Linux job has a finite 55-minute budget, including a complete
-shared-frontier gate when selected. Two complete runs exhausted the earlier
-45-minute budget before the final conformance checks. All required commands,
-samples and quality floors remain mandatory; timeout is a failure. Portable
-jobs retain 45 minutes and deterministic fuzz retains 30 minutes.
+The selector runs before Linux execution. A fast plan gets one worker. A full
+plan gets four ordinary public Linux workers, followed by a dependent strict
+closure. Each worker retains the existing finite 55-minute limit; the closure
+has 30 minutes. Portable jobs retain 45 minutes and deterministic fuzz retains
+30 minutes. All required commands, samples and quality floors remain mandatory;
+a failed, missing, cancelled or timed-out worker cannot produce a green strict
+check. This is an orchestration change, not a performance SLO or target
+promotion.
+
+`scripts/test_gate_partitions.py` derives disjoint worker plans from the
+canonical `scripts/test-gate.sh` command list. Foundation owns workspace
+validation and layer evidence; native owns native checks; runtime owns async,
+channel, synchronization and executor owners; stdlib owns the other library
+owners. The final part begins at the public API audit and includes global
+conformance, distribution, performance aggregation and the S1A gate. It waits
+for all four workers and their current layer/owner evidence. The unpartitioned
+local gate remains available.
+
+Every partition records only successfully completed named steps and hashes
+their actual logs. Receipts bind Git revision/tree, Rust/Cargo versions and
+test/build inputs. The strict closure validates all four receipts, refuses
+duplicate/missing steps, drifted sources and conflicting files, and merges
+evidence only after validation. Its final receipt must cover all remaining
+commands. The union must equal the complete canonical gate exactly once.
+Fresh checkout, current worker success and unchanged source remain required;
+cached reports or an old successful CI cannot satisfy these checks. Successful
+fast evidence also binds the exact checkout and executed command plan.
 
 The `documentation` tier executes `scripts/documentation-gate.sh`. It validates
 typed fences, documentation conformance, normative evidence, tracker topology,
@@ -41,6 +68,13 @@ changes retain their package test targets. Documentation, JSON evidence and
 Markdown never trigger coverage or mutation by themselves. The conservative
 list of audited inline modules lives in `testing/fast-gate.json`; an edit before
 the marker is classified as production automatically.
+
+Tracker, inventory, coverage matrix and their generated documentary records
+continue to receive documentation/coherence checks when mixed with package
+tests. Regenerating those records does not independently require every owner
+campaign. A real shared frontend/runtime input, a quality baseline/ratchet or
+an unmapped executable input still selects the complete gate. Package execution
+order is sorted, so repeated plans are deterministic.
 
 The machine-readable policy lives in `testing/fast-gate.json`. A change to a
 workspace manifest, compiler/runtime frontier (including the monolithic

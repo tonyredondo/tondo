@@ -63,6 +63,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}"
 if [[ -z "${CARGO_BUILD_JOBS:-}" ]]; then
     if command -v nproc >/dev/null 2>&1; then
         export CARGO_BUILD_JOBS="$(nproc)"
@@ -374,14 +375,14 @@ else
             run native-evaluation-adapter-check \
                 cargo check --manifest-path tools/native-evaluation/Cargo.toml --locked
         fi
-        for package in "${!packages[@]}"; do
+        while IFS= read -r package; do
             run "check-$package" cargo check -p "$package" --all-targets --locked
             if (( inline_test_tail_changed && ! production_rust_changed && ! external_test_changed )); then
                 run "test-$package" cargo test -p "$package" --lib --locked
             else
                 run "test-$package" cargo test -p "$package" --all-targets --locked
             fi
-        done
+        done < <(printf '%s\n' "${!packages[@]}" | sed '/^$/d' | sort)
         if (( production_rust_changed )); then
             if (( ! dry_run )) && ! command -v cargo-llvm-cov >/dev/null 2>&1; then
                 echo "fast gate: cargo-llvm-cov is required for changed-line coverage" >&2
