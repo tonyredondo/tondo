@@ -4637,10 +4637,20 @@ The independent testing boundary passes consolidated source-bound quality:
 2,921 Rust tests in 80 suites, 308,646/336,737 covered lines (91.657881%), every
 global/risk 80% dimension and all six critical mutants caught. Both maintained
 fuzz graphs build; 128 runs pass with fixed seed 4113 and active sanitizers.
-Exact publication CI remains required. Performance, common conformance and
+Exact publication `71020bc2` passes strict Linux CI run `37955205979`: all 367
+named checks and 2,921 Rust tests, with actual checkout and final quiet
+confirmation verified. Performance, common conformance and
 usage remain separate owner blocks: `STD-LOG-PERF-001`,
 `STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging
 ABI/AOT are not promoted.
+
+The [logging measurement register](testing/stdlib-log-performance.json) and
+[performance contract](docs/contracts/stdlib-log-performance.md) define 18
+hosted scalar VM whole-workload routes in the qualified test profile, with
+27 retained samples each. Filtered/accepted/dropped/rejected receipts, exact
+output, queue pressure and writer failures remain observable. Actual VM/host
+counters, modeled queue high water and selected fixture storage stay separate;
+no native AOT, RSS, optimized production latency or speedup is claimed.
 
 ### 14.19 Reglas de rendimiento de codecs
 

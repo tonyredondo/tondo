@@ -484,6 +484,12 @@ run_step stdlib-log-testing-contract \
     scripts/stdlib-log-test-check.sh
 run_step stdlib-log-testing-contract-tests \
     scripts/stdlib-log-test-test.sh
+run_step stdlib-log-performance-contract \
+    scripts/stdlib-log-performance-check.sh
+run_step stdlib-log-performance-contract-tests \
+    scripts/stdlib-log-performance-test.sh
+run_step stdlib-log-performance \
+    scripts/stdlib-log-performance.sh
 run_step stdlib-log-fuzz \
     scripts/stdlib-log-fuzz.sh
 run_step stdlib-performance-contract \

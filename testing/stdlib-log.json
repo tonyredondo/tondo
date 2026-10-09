@@ -314,6 +314,18 @@
     ],
     "next_blocks": ["STD-LOG-PERF-001"]
   },
+  "measurement": {
+    "status": "measurement-ready",
+    "register": "testing/stdlib-log-performance.json",
+    "contract": "docs/contracts/stdlib-log-performance.md",
+    "target": "x86_64-unknown-linux-gnu",
+    "backend": "hosted-bytecode-vm",
+    "profile": "test",
+    "samples_per_workload": 27,
+    "quality_gate": "pending-80-percent-per-scope",
+    "native_abi": "unmeasured",
+    "native_aot": "unmeasured"
+  },
   "model": {
     "task": "STD-LOG-TEST-001",
     "register": "testing/stdlib-log-test.json",

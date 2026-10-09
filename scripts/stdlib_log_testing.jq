@@ -47,6 +47,7 @@ def log_testing_boundary:
 
 def log_owner_progression:
   .model as $model
+  | .measurement as $measurement
   | (.implementation.host != "verified-production-hosted"
     or .implementation.status == "verified-public-hosted-core")
   and (if $model == null then true else
@@ -59,8 +60,20 @@ def log_owner_progression:
         and .implementation.status == "verified-public-hosted-core"
         and .implementation.host == "verified-production-hosted"))
   end)
+  and (if $measurement == null then true else
+    $model.status == "verified"
+    and ($measurement | del(.status,.quality_gate)) == {
+      register:"testing/stdlib-log-performance.json",contract:"docs/contracts/stdlib-log-performance.md",
+      target:"x86_64-unknown-linux-gnu",backend:"hosted-bytecode-vm",profile:"test",
+      samples_per_workload:27,native_abi:"unmeasured",native_aot:"unmeasured"}
+    and (($measurement.status == "measurement-ready"
+      and $measurement.quality_gate == "pending-80-percent-per-scope")
+      or ($measurement.status == "verified-hosted-scalar-baseline"
+        and $measurement.quality_gate == "verified-80-percent-per-scope"))
+  end)
   and .promotion.next_blocks == (if .implementation.status == "core-implementation-in-progress"
     then ["STD-LOG-IMPL-001"]
     elif .implementation.host == "pending-STD-LOG-HOST-001" then ["STD-LOG-HOST-001"]
+    elif $measurement.status == "verified-hosted-scalar-baseline" then ["STD-LOG-CONF-001"]
     elif $model.status == "verified" then ["STD-LOG-PERF-001"]
     else ["STD-LOG-TEST-001"] end);

@@ -195,7 +195,7 @@
     "crates/tondo-compiler/src/hir/check.rs": "sha256:a306eeac3a660793d618233dc8a54219b3c226102ce51eed17b82d9e5afe694d",
     "crates/tondo-compiler/src/hir/lower.rs": "sha256:7847f5d0807f0f23a720173af89d09fc7527391402137fabf878121688f8d3a7",
     "crates/tondo-compiler/src/process_host.rs": "sha256:cd78b3971423c76ca70bf04da2fa6c9ef445daf14da38ae02704c53bc0b75561",
-    "crates/tondo-compiler/src/process_host/log.rs": "sha256:6b68a608707a9461b7d3e0bcda309fc28f84bdaee74c4fa449645b96c56c1155",
+    "crates/tondo-compiler/src/process_host/log.rs": "sha256:3ca352a2623d285f8d7c5a1f0d0794d2cb5bba8c686c896bbeb00803eecba401",
     "crates/tondo-compiler/src/process_host/net.rs": "sha256:e5661056098abd33190c3d96d25fcfd923f611c1046643bea51f12dfd7d70389",
     "crates/tondo-compiler/src/resolve.rs": "sha256:26c4d8d5ba3f7e480933e50b3c0f81389753fdeab82e21b910ef6385f1401a00",
     "crates/tondo-vm/src/runtime/execute.rs": "sha256:c9006df852498b1a74b67e8bb9bde7264949dce2d8821d64aa2d29ce5e4aaf85"

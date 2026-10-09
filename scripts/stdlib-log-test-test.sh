@@ -20,7 +20,7 @@ reject() {
 bash scripts/stdlib-log-test-check.sh
 # Validate a ready fixture before making negative state mutations, so a
 # verified live register cannot turn an intended mutation into a no-op.
-jq '.model.status="ready" | .model.quality_gate="pending-current-source-proof"
+jq 'del(.measurement) | .model.status="ready" | .model.quality_gate="pending-current-source-proof"
     | .promotion.next_blocks=["STD-LOG-TEST-001"]' "$parent" > "$tmp/ready-parent.json"
 jq '.status="ready" | .quality_gate="pending-current-source-proof"
     | .promotion.test_boundary_promoted=false' "$contract" > "$tmp/ready-child.json"
@@ -88,7 +88,7 @@ MUTATIONS
 for host in pending-STD-LOG-HOST-001 verified-production-hosted; do
     for model in ready verified; do
         jq --arg host "$host" --arg model "$model" '
-          .implementation.host=$host | .model.status=$model
+          del(.measurement) | .implementation.host=$host | .model.status=$model
           | .model.quality_gate=(if $model=="ready" then "pending-current-source-proof"
             else "verified-80-percent-per-scope" end)
           | .promotion.next_blocks=(if $host=="pending-STD-LOG-HOST-001"

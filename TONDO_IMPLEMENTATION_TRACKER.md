@@ -87,10 +87,11 @@ prerequisite. `STD-LOG-IMPL-001` verifies the public hosted logging core and
 custom sink protocol. `STD-LOG-HOST-001` verifies the command stream delivery
 correction with renewed quality and exact-source Linux CI run `37937941039`
 at `1891031a`: all 364 named checks and 2,898 Rust tests pass. The active owner
-is `STD-LOG-TEST-001`; its bounded models, authored corpus and hosted replay
+is `STD-LOG-PERF-001`. The bounded models, authored corpus and hosted replay
 pass consolidated quality at source `d205cbdc`: 2,921 Rust tests, every 80%
-global/risk floor and all six critical mutants. Publication proof remains
-pending; the next owner after exact-source CI is `STD-LOG-PERF-001`.
+global/risk floor and all six critical mutants. Exact publication `71020bc2`
+passes all 367 named checks and 2,921 Rust tests in strict Linux CI run
+`37955205979`, with actual checkout and final quiet confirmation verified.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -7299,11 +7300,19 @@ estas leaves.
   workspace tests in 80 suites, 308,646/336,737 covered lines (91.657881%), every
   global/risk 80% dimension and all six unchanged critical mutants caught, with
   no missed/timeouts/unviable results. Generated evidence and final ratchet
-  closure follow the actual report bindings. Exact publication CI remains
-  pending. No native ABI/AOT, performance or full-owner promotion follows
-  from this leaf; next owner after publication proof is STD-LOG-PERF-001.
-- [ ] **STD-LOG-PERF-001 — Medir logging.** Fijar disabled/enabled cost,
-  throughput, tail, allocations, buffers y presión de sinks.
+  closure follow the actual report bindings. Exact publication `71020bc2`
+  passes all 367 named strict Linux checks and 2,921 Rust tests in CI run
+  `37955205979`, with actual checkout and final quiet confirmation verified.
+  No native ABI/AOT, performance or full-owner promotion follows from this
+  leaf; the next owner is STD-LOG-PERF-001.
+- [ ] **STD-LOG-PERF-001 — Measure hosted logging.** The target-qualified
+  [register](testing/stdlib-log-performance.json) and
+  [contract](docs/contracts/stdlib-log-performance.md) define 18 whole-workload
+  hosted scalar VM routes in the test profile. Focused execution verifies
+  exact bytes, receipts, modeled queues and terminal owners; report/schema
+  negatives, workspace check and clippy pass. Clean-source capture,
+  consolidated quality, the complete functional gate and publication CI remain
+  pending. No native, optimized production latency or full-owner claim follows.
 - [ ] **STD-LOG-CONF-001 — Conformar logging.** Verificar eventos core y sinks
   capability-gated en VM/nativo sin que fallos cambien control ocultamente.
 - [ ] **STD-LOG-DOC-001 — Documentar logging.** Publicar fields, filters,

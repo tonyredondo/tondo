@@ -1,0 +1,485 @@
+{
+  "format": "tondo-stdlib-log-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-LOG-PERF-001",
+  "owner": "std.log",
+  "status": "measurement-ready",
+  "target": "x86_64-unknown-linux-gnu",
+  "backend": "hosted-bytecode-vm",
+  "profile": "test",
+  "contract": "docs/contracts/stdlib-log-performance.md",
+  "parent_contract": "testing/stdlib-log.json",
+  "probe": {
+    "path": "crates/tondo-compiler/src/process_host/log/performance.rs",
+    "test": "process_host::log::performance::logging_performance_probe",
+    "sha256": "d0b05606e373d2e53beef8f8cda8d67f15e9c91aee85e26523a15cbe167a4433"
+  },
+  "protocol": {
+    "clock": "std::time::Instant-monotonic",
+    "warmup_repetitions": 3,
+    "measured_repetitions_per_process": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "outliers": "retain-all",
+    "percentiles": "nearest-rank",
+    "sample_order": "process-then-repetition",
+    "timed": "whole-execute_with_limits-including-VM-verification-setup-event-construction-delivery-close-and-Tondo-assertions",
+    "excluded_latency": [
+      "compiler",
+      "oracle",
+      "fixture-preload",
+      "Rust-byte-and-terminal-checks"
+    ],
+    "independent_process_timeout_seconds": 120
+  },
+  "strategy": {
+    "selected": "hosted-scalar",
+    "hosted_vm": "measured-whole-workload",
+    "public_logger": "fifteen-routes",
+    "sealed_buffered_writer": "three-test-only-routes",
+    "native_abi": "unmeasured",
+    "native_aot": "unmeasured",
+    "SIMD": "not-claimed",
+    "multiversion_dispatch": "not-claimed",
+    "code_size": "unmeasured",
+    "production_latency": "not-claimed-test-profile",
+    "speedup": "not-claimed-no-comparison"
+  },
+  "resource_model": {
+    "vm_allocations": "observed-VmStatistics-logical-managed-object-allocations-not-allocator-calls",
+    "vm_peak_live_bytes": "observed-VmStatistics-logical-managed-heap-peak-not-full-host-memory-or-RSS",
+    "collection_copies": "observed-VmStatistics-logical-buffer-copies-elements-shares-and-detaches",
+    "host_handles_created": "actual-whole-workload-host-registry-ID-increment",
+    "queue_high_water": "independent-model-replay-not-sampled-host-peak",
+    "selected_fixture_bytes": "retained-source-sealed-source-authored-records-expected-output-and-file-prefix",
+    "selected_fixture_allocations": "retained-selected-String-and-Vec-identities-not-allocator-calls",
+    "terminal": "actual-host-registries-channels-jobs-waiters-after-consuming-close",
+    "budget_bytes": "unmeasured-null-ordinary-logging-has-no-shared-provider-budget",
+    "native_live_handles": "unmeasured-null",
+    "excluded": [
+      "compiler-and-bytecode-storage",
+      "oracle-temporaries",
+      "stack-and-capacity-slack",
+      "host-map-and-Arc-nodes",
+      "writer-provider-internals",
+      "OS-allocator",
+      "native-runtime"
+    ]
+  },
+  "limits": {
+    "sample_latency_ns": 30000000000,
+    "selected_counter": 2147483648,
+    "vm_steps": 2000000,
+    "vm_heap_bytes": 8388608,
+    "capture_samples": 486,
+    "capture_report_bytes": 33554432
+  },
+  "oracle": {
+    "kind": "independent-bounded-values-queue-and-authored-large-ASCII-law",
+    "sources": [
+      "crates/tondo-reliability/src/log_model/values.rs",
+      "crates/tondo-reliability/src/log_model/queue.rs",
+      "crates/tondo-compiler/src/process_host/log/performance.rs",
+      "crates/tondo-compiler/tests/fixtures/log-writer-probe.to"
+    ],
+    "exact": [
+      "formatted-bytes",
+      "receipts",
+      "nominal-errors",
+      "retained-prefix",
+      "consuming-close"
+    ],
+    "concurrency": "whole-records-each-once-and-per-producer-order-replayed-against-legal-observed-order",
+    "large_message": "4096-ASCII-x-outside-values-domain-authored-JSON-byte-law-no-domain-promotion",
+    "floats": "shared-Rust-primitive-no-independent-numeric-rendering-claim",
+    "timestamps": "supplied-authored-UTC-token-no-calendar-or-clock-provider-oracle"
+  },
+  "identity_fields": [
+    "backend",
+    "flags",
+    "git_revision",
+    "probe_sha256",
+    "profile",
+    "source_tree_sha256",
+    "suite",
+    "target",
+    "toolchain",
+    "workload_id"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "path",
+    "pid",
+    "timestamp"
+  ],
+  "workloads": [
+    {
+      "id": "enabled-query",
+      "operation": "enabled-query",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 128,
+        "attempted_events": 0,
+        "accepted_events": 0,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 0,
+        "model_peak_queued_records": 0,
+        "output_bytes": 0,
+        "model_peak_queued_bytes": 0
+      }
+    },
+    {
+      "id": "filtered-emit",
+      "operation": "filtered-emit",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 128,
+        "attempted_events": 128,
+        "accepted_events": 0,
+        "filtered_events": 128,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 0,
+        "model_peak_queued_records": 0,
+        "output_bytes": 0,
+        "model_peak_queued_bytes": 0
+      }
+    },
+    {
+      "id": "text-small",
+      "operation": "emit",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 32,
+        "attempted_events": 32,
+        "accepted_events": 32,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 32,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "json-small",
+      "operation": "emit",
+      "format": "JsonLines",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 32,
+        "attempted_events": 32,
+        "accepted_events": 32,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 32,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "text-structured",
+      "operation": "emit",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "structured",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 16,
+        "attempted_events": 16,
+        "accepted_events": 16,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 16,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "json-structured",
+      "operation": "emit",
+      "format": "JsonLines",
+      "capacity": 8,
+      "shape": "structured",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 16,
+        "attempted_events": 16,
+        "accepted_events": 16,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 16,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "json-large",
+      "operation": "emit",
+      "format": "JsonLines",
+      "capacity": 8,
+      "shape": "large",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 8,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 8,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "block-capacity-one",
+      "operation": "block",
+      "format": "JsonLines",
+      "capacity": 1,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 32,
+        "attempted_events": 32,
+        "accepted_events": 32,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 32,
+        "model_peak_queued_records": 1
+      }
+    },
+    {
+      "id": "reject-full",
+      "operation": "reject",
+      "format": "Text",
+      "capacity": 1,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 1,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 7,
+        "delivered_records": 1,
+        "model_peak_queued_records": 1
+      }
+    },
+    {
+      "id": "drop-full",
+      "operation": "drop",
+      "format": "Text",
+      "capacity": 1,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 1,
+        "filtered_events": 0,
+        "dropped_events": 7,
+        "rejected_events": 0,
+        "delivered_records": 1,
+        "model_peak_queued_records": 1
+      }
+    },
+    {
+      "id": "flush-each",
+      "operation": "flush",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 8,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 8,
+        "model_peak_queued_records": 1
+      }
+    },
+    {
+      "id": "concurrent-producers",
+      "operation": "concurrent",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "four-producers",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 32,
+        "attempted_events": 32,
+        "accepted_events": 32,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 32,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "file-append",
+      "operation": "file",
+      "format": "JsonLines",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 8,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 8,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "file-truncate",
+      "operation": "file",
+      "format": "JsonLines",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 8,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 8,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "writer-short",
+      "operation": "short-write",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "sealed-buffered-writer",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 8,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 8,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "writer-interrupt",
+      "operation": "interruption-resume",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "sealed-buffered-writer",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 8,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 0,
+        "delivered_records": 8,
+        "model_peak_queued_records": 8
+      }
+    },
+    {
+      "id": "writer-io",
+      "operation": "terminal-io",
+      "format": "Text",
+      "capacity": 2,
+      "shape": "plain",
+      "api": "sealed-buffered-writer",
+      "expected_counters": {
+        "operations": 3,
+        "attempted_events": 3,
+        "accepted_events": 2,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 1,
+        "delivered_records": 0,
+        "model_peak_queued_records": 2,
+        "output_bytes": 2
+      }
+    },
+    {
+      "id": "reject-event-limit",
+      "operation": "limit-rejection",
+      "format": "Text",
+      "capacity": 8,
+      "shape": "plain",
+      "api": "public-Logger",
+      "expected_counters": {
+        "operations": 8,
+        "attempted_events": 8,
+        "accepted_events": 0,
+        "filtered_events": 0,
+        "dropped_events": 0,
+        "rejected_events": 8,
+        "delivered_records": 0,
+        "model_peak_queued_records": 0,
+        "output_bytes": 0,
+        "model_peak_queued_bytes": 0
+      }
+    }
+  ],
+  "metrics": [
+    "accepted_events",
+    "accepted_events_per_second",
+    "attempted_events",
+    "collection_buffer_detaches",
+    "collection_buffer_shares",
+    "collection_elements_copied",
+    "delivered_records",
+    "delivered_records_per_second",
+    "dropped_events",
+    "filtered_events",
+    "host_handles_created",
+    "latency_ns",
+    "logical_collection_copies",
+    "model_peak_queued_bytes",
+    "model_peak_queued_records",
+    "native_live_handles",
+    "operations",
+    "operations_per_second",
+    "output_bytes",
+    "rejected_events",
+    "selected_fixture_allocations",
+    "selected_fixture_bytes",
+    "terminal",
+    "vm_allocations",
+    "vm_collections",
+    "vm_peak_live_bytes",
+    "vm_peak_live_objects",
+    "vm_steps"
+  ],
+  "report": {
+    "format": "tondo-stdlib-log-performance-report/1",
+    "path": "target/reliability/evidence/stdlib-log-performance.json",
+    "portable_artifact": false
+  }
+}

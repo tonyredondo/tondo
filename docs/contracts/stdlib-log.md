@@ -355,5 +355,15 @@ and maintained fuzz target are recorded in
 `STD-LOG-TEST-001` passes consolidated current-source quality: 2,921 tests,
 91.657881% line coverage, every global/risk 80% dimension and all six critical
 mutants caught. The maintained 128-run smoke and both fuzz graphs pass.
-Exact publication proof remains required. Performance, common conformance and usage remain
+Publication `71020bc2` passes all 367 named strict Linux checks and 2,921 Rust
+tests in CI run `37955205979`, with actual checkout and final quiet confirmation
+verified. Performance, common conformance and usage remain
 separate owners. The full owner and native ABI/AOT are not promoted.
+
+The target-qualified hosted VM measurement protocol is recorded in
+[stdlib-log-performance.md](stdlib-log-performance.md) and
+[testing/stdlib-log-performance.json](../../testing/stdlib-log-performance.json).
+It separates public logger workloads from sealed buffered-writer probes,
+VM counters from modeled queue/selected fixture storage, and accepted events
+from delivered records. Clean-source capture and current-source quality are
+required before performance promotion.

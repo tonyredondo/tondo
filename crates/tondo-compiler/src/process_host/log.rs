@@ -1,6 +1,9 @@
 //! Log construction, record formatting and explicit writer retirement.
 //! Scratch and typed results are admitted before publishing or retiring handles.
 
+#[cfg(test)]
+mod performance;
+
 use super::*;
 use tondo_stdlib::log::{
     Fields, LogError, LogEvent, LogFormat, LogLevel, LogLimits, LogOperation, LogValue,
