@@ -212,7 +212,7 @@
   "promotion": {
     "compiler_api": "verified-public-hosted-core",
     "public_signatures": 19,
-    "host_sinks": "pending-STD-LOG-HOST-001",
+    "host_sinks": "verified-production-hosted",
     "native_abi": "not-implemented",
     "native_aot": "not-claimed",
     "full_owner": false,

@@ -84,7 +84,9 @@ exact-source Linux CI run `37670512681`, with stable final confirmation.
 public hosted conformance and usage boundaries recorded in their owner leaves.
 `STD-CHANNEL-OWNERSHIP-001` verifies the consuming endpoint and iterator
 prerequisite. `STD-LOG-IMPL-001` verifies the public hosted logging core and
-custom sink protocol; the next explicit owner is `STD-LOG-HOST-001`.
+custom sink protocol. `STD-LOG-HOST-001` verifies the capability-gated hosted
+sinks after source-bound quality, every local check and exact-source Linux CI;
+the next explicit owner is `STD-LOG-TEST-001`.
 `ASYNC-SELECT-ATOMIC-001` closes the general hosted protocol after public
 integration reproduced losing data through source adapters and mixed
 channel/network arms. Source-bound quality and all 345 repository-gate steps
@@ -7237,15 +7239,26 @@ estas leaves.
   and [contract](docs/contracts/stdlib-log-implementation.md) record 306,695
   of 334,764 covered lines (91.6153%), every global/risk 80% floor, all six
   selected critical mutants caught and all 2,879 workspace Rust tests passing.
-  Source cdc6ba0f passes the actual 362-step strict Linux gate in CI run
-  37856715781; the subsequent checker changes pass focused refusal tests.
-  Publication follow-up must confirm the exact pushed revision. Builtin
-  privileged sinks remain owned by STD-LOG-HOST-001; the full owner and
+  Final core closure source 79aa55dd passes the actual 362-step strict Linux
+  gate in CI run 37863627384; its exact checkout and final quiet confirmation
+  are verified. Builtin privileged sinks are separately verified by
+  STD-LOG-HOST-001; the full owner and
   native ABI/AOT are not promoted.
-- [ ] **STD-LOG-HOST-001 — Implementar sinks capability-gated.** Enlazar
-  console, filesystem y network por unidades declaradas, con flush, cierre y
-  entrega exactamente según el contrato del sink. Rotation is forbidden by
-  the locked logging contract, as are ambient providers and automatic retry.
+- [x] **STD-LOG-HOST-001 — Implement capability-gated sinks.** Verified:
+  public hosted ConsoleSink/FileSink, immediate atomic file opening, explicit
+  bounded record queues, all three backpressure policies, short writes,
+  cancellation-safe offsets, consuming close and caller-owned network sinks.
+  The [host register](testing/stdlib-log-host.json) and
+  [contract](docs/contracts/stdlib-log-host.md) record 307,531 of 335,625
+  covered lines (91.629348%), every global/risk 80% dimension, all six critical
+  mutants caught and 2,893 workspace Rust tests passing. Every local functional
+  check passes across the unchanged prefix and canonical continuation; the
+  initial native scalar timeout is retained as unreproduced after two complete
+  successful repeats at the original bound. Exact implementation source
+  96cd3c62 passes all 364 strict Linux checks in CI run 37897332476, with actual
+  checkout and final quiet confirmation verified. Metadata publication requires
+  same-session exact-SHA follow-up. Rotation, ambient providers and automatic
+  retry remain forbidden. Native logging and the full owner are not promoted.
 - [ ] **STD-LOG-TEST-001 — Probar logging.** Cubrir orden, concurrencia,
   backpressure, fallos, cancelación, redacción declarada, límites y teardown de
   sinks.

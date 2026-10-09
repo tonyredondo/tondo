@@ -1933,7 +1933,8 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.log` define eventos puros en core; cada sink declara sus capabilities y
   política de backpressure sin alterar silenciosamente el control del programa.
   FileSink.create is suspends: it opens its explicit path in the constructor
-  and returns opening errors there. Host implementation remains a separate gate.
+  and returns opening errors there. STD-LOG-HOST-001 verifies the production
+  hosted sink boundary; native logging remains a separate gate.
   Logging Append atomically creates a missing file or appends to an existing
   file; Truncate creates or truncates. Neither mode creates parent directories.
   The existing-only std.fs.OpenMode.Append contract is unchanged.
@@ -3089,7 +3090,8 @@ its bounded native Rust reference and VM-only integration boundary in
 `verified-public-hosted-vm-and-native-kernel-process` state closes its qualified
 boundary using current-source quality, clean capture and exact-checkout CI.
 The verified usage guide below completes `STD-NET-DOC-001`; the public hosted
-logging core is now verified and the next owner is `STD-LOG-HOST-001`.
+logging core and capability-gated hosted sinks are verified; the next owner is
+`STD-LOG-TEST-001`.
 Public release and full normative trace coverage remain
 separate gates.
 No native Tondo networking target is supplied by that reference process.
@@ -4600,9 +4602,16 @@ snapshots, generic affine ownership, backpressure, cancellation, terminal Io
 and bounded VM admission. Source-bound quality measures 306,695 of 334,764
 lines (91.6153%), preserves every global/risk 80% line/function/region floor
 and catches all six selected critical mutants; all 2,879 workspace Rust tests
-pass. Builtin capability-gated sinks, independent model/fuzz, performance,
-common conformance and usage remain separate owner blocks:
-`STD-LOG-HOST-001`, `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
+pass. `STD-LOG-HOST-001` now verifies public ConsoleSink/FileSink, explicit
+bounded record queues, short-write offsets, cancellation, terminal Io and
+caller-owned network sinks. Its [host register](./testing/stdlib-log-host.json)
+and [contract](./docs/contracts/stdlib-log-host.md) record 307,531 of 335,625
+covered lines (91.629348%), every global/risk 80% dimension, all six critical
+mutants caught and 2,893 workspace Rust tests passing. Exact implementation
+source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`;
+normal portable/fuzz skips do not establish global portable success.
+Independent model/fuzz, performance, common conformance and usage remain
+separate owner blocks: `STD-LOG-TEST-001`, `STD-LOG-PERF-001`,
 `STD-LOG-CONF-001` and `STD-LOG-DOC-001`. The full owner and native logging
 ABI/AOT are not promoted.
 

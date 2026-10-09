@@ -24,11 +24,15 @@ done
 jq '.status = "verified-production-hosted" | .quality_gate = "verified-80-percent-per-scope"' testing/stdlib-log-host.json > "$tmp/verified-host.json"
 jq '.implementation.host = "verified-production-hosted"' testing/stdlib-log.json > "$tmp/verified-parent.json"
 jq '.promotion.host_sinks = "verified-production-hosted"' testing/stdlib-log-implementation.json > "$tmp/verified-core.json"
+jq '.implementation.host = "pending-STD-LOG-HOST-001"' testing/stdlib-log.json > "$tmp/pending-parent.json"
+jq '.promotion.host_sinks = "pending-STD-LOG-HOST-001"' testing/stdlib-log-implementation.json > "$tmp/pending-core.json"
 env TONDO_STDLIB_LOG_HOST_CONTRACT="$tmp/verified-host.json" \
     TONDO_STDLIB_LOG_CONTRACT="$tmp/verified-parent.json" \
     TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT="$tmp/verified-core.json" \
     scripts/stdlib-log-host-check.sh --contract-only
 if env TONDO_STDLIB_LOG_HOST_CONTRACT="$tmp/verified-host.json" \
+    TONDO_STDLIB_LOG_CONTRACT="$tmp/pending-parent.json" \
+    TONDO_STDLIB_LOG_IMPLEMENTATION_CONTRACT="$tmp/pending-core.json" \
     scripts/stdlib-log-host-check.sh --contract-only > "$tmp/mismatched.log" 2>&1; then
     echo 'logging host accepted mismatched parent/host status' >&2
     exit 1

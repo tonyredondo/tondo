@@ -340,8 +340,12 @@ El contrato machine-readable y sus negativos ejecutables son
 [`scripts/stdlib-log-test.sh`](../../scripts/stdlib-log-test.sh). El diseño B0
 queda cerrado por `STD-LOG-001`. `STD-LOG-IMPL-001` verifies the public hosted
 core and custom sink protocol described in
-[stdlib-log-implementation.md](stdlib-log-implementation.md). Builtin
-capability-gated sinks, independent model/fuzz, performance, common conformance
-and usage documentation remain owned by `STD-LOG-HOST-001`,
-`STD-LOG-TEST-001`, `STD-LOG-PERF-001`, `STD-LOG-CONF-001` and
+[stdlib-log-implementation.md](stdlib-log-implementation.md).
+`STD-LOG-HOST-001` verifies the capability-gated public ConsoleSink/FileSink,
+explicit queue delivery and caller-owned network sink boundary in
+[stdlib-log-host.md](stdlib-log-host.md). Current-source quality preserves every
+80% global/risk floor and catches all six critical mutants; exact implementation
+source `96cd3c62` passes all 364 strict Linux checks in CI run `37897332476`.
+Independent model/fuzz, performance, common conformance and usage documentation
+remain owned by `STD-LOG-TEST-001`, `STD-LOG-PERF-001`, `STD-LOG-CONF-001` and
 `STD-LOG-DOC-001`. The full owner and native ABI/AOT are not promoted.

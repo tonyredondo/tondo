@@ -1,6 +1,6 @@
 # Capability-gated hosted logging sinks
 
-`STD-LOG-HOST-001` is in progress. This boundary implements ordinary Tondo
+`STD-LOG-HOST-001` verifies the production hosted boundary. It implements ordinary Tondo
 `ConsoleSink` and `FileSink` declarations and their `LogSink` implementations,
 the scalar formatting bridge and existing hosted I/O providers. It does not
 promote native ABI/AOT, the independent model/fuzz boundary, performance, common
@@ -60,5 +60,42 @@ owners and terminal zero handles. The associated checks are
 [`stdlib-log-host-check.sh`](../../scripts/stdlib-log-host-check.sh) and
 [`stdlib-log-host-test.sh`](../../scripts/stdlib-log-host-test.sh).
 
-Current-source quality and exact pushed-SHA CI are still pending. No timing,
-native execution, full owner promotion or globally green portable CI is claimed.
+## Retained local verification
+
+The measured source is `a02deb12a3dbdc172aa90f69ea9345912e0ad4f6a8b82e6f15d8cca24ccc07c8`:
+1,437 inputs with set digest
+`6cf078882cbdcee636aefc15946f0f3ade2df87118bf135bd761a9bf3c07f099`.
+It matches the executable inputs of signed implementation commit `96cd3c62`.
+One fresh workspace/all-target coverage campaign passes 2,893 Rust tests in
+77 suites; no earlier instrumented binaries or raw counters are reused.
+
+| Metric | Observed |
+| --- | --- |
+| Lines | 307,531 / 335,625 (91.629348%) |
+| Functions | 20,179 / 22,954 (87.910604%) |
+| Regions | 452,453 / 502,614 (90.019976%) |
+| Critical mutation selection | 6 / 6 caught; none missed, timed out or unviable |
+
+Fresh coverage/mutation bindings, every locked 80% global/risk dimension and
+supported ratchet generation/verification pass. No threshold or mutation
+selection is weakened. The canonical quality script's final check initially
+refuses the previous retained ratchet; supported regeneration then verifies the
+new measurement, without another coverage campaign.
+
+All 364 local functional checks pass across 238 unchanged prefix checks and
+126 canonical continuation checks. The first native scalar check times out;
+two complete subsequent runs pass its original two-second bound, including
+630 Cranelift cases, 70 arithmetic traps and 75 evidence refusals. The initial
+timeout is retained as unreproduced; it is not classified as an implementation
+repair or infrastructure fault. No native source or test limit changes.
+
+Exact implementation source `96cd3c62` passes all 364 named functional checks
+and 2,893 Rust tests in strict Linux CI run `37897332476`, job `113711568377`,
+attempt 1. The actual checkout and logs are verified, with an 86-second final
+quiet confirmation and no failure annotations or open main PR. Portable and
+fuzz jobs are expected normal-push skips; this is not global portable proof.
+Publication follow-up must also confirm the metadata closure revision.
+
+HOST is promoted only to `verified-production-hosted`; the next owner is
+`STD-LOG-TEST-001`. No timing, native logging execution or full owner promotion
+is claimed.
