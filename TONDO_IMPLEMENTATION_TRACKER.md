@@ -503,16 +503,24 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   91.67% global line coverage, every locked 80% risk floor and all six critical
   mutants. The existing quality floors and wave closure requirements are
   unchanged; documentary closure reuses unchanged quality bindings.
-  The next CI correction compiles all workspace test executables once and runs
-  four deterministic duration-balanced shards inside foundation, preserving
+  The suite-sharding correction compiles all workspace test executables once
+  and runs four deterministic duration-balanced shards inside foundation, preserving
   process isolation and exact suite/test coverage. A controlled local probe
   preserves 80 suites and 2,939 tests and reduces execution from 458.37 seconds
   to 141.19 seconds on the same four CPUs. Final aggregation requires receipt
   format 2 and matching run/attempt, source, inputs, logs and corpus outputs
   before reusing 22 completed owner commands and the draft corpus. Standalone
-  execution remains available; the canonical plan contains 374 steps. Integrated
-  hosted timing and current-source closure are pending, so this probe does not
-  establish a new CI completion claim.
+  execution remains available; the canonical plan contains 374 steps. Exact-source
+  CI `37995359543` at `e99988f3` validates all five receipts, 374 command logs,
+  80 suites and 2,939 tests; its final report verifies 26 reused commands,
+  including all 22 owners and the explicit 206-case corpus execution. The complete
+  workspace test step falls from 17m 35s to 13m 06s and strict closure from
+  13m 23s to 9m 42s. Required total wait is 37m 24s versus 35m 56s: stdlib takes
+  27m 29s versus 16m 41s on a different observed CPU model. This run does not
+  demonstrate a total CI improvement or establish the cause of that increase.
+  All required Linux jobs pass; portable/fuzz policy skips remain explicit.
+  Current-source quality retains 91.67% line coverage, every locked 80% risk
+  floor and six of six critical mutants, without a documentary recampaign.
 
 - [x] **DEC-019 — `suspends` visible sin duplicar APIs.** El efecto es postfix,
   forma parte del tipo y del hash ABI, y aparece siempre en interfaces y

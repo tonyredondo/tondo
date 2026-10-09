@@ -39,9 +39,11 @@ creation until the required strict check completed:
 | --- | --- | ---: | ---: | ---: |
 | [Serial gate](https://github.com/tonyredondo/tondo/actions/runs/37955205979) | `71020bc21c3b1d89a4dde69bc92ee57dbe811cb8` | 367 | 2,921 | 54m 42s |
 | [Partitioned gate](https://github.com/tonyredondo/tondo/actions/runs/37981051112) | `625a2327b7011715ce00c444921f276dac031982` | 373 | 2,939 | 35m 56s |
+| [Suite sharding and current-run reuse](https://github.com/tonyredondo/tondo/actions/runs/37995359543) | `e99988f38062a30354458a856edb60c3577f2cbe` | 374 | 2,939 | 37m 24s |
 
-The observed required-check wait fell by 34.3%. These are two actual runs with
-different source revisions and cache states, rather than a controlled benchmark
+The first partitioned run reduced the observed required-check wait by 34.3%.
+These are actual runs with different source revisions and cache states, rather
+than a controlled benchmark
 or a latency guarantee. The second execution validated all five receipts and
 all 373 command logs; every required worker and the strict closure passed.
 Its longest worker took 22m 18s and the dependent closure took 13m 23s. The
@@ -52,6 +54,21 @@ portable execution. Current-source quality was measured once for the source
 block: 91.67% global line coverage, every locked 80% risk floor satisfied, and
 all six selected critical mutants caught. Documentary closure reuses those
 unchanged source bindings.
+
+The suite-sharding run validated all five receipts, 374 canonical command logs,
+80 suites and all 2,939 workspace tests. Foundation's complete test step,
+including compilation and discovery, fell from 17m 35s to 13m 06s (25.4%).
+The strict closure fell from 13m 23s to 9m 42s (27.5%); its stdlib conformance
+step fell from 480.06 to 316.53 seconds. Its report verified 26 reused commands,
+including all 22 owner commands and the explicit 206-case draft corpus run.
+However, the stdlib worker increased from 16m 41s to 27m 29s, so the required
+total wait increased by 1m 28s. That worker used an AMD EPYC 7763 rather than
+the earlier AMD EPYC 9V45. These observations demonstrate the executed reuse
+and lower test/closure times, but do not establish a total CI improvement or
+attribute the stdlib increase to a single cause. Normal-push portable and fuzz
+jobs remained policy skips. The unchanged quality policy passed once for this
+source: 91.67% line coverage, all locked 80% risk floors and six of six critical
+mutants caught; this documentary closure reuses those bindings.
 
 `scripts/test_gate_partitions.py` derives disjoint worker plans from the
 canonical `scripts/test-gate.sh` command list. Foundation owns workspace
@@ -97,13 +114,17 @@ modified logs or changed source invalidate the aggregate.
 A controlled local probe on unchanged `c17a4532`, with the same 80 binaries,
 2,939 tests, four CPUs and 15 GiB, took 458.37 seconds serially and 141.19 seconds
 with four shards: 69.2% less execution time. Compilation was excluded from this
-comparison. This is feasibility evidence; hosted CI timing for the integrated
-runner remains pending.
+comparison. This is feasibility evidence. In the verified hosted run above,
+the integrated runner's shard execution took 505.62 seconds, separately from
+compilation, discovery and binary hashing; its complete test step took 786.34
+seconds. The local probe is not a hosted latency guarantee.
 
 Partition receipt format `tondo-test-gate-partition/2` additionally binds the
 workflow run ID/attempt and foundation's corpus, layer and Rust-suite outputs.
-Foundation executes the 206-case draft corpus once. Final's explicit
-`stdlib-conformance.sh --reuse-current-gate` mode validates all four complete
+Foundation owns the single explicit gate command for the 206-case draft corpus;
+corpus execution inside required Rust integration tests remains separate.
+Final's explicit `stdlib-conformance.sh --reuse-current-gate` mode validates all
+four complete
 worker receipts and their actual logs before reusing the 22 identical owner
 commands and that corpus execution. Its report records the actual producer
 command and log hash. Commands with different inputs and cases without a
