@@ -62,25 +62,43 @@ owners and terminal zero handles. The associated checks are
 
 ## Retained local verification
 
-The measured source is `a02deb12a3dbdc172aa90f69ea9345912e0ad4f6a8b82e6f15d8cca24ccc07c8`:
+The measured source is `0f9f7250e969be4e2a965d7550b478b5c7e10fb6e8fd3063a2d7600467649e52`:
 1,437 inputs with set digest
 `6cf078882cbdcee636aefc15946f0f3ade2df87118bf135bd761a9bf3c07f099`.
-It matches the executable inputs of signed implementation commit `96cd3c62`.
-One fresh workspace/all-target coverage campaign passes 2,893 Rust tests in
-77 suites; no earlier instrumented binaries or raw counters are reused.
+It includes the promotion-check fixture correction in signed commit `151fbf9b`;
+the Rust implementation is unchanged from `96cd3c62`. The original fresh
+implementation campaign remains historical evidence. For the corrected source,
+all earlier raw counters are cleared. Cargo reuses current instrumented binaries
+and rebuilds artifacts required by the selected target/features. No earlier raw
+counters contribute to the renewed measurement.
+
+All 2,893 Rust tests in 77 suites pass across source-bound continuations: 53 CLI
+unit tests, nine acceptance tests, 162 CLI integration tests, 2,668 remaining
+workspace/all-target tests and the one CLI process-argument test. The initial
+CLI integration run reports lost isolation in an interruption case. Both a
+focused repeat and the complete 162-test repeat at the original four-thread
+setting pass without changing assertions or deadlines. That initial failure is
+retained as unreproduced and unclassified. Reconciliation detects the missing
+process-argument target before attestation; it is executed and included before
+the full report and 196 layer observations are generated. Successful log parts
+are retained verbatim with their producer hashes; neither failed run is
+rewritten into a pass.
 
 | Metric | Observed |
 | --- | --- |
-| Lines | 307,531 / 335,625 (91.629348%) |
+| Lines | 307,393 / 335,625 (91.588231%) |
 | Functions | 20,179 / 22,954 (87.910604%) |
-| Regions | 452,453 / 502,614 (90.019976%) |
+| Regions | 452,188 / 502,614 (89.967251%) |
 | Critical mutation selection | 6 / 6 caught; none missed, timed out or unviable |
 
 Fresh coverage/mutation bindings, every locked 80% global/risk dimension and
 supported ratchet generation/verification pass. No threshold or mutation
 selection is weakened. The canonical quality script's final check initially
 refuses the previous retained ratchet; supported regeneration then verifies the
-new measurement, without another coverage campaign.
+new measurement, without repeating the successful test executions. Current
+reports and raw profiles are archived and hash-verified before supported cleanup
+of completed instrumentation caches. Mutation uses a separate fresh scratch
+directory; its baseline passes and all six selected mutants are caught.
 
 All 364 local functional checks pass across 238 unchanged prefix checks and
 126 canonical continuation checks. The first native scalar check times out;

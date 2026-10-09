@@ -7249,13 +7249,17 @@ estas leaves.
   bounded record queues, all three backpressure policies, short writes,
   cancellation-safe offsets, consuming close and caller-owned network sinks.
   The [host register](testing/stdlib-log-host.json) and
-  [contract](docs/contracts/stdlib-log-host.md) record 307,531 of 335,625
-  covered lines (91.629348%), every global/risk 80% dimension, all six critical
+  [contract](docs/contracts/stdlib-log-host.md) record 307,393 of 335,625
+  covered lines (91.588231%), every global/risk 80% dimension, all six critical
   mutants caught and 2,893 workspace Rust tests passing. Every local functional
   check passes across the unchanged prefix and canonical continuation; the
   initial native scalar timeout is retained as unreproduced after two complete
-  successful repeats at the original bound. Exact implementation source
-  96cd3c62 passes all 364 strict Linux checks in CI run 37897332476, with actual
+  successful repeats at the original bound. The promotion-check correction has
+  renewed source-bound quality: a CLI interruption failure is retained as
+  unreproduced after focused and complete CLI repeats pass unchanged, and the
+  omitted process-argument target is restored before attestation. Exact
+  implementation source 96cd3c62 passes all 364 strict Linux checks in CI run
+  37897332476, with actual
   checkout and final quiet confirmation verified. Metadata publication requires
   same-session exact-SHA follow-up. Rotation, ambient providers and automatic
   retry remain forbidden. Native logging and the full owner are not promoted.
