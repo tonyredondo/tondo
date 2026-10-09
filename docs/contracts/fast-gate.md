@@ -32,6 +32,27 @@ a failed, missing, cancelled or timed-out worker cannot produce a green strict
 check. This is an orchestration change, not a performance SLO or target
 promotion.
 
+Observed Linux execution on standard GitHub runners, measured from workflow
+creation until the required strict check completed:
+
+| Execution | Source | Canonical steps | Workspace tests | Wall time |
+| --- | --- | ---: | ---: | ---: |
+| [Serial gate](https://github.com/tonyredondo/tondo/actions/runs/37955205979) | `71020bc21c3b1d89a4dde69bc92ee57dbe811cb8` | 367 | 2,921 | 54m 42s |
+| [Partitioned gate](https://github.com/tonyredondo/tondo/actions/runs/37981051112) | `625a2327b7011715ce00c444921f276dac031982` | 373 | 2,939 | 35m 56s |
+
+The observed required-check wait fell by 34.3%. These are two actual runs with
+different source revisions and cache states, rather than a controlled benchmark
+or a latency guarantee. The second execution validated all five receipts and
+all 373 command logs; every required worker and the strict closure passed.
+Its longest worker took 22m 18s and the dependent closure took 13m 23s. The
+native worker restored 2,424 validated dependency files and retained a
+941,199,684-byte payload, within the 4 GiB bound. The normal-push portable and
+deterministic fuzz jobs were skipped by policy; this comparison does not claim
+portable execution. Current-source quality was measured once for the source
+block: 91.67% global line coverage, every locked 80% risk floor satisfied, and
+all six selected critical mutants caught. Documentary closure reuses those
+unchanged source bindings.
+
 `scripts/test_gate_partitions.py` derives disjoint worker plans from the
 canonical `scripts/test-gate.sh` command list. Foundation owns workspace
 validation and layer evidence; native owns native checks; runtime owns async,

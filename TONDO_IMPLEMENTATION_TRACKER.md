@@ -495,8 +495,14 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   workers with a dependent strict closure that verifies the complete canonical
   step set and current-source receipts. Mixed tracker/inventory regeneration
   retains its documentation checks without independently forcing every owner
-  campaign. Current-source timing and publication proof remain pending; the
-  existing quality floors and wave closure requirements are unchanged.
+  campaign. Exact-source CI `37981051112` at `625a2327` passes all 373 canonical
+  commands and 2,939 workspace tests; required-check wall time is 35m 56s,
+  versus 54m 42s in the previous serial run. This observed 34.3% reduction
+  includes planning and strict closure, with different source/cache states;
+  it is not a latency guarantee or portable claim. The current source passes
+  91.67% global line coverage, every locked 80% risk floor and all six critical
+  mutants. The existing quality floors and wave closure requirements are
+  unchanged; documentary closure reuses unchanged quality bindings.
 
 - [x] **DEC-019 — `suspends` visible sin duplicar APIs.** El efecto es postfix,
   forma parte del tipo y del hash ABI, y aparece siempre en interfaces y
