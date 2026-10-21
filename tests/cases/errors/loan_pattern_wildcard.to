@@ -1,0 +1,6 @@
+fn main() {
+    let values = [1]
+    for ref _ in values {}
+}
+
+// expect-error: E1202 `ref _` borrows nothing; `_` alone ignores the part

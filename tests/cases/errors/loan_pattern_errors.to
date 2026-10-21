@@ -1,0 +1,66 @@
+fn keep[T: ~Copy](values: Array[T]) {
+    for (value) in values {}
+}
+
+fn change(values: ref Array[Int]) {
+    for mut value in values {}
+}
+
+type Shelf = { items: Array[Int], offset: Int }
+
+fn Shelf.shift(mut self) {
+    for mut item in self.items {
+        self.items[0] = item
+    }
+}
+
+fn main() {
+    var values = [1, 2, 3]
+    for mut value in values {
+        values.push(value)
+        let n = values.length()
+    }
+    for ref value in values {
+        values[0] = value
+    }
+    let fixed = [1]
+    for mut value in fixed {}
+    var names = Set["a"]
+    for mut name in names {}
+    for ref c in "text" {}
+    for ref i in 0..3 {}
+    var ages = ["a": 1]
+    for mut entry in ages {}
+    for (mut key, value) in ages {}
+    let option: Int? = none
+    match option {
+        some(mut n) => {}
+        none => {}
+    }
+    let ref other = values
+    for mut value in values {
+        let f = () { values.length() }
+    }
+    for ref value in [1, 2] {}
+    var nested = [[1]]
+    for mut row in nested {
+        row.push(1)
+    }
+    let pairs = [(1, 2)]
+    for (a, mut b) in pairs {}
+}
+
+// expect-error: E1411 lending its elements as `mut` or `var` changes `values`, which is a `ref` loan
+// expect-error: E1403 `values` is lent to the `mut` or `var` bindings of the loop until it ends; reach its elements through them
+// expect-error: E1403 `values` is lent to the `ref` bindings of the loop until it ends, so it cannot change inside it
+// expect-error: E1411 lending its elements as `mut` or `var` changes `fixed`, which is not declared with `var`
+// expect-error: E1206 the elements of a set are its keys and cannot change; borrow them with `ref`
+// expect-error: E1206 `ref` bindings borrow the elements of an array, map or set, but `String` produces values
+// expect-error: E1206 a range yields integers, which are not borrowed; bind them by value
+// expect-error: E1206 only the value of a map entry can change: write `(key, mut value)`
+// expect-error: E1202 a `match` arm only observes its value, so it cannot bind `mut n`
+// expect-error: E1202 `ref other` borrows a part, which only `match` arms and `for` loops over collections do
+// expect-error: E1206 a `for` with `ref` bindings borrows its collection, which must be a binding or part of one
+// expect-error: E1411 `push` can change the length of `row`, a `mut` binding that keeps its extent; bind it as `var row`
+// expect-error: E1411 lending its elements as `mut` or `var` changes `pairs`
+// expect-error: E1403 `self.items` is lent to the `mut` or `var` bindings of the loop until it ends

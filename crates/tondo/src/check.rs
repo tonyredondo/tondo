@@ -123,6 +123,17 @@ struct PatternContext {
     in_match: bool,
     /// Bindings introduced by `var`.
     mutable: bool,
+    /// The loan bindings the pattern may introduce (14.3).
+    loans: Loans,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+enum Loans {
+    None,
+    /// `ref`, in a `match` arm.
+    Shared,
+    /// `ref`, `mut` and `var`, in the header of a `for` over a collection.
+    Any,
 }
 
 #[derive(Copy, Clone)]
@@ -351,10 +362,17 @@ struct FnCx {
     mutates: bool,
     /// A closure without a declared result infers it from its body.
     infer_result: bool,
-    /// For each local: how it was passed if it is a parameter (16.3).
+    /// For each local: how it was passed if it is a parameter (16.3), or
+    /// how it borrows if it is a `ref`, `mut` or `var` binding (14.3).
     params: Vec<Option<ast::Mode>>,
     /// The body of a `defer` block, which cannot leave its scope (13.7).
     deferred: bool,
+    /// Collections lent to the bindings of enclosing `for` loops (13.3),
+    /// and whether exclusively.
+    lent: Vec<(hir::Place, bool)>,
+    /// The `ref`, `mut` and `var` bindings of patterns, as opposed to
+    /// parameters.
+    loan_bindings: HashSet<LocalId>,
 }
 
 /// A binding a closure captures: read from `source` in the enclosing
@@ -1978,6 +1996,8 @@ impl Checker<'_> {
             infer_result: false,
             params: Vec::new(),
             deferred: false,
+            lent: Vec::new(),
+            loan_bindings: HashSet::new(),
         }
     }
 
@@ -2129,6 +2149,10 @@ impl Checker<'_> {
                         return Some(Self::error_expr(span));
                     }
                     Some(local) => {
+                        if let Some((lent, _)) = parent.lent.iter().find(|(place, e)| place.local == local && *e) {
+                            let lent = self.place_name(parent, lent);
+                            self.lent_error(&lent, true, span);
+                        }
                         let ty = parent.locals[local.0 as usize].ty;
                         let mutable = parent.mutable[local.0 as usize] && Some(local) != parent.env;
                         (Self::mk(hir::ExprKind::Local(local), ty, span), mutable)
@@ -2448,8 +2472,12 @@ impl Checker<'_> {
                         Some(hir::Stmt::Let(local, value))
                     }
                     _ => {
-                        let pattern =
-                            self.pattern(cx, pattern, ty, PatternContext { in_match: false, mutable: *mutable });
+                        let pattern = self.pattern(
+                            cx,
+                            pattern,
+                            ty,
+                            PatternContext { in_match: false, mutable: *mutable, loans: Loans::None },
+                        );
                         if let Some(missing) = crate::exhaust::refutation(&self.types, ty, &pattern) {
                             let message = format!("this pattern can fail, for example on `{missing}`; use `match`");
                             self.diags.error("E1201", pattern.span, message);
@@ -2572,6 +2600,7 @@ impl Checker<'_> {
                 let new = self.expr(cx, value, Some(entry));
                 let new = self.coerce(new, entry);
                 let result = self.types.intern(TyKind::Option(entry));
+                self.check_lent_write(cx, local, &path, span);
                 let place = hir::Place { local, path };
                 let insert = hir::ExprKind::Mutate(hir::Mutation::Insert, place, vec![key_value, new]);
                 return Some(hir::Stmt::Expr(Self::mk(insert, result, span)));
@@ -2593,6 +2622,7 @@ impl Checker<'_> {
         span: Span,
     ) -> Option<hir::Stmt> {
         let (local, path, ty) = place;
+        self.check_lent_write(cx, local, &path, span);
         // Replacing the root of a `mut` loan must keep its extent (16.3).
         if op.is_none()
             && path.is_empty()
@@ -2674,6 +2704,10 @@ impl Checker<'_> {
                 if !cx.mutable[local.0 as usize] {
                     let ty = self.types.display(cx.locals[local.0 as usize].ty);
                     let message = match cx.params[local.0 as usize] {
+                        Some(ast::Mode::Ref) if cx.loan_bindings.contains(&local) => format!(
+                            "cannot assign to `{0}`: it is a `ref` binding that only observes its part; borrow it with `mut {0}` in a `for` header",
+                            root.name
+                        ),
                         Some(ast::Mode::Ref) => format!(
                             "cannot assign to `{0}`: it is a `ref` loan; take it as `{0}: mut {ty}` to change the caller's value",
                             root.name
@@ -2827,6 +2861,7 @@ impl Checker<'_> {
         span: Span,
     ) -> Option<hir::Stmt> {
         let (local, path, ty) = self.place(cx, base)?;
+        self.check_lent_write(cx, local, &path, span);
         if !matches!(self.types.kind(ty), TyKind::Array(_)) {
             let message = if ty == Ty::STRING {
                 "a `String` is immutable: build a new one, for example with interpolation".to_string()
@@ -2924,9 +2959,12 @@ impl Checker<'_> {
                             }
                         },
                     };
+                    if let Some(exclusive) = loan_kind(pattern) {
+                        return self.borrowed_for(cx, pattern, source, element, body, exclusive);
+                    }
                     cx.scopes.push(Vec::new());
-                    let pattern =
-                        self.pattern(cx, pattern, element, PatternContext { in_match: false, mutable: false });
+                    let context = PatternContext { in_match: false, mutable: false, loans: Loans::None };
+                    let pattern = self.pattern(cx, pattern, element, context);
                     if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
                         let message = format!("this pattern can fail, for example on `{missing}`");
                         self.diags.error("E1201", pattern.span, message);
@@ -2943,6 +2981,11 @@ impl Checker<'_> {
                 let local = match &pattern.kind {
                     ast::PatternKind::Binding(binding) => self.declare(cx, binding, start.ty, false),
                     ast::PatternKind::Wildcard => self.hidden_local(cx, start.ty),
+                    ast::PatternKind::Loan(..) => {
+                        let message = "a range yields integers, which are not borrowed; bind them by value";
+                        self.diags.error("E1206", pattern.span, message);
+                        self.hidden_local(cx, start.ty)
+                    }
                     _ => {
                         self.diags.error("E1206", pattern.span, "a range yields integers; bind them to a name");
                         self.hidden_local(cx, start.ty)
@@ -2955,6 +2998,249 @@ impl Checker<'_> {
                 Some(hir::Stmt::ForRange { local, start, end, inclusive: *op == BinOp::RangeInclusive, body })
             }
         }
+    }
+
+    /// A `for` whose pattern borrows the elements of a collection (13.3):
+    /// `ref` bindings observe them, and `mut` or `var` bindings change them
+    /// in place. The collection must be a place, and stays lent for the
+    /// whole loop: exclusively when anything is borrowed with `mut` or `var`.
+    fn borrowed_for(
+        &mut self,
+        cx: &mut FnCx,
+        pattern: &ast::Pattern,
+        source: hir::Expr,
+        element: Ty,
+        body: &ast::Block,
+        exclusive: bool,
+    ) -> Option<hir::Stmt> {
+        let (ty, span) = (source.ty, source.span);
+        let fits = match self.types.kind(ty) {
+            TyKind::Array(_) | TyKind::Map(..) => true,
+            TyKind::Set(_) => !exclusive,
+            TyKind::Error => return None,
+            _ => false,
+        };
+        if !fits {
+            let message = match self.types.kind(ty) {
+                TyKind::Set(_) => "the elements of a set are its keys and cannot change; borrow them with `ref`".into(),
+                _ if exclusive => format!(
+                    "`mut` and `var` bindings change the elements of an array or map in place, but {} has no such elements",
+                    self.display(ty)
+                ),
+                _ => format!(
+                    "`ref` bindings borrow the elements of an array, map or set, but {} produces values; bind them by value",
+                    self.display(ty)
+                ),
+            };
+            self.diags.error("E1206", span, message);
+            return None;
+        }
+        // The collection is evaluated once: a place with fixed indices.
+        let place = if exclusive {
+            self.loan_place(cx, source, "lending its elements as `mut` or `var`", false)?
+        } else {
+            let Some(place) = hir::Place::of(source) else {
+                let message = "a `for` with `ref` bindings borrows its collection, which must be a binding or part of one; bind it first";
+                self.diags.error("E1206", span, message);
+                return None;
+            };
+            place
+        };
+        let mut stmts = Vec::new();
+        let mut path = Vec::new();
+        for step in place.path {
+            path.push(match step {
+                hir::PlaceStep::Index(index)
+                    if !matches!(index.kind, hir::ExprKind::Local(_) | hir::ExprKind::Int(_)) =>
+                {
+                    let local = self.hidden_local(cx, Ty::INT);
+                    let read = Self::mk(hir::ExprKind::Local(local), Ty::INT, index.span);
+                    stmts.push(hir::Stmt::Let(local, index));
+                    hir::PlaceStep::Index(read)
+                }
+                step => step,
+            });
+        }
+        let place = hir::Place { local: place.local, path };
+        let read = self.place_read(cx, &place, span);
+
+        cx.scopes.push(Vec::new());
+        let context = PatternContext { in_match: false, mutable: false, loans: Loans::Any };
+        let pattern = self.pattern(cx, pattern, element, context);
+        if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
+            let message = format!("this pattern can fail, for example on `{missing}`");
+            self.diags.error("E1201", pattern.span, message);
+        }
+        let map = matches!(self.types.kind(ty), TyKind::Map(..));
+        self.borrowed_bindings(cx, &pattern, map, false);
+        cx.lent.push((place.clone(), exclusive));
+        cx.loops.push(false);
+        let mut body = self.block(cx, body, Some(Ty::UNIT));
+        cx.loops.pop();
+        cx.lent.pop();
+        cx.scopes.pop();
+        if !exclusive {
+            stmts.push(hir::Stmt::ForEach { pattern, source: read, body });
+            return Some(hir::Stmt::Expr(Self::mk(
+                hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }),
+                Ty::UNIT,
+                span,
+            )));
+        }
+        // Each iteration binds the parts of the element at the next
+        // position; the length cannot change while the loop runs.
+        let (position, count) = (self.hidden_local(cx, Ty::INT), self.hidden_local(cx, Ty::INT));
+        let at = Self::mk(hir::ExprKind::Local(position), Ty::INT, span);
+        let mut element_place = place.clone();
+        element_place.path.push(hir::PlaceStep::Index(at));
+        let mut lends = Vec::new();
+        self.lends(&pattern, element_place, &mut lends);
+        lends.append(&mut body.stmts);
+        body.stmts = lends;
+        let length = Self::mk(hir::ExprKind::Length(Box::new(read)), Ty::INT, span);
+        stmts.push(hir::Stmt::Let(count, length));
+        stmts.push(hir::Stmt::ForRange {
+            local: position,
+            start: Self::mk(hir::ExprKind::Int(0), Ty::INT, span),
+            end: Self::mk(hir::ExprKind::Local(count), Ty::INT, span),
+            inclusive: false,
+            body,
+        });
+        Some(hir::Stmt::Expr(Self::mk(
+            hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }),
+            Ty::UNIT,
+            span,
+        )))
+    }
+
+    /// Checks the bindings of a borrowed `for` header: one by value copies
+    /// its part, which must be `Copy`, and only the value of a map entry
+    /// (`entry.1`) can be borrowed with `mut` or `var`.
+    fn borrowed_bindings(&mut self, cx: &FnCx, pattern: &hir::Pattern, map: bool, in_value: bool) {
+        match &pattern.kind {
+            hir::PatKind::Binding(local) => {
+                let name = &cx.locals[local.0 as usize].name;
+                match cx.params[local.0 as usize] {
+                    None if !self.types.is_copy(pattern.ty) => {
+                        let message = format!(
+                            "`{name}` would copy its part of type {}, which is not `Copy`; borrow it with `ref {name}`",
+                            self.display(pattern.ty)
+                        );
+                        self.diags.error("E1406", pattern.span, message);
+                    }
+                    Some(ast::Mode::Mut | ast::Mode::Var) if map && !in_value => {
+                        let message = "only the value of a map entry can change: write `(key, mut value)`";
+                        self.diags.error("E1206", pattern.span, message);
+                    }
+                    _ => {}
+                }
+            }
+            hir::PatKind::Fields(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    self.borrowed_bindings(cx, item, map, in_value || map && index == 1);
+                }
+            }
+            hir::PatKind::Newtype(inner) => self.borrowed_bindings(cx, inner, map, in_value),
+            hir::PatKind::Variant(_, items) | hir::PatKind::Array { items, .. } => {
+                items.iter().for_each(|item| self.borrowed_bindings(cx, item, map, in_value))
+            }
+            hir::PatKind::Wildcard | hir::PatKind::Literal(_) => {}
+        }
+    }
+
+    /// The statements that bind each binding of a borrowed `for` header to
+    /// its part of the element at `place`.
+    fn lends(&mut self, pattern: &hir::Pattern, place: hir::Place, out: &mut Vec<hir::Stmt>) {
+        match &pattern.kind {
+            hir::PatKind::Binding(local) => out.push(hir::Stmt::Lend { local: *local, place }),
+            hir::PatKind::Fields(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    let mut part = place.clone();
+                    part.path.push(hir::PlaceStep::Field(index as u32));
+                    self.lends(item, part, out);
+                }
+            }
+            hir::PatKind::Newtype(inner) => self.lends(inner, place, out),
+            hir::PatKind::Wildcard | hir::PatKind::Literal(_) => {}
+            hir::PatKind::Variant(..) | hir::PatKind::Array { .. } => {
+                self.diags.unsupported(pattern.span, "borrowing parts of an enum or array element in a `for` header");
+            }
+        }
+    }
+
+    /// Reports a write to a place that overlaps a collection lent to the
+    /// bindings of an enclosing `for`.
+    fn check_lent_write(&mut self, cx: &FnCx, local: LocalId, path: &[hir::PlaceStep], span: Span) {
+        let place = hir::Place { local, path: path.to_vec() };
+        if let Some((lent, exclusive)) = lent_conflict(cx, &place) {
+            let lent = self.place_name(cx, lent);
+            self.lent_error(&lent, exclusive, span);
+        }
+    }
+
+    /// A place as written, such as `self.items`.
+    fn place_name(&self, cx: &FnCx, place: &hir::Place) -> String {
+        let mut ty = cx.locals[place.local.0 as usize].ty;
+        let mut name = cx.locals[place.local.0 as usize].name.clone();
+        for step in &place.path {
+            match step {
+                hir::PlaceStep::Field(index) => {
+                    let field = match self.types.kind(self.types.repr(ty)) {
+                        TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                            AdtKind::Record(fields) => fields[*index as usize].name.clone(),
+                            _ => index.to_string(),
+                        },
+                        _ => index.to_string(),
+                    };
+                    name = format!("{name}.{field}");
+                    ty = self.types.components(ty).map_or(Ty::ERROR, |c| c[*index as usize]);
+                }
+                hir::PlaceStep::Index(_) => {
+                    name.push_str("[..]");
+                    ty = match *self.types.kind(self.types.repr(ty)) {
+                        TyKind::Array(element) | TyKind::Deque(element) => element,
+                        _ => Ty::ERROR,
+                    };
+                }
+            }
+        }
+        name
+    }
+
+    /// Reports a use of a collection that the bindings of an enclosing
+    /// `for` borrow (13.3): any use while they borrow it exclusively, and a
+    /// change while they observe it.
+    fn lent_error(&mut self, name: &str, exclusive: bool, span: Span) {
+        let message = if exclusive {
+            format!(
+                "`{name}` is lent to the `mut` or `var` bindings of the loop until it ends; reach its elements through them"
+            )
+        } else {
+            format!("`{name}` is lent to the `ref` bindings of the loop until it ends, so it cannot change inside it")
+        };
+        self.diags.error("E1403", span, message);
+    }
+
+    /// An expression reading a place.
+    fn place_read(&mut self, cx: &FnCx, place: &hir::Place, span: Span) -> hir::Expr {
+        let ty = cx.locals[place.local.0 as usize].ty;
+        let mut value = Self::mk(hir::ExprKind::Local(place.local), ty, span);
+        for step in &place.path {
+            value = match step {
+                hir::PlaceStep::Field(index) => {
+                    let ty = self.types.components(value.ty).map_or(Ty::ERROR, |c| c[*index as usize]);
+                    Self::mk(hir::ExprKind::Field(Box::new(value), *index), ty, span)
+                }
+                hir::PlaceStep::Index(index) => {
+                    let ty = match *self.types.kind(value.ty) {
+                        TyKind::Array(element) | TyKind::Deque(element) => element,
+                        _ => Ty::ERROR,
+                    };
+                    Self::mk(hir::ExprKind::Index(Box::new(value), Box::new(index.clone())), ty, span)
+                }
+            };
+        }
+        value
     }
 
     // ---- expressions -----------------------------------------------------
@@ -3515,8 +3801,12 @@ impl Checker<'_> {
         for arm in arms {
             cx.scopes.push(Vec::new());
             let outer = std::mem::replace(&mut cx.diverged, false);
-            let pattern =
-                self.pattern(cx, &arm.pattern, scrutinee.ty, PatternContext { in_match: true, mutable: false });
+            let pattern = self.pattern(
+                cx,
+                &arm.pattern,
+                scrutinee.ty,
+                PatternContext { in_match: true, mutable: false, loans: Loans::Shared },
+            );
             let guard = arm.guard.as_ref().map(|guard| {
                 let guard = self.expr(cx, guard, Some(Ty::BOOL));
                 self.coerce(guard, Ty::BOOL)
@@ -3593,6 +3883,33 @@ impl Checker<'_> {
                     return self.pattern_error(name.span, message);
                 }
                 hir::PatKind::Binding(self.declare(cx, name, ty, context.mutable))
+            }
+            ast::PatternKind::Loan(mode, name) => {
+                let allowed = match context.loans {
+                    Loans::Any => true,
+                    Loans::Shared => *mode == ast::Mode::Ref,
+                    Loans::None => false,
+                };
+                if !allowed {
+                    let message = if context.loans == Loans::Shared {
+                        format!(
+                            "a `match` arm only observes its value, so it cannot bind `{} {}`: `mut` and `var` bindings belong in `for` headers",
+                            mode.keyword(),
+                            name.name
+                        )
+                    } else {
+                        format!(
+                            "`{} {}` borrows a part, which only `match` arms and `for` loops over collections do; bind it by value",
+                            mode.keyword(),
+                            name.name
+                        )
+                    };
+                    return self.pattern_error(span, message);
+                }
+                let local = self.declare(cx, name, ty, *mode != ast::Mode::Ref);
+                cx.params[local.0 as usize] = Some(*mode);
+                cx.loan_bindings.insert(local);
+                hir::PatKind::Binding(local)
             }
             ast::PatternKind::Literal(expr) => {
                 let value = self.expr(cx, expr, Some(ty));
@@ -3722,8 +4039,23 @@ impl Checker<'_> {
                     _ => return self.pattern_error(span, mismatch(self, "an array pattern")),
                 };
                 let items = items.iter().map(|item| self.pattern(cx, item, element, context)).collect();
-                let rest =
-                    rest.as_ref().map(|name| name.as_ref().map(|name| self.declare(cx, name, ty, context.mutable)));
+                let mut bound = None;
+                if let Some(Some((mode, name))) = rest {
+                    if *mode == ast::Mode::Ref && context.loans == Loans::None {
+                        let message = format!(
+                            "`..ref {}` borrows the rest, which only `match` arms and `for` loops do; write `..{0}`",
+                            name.name
+                        );
+                        return self.pattern_error(span, message);
+                    }
+                    let local = self.declare(cx, name, ty, context.mutable && *mode == ast::Mode::Value);
+                    if *mode == ast::Mode::Ref {
+                        cx.params[local.0 as usize] = Some(ast::Mode::Ref);
+                        cx.loan_bindings.insert(local);
+                    }
+                    bound = Some(local);
+                }
+                let rest = rest.as_ref().map(|_| bound);
                 hir::PatKind::Array { items, rest }
             }
             ast::PatternKind::Path(path) => {
@@ -4682,7 +5014,8 @@ impl Checker<'_> {
         let next =
             Self::mk(hir::ExprKind::Call(Callee::Trait(ITERATOR, 0), vec![ty, element], vec![loan]), option, span);
         cx.scopes.push(Vec::new());
-        let pattern = self.pattern(cx, pattern, element, PatternContext { in_match: false, mutable: false });
+        let context = PatternContext { in_match: false, mutable: false, loans: Loans::None };
+        let pattern = self.pattern(cx, pattern, element, context);
         if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
             let message = format!("this pattern can fail, for example on `{missing}`");
             self.diags.error("E1201", pattern.span, message);
@@ -4995,6 +5328,12 @@ impl Checker<'_> {
             for segment in &segments[1..] {
                 let span = value.span.to(segment.span);
                 value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
+            }
+            if let Some(place) = hir::Place::of(value.clone())
+                && let Some((lent, true)) = lent_conflict(cx, &place)
+            {
+                let lent = self.place_name(cx, lent);
+                self.lent_error(&lent, true, value.span);
             }
             return value;
         }
@@ -5648,6 +5987,12 @@ impl Checker<'_> {
             }
         };
         steps.reverse();
+        let place = hir::Place { local, path: steps };
+        if let Some((lent, false)) = lent_conflict(cx, &place) {
+            let lent = self.place_name(cx, lent);
+            self.lent_error(&lent, false, span);
+        }
+        let hir::Place { local, path: steps } = place;
         if Some(local) == cx.env
             && let Some(hir::PlaceStep::Field(index)) = steps.first()
         {
@@ -5665,7 +6010,14 @@ impl Checker<'_> {
         }
         let name = cx.locals[local.0 as usize].name.clone();
         let ty = self.display(cx.locals[local.0 as usize].ty);
+        let binding = cx.loan_bindings.contains(&local);
         match cx.params[local.0 as usize] {
+            Some(ast::Mode::Mut) if structural && steps.is_empty() && binding => {
+                let message = format!(
+                    "{operation} can change the length of `{name}`, a `mut` binding that keeps its extent; bind it as `var {name}`"
+                );
+                self.diags.error("E1411", span, message);
+            }
             Some(ast::Mode::Mut) if structural && steps.is_empty() => {
                 let message = format!(
                     "{operation} can change the length of `{name}`, a `mut` loan that keeps its extent; take it as `{name}: var {}`",
@@ -5674,6 +6026,12 @@ impl Checker<'_> {
                 self.diags.error("E1411", span, message);
             }
             Some(ast::Mode::Mut | ast::Mode::Var) => {}
+            Some(_) if binding => {
+                let message = format!(
+                    "{operation} changes `{name}`, a `ref` binding that only observes its part; borrow it with `mut {name}` in a `for` header"
+                );
+                self.diags.error("E1411", span, message);
+            }
             Some(mode) if !cx.mutable[local.0 as usize] => {
                 let what = if mode == ast::Mode::Ref { "a `ref` loan" } else { "a parameter" };
                 let message = format!(
@@ -6036,4 +6394,53 @@ impl Checker<'_> {
         };
         Self::mk(hir::ExprKind::If(condition, then, Some(Box::new(other))), ty, span)
     }
+}
+
+/// Whether a `for` pattern borrows: `Some(true)` with any `mut` or `var`
+/// binding, `Some(false)` with only `ref` ones (13.3).
+fn loan_kind(pattern: &ast::Pattern) -> Option<bool> {
+    let mut found = None;
+    let mut note = |mode: ast::Mode| {
+        let exclusive = mode != ast::Mode::Ref;
+        found = Some(found.unwrap_or(false) || exclusive);
+    };
+    fn walk(pattern: &ast::Pattern, note: &mut dyn FnMut(ast::Mode)) {
+        match &pattern.kind {
+            ast::PatternKind::Loan(mode, _) => note(*mode),
+            ast::PatternKind::Tuple(items) | ast::PatternKind::Constructor { args: items, .. } => {
+                items.iter().for_each(|item| walk(item, note))
+            }
+            ast::PatternKind::Record { fields, .. } => {
+                fields.iter().filter_map(|f| f.pattern.as_ref()).for_each(|item| walk(item, note))
+            }
+            ast::PatternKind::Array { items, rest } => {
+                items.iter().for_each(|item| walk(item, note));
+                if let Some(Some((mode, _))) = rest
+                    && *mode != ast::Mode::Value
+                {
+                    note(*mode);
+                }
+            }
+            ast::PatternKind::Member { inner, .. } => walk(inner, note),
+            _ => {}
+        }
+    }
+    walk(pattern, &mut note);
+    found
+}
+
+/// Whether a use of `place` overlaps a collection lent to the bindings of
+/// an enclosing `for`, and then whether that loan is exclusive.
+fn lent_conflict<'c>(cx: &'c FnCx, place: &hir::Place) -> Option<(&'c hir::Place, bool)> {
+    let overlaps = |lent: &hir::Place| {
+        lent.local == place.local
+            && lent.path.iter().zip(&place.path).all(|steps| match steps {
+                (hir::PlaceStep::Field(x), hir::PlaceStep::Field(y)) => x == y,
+                (hir::PlaceStep::Index(x), hir::PlaceStep::Index(y)) => {
+                    !matches!((&x.kind, &y.kind), (hir::ExprKind::Int(i), hir::ExprKind::Int(j)) if i != j)
+                }
+                _ => true,
+            })
+    };
+    cx.lent.iter().filter(|(lent, _)| overlaps(lent)).max_by_key(|(_, exclusive)| *exclusive).map(|(l, e)| (l, *e))
 }

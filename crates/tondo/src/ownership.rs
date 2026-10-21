@@ -161,7 +161,7 @@ impl Checker<'_> {
     /// A binding takes a new value. Hidden bindings only pass values along.
     fn declare(&mut self, local: LocalId, flow: &mut Flow) {
         flow.moved.remove(&local);
-        if self.local(local).name != "_" {
+        if self.local(local).name != "_" && self.params[local.0 as usize].is_none() {
             self.scopes.last_mut().unwrap().push(local);
         }
     }
@@ -215,6 +215,11 @@ impl Checker<'_> {
             // The cleanup takes what it uses now and consumes it at the end
             // of the scope.
             Stmt::Defer { closure, .. } => self.consume(closure, flow),
+            Stmt::Lend { place, .. } => {
+                let flow = self.indices(&place.path, flow)?;
+                self.use_local(place.local, Span::default(), &flow);
+                Some(flow)
+            }
             Stmt::Expr(value) => self.consume(value, flow),
             Stmt::Return(value) => {
                 let flow = match value {
@@ -245,7 +250,9 @@ impl Checker<'_> {
                 this.block(body, flow)
             }),
             Stmt::ForEach { pattern, source, body } => {
-                let flow = self.consume(source, flow)?;
+                // `ref` bindings observe the collection; others take it.
+                let flow =
+                    if self.borrows(pattern) { self.observe(source, flow)? } else { self.consume(source, flow)? };
                 self.dropped_parts(pattern);
                 self.repeat(flow, true, |this, mut flow| {
                     this.scopes.push(Vec::new());
@@ -332,15 +339,34 @@ impl Checker<'_> {
     /// Whether a pattern binds a part that is not `Copy`, taking it.
     fn takes(&self, pattern: &Pattern) -> bool {
         match &pattern.kind {
-            PatKind::Binding(local) => !self.types.is_copy(self.local(*local).ty),
+            PatKind::Binding(local) => self.owns(*local),
             PatKind::Fields(items) | PatKind::Variant(_, items) => items.iter().any(|p| self.takes(p)),
             PatKind::Array { items, rest } => {
-                items.iter().any(|p| self.takes(p))
-                    || matches!(rest, Some(Some(local)) if !self.types.is_copy(self.local(*local).ty))
+                items.iter().any(|p| self.takes(p)) || matches!(rest, Some(Some(local)) if self.owns(*local))
             }
             PatKind::Newtype(inner) => self.takes(inner),
             PatKind::Wildcard | PatKind::Literal(_) => false,
         }
+    }
+
+    /// Whether a pattern has `ref` bindings.
+    fn borrows(&self, pattern: &Pattern) -> bool {
+        match &pattern.kind {
+            PatKind::Binding(local) => self.params[local.0 as usize].is_some(),
+            PatKind::Fields(items) | PatKind::Variant(_, items) => items.iter().any(|p| self.borrows(p)),
+            PatKind::Array { items, rest } => {
+                items.iter().any(|p| self.borrows(p))
+                    || matches!(rest, Some(Some(local)) if self.params[local.0 as usize].is_some())
+            }
+            PatKind::Newtype(inner) => self.borrows(inner),
+            PatKind::Wildcard | PatKind::Literal(_) => false,
+        }
+    }
+
+    /// Whether a pattern binding takes its part: it is not a loan and its
+    /// type is not `Copy`.
+    fn owns(&self, local: LocalId) -> bool {
+        self.params[local.0 as usize].is_none() && !self.types.is_copy(self.local(local).ty)
     }
 
     /// Reports the parts a pattern that consumes its value leaves unbound
@@ -459,11 +485,19 @@ impl Checker<'_> {
             }
             ExprKind::Field(base, _) if !copy && Self::root(base).is_some() => {
                 let root = Self::root(base).expect("checked above");
-                let message = format!(
-                    "moving a part of type {} out of `{}` would leave it incomplete; destructure the whole value with `let`, or remove `~Copy` from its type parameter",
-                    self.display(expr.ty),
-                    self.local(root).name
-                );
+                let message = if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
+                    format!(
+                        "`{}` is a loan, so its part of type {} cannot be moved out of it",
+                        self.local(root).name,
+                        self.display(expr.ty)
+                    )
+                } else {
+                    format!(
+                        "moving a part of type {} out of `{}` would leave it incomplete; destructure the whole value with `let`, or remove `~Copy` from its type parameter",
+                        self.display(expr.ty),
+                        self.local(root).name
+                    )
+                };
                 self.error("E1406", expr.span, message);
                 let flow = self.observe(expr, flow)?;
                 Some(self.forget(root, flow))

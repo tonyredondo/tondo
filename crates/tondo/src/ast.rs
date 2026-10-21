@@ -92,6 +92,9 @@ pub struct Pattern {
 pub enum PatternKind {
     Wildcard,
     Binding(Ident),
+    /// `ref name`, `mut name` or `var name`: a loan of the matched part
+    /// instead of a copy (14.3).
+    Loan(Mode, Ident),
     /// An integer, boolean, string or `()` literal, possibly negated.
     Literal(Expr),
     /// `none`
@@ -111,10 +114,11 @@ pub enum PatternKind {
     /// A qualified payload-free variant: `Enum.Variant`.
     Path(Vec<Ident>),
     /// `[a, b]`, or `[a, b, ..]` and `[a, b, ..rest]` for arrays at least
-    /// that long; `rest` is `Some(None)` for a bare `..`.
+    /// that long; `rest` is `Some(None)` for a bare `..`, and its mode is
+    /// `Ref` for `..ref rest`.
     Array {
         items: Vec<Pattern>,
-        rest: Option<Option<Ident>>,
+        rest: Option<Option<(Mode, Ident)>>,
     },
     /// `Array[Int](pattern)`: a union member given by a generic type (9.6).
     Member {

@@ -58,29 +58,6 @@ enum Resolved {
     Cursor(CursorKind),
 }
 
-/// The place a value expression reads, if it reads one.
-fn place_of(value: Expr) -> Option<Place> {
-    let mut steps = Vec::new();
-    let mut current = value;
-    let local = loop {
-        match current.kind {
-            ExprKind::Local(local) => break local,
-            ExprKind::Field(base, index) => {
-                steps.push(PlaceStep::Field(index));
-                current = *base;
-            }
-            ExprKind::Retype(base) => current = *base,
-            ExprKind::Index(base, index) => {
-                steps.push(PlaceStep::Index(*index));
-                current = *base;
-            }
-            _ => return None,
-        }
-    };
-    steps.reverse();
-    Some(Place { local, path: steps })
-}
-
 struct Mono<'a> {
     types: &'a mut Types,
     functions: &'a [Function],
@@ -162,6 +139,7 @@ impl Mono<'_> {
                 self.expr(closure, map);
                 self.expr(call, map);
             }
+            Stmt::Lend { place, .. } => self.place(place, map),
             Stmt::Destructure(pattern, value) => {
                 self.pattern(pattern, map);
                 self.expr(value, map);
@@ -325,7 +303,7 @@ impl Mono<'_> {
                     let callee =
                         std::mem::replace(&mut **callee, Expr { kind: ExprKind::Unit, ty: Ty::UNIT, span: e.span });
                     let (ty, span) = (callee.ty, callee.span);
-                    let place = place_of(callee).expect("the checker calls closures through places");
+                    let place = Place::of(callee).expect("the checker calls closures through places");
                     let mut values = vec![Expr { kind: ExprKind::Loan(place), ty, span }];
                     values.append(args);
                     e.kind = ExprKind::Call(Callee::Fn(body), Vec::new(), values);

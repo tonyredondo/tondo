@@ -253,3 +253,14 @@ in the order written; then the call checks that its exclusive loans of one
 array share no element (`P0004`), and lending a whole place together with
 part of it is rejected statically (`E1403`). `ref values[start:end]` passes
 the slice as a read-only value.
+
+## 2026-10-21 — Borrowed `for` bindings point into the collection
+
+A `for` whose pattern has `mut` or `var` bindings (13.3) walks the
+positions of the array or map; each iteration binds every binding of the
+pattern to the address of its part of the element, after giving the
+collection storage of its own, so writes reach the collection and never a
+snapshot. The collection cannot be used directly or resized while the loop
+runs (`E1403`), which keeps those addresses valid. With only `ref`
+bindings the loop reads the elements like any other `for`, and the
+collection cannot change inside it.

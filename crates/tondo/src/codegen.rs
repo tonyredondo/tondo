@@ -28,6 +28,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 const POINTER: ir::Type = types::I64;
 const IMMORTAL: u64 = u64::MAX;
@@ -107,6 +108,7 @@ enum Rt {
     MapRemove,
     MapLen,
     MapEntry,
+    MapUnique,
     MapEq,
     MapClear,
     FnNew,
@@ -190,6 +192,7 @@ impl Rt {
             Rt::MapRemove => ("tondo_rt_map_remove", &[I64, I64, I64, I64], &[I8]),
             Rt::MapLen => ("tondo_rt_map_len", &[I64], &[I64]),
             Rt::MapEntry => ("tondo_rt_map_entry", &[I64, I64], &[I64]),
+            Rt::MapUnique => ("tondo_rt_map_unique", &[I64, I64], &[]),
             Rt::MapEq => ("tondo_rt_map_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::MapClear => ("tondo_rt_map_clear", &[I64, I64], &[]),
             Rt::FnNew => ("tondo_rt_fn_new", &[I64, I64, I64], &[I64]),
@@ -1328,10 +1331,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let mut fb = FunctionBuilder::new(func, fbc);
         let blocks = body.blocks.iter().map(|_| fb.create_block()).collect();
         let mut storage = Vec::with_capacity(body.locals.len());
+        // Locals that hold the address of an element they borrow.
+        let lent: HashSet<Local> = body
+            .blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .filter_map(|s| match s {
+                Statement::Lend(local, _) => Some(*local),
+                _ => None,
+            })
+            .collect();
         for (index, &ty) in body.locals.iter().enumerate() {
             let local = Local(index as u32);
             let borrowed = body.params.contains(&local) || body.ret == Some(local);
-            let loan = body.params.iter().position(|&p| p == local).is_some_and(|i| body.loans[i]);
+            let loan =
+                body.params.iter().position(|&p| p == local).is_some_and(|i| body.loans[i]) || lent.contains(&local);
             storage.push(match cg.class(ty) {
                 Class::Zero => Storage::Zero,
                 _ if loan => Storage::Pointer(fb.declare_var(POINTER)),
@@ -1415,11 +1429,24 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             if let Proj::Index(index, _) = proj
                 && matches!(self.e.cg.types.kind(self.e.cg.types.repr(ty)), TyKind::Map(..) | TyKind::Set(_))
             {
-                // Iteration over a map or set: the entry at a valid position.
+                // Iteration over a map or set: the entry at a valid position,
+                // in storage of its own when it changes (13.3).
                 let map = match base {
-                    Some(address) => self.e.fb.ins().load(POINTER, flags(), address, 0),
+                    Some(address) => {
+                        if write {
+                            let glue = self.e.map_glue_address(ty);
+                            self.e.call_rt(Rt::MapUnique, &[address, glue]);
+                        }
+                        self.e.fb.ins().load(POINTER, flags(), address, 0)
+                    }
                     None => {
                         let Storage::Var(var) = self.storage[place.local.0 as usize] else { unreachable!() };
+                        if write {
+                            let slot = self.spill(var);
+                            let glue = self.e.map_glue_address(ty);
+                            self.e.call_rt(Rt::MapUnique, &[slot, glue]);
+                            self.unspill(var, slot);
+                        }
                         self.e.fb.use_var(var)
                     }
                 };
@@ -1728,6 +1755,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Statement::DeferPop => {
                 self.e.call_rt(Rt::DeferPop, &[]);
+            }
+            Statement::Lend(local, place) => {
+                if let Storage::Pointer(var) = self.storage[local.0 as usize] {
+                    let address = self.pointer_to(place, true);
+                    self.e.fb.def_var(var, address);
+                }
             }
             Statement::Retain(place) | Statement::Release(place) => {
                 let ty = self.place_ty(place);

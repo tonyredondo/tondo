@@ -678,6 +678,11 @@ impl Builder<'_> {
                     self.scopes.last_mut().unwrap().push(Exit::Release(local));
                 }
             }
+            hir::Stmt::Lend { local, place } => {
+                let place = self.place(place.local, &place.path);
+                let local = self.bind(*local);
+                self.push(Statement::Lend(local, place));
+            }
             hir::Stmt::Destructure(pattern, value) => {
                 let value = self.expr(value);
                 let place = self.place_of(value, pattern.ty);

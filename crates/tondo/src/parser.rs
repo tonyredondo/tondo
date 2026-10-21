@@ -740,13 +740,34 @@ impl Parser<'_> {
     /// an iteration (23.16).
     fn header_has_in(&self) -> bool {
         let mut depth = 0usize;
-        for token in &self.tokens[self.pos..] {
+        for (offset, token) in self.tokens[self.pos..].iter().enumerate() {
             match token.tok {
                 Tok::Kw(Kw::In) if depth == 0 => return true,
-                Tok::LBrace if depth == 0 => return false,
+                // A record pattern, as in `for Point { x, y } in points`,
+                // unless the brace opens the body.
+                Tok::LBrace if depth == 0 => return self.record_pattern_before_in(self.pos + offset),
                 Tok::LParen | Tok::LBracket | Tok::LBrace => depth += 1,
                 Tok::RParen | Tok::RBracket | Tok::RBrace => depth = depth.saturating_sub(1),
                 Tok::Eof | Tok::Newline if depth == 0 => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Whether the braces opening at `open` close right before `in`.
+    fn record_pattern_before_in(&self, open: usize) -> bool {
+        let mut depth = 0usize;
+        for (offset, token) in self.tokens[open..].iter().enumerate() {
+            match token.tok {
+                Tok::LParen | Tok::LBracket | Tok::LBrace => depth += 1,
+                Tok::RParen | Tok::RBracket | Tok::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(self.tokens.get(open + offset + 1), Some(t) if t.tok == Tok::Kw(Kw::In));
+                    }
+                }
+                Tok::Eof => return false,
                 _ => {}
             }
         }
@@ -980,8 +1001,10 @@ impl Parser<'_> {
                                 "`..` needs at least one pattern before it; `[..rest]` is just `rest` and `[..]` is `_`",
                             );
                         }
+                        let mode = if self.eat_kw(Kw::Ref) { Mode::Ref } else { Mode::Value };
                         rest = Some(match self.tok() {
-                            Tok::Ident(_) => Some(self.ident()?),
+                            Tok::Ident(_) => Some((mode, self.ident()?)),
+                            _ if mode == Mode::Ref => return self.expected("a name after `..ref`"),
                             _ => None,
                         });
                         self.eat(&Tok::Comma);
@@ -999,12 +1022,27 @@ impl Parser<'_> {
                 PatternKind::Array { items, rest }
             }
             Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var) => {
-                self.diags.unsupported(start, "loan patterns");
-                return Err(());
+                let mode = self.loan_mode();
+                if matches!(self.tok(), Tok::Ident(name) if name == "_") {
+                    let message = format!("`{} _` borrows nothing; `_` alone ignores the part", mode.keyword());
+                    self.diags.error("E1202", start.to(self.span()), message);
+                }
+                PatternKind::Loan(mode, self.ident()?)
             }
             _ => return self.expected("pattern"),
         };
         Ok(Pattern { kind, span: start.to(self.prev_span()) })
+    }
+
+    /// The `ref`, `mut` or `var` keyword of a loan pattern.
+    fn loan_mode(&mut self) -> Mode {
+        let mode = match self.tok() {
+            Tok::Kw(Kw::Ref) => Mode::Ref,
+            Tok::Kw(Kw::Mut) => Mode::Mut,
+            _ => Mode::Var,
+        };
+        self.bump();
+        mode
     }
 
     fn field_patterns(&mut self) -> PResult<(Vec<FieldPattern>, bool)> {
@@ -1018,6 +1056,14 @@ impl Parser<'_> {
             }
             if self.eat(&Tok::DotDot) {
                 rest = true;
+            } else if matches!(self.tok(), Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var)) {
+                // `ref field` abbreviates `field: ref field`.
+                let start = self.span();
+                let mode = self.loan_mode();
+                let name = self.field_name()?;
+                let kind = PatternKind::Loan(mode, name.clone());
+                let pattern = Pattern { kind, span: start.to(name.span) };
+                fields.push(FieldPattern { name, pattern: Some(pattern) });
             } else {
                 let name = self.field_name()?;
                 let pattern = if self.eat(&Tok::Colon) { Some(self.pattern()?) } else { None };

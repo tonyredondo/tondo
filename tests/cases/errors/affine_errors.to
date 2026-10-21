@@ -85,7 +85,7 @@ fn main() {}
 // expect-error: E1408 assigning `current` here would drop the value it holds
 // expect-error: E1409 `_ =` drops a value of type `T`
 // expect-error: E1409 this pattern drops a part of type `B`
-// expect-error: E1406 moving a part of type `A` out of `self`
+// expect-error: E1406 `self` is a loan, so its part of type `A` cannot be moved out of it
 // expect-error: E1409 `clear()` would drop the elements of `values`, and its type `Array[T]` may need to be consumed
 // expect-error: E1409 `value` still holds its value when the iteration ends
 // expect-error: E1406 `value` is a loan, so its value of type `T` cannot be moved out of it

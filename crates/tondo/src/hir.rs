@@ -105,6 +105,13 @@ pub enum Stmt {
         closure: Expr,
         call: Expr,
     },
+    /// Binds `local` to the place itself, not to a copy: a binding of a
+    /// `for` over a collection that borrows its elements (13.3). Reads
+    /// and writes of the binding go through it.
+    Lend {
+        local: LocalId,
+        place: Place,
+    },
     /// An evaluated expression whose value is dropped (`_ =` or a `Unit` statement).
     Expr(Expr),
     Return(Option<Expr>),
@@ -232,6 +239,31 @@ pub enum ExprKind {
 pub struct Place {
     pub local: LocalId,
     pub path: Vec<PlaceStep>,
+}
+
+impl Place {
+    /// The place a value expression reads, if it reads one.
+    pub fn of(value: Expr) -> Option<Place> {
+        let mut steps = Vec::new();
+        let mut current = value;
+        let local = loop {
+            match current.kind {
+                ExprKind::Local(local) => break local,
+                ExprKind::Field(base, index) => {
+                    steps.push(PlaceStep::Field(index));
+                    current = *base;
+                }
+                ExprKind::Retype(base) => current = *base,
+                ExprKind::Index(base, index) => {
+                    steps.push(PlaceStep::Index(*index));
+                    current = *base;
+                }
+                _ => return None,
+            }
+        };
+        steps.reverse();
+        Some(Place { local, path: steps })
+    }
 }
 
 #[derive(Clone)]

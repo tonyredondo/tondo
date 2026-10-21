@@ -109,6 +109,9 @@ pub enum Statement {
     DeferPush(hir::FnId, Place),
     /// Unregisters the most recent cleanup before running it normally.
     DeferPop,
+    /// Makes the local the address of the place, made unique first: a
+    /// binding that borrows an element of a collection (13.3).
+    Lend(Local, Place),
 }
 
 #[derive(Clone, Debug)]

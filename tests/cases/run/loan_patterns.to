@@ -1,0 +1,129 @@
+import std.console
+
+type Point = { x: Int, y: Int }
+
+type Shelf = { items: Array[Int], offset: Int, count: Int }
+
+fn Shelf.shift(mut self) {
+    for mut item in self.items {
+        item += self.offset
+        self.count += 1
+    }
+}
+
+fn bump(value: mut Int) {
+    value += 1000
+}
+
+fn count[T: ~Copy](values: ref Array[T]): Int {
+    var n = 0
+    for ref value in values {
+        n += 1
+    }
+    n
+}
+
+fn describe[T: ~Copy](value: ref T?): String {
+    match value {
+        some(ref inner) => "some"
+        none => "none"
+    }
+}
+
+fn main() {
+    var values = [1, 2, 3]
+    let before = values
+    for mut value in values {
+        value *= 10
+    }
+    console.println("{values} {before}")
+    var points = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+    for Point { ref x, mut y } in points {
+        y += x
+    }
+    console.println("{points[0].y} {points[1].y}")
+    var grid = [[1], [2, 3]]
+    for var row in grid {
+        row.push(row.length())
+    }
+    console.println("{grid}")
+    for mut row in grid {
+        for mut cell in row {
+            bump(mut cell)
+        }
+    }
+    console.println("{grid}")
+    var ages = ["ada": 36, "bob": 40]
+    for (key, mut age) in ages {
+        if key == "bob" {
+            age += 1
+        }
+    }
+    console.println("{ages}")
+    for (_, var age) in ages {
+        age = 0
+    }
+    console.println("{ages}")
+    var total = 0
+    for ref value in values {
+        total += value
+    }
+    let names = Set["x", "y"]
+    for ref name in names {
+        total += name.length()
+    }
+    console.println("{total}")
+    let pairs = [(1, "a"), (2, "b")]
+    for (n, ref label) in pairs {
+        console.print("{n}{label} ")
+    }
+    console.println("")
+    let option: Int? = some(5)
+    match option {
+        some(ref n) => console.println("{n}")
+        none => {}
+    }
+    match [1, 2, 3] {
+        [first, ..ref rest] => console.println("{first} {rest}")
+        _ => {}
+    }
+    var empty: Array[Int] = []
+    for mut value in empty {
+        value = 1
+    }
+    console.println("{count(ref ["a", "b"])} {describe(ref some(1))}")
+    var shelf = Shelf { items: [1, 2], offset: 10, count: 0 }
+    shelf.shift()
+    var pair = ([1, 2], [3])
+    for ref x in pair.0 {
+        pair.1.push(x)
+    }
+    console.println("{shelf.items} {shelf.count} {pair.1}")
+    var scores = ["ada": 36, "bob": 40]
+    let snapshot = scores
+    for (_, mut score) in scores {
+        score += 1
+    }
+    var table = [[1, 2], [3]]
+    let old = table
+    for mut row in table {
+        for mut cell in row {
+            cell = 0
+        }
+    }
+    console.println("{scores} {snapshot} {table} {old}")
+}
+
+// expect-stdout: [10, 20, 30] [1, 2, 3]
+// expect-stdout: 3 7
+// expect-stdout: [[1, 1], [2, 3, 2]]
+// expect-stdout: [[1001, 1001], [1002, 1003, 1002]]
+// expect-stdout: [ada: 36, bob: 41]
+// expect-stdout: [ada: 0, bob: 0]
+// expect-stdout: 62
+// expect-stdout: 1a 2b 
+// expect-stdout: 5
+// expect-stdout: 1 [2, 3]
+// expect-stdout: 2 some
+// expect-stdout: [11, 12] 2 [3, 1, 2]
+// expect-stdout: [ada: 37, bob: 41] [ada: 36, bob: 40] [[0, 0], [0]] [[1, 2], [3]]
