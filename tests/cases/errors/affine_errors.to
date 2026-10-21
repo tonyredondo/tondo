@@ -97,7 +97,7 @@ fn main() {}
 // expect-error: E1409 `value` still holds its value on some paths when the function ends
 // expect-error: E1401 `value` was moved on some paths before this use
 // expect-error: E1406 moving a part of type `A` out of `pair` would leave it incomplete; destructure the whole value with `let`, or remove `~Copy` from its type parameter
-// expect-error: E1406 this copies a value of type `T` out of `values`, but it is not `Copy`; remove `~Copy` from its type parameter, or take values out with `pop()`, `removeAt()` or a `for` loop
+// expect-error: E1406 this copies a value of type `T` out of `values`, but it is not `Copy`; take values out with `pop()`, `removeAt()` or a `for` loop, or remove `~Copy` from its type parameter
 // expect-error: E1408 assigning `current` here would drop the value it holds
 // expect-error: E1409 `_ =` drops a value of type `T`
 // expect-error: E1409 this pattern drops a part of type `B`

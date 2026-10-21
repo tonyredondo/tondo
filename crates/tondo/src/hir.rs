@@ -58,6 +58,10 @@ pub struct Function {
     pub loans: Vec<bool>,
     pub locals: Vec<Local>,
     pub result: Ty,
+    /// Whether the result is `T ! E` with the body, `return` and `?`
+    /// working on `T`, as in a function declared fallible (9.8). Otherwise
+    /// the body's value is the result, even when that is a `T ! E`.
+    pub fallible: bool,
     pub body: Block,
 }
 
@@ -214,6 +218,12 @@ pub enum ExprKind {
     CallValue(Box<Expr>, Vec<Expr>),
     /// A closure made into a `fn(...)` value; the `FnId` is its body.
     Erase(Box<Expr>, FnId),
+    /// `spawn call(...)`: starts a task running a `fn()` value that makes
+    /// the call; its type is `Join[T]` (11.11).
+    Spawn(Box<Expr>),
+    /// An operation of a `Join` or a `Group`; the receiver comes first,
+    /// as the loan of its place for `add` and `next`.
+    TaskOp(TaskOp, Vec<Expr>),
     /// `Iterator.next` of the intrinsic cursor at the place: the next entry,
     /// key or value of its map or set, or `none`.
     CursorNext(Place, CursorKind),
@@ -285,6 +295,28 @@ pub enum ArrayOp {
     Repeat,
     /// `value in array`; the value comes first.
     Contains,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TaskOp {
+    /// `job.wait()`
+    Wait,
+    /// `Group.new[T]()`
+    GroupNew,
+    /// `group.add(job)`
+    GroupAdd,
+    /// `group.next()`: `T?`
+    GroupNext,
+    /// `group.length()`
+    GroupLength,
+    /// `group.wait()`: `Array[T]`, or `Array[R] ! E` when `T` is `R ! E`.
+    GroupWait,
+    /// Used by `GroupWait`: waits for every task, or for the first that
+    /// fails, and gives its index or -1.
+    GroupSettle,
+    /// Used by `GroupWait`: the result at an index, or the first one not
+    /// taken when it is -1, as `T?`.
+    GroupTake,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

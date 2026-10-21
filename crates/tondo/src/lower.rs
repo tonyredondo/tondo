@@ -444,13 +444,13 @@ impl Builder<'_> {
 
     /// Whether the function is fallible (`T ! E`, 9.8).
     fn fallible(&self) -> bool {
-        matches!(self.types.kind(self.function.result), TyKind::Result(..))
+        self.function.fallible
     }
 
     /// The type that `return` takes: the success type of a fallible function.
     fn success_ty(&self) -> Ty {
         match self.types.kind(self.function.result) {
-            TyKind::Result(ok, _) => *ok,
+            TyKind::Result(ok, _) if self.fallible() => *ok,
             _ => self.function.result,
         }
     }
@@ -662,16 +662,18 @@ impl Builder<'_> {
             Some(tail) => self.expr(tail),
             None => Operand::Const(Const::Unit),
         };
-        // A binding of this scope cannot outlive it; hand its value (or the
-        // part of it the block yields) to a temporary of the enclosing frame.
-        if let Operand::Copy(place) = &value
-            && self.needs_drop(block.ty)
-            && self.scopes.last().unwrap().iter().any(|e| matches!(e, Exit::Release(l) if *l == place.local))
+        // Leaving the scope releases its bindings and runs its cleanups, so
+        // a value read from a place is copied first into a temporary of the
+        // enclosing frame.
+        if let Operand::Copy(_) = &value
+            && !self.scopes.last().unwrap().is_empty()
         {
             let copy = self.new_local(block.ty);
             self.assign(Place::local(copy), Rvalue::Use(value), Span::default());
-            self.push(Statement::Retain(Place::local(copy)));
-            self.frames.last_mut().unwrap().push(copy);
+            if self.needs_drop(block.ty) {
+                self.push(Statement::Retain(Place::local(copy)));
+                self.frames.last_mut().unwrap().push(copy);
+            }
             value = Operand::local(copy);
         }
         let scope = self.scopes.pop().unwrap();
@@ -1183,6 +1185,21 @@ impl Builder<'_> {
                 let retain = self.move_flags(std::slice::from_ref(&value), &[true], &[ty])[0];
                 self.temp(e.ty, Rvalue::Erase(value, *body, retain), e.span)
             }
+            hir::ExprKind::Spawn(body) => {
+                let ty = body.ty;
+                let value = self.expr(body);
+                let retain = self.move_flags(std::slice::from_ref(&value), &[true], &[ty])[0];
+                self.temp(e.ty, Rvalue::Spawn(value, retain), e.span)
+            }
+            hir::ExprKind::TaskOp(hir::TaskOp::GroupWait, operands) => self.group_wait(e, &operands[0]),
+            hir::ExprKind::TaskOp(op, operands) => {
+                let types: Vec<Ty> = operands.iter().map(|o| o.ty).collect();
+                let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
+                // `add` moves the join into the group.
+                let moves: Vec<bool> = (0..values.len()).map(|i| *op == hir::TaskOp::GroupAdd && i == 1).collect();
+                let flags = self.move_flags(&values, &moves, &types);
+                self.temp(e.ty, Rvalue::TaskOp(*op, values, flags), e.span)
+            }
             hir::ExprKind::Call(callee, _, args) => {
                 let (operands, regions) = self.call_operands(args, e.span);
                 let result = self.temp(e.ty, Rvalue::Call(*callee, operands), e.span);
@@ -1256,6 +1273,76 @@ impl Builder<'_> {
             }
             hir::ExprKind::Error => unreachable!("programs with errors are not lowered"),
         }
+    }
+
+    /// `group.wait()` (11.12): the results in the order the tasks were
+    /// added or, when they are `R ! E`, the first error. For results the
+    /// runtime first waits for every task or for the first that fails,
+    /// which is then the only one taken. Each result taken is moved into
+    /// the array or the error.
+    fn group_wait(&mut self, e: &hir::Expr, group: &hir::Expr) -> Operand {
+        let span = e.span;
+        let item = self.types.handle_result(group.ty);
+        let option = self.types.lookup(&TyKind::Option(item)).expect("interned with the group's type");
+        let (array, fallible) = match *self.types.kind(e.ty) {
+            TyKind::Result(array, _) => (array, true),
+            _ => (e.ty, false),
+        };
+        let group = self.expr(group);
+        let index = if fallible {
+            self.temp(Ty::INT, Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone()], vec![false]), span)
+        } else {
+            Operand::Const(Const::Int(-1, Ty::INT))
+        };
+        let values = self.new_local(array);
+        self.assign(Place::local(values), Rvalue::ArrayOp(hir::ArrayOp::New, Vec::new(), span), span);
+        let result = self.new_local(e.ty);
+        let (head, body, done, exit) = (self.new_block(), self.new_block(), self.new_block(), self.new_block());
+        self.goto(head);
+        self.switch_to(head);
+        let taken = self.new_local(option);
+        let take = Rvalue::TaskOp(hir::TaskOp::GroupTake, vec![group, index], vec![false, false]);
+        self.assign(Place::local(taken), take, span);
+        let taken = Place::local(taken);
+        let some = self.tag_is(&taken, option, SOME, span);
+        self.terminate(Terminator::Branch(some, body, done));
+        self.switch_to(body);
+        let mut element = taken.variant_field(SOME, 0);
+        if fallible {
+            let (failed, succeeded) = (self.new_block(), self.new_block());
+            let error = self.tag_is(&element, item, ERR, span);
+            self.terminate(Terminator::Branch(error, failed, succeeded));
+            self.switch_to(failed);
+            let error = Rvalue::Variant(ERR, vec![Operand::Copy(element.variant_field(ERR, 0))]);
+            self.assign(Place::local(result), error, span);
+            self.push(Statement::Release(Place::local(values)));
+            self.goto(exit);
+            self.switch_to(succeeded);
+            element = element.variant_field(OK, 0);
+        }
+        let push =
+            Rvalue::Mutate(hir::Mutation::Push, Place::local(values), vec![Operand::Copy(element)], vec![false], span);
+        self.temp(Ty::UNIT, push, span);
+        self.goto(head);
+        self.switch_to(done);
+        let all = if fallible {
+            Rvalue::Variant(OK, vec![Operand::local(values)])
+        } else {
+            Rvalue::Use(Operand::local(values))
+        };
+        self.assign(Place::local(result), all, span);
+        self.goto(exit);
+        self.switch_to(exit);
+        self.own(result);
+        Operand::local(result)
+    }
+
+    /// Whether the enum value at `place` holds `variant`.
+    fn tag_is(&mut self, place: &Place, ty: Ty, variant: u32, span: Span) -> Operand {
+        let tag_ty = self.types.tag_ty(ty);
+        let tag = self.temp(tag_ty, Rvalue::Discriminant(place.clone()), span);
+        let expected = Operand::Const(Const::Int(variant as i128, tag_ty));
+        self.temp(Ty::BOOL, Rvalue::Binary(BinOp::Eq, tag, expected), span)
     }
 
     fn if_expr(

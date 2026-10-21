@@ -1,0 +1,146 @@
+import std.console
+
+type FetchError = {
+    id: Int
+}
+
+type Pending = {
+    name: String
+    job: Join[Int]
+}
+
+type Counter = {
+    step: Int
+}
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn greet(name: String): String {
+    "hello {name}"
+}
+
+fn score(id: Int): Int ! FetchError {
+    if id == 3 {
+        fail FetchError { id: id }
+    }
+    id * 10
+}
+
+fn total(ids: Array[Int]): Int ! FetchError {
+    var group = Group.new[Int ! FetchError]()
+    for id in ids {
+        group.add(spawn score(id))
+    }
+    var sum = 0
+    for value in group.wait()? {
+        sum += value
+    }
+    sum
+}
+
+fn show(result: Int ! FetchError) {
+    match result {
+        ok(sum) => console.println("sum {sum}")
+        err(error) => console.println("failed at {error.id}")
+    }
+}
+
+fn fib(n: Int): Int {
+    if n < 12 {
+        return if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+    }
+    let left = spawn fib(n - 1)
+    let right = spawn fib(n - 2)
+    left.wait() + right.wait()
+}
+
+fn work(n: Int) {
+    var count = 0
+    for i in 0..100000 {
+        count += i % 3
+    }
+    console.println("work {n} {count}")
+}
+
+fn Counter.apply(self, value: Int): Int {
+    value + self.step
+}
+
+fn main() {
+    let a = spawn square(7)
+    let b = spawn greet("tondo")
+    console.println("{a.wait()} {b.wait()}")
+    console.println("{(spawn greet("again")).wait()}")
+
+    // Results come back in the order the tasks were added.
+    var group = Group.new[Int]()
+    for n in 1..=5 {
+        group.add(spawn square(n))
+    }
+    console.println("pending {group.length()}")
+    console.println("{group.wait()}")
+
+    show(total([1, 2, 4]))
+    show(total([1, 3, 5]))
+
+    var names = Group.new[String]()
+    names.add(spawn greet("a"))
+    names.add(spawn greet("b"))
+    var seen = 0
+    for {
+        match names.next() {
+            some(text) => {
+                seen += text.length()
+            }
+            none => break
+        }
+    }
+    console.println("seen {seen}, empty {names.isEmpty()}")
+
+    var jobs = Array.new[Join[Int]]()
+    for i in 0..4 {
+        jobs.push(spawn square(i))
+    }
+    var sum = 0
+    for job in jobs {
+        sum += job.wait()
+    }
+    console.println("sum of squares {sum}")
+
+    let pending = Pending { name: "seven", job: spawn square(7) }
+    let Pending { name, job } = pending
+    console.println("{name} {job.wait()}")
+
+    let add = (x: Int) { x + 1 }
+    console.println("closure {(spawn add(41)).wait()}")
+    let counter = Counter { step: 2 }
+    console.println("method {(spawn counter.apply(40)).wait()}")
+    console.println("fib {fib(20)}")
+
+    // A task nobody waits for is waited for when its block ends.
+    { spawn work(1) }
+    console.println("after the block")
+    if true {
+        spawn work(3)
+    }
+    console.println("after the branch")
+}
+
+// expect-stdout: 49 hello tondo
+// expect-stdout: hello again
+// expect-stdout: pending 5
+// expect-stdout: [1, 4, 9, 16, 25]
+// expect-stdout: sum 70
+// expect-stdout: failed at 3
+// expect-stdout: seen 14, empty true
+// expect-stdout: sum of squares 14
+// expect-stdout: seven 49
+// expect-stdout: closure 42
+// expect-stdout: method 42
+// expect-stdout: fib 6765
+// expect-stdout: work 1 99999
+// expect-stdout: after the block
+// expect-stdout: work 3 99999
+// expect-stdout: after the branch

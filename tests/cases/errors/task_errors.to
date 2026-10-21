@@ -1,0 +1,52 @@
+type Counter = {
+    value: Int
+}
+
+fn bump(counter: mut Counter) {
+    counter.value += 1
+}
+
+fn Counter.reset(var self) {
+    self = Counter { value: 0 }
+}
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn keep[T: ~Copy](value: T): T {
+    value
+}
+
+fn unused[T: ~Copy](value: T) {
+    spawn keep(value)
+}
+
+fn dropped[T: ~Copy](value: T) {
+    let job = spawn keep(value)
+}
+
+fn main() {
+    var counter = Counter { value: 0 }
+    var values = [1]
+    let number = spawn 5
+    let lent = spawn bump(mut counter)
+    let receiver = spawn counter.reset()
+    let mutation = spawn values.push(2)
+    let job = spawn square(2)
+    let other = job
+    let twice = job.wait()
+    let group = Group.new[Int]()
+    group.add(spawn square(3))
+    let untyped = Group.new()
+}
+
+// expect-error: E1611 `spawn` takes a call, such as `spawn fetch(url)`
+// expect-error: E1609 a task cannot borrow: remove `mut` to move or copy the value into the task
+// expect-error: E1609 a task cannot borrow: this call lends a place with `mut` or `var`
+// expect-error: E1611 `spawn` takes a call of a function, method or closure
+// expect-error: E1401 `job` was moved before this use, since its type `Join[Int]` is not `Copy`; use it before passing it on
+// expect-error: E1411 `add` changes `group`, which is not declared with `var`
+// expect-error: E1101 `Group.new` needs its element type: `Group.new[T](...)`
+// expect-error: E1409 the result of this task has type `T`, which may need to be consumed; bind the task and wait for it
+// expect-error: E1409 `job` still holds its value when its block ends, and its type `Join[T]` may need to be consumed; call `wait()`

@@ -1,0 +1,22 @@
+import std.console
+
+fn note(text: String) {
+    console.println(text)
+}
+
+fn crash(n: Int): Int {
+    defer note("cleanup in the task")
+    let values = [1, 2]
+    values[n]
+}
+
+fn main() {
+    defer note("not run: main's cleanup")
+    let job = spawn crash(5)
+    console.println("waiting")
+    console.println("unreachable {job.wait()}")
+}
+
+// expect-stdout: waiting
+// expect-stdout: cleanup in the task
+// expect-panic: P0001

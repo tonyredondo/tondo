@@ -12,7 +12,7 @@ use crate::ast::Mode;
 use crate::diag::Diagnostics;
 use crate::hir::{
     ArrayOp, Block, Callee, Expr, ExprKind, Function, LocalId, MapOp, Mutation, PatKind, Pattern, PlaceStep, Segment,
-    Stmt,
+    Stmt, TaskOp,
 };
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
@@ -134,8 +134,9 @@ impl Checker<'_> {
         for (local, state) in pending {
             let (name, ty, span) = (self.local(local).name.clone(), self.local(local).ty, self.local(local).span);
             let paths = if state == Some(Moved::Maybe) { "on some paths " } else { "" };
+            let wait = if matches!(self.types.kind(ty), TyKind::Handle(..)) { "call `wait()`, " } else { "" };
             let message = format!(
-                "`{name}` still holds its value {paths}when {leaving}, and its type {} may need to be consumed; pass it on or return it on every path, or add `Discard` to its type parameter",
+                "`{name}` still holds its value {paths}when {leaving}, and its type {} may need to be consumed; {wait}pass it on or return it on every path, or add `Discard` to its type parameter",
                 self.display(ty)
             );
             self.error("E1409", span, message);
@@ -394,14 +395,23 @@ impl Checker<'_> {
         }
     }
 
+    /// How to make a value `Copy`, when a type parameter declared `~Copy`
+    /// is what makes it affine rather than a task or a sender.
+    fn copy_hint(&self, ty: Ty) -> &'static str {
+        let mut params = Vec::new();
+        self.types.params_in(ty, &mut params);
+        if params.iter().any(|&p| !self.types.is_copy(p)) { ", or remove `~Copy` from its type parameter" } else { "" }
+    }
+
     fn use_local(&mut self, local: LocalId, span: Span, flow: &Flow) {
         if let Some(state) = flow.moved.get(&local) {
             let local = self.local(local);
             let when = if *state == Moved::Maybe { " on some paths" } else { "" };
             let message = format!(
-                "`{}` was moved{when} before this use, since its type {} is not `Copy`; use it before passing it on, or remove `~Copy` from its type parameter",
+                "`{}` was moved{when} before this use, since its type {} is not `Copy`; use it before passing it on{}",
                 local.name,
-                self.display(local.ty)
+                self.display(local.ty),
+                self.copy_hint(local.ty)
             );
             self.error("E1401", span, message);
         }
@@ -461,9 +471,10 @@ impl Checker<'_> {
             && !self.types.is_copy(expr.ty)
         {
             let message = format!(
-                "this copies a value of type {} out of `{}`, but it is not `Copy`; remove `~Copy` from its type parameter, or take values out with `pop()`, `removeAt()` or a `for` loop",
+                "this copies a value of type {} out of `{}`, but it is not `Copy`; take values out with `pop()`, `removeAt()` or a `for` loop{}",
                 self.display(expr.ty),
-                self.local(root).name
+                self.local(root).name,
+                self.copy_hint(expr.ty)
             );
             self.error("E1406", expr.span, message);
             let flow = self.observe(collection, flow)?;
@@ -507,8 +518,9 @@ impl Checker<'_> {
                 let root = Self::root(base).expect("checked above");
                 let message = if let Some(capture) = self.capture_name(base, *index) {
                     format!(
-                        "the closure cannot give away its capture `{capture}` of type {}, since it may be called again; remove `~Copy` from its type parameter",
-                        self.display(expr.ty)
+                        "the closure cannot give away its capture `{capture}` of type {}, since it may be called again{}",
+                        self.display(expr.ty),
+                        self.copy_hint(expr.ty)
                     )
                 } else if self.params[root.0 as usize].is_some_and(|m| m != Mode::Value) {
                     format!(
@@ -518,9 +530,10 @@ impl Checker<'_> {
                     )
                 } else {
                     format!(
-                        "moving a part of type {} out of `{}` would leave it incomplete; destructure the whole value with `let`, or remove `~Copy` from its type parameter",
+                        "moving a part of type {} out of `{}` would leave it incomplete; destructure the whole value with `let`{}",
                         self.display(expr.ty),
-                        self.local(root).name
+                        self.local(root).name,
+                        self.copy_hint(expr.ty)
                     )
                 };
                 self.error("E1406", expr.span, message);
@@ -700,7 +713,12 @@ impl Checker<'_> {
                 self.settle(0, &flow, "`?` fails");
                 Some(flow)
             }
-            ExprKind::Convert(inner) | ExprKind::Panic(inner) | ExprKind::Erase(inner, _) => self.consume(inner, flow),
+            ExprKind::Convert(inner) | ExprKind::Panic(inner) | ExprKind::Erase(inner, _) | ExprKind::Spawn(inner) => {
+                self.consume(inner, flow)
+            }
+            // `length()` reads a group; the other operations take their
+            // operands, and lend the group's place to `add` and `next`.
+            ExprKind::TaskOp(op, operands) => self.all(operands, flow, *op != TaskOp::GroupLength),
             ExprKind::Assert { condition, parts, .. } => {
                 let flow = self.consume(condition, flow)?;
                 self.all(parts, flow, false)

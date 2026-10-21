@@ -12,6 +12,8 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+mod tasks;
+
 // ---------------------------------------------------------------------------
 // Strings
 // ---------------------------------------------------------------------------
@@ -1670,34 +1672,25 @@ fn panic_name(code: u32) -> &'static str {
     }
 }
 
-/// A registered `defer` cleanup: its code and the closure it receives.
-type Cleanup = unsafe extern "C" fn(*mut u8);
-
-/// Cleanups of the scopes being executed, innermost last (13.7). Generated
-/// code pushes one when a `defer` registers and pops it before running it
-/// on a normal exit; a panic runs the rest. Frames stay alive meanwhile:
-/// a panic ends the process, so it never unwinds the native stack.
-static CLEANUPS: Mutex<Vec<(Cleanup, usize)>> = Mutex::new(Vec::new());
+/// Each task keeps the cleanups of the scopes it executes, innermost last
+/// (13.7). Generated code pushes one when a `defer` registers and pops it
+/// before running it on a normal exit; a panic runs the rest. Frames stay
+/// alive meanwhile: a panic ends the process, so it never unwinds the
+/// native stack.
 static PANICKING: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_defer_push(code: Cleanup, closure: *mut u8) {
-    CLEANUPS.lock().unwrap_or_else(|e| e.into_inner()).push((code, closure as usize));
+pub extern "C" fn tondo_rt_defer_push(code: tasks::Cleanup, closure: *mut u8) {
+    tasks::push_cleanup(code, closure);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_defer_pop() {
-    CLEANUPS.lock().unwrap_or_else(|e| e.into_inner()).pop();
+    tasks::pop_cleanup();
 }
 
-/// Runs the registered cleanups in LIFO order, each removed first so that
-/// a panic inside one never runs it twice.
 fn run_cleanups() {
-    loop {
-        let next = CLEANUPS.lock().unwrap_or_else(|e| e.into_inner()).pop();
-        let Some((code, closure)) = next else { break };
-        unsafe { code(closure as *mut u8) };
-    }
+    tasks::run_cleanups();
 }
 
 /// Reports a language panic (spec 15.7, codes in 22.2), runs the pending
@@ -1758,7 +1751,7 @@ unsafe extern "C" {
 #[cfg(tondo_staticlib)]
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
-    let mut status = unsafe { tondo_main() };
+    let mut status = tasks::run_main(tondo_main);
     if let Some(failure) = finish_stdout()
         && status == 0
     {

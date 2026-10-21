@@ -480,9 +480,6 @@ impl Formatter<'_> {
             head.push(text(": "));
             head.push(self.result(result));
         }
-        if f.suspends {
-            head.push(text(" suspends"));
-        }
         match &f.body {
             Some(body) => concat(vec![group(concat(head)), text(" "), self.block(body)]),
             None => group(concat(head)),
@@ -953,6 +950,7 @@ impl Formatter<'_> {
                 concat(docs)
             }
             ExprKind::Construct(name, value) => concat(vec![text(format!("{name}(")), self.expr(value), text(")")]),
+            ExprKind::Spawn(call) => concat(vec![text("spawn "), self.expr(call)]),
         }
     }
 

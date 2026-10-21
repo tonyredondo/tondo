@@ -3791,8 +3791,12 @@ Las tres operaciones consumen el `Join`. Un `Join` puede moverse, guardarse en
 una colección, pasarse a otra función o devolverse. Si al terminar el bloque que
 lo posee nadie lo ha consumido, el bloque espera a la tarea y descarta su
 resultado, también cuando sale por `return`, `fail` o `?`. Así ninguna tarea queda
-suelta ni hay que escribir nada para esperarla. Si el resultado no cumple
-`Discard`, el `Join` debe consumirse explícitamente (`E1409`).
+suelta ni hay que escribir nada para esperarla. Un `spawn` escrito como
+sentencia, o como valor de un bloque, rama o brazo de tipo `Unit`, no necesita
+`_ =`: su `Join` pertenece a ese bloque. Por eso `for id in ids { spawn
+notify(id) }` espera cada tarea al final de su iteración; para que corran a la
+vez se reúnen en un `Group`. Si el resultado no cumple `Discard`, el `Join`
+debe consumirse explícitamente (`E1409`).
 
 Un pánico en cualquier tarea termina el programa: el runtime informa el pánico,
 ejecuta los `defer` pendientes de esa tarea y finaliza el proceso, como un
@@ -7862,6 +7866,7 @@ oculten un diagnóstico independiente.
 | `P0010` | `invalid-shift-count` | Conteo de shift negativo, no representable como `Int` o mayor o igual que el ancho izquierdo. |
 | `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. |
 | `P0012` | `closed-channel` | `send` sobre un canal cerrado. |
+| `P0013` | `deadlock` | Todas las tareas esperan y ninguna puede avanzar. |
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. |
 | `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. |

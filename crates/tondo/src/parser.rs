@@ -420,12 +420,11 @@ impl Parser<'_> {
         self.skip_newlines();
         self.expect(Tok::RParen)?;
         let result = if self.eat(&Tok::Colon) { Some(self.function_result()?) } else { None };
-        let suspends = self.eat_kw(Kw::Suspends);
         // A required method of a trait ends at its signature.
         let body = if self.at(&Tok::LBrace) { Some(self.block()?) } else { None };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, suspends, body, span, module: 0 })
+        Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, body, span, module: 0 })
     }
 
     /// One bound of a list: a type, or `~Copy`. In an opaque result each
@@ -1155,10 +1154,14 @@ impl Parser<'_> {
             Tok::Minus => UnaryOp::Neg,
             Tok::Kw(Kw::Not) => UnaryOp::Not,
             Tok::Tilde => UnaryOp::BitNot,
-            Tok::Kw(kw @ (Kw::Await | Kw::Spawn)) => {
-                let what = format!("`{}`", kw.as_str());
-                self.diags.unsupported(self.span(), &what);
-                return Err(());
+            Tok::Kw(Kw::Spawn) => {
+                let start = self.bump().span;
+                let call = self.postfix()?;
+                if let ExprKind::Try(_) = call.kind {
+                    return self.error("`spawn` returns a `Join`, not a result: write `?` after `wait()`, as in `(spawn fetch(url)).wait()?`");
+                }
+                let span = start.to(call.span);
+                return Ok(Expr { kind: ExprKind::Spawn(Box::new(call)), span });
             }
             _ => return self.postfix(),
         };
@@ -1495,7 +1498,7 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Path(vec![Ident { name: "self".into(), span: start }])
             }
-            Tok::Kw(kw @ (Kw::Scope | Kw::Unsafe)) => {
+            Tok::Kw(kw @ Kw::Unsafe) => {
                 let what = format!("`{}`", kw.as_str());
                 self.diags.unsupported(start, &what);
                 return Err(());

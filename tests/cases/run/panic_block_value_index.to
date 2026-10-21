@@ -1,0 +1,15 @@
+import std.console
+
+// The value of a block is read before its bindings are released.
+fn at(n: Int): Int {
+    let values = [1, 2]
+    values[n]
+}
+
+fn main() {
+    console.println("{at(1)}")
+    console.println("unreachable {at(5)}")
+}
+
+// expect-stdout: 2
+// expect-panic: P0001

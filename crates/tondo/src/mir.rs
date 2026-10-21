@@ -4,7 +4,7 @@
 //! inserted during lowering, so code generation is a direct translation.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{self, ArrayOp, Callee, MapOp, Mutation, StrOp};
+use crate::hir::{self, ArrayOp, Callee, MapOp, Mutation, StrOp, TaskOp};
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 
@@ -160,6 +160,12 @@ pub enum Rvalue {
     /// A closure boxed into a `fn(...)` value whose code is the body; the
     /// flag retains captures copied rather than moved.
     Erase(Operand, hir::FnId, bool),
+    /// Starts a task that calls a `fn()` value, which the task takes; the
+    /// flag retains one that was copied rather than moved.
+    Spawn(Operand, bool),
+    /// An operation of a `Join` or a `Group`, receiver first; flags mark
+    /// copied operands to retain as they move in, as a join into a group.
+    TaskOp(TaskOp, Vec<Operand>, Vec<bool>),
     Concat(Vec<Piece>),
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.

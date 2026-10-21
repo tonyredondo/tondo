@@ -9,8 +9,8 @@ use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
 use crate::types::{
-    AdtId, AdtKind, ClosureInfo, CursorKind, ERR, Field, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty, TyKind, Types,
-    Variant,
+    AdtId, AdtKind, ClosureInfo, CursorKind, ERR, Field, Handle, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty,
+    TyKind, Types, Variant,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -50,7 +50,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-const PRELUDE_TYPES: [&str; 39] = [
+const PRELUDE_TYPES: [&str; 42] = [
     "NumericConversionError",
     "Bool",
     "Int",
@@ -81,6 +81,9 @@ const PRELUDE_TYPES: [&str; 39] = [
     "Ref",
     "Pointer",
     "Join",
+    "Group",
+    "Sender",
+    "Receiver",
     "Command",
     "Pipeline",
     "Copy",
@@ -1018,9 +1021,6 @@ impl Checker<'_> {
     /// The signature of `f` declared in `outer` (an impl or trait scope, or
     /// the module), recording the scope its body is checked in.
     fn signature(&mut self, f: &ast::FnDecl, owner: Option<Ty>, outer: FnScope) -> Signature {
-        if f.suspends {
-            self.diags.unsupported(f.span, "`suspends` functions");
-        }
         let outer_count = outer.types.len();
         self.type_params.extend(outer.types.iter().cloned());
         let saved_self = std::mem::replace(&mut self.self_type, outer.self_type);
@@ -1402,7 +1402,7 @@ impl Checker<'_> {
     fn strict_subterm(&self, part: Ty, whole: Ty) -> bool {
         let children: Vec<Ty> = match self.types.kind(whole) {
             TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => items.clone(),
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => vec![*t],
             TyKind::Result(a, b) | TyKind::Map(a, b) => vec![*a, *b],
             TyKind::Fn(params, result, ..) => params.iter().copied().chain([*result]).collect(),
             TyKind::Adt(_) => self.types.instance_of(whole).map_or(Vec::new(), |(_, args)| args.to_vec()),
@@ -1899,6 +1899,8 @@ impl Checker<'_> {
                         ("Result", [ok, err]) if segments.len() == 1 => self.types.intern(TyKind::Result(*ok, *err)),
                         ("Array", [element]) if segments.len() == 1 => self.types.intern(TyKind::Array(*element)),
                         ("Deque", [element]) if segments.len() == 1 => self.types.intern(TyKind::Deque(*element)),
+                        ("Join", [result]) if segments.len() == 1 => self.types.handle(Handle::Join, *result),
+                        ("Group", [result]) if segments.len() == 1 => self.types.handle(Handle::Group, *result),
                         ("Map", [key, value]) if segments.len() == 1 => {
                             self.require_key(*key, t.span);
                             self.map_type(*key, *value)
@@ -1907,7 +1909,9 @@ impl Checker<'_> {
                             self.require_key(*element, t.span);
                             self.types.intern(TyKind::Set(*element))
                         }
-                        ("Option" | "Result" | "Array" | "Deque" | "Map" | "Set", _) if segments.len() == 1 => {
+                        ("Option" | "Result" | "Array" | "Deque" | "Map" | "Set" | "Join" | "Group", _)
+                            if segments.len() == 1 =>
+                        {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
                             Ty::ERROR
                         }
@@ -2122,6 +2126,7 @@ impl Checker<'_> {
             generics: signature.generics,
             params,
             loans,
+            fallible: cx.error.is_some(),
             locals: cx.locals,
             result: signature.result,
             body,
@@ -2168,6 +2173,7 @@ impl Checker<'_> {
             generics: Vec::new(),
             params: Vec::new(),
             loans: Vec::new(),
+            fallible: cx.error.is_some(),
             locals: cx.locals,
             result,
             body,
@@ -2368,6 +2374,7 @@ impl Checker<'_> {
             generics,
             params: locals,
             loans,
+            fallible: inner.error.is_some(),
             locals: inner.locals,
             result,
             body,
@@ -2417,7 +2424,7 @@ impl Checker<'_> {
                     self.diags.error("E1410", call.span, message);
                     return None;
                 }
-                self.deferred_call(cx, value, span)?
+                self.deferred_call(value, span)?
             }
         };
         let local = self.hidden_local(cx, closure.ty);
@@ -2429,9 +2436,9 @@ impl Checker<'_> {
 
     /// The closure of `defer call(args)`: its operands are evaluated now
     /// and the call is made at the end of the scope.
-    fn deferred_call(&mut self, cx: &mut FnCx, call: hir::Expr, span: Span) -> Option<hir::Expr> {
-        let (callee, type_args, args) = match call.kind {
-            hir::ExprKind::Call(callee, type_args, args) => (callee, type_args, args),
+    fn deferred_call(&mut self, call: hir::Expr, span: Span) -> Option<hir::Expr> {
+        let args = match &call.kind {
+            hir::ExprKind::Call(_, _, args) => args,
             hir::ExprKind::Error => return None,
             _ => {
                 self.diags.error("E1410", span, "this call cannot be deferred; write it in a `defer { ... }` block");
@@ -2442,9 +2449,26 @@ impl Checker<'_> {
             self.diags.error("E1410", span, "a deferred call cannot borrow: loans end before the scope does");
             return None;
         }
+        Some(self.call_closure(call, "defer", span))
+    }
+
+    /// A closure that makes `call` later with its callee and arguments,
+    /// which are evaluated now and become its captures: the cleanup of
+    /// `defer call(...)` and the body of `spawn call(...)`.
+    fn call_closure(&mut self, call: hir::Expr, name: &str, span: Span) -> hir::Expr {
+        let result = call.ty;
+        let (callee, values) = match call.kind {
+            hir::ExprKind::Call(callee, type_args, args) => (Err((callee, type_args)), args),
+            hir::ExprKind::CallValue(callee, args) => {
+                let mut values = vec![*callee];
+                values.extend(args);
+                (Ok(()), values)
+            }
+            _ => unreachable!("only calls become closures"),
+        };
         let generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
-        let template = self.types.declare_template("defer".into(), generics.clone());
-        let fields = args.iter().enumerate().map(|(i, a)| Field { name: format!("argument{i}"), ty: a.ty }).collect();
+        let template = self.types.declare_template(name.into(), generics.clone());
+        let fields = values.iter().enumerate().map(|(i, a)| Field { name: format!("argument{i}"), ty: a.ty }).collect();
         self.types.define_template(template, AdtKind::Record(fields));
         let env_ty = self.types.instantiate(template, generics.clone());
         let index = self.closure_functions.len();
@@ -2452,32 +2476,178 @@ impl Checker<'_> {
         let info = ClosureInfo {
             body: body_id.0,
             params: Vec::new(),
-            result: Ty::UNIT,
+            result,
             variadic: false,
             modes: Vec::new(),
             mutates: false,
         };
         self.types.declare_closure(template, info);
         let env = Self::mk(hir::ExprKind::Local(LocalId(0)), env_ty, span);
-        let fields: Vec<hir::Expr> = args
+        let mut fields: Vec<hir::Expr> = values
             .iter()
             .enumerate()
             .map(|(i, a)| Self::mk(hir::ExprKind::Field(Box::new(env.clone()), i as u32), a.ty, a.span))
             .collect();
-        let invoke = Self::mk(hir::ExprKind::Call(callee, type_args, fields), Ty::UNIT, span);
-        let body = hir::Block { stmts: vec![hir::Stmt::Expr(invoke)], tail: None, ty: Ty::UNIT };
+        let invoke = match callee {
+            Err((callee, type_args)) => hir::ExprKind::Call(callee, type_args, fields),
+            Ok(()) => {
+                let callee = fields.remove(0);
+                hir::ExprKind::CallValue(Box::new(callee), fields)
+            }
+        };
+        let invoke = Self::mk(invoke, result, span);
+        let body = hir::Block { stmts: Vec::new(), tail: Some(Box::new(invoke)), ty: result };
         self.closure_functions.push(Some(hir::Function {
-            name: "defer".into(),
+            name: name.into(),
             generics,
             params: vec![LocalId(0)],
             loans: vec![true],
-            locals: vec![hir::Local { name: "<defer>".into(), ty: env_ty, span }],
-            result: Ty::UNIT,
+            fallible: false,
+            locals: vec![hir::Local { name: format!("<{name}>"), ty: env_ty, span }],
+            result,
             body,
         }));
-        let _ = cx;
-        let values = args.into_iter().enumerate().map(|(i, a)| (i as u32, a)).collect();
-        Some(Self::mk(hir::ExprKind::Record(values), env_ty, span))
+        let values = values.into_iter().enumerate().map(|(i, a)| (i as u32, a)).collect();
+        Self::mk(hir::ExprKind::Record(values), env_ty, span)
+    }
+
+    /// `spawn call(...)` as a statement: the task belongs to the block,
+    /// which waits for it at its end.
+    fn spawn_statement(&mut self, cx: &mut FnCx, call: &ast::Expr) -> hir::Stmt {
+        let join = self.expr(cx, call, None);
+        if !self.types.is_discard(join.ty) && !self.types.has_error(join.ty) {
+            let message = format!(
+                "the result of this task has type {}, which may need to be consumed; bind the task and wait for it: `let job = spawn ...` and `job.wait()`",
+                self.display(self.types.handle_result(join.ty))
+            );
+            self.diags.error("E1409", call.span, message);
+        }
+        let local = self.hidden_local(cx, join.ty);
+        hir::Stmt::Let(local, join)
+    }
+
+    /// `spawn call(arguments)` (11.11): the callee and arguments are
+    /// evaluated now, by value, and a new task makes the call.
+    fn spawn(&mut self, cx: &mut FnCx, call: &ast::Expr, span: Span) -> hir::Expr {
+        let ast::ExprKind::Call { args, .. } = &call.kind else {
+            let message =
+                "`spawn` takes a call, such as `spawn fetch(url)`; put other work in a function and spawn its call";
+            self.diags.error("E1611", call.span, message);
+            return Self::error_expr(span);
+        };
+        if let Some(arg) = args.iter().find(|a| a.mode != ast::Mode::Value) {
+            let message = format!(
+                "a task cannot borrow: remove `{}` to move or copy the value into the task",
+                arg.mode.keyword()
+            );
+            self.diags.error("E1609", arg.span, message);
+            return Self::error_expr(span);
+        }
+        let call = self.expr(cx, call, None);
+        self.spawn_call(call, span)
+    }
+
+    fn spawn_call(&mut self, call: hir::Expr, span: Span) -> hir::Expr {
+        match call.kind {
+            // Named arguments are evaluated in order before the call.
+            hir::ExprKind::Block(mut block) if block.tail.is_some() => {
+                let tail = self.spawn_call(*block.tail.take().unwrap(), span);
+                block.ty = tail.ty;
+                let ty = tail.ty;
+                block.tail = Some(Box::new(tail));
+                Self::mk(hir::ExprKind::Block(block), ty, span)
+            }
+            hir::ExprKind::Call(_, _, ref args) | hir::ExprKind::CallValue(_, ref args) => {
+                if args.iter().any(|a| matches!(a.kind, hir::ExprKind::Loan(_) | hir::ExprKind::Region(..))) {
+                    let message = "a task cannot borrow: this call lends a place with `mut` or `var`; make the task return the new value instead";
+                    self.diags.error("E1609", span, message);
+                    return Self::error_expr(span);
+                }
+                let result = call.ty;
+                let closure = self.call_closure(call, "spawn", span);
+                let (body, ..) = self.types.closure(closure.ty).expect("a call closure");
+                let erased = self.types.intern(TyKind::Fn(Vec::new(), result, false, Vec::new()));
+                let erased = Self::mk(hir::ExprKind::Erase(Box::new(closure), FnId(body)), erased, span);
+                let join = self.types.handle(Handle::Join, result);
+                Self::mk(hir::ExprKind::Spawn(Box::new(erased)), join, span)
+            }
+            hir::ExprKind::Error => Self::error_expr(span),
+            _ => {
+                let message = "`spawn` takes a call of a function, method or closure; put this work in a function and spawn its call";
+                self.diags.error("E1611", span, message);
+                Self::error_expr(span)
+            }
+        }
+    }
+
+    /// The methods of `Join` and `Group` (11.11, 11.12).
+    #[allow(clippy::too_many_arguments)]
+    fn handle_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        handle: Handle,
+        result: Ty,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        use hir::TaskOp as T;
+        let ty = receiver.ty;
+        let op = match (handle, method.name.as_str()) {
+            (Handle::Join, "wait") => T::Wait,
+            (Handle::Group, "add") => T::GroupAdd,
+            (Handle::Group, "next") => T::GroupNext,
+            (Handle::Group, "length" | "isEmpty") => T::GroupLength,
+            (Handle::Group, "wait") => T::GroupWait,
+            (Handle::Join | Handle::Group, "cancel") => return self.unsupported_expr(span, "`cancel()`"),
+            _ => return self.no_method(ty, method, span),
+        };
+        let params = match op {
+            T::GroupAdd => vec![self.types.handle(Handle::Join, result)],
+            _ => Vec::new(),
+        };
+        if args.len() != params.len() {
+            if op == T::Wait && args.iter().any(|a| a.name.as_ref().is_some_and(|n| n.name == "timeout")) {
+                return self.unsupported_expr(span, "`wait(timeout:)`");
+            }
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let receiver = match op {
+            T::GroupAdd | T::GroupNext => {
+                let operation = format!("`{}`", method.name);
+                let receiver_span = receiver.span;
+                let Some(place) = self.loan_place(cx, receiver, &operation, true) else {
+                    return Self::error_expr(span);
+                };
+                Self::mk(hir::ExprKind::Loan(place), ty, receiver_span)
+            }
+            _ => receiver,
+        };
+        let mut values = vec![receiver];
+        for (arg, ty) in args.iter().zip(params) {
+            let value = self.expr(cx, &arg.value, Some(ty));
+            values.push(self.coerce(value, ty));
+        }
+        let result = match op {
+            T::Wait => result,
+            T::GroupAdd => Ty::UNIT,
+            T::GroupNext => self.types.intern(TyKind::Option(result)),
+            T::GroupWait => match *self.types.kind(result) {
+                TyKind::Result(value, error) => {
+                    let values = self.types.intern(TyKind::Array(value));
+                    self.types.intern(TyKind::Result(values, error))
+                }
+                _ => self.types.intern(TyKind::Array(result)),
+            },
+            _ => Ty::INT,
+        };
+        let value = Self::mk(hir::ExprKind::TaskOp(op, values), result, span);
+        if method.name == "isEmpty" {
+            let zero = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);
+            return Self::mk(hir::ExprKind::Binary(BinOp::Eq, Box::new(value), Box::new(zero)), Ty::BOOL, span);
+        }
+        value
     }
 
     /// A local that no name refers to, such as the value of `for _ in ...`.
@@ -2607,8 +2777,17 @@ impl Checker<'_> {
                 cx.diverged |= value.ty == Ty::NEVER;
                 Some(hir::Stmt::Expr(value))
             }
+            ast::StmtKind::Expr(call @ ast::Expr { kind: ast::ExprKind::Spawn(_), .. }) => {
+                Some(self.spawn_statement(cx, call))
+            }
             ast::StmtKind::Expr(value) => {
-                let value = self.expr(cx, value, None);
+                // The value of a block, `if` or `match` statement is dropped.
+                let expected = matches!(
+                    value.kind,
+                    ast::ExprKind::Block(_) | ast::ExprKind::If { .. } | ast::ExprKind::Match { .. }
+                )
+                .then_some(Ty::UNIT);
+                let value = self.expr(cx, value, expected);
                 if ![Ty::UNIT, Ty::NEVER, Ty::ERROR].contains(&value.ty) {
                     let message =
                         format!("a value of type {} is not used; discard it with `_ = ...`", self.display(value.ty));
@@ -3077,7 +3256,7 @@ impl Checker<'_> {
             return Some(ty);
         }
         let parts: Vec<Ty> = match self.types.kind(ty) {
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => vec![*t],
             TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
             TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
             TyKind::Fn(params, result, ..) => params.iter().copied().chain([*result]).collect(),
@@ -3623,6 +3802,12 @@ impl Checker<'_> {
                 }
             },
             ast::ExprKind::Construct(constructor, value) => self.construct(cx, constructor, value, expected, span),
+            // A task whose `Join` nobody uses belongs to the enclosing block.
+            ast::ExprKind::Spawn(_) if expected == Some(Ty::UNIT) => {
+                let stmts = vec![self.spawn_statement(cx, e)];
+                Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }), Ty::UNIT, span)
+            }
+            ast::ExprKind::Spawn(call) => self.spawn(cx, call, span),
             ast::ExprKind::Error => Self::error_expr(span),
         }
     }
@@ -3756,6 +3941,7 @@ impl Checker<'_> {
             | (TyKind::Array(a), TyKind::Array(b))
             | (TyKind::Deque(a), TyKind::Deque(b))
             | (TyKind::Set(a), TyKind::Set(b)) => self.unify(inference, a, b),
+            (TyKind::Handle(h, a), TyKind::Handle(k, b)) if h == k => self.unify(inference, a, b),
             // A value lifts into an option.
             (TyKind::Option(a), _) => self.unify(inference, a, actual),
             (TyKind::Result(a, b), TyKind::Result(c, d)) | (TyKind::Map(a, b), TyKind::Map(c, d)) => {
@@ -4776,6 +4962,18 @@ impl Checker<'_> {
             let target = CallTarget { explicit, ..CallTarget::new(Callee::Fn(id), signature, expected) };
             return self.call_signature(cx, target, None, args, span);
         }
+        if let ["Group", "new"] = names.as_slice() {
+            let [result] = type_args else {
+                self.diags.error("E1104", span, "`Group.new` takes one type argument, the tasks' result");
+                return Self::error_expr(span);
+            };
+            if !args.is_empty() {
+                return self.arity_error(span, 0, args.len());
+            }
+            let result = self.resolve_type(result);
+            let ty = self.types.handle(Handle::Group, result);
+            return Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::GroupNew, Vec::new()), ty, span);
+        }
         if let ["Map" | "Set", "new"] = names.as_slice() {
             let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
             let ty = match (names[0], types.as_slice()) {
@@ -4908,6 +5106,9 @@ impl Checker<'_> {
         }
         if ty == Ty::STRING {
             return self.string_method(cx, value, method, args, span);
+        }
+        if let TyKind::Handle(handle, result) = *self.types.kind(ty) {
+            return self.handle_method(cx, value, handle, result, method, args, span);
         }
         let kind = self.types.kind(ty).clone();
         let (element, sequence) = match kind {
@@ -5695,7 +5896,7 @@ impl Checker<'_> {
             }
             _ => {}
         }
-        if let ["Array", "new" | "withCapacity"] | ["Deque", "new"] = names.as_slice() {
+        if let ["Array", "new" | "withCapacity"] | ["Deque" | "Group", "new"] = names.as_slice() {
             let message = format!("`{0}.{1}` needs its element type: `{0}.{1}[T](...)`", names[0], names[1]);
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);

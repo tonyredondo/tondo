@@ -88,6 +88,7 @@ impl Mono<'_> {
             generics: Vec::new(),
             params: Vec::new(),
             loans: Vec::new(),
+            fallible: false,
             locals: Vec::new(),
             result: Ty::UNIT,
             body: Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
@@ -209,6 +210,7 @@ impl Mono<'_> {
             | ExprKind::Set(items)
             | ExprKind::ArrayOp(_, items)
             | ExprKind::StrOp(_, items)
+            | ExprKind::TaskOp(_, items)
             | ExprKind::MapOp(_, items) => self.exprs(items, map),
             ExprKind::Record(fields) | ExprKind::Variant(_, fields) => {
                 for (_, value) in fields {
@@ -227,6 +229,7 @@ impl Mono<'_> {
             | ExprKind::Try(inner)
             | ExprKind::Convert(inner)
             | ExprKind::Unary(_, inner)
+            | ExprKind::Spawn(inner)
             | ExprKind::Panic(inner) => self.expr(inner, map),
             ExprKind::Match(scrutinee, arms) => {
                 self.expr(scrutinee, map);

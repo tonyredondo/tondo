@@ -15,10 +15,10 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, FnId, MapOp, Mutation, Program, StdFn, StrOp};
+use crate::hir::{ArrayOp, Callee, FnId, MapOp, Mutation, Program, StdFn, StrOp, TaskOp};
 use crate::mir::{Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtKind, ERR, FloatTy, IntTy, Mode, OK, SOME, Ty, TyKind, Types};
+use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, OK, SOME, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, UserFuncName, types,
@@ -118,6 +118,17 @@ enum Rt {
     DeferPop,
     SbMap,
     StrHash,
+    Spawn,
+    JoinWait,
+    JoinRelease,
+    HandleRetain,
+    GroupNew,
+    GroupAdd,
+    GroupLength,
+    GroupNext,
+    GroupSettle,
+    GroupTake,
+    GroupRelease,
 }
 
 impl Rt {
@@ -202,6 +213,17 @@ impl Rt {
             Rt::DeferPop => ("tondo_rt_defer_pop", &[], &[]),
             Rt::SbMap => ("tondo_rt_sb_map", &[I64, I64, I64, I64], &[]),
             Rt::StrHash => ("tondo_rt_str_hash", &[I64], &[I64]),
+            Rt::Spawn => ("tondo_rt_spawn", &[I64, I8, I64, I64, I64], &[I64]),
+            Rt::JoinWait => ("tondo_rt_join_wait", &[I64, I64], &[]),
+            Rt::JoinRelease => ("tondo_rt_join_release", &[I64], &[]),
+            Rt::HandleRetain => ("tondo_rt_handle_retain", &[I64], &[]),
+            Rt::GroupNew => ("tondo_rt_group_new", &[I8], &[I64]),
+            Rt::GroupAdd => ("tondo_rt_group_add", &[I64, I64], &[]),
+            Rt::GroupLength => ("tondo_rt_group_length", &[I64], &[I64]),
+            Rt::GroupNext => ("tondo_rt_group_next", &[I64, I64], &[I8]),
+            Rt::GroupSettle => ("tondo_rt_group_settle", &[I64], &[I64]),
+            Rt::GroupTake => ("tondo_rt_group_take", &[I64, I64, I64], &[I8]),
+            Rt::GroupRelease => ("tondo_rt_group_release", &[I64], &[]),
         }
     }
 }
@@ -389,7 +411,8 @@ impl Codegen<'_> {
             | TyKind::Deque(_)
             | TyKind::Map(..)
             | TyKind::Set(_)
-            | TyKind::Fn(..) => Class::Scalar(POINTER),
+            | TyKind::Fn(..)
+            | TyKind::Handle(..) => Class::Scalar(POINTER),
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -1075,6 +1098,17 @@ impl Emit<'_, '_> {
                 }
                 TyKind::Fn(..) => {
                     self.call_rt(if release { Rt::FnRelease } else { Rt::FnRetain }, &[pointer]);
+                }
+                TyKind::Handle(handle, _) if release => {
+                    let rt = match handle {
+                        Handle::Join => Rt::JoinRelease,
+                        Handle::Group => Rt::GroupRelease,
+                        Handle::Sender | Handle::Receiver => unreachable!("channels arrive in H5.2"),
+                    };
+                    self.call_rt(rt, &[pointer]);
+                }
+                TyKind::Handle(..) => {
+                    self.call_rt(Rt::HandleRetain, &[pointer]);
                 }
                 _ => {
                     self.call_rt(if release { Rt::StrRelease } else { Rt::StrRetain }, &[pointer]);
@@ -1790,6 +1824,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Rvalue::Mutate(mutation, target, operands, retain, span) => {
                     self.mutate(*mutation, target, operands, retain, place, *span);
                 }
+                Rvalue::TaskOp(op, operands, retain) => {
+                    self.task_op(*op, operands, retain, place);
+                }
                 Rvalue::AssignSlice(target, bounds, value, span) => self.assign_slice(target, bounds, value, *span),
                 Rvalue::CheckRegion(array, region, other, span) => self.check_region(array, region, other, *span),
                 _ => {}
@@ -2017,6 +2054,34 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.store_val(captures, env, value);
                 Val::Scalar(object)
             }
+            Rvalue::Spawn(body, retain) => {
+                let TyKind::Fn(_, result, ..) = *self.e.cg.types.kind(self.operand_ty(body)) else {
+                    unreachable!("a task runs a `fn()` value")
+                };
+                let object = self.scalar(body);
+                if *retain {
+                    self.e.call_rt(Rt::FnRetain, &[object]);
+                }
+                // How the body returns its result: see `ResultKind` in the runtime.
+                let kind = match self.e.cg.class(result) {
+                    Class::Zero => 0,
+                    Class::Scalar(types::F64) => 2,
+                    Class::Scalar(types::F32) => 3,
+                    Class::Scalar(_) => 1,
+                    Class::Memory => 4,
+                };
+                let layout = self.e.cg.layout(result);
+                let size = if kind == 0 { 0 } else { layout.size };
+                let kind = self.e.fb.ins().iconst(types::I8, kind);
+                let size = self.e.fb.ins().iconst(POINTER, size as i64);
+                let align = self.e.fb.ins().iconst(POINTER, layout.align as i64);
+                let release = self.e.glue_or_null(Glue::Release, result);
+                Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release]).unwrap())
+            }
+            Rvalue::TaskOp(op, operands, retain) => match self.task_op(*op, operands, retain, place) {
+                Some(value) => value,
+                None => return,
+            },
             Rvalue::Discriminant(source) => {
                 let source_ty = self.place_ty(source);
                 let value = self.read(source);
@@ -2259,6 +2324,49 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// The `T?` result of a removal: `some` with the element the runtime
     /// moved to `out` when `found` is 1, otherwise `none`.
+    /// An operation of a `Join` or a `Group` (see the runtime's `tasks`):
+    /// the value to store at `place`, or `None` once it is stored.
+    fn task_op(&mut self, op: TaskOp, operands: &[Operand], retain: &[bool], place: &Place) -> Option<Val> {
+        let ty = self.place_ty(place);
+        let handle_ty = operands.first().map(|o| self.operand_ty(o));
+        let item = handle_ty.map(|t| self.e.cg.types.handle_result(t));
+        let values: Vec<ir::Value> = operands.iter().map(|o| self.scalar(o)).collect();
+        match op {
+            TaskOp::Wait => {
+                let item = item.expect("a join");
+                let out = self.scratch(item);
+                self.e.call_rt(Rt::JoinWait, &[values[0], out]);
+                Some(self.e.value_at(out, item))
+            }
+            TaskOp::GroupNew => {
+                let result = self.e.cg.types.handle_result(ty);
+                let fallible = matches!(self.e.cg.types.kind(result), TyKind::Result(..));
+                let fallible = self.e.fb.ins().iconst(types::I8, fallible as i64);
+                Some(Val::Scalar(self.e.call_rt(Rt::GroupNew, &[fallible]).unwrap()))
+            }
+            TaskOp::GroupAdd => {
+                if retain[1] {
+                    self.e.call_rt(Rt::HandleRetain, &[values[1]]);
+                }
+                self.e.call_rt(Rt::GroupAdd, &[values[0], values[1]]);
+                None
+            }
+            TaskOp::GroupNext | TaskOp::GroupTake => {
+                let item = item.expect("a group");
+                let out = self.scratch(item);
+                let found = if op == TaskOp::GroupNext {
+                    self.e.call_rt(Rt::GroupNext, &[values[0], out]).unwrap()
+                } else {
+                    self.e.call_rt(Rt::GroupTake, &[values[0], values[1], out]).unwrap()
+                };
+                self.removal_result(place, ty, item, out, found)
+            }
+            TaskOp::GroupLength => Some(Val::Scalar(self.e.call_rt(Rt::GroupLength, &[values[0]]).unwrap())),
+            TaskOp::GroupSettle => Some(Val::Scalar(self.e.call_rt(Rt::GroupSettle, &[values[0]]).unwrap())),
+            TaskOp::GroupWait => unreachable!("lowered to a loop"),
+        }
+    }
+
     fn removal_result(&mut self, place: &Place, ty: Ty, element: Ty, out: ir::Value, found: ir::Value) -> Option<Val> {
         if self.e.cg.class(ty) != Class::Memory {
             // The element has no size: the option is just its tag.

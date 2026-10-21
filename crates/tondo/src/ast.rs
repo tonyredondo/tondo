@@ -203,7 +203,6 @@ pub struct FnDecl {
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub result: Option<TypeExpr>,
-    pub suspends: bool,
     /// `None` for a required method of a trait.
     pub body: Option<Block>,
     pub span: Span,
@@ -414,6 +413,8 @@ pub enum ExprKind {
     None,
     /// `some(value)`, `ok(value)` or `err(value)`: the constructor's name.
     Construct(&'static str, Box<Expr>),
+    /// `spawn call(arguments)` (11.11).
+    Spawn(Box<Expr>),
     /// Placeholder after a reported syntax error.
     Error,
 }

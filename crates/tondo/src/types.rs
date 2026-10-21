@@ -112,10 +112,32 @@ pub enum TyKind {
     /// last parameter is variadic and how each parameter is passed (16.3).
     /// Values are reference-counted callables.
     Fn(Vec<Ty>, Ty, bool, Vec<Mode>),
+    /// A handle to a task or a channel (11.11 to 11.13): the task's result
+    /// or the values the channel carries.
+    Handle(Handle, Ty),
     /// The result `impl Bound` of a function (12.8) applied to the
     /// function's type arguments. Callers only know its bounds;
     /// monomorphization replaces it with the witness its body returns.
     Opaque(u32, Vec<Ty>),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Handle {
+    Join,
+    Group,
+    Sender,
+    Receiver,
+}
+
+impl Handle {
+    pub fn name(self) -> &'static str {
+        match self {
+            Handle::Join => "Join",
+            Handle::Group => "Group",
+            Handle::Sender => "Sender",
+            Handle::Receiver => "Receiver",
+        }
+    }
 }
 
 /// An opaque result: its bounds are those of `carrier`, a type parameter
@@ -465,7 +487,9 @@ impl Types {
                 params.iter().for_each(|&t| self.opaques_in(t, out));
                 self.opaques_in(*result, out);
             }
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.opaques_in(*t, out),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => {
+                self.opaques_in(*t, out)
+            }
             TyKind::Result(a, b) | TyKind::Map(a, b) => {
                 self.opaques_in(*a, out);
                 self.opaques_in(*b, out);
@@ -516,6 +540,10 @@ impl Types {
                 let t = self.replace(t, map);
                 self.intern(TyKind::Set(t))
             }
+            TyKind::Handle(handle, t) => {
+                let t = self.replace(t, map);
+                self.handle(handle, t)
+            }
             TyKind::Result(a, b) => {
                 let (a, b) = (self.replace(a, map), self.replace(b, map));
                 self.intern(TyKind::Result(a, b))
@@ -565,6 +593,23 @@ impl Types {
         info.params = info.params.iter().map(|&p| self.subst(p, &map)).collect();
         info.result = self.subst(info.result, &map);
         Some((info.body, args, info))
+    }
+
+    /// `Join[T]`, `Group[T]`, `Sender[T]` or `Receiver[T]`. Lowering a
+    /// group's `wait` needs `T?` too.
+    pub fn handle(&mut self, handle: Handle, ty: Ty) -> Ty {
+        if handle == Handle::Group {
+            self.intern(TyKind::Option(ty));
+        }
+        self.intern(TyKind::Handle(handle, ty))
+    }
+
+    /// The result of a task handle's type, `T` in `Join[T]`.
+    pub fn handle_result(&self, ty: Ty) -> Ty {
+        match self.kind(ty) {
+            TyKind::Handle(_, result) => *result,
+            _ => Ty::ERROR,
+        }
     }
 
     /// The template and arguments of an instance of a generic type.
@@ -660,6 +705,10 @@ impl Types {
                 let element = self.subst(element, map);
                 self.intern(TyKind::Set(element))
             }
+            TyKind::Handle(handle, element) => {
+                let element = self.subst(element, map);
+                self.handle(handle, element)
+            }
             TyKind::Map(key, value) => {
                 let (key, value) = (self.subst(key, map), self.subst(value, map));
                 // Lowering needs the entry tuple and the `V?` of lookups.
@@ -749,6 +798,7 @@ impl Types {
             | (TyKind::Array(x), TyKind::Array(y))
             | (TyKind::Deque(x), TyKind::Deque(y))
             | (TyKind::Set(x), TyKind::Set(y)) => each(self, *x, *y),
+            (TyKind::Handle(h, x), TyKind::Handle(k, y)) if h == k => each(self, *x, *y),
             (TyKind::Result(p, q), TyKind::Result(r, t)) | (TyKind::Map(p, q), TyKind::Map(r, t)) => {
                 let (p, q, r, t) = (*p, *q, *r, *t);
                 each(self, p, r) && each(self, q, t)
@@ -775,7 +825,9 @@ impl Types {
                 params.iter().for_each(|&t| self.params_in(t, out));
                 self.params_in(*result, out);
             }
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.params_in(*t, out),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => {
+                self.params_in(*t, out)
+            }
             TyKind::Result(a, b) | TyKind::Map(a, b) => {
                 self.params_in(*a, out);
                 self.params_in(*b, out);
@@ -797,7 +849,9 @@ impl Types {
                 items.iter().any(|&t| self.has_params(t))
             }
             TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_params(t)) || self.has_params(*result),
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.has_params(*t),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => {
+                self.has_params(*t)
+            }
             TyKind::Result(a, b) | TyKind::Map(a, b) => self.has_params(*a) || self.has_params(*b),
             TyKind::Adt(id) => self.adts[id.0 as usize]
                 .instance
@@ -811,7 +865,7 @@ impl Types {
     pub fn depth(&self, ty: Ty) -> usize {
         let children: Vec<Ty> = match self.kind(ty) {
             TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
-            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Handle(_, t) => vec![*t],
             TyKind::Result(a, b) | TyKind::Map(a, b) => vec![*a, *b],
             TyKind::Adt(id) => self.adts[id.0 as usize].instance.as_ref().map_or(Vec::new(), |(_, a)| a.clone()),
             _ => Vec::new(),
@@ -921,7 +975,13 @@ impl Types {
         let repr = self.repr(ty);
         let heap = matches!(
             self.kind(repr),
-            TyKind::String | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) | TyKind::Fn(..)
+            TyKind::String
+                | TyKind::Array(_)
+                | TyKind::Deque(_)
+                | TyKind::Map(..)
+                | TyKind::Set(_)
+                | TyKind::Fn(..)
+                | TyKind::Handle(..)
         );
         let result = heap || {
             let parts = match (self.components(repr), self.variants(repr)) {
@@ -963,7 +1023,8 @@ impl Types {
             | TyKind::Deque(_)
             | TyKind::Map(..)
             | TyKind::Set(_)
-            | TyKind::Fn(..) => false,
+            | TyKind::Fn(..)
+            | TyKind::Handle(..) => false,
             TyKind::Param(index) => self.params[*index as usize].key,
             TyKind::Opaque(id, _) => self.key_in(self.opaques[*id as usize].carrier, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
@@ -981,18 +1042,19 @@ impl Types {
     /// it (`~Copy`, or a type's or trait's), and composites holding them,
     /// are affine.
     pub fn is_copy(&self, ty: Ty) -> bool {
-        self.capability(ty, &mut Vec::new(), &|p| p.copy)
+        self.capability(ty, &mut Vec::new(), true)
     }
 
     /// The closed `Discard` capability (8.10): values may be dropped at the
     /// end of their scope or with `_ =` without a terminal operation.
     pub fn is_discard(&self, ty: Ty) -> bool {
-        self.capability(ty, &mut Vec::new(), &|p| p.copy || p.discard)
+        self.capability(ty, &mut Vec::new(), false)
     }
 
-    /// A structural capability that every concrete value of 0.1 has and a
-    /// type parameter has when `param` says so; computed coinductively.
-    fn capability(&self, ty: Ty, visiting: &mut Vec<Ty>, param: &dyn Fn(&ParamDef) -> bool) -> bool {
+    /// `Copy` or `Discard`, structural and computed coinductively: a type
+    /// parameter has what it declares; a `Join`, `Group` or `Sender` has a
+    /// single owner, and the first two can be dropped when their result can.
+    fn capability(&self, ty: Ty, visiting: &mut Vec<Ty>, copy: bool) -> bool {
         if visiting.contains(&ty) {
             return true;
         }
@@ -1001,8 +1063,16 @@ impl Types {
         let parts: Vec<Ty> = match self.kind(repr) {
             TyKind::Param(index) => {
                 visiting.pop();
-                return param(&self.params[*index as usize]);
+                let param = &self.params[*index as usize];
+                return param.copy || !copy && param.discard;
             }
+            TyKind::Handle(Handle::Receiver, _) => Vec::new(),
+            TyKind::Handle(Handle::Sender, _) if !copy => Vec::new(),
+            TyKind::Handle(..) if copy => {
+                visiting.pop();
+                return false;
+            }
+            TyKind::Handle(_, result) => vec![*result],
             TyKind::Opaque(id, _) => vec![self.opaques[*id as usize].carrier],
             TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) => vec![*t],
             TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
@@ -1013,7 +1083,7 @@ impl Types {
                 (None, None) => Vec::new(),
             },
         };
-        let result = parts.iter().all(|&t| self.capability(t, visiting, param));
+        let result = parts.iter().all(|&t| self.capability(t, visiting, copy));
         visiting.pop();
         result
     }
@@ -1045,7 +1115,7 @@ impl Types {
             }
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
-            TyKind::Fn(..) => false,
+            TyKind::Fn(..) | TyKind::Handle(..) => false,
             TyKind::Opaque(id, _) => self.equatable_in(self.opaques[*id as usize].carrier, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
@@ -1064,7 +1134,9 @@ impl Types {
             TyKind::Tuple(items) => items.iter().any(|&t| self.has_error(t)),
             TyKind::Option(inner) => self.has_error(*inner),
             TyKind::Result(ok, err) => self.has_error(*ok) || self.has_error(*err),
-            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => self.has_error(*element),
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Handle(_, element) => {
+                self.has_error(*element)
+            }
             TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
             TyKind::Union(members) => members.iter().any(|&t| self.has_error(t)),
             TyKind::Fn(params, result, ..) => params.iter().any(|&t| self.has_error(t)) || self.has_error(*result),
@@ -1115,6 +1187,7 @@ impl Types {
             TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
+            TyKind::Handle(handle, element) => format!("{}[{}]", handle.name(), self.display(*element)),
             TyKind::Result(ok, err) => {
                 // A union in either position is grouped (15.1).
                 let grouped = |t: Ty| match self.kind(t) {

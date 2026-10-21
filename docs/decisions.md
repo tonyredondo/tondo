@@ -338,3 +338,16 @@ role, unbounded channels and timeouts were kept or added after review: the
 aim is a middle ground, not channels for everything. `oneshot` and
 `AsyncIterator` were dropped: `Join` covers a future result, and any
 `Iterator` may wait in `next`.
+
+## 2026-10-21 — One task queue for all cores
+
+`main` runs as the first task on the process's main thread, and the first
+`spawn` starts one worker thread per core. Workers take tasks from a single
+queue; a task that waits saves its registers on its own stack and switches
+back to its worker, so compiled code knows nothing of scheduling. Task stacks
+are 8 MiB, mapped lazily with a guard region and reused across tasks. A
+`Join` counts only the program's references and the last one waits for the
+task, which is how an unconsumed `Join` waits at the end of its block. When
+every worker is idle and nothing can run, the program panics with `P0013`.
+A single queue keeps the scheduler small; work stealing can replace it when
+measurements show contention.

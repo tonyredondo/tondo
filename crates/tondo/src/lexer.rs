@@ -89,15 +89,14 @@ macro_rules! keywords {
 }
 
 keywords! {
-    Alias = "alias", And = "and", As = "as", Await = "await", Break = "break",
+    Alias = "alias", And = "and", As = "as", Break = "break",
     Const = "const", Continue = "continue", Defer = "defer", Derive = "derive",
     Else = "else", Enum = "enum", Fail = "fail", False = "false",
     Fn = "fn", For = "for", If = "if", Impl = "impl", Import = "import", In = "in",
     Let = "let", Match = "match", Mut = "mut", None = "none", Not = "not",
     Or = "or", Priv = "priv", Pub = "pub", Ref = "ref", Return = "return",
-    Scope = "scope", Select = "select", Selectable = "selectable", SelfValue = "self",
-    Spawn = "spawn", Suite = "suite", Suspends = "suspends",
-    Test = "test", Thread = "thread", Trait = "trait", True = "true", Type = "type",
+    Select = "select", SelfValue = "self", Spawn = "spawn", Suite = "suite",
+    Test = "test", Trait = "trait", True = "true", Type = "type",
     Unsafe = "unsafe", Var = "var", With = "with",
 }
 
@@ -221,7 +220,7 @@ fn suppresses_following_newline(tok: &Tok) -> bool {
                 | Tok::ShlEq
                 | Tok::ShrEq
                 | Tok::Tilde
-                | Tok::Kw(Kw::Not | Kw::Await | Kw::Spawn | Kw::Fail | Kw::Defer)
+                | Tok::Kw(Kw::Not | Kw::Spawn | Kw::Fail | Kw::Defer)
         )
 }
 
