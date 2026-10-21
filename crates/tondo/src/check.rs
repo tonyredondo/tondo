@@ -881,7 +881,11 @@ impl Checker<'_> {
             ast::ExprKind::Index { base, index } => {
                 let (local, mut path, ty) = self.place(cx, base)?;
                 let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(ty) else {
-                    let message = format!("{} cannot be indexed", self.display(ty));
+                    let message = if ty == Ty::STRING {
+                        "a `String` is immutable: build a new one, for example with interpolation".to_string()
+                    } else {
+                        format!("{} cannot be indexed", self.display(ty))
+                    };
                     self.diags.error("E1102", base.span, message);
                     return None;
                 };
@@ -951,6 +955,7 @@ impl Checker<'_> {
                     let source = self.expr(cx, source, None);
                     let element = match *self.types.kind(source.ty) {
                         TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => element,
+                        TyKind::String => Ty::CHAR,
                         // A map yields its entries as `(key, value)` (10.13).
                         TyKind::Map(key, value) => self.types.intern(TyKind::Tuple(vec![key, value])),
                         TyKind::Error => Ty::ERROR,
@@ -1072,6 +1077,11 @@ impl Checker<'_> {
                     let ty = self.types.intern(TyKind::Option(value));
                     return Self::mk(hir::ExprKind::MapOp(hir::MapOp::Get, vec![base, index]), ty, span);
                 }
+                if base.ty == Ty::STRING {
+                    let index = self.expr(cx, index, Some(Ty::INT));
+                    let index = self.coerce(index, Ty::INT);
+                    return Self::mk(hir::ExprKind::StrOp(hir::StrOp::At, vec![base, index]), Ty::CHAR, span);
+                }
                 let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(base.ty) else {
                     return self.not_indexable(base, span);
                 };
@@ -1081,7 +1091,7 @@ impl Checker<'_> {
             }
             ast::ExprKind::Slice { base, start, end, step } => {
                 let base = self.expr(cx, base, None);
-                if !matches!(self.types.kind(base.ty), TyKind::Array(_)) {
+                if !matches!(self.types.kind(base.ty), TyKind::Array(_) | TyKind::String) {
                     return self.not_indexable(base, span);
                 }
                 let mut bound = |this: &mut Self, part: &Option<Box<ast::Expr>>| {
@@ -1891,6 +1901,9 @@ impl Checker<'_> {
         }
         let value = self.expr(cx, receiver, None);
         let ty = value.ty;
+        if ty == Ty::STRING {
+            return self.string_method(cx, value, method, args, span);
+        }
         let kind = self.types.kind(ty).clone();
         let (element, sequence) = match kind {
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => {
@@ -1947,6 +1960,45 @@ impl Checker<'_> {
             values.push(self.coerce(arg, ty));
         }
         Self::mk(hir::ExprKind::ArrayOp(op, values), result, span)
+    }
+
+    /// The intrinsic methods of `String` (19.2, 19.6).
+    fn string_method(
+        &mut self,
+        cx: &mut FnCx,
+        text: hir::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let char_option = self.types.intern(TyKind::Option(Ty::CHAR));
+        let (params, result) = match method.name.as_str() {
+            "length" | "byteLength" | "isEmpty" => (vec![], Ty::INT),
+            "get" => (vec![Ty::INT], char_option),
+            "concat" => (vec![Ty::STRING], Ty::STRING),
+            _ => return self.no_method(Ty::STRING, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let mut values = vec![text];
+        for (arg, ty) in args.iter().zip(params) {
+            let arg = self.expr(cx, &arg.value, Some(ty));
+            values.push(self.coerce(arg, ty));
+        }
+        let kind = match method.name.as_str() {
+            "length" => hir::ExprKind::Length(Box::new(values.remove(0))),
+            "byteLength" => hir::ExprKind::StrOp(hir::StrOp::ByteLength, values),
+            "isEmpty" => {
+                let length = Self::mk(hir::ExprKind::StrOp(hir::StrOp::ByteLength, values), Ty::INT, span);
+                let zero = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);
+                let kind = hir::ExprKind::Binary(BinOp::Eq, Box::new(length), Box::new(zero));
+                return Self::mk(kind, Ty::BOOL, span);
+            }
+            "get" => hir::ExprKind::StrOp(hir::StrOp::Get, values),
+            _ => hir::ExprKind::StrOp(hir::StrOp::Concat, values),
+        };
+        Self::mk(kind, result, span)
     }
 
     /// A method that changes a collection's extent or contents; the
@@ -2008,6 +2060,9 @@ impl Checker<'_> {
         let hint = match (self.types.kind(ty), name) {
             (_, "size" | "count" | "len") => "use `length()`",
             (_, "empty") => "use `isEmpty()`",
+            (TyKind::String, "charAt" | "at") => "use `text[index]`, or `get(index)` for a `Char?`",
+            (TyKind::String, "substring" | "substr" | "slice") => "use `text[start:end]`",
+            (TyKind::String, "chars") => "iterate the string itself: `for c in text`",
             (TyKind::Array(_) | TyKind::Deque(_), "append" | "add" | "enqueue" | "pushBack") => "use `push(value)`",
             (TyKind::Array(_) | TyKind::Deque(_), "peek" | "last" | "back") => "use `get(-1)`, which returns `T?`",
             (TyKind::Array(_) | TyKind::Deque(_), "first" | "front") => "use `get(0)`, which returns `T?`",
@@ -2402,7 +2457,10 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         let operator_error = |this: &mut Self, ty: Ty| {
-            let message = format!("operator `{}` cannot be applied to {}", op.as_str(), this.display(ty));
+            let mut message = format!("operator `{}` cannot be applied to {}", op.as_str(), this.display(ty));
+            if op == BinOp::Add && ty == Ty::STRING {
+                message.push_str(": use interpolation, `\"{a}{b}\"`, or `a.concat(b)`");
+            }
             this.diags.error("E1102", span, message);
         };
         let (left, right, ty) = match op {

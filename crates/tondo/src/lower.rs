@@ -507,7 +507,13 @@ impl Builder<'_> {
                 let snapshot = self.new_local(array.ty);
                 self.store(Place::local(snapshot), value, array.span);
                 self.frames.last_mut().unwrap().push(snapshot);
-                let length = Rvalue::Length(Operand::local(snapshot));
+                // A string is walked by byte offsets, one scalar at a time.
+                let text = array.ty == Ty::STRING;
+                let length = if text {
+                    Rvalue::StrOp(hir::StrOp::ByteLength, vec![Operand::local(snapshot)], array.span)
+                } else {
+                    Rvalue::Length(Operand::local(snapshot))
+                };
                 let length = self.temp(Ty::INT, length, array.span);
                 let cursor = self.new_local(Ty::INT);
                 let zero = Rvalue::Use(Operand::Const(Const::Int(0, Ty::INT)));
@@ -528,7 +534,15 @@ impl Builder<'_> {
                 });
                 // The element bindings belong to one iteration.
                 self.scopes.push(Vec::new());
-                let element = Place::local(snapshot).index(cursor, array.span);
+                let element = if text {
+                    let operands = vec![Operand::local(snapshot), Operand::local(cursor)];
+                    let scalar =
+                        self.temp(Ty::CHAR, Rvalue::StrOp(hir::StrOp::Decode, operands, array.span), array.span);
+                    let Operand::Copy(place) = scalar else { unreachable!() };
+                    place
+                } else {
+                    Place::local(snapshot).index(cursor, array.span)
+                };
                 self.bind_pattern(pattern, &element);
                 self.in_frame(|b| b.block(body));
                 let scope = self.scopes.pop().unwrap();
@@ -536,7 +550,13 @@ impl Builder<'_> {
                 self.loops.pop();
                 self.goto(step);
                 self.switch_to(step);
-                self.assign(Place::local(cursor), Rvalue::Increment(Operand::local(cursor)), array.span);
+                let next = if text {
+                    let operands = vec![Operand::local(snapshot), Operand::local(cursor)];
+                    Rvalue::StrOp(hir::StrOp::Next, operands, array.span)
+                } else {
+                    Rvalue::Increment(Operand::local(cursor))
+                };
+                self.assign(Place::local(cursor), next, array.span);
                 self.goto(head);
                 self.switch_to(exit);
             }
@@ -718,6 +738,10 @@ impl Builder<'_> {
             hir::ExprKind::Length(collection) => {
                 let collection = self.expr(collection);
                 self.temp(e.ty, Rvalue::Length(collection), e.span)
+            }
+            hir::ExprKind::StrOp(op, operands) => {
+                let operands = operands.iter().map(|o| self.expr(o)).collect();
+                self.temp(e.ty, Rvalue::StrOp(*op, operands, e.span), e.span)
             }
             hir::ExprKind::Map(entries) => {
                 let map = self.temp(e.ty, Rvalue::MapOp(hir::MapOp::New, Vec::new(), e.span), e.span);

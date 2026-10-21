@@ -94,6 +94,84 @@ pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
     unsafe { str_bytes(a).cmp(str_bytes(b)) as i32 }
 }
 
+/// The text of a string; strings always hold valid UTF-8.
+unsafe fn str_text<'a>(s: *const Str) -> &'a str {
+    unsafe { std::str::from_utf8_unchecked(str_bytes(s)) }
+}
+
+/// The number of Unicode scalar values (19.2).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_length(s: *const Str) -> i64 {
+    // Every scalar has exactly one byte that is not a continuation byte.
+    unsafe { str_bytes(s) }.iter().filter(|&&b| (b as i8) >= -0x40).count() as i64
+}
+
+/// The scalar at `index`, counting from the end when negative, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_get(s: *const Str, index: i64) -> i64 {
+    let text = unsafe { str_text(s) };
+    let found = if index >= 0 {
+        text.chars().nth(index as usize)
+    } else {
+        index.checked_neg().and_then(|back| text.chars().nth_back(back as usize - 1))
+    };
+    found.map_or(-1, |c| c as i64)
+}
+
+/// `text[index]`: the scalar at `index`, panicking with `P0001` outside.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_at(s: *const Str, index: i64, location: *const Str) -> u32 {
+    match unsafe { tondo_rt_str_get(s, index) } {
+        -1 => unsafe { tondo_rt_panic(1, std::ptr::null(), location) },
+        c => c as u32,
+    }
+}
+
+/// `text[start:end:step]` by scalar positions (19.3).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_slice(
+    s: *const Str,
+    start: i64,
+    has_start: u8,
+    end: i64,
+    has_end: u8,
+    step: i64,
+    location: *const Str,
+) -> *mut Str {
+    unsafe {
+        let text = str_text(s);
+        let chars: Vec<char> = text.chars().collect();
+        let (first, count) = slice_range(chars.len(), start, has_start, end, has_end, step, location);
+        let selected: String = (0..count as i64).map(|k| chars[(first + k * step) as usize]).collect();
+        str_new(selected.as_bytes())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_concat(a: *const Str, b: *const Str) -> *mut Str {
+    unsafe { str_new(&[str_bytes(a), str_bytes(b)].concat()) }
+}
+
+/// The scalar that starts at byte `offset`; iteration only visits valid
+/// offsets.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_decode(s: *const Str, offset: i64) -> u32 {
+    unsafe { str_text(s).get_unchecked(offset as usize..) }.chars().next().map_or(0, |c| c as u32)
+}
+
+/// The byte offset of the scalar after the one at `offset`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_next(s: *const Str, offset: i64) -> i64 {
+    let lead = unsafe { str_bytes(s) }[offset as usize];
+    let width = match lead {
+        0x00..0x80 => 1,
+        0x80..0xE0 => 2,
+        0xE0..0xF0 => 3,
+        _ => 4,
+    };
+    offset + width
+}
+
 // ---------------------------------------------------------------------------
 // Boxes
 // ---------------------------------------------------------------------------
@@ -518,21 +596,21 @@ pub unsafe extern "C" fn tondo_rt_deque_pop_front(
     }
 }
 
-/// `values[start:end:step]` with the normalization of spec 10.4. Absent
-/// bounds are passed as `has_start`/`has_end` equal to 0.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_array_slice(
-    a: *mut ArrayHeader,
-    size: usize,
-    retain: Option<Glue>,
+/// The first position and the number of elements that `[start:end:step]`
+/// selects from `len` elements, with the normalization of spec 10.4. Absent
+/// bounds are passed as `has_start`/`has_end` equal to 0; a zero step
+/// panics with `P0002`.
+#[allow(clippy::too_many_arguments)]
+unsafe fn slice_range(
+    len: usize,
     start: i64,
     has_start: u8,
     end: i64,
     has_end: u8,
     step: i64,
     location: *const Str,
-) -> *mut ArrayHeader {
-    let n = unsafe { (*a).len } as i128;
+) -> (i64, usize) {
+    let n = len as i128;
     if step == 0 {
         unsafe { tondo_rt_panic(2, std::ptr::null(), location) };
     }
@@ -554,7 +632,26 @@ pub unsafe extern "C" fn tondo_rt_array_slice(
     } else {
         0
     };
-    unsafe { array_copy(a, size, retain, first as i64, step, count as usize, count as usize) }
+    (first as i64, count as usize)
+}
+
+/// `values[start:end:step]` (10.4).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_slice(
+    a: *mut ArrayHeader,
+    size: usize,
+    retain: Option<Glue>,
+    start: i64,
+    has_start: u8,
+    end: i64,
+    has_end: u8,
+    step: i64,
+    location: *const Str,
+) -> *mut ArrayHeader {
+    unsafe {
+        let (first, count) = slice_range((*a).len, start, has_start, end, has_end, step, location);
+        array_copy(a, size, retain, first, step, count, count)
+    }
 }
 
 /// The checked `slice(start, end)` method: null when the bounds are invalid.

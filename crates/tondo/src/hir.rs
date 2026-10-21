@@ -113,8 +113,10 @@ pub enum ExprKind {
     Slice(Box<Expr>, [Option<Box<Expr>>; 3]),
     /// An intrinsic array or deque operation; the receiver comes first.
     ArrayOp(ArrayOp, Vec<Expr>),
-    /// The number of elements of any collection.
+    /// The number of elements of any collection, or of scalars of a string.
     Length(Box<Expr>),
+    /// An intrinsic string operation; the string comes first.
+    StrOp(StrOp, Vec<Expr>),
     /// A method that changes a collection on a `var` place; the arguments
     /// follow in order.
     Mutate(Mutation, Place, Vec<Expr>),
@@ -171,6 +173,20 @@ pub enum ArrayOp {
     Repeat,
     /// `value in array`; the value comes first.
     Contains,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum StrOp {
+    /// `text[index]`: a `Char`, panicking outside the string.
+    At,
+    /// `text.get(index)`: `Char?`
+    Get,
+    ByteLength,
+    Concat,
+    /// The scalar at a byte offset; used by iteration.
+    Decode,
+    /// The byte offset after the scalar at a byte offset; used by iteration.
+    Next,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

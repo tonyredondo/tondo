@@ -4,7 +4,7 @@
 //! inserted during lowering, so code generation is a direct translation.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, MapOp, Mutation};
+use crate::hir::{ArrayOp, Callee, MapOp, Mutation, StrOp};
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 
@@ -153,8 +153,10 @@ pub enum Rvalue {
     ArrayOp(ArrayOp, Vec<Operand>, Span),
     /// `array[start:end:step]`.
     Slice(Operand, [Option<Operand>; 3], Span),
-    /// The number of elements of any collection.
+    /// The number of elements of any collection, or of scalars of a string.
     Length(Operand),
+    /// An intrinsic string operation, string first.
+    StrOp(StrOp, Vec<Operand>, Span),
     /// A map or set query, collection first.
     MapOp(MapOp, Vec<Operand>, Span),
     /// A method that changes the collection at the place (made unique

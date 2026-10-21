@@ -15,7 +15,7 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, MapOp, Mutation, Program, StdFn};
+use crate::hir::{ArrayOp, Callee, MapOp, Mutation, Program, StdFn, StrOp};
 use crate::mir::{Body, Const, Local, Operand, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, SOME, Ty, TyKind, Types};
@@ -44,6 +44,13 @@ enum Rt {
     StrRelease,
     StrEq,
     StrCmp,
+    StrLength,
+    StrGet,
+    StrAt,
+    StrSlice,
+    StrConcat,
+    StrDecode,
+    StrNext,
     SbNew,
     SbStr,
     SbI64,
@@ -101,6 +108,13 @@ impl Rt {
             Rt::StrRelease => ("tondo_rt_str_release", &[I64], &[]),
             Rt::StrEq => ("tondo_rt_str_eq", &[I64, I64], &[I8]),
             Rt::StrCmp => ("tondo_rt_str_cmp", &[I64, I64], &[I32]),
+            Rt::StrLength => ("tondo_rt_str_length", &[I64], &[I64]),
+            Rt::StrGet => ("tondo_rt_str_get", &[I64, I64], &[I64]),
+            Rt::StrAt => ("tondo_rt_str_at", &[I64, I64, I64], &[I32]),
+            Rt::StrSlice => ("tondo_rt_str_slice", &[I64, I64, I8, I64, I8, I64, I64], &[I64]),
+            Rt::StrConcat => ("tondo_rt_str_concat", &[I64, I64], &[I64]),
+            Rt::StrDecode => ("tondo_rt_str_decode", &[I64, I64], &[I32]),
+            Rt::StrNext => ("tondo_rt_str_next", &[I64, I64], &[I64]),
             Rt::SbNew => ("tondo_rt_sb_new", &[], &[I64]),
             Rt::SbStr => ("tondo_rt_sb_str", &[I64, I64], &[]),
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
@@ -1535,10 +1549,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Rvalue::Slice(base, parts, span) => {
-                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) else { unreachable!() };
-                let array = self.scalar(base);
-                let size = self.e.element_size(element);
-                let retain = self.e.glue_or_null(Glue::Retain, element);
+                let sequence = self.scalar(base);
                 let bound = |this: &mut Self, part: &Option<Operand>, default: i64| match part {
                     Some(part) => (this.scalar(part), this.e.fb.ins().iconst(types::I8, 1)),
                     None => (this.e.fb.ins().iconst(types::I64, default), this.e.fb.ins().iconst(types::I8, 0)),
@@ -1547,16 +1558,49 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let (end, has_end) = bound(self, &parts[1], 0);
                 let (step, _) = bound(self, &parts[2], 1);
                 let location = self.location(*span);
-                let args = [array, size, retain, start, has_start, end, has_end, step, location];
-                Val::Scalar(self.e.call_rt(Rt::ArraySlice, &args).unwrap())
+                let range = [start, has_start, end, has_end, step, location];
+                Val::Scalar(if ty == Ty::STRING {
+                    self.e.call_rt(Rt::StrSlice, &[&[sequence], &range[..]].concat()).unwrap()
+                } else {
+                    let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) else {
+                        unreachable!()
+                    };
+                    let size = self.e.element_size(element);
+                    let retain = self.e.glue_or_null(Glue::Retain, element);
+                    self.e.call_rt(Rt::ArraySlice, &[&[sequence, size, retain], &range[..]].concat()).unwrap()
+                })
             }
             Rvalue::Length(collection) => {
                 let collection_ty = self.operand_ty(collection);
                 let value = self.scalar(collection);
                 Val::Scalar(match self.e.cg.types.kind(self.e.cg.types.repr(collection_ty)) {
                     TyKind::Array(_) | TyKind::Deque(_) => self.e.fb.ins().load(types::I64, flags(), value, 8),
+                    TyKind::String => self.e.call_rt(Rt::StrLength, &[value]).unwrap(),
                     _ => self.e.call_rt(Rt::MapLen, &[value]).unwrap(),
                 })
+            }
+            Rvalue::StrOp(op, operands, span) => {
+                let values: Vec<ir::Value> = operands.iter().map(|o| self.scalar(o)).collect();
+                match op {
+                    StrOp::At => {
+                        let location = self.location(*span);
+                        Val::Scalar(self.e.call_rt(Rt::StrAt, &[values[0], values[1], location]).unwrap())
+                    }
+                    StrOp::Get => {
+                        let found = self.e.call_rt(Rt::StrGet, &values).unwrap();
+                        let present = self.e.fb.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, found, 0);
+                        let base = self.pointer_to(place, true);
+                        self.e.fb.ins().store(flags(), present, base, 0);
+                        let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+                        let scalar = self.e.fb.ins().ireduce(types::I32, found);
+                        self.e.fb.ins().store(flags(), scalar, base, payload.offset as i32);
+                        return;
+                    }
+                    StrOp::ByteLength => Val::Scalar(self.e.fb.ins().load(types::I64, flags(), values[0], 8)),
+                    StrOp::Concat => Val::Scalar(self.e.call_rt(Rt::StrConcat, &values).unwrap()),
+                    StrOp::Decode => Val::Scalar(self.e.call_rt(Rt::StrDecode, &values).unwrap()),
+                    StrOp::Next => Val::Scalar(self.e.call_rt(Rt::StrNext, &values).unwrap()),
+                }
             }
             Rvalue::MapOp(op, operands, _) => match op {
                 MapOp::New => {

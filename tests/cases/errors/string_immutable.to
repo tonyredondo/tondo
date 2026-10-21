@@ -1,0 +1,10 @@
+fn main() {
+    var text = "abc"
+    text[0] = 'x'
+    let joined = text + "d"
+    let part = text.substring(0, 1)
+}
+
+// expect-error: E1102 a `String` is immutable
+// expect-error: E1102 use interpolation, `"{a}{b}"`, or `a.concat(b)`
+// expect-error: E1001 `substring`: use `text[start:end]`
