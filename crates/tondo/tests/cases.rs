@@ -4,8 +4,9 @@
 //! - `// expect-stdout: <line>` — one line of standard output, in order;
 //! - `// expect-exit: <status>` — process exit status (default 0);
 //! - `// expect-panic: <code>` — a language panic such as `P0005`;
-//! - `// expect-error: <code>` — compilation fails with this diagnostic;
-//! - `// expect-warning: <code>` — compilation reports this warning.
+//! - `// expect-error: <code> [text]` — compilation fails with this
+//!   diagnostic, whose message contains `text` when given;
+//! - `// expect-warning: <code> [text]` — compilation reports this warning.
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once.
@@ -65,14 +66,13 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .output()
         .unwrap();
     let diagnostics = String::from_utf8_lossy(&build.stderr);
-    for code in expect
-        .errors
-        .iter()
-        .map(|c| format!("error[{c}]"))
-        .chain(expect.warnings.iter().map(|c| format!("warning[{c}]")))
-    {
-        if !diagnostics.contains(&code) {
-            return Err(format!("missing {code} in diagnostics:\n{diagnostics}"));
+    let expected = expect.errors.iter().map(|e| ("error", e)).chain(expect.warnings.iter().map(|w| ("warning", w)));
+    for (severity, expected) in expected {
+        let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
+        let header = format!("{severity}[{code}]: ");
+        let found = diagnostics.lines().any(|line| line.strip_prefix(&header).is_some_and(|m| m.contains(text)));
+        if !found {
+            return Err(format!("missing {header}{text} in diagnostics:\n{diagnostics}"));
         }
     }
     if !expect.errors.is_empty() {

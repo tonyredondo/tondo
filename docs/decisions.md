@@ -89,16 +89,32 @@ types without any finite value are rejected (E1107).
 algorithm. Errors name a value that is not covered, such as `Shape.Point` or
 `(false, true)`, which gives the programmer (or an LLM) the exact arm to add.
 
-## 2026-10-21 — Displaying floats (proposal for the specification)
+## 2026-10-21 — Displaying floats
 
-The specification leaves the text of a displayed float to the standard
-library (19.6) without fixing it. The implementation prints the shortest
-decimal that reads back as the same value and is always distinguishable from
-an integer: `1.0`, `0.1`, `1e-7`, `1e21`, `NaN`, `inf`, `-inf`. This should be
-written into the standard library specification once approved.
+A displayed float is the shortest decimal that reads back as the same value
+and is always distinguishable from an integer: `1.0`, `0.1`, `1e-7`, `1e21`,
+`NaN`, `inf`, `-inf`. The standard library specification (10.6) now fixes this
+together with the text of displayed collections.
 
 ## 2026-10-21 — Narrow arguments to the runtime are extended
 
 Calls into the Rust runtime mark 8- and 16-bit integer parameters as
 zero-extended. LLVM, which compiles the runtime, assumes the caller extended
 them to 32 bits; without it a `Bool` with garbage high bits printed `fals`.
+
+## 2026-10-21 — One vocabulary for collections
+
+Collection methods are intrinsic and need no import. Each operation has one
+name everywhere: `length` and `isEmpty` on every collection, `push`/`pop` at
+the end of `Array` and `Deque`, `get` for positions (`get(0)` and `get(-1)`
+observe the ends), `clear` on all of them. `push` cannot fail: running out of
+memory is resource exhaustion, not a recoverable error. Queues use `Deque`,
+whose `pushFront`/`popFront` are amortized constant time; arrays only offer
+`insert(at, value)` and `removeAt(at)`. Names from other languages (`append`,
+`size`, `peek`, `enqueue`, `put`, `containsKey`...) are rejected with the
+canonical replacement in the message. See standard library spec 10.2.3.
+
+A deque shares the array's representation: the header records where the
+elements start, and the deque keeps them in the middle of storage at least
+twice their size, so both ends have room. Arrays always start at 0, so their
+generated code never reads that field.

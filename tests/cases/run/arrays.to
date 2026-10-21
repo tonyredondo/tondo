@@ -15,7 +15,7 @@ fn main() {
     let snapshot = values
     values[0] = 1
     values[-1] += 5
-    _ = values.push(60)
+    values.push(60)
     _ = console.println("{values} {snapshot} {values.length()} {snapshot.length()}")
     _ = console.println("{values[1:4]} {values[::-1]} {values[::2]} {values[-100:100]} {values[:-1:-1]}")
     _ = console.println("{values.get(2) == some(30)} {values.get(99) == none} {sum(values)} {30 in values} {31 in values}")
@@ -25,17 +25,17 @@ fn main() {
     _ = console.println("{words} {words == ["a", "b", "c", "a", "b", "c"]}")
     var grid = [[1, 2], [3]]
     grid[1][0] = 30
-    _ = grid[0].push(9)
+    grid[0].push(9)
     _ = console.println("{grid}")
     var points = [Point { x: 1, name: "p1" }]
-    _ = points.push(Point { x: 2, name: "p{2}" })
+    points.push(Point { x: 2, name: "p{2}" })
     points[0].name = "first"
     for p in points {
         _ = console.println("{p.x} {p.name}")
     }
     var empty: Array[String] = []
     for i in 0..1000 {
-        _ = empty.push("item {i}")
+        empty.push("item {i}")
     }
     var removed = 0
     for i in 0..500 {

@@ -181,14 +181,18 @@ pub unsafe extern "C" fn tondo_rt_box_unique(slot: *mut *mut BoxHeader, retain: 
 // Arrays
 // ---------------------------------------------------------------------------
 
-/// Header of an array; `len` elements of the size the compiler passes to
-/// every operation follow it. Arrays are values: a write first makes the
-/// array unique, copying it (and retaining its elements) when shared.
+/// Header of an array or a deque. Storage for `cap` elements of the size the
+/// compiler passes to every operation follows it, and the `len` elements
+/// start at position `head`. Arrays always have `head == 0`, which their
+/// generated code relies on; a deque keeps free room at both ends. Both are
+/// values: a write first makes the object unique, copying it (and retaining
+/// its elements) when shared.
 #[repr(C)]
 pub struct ArrayHeader {
     rc: AtomicUsize,
     len: usize,
     cap: usize,
+    head: usize,
 }
 
 const ARRAY_HEADER: usize = std::mem::size_of::<ArrayHeader>();
@@ -203,8 +207,13 @@ fn array_layout(size: usize, cap: usize) -> Layout {
     Layout::from_size_align(bytes, 8).expect("array too large")
 }
 
+/// The address of storage position `position`, ignoring `head`.
+unsafe fn position(a: *mut ArrayHeader, size: usize, position: usize) -> *mut u8 {
+    unsafe { (a as *mut u8).add(ARRAY_HEADER + position * size) }
+}
+
 unsafe fn element(a: *mut ArrayHeader, size: usize, index: usize) -> *mut u8 {
-    unsafe { (a as *mut u8).add(ARRAY_HEADER + index * size) }
+    unsafe { position(a, size, (*a).head + index) }
 }
 
 /// Allocates an array of `len` uninitialized elements and room for `cap`.
@@ -216,7 +225,7 @@ fn array_alloc(size: usize, len: usize, cap: usize) -> *mut ArrayHeader {
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
-        ptr.write(ArrayHeader { rc: AtomicUsize::new(1), len, cap });
+        ptr.write(ArrayHeader { rc: AtomicUsize::new(1), len, cap, head: 0 });
         LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
         ptr
     }
@@ -277,8 +286,62 @@ unsafe fn array_copy(
     new
 }
 
-/// Makes the array stored in `slot` unique and able to hold `extra` more
-/// elements, before a write.
+/// Makes the array or deque in `slot` unique, with room for `front` more
+/// elements before its first and `back` more after its last. A deque
+/// (`center`) moves its elements to the middle of storage that is at least
+/// twice as large, so both ends stay amortized constant time.
+unsafe fn reserve(
+    slot: *mut *mut ArrayHeader,
+    size: usize,
+    front: usize,
+    back: usize,
+    center: bool,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+) {
+    unsafe {
+        let a = *slot;
+        let (len, head, cap) = ((*a).len, (*a).head, (*a).cap);
+        let shared = (*a).rc.load(Ordering::Acquire) != 1;
+        if !shared && head >= front && head + len + back <= cap {
+            return;
+        }
+        let needed = len + front + back;
+        let new_cap = if center {
+            if 2 * needed <= cap { cap } else { (2 * needed).max(8) }
+        } else if needed > cap {
+            needed.max(2 * len).max(4)
+        } else {
+            cap
+        };
+        let new_head = if center { front + (new_cap - needed) / 2 } else { 0 };
+        if !shared && new_cap == cap {
+            // Unique with enough storage: slide the elements into place.
+            std::ptr::copy(element(a, size, 0), position(a, size, new_head), len * size);
+            (*a).head = new_head;
+            return;
+        }
+        let new = array_alloc(size, len, new_cap);
+        (*new).head = new_head;
+        std::ptr::copy_nonoverlapping(element(a, size, 0), element(new, size, 0), len * size);
+        if shared {
+            if let Some(retain) = retain {
+                for index in 0..len {
+                    retain(element(new, size, index));
+                }
+            }
+            tondo_rt_array_release(a, size, release);
+        } else {
+            // Unique: the elements moved; nothing is retained or released.
+            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+            dealloc(a as *mut u8, array_layout(size, cap));
+        }
+        *slot = new;
+    }
+}
+
+/// Makes the array or deque stored in `slot` unique and able to hold `extra`
+/// more elements at its end, before a write.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_unique(
     slot: *mut *mut ArrayHeader,
@@ -287,26 +350,7 @@ pub unsafe extern "C" fn tondo_rt_array_unique(
     retain: Option<Glue>,
     release: Option<Glue>,
 ) {
-    unsafe {
-        let a = *slot;
-        let len = (*a).len;
-        let shared = (*a).rc.load(Ordering::Acquire) != 1;
-        if !shared && len + extra <= (*a).cap {
-            return;
-        }
-        let cap = if len + extra > (*a).cap { (len + extra).max(len * 2).max(4) } else { (*a).cap };
-        if shared {
-            *slot = array_copy(a, size, retain, 0, 1, len, cap);
-            tondo_rt_array_release(a, size, release);
-        } else {
-            // Unique: move the elements; nothing is retained or released.
-            let new = array_alloc(size, len, cap);
-            std::ptr::copy_nonoverlapping(element(a, size, 0), element(new, size, 0), len * size);
-            LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
-            dealloc(a as *mut u8, array_layout(size, (*a).cap));
-            *slot = new;
-        }
-    }
+    unsafe { reserve(slot, size, 0, extra, false, retain, release) }
 }
 
 /// Appends the value at `value` (its ownership moves into the array).
@@ -343,6 +387,133 @@ pub unsafe extern "C" fn tondo_rt_array_pop(
         let a = *slot;
         (*a).len -= 1;
         std::ptr::copy_nonoverlapping(element(a, size, (*a).len), out, size);
+        1
+    }
+}
+
+/// A position counted from the end when negative (10.3).
+fn normalize(index: i64, len: usize) -> i64 {
+    if index < 0 { index.saturating_add(len as i64) } else { index }
+}
+
+/// `insert(at, value)`: shifts the elements from `at` on and stores the value
+/// there (its ownership moves in). `at` may equal the length; beyond that it
+/// panics with `P0001`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_insert(
+    slot: *mut *mut ArrayHeader,
+    at: i64,
+    value: *const u8,
+    size: usize,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+    location: *const Str,
+) {
+    unsafe {
+        let len = (**slot).len;
+        let at = normalize(at, len);
+        if at < 0 || at as usize > len {
+            tondo_rt_panic(1, std::ptr::null(), location);
+        }
+        let at = at as usize;
+        tondo_rt_array_unique(slot, size, 1, retain, release);
+        let a = *slot;
+        std::ptr::copy(element(a, size, at), element(a, size, at + 1), (len - at) * size);
+        std::ptr::copy_nonoverlapping(value, element(a, size, at), size);
+        (*a).len += 1;
+    }
+}
+
+/// `removeAt(at)`: moves the element at `at` to `out`, shifts the rest and
+/// returns 1, or returns 0 when there is no such element.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_remove_at(
+    slot: *mut *mut ArrayHeader,
+    at: i64,
+    out: *mut u8,
+    size: usize,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+) -> u8 {
+    unsafe {
+        let len = (**slot).len;
+        let at = normalize(at, len);
+        if at < 0 || at as usize >= len {
+            return 0;
+        }
+        let at = at as usize;
+        tondo_rt_array_unique(slot, size, 0, retain, release);
+        let a = *slot;
+        std::ptr::copy_nonoverlapping(element(a, size, at), out, size);
+        std::ptr::copy(element(a, size, at + 1), element(a, size, at), (len - at - 1) * size);
+        (*a).len -= 1;
+        1
+    }
+}
+
+/// Removes every element of the array or deque in `slot`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_clear(slot: *mut *mut ArrayHeader, size: usize, release: Option<Glue>) {
+    unsafe {
+        let a = *slot;
+        if (*a).rc.load(Ordering::Acquire) != 1 {
+            *slot = array_alloc(size, 0, 0);
+            tondo_rt_array_release(a, size, release);
+            return;
+        }
+        if let Some(release) = release {
+            for index in 0..(*a).len {
+                release(element(a, size, index));
+            }
+        }
+        (*a).len = 0;
+        (*a).head = 0;
+    }
+}
+
+/// Adds the value at `value` to the front of the deque when `front` is 1,
+/// otherwise to its back (its ownership moves in).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_deque_push(
+    slot: *mut *mut ArrayHeader,
+    value: *const u8,
+    size: usize,
+    front: u8,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+) {
+    unsafe {
+        let front = front != 0;
+        reserve(slot, size, front as usize, !front as usize, true, retain, release);
+        let a = *slot;
+        if front {
+            (*a).head -= 1;
+            std::ptr::copy_nonoverlapping(value, element(a, size, 0), size);
+        } else {
+            std::ptr::copy_nonoverlapping(value, element(a, size, (*a).len), size);
+        }
+        (*a).len += 1;
+    }
+}
+
+/// Moves the first element to `out` and returns 1, or returns 0 when empty.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_deque_pop_front(
+    slot: *mut *mut ArrayHeader,
+    out: *mut u8,
+    size: usize,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+) -> u8 {
+    unsafe {
+        if (**slot).len == 0 {
+            return 0;
+        }
+        tondo_rt_array_unique(slot, size, 0, retain, release);
+        let a = *slot;
+        std::ptr::copy_nonoverlapping(element(a, size, 0), out, size);
+        (*a).head += 1;
+        (*a).len -= 1;
         1
     }
 }
@@ -732,6 +903,23 @@ pub unsafe extern "C" fn tondo_rt_map_remove(
         m.hashes.remove(index);
         m.rebuild();
         1
+    }
+}
+
+/// Removes every entry of the map or set in `slot`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_map_clear(slot: *mut *mut MapObject, glue: *const MapGlue) {
+    unsafe {
+        let m = *slot;
+        if (*m).rc.load(Ordering::Acquire) != 1 {
+            *slot = tondo_rt_map_new((*m).entry_size, (*m).value_offset);
+            tondo_rt_map_release(m, glue);
+            return;
+        }
+        release_entries(&mut *m, &*glue);
+        (*m).entries.clear();
+        (*m).hashes.clear();
+        (*m).table.clear();
     }
 }
 

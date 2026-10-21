@@ -1,0 +1,64 @@
+import std.console
+
+type Job = { id: Int, name: String }
+
+fn describe(value: String?): String {
+    match value {
+        some(text) => text
+        none => "-"
+    }
+}
+
+fn main() {
+    var queue = Deque.new[String]()
+    queue.push("b")
+    queue.push("c")
+    queue.pushFront("a")
+    let snapshot = queue
+    _ = console.println("{queue} {queue.length()} {queue.isEmpty()} {describe(queue.get(0))} {describe(queue.get(-1))}")
+    let first = queue.popFront()
+    let last = queue.pop()
+    queue[0] = "B"
+    _ = console.println("{describe(first)} {describe(last)} {queue} {snapshot} {queue == snapshot}")
+    queue.clear()
+    _ = console.println("{queue.isEmpty()} {describe(queue.popFront())} {describe(queue.pop())} {snapshot[-1]}")
+
+    // A FIFO that slides through its storage many times.
+    var jobs = Deque.new[Job]()
+    var done = 0
+    var total = 0
+    for i in 0..5000 {
+        jobs.push(Job { id: i, name: "job {i}" })
+        if i % 3 != 0 {
+            match jobs.popFront() {
+                some(job) => {
+                    done += 1
+                    total += job.id
+                }
+                none => {}
+            }
+        }
+    }
+    _ = console.println("{done} {total} {jobs.length()} {jobs[0].name} {jobs[-1].name}")
+
+    // Both ends, interleaved.
+    var numbers = Deque.new[Int]()
+    for i in 0..100 {
+        if i % 2 == 0 {
+            numbers.pushFront(i)
+        } else {
+            numbers.push(i)
+        }
+    }
+    var sum = 0
+    for n in numbers {
+        sum += n
+    }
+    _ = console.println("{numbers.length()} {numbers[0]} {numbers[-1]} {sum} {98 in numbers} {100 in numbers}")
+}
+
+// expect-stdout: [a, b, c] 3 false a c
+// expect-stdout: a c [B] [a, b, c] false
+// expect-stdout: true - - c
+// expect-stdout: 3333 5552778 1667 job 3333 job 4999
+// expect-stdout: 100 98 99 4950 true false

@@ -111,20 +111,19 @@ pub enum ExprKind {
     Index(Box<Expr>, Box<Expr>),
     /// `array[start:end:step]`
     Slice(Box<Expr>, [Option<Box<Expr>>; 3]),
-    /// An intrinsic array operation; the receiver comes first.
+    /// An intrinsic array or deque operation; the receiver comes first.
     ArrayOp(ArrayOp, Vec<Expr>),
-    /// `array.push(value)` on a `var` place.
-    Push(Place, Box<Expr>),
-    /// `array.pop()` on a `var` place.
-    Pop(Place),
+    /// The number of elements of any collection.
+    Length(Box<Expr>),
+    /// A method that changes a collection on a `var` place; the arguments
+    /// follow in order.
+    Mutate(Mutation, Place, Vec<Expr>),
     /// `[key: value, ...]`
     Map(Vec<(Expr, Expr)>),
     /// `Set[a, b]`
     Set(Vec<Expr>),
     /// A map or set query; the collection comes first.
     MapOp(MapOp, Vec<Expr>),
-    /// `insert` or `remove` on a `var` map or set place.
-    MapMutate(MapMutation, Place, Vec<Expr>),
     /// `value?` on an option or result; the type is the payload's.
     Try(Box<Expr>),
     /// A numeric conversion (18.6). Its type is the target, or
@@ -161,11 +160,10 @@ pub enum PlaceStep {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ArrayOp {
-    /// `Array.new[T]()`
+    /// `Array.new[T]()` or `Deque.new[T]()`
     New,
     /// `Array.withCapacity[T](capacity)`
     WithCapacity,
-    Length,
     Get,
     /// The checked `slice(start, end)` method.
     SliceChecked,
@@ -186,11 +184,36 @@ pub enum MapOp {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum MapMutation {
+pub enum Mutation {
+    /// `push(value)` on an array or deque.
+    Push,
+    /// `pushFront(value)` on a deque.
+    PushFront,
+    /// `pop()` on an array or deque: the last element, `T?`.
+    Pop,
+    /// `popFront()` on a deque: the first element, `T?`.
+    PopFront,
+    /// `insert(at, value)` on an array.
+    InsertAt,
+    /// `removeAt(at)` on an array: `T?`.
+    RemoveAt,
+    /// `clear()` on any collection.
+    Clear,
     /// Map: `V?` with the replaced value. Set: `true` when newly added.
     Insert,
     /// Map: `V?` with the removed value. Set: `true` when it was present.
     Remove,
+}
+
+impl Mutation {
+    /// Which arguments move into the collection.
+    pub fn moves(self, count: usize) -> Vec<bool> {
+        match self {
+            Mutation::Push | Mutation::PushFront | Mutation::Insert => vec![true; count],
+            Mutation::InsertAt => vec![false, true],
+            _ => vec![false; count],
+        }
+    }
 }
 
 pub struct Arm {

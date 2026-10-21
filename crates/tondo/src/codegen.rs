@@ -15,7 +15,7 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, MapMutation, MapOp, Program, StdFn};
+use crate::hir::{ArrayOp, Callee, MapOp, Mutation, Program, StdFn};
 use crate::mir::{Body, Const, Local, Operand, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, SOME, Ty, TyKind, Types};
@@ -33,8 +33,9 @@ const POINTER: ir::Type = types::I64;
 const IMMORTAL: u64 = u64::MAX;
 /// Size of a box header in the runtime (`BoxHeader`).
 const BOX_HEADER: i64 = 16;
-/// Size of an array header in the runtime (`ArrayHeader`); `len` is at 8.
-const ARRAY_HEADER: i64 = 24;
+/// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
+/// a deque's `head` at 24. An array's `head` is always 0.
+const ARRAY_HEADER: i64 = 32;
 
 /// Runtime entry points (see `tondo-runtime`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -72,6 +73,11 @@ enum Rt {
     ArrayRepeat,
     ArrayEq,
     ArrayContains,
+    ArrayInsert,
+    ArrayRemoveAt,
+    ArrayClear,
+    DequePush,
+    DequePopFront,
     SbArray,
     MapNew,
     MapRetain,
@@ -82,6 +88,7 @@ enum Rt {
     MapLen,
     MapEntry,
     MapEq,
+    MapClear,
     SbMap,
     StrHash,
 }
@@ -123,6 +130,11 @@ impl Rt {
             Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
+            Rt::ArrayInsert => ("tondo_rt_array_insert", &[I64, I64, I64, I64, I64, I64, I64], &[]),
+            Rt::ArrayRemoveAt => ("tondo_rt_array_remove_at", &[I64, I64, I64, I64, I64, I64], &[I8]),
+            Rt::ArrayClear => ("tondo_rt_array_clear", &[I64, I64, I64], &[]),
+            Rt::DequePush => ("tondo_rt_deque_push", &[I64, I64, I64, I8, I64, I64], &[]),
+            Rt::DequePopFront => ("tondo_rt_deque_pop_front", &[I64, I64, I64, I64, I64], &[I8]),
             Rt::SbArray => ("tondo_rt_sb_array", &[I64, I64, I64, I64], &[]),
             Rt::MapNew => ("tondo_rt_map_new", &[I64, I64], &[I64]),
             Rt::MapRetain => ("tondo_rt_map_retain", &[I64], &[]),
@@ -133,6 +145,7 @@ impl Rt {
             Rt::MapLen => ("tondo_rt_map_len", &[I64], &[I64]),
             Rt::MapEntry => ("tondo_rt_map_entry", &[I64, I64], &[I64]),
             Rt::MapEq => ("tondo_rt_map_eq", &[I64, I64, I64, I64], &[I8]),
+            Rt::MapClear => ("tondo_rt_map_clear", &[I64, I64], &[]),
             Rt::SbMap => ("tondo_rt_sb_map", &[I64, I64, I64, I64], &[]),
             Rt::StrHash => ("tondo_rt_str_hash", &[I64], &[I64]),
         }
@@ -295,7 +308,9 @@ impl Codegen<'_> {
             TyKind::Float(FloatTy::F64) => Class::Scalar(types::F64),
             TyKind::Char => Class::Scalar(types::I32),
             TyKind::Byte => Class::Scalar(types::I8),
-            TyKind::String | TyKind::Array(_) | TyKind::Map(..) | TyKind::Set(_) => Class::Scalar(POINTER),
+            TyKind::String | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) => {
+                Class::Scalar(POINTER)
+            }
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -416,6 +431,15 @@ impl Codegen<'_> {
             signature.returns.push(AbiParam::new(types::I64));
         }
         signature
+    }
+
+    /// The element type of an array or deque, and whether it is a deque.
+    fn sequence_parts(&self, ty: Ty) -> (Ty, bool) {
+        match *self.types.kind(self.types.repr(ty)) {
+            TyKind::Array(element) => (element, false),
+            TyKind::Deque(element) => (element, true),
+            _ => unreachable!("not an array or deque"),
+        }
     }
 
     /// The key and value of a map or set: `(K, V)`, with `Unit` for sets.
@@ -723,7 +747,7 @@ impl Emit<'_, '_> {
                 let rt = if int.signed() { Rt::SbI64 } else { Rt::SbU64 };
                 self.call_rt(rt, &[builder, wide]);
             }
-            TyKind::Array(element) => {
+            TyKind::Array(element) | TyKind::Deque(element) => {
                 let size = self.element_size(element);
                 let display = self.glue_address(Glue::Display, element);
                 self.call_rt(Rt::SbArray, &[builder, value, size, display]);
@@ -866,12 +890,12 @@ impl Emit<'_, '_> {
         }
         match (value, self.cg.layout(ty).shape) {
             (Val::Scalar(pointer), _) => match *self.cg.types.kind(self.cg.types.repr(ty)) {
-                TyKind::Array(element) if release => {
+                TyKind::Array(element) | TyKind::Deque(element) if release => {
                     let size = self.element_size(element);
                     let glue = self.glue_or_null(Glue::Release, element);
                     self.call_rt(Rt::ArrayRelease, &[pointer, size, glue]);
                 }
-                TyKind::Array(_) => {
+                TyKind::Array(_) | TyKind::Deque(_) => {
                     self.call_rt(Rt::ArrayRetain, &[pointer]);
                 }
                 TyKind::Map(..) | TyKind::Set(_) if release => {
@@ -921,7 +945,7 @@ impl Emit<'_, '_> {
         match (a, b) {
             (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types.kind(self.cg.types.repr(ty)) {
                 TyKind::String => self.call_rt(Rt::StrEq, &[a, b]).unwrap(),
-                TyKind::Array(element) => {
+                TyKind::Array(element) | TyKind::Deque(element) => {
                     let size = self.element_size(element);
                     let eq = self.glue_address(Glue::Equal, element);
                     self.call_rt(Rt::ArrayEq, &[a, b, size, eq]).unwrap()
@@ -1204,7 +1228,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             if let Proj::Index(index, span) = proj {
                 let element = project(self.e.cg.types, ty, proj);
-                let array = match base {
+                let sequence = match base {
                     Some(address) => {
                         if write {
                             self.make_unique(address, element);
@@ -1221,7 +1245,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         self.e.fb.use_var(var)
                     }
                 };
-                base = Some(self.element_address(array, index, element, span));
+                let index = self.scalar(&Operand::local(index));
+                base = Some(self.element_address(sequence, ty, index, span));
                 ty = element;
                 continue;
             }
@@ -1239,20 +1264,47 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         base.expect("address of a scalar local")
     }
 
-    /// The address of `array[index]`, panicking with `P0001` out of bounds.
-    /// A negative index counts from the end (10.3).
-    fn element_address(&mut self, array: ir::Value, index: Local, element: Ty, span: Span) -> ir::Value {
-        let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
-        let raw = self.scalar(&Operand::local(index));
-        let wrapped = self.e.fb.ins().iadd(raw, length);
-        let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, raw, 0);
-        let position = self.e.fb.ins().select(negative, wrapped, raw);
-        let outside = self.e.fb.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, position, length);
+    /// The address of `sequence[index]`, panicking with `P0001` out of
+    /// bounds.
+    fn element_address(&mut self, sequence: ir::Value, ty: Ty, index: ir::Value, span: Span) -> ir::Value {
+        let (position, inside) = self.position(sequence, index);
+        let outside = self.e.fb.ins().bxor_imm_u(inside, 1);
         self.panic_if(outside, 1, span);
+        self.element_at(sequence, ty, position)
+    }
+
+    /// An index as a position, counting from the end when negative (10.3),
+    /// and whether that position holds an element.
+    fn position(&mut self, sequence: ir::Value, index: ir::Value) -> (ir::Value, ir::Value) {
+        let length = self.e.fb.ins().load(types::I64, flags(), sequence, 8);
+        let wrapped = self.e.fb.ins().iadd(index, length);
+        let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, index, 0);
+        let position = self.e.fb.ins().select(negative, wrapped, index);
+        let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, position, length);
+        (position, inside)
+    }
+
+    /// The address of the element at a valid position of an array or deque.
+    fn element_at(&mut self, sequence: ir::Value, ty: Ty, position: ir::Value) -> ir::Value {
+        let (element, deque) = self.e.cg.sequence_parts(ty);
+        let position = if deque {
+            let head = self.e.fb.ins().load(types::I64, flags(), sequence, 24);
+            self.e.fb.ins().iadd(position, head)
+        } else {
+            position
+        };
         let size = self.e.cg.layout(element).size as i64;
         let offset = self.e.fb.ins().imul_imm_s(position, size);
-        let address = self.e.fb.ins().iadd(array, offset);
+        let address = self.e.fb.ins().iadd(sequence, offset);
         self.e.fb.ins().iadd_imm_s(address, ARRAY_HEADER)
+    }
+
+    /// Stack space for a value of `ty` that the runtime writes.
+    fn scratch(&mut self, ty: Ty) -> ir::Value {
+        let size = self.e.cg.layout(ty).size.max(1);
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        self.e.fb.ins().stack_addr(POINTER, slot, 0)
     }
 
     /// Makes the array stored at `slot` unique before a write (copy-on-write).
@@ -1302,7 +1354,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().store(flags(), value, address, 0);
                 address
             }
-            Val::Zero => self.e.fb.ins().iconst(POINTER, 0),
+            // The runtime copies nothing, but needs a valid address.
+            Val::Zero => self.scratch(ty),
         }
     }
 
@@ -1393,9 +1446,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let ty = self.place_ty(place);
         let class = self.e.cg.class(ty);
         if class == Class::Zero {
-            // Zero-sized values carry no data; only calls have effects.
-            if let Rvalue::Call(callee, args) = rvalue {
-                self.call(*callee, args, None);
+            // Zero-sized values carry no data; only calls and mutations have
+            // effects.
+            match rvalue {
+                Rvalue::Call(callee, args) => {
+                    self.call(*callee, args, None);
+                }
+                Rvalue::Mutate(mutation, target, operands, retain, span) => {
+                    self.mutate(*mutation, target, operands, retain, place, *span);
+                }
+                _ => {}
             }
             return;
         }
@@ -1490,54 +1550,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let args = [array, size, retain, start, has_start, end, has_end, step, location];
                 Val::Scalar(self.e.call_rt(Rt::ArraySlice, &args).unwrap())
             }
-            Rvalue::Push(array_place, value, retain) => {
-                let array_ty = self.place_ty(array_place);
-                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(array_ty)) else {
-                    unreachable!()
-                };
-                let value = self.operand(value);
-                if *retain {
-                    self.e.refcount(element, value, false);
-                }
-                let source = self.in_memory(element, value);
-                let (slot, spilled) = self.array_slot(array_place);
-                let size = self.e.element_size(element);
-                let retain_glue = self.e.glue_or_null(Glue::Retain, element);
-                let release_glue = self.e.glue_or_null(Glue::Release, element);
-                self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain_glue, release_glue]);
-                if let Some(var) = spilled {
-                    self.unspill(var, slot);
-                }
-                // `push` cannot fail here (allocation failure aborts): `ok(())`.
-                let base = self.pointer_to(place, true);
-                let ok = self.e.fb.ins().iconst(types::I8, OK as i64);
-                self.e.fb.ins().store(flags(), ok, base, 0);
-                return;
-            }
-            Rvalue::Pop(array_place) => {
-                let array_ty = self.place_ty(array_place);
-                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(array_ty)) else {
-                    unreachable!()
-                };
-                let base = self.pointer_to(place, true);
-                let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
-                let out = self.e.offset(base, payload.offset);
-                let (slot, spilled) = self.array_slot(array_place);
-                let size = self.e.element_size(element);
-                let retain_glue = self.e.glue_or_null(Glue::Retain, element);
-                let release_glue = self.e.glue_or_null(Glue::Release, element);
-                let found = self.e.call_rt(Rt::ArrayPop, &[slot, out, size, retain_glue, release_glue]).unwrap();
-                if let Some(var) = spilled {
-                    self.unspill(var, slot);
-                }
-                self.e.fb.ins().store(flags(), found, base, 0);
-                return;
-            }
             Rvalue::Length(collection) => {
                 let collection_ty = self.operand_ty(collection);
                 let value = self.scalar(collection);
                 Val::Scalar(match self.e.cg.types.kind(self.e.cg.types.repr(collection_ty)) {
-                    TyKind::Array(_) => self.e.fb.ins().load(types::I64, flags(), value, 8),
+                    TyKind::Array(_) | TyKind::Deque(_) => self.e.fb.ins().load(types::I64, flags(), value, 8),
                     _ => self.e.call_rt(Rt::MapLen, &[value]).unwrap(),
                 })
             }
@@ -1576,50 +1593,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                 }
             },
-            Rvalue::MapMutate(mutation, map_place, operands, retain) => {
-                let map_ty = self.place_ty(map_place);
-                let (key, value) = self.e.cg.map_parts(map_ty);
-                let is_set = matches!(self.e.cg.types.kind(self.e.cg.types.repr(map_ty)), TyKind::Set(_));
-                let values: Vec<Val> = operands.iter().map(|o| self.operand(o)).collect();
-                for ((value, &retain), operand) in values.iter().zip(retain).zip(operands) {
-                    if retain {
-                        let ty = self.operand_ty(operand);
-                        self.e.refcount(ty, *value, false);
-                    }
-                }
-                let key_address = self.in_memory(key, values[0]);
-                // A map's result is `V?`: the replaced or removed value goes
-                // straight into its payload. A set's result is a `Bool`.
-                let (base, out) = if is_set {
-                    (None, key_address)
-                } else {
-                    let base = self.pointer_to(place, true);
-                    let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
-                    (Some(base), self.e.offset(base, payload.offset))
-                };
-                let glue = self.e.map_glue_address(map_ty);
-                let (slot, spilled) = self.array_slot(map_place);
-                let flag = match mutation {
-                    MapMutation::Insert => {
-                        let value_address = match values.get(1) {
-                            Some(&v) => self.in_memory(value, v),
-                            None => key_address,
-                        };
-                        self.e.call_rt(Rt::MapInsert, &[slot, key_address, value_address, out, glue]).unwrap()
-                    }
-                    MapMutation::Remove => self.e.call_rt(Rt::MapRemove, &[slot, key_address, out, glue]).unwrap(),
-                };
-                if let Some(var) = spilled {
-                    self.unspill(var, slot);
-                }
-                match base {
-                    Some(base) => {
-                        self.e.fb.ins().store(flags(), flag, base, 0);
-                        return;
-                    }
-                    // Set insert reports whether the value was new.
-                    None if *mutation == MapMutation::Insert => Val::Scalar(self.e.fb.ins().bxor_imm_u(flag, 1)),
-                    None => Val::Scalar(flag),
+            Rvalue::Mutate(mutation, target, operands, retain, span) => {
+                match self.mutate(*mutation, target, operands, retain, place, *span) {
+                    Some(value) => value,
+                    None => return,
                 }
             }
             Rvalue::Discriminant(source) => {
@@ -1644,8 +1621,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn array_op(&mut self, op: ArrayOp, operands: &[Operand], place: &Place, ty: Ty, span: Span) -> Option<Val> {
         let types = self.e.cg.types;
         let element_of = |ty: Ty| match *types.kind(types.repr(ty)) {
-            TyKind::Array(element) => element,
-            _ => unreachable!("not an array"),
+            TyKind::Array(element) | TyKind::Deque(element) => element,
+            _ => unreachable!("not an array or deque"),
         };
         Some(match op {
             ArrayOp::New => {
@@ -1674,29 +1651,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.switch_to_block(done);
                 return None;
             }
-            ArrayOp::Length => {
-                let array = self.scalar(&operands[0]);
-                Val::Scalar(self.e.fb.ins().load(types::I64, flags(), array, 8))
-            }
             ArrayOp::Get => {
-                let array_ty = self.operand_ty(&operands[0]);
-                let element = element_of(array_ty);
-                let array = self.scalar(&operands[0]);
-                let raw = self.scalar(&operands[1]);
-                let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
-                let wrapped = self.e.fb.ins().iadd(raw, length);
-                let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, raw, 0);
-                let position = self.e.fb.ins().select(negative, wrapped, raw);
-                let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, position, length);
+                let sequence_ty = self.operand_ty(&operands[0]);
+                let element = element_of(sequence_ty);
+                let sequence = self.scalar(&operands[0]);
+                let index = self.scalar(&operands[1]);
+                let (position, inside) = self.position(sequence, index);
+                if self.e.cg.class(ty) != Class::Memory {
+                    return Some(Val::Scalar(inside));
+                }
                 let base = self.pointer_to(place, true);
                 self.e.fb.ins().store(flags(), inside, base, 0);
                 let (found, done) = (self.e.fb.create_block(), self.e.fb.create_block());
                 self.e.fb.ins().brif(inside, found, &[], done, &[]);
                 self.e.fb.switch_to_block(found);
-                let size = self.e.cg.layout(element).size as i64;
-                let offset = self.e.fb.ins().imul_imm_s(position, size);
-                let address = self.e.fb.ins().iadd(array, offset);
-                let address = self.e.fb.ins().iadd_imm_s(address, ARRAY_HEADER);
+                let address = self.element_at(sequence, sequence_ty, position);
                 let value = self.e.value_at(address, element);
                 let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
                 self.e.init_component(base, &payload, value);
@@ -1740,6 +1709,161 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(self.e.call_rt(Rt::ArrayContains, &[array, address, size, eq]).unwrap())
             }
         })
+    }
+
+    /// A method that changes the collection at `target`. Returns the value
+    /// for scalar results; results in memory are written to `place`.
+    fn mutate(
+        &mut self,
+        mutation: Mutation,
+        target: &Place,
+        operands: &[Operand],
+        retain: &[bool],
+        place: &Place,
+        span: Span,
+    ) -> Option<Val> {
+        let ty = self.place_ty(place);
+        let collection_ty = self.place_ty(target);
+        let values: Vec<Val> = operands.iter().map(|o| self.operand(o)).collect();
+        for ((value, &retain), operand) in values.iter().zip(retain).zip(operands) {
+            if retain {
+                let ty = self.operand_ty(operand);
+                self.e.refcount(ty, *value, false);
+            }
+        }
+        if let TyKind::Map(..) | TyKind::Set(_) = self.e.cg.types.kind(self.e.cg.types.repr(collection_ty)) {
+            return self.mutate_map(mutation, target, &values, collection_ty, place, ty);
+        }
+        let (element, deque) = self.e.cg.sequence_parts(collection_ty);
+        let size = self.e.element_size(element);
+        let retain_glue = self.e.glue_or_null(Glue::Retain, element);
+        let release_glue = self.e.glue_or_null(Glue::Release, element);
+        // An inserted value read in place may live in the storage the
+        // mutation moves (`values.insert(0, values[1])`): copy it first.
+        let source = match mutation {
+            Mutation::Push | Mutation::PushFront => Some(self.copy_to_stack(element, values[0])),
+            Mutation::InsertAt => Some(self.copy_to_stack(element, values[1])),
+            _ => None,
+        };
+        let removes = matches!(mutation, Mutation::Pop | Mutation::PopFront | Mutation::RemoveAt);
+        let out = removes.then(|| self.scratch(element));
+        let (slot, spilled) = self.array_slot(target);
+        let found = match (mutation, source, out) {
+            (Mutation::Push, Some(source), _) if !deque => {
+                self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain_glue, release_glue])
+            }
+            (Mutation::Push | Mutation::PushFront, Some(source), _) => {
+                let front = self.e.fb.ins().iconst(types::I8, (mutation == Mutation::PushFront) as i64);
+                self.e.call_rt(Rt::DequePush, &[slot, source, size, front, retain_glue, release_glue])
+            }
+            (Mutation::InsertAt, Some(source), _) => {
+                let at = self.scalar_of(values[0]);
+                let location = self.location(span);
+                self.e.call_rt(Rt::ArrayInsert, &[slot, at, source, size, retain_glue, release_glue, location])
+            }
+            (Mutation::Pop, _, Some(out)) => {
+                self.e.call_rt(Rt::ArrayPop, &[slot, out, size, retain_glue, release_glue])
+            }
+            (Mutation::PopFront, _, Some(out)) => {
+                self.e.call_rt(Rt::DequePopFront, &[slot, out, size, retain_glue, release_glue])
+            }
+            (Mutation::RemoveAt, _, Some(out)) => {
+                let at = self.scalar_of(values[0]);
+                self.e.call_rt(Rt::ArrayRemoveAt, &[slot, at, out, size, retain_glue, release_glue])
+            }
+            (Mutation::Clear, ..) => self.e.call_rt(Rt::ArrayClear, &[slot, size, release_glue]),
+            _ => unreachable!("not a sequence mutation"),
+        };
+        if let Some(var) = spilled {
+            self.unspill(var, slot);
+        }
+        match (found, out) {
+            (Some(found), Some(out)) => self.removal_result(place, ty, element, out, found),
+            _ => None,
+        }
+    }
+
+    /// The address of a copy of `value` on the stack.
+    fn copy_to_stack(&mut self, ty: Ty, value: Val) -> ir::Value {
+        let Val::Memory(source) = value else { return self.in_memory(ty, value) };
+        let address = self.scratch(ty);
+        let size = self.e.cg.layout(ty).size;
+        self.e.copy_memory(address, source, size);
+        address
+    }
+
+    /// `insert`, `remove` or `clear` on a map or set.
+    fn mutate_map(
+        &mut self,
+        mutation: Mutation,
+        target: &Place,
+        values: &[Val],
+        map_ty: Ty,
+        place: &Place,
+        ty: Ty,
+    ) -> Option<Val> {
+        let (key, value) = self.e.cg.map_parts(map_ty);
+        let is_set = matches!(self.e.cg.types.kind(self.e.cg.types.repr(map_ty)), TyKind::Set(_));
+        let glue = self.e.map_glue_address(map_ty);
+        if mutation == Mutation::Clear {
+            let (slot, spilled) = self.array_slot(target);
+            self.e.call_rt(Rt::MapClear, &[slot, glue]);
+            if let Some(var) = spilled {
+                self.unspill(var, slot);
+            }
+            return None;
+        }
+        let key_address = self.in_memory(key, values[0]);
+        // A map's result is `V?` with the replaced or removed value. A set's
+        // result is a `Bool`.
+        let out = if is_set { key_address } else { self.scratch(value) };
+        let (slot, spilled) = self.array_slot(target);
+        let flag = match mutation {
+            Mutation::Insert => {
+                let value_address = match values.get(1) {
+                    Some(&v) => self.in_memory(value, v),
+                    None => key_address,
+                };
+                self.e.call_rt(Rt::MapInsert, &[slot, key_address, value_address, out, glue]).unwrap()
+            }
+            _ => self.e.call_rt(Rt::MapRemove, &[slot, key_address, out, glue]).unwrap(),
+        };
+        if let Some(var) = spilled {
+            self.unspill(var, slot);
+        }
+        match (is_set, mutation) {
+            (false, _) => self.removal_result(place, ty, value, out, flag),
+            // Set insert reports whether the value was new.
+            (true, Mutation::Insert) => Some(Val::Scalar(self.e.fb.ins().bxor_imm_u(flag, 1))),
+            (true, _) => Some(Val::Scalar(flag)),
+        }
+    }
+
+    /// The `T?` result of a removal: `some` with the element the runtime
+    /// moved to `out` when `found` is 1, otherwise `none`.
+    fn removal_result(&mut self, place: &Place, ty: Ty, element: Ty, out: ir::Value, found: ir::Value) -> Option<Val> {
+        if self.e.cg.class(ty) != Class::Memory {
+            // The element has no size: the option is just its tag.
+            return Some(Val::Scalar(found));
+        }
+        let base = self.pointer_to(place, true);
+        self.e.fb.ins().store(flags(), found, base, 0);
+        let (some, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(found, some, &[], done, &[]);
+        self.e.fb.switch_to_block(some);
+        let value = self.e.value_at(out, element);
+        let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+        self.e.init_component(base, &payload, value);
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(done);
+        None
+    }
+
+    fn scalar_of(&mut self, value: Val) -> ir::Value {
+        match value {
+            Val::Scalar(value) => value,
+            _ => unreachable!("expected a scalar"),
+        }
     }
 
     /// Builds the `!ConsoleError` result of a console operation from the

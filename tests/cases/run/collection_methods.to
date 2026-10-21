@@ -1,0 +1,46 @@
+import std.console
+
+fn main() {
+    var values = [1, 2, 3]
+    let original = values
+    values.insert(0, 0)
+    values.insert(values.length(), 4)
+    values.insert(-1, 35)
+    _ = console.println("{values} {original}")
+    let removed = values.removeAt(1)
+    let fromEnd = values.removeAt(-2)
+    let missing = values.removeAt(10)
+    _ = console.println("{values} {removed == some(1)} {fromEnd == some(35)} {missing == none}")
+    var names = ["ana", "leo"]
+    let kept = names
+    names.clear()
+    _ = console.println("{names} {names.isEmpty()} {kept} {kept.isEmpty()}")
+    names.push("eva")
+    _ = console.println("{names} {names.length()}")
+
+    var ages = ["ana": 32, "leo": 28]
+    let before = ages
+    _ = console.println("{ages.length()} {ages.isEmpty()}")
+    ages.clear()
+    ages["eva"] = 41
+    _ = console.println("{ages} {before} {ages.length()}")
+
+    var tags = Set["a", "b"]
+    _ = console.println("{tags.length()} {tags.isEmpty()} {tags.contains("a")}")
+    tags.clear()
+    _ = console.println("{tags} {tags.isEmpty()}")
+
+    var units = [(), ()]
+    let unit = units.pop()
+    _ = console.println("{units.length()} {unit == some(())}")
+}
+
+// expect-stdout: [0, 1, 2, 3, 35, 4] [1, 2, 3]
+// expect-stdout: [0, 2, 3, 4] true true true
+// expect-stdout: [] true [ana, leo] false
+// expect-stdout: [eva] 1
+// expect-stdout: 2 false
+// expect-stdout: [eva: 41] [ana: 32, leo: 28] 1
+// expect-stdout: 2 false true
+// expect-stdout: Set[] true
+// expect-stdout: 1 true

@@ -1,0 +1,6 @@
+fn main(): !String {
+    var values = [1]
+    values.push(2)?
+}
+
+// expect-error: E1301

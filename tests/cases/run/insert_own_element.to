@@ -1,0 +1,19 @@
+import std.console
+
+type Point = { x: Int, name: String }
+
+fn main() {
+    // The inserted value is read from the storage the insertion moves.
+    var points = [Point { x: 1, name: "a" }, Point { x: 2, name: "b" }]
+    points.push(points[0])
+    points.insert(0, points[1])
+    var queue = Deque.new[Point]()
+    queue.push(Point { x: 3, name: "c" })
+    queue.pushFront(queue[0])
+    var units = [(), ()]
+    units.push(())
+    units.insert(0, ())
+    _ = console.println("{points[0].name}{points[1].name}{points[2].name}{points[3].name} {queue.length()} {units.length()}")
+}
+
+// expect-stdout: baba 2 4

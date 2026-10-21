@@ -29,7 +29,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
 }
 
 /// Prelude type names (26.3); they cannot be redeclared unqualified.
-const PRELUDE_TYPES: [&str; 38] = [
+const PRELUDE_TYPES: [&str; 39] = [
     "NumericConversionError",
     "Bool",
     "Int",
@@ -52,6 +52,7 @@ const PRELUDE_TYPES: [&str; 38] = [
     "Option",
     "Result",
     "Array",
+    "Deque",
     "Map",
     "Set",
     "Range",
@@ -485,6 +486,7 @@ impl Checker<'_> {
                         ("Option", [inner]) if segments.len() == 1 => self.types.intern(TyKind::Option(*inner)),
                         ("Result", [ok, err]) if segments.len() == 1 => self.types.intern(TyKind::Result(*ok, *err)),
                         ("Array", [element]) if segments.len() == 1 => self.types.intern(TyKind::Array(*element)),
+                        ("Deque", [element]) if segments.len() == 1 => self.types.intern(TyKind::Deque(*element)),
                         ("Map", [key, value]) if segments.len() == 1 => {
                             self.require_key(*key, t.span);
                             self.map_type(*key, *value)
@@ -493,7 +495,7 @@ impl Checker<'_> {
                             self.require_key(*element, t.span);
                             self.types.intern(TyKind::Set(*element))
                         }
-                        ("Option" | "Result" | "Array" | "Map" | "Set", _) if segments.len() == 1 => {
+                        ("Option" | "Result" | "Array" | "Deque" | "Map" | "Set", _) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
                             Ty::ERROR
                         }
@@ -815,7 +817,7 @@ impl Checker<'_> {
                 let new = self.coerce(new, entry);
                 let result = self.types.intern(TyKind::Option(entry));
                 let place = hir::Place { local, path };
-                let insert = hir::ExprKind::MapMutate(hir::MapMutation::Insert, place, vec![key_value, new]);
+                let insert = hir::ExprKind::Mutate(hir::Mutation::Insert, place, vec![key_value, new]);
                 return Some(hir::Stmt::Expr(Self::mk(insert, result, span)));
             }
         }
@@ -878,7 +880,7 @@ impl Checker<'_> {
             }
             ast::ExprKind::Index { base, index } => {
                 let (local, mut path, ty) = self.place(cx, base)?;
-                let TyKind::Array(element) = *self.types.kind(ty) else {
+                let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(ty) else {
                     let message = format!("{} cannot be indexed", self.display(ty));
                     self.diags.error("E1102", base.span, message);
                     return None;
@@ -948,7 +950,7 @@ impl Checker<'_> {
                 else {
                     let source = self.expr(cx, source, None);
                     let element = match *self.types.kind(source.ty) {
-                        TyKind::Array(element) | TyKind::Set(element) => element,
+                        TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => element,
                         // A map yields its entries as `(key, value)` (10.13).
                         TyKind::Map(key, value) => self.types.intern(TyKind::Tuple(vec![key, value])),
                         TyKind::Error => Ty::ERROR,
@@ -1070,7 +1072,7 @@ impl Checker<'_> {
                     let ty = self.types.intern(TyKind::Option(value));
                     return Self::mk(hir::ExprKind::MapOp(hir::MapOp::Get, vec![base, index]), ty, span);
                 }
-                let TyKind::Array(element) = *self.types.kind(base.ty) else {
+                let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(base.ty) else {
                     return self.not_indexable(base, span);
                 };
                 let index = self.expr(cx, index, Some(Ty::INT));
@@ -1672,7 +1674,7 @@ impl Checker<'_> {
             | TyKind::String
             | TyKind::Error
             | TyKind::Never => true,
-            TyKind::Array(element) | TyKind::Set(element) => self.displayable(*element),
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => self.displayable(*element),
             TyKind::Map(key, value) => self.displayable(*key) && self.displayable(*value),
             _ => false,
         }
@@ -1840,16 +1842,20 @@ impl Checker<'_> {
             return Self::mk(hir::ExprKind::MapOp(hir::MapOp::New, Vec::new()), ty, span);
         }
         let (op, params) = match names.as_slice() {
-            ["Array", "new"] => (hir::ArrayOp::New, Vec::new()),
+            ["Array" | "Deque", "new"] => (hir::ArrayOp::New, Vec::new()),
             ["Array", "withCapacity"] => (hir::ArrayOp::WithCapacity, vec![Ty::INT]),
             _ => return self.unsupported_expr(span, "generic functions"),
         };
         let [element] = type_args else {
-            self.diags.error("E1104", span, "`Array` takes one type argument");
+            self.diags.error("E1104", span, format!("`{}` takes one type argument", names[0]));
             return Self::error_expr(span);
         };
         let element = self.resolve_type(element);
-        let array = self.types.intern(TyKind::Array(element));
+        let array = if names[0] == "Deque" {
+            self.types.intern(TyKind::Deque(element))
+        } else {
+            self.types.intern(TyKind::Array(element))
+        };
         if args.len() != params.len() {
             return self.arity_error(span, params.len(), args.len());
         }
@@ -1877,84 +1883,60 @@ impl Checker<'_> {
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
-        if matches!(method.name.as_str(), "insert" | "remove") {
-            // These change the collection's extent and need a `var` receiver.
-            let Some((local, path, ty)) = self.place(cx, receiver) else { return Self::error_expr(span) };
-            let place = hir::Place { local, path };
-            let mutation = if method.name == "insert" { hir::MapMutation::Insert } else { hir::MapMutation::Remove };
-            let (params, result) = match (self.types.kind(ty).clone(), mutation) {
-                (TyKind::Map(key, value), hir::MapMutation::Insert) => {
-                    (vec![key, value], self.types.intern(TyKind::Option(value)))
-                }
-                (TyKind::Map(key, value), hir::MapMutation::Remove) => {
-                    (vec![key], self.types.intern(TyKind::Option(value)))
-                }
-                (TyKind::Set(element), _) => (vec![element], Ty::BOOL),
-                _ => return self.no_method(ty, method, span),
-            };
-            if args.len() != params.len() {
-                return self.arity_error(span, params.len(), args.len());
-            }
-            let values = args
-                .iter()
-                .zip(params)
-                .map(|(a, t)| {
-                    let v = self.expr(cx, &a.value, Some(t));
-                    self.coerce(v, t)
-                })
-                .collect();
-            return Self::mk(hir::ExprKind::MapMutate(mutation, place, values), result, span);
+        if matches!(
+            method.name.as_str(),
+            "push" | "pushFront" | "pop" | "popFront" | "insert" | "removeAt" | "remove" | "clear"
+        ) {
+            return self.mutation_call(cx, receiver, method, args, span);
         }
-        if matches!(method.name.as_str(), "push" | "pop") {
-            // These change the array's length and need a `var` receiver (10.5).
-            let Some((local, path, ty)) = self.place(cx, receiver) else { return Self::error_expr(span) };
-            let TyKind::Array(element) = *self.types.kind(ty) else {
-                return self.no_method(ty, method, span);
-            };
-            let place = hir::Place { local, path };
-            return if method.name == "push" {
-                let [value] = args else { return self.arity_error(span, 1, args.len()) };
-                let value = self.expr(cx, &value.value, Some(element));
-                let value = self.coerce(value, element);
-                let ty = self.types.intern(TyKind::Result(Ty::UNIT, self.collection_error));
-                Self::mk(hir::ExprKind::Push(place, Box::new(value)), ty, span)
-            } else {
+        let value = self.expr(cx, receiver, None);
+        let ty = value.ty;
+        let kind = self.types.kind(ty).clone();
+        let (element, sequence) = match kind {
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => {
+                (element, !matches!(kind, TyKind::Set(_)))
+            }
+            TyKind::Map(key, _) => (key, false),
+            TyKind::Error => return Self::error_expr(span),
+            _ => return self.no_method(ty, method, span),
+        };
+        match method.name.as_str() {
+            "length" | "isEmpty" => {
                 if !args.is_empty() {
                     return self.arity_error(span, 0, args.len());
                 }
-                let ty = self.types.intern(TyKind::Option(element));
-                Self::mk(hir::ExprKind::Pop(place), ty, span)
-            };
-        }
-        let value = self.expr(cx, receiver, None);
-        if let TyKind::Map(key, _) | TyKind::Set(key) = *self.types.kind(value.ty) {
-            let (op, result) = match (method.name.as_str(), self.types.kind(value.ty).clone()) {
-                ("get", TyKind::Map(_, entry)) => (hir::MapOp::Get, self.types.intern(TyKind::Option(entry))),
-                ("contains", _) => (hir::MapOp::Contains, Ty::BOOL),
-                _ => return self.no_method(value.ty, method, span),
-            };
-            let [arg] = args else { return self.arity_error(span, 1, args.len()) };
-            let arg = self.expr(cx, &arg.value, Some(key));
-            let arg = self.coerce(arg, key);
-            return Self::mk(hir::ExprKind::MapOp(op, vec![value, arg]), result, span);
-        }
-        let TyKind::Array(element) = *self.types.kind(value.ty) else {
-            if value.ty == Ty::ERROR {
-                return Self::error_expr(span);
+                let length = Self::mk(hir::ExprKind::Length(Box::new(value)), Ty::INT, span);
+                if method.name == "length" {
+                    return length;
+                }
+                let zero = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);
+                let kind = hir::ExprKind::Binary(BinOp::Eq, Box::new(length), Box::new(zero));
+                return Self::mk(kind, Ty::BOOL, span);
             }
-            return self.no_method(value.ty, method, span);
-        };
-        let array = value.ty;
+            "get" | "contains" if !sequence => {
+                let result = match kind {
+                    TyKind::Map(_, entry) if method.name == "get" => self.types.intern(TyKind::Option(entry)),
+                    _ if method.name == "contains" => Ty::BOOL,
+                    _ => return self.no_method(ty, method, span),
+                };
+                let op = if method.name == "get" { hir::MapOp::Get } else { hir::MapOp::Contains };
+                let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+                let arg = self.expr(cx, &arg.value, Some(element));
+                let arg = self.coerce(arg, element);
+                return Self::mk(hir::ExprKind::MapOp(op, vec![value, arg]), result, span);
+            }
+            _ => {}
+        }
+        let is_array = matches!(kind, TyKind::Array(_));
         let (op, params, result) = match method.name.as_str() {
-            "length" => (hir::ArrayOp::Length, vec![], Ty::INT),
-            "get" => (hir::ArrayOp::Get, vec![Ty::INT], self.types.intern(TyKind::Option(element))),
-            "slice" => {
-                let result = self.types.intern(TyKind::Result(array, self.collection_error));
+            "get" if sequence => (hir::ArrayOp::Get, vec![Ty::INT], self.types.intern(TyKind::Option(element))),
+            "slice" if is_array => {
+                let result = self.types.intern(TyKind::Result(ty, self.collection_error));
                 (hir::ArrayOp::SliceChecked, vec![Ty::INT, Ty::INT], result)
             }
-            "concat" => (hir::ArrayOp::Concat, vec![array], array),
-            "repeat" => (hir::ArrayOp::Repeat, vec![Ty::INT], array),
-            _ => return self.no_method(array, method, span),
+            "concat" if is_array => (hir::ArrayOp::Concat, vec![ty], ty),
+            "repeat" if is_array => (hir::ArrayOp::Repeat, vec![Ty::INT], ty),
+            _ => return self.no_method(ty, method, span),
         };
         if args.len() != params.len() {
             return self.arity_error(span, params.len(), args.len());
@@ -1967,10 +1949,88 @@ impl Checker<'_> {
         Self::mk(hir::ExprKind::ArrayOp(op, values), result, span)
     }
 
+    /// A method that changes a collection's extent or contents; the
+    /// receiver must be a `var` place (10.5).
+    fn mutation_call(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        use hir::Mutation as M;
+        let Some((local, path, ty)) = self.place(cx, receiver) else { return Self::error_expr(span) };
+        let option = |this: &mut Self, t: Ty| this.types.intern(TyKind::Option(t));
+        let (mutation, params, result) = match (method.name.as_str(), self.types.kind(ty).clone()) {
+            ("push", TyKind::Array(e) | TyKind::Deque(e)) => (M::Push, vec![e], Ty::UNIT),
+            ("pushFront", TyKind::Deque(e)) => (M::PushFront, vec![e], Ty::UNIT),
+            ("pop", TyKind::Array(e) | TyKind::Deque(e)) => (M::Pop, vec![], option(self, e)),
+            ("popFront", TyKind::Deque(e)) => (M::PopFront, vec![], option(self, e)),
+            ("insert", TyKind::Array(e)) => (M::InsertAt, vec![Ty::INT, e], Ty::UNIT),
+            ("removeAt", TyKind::Array(e)) => (M::RemoveAt, vec![Ty::INT], option(self, e)),
+            ("clear", TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_)) => {
+                (M::Clear, vec![], Ty::UNIT)
+            }
+            ("insert", TyKind::Map(k, v)) => (M::Insert, vec![k, v], option(self, v)),
+            ("remove", TyKind::Map(k, v)) => (M::Remove, vec![k], option(self, v)),
+            ("insert", TyKind::Set(k)) => (M::Insert, vec![k], Ty::BOOL),
+            ("remove", TyKind::Set(k)) => (M::Remove, vec![k], Ty::BOOL),
+            (_, TyKind::Error) => return Self::error_expr(span),
+            _ => return self.no_method(ty, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let values = args
+            .iter()
+            .zip(params)
+            .map(|(a, t)| {
+                let v = self.expr(cx, &a.value, Some(t));
+                self.coerce(v, t)
+            })
+            .collect();
+        Self::mk(hir::ExprKind::Mutate(mutation, hir::Place { local, path }, values), result, span)
+    }
+
     fn no_method(&mut self, ty: Ty, method: &ast::Ident, span: Span) -> hir::Expr {
-        let message = format!("{} has no method `{}`", self.display(ty), method.name);
+        let mut message = format!("{} has no method `{}`", self.display(ty), method.name);
+        if let Some(hint) = self.method_hint(ty, &method.name) {
+            message = format!("{message}: {hint}");
+        }
         self.diags.error("E1001", method.span, message);
         Self::error_expr(span)
+    }
+
+    /// The canonical spelling of a method that other languages name
+    /// differently (10.2.3).
+    fn method_hint(&self, ty: Ty, name: &str) -> Option<&'static str> {
+        let hint = match (self.types.kind(ty), name) {
+            (_, "size" | "count" | "len") => "use `length()`",
+            (_, "empty") => "use `isEmpty()`",
+            (TyKind::Array(_) | TyKind::Deque(_), "append" | "add" | "enqueue" | "pushBack") => "use `push(value)`",
+            (TyKind::Array(_) | TyKind::Deque(_), "peek" | "last" | "back") => "use `get(-1)`, which returns `T?`",
+            (TyKind::Array(_) | TyKind::Deque(_), "first" | "front") => "use `get(0)`, which returns `T?`",
+            (TyKind::Array(_) | TyKind::Deque(_), "popBack") => "use `pop()`",
+            (TyKind::Deque(_), "dequeue" | "shift") => "use `popFront()`",
+            (TyKind::Deque(_), "unshift" | "prepend") => "use `pushFront(value)`",
+            (TyKind::Array(_), "dequeue" | "shift" | "popFront") => {
+                "use `removeAt(0)`, or a `Deque` for a queue: `Deque.new[T]()` has `popFront()`"
+            }
+            (TyKind::Array(_), "unshift" | "prepend" | "pushFront") => {
+                "use `insert(0, value)`, or a `Deque` for a queue: `Deque.new[T]()` has `pushFront(value)`"
+            }
+            (TyKind::Array(_), "remove") => "use `removeAt(index)`",
+            (TyKind::Array(_), "indexOf" | "includes") => "use `value in array`",
+            (TyKind::Deque(_), "insert" | "removeAt") => "a `Deque` only changes at its ends",
+            (TyKind::Map(..), "put" | "set") => "use `insert(key, value)` or `map[key] = value`",
+            (TyKind::Map(..), "containsKey" | "has") => "use `contains(key)`",
+            (TyKind::Map(..) | TyKind::Set(_), "delete") => "use `remove(key)`",
+            (TyKind::Set(_), "add") => "use `insert(value)`",
+            (TyKind::Set(_), "has" | "includes") => "use `contains(value)`",
+            _ => return None,
+        };
+        Some(hint)
     }
 
     fn unsupported_expr(&mut self, span: Span, what: &str) -> hir::Expr {
@@ -2111,8 +2171,8 @@ impl Checker<'_> {
         if self.lookup(cx, names[0]).is_some() {
             return self.unsupported_expr(callee.span, "calls through values");
         }
-        if let ["Array", "new" | "withCapacity"] = names.as_slice() {
-            let message = format!("`Array.{}` needs its element type: `Array.{}[T](...)`", names[1], names[1]);
+        if let ["Array", "new" | "withCapacity"] | ["Deque", "new"] = names.as_slice() {
+            let message = format!("`{0}.{1}` needs its element type: `{0}.{1}[T](...)`", names[0], names[1]);
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
         }
@@ -2419,7 +2479,7 @@ impl Checker<'_> {
                     let op = hir::MapOp::Contains;
                     return Self::mk(hir::ExprKind::MapOp(op, vec![container, item]), Ty::BOOL, span);
                 }
-                let TyKind::Array(element) = *self.types.kind(container.ty) else {
+                let (TyKind::Array(element) | TyKind::Deque(element)) = *self.types.kind(container.ty) else {
                     if container.ty != Ty::ERROR {
                         let message = format!("`in` is not defined for {}", self.display(container.ty));
                         self.diags.error("E1102", container.span, message);

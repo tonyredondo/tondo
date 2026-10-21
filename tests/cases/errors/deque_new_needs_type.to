@@ -1,0 +1,5 @@
+fn main() {
+    let queue = Deque.new()
+}
+
+// expect-error: E1101 `Deque.new[T](...)`

@@ -1,6 +1,6 @@
 fn main() {
     let values = [1]
-    _ = values.push(2)
+    values.push(2)
 }
 
 // expect-error: E1411

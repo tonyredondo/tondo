@@ -1,0 +1,6 @@
+fn main() {
+    var values = [1, 2, 3]
+    values.insert(4, 9)
+}
+
+// expect-panic: P0001

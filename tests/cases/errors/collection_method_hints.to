@@ -1,0 +1,27 @@
+fn main() {
+    var values = [1, 2]
+    values.append(3)
+    let n = values.size()
+    let top = values.peek()
+    var queue = Deque.new[Int]()
+    queue.enqueue(1)
+    let next = queue.dequeue()
+    queue.insert(0, 1)
+    var ages = ["ana": 1]
+    ages.put("leo", 2)
+    let known = ages.containsKey("ana")
+    var seen = Set[1]
+    seen.add(2)
+    let front = values.popFront()
+}
+
+// expect-error: E1001 `append`: use `push(value)`
+// expect-error: E1001 `size`: use `length()`
+// expect-error: E1001 `peek`: use `get(-1)`
+// expect-error: E1001 `enqueue`: use `push(value)`
+// expect-error: E1001 `dequeue`: use `popFront()`
+// expect-error: E1001 `insert`: a `Deque` only changes at its ends
+// expect-error: E1001 `put`: use `insert(key, value)` or `map[key] = value`
+// expect-error: E1001 `containsKey`: use `contains(key)`
+// expect-error: E1001 `add`: use `insert(value)`
+// expect-error: E1001 `popFront`: use `removeAt(0)`, or a `Deque`

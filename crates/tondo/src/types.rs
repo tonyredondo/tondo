@@ -95,6 +95,8 @@ pub enum TyKind {
     Result(Ty, Ty),
     /// A reference-counted, copy-on-write sequence (10.2).
     Array(Ty),
+    /// A copy-on-write sequence with cheap insertion at both ends (10.2.3).
+    Deque(Ty),
     /// An insertion-ordered hash map (10.9).
     Map(Ty, Ty),
     /// An insertion-ordered set (10.15).
@@ -339,7 +341,10 @@ impl Types {
             return known;
         }
         let repr = self.repr(ty);
-        let heap = matches!(self.kind(repr), TyKind::String | TyKind::Array(_) | TyKind::Map(..) | TyKind::Set(_));
+        let heap = matches!(
+            self.kind(repr),
+            TyKind::String | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_)
+        );
         let result = heap || {
             let parts = match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items,
@@ -375,7 +380,7 @@ impl Types {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
-            TyKind::Float(_) | TyKind::Array(_) | TyKind::Map(..) | TyKind::Set(_) => false,
+            TyKind::Float(_) | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) => false,
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.key_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.key_in(t, visiting)),
@@ -408,7 +413,9 @@ impl Types {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
-            TyKind::Array(element) | TyKind::Set(element) => self.equatable_in(*element, visiting),
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => {
+                self.equatable_in(*element, visiting)
+            }
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
@@ -427,7 +434,7 @@ impl Types {
             TyKind::Tuple(items) => items.iter().any(|&t| self.has_error(t)),
             TyKind::Option(inner) => self.has_error(*inner),
             TyKind::Result(ok, err) => self.has_error(*ok) || self.has_error(*err),
-            TyKind::Array(element) | TyKind::Set(element) => self.has_error(*element),
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => self.has_error(*element),
             TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
             _ => false,
         }
@@ -462,6 +469,7 @@ impl Types {
                 _ => format!("{}?", self.display(*inner)),
             },
             TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
+            TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
             TyKind::Result(ok, err) if *ok == Ty::UNIT => format!("!{}", self.display(*err)),

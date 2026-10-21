@@ -715,19 +715,9 @@ impl Builder<'_> {
                 let operands = operands.iter().map(|o| self.expr(o)).collect();
                 self.temp(e.ty, Rvalue::ArrayOp(*op, operands, e.span), e.span)
             }
-            hir::ExprKind::Push(place, value) => {
-                let place = self.place(place.local, &place.path);
-                let value = self.expr(value);
-                let TyKind::Array(element) = *self.types.kind(self.types.repr(self.place_ty(&place))) else {
-                    unreachable!()
-                };
-                let copied = matches!(value, Operand::Copy(_));
-                let retain = self.needs_drop(element) && copied && !self.take_temporary(&value);
-                self.temp(e.ty, Rvalue::Push(place, value, retain), e.span)
-            }
-            hir::ExprKind::Pop(place) => {
-                let place = self.place(place.local, &place.path);
-                self.temp(e.ty, Rvalue::Pop(place), e.span)
+            hir::ExprKind::Length(collection) => {
+                let collection = self.expr(collection);
+                self.temp(e.ty, Rvalue::Length(collection), e.span)
             }
             hir::ExprKind::Map(entries) => {
                 let map = self.temp(e.ty, Rvalue::MapOp(hir::MapOp::New, Vec::new(), e.span), e.span);
@@ -737,7 +727,7 @@ impl Builder<'_> {
                 for (key, value) in entries {
                     let operands = vec![self.expr(key), self.expr(value)];
                     let flags = self.move_flags(&operands, &[true, true], &[key.ty, value.ty]);
-                    let rvalue = Rvalue::MapMutate(hir::MapMutation::Insert, place.clone(), operands, flags);
+                    let rvalue = Rvalue::Mutate(hir::Mutation::Insert, place.clone(), operands, flags, e.span);
                     // A repeated dynamic key replaces the value (10.12); the
                     // replaced one is released with this temporary.
                     self.temp(result.expect("the checker interns `V?` with every map"), rvalue, e.span);
@@ -750,7 +740,7 @@ impl Builder<'_> {
                 for item in items {
                     let operands = vec![self.expr(item)];
                     let flags = self.move_flags(&operands, &[true], &[item.ty]);
-                    let rvalue = Rvalue::MapMutate(hir::MapMutation::Insert, place.clone(), operands, flags);
+                    let rvalue = Rvalue::Mutate(hir::Mutation::Insert, place.clone(), operands, flags, e.span);
                     self.temp(Ty::BOOL, rvalue, e.span);
                 }
                 set
@@ -759,15 +749,14 @@ impl Builder<'_> {
                 let operands = operands.iter().map(|o| self.expr(o)).collect();
                 self.temp(e.ty, Rvalue::MapOp(*op, operands, e.span), e.span)
             }
-            hir::ExprKind::MapMutate(mutation, place, values) => {
+            hir::ExprKind::Mutate(mutation, place, values) => {
                 let place = self.place(place.local, &place.path);
                 let types: Vec<Ty> = values.iter().map(|v| v.ty).collect();
                 let operands: Vec<Operand> = values.iter().map(|v| self.expr(v)).collect();
-                // Inserted keys and values move into the collection; a removal
-                // only looks the key up.
-                let moves = vec![*mutation == hir::MapMutation::Insert; operands.len()];
-                let flags = self.move_flags(&operands, &moves, &types);
-                self.temp(e.ty, Rvalue::MapMutate(*mutation, place, operands, flags), e.span)
+                // Inserted values move into the collection; positions and
+                // looked-up keys do not.
+                let flags = self.move_flags(&operands, &mutation.moves(operands.len()), &types);
+                self.temp(e.ty, Rvalue::Mutate(*mutation, place, operands, flags, e.span), e.span)
             }
             hir::ExprKind::Try(inner) => {
                 let value = self.expr(inner);

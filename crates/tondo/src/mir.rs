@@ -4,7 +4,7 @@
 //! inserted during lowering, so code generation is a direct translation.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, MapMutation, MapOp};
+use crate::hir::{ArrayOp, Callee, MapOp, Mutation};
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 
@@ -65,7 +65,7 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
         }
         // Iteration also indexes maps (entries as `(K, V)`) and sets.
         Proj::Index(..) => match types.kind(types.repr(ty)) {
-            TyKind::Array(element) | TyKind::Set(element) => *element,
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => *element,
             TyKind::Map(key, value) => {
                 types.lookup(&TyKind::Tuple(vec![*key, *value])).expect("map entry type is interned")
             }
@@ -149,22 +149,17 @@ pub enum Rvalue {
     /// `[a, b, c]`; a flag marks an element that was copied, not moved, and
     /// must be retained once stored.
     Array(Vec<Operand>, Vec<bool>),
-    /// An intrinsic array operation, receiver first.
+    /// An intrinsic array or deque operation, receiver first.
     ArrayOp(ArrayOp, Vec<Operand>, Span),
     /// `array[start:end:step]`.
     Slice(Operand, [Option<Operand>; 3], Span),
-    /// Appends to the array at the place (made unique first); the flag
-    /// retains a copied value.
-    Push(Place, Operand, bool),
-    /// Removes the last element of the array at the place.
-    Pop(Place),
-    /// The number of elements of an array, map or set.
+    /// The number of elements of any collection.
     Length(Operand),
     /// A map or set query, collection first.
     MapOp(MapOp, Vec<Operand>, Span),
-    /// `insert` or `remove` on the map or set at the place (made unique
+    /// A method that changes the collection at the place (made unique
     /// first); flags mark copied operands to retain as they move in.
-    MapMutate(MapMutation, Place, Vec<Operand>, Vec<bool>),
+    Mutate(Mutation, Place, Vec<Operand>, Vec<bool>, Span),
 }
 
 pub enum Piece {

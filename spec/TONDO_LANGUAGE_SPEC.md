@@ -2438,7 +2438,7 @@ Para un array de longitud `n`:
 - `-n` es el primero.
 - Un índice normalizado fuera de `0 <= i < n` produce un pánico de bounds.
 
-La longitud de todo `Array`, `Map`, `Set` o `String` cabe siempre en `Int`;
+La longitud de todo `Array`, `Deque`, `Map`, `Set` o `String` cabe siempre en `Int`;
 `Range` y los cursores no tienen esa limitación porque no necesitan exponer
 longitud. La suma conceptual `n + i` se calcula en enteros matemáticos, sin
 overflow intermedio, antes de comprobar el rango; por tanto incluso `Int.min`
@@ -2449,7 +2449,7 @@ representable es error de compilación. En runtime, alcanzar el máximo
 representable se trata como agotamiento de recursos de la implementación, igual
 que no poder reservar el almacenamiento; una API de librería puede ofrecer además
 una variante checked con error recuperable, pero el núcleo no vuelve fallible cada
-`append`.
+`push`.
 
 La indexación directa devuelve `T` y por ello requiere `T: Copy`; nunca mueve un
 elemento dejando un hueco. Un elemento afín se observa mediante receptor `self`,
@@ -2558,11 +2558,11 @@ values[1:3] = [20, 30]
 
 No puede cambiar la longitud del array. Reemplazar una región por otra longitud es una operación nombrada de colección, no semántica especial de `[]=`.
 
-Las operaciones que cambian la longitud, como `append`, `insert`, `remove` o
+Las operaciones que cambian la longitud, como `push`, `insert`, `removeAt` o
 `clear`, requieren un receptor `var self` o un parámetro `var Array[T]`. Sobre un
 binding local `var`, la dot-call continúa siendo tersa
-—`values.append(item)`—; al cruzar una firma libre el contrato aparece como
-`append(var values, item)`. Un slice puede prestarse como `ref` o `mut`, nunca
+—`values.push(item)`—; al cruzar una firma libre el contrato aparece como
+`push(var values, item)`. Un slice puede prestarse como `ref` o `mut`, nunca
 como `var`.
 
 El lado derecho se evalúa por completo y su longitud se valida antes de la primera escritura. Si origen y destino se solapan, el lado derecho actúa como snapshot; una asignación que falla antes de escribir deja el array intacto.
@@ -3364,7 +3364,7 @@ La representación no forma parte de la semántica. El compilador puede pasar un
 ~~~tondo
 fn prepare(parts: ...String): Array[String] {
     var result = parts
-    result.append("done")
+    result.push("done")
     result
 }
 ~~~
@@ -3485,17 +3485,17 @@ Un receptor `var self` permite además cambiar la extensión o reemplazar el val
 sin conservarla:
 
 ~~~tondo
-fn Array[T].append(var self, value: T) {
+fn Array[T].push(var self, value: T) {
     panic("operación intrínseca ilustrativa")
 }
 
 var values = [1, 2]
-values.append(3)
+values.push(3)
 ~~~
 
 `var self` exige un lvalue completo y reemplazable. Puede ser un binding, campo, tuple slot o elemento que almacene un `Array[T]` completo, pero no una región como `values[1:3]` ni un lookup de map potencialmente ausente.
 
-En forma calificada, el préstamo vuelve a quedar explícito: `Counter.increment(mut counter)`, `Reset.reset(mut value)` o `Array.append(var values, item)`. En dot-call, `counter.increment()` y `values.append(item)` son el único azúcar que omite `mut` o `var`, porque el lvalue receptor aparece inmediatamente antes del método. El compilador conoce el contrato desde la firma; no infiere permiso de redimensionado desde el cuerpo.
+En forma calificada, el préstamo vuelve a quedar explícito: `Counter.increment(mut counter)`, `Reset.reset(mut value)` o `Array.push(var values, item)`. En dot-call, `counter.increment()` y `values.push(item)` son el único azúcar que omite `mut` o `var`, porque el lvalue receptor aparece inmediatamente antes del método. El compilador conoce el contrato desde la firma; no infiere permiso de redimensionado desde el cuerpo.
 
 ### 11.7 Funciones como valores
 
@@ -3626,7 +3626,7 @@ let addLine: fn(var Array[String], String) = (
     lines: var Array[String],
     line: String,
 ) {
-    lines.append(line)
+    lines.push(line)
 }
 
 addLine(var output, "done")
@@ -5850,7 +5850,7 @@ redimensionar una colección o cambiar su estructura:
 
 ~~~tondo
 fn addValue(values: var Array[Int], value: Int) {
-    values.append(value)
+    values.push(value)
 }
 
 var numbers = [1, 2]
@@ -5900,7 +5900,7 @@ Las reborrows se interpretan respecto de la extensión de la **raíz prestada**:
   ese contrato.
 
 Así un método `mut self` de un record puede ejecutar
-`self.items.append(value)`: cambia el `Array` almacenado en el campo, pero el
+`self.items.push(value)`: cambia el `Array` almacenado en el campo, pero el
 record continúa teniendo exactamente los mismos campos. Del mismo modo, un
 `mut Array[Array[T]]` puede redimensionar un elemento existente sin cambiar la
 longitud del array exterior. Para un `mut T` genérico no se presume una
@@ -9891,7 +9891,7 @@ fn renderAll[T: Discard + Display](values: Array[T]): Array[String] {
     var output: Array[String] = []
 
     for value in values {
-        output.append(value.display())
+        output.push(value.display())
     }
 
     output
@@ -9971,7 +9971,7 @@ fn decorate(prefix: String, values: ...String): Array[String] {
     var output: Array[String] = []
 
     for value in values {
-        output.append(format(value))
+        output.push(format(value))
     }
 
     output
@@ -10211,7 +10211,7 @@ El núcleo no contiene:
 - Maps ordenados y desordenados separados.
 - `Stack` y `Queue` ordinarios separados de `Array`/`Deque`.
 
-`Array`, `Map`, `Set` y posteriormente `Deque` cubren las necesidades comunes con nombres únicos.
+`Array`, `Deque`, `Map` y `Set` cubren las necesidades comunes con nombres únicos.
 Los tipos calificados `sync.Array`, `sync.Map`, `sync.Set`, `sync.Stack` y
 `sync.Queue` no contradicen esta regla: son handles con identidad compartida,
 linearización y sincronización interior, no aliases ni representaciones locales
@@ -10302,7 +10302,7 @@ Esta especificación define:
 - Sistema de tipos.
 - Records, enums, uniones, tuples y newtypes.
 - `Option` y `Result`.
-- `Array`, `Map`, `Set` y `Range` como tipos intrínsecos, y `Iterator[T]` como
+- `Array`, `Deque`, `Map`, `Set` y `Range` como tipos intrínsecos, y `Iterator[T]` como
   protocolo estático intrínseco implementable.
 - Literales e indexación de colecciones.
 - Operadores y aritmética vectorizada.
@@ -10366,7 +10366,7 @@ anterior:
 
 El catálogo cerrado, sus capabilities y las características diferidas se fijan
 exclusivamente en `TONDO_STANDARD_LIBRARY_SPEC.md`. En particular, esta
-frontera no incorpora a STD-0.1 `Deque`, priority queues, `Decimal`, `BigInt`,
+frontera no incorpora a STD-0.1 priority queues, `Decimal`, `BigInt`,
 `Complex`, aleatoriedad general de usuario, `WeakRef`, `Cell`, streams suspendibles
 generales ni una FFI pública.
 
@@ -10380,7 +10380,7 @@ Int8 Int16 Int32 Int64
 UInt8 UInt16 UInt32 UInt64
 Float32 Float64
 Option Result
-Array Map Set Range Iterator
+Array Deque Map Set Range Iterator
 Ref Pointer Join
 Command Pipeline
 Copy Discard Equatable Key Send Share
@@ -10414,7 +10414,7 @@ El lenguaje garantiza las capacidades necesarias para:
 - Comprobar pertenencia.
 - Aplicar operadores definidos.
 
-Los nombres concretos como `length`, `get`, `getOr`, `append`, `remove`, `keys`
+Los nombres concretos como `length`, `get`, `getOr`, `push`, `remove`, `keys`
 y `values` se fijarán en la especificación estándar. Los ejemplos de este
 documento anticipan nombres recomendados, pero no constituyen aún el inventario
 final de métodos.
@@ -11257,7 +11257,7 @@ fn String(value: Bytes): String ! Utf8Error
 fn Array[T].length(self): Int
 fn Array[T].isEmpty(self): Bool
 fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
-fn Array[T].append(var self, value: T)
+fn Array[T].push(var self, value: T)
 fn Map[K: Key, V: Copy].getOr(self, key: K, fallback: V): V
 fn Option[T: Copy].at(self): T
 unsafe fn Pointer[T].read(self): T

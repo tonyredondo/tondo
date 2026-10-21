@@ -1298,57 +1298,102 @@ devolver `Utf8Error` por bytes inválidos.
 
 #### 10.2.3 Contrato cerrado de `std.collections`
 
-`Array[T]`, `Map[K, V]` y `Set[K]` conservan una sola representación de valor
-del lenguaje. La implementación puede compartir buffers mediante COW, pero una
-asignación, paso por valor o resultado de una operación nunca expone alias
-mutables inesperados. Los métodos que cambian una colección exigen un receptor
-`var`; los métodos de consulta son puros. `Map` y `Set` requieren `Key` para
-garantizar igualdad y hashing estables, preservan el orden de inserción y no
+`Array[T]`, `Deque[T]`, `Map[K, V]` y `Set[K]` conservan una sola representación
+de valor del lenguaje. La implementación puede compartir buffers mediante COW,
+pero una asignación, paso por valor o resultado de una operación nunca expone
+alias mutables inesperados. Los métodos que cambian una colección exigen un
+receptor `var`; los métodos de consulta son puros. `Map` y `Set` requieren `Key`
+para garantizar igualdad y hashing estables, preservan el orden de inserción y no
 reordenan una entrada al reemplazar su valor.
 
-```tondo
-import std.collections
+Estos métodos son intrínsecos de tipos del prelude: están disponibles sin
+`import`. Importar `std.collections` solo hace falta para nombrar
+`collections.CollectionError`.
 
+Una misma operación tiene el mismo nombre en todas las colecciones: `length` e
+`isEmpty` existen en todas, `push`/`pop` operan en el final de `Array` y `Deque`,
+y la consulta por posición es `get`, que también sirve para observar un extremo
+sin extraerlo (`get(0)` el primero, `get(-1)` el último).
+
+```tondo
 fn Array.new[T](): Array[T]
 fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError
 fn Array.length[T](self): Int
+fn Array.isEmpty[T](self): Bool
 fn Array.get[T](self, index: Int): T?
 fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError
-fn Array.push[T](var self, value: T): Unit ! CollectionError
+fn Array.push[T](var self, value: T)
 fn Array.pop[T](var self): T?
+fn Array.insert[T](var self, at: Int, value: T)
+fn Array.removeAt[T](var self, at: Int): T?
+fn Array.clear[T](var self)
+
+fn Deque.new[T](): Deque[T]
+fn Deque.length[T](self): Int
+fn Deque.isEmpty[T](self): Bool
+fn Deque.get[T](self, index: Int): T?
+fn Deque.push[T](var self, value: T)
+fn Deque.pop[T](var self): T?
+fn Deque.pushFront[T](var self, value: T)
+fn Deque.popFront[T](var self): T?
+fn Deque.clear[T](var self)
 
 fn Map.new[K: Key, V](): Map[K, V]
+fn Map.length[K: Key, V](self): Int
+fn Map.isEmpty[K: Key, V](self): Bool
 fn Map.get[K: Key, V](self, key: K): V?
 fn Map.insert[K: Key, V](var self, key: K, value: V): V?
 fn Map.remove[K: Key, V](var self, key: K): V?
 fn Map.contains[K: Key, V](self, key: K): Bool
+fn Map.clear[K: Key, V](var self)
 fn Map.entries[K: Key, V](self): Iterator[(K, V)]
+fn Map.keys[K: Key, V](self): Iterator[K]
+fn Map.values[K: Key, V](self): Iterator[V]
 
 fn Set.new[K: Key](): Set[K]
+fn Set.length[K: Key](self): Int
+fn Set.isEmpty[K: Key](self): Bool
 fn Set.insert[K: Key](var self, value: K): Bool
 fn Set.remove[K: Key](var self, value: K): Bool
 fn Set.contains[K: Key](self, value: K): Bool
+fn Set.clear[K: Key](var self)
 fn Set.values[K: Key](self): Iterator[K]
 
 enum CollectionError { InvalidCapacity, InvalidIndex, InvalidStep, ResourceLimit }
 ```
 
-`Array.new` y `Map/Set.new` requieren argumentos de tipo explícitos para que no
-haya una inferencia dependiente del uso posterior. `withCapacity` rechaza una
-capacidad negativa, no representable o por encima del límite del run sin
-publicar una reserva parcial. `get` es total y devuelve `none` fuera de rango;
-los índices negativos cuentan desde el final. `slice` usa `[start, end)`, exige
-límites no negativos y que `start <= end <= length`, y también es atómica.
-`push` conserva el orden y devuelve `CollectionError` si no puede reservar; no
-modifica el array en ese caso. `pop` devuelve `none` para un array vacío.
+`new` requiere argumentos de tipo explícitos para que no haya una inferencia
+dependiente del uso posterior. `withCapacity` rechaza una capacidad negativa,
+no representable o por encima del límite del run sin publicar una reserva
+parcial. `get` es total y devuelve `none` fuera de rango; los índices negativos
+cuentan desde el final. `slice` usa
+`[start, end)`, exige límites no negativos y que `start <= end <= length`, y es
+atómica.
+
+`push`, `pushFront` e `insert` no son fallibles: no poder reservar memoria es
+agotamiento de recursos de la implementación (lenguaje 10.3), no un error
+recuperable. `push` añade al final y `pushFront` al principio. `pop` y
+`popFront` devuelven `none` cuando la colección está vacía. `insert(at, value)`
+coloca `value` en la posición `at`, que admite índices negativos desde el final
+y puede ser igual a `length` para añadir al final; una posición fuera de
+`0...length` produce el pánico de bounds `P0001`, igual que un índice directo.
+`removeAt(at)` extrae el elemento de esa posición, desplaza los siguientes y
+devuelve `none` si la posición no existe. `clear` elimina todos los elementos.
+
+`Deque[T]` es la colección para colas: `push` y `popFront` forman una cola FIFO
+y ambos extremos operan en tiempo constante amortizado. Admite indexación
+`deque[i]` con las mismas reglas que `Array`. Las colas compartidas entre tasks
+son `sync.Queue` y `sync.Stack`.
 
 `Map.insert` devuelve el valor anterior y mantiene la primera posición de la
-key; `remove` devuelve el valor eliminado. `Map.entries` y `Set.values` son
-cursores propios lazy: cada target de `for` consume exactamente un elemento y
-el cursor no se reinicia implícitamente. `Set.insert` devuelve `false` cuando la
-key ya existe y `remove` devuelve `false` cuando está ausente. Los resultados de
-consulta y los cursores se materializan por la ruta HIR → MIR → bytecode → VM;
-no existe un segundo API host ni una segunda representación de colección.
+key; `remove` devuelve el valor eliminado. `Set.insert` devuelve `false` cuando
+la key ya existe y `remove` devuelve `false` cuando está ausente. `entries`,
+`keys` y `values` son cursores lazy en orden de inserción: cada target de `for`
+consume exactamente un elemento y el cursor no se reinicia implícitamente.
+
+Un nombre habitual en otros lenguajes que no pertenezca a esta lista
+(`append`, `add`, `peek`, `first`, `last`, `size`, `count`, `len`, `enqueue`,
+`dequeue`, `has`, `delete`...) produce `E1001` indicando la operación canónica.
 
 ### 10.3 Protocolos de I/O
 
@@ -1518,8 +1563,19 @@ remaining filesystem admission paths and integrated owner checks are complete.
 
 ### 10.6 Formato
 
-`Display` es el protocolo mínimo estático usado por interpolación. La stdlib
-puede añadir formato controlado mediante `std.format`, pero:
+`Display` es el protocolo mínimo estático usado por interpolación. Los tipos
+intrínsecos lo implementan así:
+
+- Enteros y `Byte`: decimal, con `-` para negativos.
+- `Bool`: `true` o `false`.
+- `Char` y `String`: su propio texto, sin comillas.
+- Floats: la forma decimal más corta que vuelve a leerse como el mismo valor y
+  que siempre se distingue de un entero: `1.0`, `0.1`, `1e-7`, `1e21`. Los
+  valores especiales son `NaN`, `inf` y `-inf`.
+- `Array` y `Deque`: `[a, b, c]`; `Map`: `[key: value, ...]` y `[:]` vacío;
+  `Set`: `Set[a, b]`. Los elementos usan su propio `Display`.
+
+La stdlib puede añadir formato controlado mediante `std.format`, pero:
 
 - No introduce reflection general.
 - No busca métodos por string.
@@ -4960,7 +5016,7 @@ No forman parte de STD-0.1:
 - Streams suspendible generales o reactivos; los protocolos acotados de byte I/O de
   `std.io`, sockets de `std.net` y canales de `std.channel` sí pertenecen a
   0.1.
-- Deque y priority queues.
+- Priority queues.
 - Decimal, BigInt y Complex.
 - Matrices, tensors y álgebra lineal.
 - `WeakRef`, `Cell` y mutabilidad interior general.
