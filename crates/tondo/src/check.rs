@@ -37,6 +37,10 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         closure_functions: Vec::new(),
         fn_scopes: Vec::new(),
         console_error: None,
+        module: 0,
+        owners: HashMap::new(),
+        method_visibility: HashMap::new(),
+        trait_modules: HashMap::new(),
         conversion_error: Ty::ERROR,
         collection_error: Ty::ERROR,
         text_error: Ty::ERROR,
@@ -246,6 +250,8 @@ struct ImplDef {
 /// in scope and what `Self` means.
 #[derive(Clone, Default)]
 struct FnScope {
+    /// The module of the function (7.5).
+    module: u32,
     types: Vec<(String, Ty)>,
     self_type: Option<Ty>,
     /// Inside an `impl`: the trait it implements, whose methods are
@@ -328,6 +334,14 @@ struct Checker<'a> {
     fn_scopes: Vec<FnScope>,
     /// `console.ConsoleError`, once `std.console` is imported.
     console_error: Option<Ty>,
+    /// The module whose declaration or code is being checked (7.5).
+    module: u32,
+    /// Who declares each nominal type, by name.
+    owners: HashMap<String, Owner>,
+    /// The module of each inherent operation, and whether it is `pub`.
+    method_visibility: HashMap<FnId, (u32, bool)>,
+    /// The module of each user trait.
+    trait_modules: HashMap<TraitId, u32>,
     /// The prelude's `NumericConversionError`.
     conversion_error: Ty,
     /// `std.collections.CollectionError`.
@@ -384,6 +398,14 @@ struct Callable {
     variadic: bool,
     mutates: bool,
     modes: Vec<ast::Mode>,
+}
+
+/// What declares a nominal type (7.5–7.7): its module, whether it is `pub`,
+/// and which fields of a record are `priv`.
+struct Owner {
+    module: u32,
+    public: bool,
+    private_fields: Vec<bool>,
 }
 
 /// A binding a closure captures: read from `source` in the enclosing
@@ -711,6 +733,26 @@ impl Checker<'_> {
         let mut declared = Vec::new();
         let mut templates = Vec::new();
         for item in items {
+            let owner = match item {
+                ast::Item::Type(decl) => Some((
+                    decl.module,
+                    decl.public,
+                    match &decl.body {
+                        ast::TypeBody::Record(fields) => fields.iter().map(|f| f.private).collect(),
+                        ast::TypeBody::Newtype(_) => Vec::new(),
+                    },
+                )),
+                ast::Item::Enum(decl) => Some((decl.module, decl.public, Vec::new())),
+                _ => None,
+            };
+            if let Some((module, public, private_fields)) = owner {
+                let name = match item {
+                    ast::Item::Type(decl) => decl.name.name.clone(),
+                    ast::Item::Enum(decl) => decl.name.name.clone(),
+                    _ => unreachable!(),
+                };
+                self.owners.insert(name, Owner { module, public, private_fields });
+            }
             let name = match item {
                 ast::Item::Type(decl) => &decl.name,
                 ast::Item::Enum(decl) => &decl.name,
@@ -1029,7 +1071,11 @@ impl Checker<'_> {
             Some(result) => self.result_type(result, f, all_generics),
             None => Ty::UNIT,
         };
+        if f.public {
+            self.check_public_api(&params, result, f);
+        }
         let scope = FnScope {
+            module: f.module,
             types: self.type_params.clone(),
             self_type: self.self_type,
             implementing: outer.implementing.clone(),
@@ -1061,6 +1107,7 @@ impl Checker<'_> {
             let self_param = self.types.declare_param("Self".into());
             let params = decl.generics.iter().map(|g| self.types.declare_param(g.name.name.clone())).collect();
             let id = TraitId(self.traits.len() as u32);
+            self.trait_modules.insert(id, decl.module);
             self.traits.push(TraitDef { name: name.name.clone(), self_param, params, methods: Vec::new() });
             self.trait_names.insert(name.name.clone(), id);
         }
@@ -1087,7 +1134,7 @@ impl Checker<'_> {
             let def = &self.traits[id.0 as usize];
             let mut types = vec![("Self".to_string(), def.self_param)];
             types.extend(decl.generics.iter().map(|g| g.name.name.clone()).zip(def.params.iter().copied()));
-            let scope = FnScope { types, self_type: Some(def.self_param), implementing: None };
+            let scope = FnScope { module: decl.module, types, self_type: Some(def.self_param), implementing: None };
             let mut seen = HashSet::new();
             for f in &decl.methods {
                 if !seen.insert(f.name.name.as_str()) {
@@ -1153,11 +1200,11 @@ impl Checker<'_> {
         let trait_name = self.traits[trait_id.0 as usize].name.clone();
         let target_name = self.types.display(target);
         // Coherence (12.6): the module owns the trait or the target's nominal type.
-        let local_trait = trait_id != DISPLAY;
-        let local_target = matches!(self.types.kind(target), TyKind::Adt(_)) && self.types.repr(target) != Ty::ERROR;
+        let local_trait = self.trait_modules.get(&trait_id) == Some(&decl.module);
+        let local_target = self.owner(target).is_some_and(|o| o.module == decl.module);
         if !local_trait && !local_target {
             let message = format!(
-                "`impl {trait_name} for {target_name}` implements a prelude trait for a type this module does not own; wrap it in a newtype, such as `type Name = {target_name}`"
+                "`impl {trait_name} for {target_name}` implements a trait for a type, neither of which this module declares; implement it in the module of one of them, or wrap the type in a newtype, such as `type Name = {target_name}`"
             );
             self.diags.error("E1114", decl.target.span, message);
             return;
@@ -1212,7 +1259,12 @@ impl Checker<'_> {
         let mut types: Vec<(String, Ty)> =
             decl.generics.iter().map(|g| g.name.name.clone()).zip(binders.iter().copied()).collect();
         types.dedup();
-        let scope = FnScope { types, self_type: Some(target), implementing: Some((trait_id, trait_args.clone())) };
+        let scope = FnScope {
+            module: decl.module,
+            types,
+            self_type: Some(target),
+            implementing: Some((trait_id, trait_args.clone())),
+        };
         let mut methods = vec![None; declared.len()];
         for f in &decl.methods {
             let Some(index) = declared.iter().position(|(name, ..)| *name == f.name.name) else {
@@ -1797,6 +1849,7 @@ impl Checker<'_> {
             Some(message) => self.diags.error("E1002", f.name.span, message),
             None => {
                 self.methods.insert((owner, name.clone()), id);
+                self.method_visibility.insert(id, (f.module, f.public));
             }
         }
     }
@@ -2025,6 +2078,7 @@ impl Checker<'_> {
         let outer_types = std::mem::replace(&mut self.type_params, scope.types);
         let outer_self = std::mem::replace(&mut self.self_type, scope.self_type);
         let outer_implementing = std::mem::replace(&mut self.implementing, scope.implementing);
+        self.module = scope.module;
         // An opaque result's witness is inferred from the body (12.8).
         let opaque = match self.types.kind(signature.result) {
             TyKind::Opaque(..) => Some(signature.result),
@@ -2960,6 +3014,13 @@ impl Checker<'_> {
     /// The position and type of a field. The position is `None` for a
     /// newtype's `.value`, which shares the newtype's representation.
     fn field_of(&mut self, ty: Ty, field: FieldRef, span: Span) -> Option<(Option<u32>, Ty)> {
+        if let (FieldRef::Name(name), Some(hidden)) = (field, self.hidden_fields(ty))
+            && let Some(index) = self.types.components(ty).and(self.field_index(ty, name))
+            && hidden[index]
+        {
+            let message = format!("field `{name}` of {} is private to its module", self.display(ty));
+            self.diags.error("E1501", span, message);
+        }
         let found = match (self.types.kind(ty), field) {
             (TyKind::Error, _) => return None,
             (TyKind::Tuple(items), FieldRef::Slot(slot)) => items.get(slot as usize).map(|&t| (Some(slot), t)),
@@ -2981,6 +3042,77 @@ impl Checker<'_> {
             self.diags.error("E1102", span, message);
         }
         found
+    }
+
+    /// Who declares a nominal type, if the program does.
+    fn owner(&self, ty: Ty) -> Option<&Owner> {
+        let name = match self.types.instance_of(ty) {
+            Some((template, _)) => &self.types.template(template).name,
+            None => match self.types.kind(ty) {
+                TyKind::Adt(id) => &self.types.adt(*id).name,
+                _ => return None,
+            },
+        };
+        self.owners.get(name)
+    }
+
+    /// Which fields of a record are private, when it is declared in another
+    /// module and has some (7.6).
+    fn hidden_fields(&self, ty: Ty) -> Option<&[bool]> {
+        let owner = self.owner(ty)?;
+        (owner.module != self.module && owner.private_fields.contains(&true)).then_some(&owner.private_fields)
+    }
+
+    fn field_index(&self, ty: Ty, name: &str) -> Option<usize> {
+        let TyKind::Adt(id) = self.types.kind(ty) else { return None };
+        match &self.types.adt(*id).kind {
+            AdtKind::Record(fields) => fields.iter().position(|f| f.name == name),
+            _ => None,
+        }
+    }
+
+    /// A type that `ty` mentions and that is private to its module.
+    fn private_in(&self, ty: Ty) -> Option<Ty> {
+        if self.owner(ty).is_some_and(|o| !o.public) {
+            return Some(ty);
+        }
+        let parts: Vec<Ty> = match self.types.kind(ty) {
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
+            TyKind::Map(a, b) | TyKind::Result(a, b) => vec![*a, *b],
+            TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
+            TyKind::Fn(params, result, ..) => params.iter().copied().chain([*result]).collect(),
+            _ => self.types.instance_of(ty).map_or(Vec::new(), |(_, args)| args.to_vec()),
+        };
+        parts.into_iter().find_map(|t| self.private_in(t))
+    }
+
+    /// A `pub` function or operation exposes only `pub` types (7.9).
+    fn check_public_api(&mut self, params: &[Ty], result: Ty, f: &ast::FnDecl) {
+        let exposed = params.iter().chain([&result]).find_map(|&t| self.private_in(t));
+        if let Some(private) = exposed {
+            let (shown, name) = (self.display(private), &f.name.name);
+            let message = if f.owner.is_some() && params.first() == Some(&private) {
+                format!(
+                    "`pub` operation `{name}` belongs to {shown}, which is private; declare the type `pub`, or the operation private"
+                )
+            } else {
+                format!("`pub fn {name}` exposes {shown}, which is private; declare it `pub`, or the function private")
+            };
+            self.diags.error("E1503", f.name.span, message);
+        }
+    }
+
+    /// Reports a call of an inherent operation that is private to another
+    /// module (7.8).
+    fn check_method_visible(&mut self, id: FnId, span: Span) {
+        if let Some(&(module, public)) = self.method_visibility.get(&id)
+            && module != self.module
+            && !public
+        {
+            let name = self.signatures[id.0 as usize].name.clone();
+            let message = format!("`{name}` is private to its module; declare it `pub` to use it here");
+            self.diags.error("E1501", span, message);
+        }
     }
 
     fn for_loop(&mut self, cx: &mut FnCx, header: &ast::ForHeader, body: &ast::Block) -> Option<hir::Stmt> {
@@ -3754,6 +3886,13 @@ impl Checker<'_> {
         let Some(fields) = self.record_fields(ty, name.span) else {
             return Self::error_expr(span);
         };
+        if self.hidden_fields(ty).is_some() {
+            let message = format!(
+                "{} has private fields, so only its module can build it with a literal; call a function of that module",
+                self.display(ty)
+            );
+            self.diags.error("E1502", name.span, message);
+        }
         let (ty, values, seen) = self.generic_fields(cx, ty, &fields, inits, expected, span);
         self.report_missing(&fields, &seen, span);
         Self::mk(hir::ExprKind::Record(values), ty, span)
@@ -4077,6 +4216,27 @@ impl Checker<'_> {
                 {
                     let record = if self.same_nominal(record, ty) { ty } else { record };
                     let Some(fields) = self.record_fields(record, name.span) else { return Self::wild(ty, span) };
+                    if let Some(hidden) = self.hidden_fields(record).map(<[bool]>::to_vec) {
+                        let ast::PatternKind::Record { fields: written, .. } = &p.kind else { unreachable!() };
+                        let named = written.iter().find(|w| {
+                            fields.iter().zip(&hidden).any(|((name, _), private)| *private && *name == w.name.name)
+                        });
+                        let message = match named {
+                            Some(field) => Some(format!(
+                                "field `{}` of {} is private to its module",
+                                field.name.name,
+                                self.display(record)
+                            )),
+                            None if !*rest => {
+                                Some(format!("{} has private fields; end the pattern with `..`", self.display(record)))
+                            }
+                            None => None,
+                        };
+                        if let Some(message) = message {
+                            self.diags.error("E1501", span, message);
+                            return Self::wild(ty, span);
+                        }
+                    }
                     (record, fields, None)
                 } else {
                     let message = format!("`{}` is not a record type or variant", Self::path_text(path));
@@ -4337,6 +4497,17 @@ impl Checker<'_> {
         };
         if updates.is_empty() {
             self.diags.error("E1102", span, "`with` must update at least one field");
+        }
+        if let Some(hidden) = self.hidden_fields(ty).map(<[bool]>::to_vec) {
+            for update in updates {
+                if let Some(index) = self.field_index(ty, &update.name.name)
+                    && hidden[index]
+                {
+                    let message =
+                        format!("field `{}` of {} is private to its module", update.name.name, self.display(ty));
+                    self.diags.error("E1501", update.name.span, message);
+                }
+            }
         }
         let (values, _) = self.field_values(cx, ty, &fields, updates, false, None);
         Self::mk(hir::ExprKind::With(Box::new(base), values), ty, span)
@@ -4672,6 +4843,7 @@ impl Checker<'_> {
         let ty = value.ty;
         let key = self.owner_key(ty);
         if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
+            self.check_method_visible(id, method.span);
             let signature = self.signatures[id.0 as usize].clone();
             return self.dot_call(cx, Callee::Fn(id), signature, HashMap::new(), value, method, args, span);
         }
@@ -5417,6 +5589,7 @@ impl Checker<'_> {
             && let Some(owner) = self.type_named(&type_name.name)
             && let Some(&id) = self.methods.get(&(owner, operation.name.clone()))
         {
+            self.check_method_visible(id, operation.span);
             return self.fn_value(id, Vec::new(), expected, span);
         }
         if let Some(resolved) = self.variant_path(segments) {
@@ -5542,6 +5715,7 @@ impl Checker<'_> {
             && let Some(owner) = self.type_named(type_name)
         {
             if let Some(id) = self.methods.get(&(owner, operation.to_string())).copied() {
+                self.check_method_visible(id, span);
                 let signature = self.signatures[id.0 as usize].clone();
                 let target = CallTarget::new(Callee::Fn(id), signature, expected);
                 return self.call_signature(cx, target, None, args, span);

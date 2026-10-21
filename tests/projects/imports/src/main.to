@@ -1,0 +1,16 @@
+import imports.a
+import imports.missing
+import other.thing
+import imports.a as a2
+
+fn main() {
+    a.hidden()
+    a.nothing()
+}
+
+// expect-error: E1008 the package has no module `imports.missing`
+// expect-error: E1008 module `other.thing` is not available: imports start with `std` or `imports`
+// expect-error: E1006 modules cannot import each other in a cycle: `imports.a` imports `imports.b`, which imports `imports.a`
+// expect-error: E1501 `hidden` is private to module `imports.a`; declare it `pub` to use it here
+// expect-error: E1001 module `imports.a` declares no `nothing`
+// expect-error: E1804 top-level statements belong in the root file of the program

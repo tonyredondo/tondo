@@ -10,6 +10,9 @@
 //!
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once.
+//!
+//! Each directory under `tests/projects` is a project built as a whole,
+//! with the expectations written in any of its files.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -53,7 +56,13 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
-    let source = std::fs::read_to_string(path).unwrap();
+    let mut sources = Vec::new();
+    if path.is_dir() {
+        collect(path, &mut sources);
+    } else {
+        sources.push(path.to_path_buf());
+    }
+    let source: String = sources.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
     let expect = expectations(&source);
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let binary = scratch.join(path.file_stem().unwrap());
@@ -109,10 +118,21 @@ fn cases() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases");
     let mut paths = Vec::new();
     collect(&root, &mut paths);
-    paths.sort();
-    assert!(!paths.is_empty(), "no cases found under {}", root.display());
+    run_all(paths, "cases");
+}
 
-    let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cases");
+#[test]
+fn projects() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/projects");
+    let paths = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
+    run_all(paths, "projects");
+}
+
+fn run_all(mut paths: Vec<PathBuf>, name: &str) {
+    paths.sort();
+    assert!(!paths.is_empty(), "no {name} found");
+
+    let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).unwrap();
 

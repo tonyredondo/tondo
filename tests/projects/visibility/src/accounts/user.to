@@ -1,0 +1,28 @@
+pub type User = {
+    name: String
+    priv secret: String
+}
+
+pub type Plain = { value: Int }
+
+type Hidden = { value: Int }
+
+pub fn User.new(name: String): User {
+    User { name, secret: "s" }
+}
+
+fn User.check(self): Bool {
+    self.secret.length() > 0
+}
+
+pub fn User.verified(self): Bool {
+    self.check()
+}
+
+pub fn leak(): Hidden {
+    Hidden { value: 1 }
+}
+
+pub trait Named {
+    fn name(self): String
+}

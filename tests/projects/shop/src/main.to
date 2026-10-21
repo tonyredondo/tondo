@@ -1,0 +1,20 @@
+import std.console
+import shop.models
+import shop.models.pricing as prices
+
+fn main() {
+    let pen = models.Item.new("pen", 3)
+    console.println(models.describe(pen))
+    let items = [pen, models.Item { name: "ink", price: 5 }]
+    console.println("{prices.total(items)} {label(models.Color.Red)}")
+}
+
+fn label(color: models.Color): String {
+    match color {
+        models.Color.Red => "red"
+        models.Color.Blue => "blue"
+    }
+}
+
+// expect-stdout: pen: $3
+// expect-stdout: 8 red

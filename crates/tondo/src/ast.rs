@@ -16,7 +16,7 @@ pub struct Module {
     pub statements: Vec<Stmt>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Import {
     pub path: Vec<Ident>,
     pub alias: Option<Ident>,
@@ -41,6 +41,9 @@ pub struct TraitDecl {
     pub generics: Vec<GenericParam>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
+    /// The module that declares it, numbered when modules are linked; the
+    /// root module is 0.
+    pub module: u32,
 }
 
 /// `impl[Binders] Trait[Args] for Target { fn ... }` (12.4).
@@ -51,6 +54,9 @@ pub struct ImplDecl {
     pub target: TypeExpr,
     pub methods: Vec<FnDecl>,
     pub span: Span,
+    /// The module that declares it, numbered when modules are linked; the
+    /// root module is 0.
+    pub module: u32,
 }
 
 /// `T` or `T: Bound + Bound` in a generic declaration (12.1).
@@ -67,6 +73,9 @@ pub struct EnumDecl {
     pub generics: Vec<GenericParam>,
     pub variants: Vec<VariantDecl>,
     pub span: Span,
+    /// The module that declares it, numbered when modules are linked; the
+    /// root module is 0.
+    pub module: u32,
 }
 
 #[derive(Debug)]
@@ -157,6 +166,9 @@ pub struct TypeDecl {
     pub generics: Vec<GenericParam>,
     pub body: TypeBody,
     pub span: Span,
+    /// The module that declares it, numbered when modules are linked; the
+    /// root module is 0.
+    pub module: u32,
 }
 
 #[derive(Debug)]
@@ -195,6 +207,9 @@ pub struct FnDecl {
     /// `None` for a required method of a trait.
     pub body: Option<Block>,
     pub span: Span,
+    /// The module that declares it, numbered when modules are linked; the
+    /// root module is 0.
+    pub module: u32,
 }
 
 #[derive(Debug)]

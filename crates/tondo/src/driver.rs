@@ -2,7 +2,7 @@
 
 use crate::diag::Diagnostics;
 use crate::source::{SourceMap, Span};
-use crate::{check, codegen, hir, lower, mono, parser};
+use crate::{ast, check, codegen, hir, lower, modules, mono, parser, project};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -17,31 +17,80 @@ pub struct Analysis {
     pub program: Option<hir::Program>,
 }
 
-/// Reads, parses and checks a root source file.
+/// Reads, parses and checks a program: a project directory (toolchain 3)
+/// or a single source file.
 pub fn analyze(path: &Path) -> Result<Analysis, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
+    let module = if path.is_dir() {
+        let project = project::discover(path)?;
+        let mut modules: Vec<modules::ModuleSource> = Vec::new();
+        let mut root = 0;
+        for (index, file) in project.files.iter().enumerate() {
+            let Some(parsed) = parse(&file.path, &mut sources, &mut diags)? else { continue };
+            let position = match modules.iter().position(|m| m.path == file.module) {
+                Some(position) => position,
+                None => {
+                    modules.push(modules::ModuleSource { path: file.module.clone(), files: Vec::new() });
+                    modules.len() - 1
+                }
+            };
+            if index == project.root {
+                root = position;
+            }
+            modules[position].files.push((parsed, index == project.root));
+        }
+        if diags.has_errors() {
+            return Ok(Analysis { sources, diags, program: None });
+        }
+        modules::link(modules, root, &mut diags)
+    } else {
+        match parse(path, &mut sources, &mut diags)? {
+            Some(module) => module,
+            None => return Ok(Analysis { sources, diags, program: None }),
+        }
+    };
+    let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags) };
+    let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
+    Ok(Analysis { sources, diags, program })
+}
+
+/// Reads and parses one source file; `None` when it cannot be lexed.
+fn parse(path: &Path, sources: &mut SourceMap, diags: &mut Diagnostics) -> Result<Option<ast::Module>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let text = match String::from_utf8(bytes) {
         Ok(text) => text,
         Err(error) => {
             let offset = error.utf8_error().valid_up_to() as u32;
             let text = String::from_utf8_lossy(error.as_bytes()).into_owned();
-            sources.add(path, text);
-            diags.error("E0001", Span::new(offset, offset + 1), "invalid UTF-8 in source file");
-            return Ok(Analysis { sources, diags, program: None });
+            let file = sources.add(path, text);
+            let base = sources.file(file).base;
+            diags.error("E0001", Span::new(base + offset, base + offset + 1), "invalid UTF-8 in source file");
+            return Ok(None);
         }
     };
     let has_bom = text.starts_with('\u{feff}');
     let file = sources.add(path, text);
     if has_bom {
-        diags.error("E0001", Span::new(0, 3), "source files must not start with a byte order mark");
-        return Ok(Analysis { sources, diags, program: None });
+        let base = sources.file(file).base;
+        diags.error("E0001", Span::new(base, base + 3), "source files must not start with a byte order mark");
+        return Ok(None);
     }
-    let module = parser::parse_file(sources.file(file), &mut diags);
-    let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags) };
-    let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
-    Ok(Analysis { sources, diags, program })
+    Ok(Some(parser::parse_file(sources.file(file), diags)))
+}
+
+/// The source files a build of `path` reads, for cache keys.
+pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if !path.is_dir() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    let project = project::discover(path)?;
+    let mut inputs: Vec<PathBuf> = project.files.into_iter().map(|f| f.path).collect();
+    let manifest = path.join("tondo.toml");
+    if manifest.is_file() {
+        inputs.push(manifest);
+    }
+    Ok(inputs)
 }
 
 /// Lowers a checked program to a native object file.

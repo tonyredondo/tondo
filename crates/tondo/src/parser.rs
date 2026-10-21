@@ -286,7 +286,7 @@ impl Parser<'_> {
         };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(TypeDecl { public, name, generics, body, span })
+        Ok(TypeDecl { public, name, generics, body, span, module: 0 })
     }
 
     fn enum_declaration(&mut self, public: bool, start: Span) -> PResult<EnumDecl> {
@@ -322,7 +322,7 @@ impl Parser<'_> {
         }
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(EnumDecl { public, name, generics, variants, span })
+        Ok(EnumDecl { public, name, generics, variants, span, module: 0 })
     }
 
     /// `{ [priv] name: Type, ... }` separated by commas or newlines.
@@ -416,7 +416,7 @@ impl Parser<'_> {
         let body = if self.at(&Tok::LBrace) { Some(self.block()?) } else { None };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, suspends, body, span })
+        Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, suspends, body, span, module: 0 })
     }
 
     /// One bound of a list: a type, or `~Copy`. In an opaque result each
@@ -463,7 +463,7 @@ impl Parser<'_> {
         let methods = self.method_block()?;
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(TraitDecl { public, name, generics, methods, span })
+        Ok(TraitDecl { public, name, generics, methods, span, module: 0 })
     }
 
     fn impl_declaration(&mut self, start: Span) -> PResult<ImplDecl> {
@@ -478,7 +478,7 @@ impl Parser<'_> {
         let methods = self.method_block()?;
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(ImplDecl { generics, trait_ref, target, methods, span })
+        Ok(ImplDecl { generics, trait_ref, target, methods, span, module: 0 })
     }
 
     /// `{ fn ... }` of a trait or implementation.

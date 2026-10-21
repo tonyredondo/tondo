@@ -1,0 +1,14 @@
+pub type Item = { name: String, price: Int }
+
+pub enum Color {
+    Red
+    Blue
+}
+
+pub fn Item.new(name: String, price: Int): Item {
+    Item { name, price }
+}
+
+pub fn describe(item: Item): String {
+    "{item.name}: {money(item.price)}"
+}

@@ -1,0 +1,9 @@
+import shop.models
+
+pub fn total(items: Array[models.Item]): Int {
+    var sum = 0
+    for item in items {
+        sum += item.price
+    }
+    sum
+}

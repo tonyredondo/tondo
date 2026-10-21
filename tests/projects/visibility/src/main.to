@@ -1,0 +1,27 @@
+import std.console
+import visibility.accounts
+
+impl Display for accounts.Plain {
+    fn display(self): String {
+        "plain"
+    }
+}
+
+fn main() {
+    let user = accounts.User.new("ada")
+    console.println(user.secret)
+    let copy = accounts.User { name: "x", secret: "y" }
+    let other = user with { secret: "z" }
+    match user {
+        accounts.User { name } => console.println(name)
+    }
+    let fine = user.verified()
+    let bad = user.check()
+}
+
+// expect-error: E1503 `pub fn accounts.leak` exposes `accounts.Hidden`, which is private
+// expect-error: E1114 `impl Display for accounts.Plain` implements a trait for a type, neither of which this module declares
+// expect-error: E1501 field `secret` of `accounts.User` is private to its module
+// expect-error: E1502 `accounts.User` has private fields, so only its module can build it with a literal
+// expect-error: E1501 `accounts.User` has private fields; end the pattern with `..`
+// expect-error: E1501 `accounts.User.check` is private to its module; declare it `pub` to use it here

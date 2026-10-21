@@ -1,0 +1,7 @@
+import imports.b
+
+fn hidden() {}
+
+pub fn visible() {
+    b.run()
+}

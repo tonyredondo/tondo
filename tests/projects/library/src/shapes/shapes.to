@@ -1,0 +1,34 @@
+pub trait Area {
+    fn area(self): Int
+
+    fn describe(self): String {
+        "area {self.area()}"
+    }
+}
+
+pub type Square = { side: Int }
+
+impl Area for Square {
+    fn area(self): Int {
+        self.side * self.side
+    }
+}
+
+pub type Box[T] = { value: T }
+
+pub fn wrap[T](value: T): Box[T] {
+    Box { value }
+}
+
+pub fn total[S: Area](shapes: Array[S]): Int {
+    var sum = 0
+    for shape in shapes {
+        sum += shape.area()
+    }
+    sum
+}
+
+pub enum Kind {
+    Small
+    Large(Int)
+}

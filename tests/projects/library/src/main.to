@@ -1,0 +1,26 @@
+import std.console
+import library.shapes
+
+type Rect = { width: Int, height: Int }
+
+impl shapes.Area for Rect {
+    fn area(self): Int {
+        self.width * self.height
+    }
+}
+
+let boxed: shapes.Box[Int] = shapes.wrap(5)
+let rect = Rect { width: 2, height: 3 }
+console.println("{boxed.value} {shapes.wrap[String]("x").value}")
+console.println("{shapes.total([shapes.Square { side: 2 }, shapes.Square { side: 3 }])} {shapes.total([rect])}")
+console.println(shapes.Area.describe(rect))
+let kind = shapes.Kind.Large(3)
+match kind {
+    shapes.Kind.Small => console.println("small")
+    shapes.Kind.Large(size) => console.println("large {size}")
+}
+
+// expect-stdout: 5 x
+// expect-stdout: 13 6
+// expect-stdout: area 6
+// expect-stdout: large 3

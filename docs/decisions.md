@@ -272,3 +272,17 @@ types (16.3): a call through a function value lends `mut` and `var`
 arguments by address, as a direct call does, and a closure declares the
 mode of each parameter or takes it from the expected type. Terminal resources and their unwind actions move to H6, where
 the first types that need them (files, processes) arrive.
+
+## 2026-10-21 — Modules are linked by renaming
+
+A project's directories are its modules (6.1). Before checking, the module
+linker resolves every import and renames each declaration of a module other
+than the root after its module path, and each path that reaches it: `User`
+in `app.models` becomes `models.User`, which is also how code that imports
+`app.models` writes it. The checker then works on one namespace and shows
+types as they are written. The linker reports unknown modules and
+declarations (`E1008`, `E1001`), private declarations (`E1501`) and import
+cycles with their path (`E1006`); the checker knows the module of each
+declaration and of the code it checks, for `priv` fields, private
+operations, public APIs that expose private types (`E1503`) and coherence.
+Imports of `std` modules are shared by the files of a program for now.

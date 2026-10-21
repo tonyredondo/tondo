@@ -52,7 +52,7 @@ fn main() {
 // expect-error: E1114 `Summary` has no method `extra`
 // expect-error: E1111 `impl Summary for User` overlaps an earlier implementation
 // expect-error: E1114 `impl Summary for Item` is missing `summarize`
-// expect-error: E1114 implements a prelude trait for a type this module does not own
+// expect-error: E1114 implements a trait for a type, neither of which this module declares
 // expect-error: E1110 a trait is not a type
 // expect-error: E1115 this bound is repeated
 // expect-error: E1004 `summarize` comes from more than one bound

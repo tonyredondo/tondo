@@ -7,11 +7,14 @@ use tondo::driver;
 
 const USAGE: &str = "\
 usage:
-  tondo run <file.to> [-- <argument>...]   compile and run a program
-  tondo build <file.to> [--output <path>]  compile a native executable
-  tondo check <file.to>                    report diagnostics only
-  tondo <file.to> [<argument>...]          run a script (for #! lines)
-  tondo version";
+  tondo run [<project>|<file.to>] [-- <argument>...]   compile and run a program
+  tondo build [<project>|<file.to>] [--output <path>]  compile a native executable
+  tondo check [<project>|<file.to>]                    report diagnostics only
+  tondo <file.to> [<argument>...]                      run a script (for #! lines)
+  tondo version
+
+A project is a directory with src/main.to, or with main.to or tondo.toml;
+the current directory when none is given.";
 
 /// Exit status for usage and toolchain failures (distinct from program errors).
 const TOOL_FAILURE: u8 = 3;
@@ -43,11 +46,20 @@ fn main() -> ExitCode {
     })
 }
 
-fn source_argument(args: &[OsString]) -> Result<PathBuf, String> {
+/// The program to compile, and the arguments after it.
+fn source_argument(args: &[OsString]) -> (PathBuf, &[OsString]) {
     match args.first() {
-        Some(path) if path != "--" => Ok(PathBuf::from(path)),
-        _ => Err(format!("expected a source file\n{USAGE}")),
+        Some(path) if path != "--" && !path.to_string_lossy().starts_with('-') => (PathBuf::from(path), &args[1..]),
+        _ => (PathBuf::from("."), args),
     }
+}
+
+/// The name of the executable built from `path`: the file's stem, or the
+/// project directory's name.
+fn program_name(path: &Path) -> Result<PathBuf, String> {
+    let path = if path.is_dir() { std::fs::canonicalize(path).map_err(|e| e.to_string())? } else { path.to_path_buf() };
+    let name = if path.is_dir() { path.file_name() } else { path.file_stem() };
+    name.map(PathBuf::from).ok_or_else(|| format!("cannot name a program after {}", path.display()))
 }
 
 /// Prints diagnostics; returns the analysis only when it has no errors.
@@ -60,14 +72,17 @@ fn analyze(path: &Path) -> Result<Option<driver::Analysis>, String> {
 }
 
 fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let path = source_argument(args)?;
+    let (path, rest) = source_argument(args);
+    if !rest.is_empty() {
+        return Err(format!("unexpected arguments\n{USAGE}"));
+    }
     Ok(if analyze(&path)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let path = source_argument(args)?;
-    let output = match &args[1..] {
-        [] => PathBuf::from(path.file_stem().ok_or("invalid source path")?),
+    let (path, rest) = source_argument(args);
+    let output = match rest {
+        [] => program_name(&path)?,
         [flag, output] if flag == "--output" || flag == "-o" => PathBuf::from(output),
         _ => return Err(format!("unexpected arguments\n{USAGE}")),
     };
@@ -79,8 +94,8 @@ fn build_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
-    let path = source_argument(args)?;
-    let program_args = match &args[1..] {
+    let (path, rest) = source_argument(args);
+    let program_args = match rest {
         [] => &[][..],
         [separator, rest @ ..] if separator == "--" => rest,
         _ => return Err(format!("program arguments go after `--`\n{USAGE}")),
@@ -90,11 +105,15 @@ fn run_command(args: &[OsString]) -> Result<ExitCode, String> {
 
 /// Compiles (or reuses a cached build of) `path` and executes it.
 fn run(path: &Path, program_args: &[OsString]) -> Result<ExitCode, String> {
-    let source = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let identity = driver::compiler_identity();
-    let key = driver::fingerprint(&[identity.as_bytes(), path.as_os_str().as_encoded_bytes(), &source]);
+    let mut parts = vec![identity.into_bytes()];
+    for input in driver::inputs(path)? {
+        parts.push(input.as_os_str().as_encoded_bytes().to_vec());
+        parts.push(std::fs::read(&input).map_err(|e| format!("cannot read {}: {e}", input.display()))?);
+    }
+    let key = driver::fingerprint(&parts.iter().map(Vec::as_slice).collect::<Vec<_>>());
     let dir = driver::cache_dir().join("run").join(key);
-    let executable = dir.join(path.file_stem().ok_or("invalid source path")?);
+    let executable = dir.join(program_name(path)?);
     if !executable.exists() {
         let Some(analysis) = analyze(path)? else {
             return Ok(ExitCode::FAILURE);

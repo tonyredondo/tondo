@@ -37,6 +37,19 @@ target/release/tondo script.to args              # for #!/usr/bin/env tondo
 executable, caches it under `~/.cache/tondo`, and executes it. There is no
 interpreter, so `run` and `build` always agree.
 
+A program can also be a project: a directory with `src/main.to` (or
+`main.to` at its root), where each directory is a module and every module
+of the package is imported by its path. Without a path, the commands use the
+project in the current directory.
+
+```text
+app/
+  src/
+    main.to            import app.models
+    models/user.to     pub type User = { ... }
+  tondo.toml           optional: [package] name = "app"
+```
+
 ## How it is built
 
 | Path | Contents |
@@ -44,6 +57,7 @@ interpreter, so `run` and `build` always agree.
 | `crates/tondo` | Compiler and CLI: lexer, parser, checker (AST to typed HIR), MIR lowering with explicit reference counting, Cranelift code generation, linking |
 | `crates/tondo-runtime` | Runtime linked into every executable (strings, console, panics). The compiler's build script compiles it as a static library and embeds it |
 | `tests/cases` | Tondo programs whose comments state the expected output, exit status, panic or diagnostic |
+| `tests/projects` | Projects of several modules, with expectations in the same comments |
 | `spec` | Language, standard library, testing, toolchain and LLM-form specifications |
 | `docs/decisions.md` | Short records of design decisions |
 
@@ -67,7 +81,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H1** | Data: tuples, records, newtypes, aliases, enums (including recursive ones), `match` with exhaustiveness, patterns (including array patterns), `Option`/`Result` with `ok`/`err`/`some`/`none`, `?` and `fail`, fallible `main`, structural unions and error unions, `Char`, `Byte`, floats, numeric conversions, string indexing and slicing, `Array`/`Deque`/`Map`/`Set` with copy-on-write, array arithmetic and slice assignment | Done |
 | **H2** | Abstraction: methods, named arguments, variadics, generics (monomorphization), traits with static dispatch, closures and function values, iterators, opaque `impl` results | Done |
 | **H3** | Ownership: affine values (`~Copy`), `ref`/`mut`/`var` loans, region loans, loan patterns, loan modes in function types, `defer`, panic cleanups | Done |
-| **H4** | Projects: modules and packages, `tondo.toml` and lockfile, canonical formatter (`tondo fmt`), JSON diagnostics | Planned |
+| **H4** | Projects: modules and packages, `tondo.toml` and lockfile, canonical formatter (`tondo fmt`), JSON diagnostics | In progress |
 | **H5** | Concurrency: stackful tasks, `spawn`/`scope`/`Join`/`await`, cancellation, `select`, channels, `spawn thread` | Planned |
 | **H6** | Hosted standard library: filesystem, processes and pipelines, environment, time, JSON; terminal resources with unwind actions (`E1404`) | Planned |
 

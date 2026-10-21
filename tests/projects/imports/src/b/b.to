@@ -1,0 +1,7 @@
+import imports.a
+
+pub fn run() {
+    a.visible()
+}
+
+let x = 1
