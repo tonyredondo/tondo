@@ -257,7 +257,24 @@ impl Builder<'_> {
                 }
             }
             hir::PatKind::Newtype(inner) => self.test_pattern(inner, place, fail),
+            hir::PatKind::Array { items, rest } => {
+                let length = self.temp(Ty::INT, Rvalue::Length(Operand::Copy(place.clone())), pattern.span);
+                let compare = if rest.is_some() { BinOp::Ge } else { BinOp::Eq };
+                let count = Operand::Const(Const::Int(items.len() as i128, Ty::INT));
+                self.branch_on(Rvalue::Binary(compare, length, count), pattern.span, fail);
+                for (index, item) in items.iter().enumerate() {
+                    let element = self.element(place, index, pattern.span);
+                    self.test_pattern(item, &element, fail);
+                }
+            }
         }
+    }
+
+    /// The element at a constant position of the array at `place`.
+    fn element(&mut self, place: &Place, index: usize, span: Span) -> Place {
+        let local = self.new_local(Ty::INT);
+        self.assign(Place::local(local), Rvalue::Use(Operand::Const(Const::Int(index as i128, Ty::INT))), span);
+        place.index(local, span)
     }
 
     fn branch_on(&mut self, condition: Rvalue, span: Span, fail: BlockId) {
@@ -290,6 +307,20 @@ impl Builder<'_> {
                 }
             }
             hir::PatKind::Newtype(inner) => self.bind_pattern(inner, place),
+            hir::PatKind::Array { items, rest } => {
+                for (index, item) in items.iter().enumerate() {
+                    let element = self.element(place, index, pattern.span);
+                    self.bind_pattern(item, &element);
+                }
+                if let Some(Some(id)) = rest {
+                    // The remainder is a new array (14.3).
+                    let local = self.bind(*id);
+                    let start = Some(Operand::Const(Const::Int(items.len() as i128, Ty::INT)));
+                    let remainder = Rvalue::Slice(Operand::Copy(place.clone()), [start, None, None], pattern.span);
+                    self.assign(Place::local(local), remainder, pattern.span);
+                    self.scopes.last_mut().unwrap().push(local);
+                }
+            }
         }
     }
 

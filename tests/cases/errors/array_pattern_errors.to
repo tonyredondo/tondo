@@ -1,0 +1,21 @@
+fn first(values: Array[Int]): Int {
+    match values {
+        [x, ..] => x
+    }
+}
+
+fn pairs(values: Array[Int]): Int {
+    match values {
+        [] => 0
+        [a] => a
+        [a, b] => a + b
+    }
+}
+
+fn main() {
+    let [a, b] = [1, 2]
+}
+
+// expect-error: E1204 `[]` is not covered
+// expect-error: E1204 `[_, _, _, ..]` is not covered
+// expect-error: E1201

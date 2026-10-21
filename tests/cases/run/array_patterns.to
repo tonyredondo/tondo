@@ -1,0 +1,40 @@
+import std.console
+
+fn describe(values: Array[String]): String {
+    match values {
+        [] => "empty"
+        [only] => "one: {only}"
+        [first, "stop", ..] => "stops after {first}"
+        [first, second, ..rest] => "{first}, {second} and {rest.length()} more: {rest}"
+    }
+}
+
+fn sum(values: Array[Int]): Int {
+    match values {
+        [] => 0
+        [head, ..tail] => head + sum(tail)
+    }
+}
+
+fn main() {
+    _ = console.println(describe([]))
+    _ = console.println(describe(["a"]))
+    _ = console.println(describe(["a", "stop", "c"]))
+    _ = console.println(describe(["a", "b"]))
+    _ = console.println(describe(["a", "b", "c", "d"]))
+    _ = console.println("{sum([1, 2, 3, 4])}")
+    let grid = [[1, 2], [3]]
+    let corner = match grid {
+        [[x, ..], ..] => x
+        _ => -1
+    }
+    _ = console.println("{corner}")
+}
+
+// expect-stdout: empty
+// expect-stdout: one: a
+// expect-stdout: stops after a
+// expect-stdout: a, b and 0 more: []
+// expect-stdout: a, b and 2 more: [c, d]
+// expect-stdout: 10
+// expect-stdout: 1

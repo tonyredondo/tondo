@@ -1632,6 +1632,17 @@ impl Checker<'_> {
             ast::PatternKind::Member { .. } => {
                 return self.pattern_error(span, mismatch(self, "a member pattern"));
             }
+            ast::PatternKind::Array { items, rest } => {
+                let element = match *self.types.kind(ty) {
+                    TyKind::Array(element) => element,
+                    TyKind::Error => return Self::wild(ty, span),
+                    _ => return self.pattern_error(span, mismatch(self, "an array pattern")),
+                };
+                let items = items.iter().map(|item| self.pattern(cx, item, element, context)).collect();
+                let rest =
+                    rest.as_ref().map(|name| name.as_ref().map(|name| self.declare(cx, name, ty, context.mutable)));
+                hir::PatKind::Array { items, rest }
+            }
             ast::PatternKind::Path(path) => {
                 let Some(resolved) = self.variant_path(path) else {
                     let message = format!("`{}` is not a variant", Self::path_text(path));

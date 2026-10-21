@@ -263,6 +263,12 @@ pub enum PatKind {
     Variant(u32, Vec<Pattern>),
     /// `Newtype(pattern)`: the same value seen as the newtype's value.
     Newtype(Box<Pattern>),
+    /// `[a, b]` matches arrays of exactly that length; with `rest` it
+    /// matches longer ones too, binding the remainder when named.
+    Array {
+        items: Vec<Pattern>,
+        rest: Option<Option<LocalId>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -811,8 +811,33 @@ impl Parser<'_> {
                 }
             }
             Tok::LBracket => {
-                self.diags.unsupported(start, "array patterns");
-                return Err(());
+                self.bump();
+                let mut items = Vec::new();
+                let mut rest = None;
+                while !self.at(&Tok::RBracket) {
+                    if self.eat(&Tok::DotDot) {
+                        if items.is_empty() {
+                            return self.error(
+                                "`..` needs at least one pattern before it; `[..rest]` is just `rest` and `[..]` is `_`",
+                            );
+                        }
+                        rest = Some(match self.tok() {
+                            Tok::Ident(_) => Some(self.ident()?),
+                            _ => None,
+                        });
+                        self.eat(&Tok::Comma);
+                        break;
+                    }
+                    items.push(self.pattern()?);
+                    if !self.eat(&Tok::Comma) {
+                        break;
+                    }
+                }
+                if !self.at(&Tok::RBracket) && rest.is_some() {
+                    return self.error("`..` must be the last item of an array pattern");
+                }
+                self.expect(Tok::RBracket)?;
+                PatternKind::Array { items, rest }
             }
             Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var) => {
                 self.diags.unsupported(start, "loan patterns");
