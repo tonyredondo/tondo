@@ -363,3 +363,17 @@ references to a temporary there and zeroes the binding, so the end of the
 scope releases nothing. Moving a sender into `spawn` or into a call therefore
 closes the channel when that task or call is done with it. Releases accept a
 zeroed value, which needs no drop flags.
+
+## 2026-10-21 — Waits are claimed, then notified
+
+`select` and timeouts wait for the first of several operations, so a wait
+is an object of its own: the task registers it with each join, group,
+channel or timer, and whoever completes one of those operations first
+claims it with a compare-and-swap, under that object's lock, and then
+notifies the task. A notification that arrives before the task has
+switched out is kept as a token, so no lock is held across a switch.
+`select` locks all of its objects in address order while it checks which
+operations are ready and registers itself, as Go does, which makes the
+check and the registration one step. Timers live in a heap that idle
+workers sleep on; a wait that ends another way leaves its timer behind, and
+those are purged once they are most of the heap.

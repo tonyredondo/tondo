@@ -151,6 +151,17 @@ pub struct MatchArm {
     pub span: Span,
 }
 
+/// An arm of `select` (11.14): `let pattern = operation => body`,
+/// `operation => body` or `else => body`.
+#[derive(Debug)]
+pub struct SelectArm {
+    pub pattern: Option<Pattern>,
+    /// The operation it waits for; `None` for `else`.
+    pub operation: Option<Expr>,
+    pub body: ArmBody,
+    pub span: Span,
+}
+
 #[derive(Debug)]
 pub enum ArmBody {
     Expr(Expr),
@@ -383,6 +394,8 @@ pub enum ExprKind {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    /// `select { ... }` (11.14).
+    Select(Vec<SelectArm>),
     Tuple(Vec<Expr>),
     /// `[a, b, c]`
     Array(Vec<Expr>),

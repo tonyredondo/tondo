@@ -1,4 +1,4 @@
-//! Tasks (spec 11.11, 11.12, 16.14): stackful coroutines that worker
+//! Tasks (spec 11.11 to 11.14, 16.14): stackful coroutines that worker
 //! threads run from one queue. A task that waits saves its registers on its
 //! own stack and switches back to its worker, which runs another task; the
 //! code it runs is ordinary compiled code that knows nothing of this.
@@ -6,13 +6,20 @@
 //! The process's main thread is the first worker and runs `main` as the
 //! first task. More workers start, one per core, when the program first
 //! spawns a task.
+//!
+//! Every wait goes through a `Wait`: the task registers it with the objects
+//! it waits on (a join, a group, channels, a timer) and parks; whoever
+//! completes one of those operations first claims the wait, under that
+//! object's lock, and then notifies the task.
 
 use super::{Glue, LIVE_OBJECTS, Str, flush_stdout, runtime_fault, tondo_rt_panic};
 use std::cell::Cell;
+use std::collections::BinaryHeap;
 use std::collections::VecDeque;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // Switching stacks
@@ -194,6 +201,13 @@ pub enum ResultKind {
     Memory = 4,
 }
 
+/// The states of a task: it runs, it is switching out to wait, it waits,
+/// or it was notified before it could wait.
+const RUNNING: u8 = 0;
+const PARKING: u8 = 1;
+const PARKED: u8 = 2;
+const NOTIFIED: u8 = 3;
+
 struct Task {
     /// The stack pointer saved when the task is not running.
     sp: *mut u8,
@@ -205,15 +219,47 @@ struct Task {
     join: *mut JoinObject,
     /// Its `defer` cleanups, innermost last (13.7).
     cleanups: Vec<(Cleanup, usize)>,
-    /// A lock its worker releases once the task has switched out, so that
-    /// nobody resumes it before its registers are saved.
-    unlock: *const AtomicBool,
+    state: AtomicU8,
     finished: bool,
     main: bool,
 }
 
+/// Notifies `wait` with operation `index` at `at`, unless another operation
+/// claimed it first.
+struct Timer {
+    at: Instant,
+    sequence: u64,
+    wait: Arc<Wait>,
+    index: usize,
+}
+
+impl PartialEq for Timer {
+    fn eq(&self, other: &Timer) -> bool {
+        (self.at, self.sequence) == (other.at, other.sequence)
+    }
+}
+
+impl Eq for Timer {}
+
+impl PartialOrd for Timer {
+    fn partial_cmp(&self, other: &Timer) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// The earliest timer is the greatest, for `BinaryHeap`.
+impl Ord for Timer {
+    fn cmp(&self, other: &Timer) -> std::cmp::Ordering {
+        (other.at, other.sequence).cmp(&(self.at, self.sequence))
+    }
+}
+
 struct Queue {
     runnable: VecDeque<*mut Task>,
+    timers: BinaryHeap<Timer>,
+    /// Timers whose wait ended another way; purged when they are most.
+    stale: usize,
+    sequence: u64,
     /// Workers started, and how many wait for a task.
     workers: usize,
     idle: usize,
@@ -221,7 +267,14 @@ struct Queue {
 
 unsafe impl Send for Queue {}
 
-static QUEUE: Mutex<Queue> = Mutex::new(Queue { runnable: VecDeque::new(), workers: 1, idle: 0 });
+static QUEUE: Mutex<Queue> = Mutex::new(Queue {
+    runnable: VecDeque::new(),
+    timers: BinaryHeap::new(),
+    stale: 0,
+    sequence: 0,
+    workers: 1,
+    idle: 0,
+});
 static READY: Condvar = Condvar::new();
 static STARTED: AtomicBool = AtomicBool::new(false);
 static MAIN_STATUS: AtomicUsize = AtomicUsize::new(0);
@@ -247,26 +300,88 @@ fn home() -> *mut *mut u8 {
     HOME.with(|h| h.as_ptr())
 }
 
-/// Makes a task runnable.
-fn wake(task: *mut Task) {
-    let mut queue = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
-    queue.runnable.push_back(task);
-    drop(queue);
+fn queue() -> std::sync::MutexGuard<'static, Queue> {
+    QUEUE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Makes a new or notified task runnable.
+fn schedule(task: *mut Task) {
+    queue().runnable.push_back(task);
     READY.notify_one();
 }
 
-/// Switches from the current task to its worker. With `unlock`, the worker
-/// releases that lock once the task is saved; whoever finds the task in the
-/// structure the lock protects can then wake it.
-unsafe fn park(unlock: Option<&AtomicBool>) {
+/// Wakes a task for its current wait, or makes its next `park` return at
+/// once if it has not parked yet; `run` makes it runnable.
+fn notify_with(task: *mut Task, run: impl FnOnce(*mut Task)) {
+    let state = unsafe { &(*task).state };
+    loop {
+        let current = state.load(Ordering::Acquire);
+        let next = if current == PARKED { RUNNING } else { NOTIFIED };
+        if current == NOTIFIED {
+            return;
+        }
+        if state.compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            if current == PARKED {
+                run(task);
+            }
+            return;
+        }
+    }
+}
+
+fn notify(task: *mut Task) {
+    notify_with(task, schedule);
+}
+
+/// Switches the current task out until it is notified; returns at once if
+/// it already was.
+fn park() {
     let task = current();
     if task.is_null() {
         runtime_fault("waiting outside a task");
     }
     unsafe {
-        (*task).unlock = unlock.map_or(std::ptr::null(), |l| l as *const AtomicBool);
+        let state = &(*task).state;
+        if state.compare_exchange(RUNNING, PARKING, Ordering::AcqRel, Ordering::Acquire).is_err() {
+            state.store(RUNNING, Ordering::Release);
+            return;
+        }
         switch(&mut (*task).sp, *home());
     }
+}
+
+/// Fires the timers that are due; their tasks join `runnable`.
+fn fire_timers(queue: &mut Queue) {
+    let now = Instant::now();
+    while queue.timers.peek().is_some_and(|t| t.at <= now) {
+        let timer = queue.timers.pop().unwrap();
+        if timer.wait.claim(timer.index) {
+            notify_with(timer.wait.task, |task| queue.runnable.push_back(task));
+        } else {
+            queue.stale = queue.stale.saturating_sub(1);
+        }
+    }
+}
+
+/// Notes timers whose wait ended another way, and drops them once they
+/// are most of the timers.
+fn timers_ended(count: usize) {
+    let mut queue = queue();
+    queue.stale += count;
+    if queue.stale > 64 && queue.stale * 2 > queue.timers.len() {
+        queue.timers.retain(|t| t.wait.fired.load(Ordering::Acquire) == NONE);
+        queue.stale = 0;
+    }
+}
+
+fn add_timer(delay: Duration, wait: Arc<Wait>, index: usize) {
+    let mut queue = queue();
+    queue.sequence += 1;
+    let sequence = queue.sequence;
+    queue.timers.push(Timer { at: Instant::now() + delay, sequence, wait, index });
+    drop(queue);
+    // An idle worker recomputes how long to sleep.
+    READY.notify_one();
 }
 
 /// Runs tasks; on the main thread, until the main task finishes, wherever
@@ -274,21 +389,29 @@ unsafe fn park(unlock: Option<&AtomicBool>) {
 fn work(main: bool) -> i32 {
     loop {
         let task = {
-            let mut queue = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+            let mut queue = queue();
             loop {
                 if main && MAIN_DONE.load(Ordering::SeqCst) {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
                 }
+                fire_timers(&mut queue);
                 if let Some(task) = queue.runnable.pop_front() {
                     break task;
                 }
                 queue.idle += 1;
-                if queue.idle == queue.workers && !MAIN_DONE.load(Ordering::SeqCst) {
-                    // Every worker waits and no task can run.
+                let next = queue.timers.peek().map(|t| t.at);
+                if next.is_none() && queue.idle == queue.workers && !MAIN_DONE.load(Ordering::SeqCst) {
+                    // Every worker waits, no task can run and no timer is due.
                     drop(queue);
                     deadlock();
                 }
-                queue = READY.wait(queue).unwrap_or_else(|e| e.into_inner());
+                queue = match next {
+                    Some(at) => {
+                        let delay = at.saturating_duration_since(Instant::now());
+                        READY.wait_timeout(queue, delay).unwrap_or_else(|e| e.into_inner()).0
+                    }
+                    None => READY.wait(queue).unwrap_or_else(|e| e.into_inner()),
+                };
                 queue.idle -= 1;
             }
         };
@@ -296,10 +419,6 @@ fn work(main: bool) -> i32 {
         unsafe { switch(home(), (*task).sp) };
         CURRENT.with(|c| c.set(std::ptr::null_mut()));
         unsafe {
-            if let Some(lock) = (*task).unlock.as_ref() {
-                (*task).unlock = std::ptr::null();
-                lock.store(false, Ordering::Release);
-            }
             if (*task).finished {
                 let mut task = Box::from_raw(task);
                 let was_main = task.main;
@@ -311,9 +430,13 @@ fn work(main: bool) -> i32 {
                     MAIN_DONE.store(true, Ordering::SeqCst);
                     // Take the queue's lock so the main thread cannot miss
                     // the notification between its check and its wait.
-                    drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+                    drop(queue());
                     READY.notify_all();
                 }
+            } else if (*task).state.compare_exchange(PARKING, PARKED, Ordering::AcqRel, Ordering::Acquire).is_err() {
+                // Notified while switching out.
+                (*task).state.store(RUNNING, Ordering::Release);
+                schedule(task);
             }
         }
     }
@@ -338,7 +461,7 @@ fn start_workers() {
         return;
     }
     let count = std::thread::available_parallelism().map_or(1, |n| n.get());
-    QUEUE.lock().unwrap_or_else(|e| e.into_inner()).workers = count;
+    queue().workers = count;
     for _ in 1..count {
         std::thread::Builder::new()
             .stack_size(256 * 1024)
@@ -393,25 +516,34 @@ extern "C" fn trampoline() -> ! {
     runtime_fault("a finished task resumed")
 }
 
+fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join: *mut JoinObject) -> *mut Task {
+    let sp = unsafe { initial_stack(stack.top()) };
+    Box::into_raw(Box::new(Task {
+        sp,
+        stack: Some(stack),
+        body,
+        code,
+        kind,
+        join,
+        cleanups: Vec::new(),
+        state: AtomicU8::new(RUNNING),
+        finished: false,
+        main: join.is_null(),
+    }))
+}
+
 /// Runs `tondo_main` as the first task on the calling thread, which becomes
 /// a worker; returns the program's exit status.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
-    let stack = Stack::new(MAIN_STACK);
-    let sp = unsafe { initial_stack(stack.top()) };
-    let task = Box::into_raw(Box::new(Task {
-        sp,
-        stack: Some(stack),
-        body: std::ptr::null_mut(),
-        code: code as *const u8,
-        kind: ResultKind::Integer,
-        join: std::ptr::null_mut(),
-        cleanups: Vec::new(),
-        unlock: std::ptr::null(),
-        finished: false,
-        main: true,
-    }));
-    wake(task);
+    let task = new_task(
+        Stack::new(MAIN_STACK),
+        std::ptr::null_mut(),
+        code as *const u8,
+        ResultKind::Integer,
+        std::ptr::null_mut(),
+    );
+    schedule(task);
     work(true)
 }
 
@@ -441,10 +573,48 @@ pub fn run_cleanups() {
 }
 
 // ---------------------------------------------------------------------------
-// Locks held while switching
+// Waits and locks
 // ---------------------------------------------------------------------------
 
-/// A spin lock that a parked task's worker releases after the switch.
+const NONE: usize = usize::MAX;
+
+/// A task's wait for the first of one or more operations. The objects it
+/// waits on point to it until the task removes itself, and timers hold it,
+/// since they outlive it.
+struct Wait {
+    task: *mut Task,
+    fired: AtomicUsize,
+}
+
+// Other threads only claim the wait and notify its task.
+unsafe impl Send for Wait {}
+unsafe impl Sync for Wait {}
+
+impl Wait {
+    fn new() -> Arc<Wait> {
+        Arc::new(Wait { task: current(), fired: AtomicUsize::new(NONE) })
+    }
+
+    /// Claims the wait for operation `index`; false when another operation
+    /// did first. Whoever claims it notifies the task afterwards.
+    fn claim(&self, index: usize) -> bool {
+        self.fired.compare_exchange(NONE, index, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
+
+    /// Parks until the operation that claimed the wait notifies the task;
+    /// returns its index.
+    fn block(&self) -> usize {
+        loop {
+            park();
+            let fired = self.fired.load(Ordering::Acquire);
+            if fired != NONE {
+                return fired;
+            }
+        }
+    }
+}
+
+/// A short spin lock over one object's state.
 fn lock(flag: &AtomicBool) {
     while flag.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
         std::hint::spin_loop();
@@ -453,6 +623,17 @@ fn lock(flag: &AtomicBool) {
 
 fn unlock(flag: &AtomicBool) {
     flag.store(false, Ordering::Release);
+}
+
+/// `time.sleep(delay)` in nanoseconds; no wait when it is not positive.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_sleep(nanos: i64) {
+    if nanos <= 0 {
+        return;
+    }
+    let wait = Wait::new();
+    add_timer(Duration::from_nanos(nanos as u64), wait.clone(), 0);
+    wait.block();
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +650,7 @@ pub struct JoinObject {
     lock: AtomicBool,
     done: bool,
     taken: bool,
-    waiters: Vec<*mut Task>,
+    waiters: Vec<(*const Wait, usize)>,
     result: *mut u8,
     size: usize,
     align: usize,
@@ -519,40 +700,29 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         3 => ResultKind::Float32,
         _ => ResultKind::Memory,
     };
-    let stack = task_stack();
-    let sp = unsafe { initial_stack(stack.top()) };
-    let task = Box::into_raw(Box::new(Task {
-        sp,
-        stack: Some(stack),
-        body,
-        code,
-        kind,
-        join,
-        cleanups: Vec::new(),
-        unlock: std::ptr::null(),
-        finished: false,
-        main: false,
-    }));
-    wake(task);
+    schedule(new_task(task_stack(), body, code, kind, join));
     join
 }
 
-/// Marks the task done and wakes whoever waits for it. The group hears of
-/// it under the join's lock, so nobody sees the task done, and frees the
+/// Marks the task done and notifies whoever waits for it. The group hears
+/// of it under the join's lock, so nobody sees the task done, and frees the
 /// group, before that.
 unsafe fn complete(join: *mut JoinObject) {
     unsafe {
         let j = &mut *join;
         lock(&j.lock);
         j.done = true;
-        let waiters = std::mem::take(&mut j.waiters);
+        let mut woken: Vec<*mut Task> = Vec::new();
+        for (wait, index) in std::mem::take(&mut j.waiters) {
+            if (*wait).claim(index) {
+                woken.push((*wait).task);
+            }
+        }
         if !j.group.is_null() {
-            group_completed(j.group, j.index);
+            woken.extend(group_completed(j.group, j.index));
         }
         unlock(&j.lock);
-        for waiter in waiters {
-            wake(waiter);
-        }
+        woken.into_iter().for_each(notify);
     }
 }
 
@@ -565,8 +735,10 @@ unsafe fn finish(join: *mut JoinObject) {
             unlock(&j.lock);
             return;
         }
-        j.waiters.push(current());
-        park(Some(&j.lock));
+        let wait = Wait::new();
+        j.waiters.push((Arc::as_ptr(&wait), 0));
+        unlock(&j.lock);
+        wait.block();
     }
 }
 
@@ -645,7 +817,7 @@ pub struct GroupObject {
     finished: VecDeque<usize>,
     running: usize,
     failed: Option<usize>,
-    waiter: *mut Task,
+    waiter: Option<(*const Wait, usize)>,
 }
 
 /// `Group.new[T]()`; `fallible` when `T` is `R ! E`, whose results start
@@ -662,7 +834,7 @@ pub extern "C" fn tondo_rt_group_new(fallible: u8) -> *mut GroupObject {
         finished: VecDeque::new(),
         running: 0,
         failed: None,
-        waiter: std::ptr::null_mut(),
+        waiter: None,
     }))
 }
 
@@ -680,18 +852,21 @@ pub unsafe extern "C" fn tondo_rt_group_add(group: *mut GroupObject, join: *mut 
         unlock(&g.lock);
         let j = &mut *join;
         lock(&j.lock);
-        if j.done {
-            group_completed(group, index);
+        let woken = if j.done {
+            group_completed(group, index)
         } else {
             j.group = group;
             j.index = index;
-        }
+            None
+        };
         unlock(&j.lock);
+        woken.into_iter().for_each(notify);
     }
 }
 
-/// Records that the task at `index` finished; called under its join's lock.
-unsafe fn group_completed(group: *mut GroupObject, index: usize) {
+/// Records that the task at `index` finished; called under its join's
+/// lock. Returns the task to notify, if one waits.
+unsafe fn group_completed(group: *mut GroupObject, index: usize) -> Option<*mut Task> {
     unsafe {
         let g = &mut *group;
         lock(&g.lock);
@@ -701,19 +876,19 @@ unsafe fn group_completed(group: *mut GroupObject, index: usize) {
         if g.fallible && g.failed.is_none() && *(*join).result != 0 {
             g.failed = Some(index);
         }
-        let waiter = std::mem::replace(&mut g.waiter, std::ptr::null_mut());
+        let woken = g.waiter.take().filter(|&(wait, i)| (*wait).claim(i)).map(|(wait, _)| (*wait).task);
         unlock(&g.lock);
-        if !waiter.is_null() {
-            wake(waiter);
-        }
+        woken
     }
 }
 
-/// Parks the current task until the group's state changes; `g.lock` is
-/// held and released by the switch.
-unsafe fn group_park(g: &mut GroupObject) {
-    g.waiter = current();
-    unsafe { park(Some(&g.lock)) };
+/// Waits, with the group locked, until a task finishes; returns locked.
+unsafe fn group_block(g: &mut GroupObject) {
+    let wait = Wait::new();
+    g.waiter = Some((Arc::as_ptr(&wait), 0));
+    unlock(&g.lock);
+    wait.block();
+    lock(&g.lock);
 }
 
 /// `group.length()`: the tasks whose results the group still holds.
@@ -728,28 +903,36 @@ pub unsafe extern "C" fn tondo_rt_group_length(group: *mut GroupObject) -> i64 {
     }
 }
 
+/// Takes the next finished result into `out`, with the group locked:
+/// `Some(true)` when there was one, `Some(false)` when no task is left, and
+/// `None` when it must wait.
+unsafe fn group_try_next(g: &mut GroupObject, out: *mut u8) -> Option<bool> {
+    if g.taken.iter().all(|t| *t) {
+        return Some(false);
+    }
+    while let Some(index) = g.finished.pop_front() {
+        if !g.taken[index] {
+            g.taken[index] = true;
+            unsafe { take(g.joins[index], out) };
+            return Some(true);
+        }
+    }
+    None
+}
+
 /// `group.next()`: moves the result of the next task to finish into `out`
 /// and returns 1, or returns 0 when no task is left.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_group_next(group: *mut GroupObject, out: *mut u8) -> u8 {
     unsafe {
+        let g = &mut *group;
+        lock(&g.lock);
         loop {
-            let g = &mut *group;
-            lock(&g.lock);
-            if g.taken.iter().all(|t| *t) {
+            if let Some(found) = group_try_next(g, out) {
                 unlock(&g.lock);
-                return 0;
+                return found as u8;
             }
-            while let Some(index) = g.finished.pop_front() {
-                if !g.taken[index] {
-                    g.taken[index] = true;
-                    let join = g.joins[index];
-                    unlock(&g.lock);
-                    take(join, out);
-                    return 1;
-                }
-            }
-            group_park(g);
+            group_block(g);
         }
     }
 }
@@ -760,9 +943,9 @@ pub unsafe extern "C" fn tondo_rt_group_next(group: *mut GroupObject, out: *mut 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
     unsafe {
+        let g = &mut *group;
+        lock(&g.lock);
         loop {
-            let g = &mut *group;
-            lock(&g.lock);
             if let Some(index) = g.failed.filter(|&i| !g.taken[i]) {
                 unlock(&g.lock);
                 return index as i64;
@@ -771,7 +954,7 @@ pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
                 unlock(&g.lock);
                 return -1;
             }
-            group_park(g);
+            group_block(g);
         }
     }
 }
@@ -824,15 +1007,15 @@ pub unsafe extern "C" fn tondo_rt_group_release(group: *mut GroupObject) {
 // Channels
 // ---------------------------------------------------------------------------
 
-/// A task waiting on a channel, on its own stack: the value it sends, or
-/// where the value it receives goes, and how the wait ended.
+/// A task waiting on a channel: the value it sends, or where the value it
+/// receives goes, and how the wait ended.
 struct Waiter {
-    task: *mut Task,
+    wait: *const Wait,
+    index: usize,
     value: *mut u8,
     state: u8,
 }
 
-const WAITING: u8 = 0;
 const MOVED: u8 = 1;
 const CLOSED: u8 = 2;
 
@@ -927,20 +1110,83 @@ fn pop_bytes(buffer: &mut VecDeque<u8>, out: *mut u8, size: usize) {
     buffer.drain(..size);
 }
 
-/// Ends the waits of a channel that just closed; returns who to wake.
-fn close_waits(c: &mut ChannelObject) -> Vec<*mut Task> {
+/// The first waiter of `queue` whose wait it can still claim, removed;
+/// waiters another operation claimed first are dropped.
+unsafe fn claim_first(queue: &mut VecDeque<*mut Waiter>) -> Option<*mut Waiter> {
+    while let Some(waiter) = queue.pop_front() {
+        if unsafe { (*(*waiter).wait).claim((*waiter).index) } {
+            return Some(waiter);
+        }
+    }
+    None
+}
+
+/// Ends the waits of a channel that just closed; returns who to notify.
+unsafe fn close_waits(c: &mut ChannelObject) -> Vec<*mut Task> {
     c.closed = true;
-    let waiters = c.receiving.drain(..).chain(c.sending.drain(..));
-    waiters
-        .map(|w| unsafe {
-            (*w).state = CLOSED;
-            (*w).task
-        })
-        .collect()
+    let mut woken = Vec::new();
+    for waiter in c.receiving.drain(..).chain(c.sending.drain(..)) {
+        unsafe {
+            if (*(*waiter).wait).claim((*waiter).index) {
+                (*waiter).state = CLOSED;
+                woken.push((*(*waiter).wait).task);
+            }
+        }
+    }
+    woken
 }
 
 fn closed_panic(location: *const Str) -> ! {
     unsafe { tondo_rt_panic(12, std::ptr::null(), location) }
+}
+
+/// Moves the value at `value` into the channel if it can without waiting,
+/// with the channel locked: `Some(task)` with a receiver to notify, or
+/// `None` when it must wait.
+unsafe fn try_send(c: &mut ChannelObject, value: *mut u8) -> Option<Option<*mut Task>> {
+    unsafe {
+        if let Some(receiver) = claim_first(&mut c.receiving) {
+            std::ptr::copy_nonoverlapping(value, (*receiver).value, c.size);
+            (*receiver).state = MOVED;
+            return Some(Some((*(*receiver).wait).task));
+        }
+        if c.count < c.capacity {
+            c.buffer.extend(std::slice::from_raw_parts(value, c.size));
+            c.count += 1;
+            return Some(None);
+        }
+        None
+    }
+}
+
+/// Takes the next value into `out` if it can without waiting, with the
+/// channel locked: `Some((found, task))`, where `found` is false once the
+/// channel is closed and empty and `task` is a sender to notify.
+unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<(bool, Option<*mut Task>)> {
+    unsafe {
+        if c.count > 0 {
+            pop_bytes(&mut c.buffer, out, c.size);
+            c.count -= 1;
+            // A sender waiting for room moves its value in.
+            let woken = claim_first(&mut c.sending).map(|sender| {
+                c.buffer.extend(std::slice::from_raw_parts((*sender).value, c.size));
+                c.count += 1;
+                (*sender).state = MOVED;
+                (*(*sender).wait).task
+            });
+            return Some((true, woken));
+        }
+        // A rendezvous: take the value from a waiting sender.
+        if let Some(sender) = claim_first(&mut c.sending) {
+            std::ptr::copy_nonoverlapping((*sender).value, out, c.size);
+            (*sender).state = MOVED;
+            return Some((true, Some((*(*sender).wait).task)));
+        }
+        if c.closed {
+            return Some((false, None));
+        }
+        None
+    }
 }
 
 /// `sender.send(value)`: moves the value at `value` into the channel,
@@ -954,23 +1200,16 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
             unlock(&c.lock);
             closed_panic(location);
         }
-        if let Some(receiver) = c.receiving.pop_front() {
-            std::ptr::copy_nonoverlapping(value, (*receiver).value, c.size);
-            (*receiver).state = MOVED;
-            let task = (*receiver).task;
+        if let Some(woken) = try_send(c, value) {
             unlock(&c.lock);
-            wake(task);
+            woken.into_iter().for_each(notify);
             return;
         }
-        if c.count < c.capacity {
-            c.buffer.extend(std::slice::from_raw_parts(value, c.size));
-            c.count += 1;
-            unlock(&c.lock);
-            return;
-        }
-        let mut waiter = Waiter { task: current(), value, state: WAITING };
+        let wait = Wait::new();
+        let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value, state: 0 };
         c.sending.push_back(&mut waiter);
-        park(Some(&c.lock));
+        unlock(&c.lock);
+        wait.block();
         if std::ptr::read_volatile(&waiter.state) == CLOSED {
             closed_panic(location);
         }
@@ -984,40 +1223,30 @@ pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, o
     unsafe {
         let c = &mut *channel;
         lock(&c.lock);
-        if c.count > 0 {
-            pop_bytes(&mut c.buffer, out, c.size);
-            c.count -= 1;
-            // A sender waiting for room moves its value in.
-            if let Some(sender) = c.sending.pop_front() {
-                c.buffer.extend(std::slice::from_raw_parts((*sender).value, c.size));
-                c.count += 1;
-                (*sender).state = MOVED;
-                let task = (*sender).task;
-                unlock(&c.lock);
-                wake(task);
-                return 1;
-            }
+        if let Some((found, woken)) = try_receive(c, out) {
             unlock(&c.lock);
-            return 1;
+            woken.into_iter().for_each(notify);
+            return found as u8;
         }
-        // A rendezvous: take the value from a waiting sender.
-        if let Some(sender) = c.sending.pop_front() {
-            std::ptr::copy_nonoverlapping((*sender).value, out, c.size);
-            (*sender).state = MOVED;
-            let task = (*sender).task;
-            unlock(&c.lock);
-            wake(task);
-            return 1;
-        }
-        if c.closed {
-            unlock(&c.lock);
-            return 0;
-        }
-        let mut waiter = Waiter { task: current(), value: out, state: WAITING };
+        let wait = Wait::new();
+        let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value: out, state: 0 };
         c.receiving.push_back(&mut waiter);
-        park(Some(&c.lock));
+        unlock(&c.lock);
+        wait.block();
         (std::ptr::read_volatile(&waiter.state) == MOVED) as u8
     }
+}
+
+/// `receiver.receive(timeout: delay)`: like `receive`, but gives 0 if
+/// nothing arrives within `nanos`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_channel_receive_timeout(channel: *mut ChannelObject, out: *mut u8, nanos: i64) -> u8 {
+    let mut cases = [
+        Case { kind: RECEIVE, found: 0, handle: channel as *mut u8, value: out, nanos: 0 },
+        Case { kind: SLEEP, found: 0, handle: std::ptr::null_mut(), value: std::ptr::null_mut(), nanos },
+    ];
+    let won = unsafe { select(&mut cases, true, std::ptr::null()) };
+    (won == 0 && cases[0].found != 0) as u8
 }
 
 /// `sender.close()`: later sends panic, and receivers get what is buffered
@@ -1029,7 +1258,7 @@ pub unsafe extern "C" fn tondo_rt_channel_close(sender: *mut SenderObject) {
         lock(&c.lock);
         let woken = if c.closed { Vec::new() } else { close_waits(c) };
         unlock(&c.lock);
-        woken.into_iter().for_each(wake);
+        woken.into_iter().for_each(notify);
     }
 }
 
@@ -1063,7 +1292,7 @@ pub unsafe extern "C" fn tondo_rt_sender_release(sender: *mut SenderObject) {
         c.senders -= 1;
         let woken = if c.senders == 0 && !c.closed { close_waits(c) } else { Vec::new() };
         unlock(&c.lock);
-        woken.into_iter().for_each(wake);
+        woken.into_iter().for_each(notify);
         tondo_rt_receiver_release(sender.channel);
     }
 }
@@ -1094,5 +1323,182 @@ pub unsafe extern "C" fn tondo_rt_receiver_release(channel: *mut ChannelObject) 
             std::alloc::dealloc(value, layout);
         }
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// select
+// ---------------------------------------------------------------------------
+
+const RECEIVE: u8 = 0;
+const SEND: u8 = 1;
+const WAIT: u8 = 2;
+const NEXT: u8 = 3;
+const SLEEP: u8 = 4;
+
+/// One operation of a `select` (11.14), as compiled code lays it out:
+/// `handle` is the receiver's channel, the sender, the join or the group;
+/// `value` the value sent, or where a received value or a result goes;
+/// `found` tells whether `receive` or `next` produced one.
+#[repr(C)]
+pub struct Case {
+    kind: u8,
+    found: u8,
+    handle: *mut u8,
+    value: *mut u8,
+    nanos: i64,
+}
+
+impl Case {
+    /// The lock of the object the operation waits on.
+    unsafe fn lock(&self) -> Option<*const AtomicBool> {
+        unsafe {
+            match self.kind {
+                RECEIVE => Some(&raw const (*(self.handle as *mut ChannelObject)).lock),
+                SEND => Some(&raw const (*(*(self.handle as *mut SenderObject)).channel).lock),
+                WAIT => Some(&raw const (*(self.handle as *mut JoinObject)).lock),
+                NEXT => Some(&raw const (*(self.handle as *mut GroupObject)).lock),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// A small generator for the random choice among ready operations.
+fn random(bound: usize) -> usize {
+    static STATE: AtomicUsize = AtomicUsize::new(0x9e37_79b9_7f4a_7c15);
+    let mut x = STATE.load(Ordering::Relaxed);
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    STATE.store(x, Ordering::Relaxed);
+    x % bound
+}
+
+/// `select` over `count` operations at `cases`: completes the first that
+/// is ready, chosen at random among those ready, and returns its index;
+/// with `blocking` 0 (an `else` arm) returns -1 when none is.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_select(cases: *mut Case, count: usize, blocking: u8, location: *const Str) -> i64 {
+    let cases = unsafe { std::slice::from_raw_parts_mut(cases, count) };
+    unsafe { select(cases, blocking != 0, location) }
+}
+
+unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i64 {
+    unsafe {
+        // Every object is locked, once and in address order, from checking
+        // readiness until the task is registered everywhere.
+        let mut locks: Vec<*const AtomicBool> = cases.iter().filter_map(|c| c.lock()).collect();
+        locks.sort();
+        locks.dedup();
+        let lock_all = |locks: &[*const AtomicBool]| locks.iter().for_each(|l| lock(&**l));
+        let unlock_all = |locks: &[*const AtomicBool]| locks.iter().for_each(|l| unlock(&**l));
+        lock_all(&locks);
+        let mut order: Vec<usize> = (0..cases.len()).collect();
+        for i in (1..order.len()).rev() {
+            order.swap(i, random(i + 1));
+        }
+        for &index in &order {
+            let case = &mut cases[index];
+            if case.kind == SEND && (*(*(case.handle as *mut SenderObject)).channel).closed {
+                unlock_all(&locks);
+                closed_panic(location);
+            }
+            if let Some(woken) = try_case(case) {
+                unlock_all(&locks);
+                woken.into_iter().for_each(notify);
+                return index as i64;
+            }
+        }
+        if !blocking {
+            unlock_all(&locks);
+            return -1;
+        }
+        let wait = Wait::new();
+        let mut waiters: Vec<Waiter> = cases
+            .iter()
+            .enumerate()
+            .map(|(index, case)| Waiter { wait: Arc::as_ptr(&wait), index, value: case.value, state: 0 })
+            .collect();
+        for (index, case) in cases.iter().enumerate() {
+            let waiter: *mut Waiter = &mut waiters[index];
+            match case.kind {
+                RECEIVE => (*(case.handle as *mut ChannelObject)).receiving.push_back(waiter),
+                SEND => (*(*(case.handle as *mut SenderObject)).channel).sending.push_back(waiter),
+                WAIT => (*(case.handle as *mut JoinObject)).waiters.push((Arc::as_ptr(&wait), index)),
+                NEXT => (*(case.handle as *mut GroupObject)).waiter = Some((Arc::as_ptr(&wait), index)),
+                _ => add_timer(Duration::from_nanos(case.nanos as u64), wait.clone(), index),
+            }
+        }
+        unlock_all(&locks);
+        let won = wait.block();
+        // Leave every queue the wait is still in.
+        lock_all(&locks);
+        for (index, case) in cases.iter().enumerate() {
+            let waiter: *mut Waiter = &mut waiters[index];
+            match case.kind {
+                RECEIVE => (*(case.handle as *mut ChannelObject)).receiving.retain(|w| *w != waiter),
+                SEND => (*(*(case.handle as *mut SenderObject)).channel).sending.retain(|w| *w != waiter),
+                WAIT => (*(case.handle as *mut JoinObject)).waiters.retain(|&(w, _)| w != Arc::as_ptr(&wait)),
+                NEXT => {
+                    let group = &mut *(case.handle as *mut GroupObject);
+                    if group.waiter.is_some_and(|(w, _)| w == Arc::as_ptr(&wait)) {
+                        group.waiter = None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let sleeps = cases.iter().enumerate().filter(|&(i, c)| c.kind == SLEEP && i != won).count();
+        // The operation that won is complete but for what this task does.
+        let case = &mut cases[won];
+        match case.kind {
+            RECEIVE => case.found = (waiters[won].state == MOVED) as u8,
+            SEND if waiters[won].state == CLOSED => {
+                unlock_all(&locks);
+                closed_panic(location);
+            }
+            WAIT => take(case.handle as *mut JoinObject, case.value),
+            NEXT => {
+                let group = &mut *(case.handle as *mut GroupObject);
+                case.found = group_try_next(group, case.value).unwrap_or(false) as u8;
+            }
+            _ => {}
+        }
+        unlock_all(&locks);
+        if sleeps > 0 {
+            timers_ended(sleeps);
+        }
+        won as i64
+    }
+}
+
+/// Completes one operation of a `select` if it is ready, with its object
+/// locked; returns a task to notify, if any.
+unsafe fn try_case(case: &mut Case) -> Option<Option<*mut Task>> {
+    unsafe {
+        match case.kind {
+            RECEIVE => {
+                let c = &mut *(case.handle as *mut ChannelObject);
+                let (found, woken) = try_receive(c, case.value)?;
+                case.found = found as u8;
+                Some(woken)
+            }
+            SEND => try_send(&mut *(*(case.handle as *mut SenderObject)).channel, case.value),
+            WAIT => {
+                let join = case.handle as *mut JoinObject;
+                if !(*join).done {
+                    return None;
+                }
+                take(join, case.value);
+                Some(None)
+            }
+            NEXT => {
+                let group = &mut *(case.handle as *mut GroupObject);
+                case.found = group_try_next(group, case.value)? as u8;
+                Some(None)
+            }
+            _ => (case.nanos <= 0).then_some(None),
+        }
     }
 }

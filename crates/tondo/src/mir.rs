@@ -169,6 +169,9 @@ pub enum Rvalue {
     /// An operation of a `Join` or a `Group`, receiver first; flags mark
     /// copied operands to retain as they move in, as a join into a group.
     TaskOp(TaskOp, Vec<Operand>, Vec<bool>, Span),
+    /// `select` (11.14): completes one of the operations and gives its
+    /// index, or -1 for `else` when the flag (blocking) is false.
+    Select(Vec<SelectCase>, bool, Span),
     Concat(Vec<Piece>),
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.
@@ -203,6 +206,17 @@ pub enum Rvalue {
     /// A method that changes the collection at the place (made unique
     /// first); flags mark copied operands to retain as they move in.
     Mutate(Mutation, Place, Vec<Operand>, Vec<bool>, Span),
+}
+
+/// One operation of a `select`.
+pub struct SelectCase {
+    /// `receive`, `send`, `wait` or `next`; `None` for `time.sleep`.
+    pub op: Option<TaskOp>,
+    pub operands: Vec<Operand>,
+    /// Receives the result of `receive`, `next` or `wait` when it completes.
+    pub out: Local,
+    /// A value to send that was copied, not moved: retained before waiting.
+    pub retain: bool,
 }
 
 pub enum Piece {

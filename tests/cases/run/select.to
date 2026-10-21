@@ -1,0 +1,104 @@
+import std.console
+import std.time
+
+enum Event {
+    Message(String?)
+    Done(Int)
+    Sent
+    Timeout
+    Idle
+}
+
+fn slow(n: Int): Int {
+    time.sleep(time.milliseconds(30))
+    n * 2
+}
+
+fn describe(event: Event): String {
+    match event {
+        Event.Message(some(text)) => "message {text}"
+        Event.Message(none) => "closed"
+        Event.Done(value) => "done {value}"
+        Event.Sent => "sent"
+        Event.Timeout => "timeout"
+        Event.Idle => "idle"
+    }
+}
+
+fn nap(n: Int): Int {
+    time.sleep(time.milliseconds(50))
+    n
+}
+
+fn main() {
+    let (outbox, inbox) = channel[String](1)
+    let job = spawn slow(21)
+    let first = select {
+        // The sleep wins: the job takes 30 milliseconds.
+        let message = inbox.receive() => Event.Message(message)
+        let result = job.wait() => Event.Done(result)
+        time.sleep(time.milliseconds(5)) => Event.Timeout
+    }
+    console.println(describe(first))
+    let second = select {
+        outbox.send("hi") => Event.Sent
+        else => Event.Idle
+    }
+    console.println(describe(second))
+    let third = select {
+        let message = inbox.receive() => Event.Message(message)
+        else => Event.Idle
+    }
+    console.println(describe(third))
+    let other = spawn slow(5)
+    let fourth = select {
+        inbox.receive() => Event.Idle
+        let result = other.wait() => Event.Done(result)
+    }
+    console.println(describe(fourth))
+    match inbox.receive(timeout: time.milliseconds(10)) {
+        some(text) => console.println("got {text}")
+        none => console.println("no message in time")
+    }
+    outbox.send("late")
+    match inbox.receive(timeout: time.milliseconds(10)) {
+        some(text) => console.println("got {text}")
+        none => console.println("no message in time")
+    }
+
+    // Waiting stops the task, not the thread: these sleeps overlap.
+    var group = Group.new[Int]()
+    for i in 0..100 {
+        group.add(spawn nap(i))
+    }
+    var total = 0
+    for value in group.wait() {
+        total += value
+    }
+    console.println("total {total}")
+
+    // A send that does not complete leaves the value with its owner.
+    let (rendezvous, nobody) = channel[String](0)
+    let text = "kept {total}"
+    let sent = select {
+        rendezvous.send(text) => true
+        else => false
+    }
+    console.println("sent {sent} {text}")
+    let lost = select {
+        rendezvous.send("temporary {total}") => true
+        time.sleep(time.milliseconds(1)) => false
+    }
+    console.println("lost {lost}")
+    time.sleep(time.milliseconds(0))
+}
+
+// expect-stdout: timeout
+// expect-stdout: sent
+// expect-stdout: message hi
+// expect-stdout: done 10
+// expect-stdout: no message in time
+// expect-stdout: got late
+// expect-stdout: total 4950
+// expect-stdout: sent false kept 4950
+// expect-stdout: lost false

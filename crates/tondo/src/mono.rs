@@ -242,6 +242,18 @@ impl Mono<'_> {
                     self.expr(&mut arm.body, map);
                 }
             }
+            ExprKind::Select(arms, otherwise) => {
+                for arm in arms {
+                    self.expr(&mut arm.operation, map);
+                    if let Some(pattern) = &mut arm.pattern {
+                        self.pattern(pattern, map);
+                    }
+                    self.expr(&mut arm.body, map);
+                }
+                if let Some(otherwise) = otherwise {
+                    self.expr(otherwise, map);
+                }
+            }
             ExprKind::Index(base, index) | ExprKind::Binary(_, base, index) => {
                 self.expr(base, map);
                 self.expr(index, map);

@@ -1,0 +1,7 @@
+import std.time
+
+fn main() {
+    let delay = time.seconds(9223372036854775807)
+}
+
+// expect-panic: P0005

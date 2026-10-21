@@ -820,11 +820,7 @@ impl Parser<'_> {
         match self.tok() {
             Tok::Kw(Kw::If) => self.if_expression(),
             Tok::Kw(Kw::Match) => self.match_expression(),
-            Tok::Kw(kw @ Kw::Select) => {
-                let what = format!("`{}` expressions", kw.as_str());
-                self.diags.unsupported(self.span(), &what);
-                Err(())
-            }
+            Tok::Kw(Kw::Select) => self.select_expression(),
             _ => {
                 let mut expr = self.binary(0)?;
                 while self.eat_kw(Kw::With) {
@@ -875,6 +871,56 @@ impl Parser<'_> {
         let pattern = self.pattern()?;
         let guard = if self.eat_kw(Kw::If) { Some(self.expression()?) } else { None };
         self.expect(Tok::FatArrow)?;
+        let body = self.arm_body()?;
+        Ok(MatchArm { span: pattern.span.to(self.prev_span()), pattern, guard, body })
+    }
+
+    /// `select { arms }` (11.14).
+    fn select_expression(&mut self) -> PResult<Expr> {
+        let start = self.bump().span;
+        let no_brace = std::mem::replace(&mut self.no_brace, false);
+        let arms = self.select_arms();
+        self.no_brace = no_brace;
+        let arms = arms?;
+        Ok(Expr { kind: ExprKind::Select(arms), span: start.to(self.prev_span()) })
+    }
+
+    fn select_arms(&mut self) -> PResult<Vec<SelectArm>> {
+        self.expect(Tok::LBrace)?;
+        let mut arms = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.eat(&Tok::RBrace) {
+                return Ok(arms);
+            }
+            if self.at(&Tok::Eof) {
+                return self.expected("`}`");
+            }
+            match self.select_arm() {
+                Ok(arm) => arms.push(arm),
+                Err(()) => self.recover(),
+            }
+        }
+    }
+
+    fn select_arm(&mut self) -> PResult<SelectArm> {
+        let start = self.span();
+        let (pattern, operation) = if self.eat_kw(Kw::Else) {
+            (None, None)
+        } else if self.eat_kw(Kw::Let) {
+            let pattern = self.pattern()?;
+            self.expect(Tok::Eq)?;
+            (Some(pattern), Some(self.expression()?))
+        } else {
+            (None, Some(self.expression()?))
+        };
+        self.expect(Tok::FatArrow)?;
+        let body = self.arm_body()?;
+        Ok(SelectArm { pattern, operation, body, span: start.to(self.prev_span()) })
+    }
+
+    /// What follows `=>` in a `match` or `select` arm, up to its end.
+    fn arm_body(&mut self) -> PResult<ArmBody> {
         let body = match self.tok() {
             Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => {
                 let start = self.span();
@@ -891,9 +937,9 @@ impl Parser<'_> {
         }
         // An arm ends at a new line or a comma (23.17).
         if !self.eat(&Tok::Comma) && !self.at(&Tok::Newline) && !self.at(&Tok::RBrace) {
-            return self.expected("a new line after the match arm");
+            return self.expected("a new line after the arm");
         }
-        Ok(MatchArm { span: pattern.span.to(self.prev_span()), pattern, guard, body })
+        Ok(body)
     }
 
     /// `return`, `fail`, `break` or `continue` (shared by statements and arms).

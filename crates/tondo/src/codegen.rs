@@ -16,7 +16,9 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{ArrayOp, Callee, FnId, MapOp, Mutation, Program, StdFn, StrOp, TaskOp};
-use crate::mir::{Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
+use crate::mir::{
+    Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
+};
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, OK, SOME, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -138,6 +140,9 @@ enum Rt {
     ChannelClosed,
     SenderRelease,
     ReceiverRelease,
+    Sleep,
+    ReceiveTimeout,
+    Select,
 }
 
 impl Rt {
@@ -242,6 +247,9 @@ impl Rt {
             Rt::ChannelClosed => ("tondo_rt_channel_closed", &[I64, I8], &[I8]),
             Rt::SenderRelease => ("tondo_rt_sender_release", &[I64], &[]),
             Rt::ReceiverRelease => ("tondo_rt_receiver_release", &[I64], &[]),
+            Rt::Sleep => ("tondo_rt_sleep", &[I64], &[]),
+            Rt::ReceiveTimeout => ("tondo_rt_channel_receive_timeout", &[I64, I64, I64], &[I8]),
+            Rt::Select => ("tondo_rt_select", &[I64, I64, I8, I64], &[I64]),
         }
     }
 }
@@ -2125,6 +2133,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let release = self.e.glue_or_null(Glue::Release, result);
                 Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release]).unwrap())
             }
+            Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
             Rvalue::TaskOp(op, operands, retain, span) => match self.task_op(*op, operands, retain, place, *span) {
                 Some(value) => value,
                 None => return,
@@ -2447,10 +2456,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::ChannelSend, &[values[0], source, location]);
                 None
             }
-            TaskOp::Receive => {
+            TaskOp::Receive | TaskOp::ReceiveTimeout => {
                 let item = item.expect("a receiver");
                 let out = self.scratch(item);
-                let found = self.e.call_rt(Rt::ChannelReceive, &[values[0], out]).unwrap();
+                let found = if op == TaskOp::Receive {
+                    self.e.call_rt(Rt::ChannelReceive, &[values[0], out]).unwrap()
+                } else {
+                    self.e.call_rt(Rt::ReceiveTimeout, &[values[0], out, values[1]]).unwrap()
+                };
                 self.removal_result(place, ty, item, out, found)
             }
             TaskOp::Close => {
@@ -2465,6 +2478,92 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             TaskOp::GroupWait => unreachable!("lowered to a loop"),
         }
+    }
+
+    /// `select`: lays out one runtime `Case` per operation (see the
+    /// runtime's `tasks`), waits, and stores the result of the operation
+    /// that completed in its case's `out`. A value whose send did not
+    /// complete is released. Returns the index of that operation.
+    fn select(&mut self, cases: &[SelectCase], blocking: bool, span: Span) -> ir::Value {
+        const CASE: u32 = 32;
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, CASE * cases.len() as u32, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        let base = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        let mut outs = Vec::new();
+        let mut sent = Vec::new();
+        for (index, case) in cases.iter().enumerate() {
+            let at = (CASE * index as u32) as i32;
+            let item = self.e.cg.types.handle_result(self.operand_ty(&case.operands[0]));
+            let kind = match case.op {
+                Some(TaskOp::Receive) => 0,
+                Some(TaskOp::Send) => 1,
+                Some(TaskOp::Wait) => 2,
+                Some(TaskOp::GroupNext) => 3,
+                _ => 4,
+            };
+            let kind_value = self.e.fb.ins().iconst(types::I8, kind);
+            let zero = self.e.fb.ins().iconst(types::I8, 0);
+            self.e.fb.ins().store(flags(), kind_value, base, at);
+            self.e.fb.ins().store(flags(), zero, base, at + 1);
+            let first = self.scalar(&case.operands[0]);
+            if kind == 4 {
+                let null = self.e.fb.ins().iconst(POINTER, 0);
+                self.e.fb.ins().store(flags(), null, base, at + 8);
+                self.e.fb.ins().store(flags(), first, base, at + 24);
+                continue;
+            }
+            self.e.fb.ins().store(flags(), first, base, at + 8);
+            let value = if kind == 1 {
+                let value = self.operand(&case.operands[1]);
+                if case.retain {
+                    self.e.refcount(item, value, false);
+                }
+                let source = self.copy_to_stack(item, value);
+                if self.e.cg.types.needs_drop(item) {
+                    sent.push((index, source, item));
+                }
+                source
+            } else {
+                let out = self.scratch(item);
+                outs.push((index, case.out, kind, item, out));
+                out
+            };
+            self.e.fb.ins().store(flags(), value, base, at + 16);
+        }
+        let count = self.e.fb.ins().iconst(POINTER, cases.len() as i64);
+        let blocking = self.e.fb.ins().iconst(types::I8, blocking as i64);
+        let location = self.location(span);
+        let won = self.e.call_rt(Rt::Select, &[base, count, blocking, location]).unwrap();
+        for (index, out, kind, item, scratch) in outs {
+            let (this, next) = (self.e.fb.create_block(), self.e.fb.create_block());
+            let is_this = self.e.fb.ins().icmp_imm_s(IntCC::Equal, won, index as i64);
+            self.e.fb.ins().brif(is_this, this, &[], next, &[]);
+            self.e.fb.switch_to_block(this);
+            let place = Place::local(out);
+            if kind == 2 {
+                let value = self.e.value_at(scratch, item);
+                self.write(&place, value);
+            } else {
+                let found = self.e.fb.ins().load(types::I8, flags(), base, (CASE * index as u32 + 1) as i32);
+                let option = self.place_ty(&place);
+                if let Some(value) = self.removal_result(&place, option, item, scratch, found) {
+                    self.write(&place, value);
+                }
+            }
+            self.e.fb.ins().jump(next, &[]);
+            self.e.fb.switch_to_block(next);
+        }
+        for (index, source, item) in sent {
+            let (lost, next) = (self.e.fb.create_block(), self.e.fb.create_block());
+            let is_this = self.e.fb.ins().icmp_imm_s(IntCC::Equal, won, index as i64);
+            self.e.fb.ins().brif(is_this, next, &[], lost, &[]);
+            self.e.fb.switch_to_block(lost);
+            let value = self.e.value_at(source, item);
+            self.e.refcount(item, value, true);
+            self.e.fb.ins().jump(next, &[]);
+            self.e.fb.switch_to_block(next);
+        }
+        won
     }
 
     fn removal_result(&mut self, place: &Place, ty: Ty, element: Ty, out: ir::Value, found: ir::Value) -> Option<Val> {
@@ -2697,6 +2796,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),
             Callee::Std(StdFn::ConsolePrintln) => self.e.call_rt(Rt::ConsolePrintln, &values),
             Callee::Std(StdFn::ConsoleFlush) => self.e.call_rt(Rt::ConsoleFlush, &values),
+            Callee::Std(StdFn::TimeSleep) => self.e.call_rt(Rt::Sleep, &values),
             Callee::Trait(..) => unreachable!("trait calls are resolved by monomorphization"),
         };
         for (var, slot) in spilled {

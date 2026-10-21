@@ -98,7 +98,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H2** | Abstraction: methods, named arguments, variadics, generics (monomorphization), traits with static dispatch, closures and function values, iterators, opaque `impl` results | Done |
 | **H3** | Ownership: affine values (`~Copy`), `ref`/`mut`/`var` loans, region loans, loan patterns, loan modes in function types, `defer`, panic cleanups | Done |
 | **H4** | Projects: modules and packages, `tondo.toml`, dependencies (path, git, archives) and `tondo.lock`, canonical formatter (`tondo fmt`), JSON diagnostics | Done |
-| **H5** | Concurrency without colors: stackful tasks on all cores, `spawn`, `Join`, `Group`, channels, `select`, timeouts, cancellation | In progress: `spawn`, `Join`, `Group` and channels |
+| **H5** | Concurrency without colors: stackful tasks on all cores, `spawn`, `Join`, `Group`, channels, `select`, timeouts, cancellation | In progress: `spawn`, `Join`, `Group`, channels, `select` and `time.sleep` |
 | **H6** | Hosted standard library: filesystem, processes and pipelines, environment, time, JSON; terminal resources with unwind actions (`E1404`) | Planned |
 
 The first cut deliberately leaves out the following. They are part of the

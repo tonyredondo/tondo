@@ -1207,6 +1207,7 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Spawn(value, retain), e.span)
             }
             hir::ExprKind::TaskOp(hir::TaskOp::GroupWait, operands) => self.group_wait(e, &operands[0]),
+            hir::ExprKind::Select(arms, otherwise) => self.select(e, arms, otherwise.as_deref()),
             hir::ExprKind::TaskOp(op, operands) => {
                 let types: Vec<Ty> = operands.iter().map(|o| o.ty).collect();
                 let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
@@ -1352,6 +1353,73 @@ impl Builder<'_> {
         self.switch_to(exit);
         self.own(result);
         Operand::local(result)
+    }
+
+    /// `select` (11.14): evaluates the operations' operands in order, lets
+    /// the runtime complete one, and runs its arm with the result in the
+    /// case's `out`, which the arm owns; or runs the `else` arm. A value to
+    /// send stays the sender's unless its send completes.
+    fn select(&mut self, e: &hir::Expr, arms: &[hir::SelectArm], otherwise: Option<&hir::Expr>) -> Operand {
+        let span = e.span;
+        let mut cases = Vec::new();
+        for arm in arms {
+            let (op, operands) = match &arm.operation.kind {
+                hir::ExprKind::TaskOp(op, operands) => (Some(*op), operands),
+                hir::ExprKind::Call(_, _, operands) => (None, operands),
+                _ => unreachable!("the checker allows only these operations"),
+            };
+            let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
+            let retain = op == Some(hir::TaskOp::Send) && {
+                let ty = operands[1].ty;
+                self.needs_drop(ty) && matches!(values[1], Operand::Copy(_)) && !self.take_temporary(&values[1])
+            };
+            let out = self.new_local(arm.operation.ty);
+            cases.push(SelectCase { op, operands: values, out, retain });
+        }
+        let outs: Vec<Local> = cases.iter().map(|c| c.out).collect();
+        let won = self.temp(Ty::INT, Rvalue::Select(cases, otherwise.is_none(), span), span);
+        let has_value = e.ty != Ty::UNIT && e.ty != Ty::NEVER;
+        let result = has_value.then(|| self.new_local(e.ty));
+        let join = self.new_block();
+        let bodies = arms.iter().map(|a| (a.pattern.as_ref(), &a.body)).chain(otherwise.map(|o| (None, o)));
+        for (index, (pattern, body)) in bodies.enumerate() {
+            let next = self.new_block();
+            if index < outs.len() {
+                let expected = Operand::Const(Const::Int(index as i128, Ty::INT));
+                let this = self.temp(Ty::BOOL, Rvalue::Binary(BinOp::Eq, won.clone(), expected), span);
+                let block = self.new_block();
+                self.terminate(Terminator::Branch(this, block, next));
+                self.switch_to(block);
+            }
+            self.scopes.push(Vec::new());
+            if let Some(&out) = outs.get(index) {
+                if self.needs_drop(self.locals[out.0 as usize]) {
+                    self.scopes.last_mut().unwrap().push(Exit::Release(out));
+                }
+                if let Some(pattern) = pattern {
+                    self.bind_pattern(pattern, &Place::local(out));
+                }
+            }
+            self.in_frame(|b| {
+                let value = b.expr(body);
+                if let Some(result) = result.filter(|_| body.ty != Ty::NEVER) {
+                    b.store(Place::local(result), value, span);
+                }
+            });
+            let scope = self.scopes.pop().unwrap();
+            self.leave(scope);
+            self.goto(join);
+            self.switch_to(next);
+        }
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(join);
+        match result {
+            Some(result) => {
+                self.own(result);
+                Operand::local(result)
+            }
+            None => Operand::Const(Const::Unit),
+        }
     }
 
     /// Whether the enum value at `place` holds `variant`.

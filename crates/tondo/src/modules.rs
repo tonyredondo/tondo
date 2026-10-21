@@ -537,6 +537,20 @@ impl Linker<'_> {
                     }
                 }
             }
+            ExprKind::Select(arms) => {
+                for arm in arms {
+                    if let Some(pattern) = &mut arm.pattern {
+                        self.pattern(pattern);
+                    }
+                    if let Some(operation) = &mut arm.operation {
+                        self.expr(operation);
+                    }
+                    match &mut arm.body {
+                        ArmBody::Expr(body) => self.expr(body),
+                        ArmBody::Transfer(stmt) => self.stmt(stmt),
+                    }
+                }
+            }
             ExprKind::Tuple(items) | ExprKind::Array(items) | ExprKind::Set(items) => {
                 items.iter_mut().for_each(|e| self.expr(e))
             }

@@ -1,0 +1,39 @@
+import std.time
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn main() {
+    let (outbox, inbox) = channel[Int?]()
+    let job = spawn square(2)
+    let notWaiting = select {
+        square(3) => 1
+        else => 2
+    }
+    let onlyElse = select {
+        else => 1
+    }
+    let elseFirst = select {
+        else => 1
+        inbox.receive() => 2
+    }
+    let twice = select {
+        let x = job.wait() => x
+        let y = job.wait() => y
+    }
+    let refutable = select {
+        let some(value) = inbox.receive() => 1
+        else => 2
+    }
+    let timeout = select {
+        inbox.receive(timeout: time.milliseconds(5)) => 1
+    }
+}
+
+// expect-error: E1612 `select` waits for `receiver.receive()`, `sender.send(value)`, `job.wait()`, `group.next()` or `time.sleep(delay)`
+// expect-error: E1613 `select` needs at least one operation to wait for
+// expect-error: E1613 the `else` arm of `select` comes last
+// expect-error: E1615 `job` is taken by two arms of this `select`, but only one arm runs
+// expect-error: E1201 this pattern can fail, for example on `none`
+// expect-error: E1612 in `select`, a timeout is an arm of its own: `time.sleep(delay) => ...`

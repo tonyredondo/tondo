@@ -91,6 +91,7 @@ pub fn check(
         loops: Vec::new(),
         reported: HashSet::new(),
         moves: HashSet::new(),
+        quiet: false,
     };
     // Parameters passed by value belong to the body; loans do not.
     let owned = function.params.iter().copied().filter(|p| params[p.0 as usize] == Some(Mode::Value)).collect();
@@ -114,6 +115,9 @@ struct Checker<'a> {
     /// What was reported, as `(code, position)`: loops are checked twice.
     reported: HashSet<(&'static str, u32)>,
     moves: HashSet<(LocalId, Span)>,
+    /// Inside the operations of a `select`, which take their values only in
+    /// the arm that wins: such moves are not recorded for lowering.
+    quiet: bool,
 }
 
 impl Checker<'_> {
@@ -522,7 +526,9 @@ impl Checker<'_> {
                         self.error("E1406", expr.span, message);
                     } else {
                         flow.moved.insert(*local, Moved::Surely);
-                        self.moves.insert((*local, expr.span));
+                        if !self.quiet {
+                            self.moves.insert((*local, expr.span));
+                        }
                     }
                 }
                 Some(flow)
@@ -729,6 +735,45 @@ impl Checker<'_> {
             ExprKind::Convert(inner) | ExprKind::Panic(inner) | ExprKind::Erase(inner, _) | ExprKind::Spawn(inner) => {
                 self.consume(inner, flow)
             }
+            ExprKind::Select(arms, otherwise) => {
+                // Every operation is evaluated first; each arm then takes
+                // what its own operation takes.
+                let mut flow = flow;
+                for arm in arms {
+                    for operand in Self::operands(&arm.operation) {
+                        flow = self.observe(operand, flow)?;
+                    }
+                }
+                let mut out = None;
+                for arm in arms {
+                    let mut arm_flow = flow.clone();
+                    if let ExprKind::TaskOp(op, operands) = &arm.operation.kind {
+                        self.quiet = true;
+                        let taken = operands
+                            .iter()
+                            .enumerate()
+                            .filter(|&(i, _)| op.takes(i))
+                            .try_fold(arm_flow, |flow, (_, operand)| self.consume(operand, flow));
+                        self.quiet = false;
+                        arm_flow = taken?;
+                    }
+                    self.scopes.push(Vec::new());
+                    if let Some(pattern) = &arm.pattern {
+                        self.bind(pattern, &mut arm_flow);
+                    }
+                    let end = self.consume(&arm.body, arm_flow);
+                    if let Some(end) = &end {
+                        let depth = self.scopes.len() - 1;
+                        self.settle(depth, end, "its arm ends");
+                    }
+                    self.scopes.pop();
+                    out = merge(out, end);
+                }
+                if let Some(otherwise) = otherwise {
+                    out = merge(out, self.consume(otherwise, flow));
+                }
+                out
+            }
             ExprKind::TaskOp(op, operands) => {
                 let mut flow = flow;
                 for (index, operand) in operands.iter().enumerate() {
@@ -742,6 +787,14 @@ impl Checker<'_> {
             }
         };
         flow.filter(|_| expr.ty != Ty::NEVER)
+    }
+
+    /// The operands of a `select` operation.
+    fn operands(operation: &Expr) -> &[Expr] {
+        match &operation.kind {
+            ExprKind::TaskOp(_, operands) | ExprKind::Call(_, _, operands) => operands,
+            _ => &[],
+        }
     }
 
     /// The parameter modes of a callable value of type `ty`.

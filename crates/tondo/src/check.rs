@@ -37,6 +37,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         closure_functions: Vec::new(),
         fn_scopes: Vec::new(),
         console_error: None,
+        duration: None,
         module: 0,
         owners: HashMap::new(),
         method_visibility: HashMap::new(),
@@ -114,6 +115,7 @@ enum StdModule {
     Console,
     Collections,
     Text,
+    Time,
 }
 
 #[derive(Copy, Clone)]
@@ -337,6 +339,8 @@ struct Checker<'a> {
     fn_scopes: Vec<FnScope>,
     /// `console.ConsoleError`, once `std.console` is imported.
     console_error: Option<Ty>,
+    /// `time.Duration`, once `std.time` is imported: nanoseconds.
+    duration: Option<Ty>,
     /// The module whose declaration or code is being checked (7.5).
     module: u32,
     /// Who declares each nominal type, by name.
@@ -668,6 +672,7 @@ impl Checker<'_> {
             ["std", "console"] => StdModule::Console,
             ["std", "collections"] => StdModule::Collections,
             ["std", "text"] => StdModule::Text,
+            ["std", "time"] => StdModule::Time,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -692,6 +697,11 @@ impl Checker<'_> {
             self.types.define_adt(id, AdtKind::Enum(variants));
             self.console_error = Some(ty);
         }
+        if module == StdModule::Time && self.duration.is_none() {
+            let (id, ty) = self.types.declare_adt(format!("{}.Duration", name.name));
+            self.types.define_adt(id, AdtKind::Newtype(Ty::INT));
+            self.duration = Some(ty);
+        }
     }
 
     /// A type of an imported standard module, such as `text.TextError`.
@@ -700,6 +710,7 @@ impl Checker<'_> {
             (Some(ModuleName::Module(StdModule::Console)), "ConsoleError") => self.console_error,
             (Some(ModuleName::Module(StdModule::Collections)), "CollectionError") => Some(self.collection_error),
             (Some(ModuleName::Module(StdModule::Text)), "TextError") => Some(self.text_error),
+            (Some(ModuleName::Module(StdModule::Time)), "Duration") => self.duration,
             _ => None,
         }
     }
@@ -2644,17 +2655,27 @@ impl Checker<'_> {
             (Handle::Receiver, "receive") => T::Receive,
             _ => return self.no_method(ty, method, span),
         };
+        let timeout = matches!(args, [arg] if arg.name.as_ref().is_some_and(|n| n.name == "timeout"));
+        let op = match op {
+            T::Wait if timeout => return self.unsupported_expr(span, "`wait(timeout:)`"),
+            T::Receive if timeout => T::ReceiveTimeout,
+            op => op,
+        };
         let params = match op {
             T::GroupAdd => vec![self.types.handle(Handle::Join, result)],
             T::Send => vec![result],
+            T::ReceiveTimeout => match self.duration {
+                Some(duration) => vec![duration],
+                None => {
+                    let message =
+                        "a timeout is a `time.Duration`: add `import std.time` and write `time.milliseconds(n)`";
+                    self.diags.error("E1102", args[0].span, message);
+                    return Self::error_expr(span);
+                }
+            },
             _ => Vec::new(),
         };
         if args.len() != params.len() {
-            if matches!(op, T::Wait | T::Receive)
-                && args.iter().any(|a| a.name.as_ref().is_some_and(|n| n.name == "timeout"))
-            {
-                return self.unsupported_expr(span, &format!("`{}(timeout:)`", method.name));
-            }
             return self.arity_error(span, params.len(), args.len());
         }
         let receiver = match op {
@@ -2676,7 +2697,7 @@ impl Checker<'_> {
         let result = match op {
             T::Wait => result,
             T::GroupAdd | T::Send | T::Close => Ty::UNIT,
-            T::GroupNext | T::Receive => self.types.intern(TyKind::Option(result)),
+            T::GroupNext | T::Receive | T::ReceiveTimeout => self.types.intern(TyKind::Option(result)),
             T::CopySender => ty,
             T::IsClosed => Ty::BOOL,
             T::GroupWait => match *self.types.kind(result) {
@@ -3837,6 +3858,7 @@ impl Checker<'_> {
                 }
             },
             ast::ExprKind::Match { scrutinee, arms } => self.match_expr(cx, scrutinee, arms, expected, span),
+            ast::ExprKind::Select(arms) => self.select(cx, arms, expected, span),
             ast::ExprKind::Record { path, type_args, fields } => {
                 self.record_literal(cx, path, type_args, fields, expected, span)
             }
@@ -4248,23 +4270,7 @@ impl Checker<'_> {
                 let guard = self.expr(cx, guard, Some(Ty::BOOL));
                 self.coerce(guard, Ty::BOOL)
             });
-            let body = match &arm.body {
-                ast::ArmBody::Expr(body) => {
-                    let value = self.expr(cx, body, result);
-                    match result {
-                        Some(expected) => self.coerce(value, expected),
-                        None => value,
-                    }
-                }
-                ast::ArmBody::Transfer(stmt) => {
-                    let stmts = self.statement(cx, stmt).into_iter().collect();
-                    let block = hir::Block { stmts, tail: None, ty: Ty::NEVER };
-                    Self::mk(hir::ExprKind::Block(block), Ty::NEVER, stmt.span)
-                }
-            };
-            if result.is_none() && body.ty != Ty::NEVER && body.ty != Ty::ERROR {
-                result = Some(body.ty);
-            }
+            let body = self.arm_body(cx, &arm.body, &mut result);
             cx.diverged = outer;
             cx.scopes.pop();
             out.push(hir::Arm { pattern, guard, body });
@@ -4283,6 +4289,109 @@ impl Checker<'_> {
         let all_diverge = out.iter().all(|a| a.body.ty == Ty::NEVER);
         let ty = if all_diverge { Ty::NEVER } else { result.unwrap_or(Ty::UNIT) };
         Self::mk(hir::ExprKind::Match(Box::new(scrutinee), out), ty, span)
+    }
+
+    /// The body of a `match` or `select` arm, of the type the first arm
+    /// with a value set in `result`.
+    fn arm_body(&mut self, cx: &mut FnCx, body: &ast::ArmBody, result: &mut Option<Ty>) -> hir::Expr {
+        let body = match body {
+            ast::ArmBody::Expr(body) => {
+                let value = self.expr(cx, body, *result);
+                match *result {
+                    Some(expected) => self.coerce(value, expected),
+                    None => value,
+                }
+            }
+            ast::ArmBody::Transfer(stmt) => {
+                let stmts = self.statement(cx, stmt).into_iter().collect();
+                let block = hir::Block { stmts, tail: None, ty: Ty::NEVER };
+                Self::mk(hir::ExprKind::Block(block), Ty::NEVER, stmt.span)
+            }
+        };
+        if result.is_none() && body.ty != Ty::NEVER && body.ty != Ty::ERROR {
+            *result = Some(body.ty);
+        }
+        body
+    }
+
+    /// `select { ... }` (11.14): waits for the first of its operations and
+    /// runs that arm, or the `else` arm when none is ready.
+    fn select(&mut self, cx: &mut FnCx, arms: &[ast::SelectArm], expected: Option<Ty>, span: Span) -> hir::Expr {
+        let mut result = expected;
+        let mut out: Vec<hir::SelectArm> = Vec::new();
+        let mut otherwise: Option<hir::Expr> = None;
+        let mut taken: Vec<LocalId> = Vec::new();
+        for (index, arm) in arms.iter().enumerate() {
+            let outer = std::mem::replace(&mut cx.diverged, false);
+            cx.scopes.push(Vec::new());
+            match &arm.operation {
+                None => {
+                    if otherwise.is_some() {
+                        self.diags.error("E1613", arm.span, "`select` has one `else` arm at most");
+                    } else if index + 1 != arms.len() {
+                        self.diags.error("E1613", arm.span, "the `else` arm of `select` comes last");
+                    }
+                    otherwise = Some(self.arm_body(cx, &arm.body, &mut result));
+                }
+                Some(operation) => {
+                    let operation = self.expr(cx, operation, None);
+                    let valid = matches!(
+                        operation.kind,
+                        hir::ExprKind::TaskOp(
+                            hir::TaskOp::Receive | hir::TaskOp::Send | hir::TaskOp::Wait | hir::TaskOp::GroupNext,
+                            _
+                        ) | hir::ExprKind::Call(Callee::Std(StdFn::TimeSleep), ..)
+                            | hir::ExprKind::Error
+                    );
+                    if let hir::ExprKind::TaskOp(hir::TaskOp::ReceiveTimeout, _) = operation.kind {
+                        let message = "in `select`, a timeout is an arm of its own: `time.sleep(delay) => ...`";
+                        self.diags.error("E1612", operation.span, message);
+                    } else if !valid {
+                        let message = "`select` waits for `receiver.receive()`, `sender.send(value)`, `job.wait()`, `group.next()` or `time.sleep(delay)`";
+                        self.diags.error("E1612", operation.span, message);
+                    }
+                    // An affine value moves only in the arm whose operation
+                    // completes, so no two arms may take the same one.
+                    if let hir::ExprKind::TaskOp(op, operands) = &operation.kind {
+                        for (position, operand) in operands.iter().enumerate() {
+                            let Some(place) = hir::Place::of(operand.clone()) else { continue };
+                            if !op.takes(position) || self.types.is_copy(operand.ty) {
+                                continue;
+                            }
+                            if taken.contains(&place.local) {
+                                let name = &cx.locals[place.local.0 as usize].name;
+                                let message = format!(
+                                    "`{name}` is taken by two arms of this `select`, but only one arm runs; give each arm its own value"
+                                );
+                                self.diags.error("E1615", operand.span, message);
+                            }
+                            taken.push(place.local);
+                        }
+                    }
+                    let pattern = arm.pattern.as_ref().map(|p| {
+                        let context = PatternContext { in_match: false, mutable: false, loans: Loans::None };
+                        let pattern = self.pattern(cx, p, operation.ty, context);
+                        if let Some(missing) = crate::exhaust::refutation(&self.types, operation.ty, &pattern) {
+                            let message =
+                                format!("this pattern can fail, for example on `{missing}`; match it in the body");
+                            self.diags.error("E1201", pattern.span, message);
+                        }
+                        pattern
+                    });
+                    let body = self.arm_body(cx, &arm.body, &mut result);
+                    out.push(hir::SelectArm { operation, pattern, body });
+                }
+            }
+            cx.scopes.pop();
+            cx.diverged = outer;
+        }
+        if out.is_empty() {
+            self.diags.error("E1613", span, "`select` needs at least one operation to wait for");
+            return Self::error_expr(span);
+        }
+        let all_diverge = out.iter().map(|a| &a.body).chain(otherwise.as_ref()).all(|b| b.ty == Ty::NEVER);
+        let ty = if all_diverge { Ty::NEVER } else { result.unwrap_or(Ty::UNIT) };
+        Self::mk(hir::ExprKind::Select(out, otherwise.map(Box::new)), ty, span)
     }
 
     fn pattern_error(&mut self, span: Span, message: String) -> hir::Pattern {
@@ -6137,6 +6246,35 @@ impl Checker<'_> {
                 let signature = Signature::simple(params, result);
                 let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
+            }
+            ([_, member], Some(ModuleName::Module(StdModule::Time))) => {
+                let duration = self.duration.unwrap();
+                let factor = match *member {
+                    "milliseconds" => 1_000_000,
+                    "seconds" => 1_000_000_000,
+                    "sleep" => {
+                        let signature = Signature::simple(vec![duration], Ty::UNIT);
+                        let target = CallTarget::new(Callee::Std(StdFn::TimeSleep), signature, expected);
+                        return self.call_signature(cx, target, None, args, span);
+                    }
+                    "now" | "deadline" | "resolution" => {
+                        return self.unsupported_expr(span, &format!("`time.{member}`"));
+                    }
+                    _ => {
+                        let message = format!("module `time` has no function `{member}`");
+                        self.diags.error("E1001", segments[1].span, message);
+                        return Self::error_expr(span);
+                    }
+                };
+                // A count of milliseconds or seconds in nanoseconds; one that
+                // does not fit panics with `P0005` (14.3.3).
+                let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+                let count = self.expr(cx, &arg.value, Some(Ty::INT));
+                let count = self.coerce(count, Ty::INT);
+                let factor = Self::mk(hir::ExprKind::Int(factor), Ty::INT, span);
+                let nanos =
+                    Self::mk(hir::ExprKind::Binary(BinOp::Mul, Box::new(count), Box::new(factor)), Ty::INT, span);
+                Self::mk(hir::ExprKind::Retype(Box::new(nanos)), duration, span)
             }
             ([name], None) if Self::numeric_type(name).is_some() => {
                 let to = Self::numeric_type(name).unwrap();

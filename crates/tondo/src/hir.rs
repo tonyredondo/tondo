@@ -228,6 +228,9 @@ pub enum ExprKind {
     /// An operation of a `Join` or a `Group`; the receiver comes first,
     /// as the loan of its place for `add` and `next`.
     TaskOp(TaskOp, Vec<Expr>),
+    /// `select` (11.14): the arms' operations, all evaluated in order
+    /// before waiting, and the `else` arm.
+    Select(Vec<SelectArm>, Option<Box<Expr>>),
     /// `Iterator.next` of the intrinsic cursor at the place: the next entry,
     /// key or value of its map or set, or `none`.
     CursorNext(Place, CursorKind),
@@ -333,6 +336,8 @@ pub enum TaskOp {
     CopySender,
     /// `isClosed()` of a sender or a receiver.
     IsClosed,
+    /// `receiver.receive(timeout: delay)`: `T?`
+    ReceiveTimeout,
 }
 
 impl TaskOp {
@@ -417,6 +422,15 @@ impl Mutation {
     }
 }
 
+/// An arm of `select`: the body runs, with the pattern bound to the
+/// operation's result, when the operation is the one that completes.
+#[derive(Clone)]
+pub struct SelectArm {
+    pub operation: Expr,
+    pub pattern: Option<Pattern>,
+    pub body: Expr,
+}
+
 #[derive(Clone)]
 pub struct Arm {
     pub pattern: Pattern,
@@ -482,4 +496,6 @@ pub enum StdFn {
     ConsolePrint,
     ConsolePrintln,
     ConsoleFlush,
+    /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
+    TimeSleep,
 }

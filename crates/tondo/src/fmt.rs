@@ -767,6 +767,7 @@ impl Formatter<'_> {
                     | ExprKind::Block(_)
                     | ExprKind::If { .. }
                     | ExprKind::Match { .. }
+                    | ExprKind::Select(_)
                     | ExprKind::Closure(_)
                     | ExprKind::With { .. }
             )
@@ -891,6 +892,24 @@ impl Formatter<'_> {
                     Doc::Hardline,
                     text("}"),
                 ])
+            }
+            ExprKind::Select(arms) => {
+                let mut body = Vec::new();
+                for arm in arms {
+                    body.push(Doc::Hardline);
+                    body.push(self.leading(arm.span.start));
+                    let left = match (&arm.pattern, &arm.operation) {
+                        (Some(pattern), Some(operation)) => {
+                            vec![text("let "), self.pattern(pattern), text(" = "), self.expr(operation)]
+                        }
+                        (None, Some(operation)) => vec![self.expr(operation)],
+                        _ => vec![text("else")],
+                    };
+                    body.push(self.arm_with(left, &arm.body));
+                    body.push(self.trailing(arm.span.end));
+                }
+                body.push(self.leading_in_block(expr.span.end));
+                concat(vec![text("select {"), indent(concat(body)), Doc::Hardline, text("}")])
             }
             ExprKind::Tuple(items) => {
                 let items: Vec<(Span, Doc)> = items.iter().map(|e| (e.span, self.expr(e))).collect();
@@ -1085,7 +1104,11 @@ impl Formatter<'_> {
             left.push(text(" if "));
             left.push(self.expr(guard));
         }
-        match &arm.body {
+        self.arm_with(left, &arm.body)
+    }
+
+    fn arm_with(&mut self, left: Vec<Doc>, body: &ArmBody) -> Doc {
+        match body {
             ArmBody::Expr(body) if self.opens_brackets(body) => {
                 concat(vec![concat(left), text(" => "), self.expr(body)])
             }
