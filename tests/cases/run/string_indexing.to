@@ -9,20 +9,20 @@ fn describe(value: Char?): String {
 
 fn main() {
     let text = "añ🙂b"
-    _ = console.println("{text.length()} {text.byteLength()} {text.isEmpty()} {"".isEmpty()} {"".length()}")
-    _ = console.println("{text[0]} {text[1]} {text[2]} {text[-1]} {text[-4]}")
-    _ = console.println("{describe(text.get(2))} {describe(text.get(4))} {describe(text.get(-5))} {describe(text.get(-2))}")
-    _ = console.println("{text[:2]}|{text[1:3]}|{text[::-1]}|{text[::2]}|{text[-2:]}|{text[10:]}|{text[3:1]}")
+    console.println("{text.length()} {text.byteLength()} {text.isEmpty()} {"".isEmpty()} {"".length()}")
+    console.println("{text[0]} {text[1]} {text[2]} {text[-1]} {text[-4]}")
+    console.println("{describe(text.get(2))} {describe(text.get(4))} {describe(text.get(-5))} {describe(text.get(-2))}")
+    console.println("{text[:2]}|{text[1:3]}|{text[::-1]}|{text[::2]}|{text[-2:]}|{text[10:]}|{text[3:1]}")
     var count = 0
     for c in text {
-        _ = console.println("{count}: {c}")
+        console.println("{count}: {c}")
         count += 1
     }
     for c in "" {
-        _ = console.println("never")
+        console.println("never")
     }
     let joined = text[:1].concat(text[-1:])
-    _ = console.println("{joined} {joined == "ab"} {"ab" < "añ"}")
+    console.println("{joined} {joined == "ab"} {"ab" < "añ"}")
 }
 
 // expect-stdout: 4 8 false true 0

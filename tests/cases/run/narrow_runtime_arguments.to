@@ -5,8 +5,8 @@ import std.console
 fn main() {
     let zero = 0.0
     let x = zero / zero
-    _ = console.println("{x == x}")
-    _ = console.println("{x < x}")
+    console.println("{x == x}")
+    console.println("{x < x}")
 }
 
 // expect-stdout: false

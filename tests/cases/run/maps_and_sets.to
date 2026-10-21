@@ -13,10 +13,10 @@ fn main() {
     ages["eva"] = 41
     ages["ana"] = 33
     let removed = ages.remove("leo")
-    _ = console.println("{ages} {before} {removed == some(28)} {ages.remove("zoe") == none}")
-    _ = console.println("{ages["ana"] == some(33)} {ages["nobody"] == none} {"eva" in ages} {"leo" in ages}")
+    console.println("{ages} {before} {removed == some(28)} {ages.remove("zoe") == none}")
+    console.println("{ages["ana"] == some(33)} {ages["nobody"] == none} {"eva" in ages} {"leo" in ages}")
     for (name, age) in ages {
-        _ = console.println("{name} -> {age}")
+        console.println("{name} -> {age}")
     }
     var counts: Map[String, Int] = [:]
     for word in ["a", "b", "a", "c", "a", "b"] {
@@ -25,12 +25,12 @@ fn main() {
             none => 1
         }
     }
-    _ = console.println("{counts} {counts == ["c": 1, "b": 2, "a": 3]}")
+    console.println("{counts} {counts == ["c": 1, "b": 2, "a": 3]}")
     var seen = Set["read", "write"]
     let added = seen.insert("exec")
     let again = seen.insert("read")
     let gone = seen.remove("write")
-    _ = console.println("{seen} {added} {again} {gone} {"read" in seen} {seen == Set["exec", "read"]}")
+    console.println("{seen} {added} {again} {gone} {"read" in seen} {seen == Set["exec", "read"]}")
     var grid: Map[(Int, Int), Color] = [:]
     grid[(0, 0)] = Color.Red
     grid[(1, 2)] = Color.Green
@@ -40,7 +40,7 @@ fn main() {
     let home = places.get(Pos { x: 1, y: 2 }) == some("home")
     var colors = Set.new[Color]()
     _ = colors.insert(Color.Red)
-    _ = console.println("{cell} {home} {Color.Red in colors} {Color.Green in colors}")
+    console.println("{cell} {home} {Color.Red in colors} {Color.Green in colors}")
     var big = Map.new[Int, String]()
     for i in 0..2000 {
         big[i] = "v{i}"
@@ -48,7 +48,7 @@ fn main() {
     for i in 0..1990 {
         _ = big.remove(i)
     }
-    _ = console.println("{big}")
+    console.println("{big}")
 }
 
 // expect-stdout: [ana: 33, eva: 41] [ana: 32, leo: 28] true true

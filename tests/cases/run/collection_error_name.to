@@ -9,7 +9,7 @@ fn main() {
         err(_) => "other"
     }
     let error: collections.CollectionError = collections.CollectionError.InvalidStep
-    _ = console.println("{message} {error == collections.CollectionError.InvalidStep}")
+    console.println("{message} {error == collections.CollectionError.InvalidStep}")
 }
 
 // expect-stdout: invalid index true

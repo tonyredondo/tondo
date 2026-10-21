@@ -14,7 +14,7 @@ $ cat hello.to
 import std.console
 
 fn main() {
-    _ = console.print("Hello, world\n")
+    console.println("Hello, world")
 }
 $ tondo run hello.to
 Hello, world

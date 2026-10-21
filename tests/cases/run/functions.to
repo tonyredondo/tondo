@@ -24,9 +24,9 @@ fn firstOver(limit: Int): Int {
 
 fn main() {
     for i in 0..6 {
-        _ = console.println("fib({i}) = {fib(i)} ({parity(fib(i))})")
+        console.println("fib({i}) = {fib(i)} ({parity(fib(i))})")
     }
-    _ = console.println("first over 100: {firstOver(100)}")
+    console.println("first over 100: {firstOver(100)}")
 }
 
 // expect-stdout: fib(0) = 0 (even)

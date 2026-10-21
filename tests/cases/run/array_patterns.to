@@ -17,18 +17,18 @@ fn sum(values: Array[Int]): Int {
 }
 
 fn main() {
-    _ = console.println(describe([]))
-    _ = console.println(describe(["a"]))
-    _ = console.println(describe(["a", "stop", "c"]))
-    _ = console.println(describe(["a", "b"]))
-    _ = console.println(describe(["a", "b", "c", "d"]))
-    _ = console.println("{sum([1, 2, 3, 4])}")
+    console.println(describe([]))
+    console.println(describe(["a"]))
+    console.println(describe(["a", "stop", "c"]))
+    console.println(describe(["a", "b"]))
+    console.println(describe(["a", "b", "c", "d"]))
+    console.println("{sum([1, 2, 3, 4])}")
     let grid = [[1, 2], [3]]
     let corner = match grid {
         [[x, ..], ..] => x
         _ => -1
     }
-    _ = console.println("{corner}")
+    console.println("{corner}")
 }
 
 // expect-stdout: empty

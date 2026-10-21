@@ -105,7 +105,7 @@ fn greet(name: String): String ! AppError {
 
 fn main(): !AppError {
     let message = greet("Ada")?
-    _ = console.print(message)
+    console.print(message)
 }
 ~~~
 
@@ -1479,7 +1479,7 @@ Una función sin anotación de retorno devuelve `Unit`:
 
 ~~~tondo
 fn log(message: String) {
-    _ = console.print(message)
+    console.print(message)
 }
 ~~~
 
@@ -2846,7 +2846,7 @@ La forma canónica itera entradas:
 
 ~~~tondo
 for (key, value) in ages {
-    _ = console.print("{key}: {value}")
+    console.print("{key}: {value}")
 }
 ~~~
 
@@ -3308,7 +3308,7 @@ aparece en firma y llamada:
 
 ~~~tondo
 fn inspect(resource: ref Resource) {
-    _ = console.print(resource.status())
+    console.print(resource.status())
 }
 
 inspect(ref resource)
@@ -3321,7 +3321,7 @@ Un único parámetro final puede ser variádico y homogéneo:
 ~~~tondo
 fn log(prefix: String, parts: ...String) {
     for part in parts {
-        _ = console.print("{prefix}{part}")
+        console.print("{prefix}{part}")
     }
 }
 
@@ -4875,7 +4875,7 @@ También acepta bloque:
 
 ~~~tondo
 defer {
-    _ = console.print("leaving scope")
+    console.print("leaving scope")
 }
 ~~~
 
@@ -7135,7 +7135,7 @@ Programa infallible:
 
 ~~~tondo
 fn main() {
-    _ = console.print("Hola")
+    console.print("Hola")
 }
 ~~~
 
@@ -7226,7 +7226,7 @@ let pipeline = (
 )
 
 let output = pipeline.output()?
-_ = console.print(String(output.stdout)?)
+console.print(String(output.stdout)?)
 ~~~
 
 En un script raíz:
@@ -9800,7 +9800,7 @@ fn main(): !StatisticsError {
     let interior = samples[1:-1]
     let centered = center(interior)?
 
-    _ = console.print("{centered}")
+    console.print("{centered}")
 }
 ~~~
 
@@ -9839,7 +9839,7 @@ fn countWords(words: Array[String]): Map[String, Int] {
 
 fn printCounts(counts: Map[String, Int]) {
     for (word, count) in counts {
-        _ = console.print("{word}: {count}")
+        console.print("{word}: {count}")
     }
 }
 ~~~
@@ -10014,7 +10014,7 @@ fn loadPage(userId: UserId): Page ! ApiError {
 
 fn main(): !ApiError {
     let page = loadPage(UserId(42))?
-    _ = console.print("{page}")
+    console.print("{page}")
 }
 ~~~
 
@@ -10070,7 +10070,7 @@ let pipeline = (
 )
 
 let output = pipeline.check()?
-_ = console.print(String(output.stdout)?)
+console.print(String(output.stdout)?)
 ~~~
 
 La llamada a `check()` espera implícitamente y hace suspendible por inferencia al
@@ -11145,7 +11145,7 @@ import std.process
 
 let pipeline = process.command("producer") | process.command("consumer")
 let output = pipeline.output()?
-_ = console.print(String(output.stdout)?)
+console.print(String(output.stdout)?)
 ~~~
 
 Las sentencias top-level existen solo en el archivo raíz de un script y forman un `main` implícito.

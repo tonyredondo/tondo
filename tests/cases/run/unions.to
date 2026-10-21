@@ -68,16 +68,16 @@ fn main() {
     let a: Int | String = 42
     let b: String | Int = "hi"
     var c: Int | String = -1
-    _ = console.println("{render(a)} {render(b)} {render(c)} {a == 42} {a == b}")
+    console.println("{render(a)} {render(b)} {render(c)} {a == 42} {a == b}")
     c = "changed"
     let shapes: Array[Shape | Array[Int] | Bool | String?] = [Shape.Circle(1.5), Shape.Point, [1, 2], true, some("x"), none]
     for shape in shapes {
-        _ = console.println(kind(shape))
+        console.println(kind(shape))
     }
     let small: Int32 | String = 7
     let picked: Int | String = if c == "changed" { 1 } else { "one" }
-    _ = console.println("{render(picked)} {render(c)}")
-    _ = console.println("{explain(retry("file"))} {explain(retry(""))} {explain(retry("bad"))} {explain(fallback())}")
+    console.println("{render(picked)} {render(c)}")
+    console.println("{explain(retry("file"))} {explain(retry(""))} {explain(retry("bad"))} {explain(fallback())}")
     match retry("") {
         ok(_) => {}
         err(e) => {
@@ -86,7 +86,7 @@ fn main() {
                 DecodeError { .. } => "retry decode"
                 String(s) => s
             }
-            _ = console.println(text)
+            console.println(text)
         }
     }
 }

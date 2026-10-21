@@ -5074,8 +5074,8 @@ pub fn stdin(): Input ! ConsoleError
 pub fn stdout(): Output ! ConsoleError
 pub fn stderr(): Output ! ConsoleError
 pub fn readLine(input: var Input): String? ! ConsoleError suspends
-pub fn print(value: String): Unit ! ConsoleError
-pub fn println(value: String): Unit ! ConsoleError
+pub fn print(value: String)
+pub fn println(value: String)
 pub fn flush(): Unit ! ConsoleError suspends
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ~~~
@@ -5093,9 +5093,19 @@ avanza el cursor después de aceptar una línea UTF-8 completa, devuelve `none`
 en EOF y devuelve un `ConsoleError` tipado sin consumir datos cuando recibe
 UTF-8 inválido. `print` y `println` solo anexan al buffer
 de salida ordenado del runtime, nunca esperan al sistema operativo y por eso no
-declaran `suspends`; `println` añade un único LF. Ninguna de las dos hace flush
-implícito. `flush` es la única frontera de entrega suspendible y terminal para
-el writer correspondiente. Partial I/O, límites, progreso, cancelación y
+declaran `suspends`; `println` añade un único LF. Como solo anexan, no pueden
+fallar y devuelven `Unit`: una llamada es una sentencia ordinaria, sin `_ =`.
+
+El runtime entrega el buffer sin intervención del programa: cuando se llena,
+en cada línea si stdout es una terminal, antes de leer de stdin y al terminar
+el programa. Un programa nunca necesita llamar a `flush`. `flush` es la única
+frontera de entrega explícita, suspendible y terminal para el writer
+correspondiente: entrega lo pendiente y devuelve el primer fallo de entrega
+ocurrido desde el anterior `flush`. Un fallo que el programa no observe se
+reporta al terminar en stderr como `error: standard output: …` y el proceso
+termina con estado 1, salvo que ya termine con otro estado de error o pánico.
+Escribir en una pipe cuyo lector ya cerró termina el proceso sin mensaje, como
+cualquier herramienta del sistema. Partial I/O, límites, progreso, cancelación y
 cleanup siguen las reglas de `std.io`; el adaptador no introduce una segunda
 API sync/async ni duplica buffers. Los mensajes del host se mantienen opacos y
 nunca publican rutas o detalles dependientes del sistema operativo.

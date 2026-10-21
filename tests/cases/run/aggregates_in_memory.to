@@ -41,13 +41,13 @@ fn main() {
         inner }
     let e = Empty {}
     let ev = Event { type: "click", at: 3 }
-    _ = console.println("{x.name} {y.name} {z.name} {w.name} {w.i} {e == Empty {}} {ev.type}")
+    console.println("{x.name} {y.name} {z.name} {w.name} {w.i} {e == Empty {}} {ev.type}")
     var total = 0
     for k in 0..1000 {
         let item = build(k)
         total += item.a
     }
-    _ = console.println("{total}")
+    console.println("{total}")
 }
 
 // Records larger than 64 bytes are copied with memcpy; empty records have no

@@ -3,31 +3,31 @@ import std.console
 fn main() {
     let a = [1, 2, 3]
     let b = [10, 20, 30]
-    _ = console.println("{a + b} {a * b} {a + 10} {10 - a} {b / a} {b % [3, 7, 9]}")
+    console.println("{a + b} {a * b} {a + 10} {10 - a} {b / a} {b % [3, 7, 9]}")
     let small: Array[Int32] = [1, 2]
     let bumped = small + 1
-    _ = console.println("{bumped} {-1 * small}")
+    console.println("{bumped} {-1 * small}")
     let grid = [[1, 2], [3, 4]]
-    _ = console.println("{grid + grid} {grid * 2} {grid + [10, 20]}")
+    console.println("{grid + grid} {grid * 2} {grid + [10, 20]}")
     let half = [1.0, 3.0] / 2.0
-    _ = console.println("{half} {[0.5, 1.5] - half}")
+    console.println("{half} {[0.5, 1.5] - half}")
     var total = [1, 1, 1]
     total += [1, 2, 3]
     total *= 2
     var x = 1.5
     x += 1.0
-    _ = console.println("{total} {a} {x}")
+    console.println("{total} {a} {x}")
     var values = [1, 2, 3, 4, 5]
     let before = values
     values[1:3] = [20, 30]
     values[::2] *= -1
     values[1:4] += 100
     values[::-1] = values
-    _ = console.println("{values} {before}")
+    console.println("{values} {before}")
     var names = ["a", "b", "c"]
     names[:2] = names[1:]
     names[1:1] = []
-    _ = console.println("{names}")
+    console.println("{names}")
 }
 
 // expect-stdout: [11, 22, 33] [10, 40, 90] [11, 12, 13] [9, 8, 7] [10, 10, 10] [1, 6, 3]

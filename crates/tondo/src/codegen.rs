@@ -68,6 +68,7 @@ enum Rt {
     SbFinish,
     ConsolePrint,
     ConsolePrintln,
+    ConsoleFlush,
     Panic,
     BoxNew,
     BoxRetain,
@@ -138,8 +139,9 @@ impl Rt {
             Rt::SbF32 => ("tondo_rt_sb_f32", &[I64, types::F32], &[]),
             Rt::SbChar => ("tondo_rt_sb_char", &[I64, I32], &[]),
             Rt::SbFinish => ("tondo_rt_sb_finish", &[I64], &[I64]),
-            Rt::ConsolePrint => ("tondo_rt_console_print", &[I64], &[I64]),
-            Rt::ConsolePrintln => ("tondo_rt_console_println", &[I64], &[I64]),
+            Rt::ConsolePrint => ("tondo_rt_console_print", &[I64], &[]),
+            Rt::ConsolePrintln => ("tondo_rt_console_println", &[I64], &[]),
+            Rt::ConsoleFlush => ("tondo_rt_console_flush", &[], &[I64]),
             Rt::Panic => ("tondo_rt_panic", &[I32, I64, I64], &[]),
             Rt::BoxNew => ("tondo_rt_box_new", &[I64], &[I64]),
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
@@ -2044,15 +2046,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     /// Builds the `!ConsoleError` result of a console operation from the
-    /// runtime's status: 0 for `ok`, otherwise the error variant plus one.
+    /// runtime's status: 0 for `ok`, 1 plus a variant without payload, or 4
+    /// plus the `IoError` of `ConsoleError.Io` (variant 3).
     fn std_result(&mut self, place: &Place, ty: Ty, status: ir::Value) {
+        const IO_VARIANT: i64 = 3;
         let base = self.pointer_to(place, true);
         let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, status, 0);
         self.e.fb.ins().store(flags(), failed, base, 0);
+        let TyKind::Result(_, error) = *self.e.cg.types.kind(ty) else { unreachable!() };
         let slot = self.e.cg.slot(ty, Proj::Variant(ERR, 0));
-        let code = self.e.fb.ins().iadd_imm_s(status, -1);
-        let code = self.e.fb.ins().ireduce(types::I8, code);
-        self.e.fb.ins().store(flags(), code, base, slot.offset as i32);
+        let error_base = self.e.offset(base, slot.offset);
+        let io = self.e.fb.ins().icmp_imm_s(IntCC::SignedGreaterThan, status, IO_VARIANT);
+        let plain = self.e.fb.ins().iadd_imm_s(status, -1);
+        let io_tag = self.e.fb.ins().iconst(types::I64, IO_VARIANT);
+        let tag = self.e.fb.ins().select(io, io_tag, plain);
+        let tag = self.e.fb.ins().ireduce(types::I8, tag);
+        self.e.fb.ins().store(flags(), tag, error_base, 0);
+        // The payload area is unused by the other variants.
+        let payload = self.e.cg.slot(error, Proj::Variant(IO_VARIANT as u32, 0));
+        let io_error = self.e.fb.ins().iadd_imm_s(status, -(IO_VARIANT + 1));
+        let io_error = self.e.fb.ins().ireduce(types::I8, io_error);
+        self.e.fb.ins().store(flags(), io_error, error_base, payload.offset as i32);
     }
 
     /// A conversion that cannot fail (18.6).
@@ -2224,6 +2238,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),
             Callee::Std(StdFn::ConsolePrintln) => self.e.call_rt(Rt::ConsolePrintln, &values),
+            Callee::Std(StdFn::ConsoleFlush) => self.e.call_rt(Rt::ConsoleFlush, &values),
         }
     }
 

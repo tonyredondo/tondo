@@ -310,4 +310,5 @@ pub enum Callee {
 pub enum StdFn {
     ConsolePrint,
     ConsolePrintln,
+    ConsoleFlush,
 }

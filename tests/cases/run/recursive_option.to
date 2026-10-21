@@ -19,7 +19,7 @@ fn total(c: Chain): Int {
 
 fn main() {
     let c = build(100)
-    _ = console.println("{total(c)} {c == build(100)} {c == build(99)}")
+    console.println("{total(c)} {c == build(100)} {c == build(99)}")
 }
 
 // `Chain` contains itself through an option, so the option payload is boxed.

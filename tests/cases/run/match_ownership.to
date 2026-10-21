@@ -53,14 +53,14 @@ fn main() {
         }
         out = render(m)
     }
-    _ = console.println("{out} {render(Msg.Pair { key: "a", value: "a" })} {render(Msg.Quit)}")
-    _ = console.println("{command("start")} {command("stop")} {command("other")}")
+    console.println("{out} {render(Msg.Pair { key: "a", value: "a" })} {render(Msg.Quit)}")
+    console.println("{command("start")} {command("stop")} {command("other")}")
     let c = Person { name: "C", best: Friend.Nobody }
     let b = Person { name: "B", best: Friend.Someone(c) }
     var a = Person { name: "A", best: Friend.Someone(b) }
     let before = a
     a.name = "A2"
-    _ = console.println("{names(a)} {names(before)} {a == before}")
+    console.println("{names(a)} {names(before)} {a == before}")
 }
 
 // Guards that fail must release the bindings of their arm.

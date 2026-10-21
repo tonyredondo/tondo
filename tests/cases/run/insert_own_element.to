@@ -13,7 +13,7 @@ fn main() {
     var units = [(), ()]
     units.push(())
     units.insert(0, ())
-    _ = console.println("{points[0].name}{points[1].name}{points[2].name}{points[3].name} {queue.length()} {units.length()}")
+    console.println("{points[0].name}{points[1].name}{points[2].name}{points[3].name} {queue.length()} {units.length()}")
 }
 
 // expect-stdout: baba 2 4

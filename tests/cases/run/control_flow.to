@@ -31,7 +31,7 @@ fn main() {
         steps += 1
     }
     let label = { classify(-5) }
-    _ = console.println("{total} {countdown} {steps} {label} {classify(0)} {classify(9)}")
+    console.println("{total} {countdown} {steps} {label} {classify(0)} {classify(9)}")
 }
 
 // expect-stdout: 9 0 6 negative zero positive

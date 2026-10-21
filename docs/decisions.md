@@ -144,3 +144,15 @@ a smaller union. In patterns, `Member(p)` tests a member and binds the whole
 value, while record, variant, option and literal patterns select the member
 their own type belongs to; a bare type name is rejected because it would
 bind everything.
+
+## 2026-10-21 — Printing cannot fail
+
+`console.print` and `console.println` return `Unit`: they only append to the
+runtime's output buffer, so the `!ConsoleError` they used to return could
+never report anything and only forced `_ =` on every line. The runtime
+delivers the buffer by itself (when it fills, at every line on a terminal,
+and at exit), so programs never flush. `console.flush()` returns delivery
+failures to programs that want them; a failure nobody observed is reported
+on stderr at exit with status 1, and a closed pipe ends the process silently
+through `SIGPIPE`, like other command-line tools. See standard library spec
+19.1.

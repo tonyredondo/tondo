@@ -7,6 +7,6 @@ var count = 0
 for i in 1..=3 {
     count += i
 }
-_ = console.println("{name}: {count}")
+console.println("{name}: {count}")
 
 // expect-stdout: Tondo: 6

@@ -33,7 +33,7 @@ fn main() {
         let inner = "inner {last}"
         inner
     }
-    _ = console.println(kept)
+    console.println(kept)
 }
 
 // expect-stdout: inner item 998.

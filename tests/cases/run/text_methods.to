@@ -20,10 +20,10 @@ fn position(value: Int?): String {
 fn main() {
     let input = "  Añ🙂 world  "
     let trimmed = input.trim()
-    _ = console.println("[{trimmed}] {trimmed.contains("🙂")} {trimmed.startsWith("Añ")} {trimmed.endsWith("x")}")
-    _ = console.println("{position(trimmed.find("world"))} {position(trimmed.find("zzz"))} {trimmed.replace("o", "0")}")
-    _ = console.println("{trimmed.toUpperAscii()} {trimmed.toLowerAscii()} {String.empty().isEmpty()}")
-    _ = console.println("{show(trimmed.slice(1, 3))} {show(trimmed.slice(-1, 2))} {show(trimmed.slice(3, 1))} {show(trimmed.slice(0, 99))}")
+    console.println("[{trimmed}] {trimmed.contains("🙂")} {trimmed.startsWith("Añ")} {trimmed.endsWith("x")}")
+    console.println("{position(trimmed.find("world"))} {position(trimmed.find("zzz"))} {trimmed.replace("o", "0")}")
+    console.println("{trimmed.toUpperAscii()} {trimmed.toLowerAscii()} {String.empty().isEmpty()}")
+    console.println("{show(trimmed.slice(1, 3))} {show(trimmed.slice(-1, 2))} {show(trimmed.slice(3, 1))} {show(trimmed.slice(0, 99))}")
     let built = match String.fromChars(['h', 'é', '!']) {
         ok(value) => value
         err(_) => "?"
@@ -32,7 +32,7 @@ fn main() {
     for c in built.chars() {
         count += 1
     }
-    _ = console.println("{built} {count}")
+    console.println("{built} {count}")
 }
 
 // expect-stdout: [Añ🙂 world] true true false

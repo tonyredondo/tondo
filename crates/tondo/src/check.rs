@@ -2652,10 +2652,16 @@ impl Checker<'_> {
                 self.call_with(cx, Callee::Fn(id), &params, result, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Console))) => {
-                let function = match *member {
-                    "print" => StdFn::ConsolePrint,
-                    "println" => StdFn::ConsolePrintln,
-                    "stdin" | "stdout" | "stderr" | "readLine" | "flush" => {
+                // `print` and `println` only append to the output buffer and
+                // cannot fail; delivery errors surface through `flush` (19.1).
+                let (function, params, result) = match *member {
+                    "print" => (StdFn::ConsolePrint, vec![Ty::STRING], Ty::UNIT),
+                    "println" => (StdFn::ConsolePrintln, vec![Ty::STRING], Ty::UNIT),
+                    "flush" => {
+                        let error = self.console_error.unwrap();
+                        (StdFn::ConsoleFlush, Vec::new(), self.types.intern(TyKind::Result(Ty::UNIT, error)))
+                    }
+                    "stdin" | "stdout" | "stderr" | "readLine" => {
                         let what = format!("`console.{member}`");
                         return self.unsupported_expr(span, &what);
                     }
@@ -2665,9 +2671,7 @@ impl Checker<'_> {
                         return Self::error_expr(span);
                     }
                 };
-                let error = self.console_error.unwrap();
-                let result = self.types.intern(TyKind::Result(Ty::UNIT, error));
-                self.call_with(cx, Callee::Std(function), &[Ty::STRING], result, args, span)
+                self.call_with(cx, Callee::Std(function), &params, result, args, span)
             }
             ([name], None) if Self::numeric_type(name).is_some() => {
                 let to = Self::numeric_type(name).unwrap();

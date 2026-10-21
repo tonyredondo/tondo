@@ -19,7 +19,7 @@ fn main() {
     counts[1] = 12
     let keys: Set[Int | String] = Set[1, "a", 1]
     let key: Int | String = "one"
-    _ = console.println("{length(list)} {list.value} {copy.value} {counts.length()} {counts[key] == some(11)} {keys.length()} {"a" in keys}")
+    console.println("{length(list)} {list.value} {copy.value} {counts.length()} {counts[key] == some(11)} {keys.length()} {"a" in keys}")
 }
 
 // expect-stdout: 3 1 10 2 true 2 true

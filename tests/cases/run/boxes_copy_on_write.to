@@ -24,7 +24,7 @@ fn main() {
     a.best = Friend.Someone(Person { name: "Z", best: Friend.Nobody })
     var c = shared
     c.best = Friend.Nobody
-    _ = console.println("{names(a)} {names(shared)} {names(c)}")
+    console.println("{names(a)} {names(shared)} {names(c)}")
 }
 
 // `Person` and `Friend` contain each other, so `best` lives in a box that

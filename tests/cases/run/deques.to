@@ -15,13 +15,13 @@ fn main() {
     queue.push("c")
     queue.pushFront("a")
     let snapshot = queue
-    _ = console.println("{queue} {queue.length()} {queue.isEmpty()} {describe(queue.get(0))} {describe(queue.get(-1))}")
+    console.println("{queue} {queue.length()} {queue.isEmpty()} {describe(queue.get(0))} {describe(queue.get(-1))}")
     let first = queue.popFront()
     let last = queue.pop()
     queue[0] = "B"
-    _ = console.println("{describe(first)} {describe(last)} {queue} {snapshot} {queue == snapshot}")
+    console.println("{describe(first)} {describe(last)} {queue} {snapshot} {queue == snapshot}")
     queue.clear()
-    _ = console.println("{queue.isEmpty()} {describe(queue.popFront())} {describe(queue.pop())} {snapshot[-1]}")
+    console.println("{queue.isEmpty()} {describe(queue.popFront())} {describe(queue.pop())} {snapshot[-1]}")
 
     // A FIFO that slides through its storage many times.
     var jobs = Deque.new[Job]()
@@ -39,7 +39,7 @@ fn main() {
             }
         }
     }
-    _ = console.println("{done} {total} {jobs.length()} {jobs[0].name} {jobs[-1].name}")
+    console.println("{done} {total} {jobs.length()} {jobs[0].name} {jobs[-1].name}")
 
     // Both ends, interleaved.
     var numbers = Deque.new[Int]()
@@ -54,7 +54,7 @@ fn main() {
     for n in numbers {
         sum += n
     }
-    _ = console.println("{numbers.length()} {numbers[0]} {numbers[-1]} {sum} {98 in numbers} {100 in numbers}")
+    console.println("{numbers.length()} {numbers[0]} {numbers[-1]} {sum} {98 in numbers} {100 in numbers}")
 }
 
 // expect-stdout: [a, b, c] 3 false a c

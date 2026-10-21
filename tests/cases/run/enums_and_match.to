@@ -69,18 +69,18 @@ fn depth(t: Tree): Int {
 
 fn main() {
     let shapes = (Shape.Circle(2), Shape.Rect(3, 4), Shape.Labeled { name: "tri", sides: 3 }, Shape.Point)
-    _ = console.println("{area(shapes.0)} {area(shapes.1)} {area(shapes.2)} {area(shapes.3)}")
-    _ = console.println("{area(Shape.Labeled { name: "many", sides: 20 })}")
-    _ = console.println("{describe(Color.Red)} {describe(Color.Blue)} {Color.Red == Color.Red} {Color.Red == Color.Green}")
+    console.println("{area(shapes.0)} {area(shapes.1)} {area(shapes.2)} {area(shapes.3)}")
+    console.println("{area(Shape.Labeled { name: "many", sides: 20 })}")
+    console.println("{describe(Color.Red)} {describe(Color.Blue)} {Color.Red == Color.Red} {Color.Red == Color.Green}")
     var t = Tree.Leaf
     for x in 0..200 {
         t = insert(t, (x * 37) % 101)
     }
     let copy = t
     t = insert(t, 1000)
-    _ = console.println("{sum(t)} {sum(copy)} {depth(copy)} {t == copy} {copy == copy}")
+    console.println("{sum(t)} {sum(copy)} {depth(copy)} {t == copy} {copy == copy}")
     let (a, b) = (1, "dos")
-    _ = console.println("{a} {b}")
+    console.println("{a} {b}")
 }
 
 // expect-stdout: 12 12 3 0

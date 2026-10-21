@@ -7,15 +7,15 @@ fn shout(text: String): String {
 fn main() {
     let name = "Ada"
     let message = "Hola, {name}. Resultado: {2 + 2}"
-    _ = console.println(message)
-    _ = console.println("llaves {{literales}} y \u{1F642} y tab:\t.")
-    _ = console.println(r"raw \n {sin interpolación}")
+    console.println(message)
+    console.println("llaves {{literales}} y \u{1F642} y tab:\t.")
+    console.println(r"raw \n {sin interpolación}")
     let block = """
         uno
           dos: {shout(name)}
         """
-    _ = console.println(block)
-    _ = console.println("{"a" < "b"} {"b" < "a"} {"ab" == "ab"} {"ñ" > "z"} {name != "Ada"}")
+    console.println(block)
+    console.println("{"a" < "b"} {"b" < "a"} {"ab" == "ab"} {"ñ" > "z"} {name != "Ada"}")
 }
 
 // expect-stdout: Hola, Ada. Resultado: 4

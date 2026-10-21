@@ -46,9 +46,9 @@ fn show(r: Int ! ParseError): String {
 }
 
 fn main(): !console.ConsoleError {
-    console.println(show(sumTwo(1, 2)))?
-    console.println(show(sumTwo(1, 0)))?
-    console.println(show(sumTwo(-5, 1)))?
+    console.println(show(sumTwo(1, 2)))
+    console.println(show(sumTwo(1, 0)))
+    console.println(show(sumTwo(-5, 1)))
     let names = ("ana", "bea", "cris")
     let found = match firstTwo(names, "cris", "ana") {
         some((a, b)) => "{a},{b}"
@@ -58,10 +58,12 @@ fn main(): !console.ConsoleError {
         some(_) => "found"
         none => "missing"
     }
-    console.println("{found} {missing}")?
+    console.println("{found} {missing}")
     let maybe: String? = "x"
     let nothing: String? = none
-    console.println("{maybe == some("x")} {nothing == none} {maybe == nothing}")?
+    console.println("{maybe == some("x")} {nothing == none} {maybe == nothing}")
+    // Delivery errors surface only through `flush` (std.console).
+    console.flush()?
 }
 
 // expect-stdout: ok 30
