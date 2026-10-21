@@ -1,0 +1,15 @@
+import std.console
+import std.collections
+
+fn main() {
+    let values = [1, 2, 3]
+    let message = match values.slice(2, 1) {
+        ok(_) => "ok"
+        err(collections.CollectionError.InvalidIndex) => "invalid index"
+        err(_) => "other"
+    }
+    let error: collections.CollectionError = collections.CollectionError.InvalidStep
+    _ = console.println("{message} {error == collections.CollectionError.InvalidStep}")
+}
+
+// expect-stdout: invalid index true

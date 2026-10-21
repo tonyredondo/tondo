@@ -1263,15 +1263,19 @@ válido en UTF-8. Los índices y límites de esta API son posiciones de scalar
 Unicode, nunca offsets de bytes. `TextError` pertenece al módulo y no publica
 una representación de error alternativa.
 
-```tondo
-import std.text
+Como los de las colecciones (10.2.3), estos métodos son intrínsecos de `String`,
+que está en el prelude: están disponibles sin `import`. Importar `std.text`
+solo hace falta para nombrar `text.TextError`.
 
+```tondo
 fn String.empty(): String
 fn String.fromChars(value: Array[Char]): String ! text.TextError
 fn String.length(self): Int
 fn String.byteLength(self): Int
+fn String.isEmpty(self): Bool
 fn String.get(self, index: Int): Char?
 fn String.slice(self, start: Int, end: Int): String ! text.TextError
+fn String.concat(self, other: String): String
 fn String.contains(self, needle: String): Bool
 fn String.startsWith(self, prefix: String): Bool
 fn String.endsWith(self, suffix: String): Bool
@@ -2877,34 +2881,40 @@ lecturas mediante un único lock exclusivo.
 ##### 14.4.4.3 Stack y queue compartidos
 
 `sync.Stack` es LIFO y `sync.Queue` es una cola FIFO multi-productor,
-multi-consumidor. Su superficie deliberadamente pequeña es:
+multi-consumidor. Usan los mismos nombres que `Deque` (10.2.3): `push` añade al
+final, `pop` retira del final, `popFront` retira del frente y `get` observa una
+posición sin retirarla (`get(-1)` la cima de la pila, `get(0)` el frente de la
+cola). Su superficie deliberadamente pequeña es:
 
 ~~~tondo pseudocode
 pub fn sync.Stack.length(ref self): Int
 pub fn sync.Stack.isEmpty(ref self): Bool
-pub fn sync.Stack.push(ref self, value: T): Unit ! CollectionError suspends
+pub fn sync.Stack.push(ref self, value: T) suspends
 pub fn sync.Stack.pop(ref self): T? suspends
-pub fn sync.Stack[T: Copy + Send + Share].peek(ref self): T? suspends
+pub fn sync.Stack[T: Copy + Send + Share].get(ref self, index: Int): T? suspends
 pub fn sync.Stack[T: Copy + Send + Share].snapshot(
     ref self,
 ): Array[T] ! CollectionError suspends
 
 pub fn sync.Queue.length(ref self): Int
 pub fn sync.Queue.isEmpty(ref self): Bool
-pub fn sync.Queue.enqueue(ref self, value: T): Unit ! CollectionError suspends
-pub fn sync.Queue.dequeue(ref self): T? suspends
-pub fn sync.Queue[T: Copy + Send + Share].peek(ref self): T? suspends
+pub fn sync.Queue.push(ref self, value: T) suspends
+pub fn sync.Queue.popFront(ref self): T? suspends
+pub fn sync.Queue[T: Copy + Send + Share].get(ref self, index: Int): T? suspends
 pub fn sync.Queue[T: Copy + Send + Share].snapshot(
     ref self,
 ): Array[T] ! CollectionError suspends
 ~~~
 
-`pop` y `dequeue` transfieren ownership únicamente al caller ganador y devuelven
-`none` inmediatamente cuando la estructura está vacía. No hay `waitPop`,
-`waitDequeue`, sufijos `Async` ni una queue con backpressure oculta. Esperar un
-productor, limitar capacidad o seleccionar entre fuentes utiliza
-`std.channel`. `peek` y `snapshot` dejan el elemento en la estructura y por eso
-solo existen cuando copiarlo y observarlo concurrentemente es seguro.
+`push` no es fallible, igual que en `Deque`: no poder reservar memoria es
+agotamiento de recursos. `pop` y `popFront` transfieren ownership únicamente al
+caller ganador y devuelven `none` inmediatamente cuando la estructura está
+vacía. No hay `waitPop`, `waitPopFront`, sufijos `Async` ni una queue con
+backpressure oculta. Esperar un productor, limitar capacidad o seleccionar entre
+fuentes utiliza `std.channel`. `get` y `snapshot` dejan el elemento en la
+estructura y por eso solo existen cuando copiarlo y observarlo concurrentemente
+es seguro; `get` devuelve `none` fuera de rango y los índices negativos cuentan
+desde el final, como en `Deque`.
 
 ##### 14.4.4.4 Literales, iteración, snapshots y orden
 
@@ -2928,7 +2938,7 @@ antes de publicar el handle. Las duplicaciones de map/set siguen exactamente las
 reglas de los literales de valor equivalentes.
 
 En `sync.Stack[a, b, c]`, `c` es la cima y el primer `pop` devuelve `c`. En
-`sync.Queue[a, b, c]`, `a` está al frente y el primer `dequeue` devuelve `a`.
+`sync.Queue[a, b, c]`, `a` está al frente y el primer `popFront` devuelve `a`.
 
 Los cinco owners son fuentes directas de `for` mediante el cursor asíncrono
 cerrado `cursor[sync,C]` del lenguaje:
@@ -2954,14 +2964,14 @@ for (key, value) in coherent {
 
 El recorrido es observacional, finito y débilmente consistente. Crear el cursor
 captura en O(1) un horizonte estructural, no los contenidos: inserciones,
-reinserciones, `push` y `enqueue` posteriores a crearlo quedan fuera; una
+reinserciones y `push` posteriores a crearlo quedan fuera; una
 retirada anterior a observar la entrada puede omitirla; y una escritura pendiente
 se observa en el valor que determine el punto de linearización de ese `next`.
 Cada generación estructural se entrega como máximo una vez, el cursor no
 mantiene locks durante el cuerpo, no asigna memoria proporcional a la
 cardinalidad y termina aunque continúen las inserciones. `sync.Array` recorre
 cada índice una vez; map produce `(K, V)`; set produce `K`; stack y queue
-producen copias sin ejecutar `pop` ni `dequeue`.
+producen copias sin ejecutar `pop` ni `popFront`.
 
 Solo se permiten bindings por valor. `for ref`, `for mut` y `for var` se
 rechazan porque el almacenamiento puede cambiar concurrentemente. La iteración
@@ -2978,7 +2988,7 @@ cambio un único punto de linearización y materializa una colección ordinaria
 independiente con esos mismos órdenes. Igualdad, agregaciones exactas,
 serialización, aritmética de colecciones y cualquier decisión que necesite un
 solo instante se realizan sobre el snapshot, no directamente sobre el owner.
-`sync.Stack` es LIFO y `sync.Queue` es FIFO-MPMC; `pop`/`dequeue` devuelven
+`sync.Stack` es LIFO y `sync.Queue` es FIFO-MPMC; `pop`/`popFront` devuelven
 `none` sin esperar. La espera, el rendezvous y el backpressure pertenecen a
 `std.channel.bounded(0)`, `bounded(n)` o `unbounded()` cuando se elige de forma
 explícita, no a una queue oculta.

@@ -192,6 +192,19 @@ pub enum StrOp {
     Get,
     ByteLength,
     Concat,
+    Contains,
+    StartsWith,
+    EndsWith,
+    /// `find(needle)`: `Int?`
+    Find,
+    Replace,
+    Trim,
+    LowerAscii,
+    UpperAscii,
+    /// The checked `slice(start, end)`: `String ! text.TextError`
+    SliceChecked,
+    /// `String.fromChars(chars)`, wrapped in `ok` by the checker.
+    FromChars,
     /// The scalar at a byte offset; used by iteration.
     Decode,
     /// The byte offset after the scalar at a byte offset; used by iteration.

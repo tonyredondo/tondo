@@ -51,6 +51,12 @@ enum Rt {
     StrConcat,
     StrDecode,
     StrNext,
+    StrTest,
+    StrFind,
+    StrReplace,
+    StrTransform,
+    StrSliceChecked,
+    StrFromChars,
     SbNew,
     SbStr,
     SbI64,
@@ -117,6 +123,12 @@ impl Rt {
             Rt::StrConcat => ("tondo_rt_str_concat", &[I64, I64], &[I64]),
             Rt::StrDecode => ("tondo_rt_str_decode", &[I64, I64], &[I32]),
             Rt::StrNext => ("tondo_rt_str_next", &[I64, I64], &[I64]),
+            Rt::StrTest => ("tondo_rt_str_test", &[I64, I64, I32], &[I8]),
+            Rt::StrFind => ("tondo_rt_str_find", &[I64, I64], &[I64]),
+            Rt::StrReplace => ("tondo_rt_str_replace", &[I64, I64, I64], &[I64]),
+            Rt::StrTransform => ("tondo_rt_str_transform", &[I64, I32], &[I64]),
+            Rt::StrSliceChecked => ("tondo_rt_str_slice_checked", &[I64, I64, I64, I64], &[I64]),
+            Rt::StrFromChars => ("tondo_rt_str_from_chars", &[I64], &[I64]),
             Rt::SbNew => ("tondo_rt_sb_new", &[], &[I64]),
             Rt::SbStr => ("tondo_rt_sb_str", &[I64, I64], &[]),
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
@@ -1677,14 +1689,43 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let location = self.location(*span);
                         Val::Scalar(self.e.call_rt(Rt::StrAt, &[values[0], values[1], location]).unwrap())
                     }
-                    StrOp::Get => {
-                        let found = self.e.call_rt(Rt::StrGet, &values).unwrap();
+                    StrOp::Get | StrOp::Find => {
+                        // A position, or -1 for `none`.
+                        let rt = if *op == StrOp::Get { Rt::StrGet } else { Rt::StrFind };
+                        let found = self.e.call_rt(rt, &values).unwrap();
                         let present = self.e.fb.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, found, 0);
                         let base = self.pointer_to(place, true);
                         self.e.fb.ins().store(flags(), present, base, 0);
                         let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
-                        let scalar = self.e.fb.ins().ireduce(types::I32, found);
-                        self.e.fb.ins().store(flags(), scalar, base, payload.offset as i32);
+                        let value = if *op == StrOp::Get { self.e.fb.ins().ireduce(types::I32, found) } else { found };
+                        self.e.fb.ins().store(flags(), value, base, payload.offset as i32);
+                        return;
+                    }
+                    StrOp::Contains | StrOp::StartsWith | StrOp::EndsWith => {
+                        let test = match op {
+                            StrOp::Contains => 0,
+                            StrOp::StartsWith => 1,
+                            _ => 2,
+                        };
+                        let test = self.e.fb.ins().iconst(types::I32, test);
+                        Val::Scalar(self.e.call_rt(Rt::StrTest, &[values[0], values[1], test]).unwrap())
+                    }
+                    StrOp::Trim | StrOp::LowerAscii | StrOp::UpperAscii => {
+                        let transform = match op {
+                            StrOp::Trim => 0,
+                            StrOp::LowerAscii => 1,
+                            _ => 2,
+                        };
+                        let transform = self.e.fb.ins().iconst(types::I32, transform);
+                        Val::Scalar(self.e.call_rt(Rt::StrTransform, &[values[0], transform]).unwrap())
+                    }
+                    StrOp::Replace => Val::Scalar(self.e.call_rt(Rt::StrReplace, &values).unwrap()),
+                    StrOp::FromChars => Val::Scalar(self.e.call_rt(Rt::StrFromChars, &values).unwrap()),
+                    StrOp::SliceChecked => {
+                        let error = self.scratch(Ty::BYTE);
+                        let slice = self.e.call_rt(Rt::StrSliceChecked, &[values[0], values[1], values[2], error]);
+                        let code = self.e.fb.ins().load(types::I8, flags(), error, 0);
+                        self.write_checked(place, ty, slice.unwrap(), code);
                         return;
                     }
                     StrOp::ByteLength => Val::Scalar(self.e.fb.ins().load(types::I64, flags(), values[0], 8)),

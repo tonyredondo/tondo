@@ -152,6 +152,73 @@ pub unsafe extern "C" fn tondo_rt_str_concat(a: *const Str, b: *const Str) -> *m
     unsafe { str_new(&[str_bytes(a), str_bytes(b)].concat()) }
 }
 
+/// `contains` (0), `startsWith` (1) or `endsWith` (2).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, test: u32) -> u8 {
+    let (text, other) = unsafe { (str_text(s), str_text(other)) };
+    (match test {
+        0 => text.contains(other),
+        1 => text.starts_with(other),
+        _ => text.ends_with(other),
+    }) as u8
+}
+
+/// The scalar position of the first occurrence of `needle`, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_find(s: *const Str, needle: *const Str) -> i64 {
+    let (text, needle) = unsafe { (str_text(s), str_text(needle)) };
+    text.find(needle).map_or(-1, |offset| text[..offset].chars().count() as i64)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_replace(s: *const Str, old: *const Str, new: *const Str) -> *mut Str {
+    let replaced = unsafe { str_text(s).replace(str_text(old), str_text(new)) };
+    str_new(replaced.as_bytes())
+}
+
+/// `trim` (0), `toLowerAscii` (1) or `toUpperAscii` (2).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_transform(s: *const Str, transform: u32) -> *mut Str {
+    let text = unsafe { str_text(s) };
+    match transform {
+        0 => str_new(text.trim().as_bytes()),
+        1 => str_new(text.to_ascii_lowercase().as_bytes()),
+        _ => str_new(text.to_ascii_uppercase().as_bytes()),
+    }
+}
+
+/// The checked `slice(start, end)`: null with `error` set to 0
+/// (`InvalidIndex`) or 1 (`InvalidBoundary`) when the bounds are invalid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_slice_checked(s: *const Str, start: i64, end: i64, error: *mut i8) -> *mut Str {
+    unsafe {
+        let text = str_text(s);
+        let length = text.chars().count() as i64;
+        let code = if start < 0 || end < 0 || start > length || end > length {
+            0
+        } else if start > end {
+            1
+        } else {
+            let selected: String = text.chars().skip(start as usize).take((end - start) as usize).collect();
+            *error = -1;
+            return str_new(selected.as_bytes());
+        };
+        *error = code;
+        std::ptr::null_mut()
+    }
+}
+
+/// A string holding the characters of an `Array[Char]`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_from_chars(chars: *mut ArrayHeader) -> *mut Str {
+    unsafe {
+        let text: String = (0..(*chars).len)
+            .map(|k| char::from_u32((element(chars, 4, k) as *const u32).read()).unwrap_or('\u{FFFD}'))
+            .collect();
+        str_new(text.as_bytes())
+    }
+}
+
 /// The scalar that starts at byte `offset`; iteration only visits valid
 /// offsets.
 #[unsafe(no_mangle)]

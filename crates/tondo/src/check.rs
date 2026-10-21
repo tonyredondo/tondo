@@ -23,6 +23,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         console_error: None,
         conversion_error: Ty::ERROR,
         collection_error: Ty::ERROR,
+        text_error: Ty::ERROR,
     };
     checker.declare_prelude();
     checker.program(module)
@@ -86,6 +87,8 @@ struct AliasEntry {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum StdModule {
     Console,
+    Collections,
+    Text,
 }
 
 #[derive(Copy, Clone)]
@@ -131,6 +134,8 @@ struct Checker<'a> {
     conversion_error: Ty,
     /// `std.collections.CollectionError`.
     collection_error: Ty,
+    /// `std.text.TextError`.
+    text_error: Ty,
 }
 
 /// Per-function checking state.
@@ -213,6 +218,12 @@ impl Checker<'_> {
             .to_vec();
         self.types.define_adt(id, AdtKind::Enum(variants));
         self.collection_error = ty;
+        let (id, ty) = self.types.declare_adt("text.TextError".into());
+        let variants = ["InvalidIndex", "InvalidBoundary", "ResourceLimit"]
+            .map(|name| Variant { name: name.into(), payload: Payload::Unit })
+            .to_vec();
+        self.types.define_adt(id, AdtKind::Enum(variants));
+        self.text_error = ty;
     }
 
     /// The type a numeric constructor such as `Int8(value)` names (18.6).
@@ -255,6 +266,8 @@ impl Checker<'_> {
         let path: Vec<&str> = import.path.iter().map(|i| i.name.as_str()).collect();
         let module = match path.as_slice() {
             ["std", "console"] => StdModule::Console,
+            ["std", "collections"] => StdModule::Collections,
+            ["std", "text"] => StdModule::Text,
             ["std", ..] => {
                 let what = format!("module `{}`", path.join("."));
                 self.diags.unsupported(import.span, &what);
@@ -278,6 +291,16 @@ impl Checker<'_> {
             variants.push(Variant { name: "Io".into(), payload: Payload::Tuple(vec![io]) });
             self.types.define_adt(id, AdtKind::Enum(variants));
             self.console_error = Some(ty);
+        }
+    }
+
+    /// A type of an imported standard module, such as `text.TextError`.
+    fn module_type(&self, module: &str, name: &str) -> Option<Ty> {
+        match (self.names.get(module), name) {
+            (Some(ModuleName::Module(StdModule::Console)), "ConsoleError") => self.console_error,
+            (Some(ModuleName::Module(StdModule::Collections)), "CollectionError") => Some(self.collection_error),
+            (Some(ModuleName::Module(StdModule::Text)), "TextError") => Some(self.text_error),
+            _ => None,
         }
     }
 
@@ -516,10 +539,8 @@ impl Checker<'_> {
                     ["String"] => Ty::STRING,
                     ["Unit"] => Ty::UNIT,
                     ["Never"] => Ty::NEVER,
-                    [module, "ConsoleError"]
-                        if matches!(self.names.get(*module), Some(ModuleName::Module(StdModule::Console))) =>
-                    {
-                        self.console_error.unwrap()
+                    [module, name] if self.module_type(module, name).is_some() => {
+                        self.module_type(module, name).unwrap()
                     }
                     ["Float" | "Float64"] => Ty::F64,
                     ["Float32"] => Ty::F32,
@@ -1383,12 +1404,7 @@ impl Checker<'_> {
                     self.resolve_alias(index)
                 }
             },
-            [module, name]
-                if name.name == "ConsoleError"
-                    && matches!(self.names.get(&module.name), Some(ModuleName::Module(StdModule::Console))) =>
-            {
-                self.console_error?
-            }
+            [module, name] => self.module_type(&module.name, &name.name)?,
             _ => return None,
         };
         let found = match self.types.kind(ty) {
@@ -2260,10 +2276,22 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         let char_option = self.types.intern(TyKind::Option(Ty::CHAR));
-        let (params, result) = match method.name.as_str() {
-            "length" | "byteLength" | "isEmpty" => (vec![], Ty::INT),
-            "get" => (vec![Ty::INT], char_option),
-            "concat" => (vec![Ty::STRING], Ty::STRING),
+        let int_option = self.types.intern(TyKind::Option(Ty::INT));
+        let checked = self.types.intern(TyKind::Result(Ty::STRING, self.text_error));
+        use hir::StrOp as S;
+        let (op, params, result) = match method.name.as_str() {
+            "length" | "byteLength" | "isEmpty" | "chars" => (S::ByteLength, vec![], Ty::INT),
+            "get" => (S::Get, vec![Ty::INT], char_option),
+            "concat" => (S::Concat, vec![Ty::STRING], Ty::STRING),
+            "contains" => (S::Contains, vec![Ty::STRING], Ty::BOOL),
+            "startsWith" => (S::StartsWith, vec![Ty::STRING], Ty::BOOL),
+            "endsWith" => (S::EndsWith, vec![Ty::STRING], Ty::BOOL),
+            "find" => (S::Find, vec![Ty::STRING], int_option),
+            "replace" => (S::Replace, vec![Ty::STRING, Ty::STRING], Ty::STRING),
+            "trim" => (S::Trim, vec![], Ty::STRING),
+            "toLowerAscii" => (S::LowerAscii, vec![], Ty::STRING),
+            "toUpperAscii" => (S::UpperAscii, vec![], Ty::STRING),
+            "slice" => (S::SliceChecked, vec![Ty::INT, Ty::INT], checked),
             _ => return self.no_method(Ty::STRING, method, span),
         };
         if args.len() != params.len() {
@@ -2276,15 +2304,15 @@ impl Checker<'_> {
         }
         let kind = match method.name.as_str() {
             "length" => hir::ExprKind::Length(Box::new(values.remove(0))),
-            "byteLength" => hir::ExprKind::StrOp(hir::StrOp::ByteLength, values),
+            // A string is its own iterator of `Char` (10.2.2).
+            "chars" => return values.remove(0),
             "isEmpty" => {
-                let length = Self::mk(hir::ExprKind::StrOp(hir::StrOp::ByteLength, values), Ty::INT, span);
+                let length = Self::mk(hir::ExprKind::StrOp(S::ByteLength, values), Ty::INT, span);
                 let zero = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);
                 let kind = hir::ExprKind::Binary(BinOp::Eq, Box::new(length), Box::new(zero));
                 return Self::mk(kind, Ty::BOOL, span);
             }
-            "get" => hir::ExprKind::StrOp(hir::StrOp::Get, values),
-            _ => hir::ExprKind::StrOp(hir::StrOp::Concat, values),
+            _ => hir::ExprKind::StrOp(op, values),
         };
         Self::mk(kind, result, span)
     }
@@ -2350,7 +2378,6 @@ impl Checker<'_> {
             (_, "empty") => "use `isEmpty()`",
             (TyKind::String, "charAt" | "at") => "use `text[index]`, or `get(index)` for a `Char?`",
             (TyKind::String, "substring" | "substr" | "slice") => "use `text[start:end]`",
-            (TyKind::String, "chars") => "iterate the string itself: `for c in text`",
             (TyKind::Array(_) | TyKind::Deque(_), "append" | "add" | "enqueue" | "pushBack") => "use `push(value)`",
             (TyKind::Array(_) | TyKind::Deque(_), "peek" | "last" | "back") => "use `get(-1)`, which returns `T?`",
             (TyKind::Array(_) | TyKind::Deque(_), "first" | "front") => "use `get(0)`, which returns `T?`",
@@ -2538,6 +2565,25 @@ impl Checker<'_> {
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
         if self.lookup(cx, names[0]).is_some() {
             return self.unsupported_expr(callee.span, "calls through values");
+        }
+        match names.as_slice() {
+            ["String", "empty"] => {
+                if !args.is_empty() {
+                    return self.arity_error(span, 0, args.len());
+                }
+                return Self::mk(hir::ExprKind::Str(String::new()), Ty::STRING, span);
+            }
+            ["String", "fromChars"] => {
+                let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+                let chars = self.types.intern(TyKind::Array(Ty::CHAR));
+                let value = self.expr(cx, &arg.value, Some(chars));
+                let value = self.coerce(value, chars);
+                // Building the text cannot fail short of resource exhaustion.
+                let text = Self::mk(hir::ExprKind::StrOp(hir::StrOp::FromChars, vec![value]), Ty::STRING, span);
+                let ty = self.types.intern(TyKind::Result(Ty::STRING, self.text_error));
+                return Self::mk(hir::ExprKind::Variant(OK, vec![(0, text)]), ty, span);
+            }
+            _ => {}
         }
         if let ["Array", "new" | "withCapacity"] | ["Deque", "new"] = names.as_slice() {
             let message = format!("`{0}.{1}` needs its element type: `{0}.{1}[T](...)`", names[0], names[1]);

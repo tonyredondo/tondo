@@ -3173,7 +3173,7 @@ patrones con bindings `ref`, `mut` o `var` se rechazan porque una colección
 compartida no puede publicar préstamos estables a almacenamiento que otro
 thread puede reemplazar o retirar. `sync.Stack[T]` y `sync.Queue[T]` solo son
 iterables cuando `T: Copy + Send + Share`; el recorrido es observacional y no
-ejecuta `pop` ni `dequeue`. La consistencia débil, el orden y la diferencia con
+ejecuta `pop` ni `popFront`. La consistencia débil, el orden y la diferencia con
 `snapshot()` se definen en 16.14.
 
 ### 10.19 Colecciones heterogéneas
@@ -6479,14 +6479,14 @@ claves distintas o slots distintos pueden progresar en paralelo y una
 implementación no puede serializar todas las lecturas mediante un único lock
 exclusivo. `sync.Array` tiene longitud fija e índices estables; por ello no
 publica `push`, `pop`, inserción ni borrado estructural. La pila es LIFO y la
-cola MPMC es FIFO. `dequeue` y `pop` devuelven `none` inmediatamente cuando no
+cola MPMC es FIFO. `popFront` y `pop` devuelven `none` inmediatamente cuando no
 hay elemento: esperar, aplicar backpressure o seleccionar readiness pertenece a
 `std.channel`, no a una segunda modalidad de queue.
 
 Un `for` directo sobre estos owners crea el `cursor[sync,C]` asíncrono de 10.18
 y realiza un recorrido observacional, finito y débilmente consistente. Crear el
 cursor captura en O(1) una frontera estructural, no los contenidos: una
-inserción, reinserción, `push` o `enqueue` posterior a crear el cursor queda
+inserción, reinserción o `push` posterior a crear el cursor queda
 fuera del recorrido;
 una retirada anterior a la observación de su entrada puede hacer que se omita;
 y un reemplazo o escritura sobre una entrada todavía pendiente puede aportar
