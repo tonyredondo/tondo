@@ -1,0 +1,10 @@
+import std.console
+import geo
+import geo.area
+
+fn main() {
+    let rect = geo.Rect { width: 3, height: 4 }
+    console.println("{area.of(rect)}")
+}
+
+// expect-stdout: 12

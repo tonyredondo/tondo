@@ -3,10 +3,12 @@
 pub mod ast;
 pub mod check;
 pub mod codegen;
+pub mod deps;
 pub mod diag;
 pub mod driver;
 pub mod exhaust;
 pub mod fmt;
+pub mod hash;
 pub mod hir;
 pub mod lexer;
 pub mod lower;
@@ -17,4 +19,5 @@ pub mod ownership;
 pub mod parser;
 pub mod project;
 pub mod source;
+pub mod toml;
 pub mod types;

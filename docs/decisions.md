@@ -307,3 +307,17 @@ A block that produces a value and holds only an expression (a closure
 body, a block used as a value, the branches of an `if` with `else`) stays
 on one line when it fits, so short lambdas and conditional values read as
 in Kotlin or Swift; function bodies and loops are always blocks.
+
+## 2026-10-21 — Dependencies come from paths, git and archives
+
+There is no registry, so a dependency names where it lives: a directory, a
+git repository at a tag, branch or commit, or an archive URL with an
+optional SHA-256. Fetching uses the system's `git`, `curl` and `tar`, as
+linking uses `cc`, into a cache that is never modified in place. `tondo.lock`
+is written by the toolchain, Cargo-style: it pins the commit or content of
+every fetched dependency of the graph, builds use the pins without the
+network, and `tondo update` resolves again. Each package's modules are named
+after the package, and a package imports its own modules and the aliases it
+declares. The toolchain specification was rewritten around this; targets,
+capabilities, generators, compiled interfaces and the internal JSON
+manifests of the earlier draft were removed.

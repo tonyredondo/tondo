@@ -1073,11 +1073,8 @@ resto del grafo. Cambiar esa implementación invalida las interfaces que dependa
 de su API igual que cambiar cualquier otra dependencia.
 
 Cada paquete selecciona exactamente una edición del lenguaje. Todos sus archivos
-se analizan con esa edición; no existen pragmas por archivo. Dependencias de otras
-ediciones conservan su propia semántica y se consumen mediante interfaces
-compiladas que registran edición, `PackageId`, target, perfil, capacidades,
-features y hash de API pública. Una interfaz incompatible se rechaza antes de
-typecheckear consumidores.
+se analizan con esa edición; no existen pragmas por archivo. Una dependencia de
+otra edición conserva su propia semántica.
 
 El lockfile fija todos los `PackageId` transitivos y hashes disponibles. Con el
 mismo manifiesto, lockfile, fuentes, edición, target, perfil, capacidades,
@@ -1116,12 +1113,12 @@ Reglas:
   declarado y fijado por hash; un target que no pueda demostrarlo se rechaza en
   vez de producir un artefacto “no reproducible”.
 
-El schema concreto del manifiesto, lockfile, interfaces, artefactos y unidades
-privilegiadas se define en
-[`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md). El algoritmo de versiones
-y los comandos de un futuro gestor de paquetes permanecen fuera de 0.1; ninguna
-de esas herramientas puede cambiar estas identidades ni introducir semántica
-fuente oculta.
+El formato de `tondo.toml`, de las dependencias y de `tondo.lock` se define en
+[`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md). El toolchain 0.1 no tiene
+fuentes condicionales por plataforma ni generadores: las reglas anteriores fijan
+cómo deberán comportarse cuando existan. Un registro de paquetes y su algoritmo
+de versiones permanecen fuera de 0.1; ninguna de esas herramientas puede cambiar
+estas identidades ni introducir semántica fuente oculta.
 
 ---
 
@@ -1904,10 +1901,10 @@ cruzarlo; un wrapper que necesite recuperación convierte antes el fallo en un
 valor o protocolo nativo explícito. De forma simétrica, una excepción extranjera
 no entra en frames Tondo: el adaptador la convierte o aborta.
 
-El mecanismo 0.1 para intrinsics y bindings nativos utiliza las unidades
-privilegiadas fijadas por
-[`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md). No añade declaraciones
-`extern`, atributos arbitrarios ni pragmas a un archivo `.to` ordinario.
+Los intrinsics y bindings nativos de 0.1 pertenecen al toolchain y a la
+librería estándar; Tondo 0.1 no define una FFI de usuario. No añade
+declaraciones `extern`, atributos arbitrarios ni pragmas a un archivo `.to`
+ordinario.
 Incorporar después nueva sintaxis fuente para FFI requerirá una edición que la
 incluya en su gramática.
 
@@ -11527,9 +11524,8 @@ la clasificación y sus reglas de visibilidad pertenecen a
 `TONDO_TESTING_SPEC.md`, no al parser.
 
 La configuración humana opcional es `tondo.toml`; define nombre de paquete,
-edición, target, perfil, capabilities, features y aliases de dependencias, pero
-no puede declarar módulos alternativos ni cambiar la semántica de imports. Un
-`tondo.lock.toml` generado fija las identidades externas. Estos archivos son
-toolchain inputs, no unidades de compilación Tondo y no se importan desde
-`.to`. El compilador recibe finalmente el grafo cerrado interno y conserva la
-misma semántica que tendría un manifiesto explícito.
+edición y dependencias con sus aliases, pero no puede declarar módulos
+alternativos ni cambiar la semántica de imports. Un `tondo.lock` generado fija
+el commit o el contenido de cada dependencia descargada. Estos archivos son
+entradas del toolchain, no unidades de compilación Tondo, y no se importan desde
+`.to`.

@@ -15,6 +15,8 @@ use std::collections::HashMap;
 pub struct ModuleSource {
     /// The module path, starting with the package name.
     pub path: Vec<String>,
+    /// The package it belongs to; the root's is 0.
+    pub package: usize,
     /// Its files, and whether each is the root file of the program.
     pub files: Vec<(Module, bool)>,
 }
@@ -44,25 +46,35 @@ enum Position {
     Any,
 }
 
+/// A package of the program: its name and its dependencies by alias, as
+/// indices of packages.
+pub struct PackageInfo {
+    pub name: String,
+    pub dependencies: HashMap<String, usize>,
+}
+
 /// Merges the modules into one. Declarations record their module's
 /// number, 0 for the root.
-pub fn link(mut modules: Vec<ModuleSource>, root: usize, diags: &mut Diagnostics) -> Module {
+pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo], diags: &mut Diagnostics) -> Module {
     let first = modules.remove(root);
     modules.insert(0, first);
     let root = 0;
     let decls: Vec<Declarations> = modules.iter().map(declarations).collect();
-    let prefixes: Vec<Option<String>> = modules
-        .iter()
-        .enumerate()
-        .map(|(index, module)| match &module.path[..] {
-            _ if index == root => None,
-            [package] => Some(package.clone()),
-            [_, rest @ ..] => Some(rest.join(".")),
-            [] => unreachable!("module paths start with the package name"),
-        })
-        .collect();
-    let by_path: HashMap<String, usize> = modules.iter().enumerate().map(|(i, m)| (m.path.join("."), i)).collect();
-    let package = modules[root].path[0].clone();
+    // The root package's modules are named after their path inside it, and
+    // other packages' after their whole path, unless that is ambiguous.
+    let prefix = |module: &ModuleSource, whole: bool| match &module.path[..] {
+        [package] => package.clone(),
+        [_, rest @ ..] if module.package == 0 && !whole => rest.join("."),
+        path => path.join("."),
+    };
+    let mut prefixes: Vec<Option<String>> =
+        modules.iter().enumerate().map(|(i, m)| (i != root).then(|| prefix(m, false))).collect();
+    let mut distinct = std::collections::HashSet::new();
+    if !prefixes.iter().flatten().all(|p| distinct.insert(p.clone())) {
+        prefixes = modules.iter().enumerate().map(|(i, m)| (i != root).then(|| prefix(m, true))).collect();
+    }
+    let by_path: HashMap<(usize, String), usize> =
+        modules.iter().enumerate().map(|(i, m)| ((m.package, m.path.join(".")), i)).collect();
     let script = modules[root].files.iter().any(|(file, is_root)| *is_root && !file.statements.is_empty());
 
     // Each file's imports of this package's modules, by alias.
@@ -83,6 +95,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, diags: &mut Diagnostics
                     );
                     diags.error("E1003", alias.span, message);
                 }
+                let package = &packages[module.package];
                 if path[0] == "std" {
                     let duplicate = std_imports.iter().find(|i| i.alias_name() == alias.name);
                     match duplicate {
@@ -95,12 +108,27 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, diags: &mut Diagnostics
                     }
                     continue;
                 }
-                let Some(&target) = by_path.get(&path.join(".")) else {
-                    let message = if path[0] == package {
-                        format!("the package has no module `{}`", path.join("."))
-                    } else {
-                        format!("module `{}` is not available: imports start with `std` or `{package}`", path.join("."))
-                    };
+                // The first segment names this package or a dependency.
+                let (target_package, inner) = match package.dependencies.get(path[0]) {
+                    _ if path[0] == package.name => (module.package, path[1..].to_vec()),
+                    Some(&dependency) => (dependency, path[1..].to_vec()),
+                    None => {
+                        let mut names: Vec<String> = package.dependencies.keys().map(|k| format!("`{k}`")).collect();
+                        names.sort();
+                        names.insert(0, format!("`{}`", package.name));
+                        let message = format!(
+                            "module `{}` is not available: imports start with `std`, {}",
+                            path.join("."),
+                            names.join(", ")
+                        );
+                        diags.error("E1008", import.span, message);
+                        continue;
+                    }
+                };
+                let full: Vec<&str> =
+                    std::iter::once(packages[target_package].name.as_str()).chain(inner.iter().copied()).collect();
+                let Some(&target) = by_path.get(&(target_package, full.join("."))) else {
+                    let message = format!("the package `{}` has no module `{}`", path[0], path.join("."));
                     diags.error("E1008", import.span, message);
                     continue;
                 };

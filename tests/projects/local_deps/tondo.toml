@@ -1,0 +1,5 @@
+[package]
+name = "drawing"
+
+[dependencies]
+geo = { path = "libs/shapes" }

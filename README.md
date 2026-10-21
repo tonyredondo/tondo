@@ -46,10 +46,25 @@ project in the current directory.
 ```text
 app/
   src/
-    main.to            import app.models
+    main.to            import app.models, import http.client
     models/user.to     pub type User = { ... }
-  tondo.toml           optional: [package] name = "app"
+  tondo.toml           optional, see below
+  tondo.lock           written by tondo: the exact version of each fetched dependency
 ```
+
+```toml
+[package]
+name = "app"
+
+[dependencies]
+units = { path = "libs/units" }
+http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
+zlib = { url = "https://example.com/zlib-1.0.tar.gz" }
+```
+
+Dependencies are fetched with the system's `git`, `curl` and `tar` into
+`~/.cache/tondo` and pinned in `tondo.lock`; `tondo update` fetches them
+again.
 
 ## How it is built
 
@@ -82,7 +97,7 @@ Every milestone ends with programs that compile to native executables and run.
 | **H1** | Data: tuples, records, newtypes, aliases, enums (including recursive ones), `match` with exhaustiveness, patterns (including array patterns), `Option`/`Result` with `ok`/`err`/`some`/`none`, `?` and `fail`, fallible `main`, structural unions and error unions, `Char`, `Byte`, floats, numeric conversions, string indexing and slicing, `Array`/`Deque`/`Map`/`Set` with copy-on-write, array arithmetic and slice assignment | Done |
 | **H2** | Abstraction: methods, named arguments, variadics, generics (monomorphization), traits with static dispatch, closures and function values, iterators, opaque `impl` results | Done |
 | **H3** | Ownership: affine values (`~Copy`), `ref`/`mut`/`var` loans, region loans, loan patterns, loan modes in function types, `defer`, panic cleanups | Done |
-| **H4** | Projects: modules and packages, `tondo.toml` and lockfile, canonical formatter (`tondo fmt`), JSON diagnostics | In progress |
+| **H4** | Projects: modules and packages, `tondo.toml`, dependencies (path, git, archives) and `tondo.lock`, canonical formatter (`tondo fmt`), JSON diagnostics | Done |
 | **H5** | Concurrency: stackful tasks, `spawn`/`scope`/`Join`/`await`, cancellation, `select`, channels, `spawn thread` | Planned |
 | **H6** | Hosted standard library: filesystem, processes and pipelines, environment, time, JSON; terminal resources with unwind actions (`E1404`) | Planned |
 

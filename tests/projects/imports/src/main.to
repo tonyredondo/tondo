@@ -8,8 +8,8 @@ fn main() {
     a.nothing()
 }
 
-// expect-error: E1008 the package has no module `imports.missing`
-// expect-error: E1008 module `other.thing` is not available: imports start with `std` or `imports`
+// expect-error: E1008 the package `imports` has no module `imports.missing`
+// expect-error: E1008 module `other.thing` is not available: imports start with `std`, `imports`
 // expect-error: E1006 modules cannot import each other in a cycle: `imports.a` imports `imports.b`, which imports `imports.a`
 // expect-error: E1501 `hidden` is private to module `imports.a`; declare it `pub` to use it here
 // expect-error: E1001 module `imports.a` declares no `nothing`

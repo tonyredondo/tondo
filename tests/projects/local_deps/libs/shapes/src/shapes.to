@@ -1,0 +1,5 @@
+pub type Rect = { width: Int, height: Int }
+
+fn hidden(): Int {
+    0
+}

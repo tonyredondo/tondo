@@ -657,7 +657,7 @@ el conjunto. Los comandos de producción excluyen en ambos layouts `*_test.to`
 y `tests/`; solo esta entrada de discovery los añade. Se ignoran symlinks,
 directorios ocultos, `target/` y `vendor/`. El nombre de paquete, target,
 perfil, capabilities y features salen de `tondo.toml` o de defaults cerrados.
-External dependencies require `tondo.lock.toml`; without dependencies the lock
+External dependencies require `tondo.lock`; without dependencies the lock
 is materialized in memory. Its production records describe only the production
 graph. `tondo test` validates that graph first and derives the test overlay lock
 in memory. An optional `test.packages` section closes test-only source and

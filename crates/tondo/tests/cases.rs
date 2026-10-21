@@ -173,3 +173,82 @@ fn json_diagnostics() {
     );
     assert!(json.starts_with(r#"[{"id":"diag:"#) && json.trim_end().ends_with(expected), "{json}");
 }
+
+/// Dependencies from a git repository (by tag) and an archive, reached
+/// through a path dependency; `tondo.lock` pins them until `tondo update`.
+#[test]
+fn dependencies() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dependencies");
+    let _ = std::fs::remove_dir_all(&root);
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgSign=false",
+                "-c",
+                "tag.gpgSign=false",
+            ])
+            .args(args)
+            .current_dir(root.join("greet"))
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&status.stderr));
+    };
+    write("greet/src/greet.to", "pub fn hello(name: String): String {\n    \"hello {name}\"\n}\n");
+    write("greet/tondo.toml", "[package]\nname = \"greet\"\n");
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "v1"]);
+    git(&["tag", "-a", "v1", "-m", "v1"]);
+    write("greet/src/greet.to", "pub fn hello(name: String): String {\n    \"HELLO {name}\"\n}\n");
+    git(&["commit", "-qam", "v2"]);
+    write("math-1.0/tondo.toml", "[package]\nname = \"math\"\n");
+    write("math-1.0/src/math.to", "pub fn twice(value: Int): Int {\n    value * 2\n}\n");
+    let tar = Command::new("tar").args(["-czf", "math-1.0.tar.gz", "math-1.0"]).current_dir(&root).status().unwrap();
+    assert!(tar.success());
+    let url = format!("file://{}/math-1.0.tar.gz", root.display());
+    write("app/libs/units/src/units.to", "import math\n\npub fn meters(km: Int): Int {\n    math.twice(km) * 500\n}\n");
+    write(
+        "app/libs/units/tondo.toml",
+        &format!("[package]\nname = \"units\"\n\n[dependencies]\nmath = {{ url = \"{url}\" }}\n"),
+    );
+    let repository = format!("file://{}/greet", root.display());
+    write(
+        "app/tondo.toml",
+        &format!(
+            "[dependencies]\ngreet = {{ git = \"{repository}\", tag = \"v1\" }}\nunits = {{ path = \"libs/units\" }}\n"
+        ),
+    );
+    write(
+        "app/src/main.to",
+        "import std.console\nimport greet\nimport units\n\nconsole.println(\"{greet.hello(\"ada\")} {units.meters(3)}\")\n",
+    );
+    let tondo = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(args)
+            .arg(root.join("app"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "tondo {args:?}: {stderr}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    assert_eq!(tondo(&["run"]), "hello ada 3000\n");
+    let lock = std::fs::read_to_string(root.join("app/tondo.lock")).unwrap();
+    assert!(lock.contains("commit = ") && lock.contains("sha256 = "), "{lock}");
+    // Moving the tag changes nothing until the lock is updated.
+    git(&["tag", "-f", "-a", "v1", "-m", "moved"]);
+    assert_eq!(tondo(&["run"]), "hello ada 3000\n");
+    tondo(&["update"]);
+    assert_eq!(tondo(&["run"]), "HELLO ada 3000\n");
+}

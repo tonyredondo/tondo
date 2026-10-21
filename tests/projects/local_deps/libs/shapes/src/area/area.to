@@ -1,0 +1,5 @@
+import shapes
+
+pub fn of(rect: shapes.Rect): Int {
+    rect.width * rect.height
+}

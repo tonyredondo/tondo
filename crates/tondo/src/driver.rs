@@ -2,7 +2,7 @@
 
 use crate::diag::Diagnostics;
 use crate::source::{SourceMap, Span};
-use crate::{ast, check, codegen, hir, lower, modules, mono, parser, project};
+use crate::{ast, check, codegen, deps, hir, lower, modules, mono, parser, project};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -26,33 +26,51 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
     let mut diags = Diagnostics::default();
     let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
     let module = if path.is_dir() {
-        let project = project::discover(path)?;
-        source_id = format!("pkg:{}", project.name);
+        let packages = deps::resolve(path, None)?;
+        source_id = format!("pkg:{}", packages[0].name);
         let mut modules: Vec<modules::ModuleSource> = Vec::new();
         let mut root = 0;
-        for (index, file) in project.files.iter().enumerate() {
-            let parsed = parse(&file.path, &mut sources, &mut diags)?;
-            let logical = file.path.strip_prefix(path).unwrap_or(&file.path);
-            let logical = logical.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
-            sources.set_identity(sources.len() - 1, logical, file.module.join("."));
-            let Some(parsed) = parsed else { continue };
-            let position = match modules.iter().position(|m| m.path == file.module) {
-                Some(position) => position,
-                None => {
-                    modules.push(modules::ModuleSource { path: file.module.clone(), files: Vec::new() });
-                    modules.len() - 1
+        for (package_index, package) in packages.iter().enumerate() {
+            let (files, root_file) = project::sources(&package.dir, &package.name)?;
+            for (index, file) in files.iter().enumerate() {
+                let parsed = parse(&file.path, &mut sources, &mut diags)?;
+                // A dependency's files are shown under its package name.
+                let relative = file.path.strip_prefix(&package.dir).unwrap_or(&file.path);
+                let mut logical: Vec<String> =
+                    relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+                if package_index > 0 {
+                    logical.insert(0, package.name.clone());
                 }
-            };
-            if index == project.root {
-                root = position;
+                sources.set_identity(sources.len() - 1, logical.join("/"), file.module.join("."));
+                let Some(parsed) = parsed else { continue };
+                let position = match modules.iter().position(|m| m.package == package_index && m.path == file.module) {
+                    Some(position) => position,
+                    None => {
+                        let source = modules::ModuleSource {
+                            path: file.module.clone(),
+                            package: package_index,
+                            files: Vec::new(),
+                        };
+                        modules.push(source);
+                        modules.len() - 1
+                    }
+                };
+                let is_root = package_index == 0 && index == root_file;
+                if is_root {
+                    root = position;
+                }
+                modules[position].files.push((parsed, is_root));
             }
-            modules[position].files.push((parsed, index == project.root));
         }
         if diags.has_errors() {
             diags.sort(&sources);
             return Ok(Analysis { sources, diags, program: None, source_id });
         }
-        modules::link(modules, root, &mut diags)
+        let packages: Vec<modules::PackageInfo> = packages
+            .into_iter()
+            .map(|p| modules::PackageInfo { name: p.name, dependencies: p.dependencies.into_iter().collect() })
+            .collect();
+        modules::link(modules, root, &packages, &mut diags)
     } else {
         match parse(path, &mut sources, &mut diags)? {
             Some(module) => module,
@@ -94,11 +112,14 @@ pub fn inputs(path: &Path) -> Result<Vec<PathBuf>, String> {
     if !path.is_dir() {
         return Ok(vec![path.to_path_buf()]);
     }
-    let project = project::discover(path)?;
-    let mut inputs: Vec<PathBuf> = project.files.into_iter().map(|f| f.path).collect();
-    let manifest = path.join("tondo.toml");
-    if manifest.is_file() {
-        inputs.push(manifest);
+    let mut inputs = Vec::new();
+    for package in deps::resolve(path, None)? {
+        let (files, _) = project::sources(&package.dir, &package.name)?;
+        inputs.extend(files.into_iter().map(|f| f.path));
+        let manifest = package.dir.join("tondo.toml");
+        if manifest.is_file() {
+            inputs.push(manifest);
+        }
     }
     Ok(inputs)
 }

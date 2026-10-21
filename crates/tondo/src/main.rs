@@ -11,6 +11,7 @@ usage:
   tondo build [<project>|<file.to>] [--output <path>]  compile a native executable
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo fmt [--check] <file.to>...                     format files canonically
+  tondo update [<project>] [<dependency>...]           fetch dependencies again and rewrite tondo.lock
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
   tondo version
 
@@ -31,6 +32,7 @@ fn main() -> ExitCode {
         "build" => build_command(&args[1..]),
         "check" => check_command(&args[1..]),
         "fmt" => fmt_command(&args[1..]),
+        "update" => update_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -44,7 +46,8 @@ fn main() -> ExitCode {
     };
     result.unwrap_or_else(|message| {
         eprintln!("tondo: {message}");
-        ExitCode::from(TOOL_FAILURE)
+        // Usage errors end with the usage text.
+        ExitCode::from(if message.ends_with(USAGE) { 2 } else { TOOL_FAILURE })
     })
 }
 
@@ -87,6 +90,18 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
     }
     Ok(if analyze(&path)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// Resolves the named dependencies, or all of them, again instead of
+/// using `tondo.lock`.
+fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let (path, rest) = match args.first() {
+        Some(first) if Path::new(first).is_dir() => (PathBuf::from(first), &args[1..]),
+        _ => source_argument(args),
+    };
+    let names: Vec<String> = rest.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    tondo::deps::resolve(&path, Some(&names))?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Rewrites files in the canonical format (21), or with `--check` reports

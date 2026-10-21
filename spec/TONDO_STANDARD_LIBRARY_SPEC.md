@@ -160,7 +160,7 @@ reparten así:
 | Documento | Autoridad |
 |---|---|
 | [`TONDO_LANGUAGE_SPEC.md`](./TONDO_LANGUAGE_SPEC.md) | Sintaxis, tipos, ownership, suspendible, módulos, imports, prelude, intrinsics, `derive` y límites de reflection |
-| [`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md) | Manifiesto, lockfile, PackageId, target, capabilities, generación meta, interfaces, artefactos y unidades privilegiadas |
+| [`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md) | Proyectos, `tondo.toml`, dependencias, `tondo.lock`, caché y comandos |
 | [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) | Testing Tondo 0.1, runner y núcleo sellado de `std.testing` |
 | Este documento | API estándar, reglas comunes, catálogo de módulos y distribución de la stdlib |
 
