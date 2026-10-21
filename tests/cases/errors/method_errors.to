@@ -1,0 +1,35 @@
+type Point = { x: Int, y: Int }
+
+fn Point.origin(): Point {
+    Point { x: 0, y: 0 }
+}
+
+fn Point.shift(mut self) {
+    self.x += 1
+}
+
+fn Point.x(self): Int {
+    self.x
+}
+
+fn connect(host: String, port: Int): String {
+    host
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    p.shift()
+    let o = p.origin()
+    let s = connect(host: "a", prt: 1)
+    let t = connect(port: 1)
+    let u = connect(host: "a", 1)
+    let v = p.length()
+}
+
+// expect-error: E1002 `x` is a field of `Point`
+// expect-error: E1411 `shift` changes `p`, which is not declared with `var`: declare it as `var p`
+// expect-error: E1001 `origin` is an operation of `Point` without a receiver: call it as `Point.origin(...)`
+// expect-error: E1001 no parameter is named `prt`; the parameters are `host`, `port`
+// expect-error: E1102 missing argument `host`
+// expect-error: E1102 positional arguments must come before named ones
+// expect-error: E1001 `Point` has no method `length`

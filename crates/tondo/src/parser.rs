@@ -365,15 +365,17 @@ impl Parser<'_> {
         }
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
-        while !self.at(&Tok::RParen) {
-            let name = self.ident()?;
-            self.expect(Tok::Colon)?;
-            let ty = self.type_expr()?;
-            params.push(Param { span: name.span.to(ty.span), name, ty });
+        loop {
+            self.skip_newlines();
+            if self.at(&Tok::RParen) {
+                break;
+            }
+            params.push(self.parameter(params.is_empty())?);
             if !self.eat(&Tok::Comma) {
                 break;
             }
         }
+        self.skip_newlines();
         self.expect(Tok::RParen)?;
         let result = if self.eat(&Tok::Colon) { Some(self.type_expr()?) } else { None };
         let suspends = self.eat_kw(Kw::Suspends);
@@ -1092,14 +1094,62 @@ impl Parser<'_> {
         Ok(Expr { kind: ExprKind::Slice { base: Box::new(base), start, end, step }, span })
     }
 
+    /// `self`, `mut self` or `var self` first; otherwise
+    /// `name: [ref|mut|var] Type` or `name: ...Type` (11.3, 11.5).
+    fn parameter(&mut self, first: bool) -> PResult<Param> {
+        let start = self.span();
+        let receiver_mode = match (self.tok(), self.nth(1)) {
+            (Tok::Kw(Kw::SelfValue), _) => Some(Mode::Ref),
+            (Tok::Kw(Kw::Mut), Tok::Kw(Kw::SelfValue)) => Some(Mode::Mut),
+            (Tok::Kw(Kw::Var), Tok::Kw(Kw::SelfValue)) => Some(Mode::Var),
+            (Tok::Kw(Kw::Ref), Tok::Kw(Kw::SelfValue)) => {
+                return self.error("`ref self` is redundant: a plain `self` receiver is already a shared loan");
+            }
+            _ => None,
+        };
+        if let Some(mode) = receiver_mode {
+            if mode != Mode::Ref {
+                self.bump();
+            }
+            let span = self.bump().span;
+            if !first {
+                return self.error("the receiver `self` must be the first parameter");
+            }
+            return Ok(Param {
+                name: Ident { name: "self".into(), span },
+                ty: None,
+                mode,
+                variadic: false,
+                span: start.to(span),
+            });
+        }
+        let name = self.ident()?;
+        self.expect(Tok::Colon)?;
+        let mode = self.mode();
+        let variadic = mode == Mode::Value && self.eat(&Tok::Ellipsis);
+        let ty = self.type_expr()?;
+        Ok(Param { span: name.span.to(ty.span), name, ty: Some(ty), mode, variadic })
+    }
+
+    fn mode(&mut self) -> Mode {
+        let mode = match self.tok() {
+            Tok::Kw(Kw::Ref) => Mode::Ref,
+            Tok::Kw(Kw::Mut) => Mode::Mut,
+            Tok::Kw(Kw::Var) => Mode::Var,
+            _ => return Mode::Value,
+        };
+        self.bump();
+        mode
+    }
+
     fn call_arguments(&mut self) -> PResult<Vec<Arg>> {
         let mut args = Vec::new();
-        while !self.at(&Tok::RParen) {
-            let start = self.span();
-            if matches!(self.tok(), Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var)) || self.at(&Tok::Ellipsis) {
-                self.diags.unsupported(start, "loan and spread arguments");
-                return Err(());
+        loop {
+            self.skip_newlines();
+            if self.at(&Tok::RParen) {
+                break;
             }
+            let start = self.span();
             let name = if matches!(self.tok(), Tok::Ident(_)) && self.nth(1) == &Tok::Colon {
                 let name = self.ident()?;
                 self.bump();
@@ -1107,12 +1157,15 @@ impl Parser<'_> {
             } else {
                 None
             };
+            let mode = self.mode();
+            let spread = mode == Mode::Value && self.eat(&Tok::Ellipsis);
             let value = self.expression()?;
-            args.push(Arg { span: start.to(value.span), name, value });
+            args.push(Arg { span: start.to(value.span), name, value, mode, spread });
             if !self.eat(&Tok::Comma) {
                 break;
             }
         }
+        self.skip_newlines();
         self.expect(Tok::RParen)?;
         Ok(args)
     }
@@ -1170,7 +1223,11 @@ impl Parser<'_> {
             }
             Tok::Kw(Kw::If) => return self.if_expression(),
             Tok::LBracket => return self.bracket_literal(),
-            Tok::Kw(kw @ (Kw::Scope | Kw::Unsafe | Kw::SelfValue)) => {
+            Tok::Kw(Kw::SelfValue) => {
+                self.bump();
+                ExprKind::Path(vec![Ident { name: "self".into(), span: start }])
+            }
+            Tok::Kw(kw @ (Kw::Scope | Kw::Unsafe)) => {
                 let what = format!("`{}`", kw.as_str());
                 self.diags.unsupported(start, &what);
                 return Err(());

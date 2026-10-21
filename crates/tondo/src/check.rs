@@ -20,6 +20,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         type_names: HashMap::new(),
         aliases: Vec::new(),
         signatures: Vec::new(),
+        methods: HashMap::new(),
         console_error: None,
         conversion_error: Ty::ERROR,
         collection_error: Ty::ERROR,
@@ -113,9 +114,24 @@ enum FieldRef<'a> {
     Slot(u32),
 }
 
+#[derive(Clone)]
 struct Signature {
     params: Vec<Ty>,
+    /// Parameter names, which named arguments use (11.3).
+    names: Vec<String>,
+    /// The mode of the receiver when the first parameter is `self`.
+    receiver: Option<ast::Mode>,
+    /// Whether the last parameter is variadic; its type is `Array[T]`.
+    variadic: bool,
     result: Ty,
+}
+
+impl Signature {
+    /// The signature of a standard function taking `params` by value.
+    fn simple(params: Vec<Ty>, result: Ty) -> Signature {
+        let names = (0..params.len()).map(|i| format!("argument{i}")).collect();
+        Signature { params, names, receiver: None, variadic: false, result }
+    }
 }
 
 const INTRINSICS: [&str; 2] = ["panic", "assert"];
@@ -128,6 +144,8 @@ struct Checker<'a> {
     type_names: HashMap<String, TypeName>,
     aliases: Vec<AliasEntry>,
     signatures: Vec<Signature>,
+    /// Inherent operations by owner type and name (11.5).
+    methods: HashMap<(Ty, String), FnId>,
     /// `console.ConsoleError`, once `std.console` is imported.
     console_error: Option<Ty>,
     /// The prelude's `NumericConversionError`.
@@ -172,9 +190,15 @@ impl Checker<'_> {
             })
             .collect();
         for (index, f) in fns.iter().enumerate() {
-            let signature = self.signature(f);
+            let id = FnId(index as u32);
+            let owner = f.owner.as_ref().map(|owner| self.method_owner(owner));
+            let signature = self.signature(f, owner);
+            let receiver = signature.receiver;
             self.signatures.push(signature);
-            self.declare_module_name(&f.name, ModuleName::Fn(FnId(index as u32)));
+            match owner {
+                Some(owner) => self.declare_method(f, owner, receiver.is_some(), id),
+                None => self.declare_module_name(&f.name, ModuleName::Fn(id)),
+            }
         }
 
         let mut functions: Vec<hir::Function> = fns.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
@@ -470,16 +494,108 @@ impl Checker<'_> {
         self.aliases[index].resolved.unwrap()
     }
 
-    fn signature(&mut self, f: &ast::FnDecl) -> Signature {
-        if let Some(owner) = &f.owner {
-            self.diags.unsupported(owner.span, "methods");
-        }
+    fn signature(&mut self, f: &ast::FnDecl, owner: Option<Ty>) -> Signature {
         if f.suspends {
             self.diags.unsupported(f.span, "`suspends` functions");
         }
-        let params = f.params.iter().map(|p| self.resolve_type(&p.ty)).collect();
+        let (mut params, mut names, mut receiver, mut variadic) = (Vec::new(), Vec::new(), None, false);
+        for (index, param) in f.params.iter().enumerate() {
+            let ty = match &param.ty {
+                None => {
+                    receiver = Some(param.mode);
+                    owner.unwrap_or_else(|| {
+                        let message = format!(
+                            "only a method has a receiver: declare it on its type, as in `fn Type.{}(self, ...)`",
+                            f.name.name
+                        );
+                        self.diags.error("E1002", param.span, message);
+                        Ty::ERROR
+                    })
+                }
+                Some(ty) => {
+                    if param.mode != ast::Mode::Value {
+                        self.diags.unsupported(param.span, &format!("`{}` parameters", param.mode.keyword()));
+                    }
+                    let ty = self.resolve_type(ty);
+                    if param.variadic {
+                        if index + 1 != f.params.len() {
+                            self.diags.error("E1102", param.span, "only the last parameter can be variadic");
+                        }
+                        variadic = true;
+                        self.types.intern(TyKind::Array(ty))
+                    } else {
+                        ty
+                    }
+                }
+            };
+            params.push(ty);
+            names.push(param.name.name.clone());
+        }
         let result = f.result.as_ref().map_or(Ty::UNIT, |t| self.resolve_type(t));
-        Signature { params, result }
+        Signature { params, names, receiver, variadic, result }
+    }
+
+    /// The type an inherent method is declared on: a nominal type of this
+    /// module (11.5).
+    fn method_owner(&mut self, owner: &ast::Ident) -> Ty {
+        let nominal = match self.type_names.get(&owner.name) {
+            Some(TypeName::Nominal(ty)) => Some(Some(*ty)),
+            Some(TypeName::Alias(_)) => Some(None),
+            None => None,
+        };
+        match nominal {
+            Some(Some(ty)) if !PRELUDE_TYPES.contains(&owner.name.as_str()) => ty,
+            Some(_) => {
+                let message = format!(
+                    "methods can only be declared on records, enums and newtypes of this module, not `{}`",
+                    owner.name
+                );
+                self.diags.error("E1002", owner.span, message);
+                Ty::ERROR
+            }
+            None if PRELUDE_TYPES.contains(&owner.name.as_str()) || self.type_named(&owner.name).is_some() => {
+                let message = format!("methods cannot be added to the intrinsic type `{}`", owner.name);
+                self.diags.error("E1002", owner.span, message);
+                Ty::ERROR
+            }
+            None => {
+                let message = format!("unknown type `{}`", owner.name);
+                self.diags.error("E1001", owner.span, message);
+                Ty::ERROR
+            }
+        }
+    }
+
+    fn declare_method(&mut self, f: &ast::FnDecl, owner: Ty, has_receiver: bool, id: FnId) {
+        if owner == Ty::ERROR {
+            return;
+        }
+        let name = &f.name.name;
+        let type_name = self.types.display(owner);
+        let clash = if self.methods.contains_key(&(owner, name.clone())) {
+            Some(format!("`{type_name}` already has an operation named `{name}`"))
+        } else if self.types.variants(owner).is_some()
+            && let TyKind::Adt(adt) = self.types.kind(owner)
+            && let AdtKind::Enum(variants) = &self.types.adt(*adt).kind
+            && variants.iter().any(|v| &v.name == name)
+        {
+            Some(format!("`{type_name}.{name}` is a variant; an operation of `{type_name}` needs another name"))
+        } else if has_receiver && self.types.components(owner).is_some_and(|_| self.record_has_field(owner, name)) {
+            Some(format!("`{name}` is a field of `{type_name}`; a method with a receiver needs another name"))
+        } else {
+            None
+        };
+        match clash {
+            Some(message) => self.diags.error("E1002", f.name.span, message),
+            None => {
+                self.methods.insert((owner, name.clone()), id);
+            }
+        }
+    }
+
+    fn record_has_field(&self, ty: Ty, name: &str) -> bool {
+        matches!(self.types.kind(ty), TyKind::Adt(id)
+            if matches!(&self.types.adt(*id).kind, AdtKind::Record(fields) if fields.iter().any(|f| f.name == name)))
     }
 
     fn validate_main(&mut self, f: &ast::FnDecl, id: FnId) {
@@ -629,14 +745,23 @@ impl Checker<'_> {
     }
 
     fn function(&mut self, f: &ast::FnDecl, id: FnId) -> hir::Function {
-        let result = self.signatures[id.0 as usize].result;
-        let mut cx = self.new_cx(result);
-        let param_types = self.signatures[id.0 as usize].params.clone();
-        let params =
-            f.params.iter().zip(param_types).map(|(p, ty)| self.declare(&mut cx, &p.name, ty, false)).collect();
+        let signature = self.signatures[id.0 as usize].clone();
+        let mut cx = self.new_cx(signature.result);
+        let mut params = Vec::new();
+        let mut loans = Vec::new();
+        for (param, ty) in f.params.iter().zip(signature.params) {
+            // `mut self` and `var self` borrow the caller's place (11.6).
+            let loan = param.ty.is_none() && matches!(param.mode, ast::Mode::Mut | ast::Mode::Var);
+            params.push(self.declare(&mut cx, &param.name, ty, loan));
+            loans.push(loan);
+        }
         let success = cx.result;
         let body = self.block(&mut cx, &f.body, Some(success));
-        hir::Function { name: f.name.name.clone(), params, locals: cx.locals, result, body }
+        let name = match &f.owner {
+            Some(owner) => format!("{}.{}", owner.name, f.name.name),
+            None => f.name.name.clone(),
+        };
+        hir::Function { name, params, loans, locals: cx.locals, result: signature.result, body }
     }
 
     /// The implicit `main` of a root script (spec 20.3). Its error type is
@@ -651,7 +776,7 @@ impl Checker<'_> {
             Some(error) => self.types.intern(TyKind::Result(Ty::UNIT, error)),
             None => Ty::UNIT,
         };
-        hir::Function { name: "main".into(), params: Vec::new(), locals: cx.locals, result, body }
+        hir::Function { name: "main".into(), params: Vec::new(), loans: Vec::new(), locals: cx.locals, result, body }
     }
 
     /// The error type a `fail` or `?` may produce here, inferring it in a
@@ -2197,14 +2322,21 @@ impl Checker<'_> {
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
+        let value = self.expr(cx, receiver, None);
+        let ty = value.ty;
+        if let Some(&id) = self.methods.get(&(ty, method.name.clone())) {
+            return self.dot_call(cx, id, value, method, args, span);
+        }
+        if matches!(self.types.kind(ty), TyKind::Adt(_)) {
+            return self.no_method(ty, method, span);
+        }
         if matches!(
             method.name.as_str(),
             "push" | "pushFront" | "pop" | "popFront" | "insert" | "removeAt" | "remove" | "clear"
-        ) {
-            return self.mutation_call(cx, receiver, method, args, span);
+        ) && matches!(self.types.kind(ty), TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_))
+        {
+            return self.mutation_call(cx, value, method, args, span);
         }
-        let value = self.expr(cx, receiver, None);
-        let ty = value.ty;
         if ty == Ty::STRING {
             return self.string_method(cx, value, method, args, span);
         }
@@ -2322,13 +2454,17 @@ impl Checker<'_> {
     fn mutation_call(
         &mut self,
         cx: &mut FnCx,
-        receiver: &ast::Expr,
+        receiver: hir::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
         use hir::Mutation as M;
-        let Some((local, path, ty)) = self.place(cx, receiver) else { return Self::error_expr(span) };
+        let ty = receiver.ty;
+        let operation = format!("`{}`", method.name);
+        let Some(hir::Place { local, path }) = self.loan_place(cx, receiver, &operation) else {
+            return Self::error_expr(span);
+        };
         let option = |this: &mut Self, t: Ty| this.types.intern(TyKind::Option(t));
         let (mutation, params, result) = match (method.name.as_str(), self.types.kind(ty).clone()) {
             ("push", TyKind::Array(e) | TyKind::Deque(e)) => (M::Push, vec![e], Ty::UNIT),
@@ -2359,6 +2495,42 @@ impl Checker<'_> {
             })
             .collect();
         Self::mk(hir::ExprKind::Mutate(mutation, hir::Place { local, path }, values), result, span)
+    }
+
+    /// `value.method(args)` for an inherent method (11.5): the receiver is
+    /// borrowed, or loaned for `mut self` and `var self`.
+    fn dot_call(
+        &mut self,
+        cx: &mut FnCx,
+        id: FnId,
+        receiver: hir::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let signature = self.signatures[id.0 as usize].clone();
+        let ty = receiver.ty;
+        let receiver = match signature.receiver {
+            None => {
+                let owner = self.types.display(ty);
+                let message = format!(
+                    "`{}` is an operation of `{owner}` without a receiver: call it as `{owner}.{}(...)`",
+                    method.name, method.name
+                );
+                self.diags.error("E1001", method.span, message);
+                return Self::error_expr(span);
+            }
+            Some(ast::Mode::Mut | ast::Mode::Var) => {
+                let receiver_span = receiver.span;
+                let operation = format!("`{}`", method.name);
+                match self.loan_place(cx, receiver, &operation) {
+                    Some(place) => Self::mk(hir::ExprKind::Loan(place), ty, receiver_span),
+                    None => return Self::error_expr(span),
+                }
+            }
+            Some(_) => receiver,
+        };
+        self.call_signature(cx, Callee::Fn(id), &signature, Some(receiver), args, span)
     }
 
     fn no_method(&mut self, ty: Ty, method: &ast::Ident, span: Span) -> hir::Expr {
@@ -2543,9 +2715,6 @@ impl Checker<'_> {
     }
 
     fn call(&mut self, cx: &mut FnCx, callee: &ast::Expr, args: &[ast::Arg], span: Span) -> hir::Expr {
-        if let Some(arg) = args.iter().find(|a| a.name.is_some()) {
-            return self.unsupported_expr(arg.span, "named arguments");
-        }
         match &callee.kind {
             ast::ExprKind::Field(receiver, method) => return self.method_call(cx, receiver, method, args, span),
             ast::ExprKind::Path(segments) if segments.len() > 1 && self.lookup(cx, &segments[0].name).is_some() => {
@@ -2590,7 +2759,29 @@ impl Checker<'_> {
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
         }
+        // `Type.operation(...)`: an associated operation, or a method with
+        // its receiver written first (11.5). Operations and variants never
+        // share a name.
+        if let [type_name, operation] = names.as_slice()
+            && !self.names.contains_key(*type_name)
+            && let Some(owner) = self.type_named(type_name)
+        {
+            if let Some(id) = self.methods.get(&(owner, operation.to_string())).copied() {
+                let signature = self.signatures[id.0 as usize].clone();
+                return self.call_signature(cx, Callee::Fn(id), &signature, None, args, span);
+            }
+            if self.types.variants(owner).is_none()
+                || matches!(self.types.kind(owner), TyKind::Option(_) | TyKind::Result(..))
+            {
+                let message = format!("`{type_name}` has no operation named `{operation}`");
+                self.diags.error("E1001", segments[1].span, message);
+                return Self::error_expr(span);
+            }
+        }
         if let Some(resolved) = self.variant_path(segments) {
+            if let Some(arg) = args.iter().find(|a| a.name.is_some() || a.mode != ast::Mode::Value || a.spread) {
+                return self.unsupported_expr(arg.span, "this argument form in a variant constructor");
+            }
             let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
             let Payload::Tuple(types) = self.payload(ty, variant) else {
                 let message = format!("`{}` does not take positional values", Self::path_text(segments));
@@ -2647,9 +2838,8 @@ impl Checker<'_> {
                 Self::mk(hir::ExprKind::Retype(Box::new(value)), ty, span)
             }
             ([_], Some(ModuleName::Fn(id))) => {
-                let params = self.signatures[id.0 as usize].params.clone();
-                let result = self.signatures[id.0 as usize].result;
-                self.call_with(cx, Callee::Fn(id), &params, result, args, span)
+                let signature = self.signatures[id.0 as usize].clone();
+                self.call_signature(cx, Callee::Fn(id), &signature, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Console))) => {
                 // `print` and `println` only append to the output buffer and
@@ -2671,7 +2861,8 @@ impl Checker<'_> {
                         return Self::error_expr(span);
                     }
                 };
-                self.call_with(cx, Callee::Std(function), &params, result, args, span)
+                let signature = Signature::simple(params, result);
+                self.call_signature(cx, Callee::Std(function), &signature, None, args, span)
             }
             ([name], None) if Self::numeric_type(name).is_some() => {
                 let to = Self::numeric_type(name).unwrap();
@@ -2707,27 +2898,215 @@ impl Checker<'_> {
         Self::error_expr(span)
     }
 
-    fn call_with(
+    /// A call of `callee` with `signature`. A dot-call passes its receiver
+    /// already checked; otherwise every parameter comes from `args`, which
+    /// may be named, variadic or spread (11.3). Arguments are evaluated in
+    /// the order they are written.
+    fn call_signature(
         &mut self,
         cx: &mut FnCx,
         callee: Callee,
-        params: &[Ty],
-        result: Ty,
+        signature: &Signature,
+        receiver: Option<hir::Expr>,
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
-        if params.len() != args.len() {
-            return self.arity_error(span, params.len(), args.len());
+        let first = receiver.is_some() as usize;
+        let count = signature.params.len() - first;
+        let fixed = count - signature.variadic as usize;
+        // Which argument fills each parameter, then the variadic elements.
+        let mut slots: Vec<Option<usize>> = vec![None; fixed];
+        let (mut pack, mut spread) = (Vec::new(), None);
+        let mut named = false;
+        for (index, arg) in args.iter().enumerate() {
+            let position = match &arg.name {
+                None if named => {
+                    self.diags.error("E1102", arg.span, "positional arguments must come before named ones");
+                    return Self::error_expr(span);
+                }
+                None => index,
+                Some(name) => {
+                    named = true;
+                    match signature.names[first..].iter().position(|n| *n == name.name) {
+                        Some(position) => position,
+                        None => {
+                            let known: Vec<String> =
+                                signature.names[first..].iter().map(|n| format!("`{n}`")).collect();
+                            let message = format!(
+                                "no parameter is named `{}`; the parameters are {}",
+                                name.name,
+                                known.join(", ")
+                            );
+                            self.diags.error("E1001", name.span, message);
+                            return Self::error_expr(span);
+                        }
+                    }
+                }
+            };
+            if position >= fixed && signature.variadic {
+                if spread.is_some() || (arg.spread && !pack.is_empty()) {
+                    self.diags.error("E1102", arg.span, "a spread `...values` must be the only variadic argument");
+                    return Self::error_expr(span);
+                }
+                if arg.name.is_some() && !arg.spread {
+                    let name = &signature.names[first + fixed];
+                    let message = format!("a named variadic argument is an array spread: `{name}: ...[a, b]`");
+                    self.diags.error("E1102", arg.span, message);
+                    return Self::error_expr(span);
+                }
+                if arg.spread {
+                    spread = Some(index)
+                } else {
+                    pack.push(index)
+                }
+                continue;
+            }
+            if arg.spread {
+                self.diags.error("E1102", arg.span, "`...` expands an array only into a variadic parameter");
+                return Self::error_expr(span);
+            }
+            if position >= fixed {
+                return self.arity_error(span, fixed, args.len());
+            }
+            if slots[position].replace(index).is_some() {
+                let message = format!("parameter `{}` is given twice", signature.names[first + position]);
+                self.diags.error("E1102", arg.span, message);
+                return Self::error_expr(span);
+            }
         }
-        let args = args
-            .iter()
-            .zip(params)
-            .map(|(arg, &ty)| {
-                let value = self.expr(cx, &arg.value, Some(ty));
-                self.coerce(value, ty)
-            })
-            .collect();
-        Self::mk(hir::ExprKind::Call(callee, args), result, span)
+        if let Some(missing) = slots.iter().position(Option::is_none) {
+            let message = format!("missing argument `{}`", signature.names[first + missing]);
+            self.diags.error("E1102", span, message);
+            return Self::error_expr(span);
+        }
+        // Check the arguments in the order they are written.
+        let mut values: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
+        let element = signature.variadic.then(|| match self.types.kind(signature.params[signature.params.len() - 1]) {
+            TyKind::Array(element) => *element,
+            _ => Ty::ERROR,
+        });
+        for (index, arg) in args.iter().enumerate() {
+            let parameter = match slots.iter().position(|&s| s == Some(index)) {
+                Some(position) => first + position,
+                None => signature.params.len() - 1,
+            };
+            let ty = match (slots.contains(&Some(index)), spread == Some(index)) {
+                (true, _) | (false, true) => signature.params[parameter],
+                (false, false) => element.unwrap_or(Ty::ERROR),
+            };
+            let receiver_mode = (parameter == 0).then_some(signature.receiver).flatten();
+            values[index] = Some(self.argument(cx, arg, ty, receiver_mode));
+        }
+        let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();
+        if let Some(receiver) = receiver {
+            ordered.push((None, receiver));
+        }
+        for slot in slots {
+            let index = slot.unwrap();
+            ordered.push((Some(index), values[index].take().unwrap()));
+        }
+        if let Some(array) = signature.variadic.then(|| signature.params[signature.params.len() - 1]) {
+            let value = match spread {
+                Some(index) => values[index].take().unwrap(),
+                None => {
+                    let items: Vec<hir::Expr> = pack.iter().map(|&i| values[i].take().unwrap()).collect();
+                    Self::mk(hir::ExprKind::Array(items), array, span)
+                }
+            };
+            ordered.push((spread.or(pack.first().copied()), value));
+        }
+        // Named arguments out of declaration order are evaluated into
+        // temporaries first, in the order they are written.
+        let in_order = ordered.iter().filter_map(|(i, _)| *i).collect::<Vec<_>>().is_sorted();
+        if in_order {
+            let args = ordered.into_iter().map(|(_, value)| value).collect();
+            return Self::mk(hir::ExprKind::Call(callee, args), signature.result, span);
+        }
+        let mut written: Vec<(usize, LocalId)> = Vec::new();
+        let mut stmts = Vec::new();
+        let mut args = Vec::new();
+        for (index, value) in &mut ordered {
+            if let Some(index) = index
+                && !matches!(value.kind, hir::ExprKind::Loan(_))
+            {
+                let local = self.hidden_local(cx, value.ty);
+                written.push((*index, local));
+                let value = std::mem::replace(value, Self::error_expr(span));
+                args.push(Self::mk(hir::ExprKind::Local(local), value.ty, value.span));
+                stmts.push((*index, hir::Stmt::Let(local, value)));
+            } else {
+                args.push(std::mem::replace(value, Self::error_expr(span)));
+            }
+        }
+        stmts.sort_by_key(|(index, _)| *index);
+        let call = Self::mk(hir::ExprKind::Call(callee, args), signature.result, span);
+        let block = hir::Block {
+            stmts: stmts.into_iter().map(|(_, s)| s).collect(),
+            tail: Some(Box::new(call)),
+            ty: signature.result,
+        };
+        Self::mk(hir::ExprKind::Block(block), signature.result, span)
+    }
+
+    /// One argument for a parameter of type `ty`; a `mut self` or `var self`
+    /// receiver written in a qualified call is a loan of a `var` place.
+    fn argument(&mut self, cx: &mut FnCx, arg: &ast::Arg, ty: Ty, receiver: Option<ast::Mode>) -> hir::Expr {
+        let loan = matches!(receiver, Some(ast::Mode::Mut | ast::Mode::Var));
+        let expected_mode = if loan { receiver.unwrap() } else { ast::Mode::Value };
+        if arg.mode != expected_mode {
+            let message = match (expected_mode, arg.mode) {
+                (ast::Mode::Value, _) => format!("this parameter takes a value: remove `{}`", arg.mode.keyword()),
+                (mode, _) => format!("the receiver is a `{0}` loan: write `{0} value`", mode.keyword()),
+            };
+            self.diags.error("E1102", arg.span, message);
+        }
+        let value = self.expr(cx, &arg.value, Some(ty));
+        let value = self.coerce(value, ty);
+        if !loan {
+            return value;
+        }
+        let span = value.span;
+        match self.loan_place(cx, value, "this operation") {
+            Some(place) => Self::mk(hir::ExprKind::Loan(place), ty, span),
+            None => Self::error_expr(span),
+        }
+    }
+
+    /// The `var` place a value expression denotes, for an operation that
+    /// changes it (11.6); reports values that are not such a place.
+    fn loan_place(&mut self, cx: &FnCx, value: hir::Expr, operation: &str) -> Option<hir::Place> {
+        let span = value.span;
+        let mut steps = Vec::new();
+        let mut current = value;
+        let local = loop {
+            match current.kind {
+                hir::ExprKind::Local(local) => break local,
+                hir::ExprKind::Field(base, index) => {
+                    steps.push(hir::PlaceStep::Field(index));
+                    current = *base;
+                }
+                hir::ExprKind::Retype(base) => current = *base,
+                hir::ExprKind::Index(base, index) => {
+                    steps.push(hir::PlaceStep::Index(*index));
+                    current = *base;
+                }
+                hir::ExprKind::Error => return None,
+                _ => {
+                    let message =
+                        format!("{operation} changes its receiver, which must be a `var` binding or part of one");
+                    self.diags.error("E1411", span, message);
+                    return None;
+                }
+            }
+        };
+        steps.reverse();
+        if !cx.mutable[local.0 as usize] {
+            let name = &cx.locals[local.0 as usize].name;
+            let message =
+                format!("{operation} changes `{name}`, which is not declared with `var`: declare it as `var {name}`");
+            self.diags.error("E1411", span, message);
+        }
+        Some(hir::Place { local, path: steps })
     }
 
     fn unary(

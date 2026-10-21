@@ -19,6 +19,9 @@ pub struct Program {
 pub struct Function {
     pub name: String,
     pub params: Vec<LocalId>,
+    /// Parameters that borrow the caller's place instead of a value: the
+    /// `mut self` and `var self` receivers (11.6).
+    pub loans: Vec<bool>,
     pub locals: Vec<Local>,
     pub result: Ty,
     pub body: Block,
@@ -122,6 +125,8 @@ pub enum ExprKind {
     Slice(Box<Expr>, [Option<Box<Expr>>; 3]),
     /// An intrinsic array or deque operation; the receiver comes first.
     ArrayOp(ArrayOp, Vec<Expr>),
+    /// A `mut` or `var` loan of a place, passed to a loan parameter.
+    Loan(Place),
     /// The number of elements of any collection, or of scalars of a string.
     Length(Box<Expr>),
     /// An intrinsic string operation; the string comes first.

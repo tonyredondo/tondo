@@ -1,0 +1,88 @@
+import std.console
+
+type Point = { x: Int, y: Int }
+
+fn Point.origin(): Point {
+    Point { x: 0, y: 0 }
+}
+
+fn Point.distance2(self, other: Point): Int {
+    let dx = self.x - other.x
+    let dy = self.y - other.y
+    dx * dx + dy * dy
+}
+
+fn Point.moveBy(mut self, dx: Int, dy: Int) {
+    self.x += dx
+    self.y += dy
+}
+
+fn Point.reset(var self) {
+    self = Point.origin()
+}
+
+type Counter = { count: Int, log: Array[String] }
+
+fn Counter.increment(mut self) {
+    self.count += 1
+    self.log.push("step {self.count}")
+}
+
+fn Counter.twice(mut self) {
+    self.increment()
+    self.increment()
+}
+
+fn Counter.total(self): Int {
+    self.count
+}
+
+enum Shape {
+    Circle(Int)
+    Square(Int)
+}
+
+fn Shape.area(self): Int {
+    match self {
+        Shape.Circle(r) => 3 * r * r
+        Shape.Square(side) => side * side
+    }
+}
+
+type Meters = Int
+
+fn Meters.double(mut self) {
+    self = Meters(self.value * 2)
+}
+
+fn main() {
+    var p = Point { x: 1, y: 2 }
+    let q = Point.origin()
+    _ = console.println("{p.distance2(q)} {Point.distance2(p, q)}")
+    p.moveBy(2, 3)
+    Point.moveBy(mut p, dx: 1, dy: 1)
+    console.println("{p.x} {p.y}")
+    var points = [Point { x: 5, y: 5 }, Point { x: 7, y: 7 }]
+    points[1].moveBy(dy: 10, dx: -7)
+    points[0].reset()
+    console.println("{points[0].x} {points[1].x} {points[1].y}")
+    var counter = Counter { count: 0, log: [] }
+    let before = counter
+    counter.twice()
+    counter.increment()
+    console.println("{counter.total()} {counter.log} {before.total()} {before.log}")
+    let shapes = [Shape.Circle(2), Shape.Square(3)]
+    var areas = 0
+    for shape in shapes {
+        areas += shape.area()
+    }
+    var distance = Meters(21)
+    distance.double()
+    console.println("{areas} {distance.value}")
+}
+
+// expect-stdout: 5 5
+// expect-stdout: 4 6
+// expect-stdout: 0 0 17
+// expect-stdout: 3 [step 1, step 2, step 3] 0 []
+// expect-stdout: 21 42

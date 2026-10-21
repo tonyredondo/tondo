@@ -161,8 +161,33 @@ pub struct FnDecl {
 #[derive(Debug)]
 pub struct Param {
     pub name: Ident,
-    pub ty: TypeExpr,
+    /// `None` for a receiver: `self`, `mut self` or `var self`.
+    pub ty: Option<TypeExpr>,
+    pub mode: Mode,
+    /// `name: ...T`
+    pub variadic: bool,
     pub span: Span,
+}
+
+/// How a parameter or argument is passed: by value, or as a `ref`, `mut` or
+/// `var` loan (11.3, 16.3). A plain `self` receiver is a `ref` loan.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Value,
+    Ref,
+    Mut,
+    Var,
+}
+
+impl Mode {
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Mode::Value => "",
+            Mode::Ref => "ref",
+            Mode::Mut => "mut",
+            Mode::Var => "var",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -334,6 +359,10 @@ pub enum StrSegment {
 pub struct Arg {
     pub name: Option<Ident>,
     pub value: Expr,
+    /// `ref value`, `mut value` or `var value`
+    pub mode: Mode,
+    /// `...values`
+    pub spread: bool,
     pub span: Span,
 }
 

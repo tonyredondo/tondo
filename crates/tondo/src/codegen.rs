@@ -285,6 +285,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         glue: HashMap::new(),
         pending_glue: Vec::new(),
         map_glue: HashMap::new(),
+        loans: bodies.iter().map(|body| body.loans.clone()).collect(),
     };
 
     for (index, body) in bodies.iter().enumerate() {
@@ -329,6 +330,8 @@ struct Codegen<'a> {
     glue: HashMap<(Glue, Ty), FuncId>,
     pending_glue: Vec<(Glue, Ty, FuncId)>,
     map_glue: HashMap<Ty, DataId>,
+    /// Which parameters of each function are loans (`Body::loans`).
+    loans: Vec<Vec<bool>>,
 }
 
 impl Codegen<'_> {
@@ -438,8 +441,10 @@ impl Codegen<'_> {
         if self.class(body.result) == Class::Memory {
             signature.params.push(AbiParam::new(POINTER));
         }
-        for &param in &body.params {
+        for (index, &param) in body.params.iter().enumerate() {
             match self.class(body.locals[param.0 as usize]) {
+                // A loan is the address of the caller's place.
+                _ if body.loans[index] => signature.params.push(AbiParam::new(POINTER)),
                 Class::Zero => {}
                 Class::Scalar(ty) => signature.params.push(AbiParam::new(ty)),
                 Class::Memory => signature.params.push(AbiParam::new(POINTER)),
@@ -1196,8 +1201,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         for (index, &ty) in body.locals.iter().enumerate() {
             let local = Local(index as u32);
             let borrowed = body.params.contains(&local) || body.ret == Some(local);
+            let loan = body.params.iter().position(|&p| p == local).is_some_and(|i| body.loans[i]);
             storage.push(match cg.class(ty) {
                 Class::Zero => Storage::Zero,
+                _ if loan => Storage::Pointer(fb.declare_var(POINTER)),
                 Class::Scalar(t) => Storage::Var(fb.declare_var(t)),
                 Class::Memory if borrowed => Storage::Pointer(fb.declare_var(POINTER)),
                 Class::Memory => {
@@ -1221,9 +1228,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         {
             self.e.fb.def_var(var, incoming.next().unwrap());
         }
-        for &param in &self.body.params {
+        for (index, &param) in self.body.params.iter().enumerate() {
             match self.storage[param.0 as usize] {
                 Storage::Var(var) | Storage::Pointer(var) => self.e.fb.def_var(var, incoming.next().unwrap()),
+                // A loan of a zero-sized place still has its address parameter.
+                Storage::Zero if self.body.loans[index] => {
+                    incoming.next();
+                }
                 Storage::Zero | Storage::Slot(_) => {}
             }
         }
@@ -2224,13 +2235,23 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     fn call(&mut self, callee: Callee, args: &[Operand], result: Option<ir::Value>) -> Option<ir::Value> {
         let mut values: Vec<ir::Value> = result.into_iter().collect();
-        for arg in args {
+        let loans = match callee {
+            Callee::Fn(id) => self.e.cg.loans[id.0 as usize].clone(),
+            Callee::Std(_) => Vec::new(),
+        };
+        let mut spilled = Vec::new();
+        for (index, arg) in args.iter().enumerate() {
+            if loans.get(index).copied().unwrap_or(false) {
+                let Operand::Copy(place) = arg else { unreachable!("a loan is a place") };
+                values.push(self.loan_address(place, &mut spilled));
+                continue;
+            }
             match self.operand(arg) {
                 Val::Scalar(value) | Val::Memory(value) => values.push(value),
                 Val::Zero => {}
             }
         }
-        match callee {
+        let result = match callee {
             Callee::Fn(id) => {
                 let func = self.e.cg.module.declare_func_in_func(self.e.cg.functions[id.0 as usize], self.e.fb.func);
                 let call = self.e.fb.ins().call(func, &values);
@@ -2239,7 +2260,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),
             Callee::Std(StdFn::ConsolePrintln) => self.e.call_rt(Rt::ConsolePrintln, &values),
             Callee::Std(StdFn::ConsoleFlush) => self.e.call_rt(Rt::ConsoleFlush, &values),
+        };
+        for (var, slot) in spilled {
+            self.unspill(var, slot);
         }
+        result
+    }
+
+    /// The address a loan of `place` passes; a local held in a variable is
+    /// spilled to the stack and recorded in `spilled` to reload after the call.
+    fn loan_address(&mut self, place: &Place, spilled: &mut Vec<(Variable, ir::Value)>) -> ir::Value {
+        if self.e.cg.class(self.place_ty(place)) == Class::Zero {
+            return self.e.fb.ins().iconst(POINTER, 0);
+        }
+        if let Storage::Var(var) = self.storage[place.local.0 as usize]
+            && place.path.is_empty()
+        {
+            let slot = self.spill(var);
+            spilled.push((var, slot));
+            return slot;
+        }
+        self.pointer_to(place, true)
     }
 
     fn terminator(&mut self, terminator: &Terminator) {

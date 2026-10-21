@@ -1,0 +1,46 @@
+import std.console
+
+fn connect(host: String, port: Int, secure: Bool): String {
+    "{host}:{port} {secure}"
+}
+
+fn log(prefix: String, parts: ...String): String {
+    var text = prefix
+    for part in parts {
+        text = "{text}{part}"
+    }
+    "{text} ({parts.length()})"
+}
+
+fn trace(label: String, value: Int): Int {
+    console.println("evaluating {label}")
+    value
+}
+
+fn pair(first: Int, second: Int): String {
+    "{first},{second}"
+}
+
+fn main() {
+    console.println(connect("localhost", 8080, true))
+    console.println(connect(port: 1, secure: false, host: "db"))
+    console.println(connect("api", secure: true, port: 443))
+    console.println(log("Info: ", "server", " started"))
+    console.println(log("Empty"))
+    let parts = ["a", "b"]
+    console.println(log("Spread: ", ...parts))
+    console.println(log(prefix: "Named: ", parts: ...parts))
+    // Arguments are evaluated in the order they are written.
+    console.println(pair(second: trace("second", 2), first: trace("first", 1)))
+}
+
+// expect-stdout: localhost:8080 true
+// expect-stdout: db:1 false
+// expect-stdout: api:443 true
+// expect-stdout: Info: server started (2)
+// expect-stdout: Empty (0)
+// expect-stdout: Spread: ab (2)
+// expect-stdout: Named: ab (2)
+// expect-stdout: evaluating second
+// expect-stdout: evaluating first
+// expect-stdout: 1,2

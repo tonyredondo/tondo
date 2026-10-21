@@ -78,6 +78,9 @@ pub struct Body {
     pub name: String,
     pub locals: Vec<Ty>,
     pub params: Vec<Local>,
+    /// Parameters passed as the address of the caller's place (a `mut self`
+    /// or `var self` loan); reads and writes go through it.
+    pub loans: Vec<bool>,
     /// The local that holds the result, unless it is `Unit` or `Never`.
     pub ret: Option<Local>,
     pub result: Ty,

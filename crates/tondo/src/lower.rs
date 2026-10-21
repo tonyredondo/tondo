@@ -71,7 +71,15 @@ fn lower_function(types: &Types, function: &hir::Function) -> Body {
         .into_iter()
         .map(|(stmts, terminator)| BlockData { stmts, terminator: terminator.unwrap_or(Terminator::Unreachable) })
         .collect();
-    Body { name: function.name.clone(), locals: b.locals, params, ret: b.ret, result: function.result, blocks }
+    Body {
+        name: function.name.clone(),
+        locals: b.locals,
+        params,
+        loans: function.loans.clone(),
+        ret: b.ret,
+        result: function.result,
+        blocks,
+    }
 }
 
 impl Builder<'_> {
@@ -824,6 +832,8 @@ impl Builder<'_> {
                 let operands = operands.iter().map(|o| self.expr(o)).collect();
                 self.temp(e.ty, Rvalue::ArrayOp(*op, operands, e.span), e.span)
             }
+            // The callee receives the place's address (see `Body::loans`).
+            hir::ExprKind::Loan(place) => Operand::Copy(self.place(place.local, &place.path)),
             hir::ExprKind::Length(collection) => {
                 let collection = self.expr(collection);
                 self.temp(e.ty, Rvalue::Length(collection), e.span)
