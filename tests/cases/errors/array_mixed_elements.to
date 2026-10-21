@@ -1,0 +1,5 @@
+fn main() {
+    let values = [1, "two"]
+}
+
+// expect-error: E1102

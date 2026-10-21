@@ -1,0 +1,7 @@
+fn main() {
+    let values = [1, 2, 3]
+    let step = 0
+    let x = values[::step]
+}
+
+// expect-panic: P0002

@@ -4,9 +4,9 @@
 //! inserted during lowering, so code generation is a direct translation.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::Callee;
+use crate::hir::{ArrayOp, Callee};
 use crate::source::Span;
-use crate::types::{Ty, Types};
+use crate::types::{Ty, TyKind, Types};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Local(pub u32);
@@ -20,6 +20,9 @@ pub struct BlockId(pub u32);
 pub enum Proj {
     Field(u32),
     Variant(u32, u32),
+    /// An array element at the index held by the local; out-of-bounds
+    /// accesses panic at the span.
+    Index(Local, Span),
 }
 
 /// A local or a path inside it.
@@ -47,6 +50,10 @@ impl Place {
     pub fn variant_field(&self, variant: u32, index: u32) -> Place {
         self.with(Proj::Variant(variant, index))
     }
+
+    pub fn index(&self, index: Local, span: Span) -> Place {
+        self.with(Proj::Index(index, span))
+    }
 }
 
 /// The type of the component a projection selects inside `ty`.
@@ -56,6 +63,10 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
         Proj::Variant(variant, index) => {
             types.variants(ty).expect("payload of an enum")[variant as usize][index as usize]
         }
+        Proj::Index(..) => match types.kind(types.repr(ty)) {
+            TyKind::Array(element) => *element,
+            _ => unreachable!("index of a non-array"),
+        },
     }
 }
 
@@ -81,7 +92,7 @@ pub struct BlockData {
 }
 
 pub enum Statement {
-    Assign(Place, Rvalue, Span),
+    Assign(Place, Box<Rvalue>, Span),
     /// Takes one more reference to every counted value inside the place.
     Retain(Place),
     /// Releases every counted value inside the place.
@@ -131,6 +142,18 @@ pub enum Rvalue {
     /// A numeric conversion (18.6) to the destination's type, or to
     /// `T ! NumericConversionError` when it can fail.
     Convert(Operand),
+    /// `[a, b, c]`; a flag marks an element that was copied, not moved, and
+    /// must be retained once stored.
+    Array(Vec<Operand>, Vec<bool>),
+    /// An intrinsic array operation, receiver first.
+    ArrayOp(ArrayOp, Vec<Operand>, Span),
+    /// `array[start:end:step]`.
+    Slice(Operand, [Option<Operand>; 3], Span),
+    /// Appends to the array at the place (made unique first); the flag
+    /// retains a copied value.
+    Push(Place, Operand, bool),
+    /// Removes the last element of the array at the place.
+    Pop(Place),
 }
 
 pub enum Piece {

@@ -1,0 +1,19 @@
+// Regression: the temporaries of a loop body's final expression belong to
+// each iteration; they used to accumulate in the loop statement's frame and
+// leak every iteration but the last.
+fn main() {
+    var items: Array[String] = []
+    for i in 0..10 {
+        _ = items.push("item {i}")
+    }
+    for i in 0..5 {
+        if items.pop() != none {
+        }
+    }
+    var count = 0
+    for count < 3 {
+        count += 1
+        if "tail {count}" == "x" {
+        }
+    }
+}

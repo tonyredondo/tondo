@@ -22,6 +22,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         signatures: Vec::new(),
         console_error: None,
         conversion_error: Ty::ERROR,
+        collection_error: Ty::ERROR,
     };
     checker.declare_prelude();
     checker.program(module)
@@ -127,6 +128,8 @@ struct Checker<'a> {
     console_error: Option<Ty>,
     /// The prelude's `NumericConversionError`.
     conversion_error: Ty,
+    /// `std.collections.CollectionError`.
+    collection_error: Ty,
 }
 
 /// Per-function checking state.
@@ -203,6 +206,12 @@ impl Checker<'_> {
         self.types.define_adt(id, AdtKind::Enum(variants));
         self.type_names.insert("NumericConversionError".into(), TypeName::Nominal(ty));
         self.conversion_error = ty;
+        let (id, ty) = self.types.declare_adt("collections.CollectionError".into());
+        let variants = ["InvalidCapacity", "InvalidIndex", "InvalidStep", "ResourceLimit"]
+            .map(|name| Variant { name: name.into(), payload: Payload::Unit })
+            .to_vec();
+        self.types.define_adt(id, AdtKind::Enum(variants));
+        self.collection_error = ty;
     }
 
     /// The type a numeric constructor such as `Int8(value)` names (18.6).
@@ -475,7 +484,8 @@ impl Checker<'_> {
                     return match (segments[0].name.as_str(), args.as_slice()) {
                         ("Option", [inner]) if segments.len() == 1 => self.types.intern(TyKind::Option(*inner)),
                         ("Result", [ok, err]) if segments.len() == 1 => self.types.intern(TyKind::Result(*ok, *err)),
-                        ("Option" | "Result", _) if segments.len() == 1 => {
+                        ("Array", [element]) if segments.len() == 1 => self.types.intern(TyKind::Array(*element)),
+                        ("Option" | "Result" | "Array", _) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
                             Ty::ERROR
                         }
@@ -805,7 +815,7 @@ impl Checker<'_> {
     }
 
     /// Resolves an assignment target to a `var` binding and a field path.
-    fn place(&mut self, cx: &FnCx, target: &ast::Expr) -> Option<(LocalId, Vec<u32>, Ty)> {
+    fn place(&mut self, cx: &mut FnCx, target: &ast::Expr) -> Option<(LocalId, Vec<hir::PlaceStep>, Ty)> {
         let (base, field) = match &target.kind {
             ast::ExprKind::Path(segments) => {
                 let root = &segments[0];
@@ -827,10 +837,21 @@ impl Checker<'_> {
                 let mut path = Vec::new();
                 for segment in &segments[1..] {
                     let (index, field_ty) = self.field_of(ty, FieldRef::Name(&segment.name), segment.span)?;
-                    path.extend(index);
+                    path.extend(index.map(hir::PlaceStep::Field));
                     ty = field_ty;
                 }
                 return Some((local, path, ty));
+            }
+            ast::ExprKind::Index { base, index } => {
+                let (local, mut path, ty) = self.place(cx, base)?;
+                let TyKind::Array(element) = *self.types.kind(ty) else {
+                    let message = format!("{} cannot be indexed", self.display(ty));
+                    self.diags.error("E1102", base.span, message);
+                    return None;
+                };
+                let index = self.expr(cx, index, Some(Ty::INT));
+                path.push(hir::PlaceStep::Index(self.coerce(index, Ty::INT)));
+                return Some((local, path, element));
             }
             ast::ExprKind::Field(base, name) => (base, (FieldRef::Name(&name.name), name.span)),
             ast::ExprKind::TupleSlot(base, slot) => (base, (FieldRef::Slot(*slot), target.span)),
@@ -841,7 +862,7 @@ impl Checker<'_> {
         };
         let (local, mut path, ty) = self.place(cx, base)?;
         let (index, field_ty) = self.field_of(ty, field.0, field.1)?;
-        path.extend(index);
+        path.extend(index.map(hir::PlaceStep::Field));
         Some((local, path, field_ty))
     }
 
@@ -891,8 +912,23 @@ impl Checker<'_> {
             ast::ForHeader::In { binding, source } => {
                 let ast::ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) = &source.kind
                 else {
-                    self.diags.unsupported(source.span, "iteration over values other than integer ranges");
-                    return None;
+                    let array = self.expr(cx, source, None);
+                    let element = match *self.types.kind(array.ty) {
+                        TyKind::Array(element) => element,
+                        TyKind::Error => Ty::ERROR,
+                        _ => {
+                            let message = format!("{} cannot be iterated", self.display(array.ty));
+                            self.diags.error("E1206", array.span, message);
+                            return None;
+                        }
+                    };
+                    cx.scopes.push(Vec::new());
+                    let local = self.declare(cx, binding, element, false);
+                    cx.loops.push(false);
+                    let body = self.block(cx, body, Some(Ty::UNIT));
+                    cx.loops.pop();
+                    cx.scopes.pop();
+                    return Some(hir::Stmt::ForArray { local, array, body });
                 };
                 let (start, end) = self.operands(cx, start, end, None);
                 self.require_int(&start);
@@ -974,6 +1010,35 @@ impl Checker<'_> {
                 self.field_access(base, FieldRef::Slot(*slot), span, span)
             }
             ast::ExprKind::Tuple(items) => self.tuple(cx, items, expected, span),
+            ast::ExprKind::Array(items) => self.array_literal(cx, items, expected, span),
+            ast::ExprKind::Index { base, index } => {
+                let base = self.expr(cx, base, None);
+                let TyKind::Array(element) = *self.types.kind(base.ty) else {
+                    return self.not_indexable(base, span);
+                };
+                let index = self.expr(cx, index, Some(Ty::INT));
+                let index = self.coerce(index, Ty::INT);
+                Self::mk(hir::ExprKind::Index(Box::new(base), Box::new(index)), element, span)
+            }
+            ast::ExprKind::Slice { base, start, end, step } => {
+                let base = self.expr(cx, base, None);
+                if !matches!(self.types.kind(base.ty), TyKind::Array(_)) {
+                    return self.not_indexable(base, span);
+                }
+                let mut bound = |this: &mut Self, part: &Option<Box<ast::Expr>>| {
+                    part.as_ref().map(|p| {
+                        let value = this.expr(cx, p, Some(Ty::INT));
+                        Box::new(this.coerce(value, Ty::INT))
+                    })
+                };
+                let parts = [bound(self, start), bound(self, end), bound(self, step)];
+                let ty = base.ty;
+                Self::mk(hir::ExprKind::Slice(Box::new(base), parts), ty, span)
+            }
+            ast::ExprKind::Generic { .. } => {
+                self.diags.error("E1102", span, "type arguments must be followed by a call");
+                Self::error_expr(span)
+            }
             ast::ExprKind::Match { scrutinee, arms } => self.match_expr(cx, scrutinee, arms, expected, span),
             ast::ExprKind::Record { path, fields } => self.record_literal(cx, path, fields, span),
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
@@ -1540,6 +1605,162 @@ impl Checker<'_> {
         }
     }
 
+    fn displayable(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Char
+            | TyKind::Byte
+            | TyKind::Bool
+            | TyKind::String
+            | TyKind::Error
+            | TyKind::Never => true,
+            TyKind::Array(element) => self.displayable(*element),
+            _ => false,
+        }
+    }
+
+    fn not_indexable(&mut self, base: hir::Expr, span: Span) -> hir::Expr {
+        if base.ty != Ty::ERROR {
+            let message = format!("{} cannot be indexed", self.display(base.ty));
+            self.diags.error("E1102", base.span, message);
+        }
+        Self::error_expr(span)
+    }
+
+    fn array_literal(&mut self, cx: &mut FnCx, items: &[ast::Expr], expected: Option<Ty>, span: Span) -> hir::Expr {
+        let mut element = match expected.map(|t| self.types.kind(t)) {
+            Some(TyKind::Array(element)) => Some(*element),
+            _ => None,
+        };
+        let mut values = Vec::new();
+        for item in items {
+            let value = self.expr(cx, item, element);
+            let value = match element {
+                Some(element) => self.coerce(value, element),
+                None => {
+                    element = Some(value.ty);
+                    value
+                }
+            };
+            values.push(value);
+        }
+        let Some(element) = element else {
+            self.diags.error("E1101", span, "an empty array literal needs an expected `Array[T]` type");
+            return Self::error_expr(span);
+        };
+        let ty = self.types.intern(TyKind::Array(element));
+        Self::mk(hir::ExprKind::Array(values), ty, span)
+    }
+
+    /// `Array.new[T]()` and `Array.withCapacity[T](capacity)`.
+    fn generic_call(
+        &mut self,
+        cx: &mut FnCx,
+        base: &ast::Expr,
+        type_args: &[ast::TypeExpr],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        let ast::ExprKind::Path(segments) = &base.kind else {
+            return self.unsupported_expr(span, "generic calls");
+        };
+        let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        let (op, params) = match names.as_slice() {
+            ["Array", "new"] => (hir::ArrayOp::New, Vec::new()),
+            ["Array", "withCapacity"] => (hir::ArrayOp::WithCapacity, vec![Ty::INT]),
+            _ => return self.unsupported_expr(span, "generic functions"),
+        };
+        let [element] = type_args else {
+            self.diags.error("E1104", span, "`Array` takes one type argument");
+            return Self::error_expr(span);
+        };
+        let element = self.resolve_type(element);
+        let array = self.types.intern(TyKind::Array(element));
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let values = args
+            .iter()
+            .zip(params)
+            .map(|(a, t)| {
+                let v = self.expr(cx, &a.value, Some(t));
+                self.coerce(v, t)
+            })
+            .collect();
+        let ty = match op {
+            hir::ArrayOp::New => array,
+            _ => self.types.intern(TyKind::Result(array, self.collection_error)),
+        };
+        Self::mk(hir::ExprKind::ArrayOp(op, values), ty, span)
+    }
+
+    /// `receiver.method(args)` on an intrinsic collection (std.collections).
+    fn method_call(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        if matches!(method.name.as_str(), "push" | "pop") {
+            // These change the array's length and need a `var` receiver (10.5).
+            let Some((local, path, ty)) = self.place(cx, receiver) else { return Self::error_expr(span) };
+            let TyKind::Array(element) = *self.types.kind(ty) else {
+                return self.no_method(ty, method, span);
+            };
+            let place = hir::Place { local, path };
+            return if method.name == "push" {
+                let [value] = args else { return self.arity_error(span, 1, args.len()) };
+                let value = self.expr(cx, &value.value, Some(element));
+                let value = self.coerce(value, element);
+                let ty = self.types.intern(TyKind::Result(Ty::UNIT, self.collection_error));
+                Self::mk(hir::ExprKind::Push(place, Box::new(value)), ty, span)
+            } else {
+                if !args.is_empty() {
+                    return self.arity_error(span, 0, args.len());
+                }
+                let ty = self.types.intern(TyKind::Option(element));
+                Self::mk(hir::ExprKind::Pop(place), ty, span)
+            };
+        }
+        let value = self.expr(cx, receiver, None);
+        let TyKind::Array(element) = *self.types.kind(value.ty) else {
+            if value.ty == Ty::ERROR {
+                return Self::error_expr(span);
+            }
+            return self.no_method(value.ty, method, span);
+        };
+        let array = value.ty;
+        let (op, params, result) = match method.name.as_str() {
+            "length" => (hir::ArrayOp::Length, vec![], Ty::INT),
+            "get" => (hir::ArrayOp::Get, vec![Ty::INT], self.types.intern(TyKind::Option(element))),
+            "slice" => {
+                let result = self.types.intern(TyKind::Result(array, self.collection_error));
+                (hir::ArrayOp::SliceChecked, vec![Ty::INT, Ty::INT], result)
+            }
+            "concat" => (hir::ArrayOp::Concat, vec![array], array),
+            "repeat" => (hir::ArrayOp::Repeat, vec![Ty::INT], array),
+            _ => return self.no_method(array, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        let mut values = vec![value];
+        for (arg, ty) in args.iter().zip(params) {
+            let arg = self.expr(cx, &arg.value, Some(ty));
+            values.push(self.coerce(arg, ty));
+        }
+        Self::mk(hir::ExprKind::ArrayOp(op, values), result, span)
+    }
+
+    fn no_method(&mut self, ty: Ty, method: &ast::Ident, span: Span) -> hir::Expr {
+        let message = format!("{} has no method `{}`", self.display(ty), method.name);
+        self.diags.error("E1001", method.span, message);
+        Self::error_expr(span)
+    }
+
     fn unsupported_expr(&mut self, span: Span, what: &str) -> hir::Expr {
         self.diags.unsupported(span, what);
         Self::error_expr(span)
@@ -1591,18 +1812,7 @@ impl Checker<'_> {
                 ast::StrSegment::Text(text) => out.push(hir::Segment::Text(text.clone())),
                 ast::StrSegment::Expr(e) => {
                     let value = self.expr(cx, e, None);
-                    let displayable = matches!(
-                        self.types.kind(value.ty),
-                        TyKind::Int(_)
-                            | TyKind::Float(_)
-                            | TyKind::Char
-                            | TyKind::Byte
-                            | TyKind::Bool
-                            | TyKind::String
-                            | TyKind::Error
-                            | TyKind::Never
-                    );
-                    if !displayable {
+                    if !self.displayable(value.ty) {
                         let message = format!("{} does not implement `Display`", self.display(value.ty));
                         self.diags.error("E1105", value.span, message);
                     }
@@ -1669,12 +1879,30 @@ impl Checker<'_> {
         if let Some(arg) = args.iter().find(|a| a.name.is_some()) {
             return self.unsupported_expr(arg.span, "named arguments");
         }
+        match &callee.kind {
+            ast::ExprKind::Field(receiver, method) => return self.method_call(cx, receiver, method, args, span),
+            ast::ExprKind::Path(segments) if segments.len() > 1 && self.lookup(cx, &segments[0].name).is_some() => {
+                let (method, prefix) = segments.split_last().unwrap();
+                let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
+                let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
+                return self.method_call(cx, &receiver, method, args, span);
+            }
+            ast::ExprKind::Generic { base, args: type_args } => {
+                return self.generic_call(cx, base, type_args, args, span);
+            }
+            _ => {}
+        }
         let ast::ExprKind::Path(segments) = &callee.kind else {
             return self.unsupported_expr(callee.span, "calling this expression");
         };
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
         if self.lookup(cx, names[0]).is_some() {
-            return self.unsupported_expr(callee.span, "method calls and calls through values");
+            return self.unsupported_expr(callee.span, "calls through values");
+        }
+        if let ["Array", "new" | "withCapacity"] = names.as_slice() {
+            let message = format!("`Array.{}` needs its element type: `Array.{}[T](...)`", names[1], names[1]);
+            self.diags.error("E1101", span, message);
+            return Self::error_expr(span);
         }
         if let Some(resolved) = self.variant_path(segments) {
             let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
@@ -1971,7 +2199,25 @@ impl Checker<'_> {
                 }
                 (left, right, Ty::BOOL)
             }
-            BinOp::Range | BinOp::RangeInclusive | BinOp::In => {
+            BinOp::In => {
+                let container = self.expr(cx, right, None);
+                let TyKind::Array(element) = *self.types.kind(container.ty) else {
+                    if container.ty != Ty::ERROR {
+                        let message = format!("`in` is not defined for {}", self.display(container.ty));
+                        self.diags.error("E1102", container.span, message);
+                    }
+                    return Self::error_expr(span);
+                };
+                if !self.types.is_equatable(element) {
+                    operator_error(self, element);
+                }
+                // Membership observes the element first (5.12 orders operands
+                // textually; the left operand is the element).
+                let item = self.expr(cx, left, Some(element));
+                let item = self.coerce(item, element);
+                return Self::mk(hir::ExprKind::ArrayOp(hir::ArrayOp::Contains, vec![item, container]), Ty::BOOL, span);
+            }
+            BinOp::Range | BinOp::RangeInclusive => {
                 return self.unsupported_expr(span, &format!("`{}` outside a `for` header", op.as_str()));
             }
         };

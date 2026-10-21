@@ -1,0 +1,10 @@
+fn f(x: Int?) {
+    match x {
+        some(v) => _ = v
+        none => ()
+    }
+}
+
+fn main() {}
+
+// expect-error: E0004

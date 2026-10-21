@@ -275,6 +275,24 @@ pub enum ExprKind {
         arms: Vec<MatchArm>,
     },
     Tuple(Vec<Expr>),
+    /// `[a, b, c]`
+    Array(Vec<Expr>),
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
+    /// `base[start:end:step]`, each part optional.
+    Slice {
+        base: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
+    },
+    /// Explicit type arguments of a call: `Array.new[Int]`.
+    Generic {
+        base: Box<Expr>,
+        args: Vec<TypeExpr>,
+    },
     Try(Box<Expr>),
     /// `none`
     None,

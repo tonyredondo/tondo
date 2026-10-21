@@ -655,23 +655,40 @@ impl Parser<'_> {
             if self.eat(&Tok::RBrace) {
                 return Ok(arms);
             }
-            let pattern = self.pattern()?;
-            let guard = if self.eat_kw(Kw::If) { Some(self.expression()?) } else { None };
-            self.expect(Tok::FatArrow)?;
-            let body = match self.tok() {
-                Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => {
-                    let start = self.span();
-                    let kind = self.transfer()?;
-                    ArmBody::Transfer(Box::new(Stmt { kind, span: start.to(self.prev_span()) }))
-                }
-                _ => ArmBody::Expr(self.expression()?),
-            };
-            arms.push(MatchArm { span: pattern.span.to(self.prev_span()), pattern, guard, body });
-            // An arm ends at a new line or a comma (23.17).
-            if !self.eat(&Tok::Comma) && !self.at(&Tok::Newline) && !self.at(&Tok::RBrace) {
-                return self.expected("a new line after the match arm");
+            if self.at(&Tok::Eof) {
+                return self.expected("`}`");
+            }
+            match self.match_arm() {
+                Ok(arm) => arms.push(arm),
+                // Recover at the next arm.
+                Err(()) => self.recover(),
             }
         }
+    }
+
+    fn match_arm(&mut self) -> PResult<MatchArm> {
+        let pattern = self.pattern()?;
+        let guard = if self.eat_kw(Kw::If) { Some(self.expression()?) } else { None };
+        self.expect(Tok::FatArrow)?;
+        let body = match self.tok() {
+            Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => {
+                let start = self.span();
+                let kind = self.transfer()?;
+                ArmBody::Transfer(Box::new(Stmt { kind, span: start.to(self.prev_span()) }))
+            }
+            Tok::Ident(name) if name == "_" && self.nth(1) == &Tok::Eq => {
+                return self.error("a statement in a match arm needs a block: `=> { ... }`");
+            }
+            _ => ArmBody::Expr(self.expression()?),
+        };
+        if matches!(self.tok(), Tok::Eq | Tok::PlusEq | Tok::MinusEq | Tok::StarEq | Tok::SlashEq) {
+            return self.error("an assignment in a match arm needs a block: `=> { ... }`");
+        }
+        // An arm ends at a new line or a comma (23.17).
+        if !self.eat(&Tok::Comma) && !self.at(&Tok::Newline) && !self.at(&Tok::RBrace) {
+            return self.expected("a new line after the match arm");
+        }
+        Ok(MatchArm { span: pattern.span.to(self.prev_span()), pattern, guard, body })
     }
 
     /// `return`, `fail`, `break` or `continue` (shared by statements and arms).
@@ -937,8 +954,14 @@ impl Parser<'_> {
                     expr = Expr { kind: ExprKind::Try(Box::new(expr)), span };
                 }
                 Tok::LBracket => {
-                    self.diags.unsupported(self.span(), "indexing and generic arguments");
-                    return Err(());
+                    if matches!(expr.kind, ExprKind::Path(_))
+                        && let Some(args) = self.try_generic_arguments()
+                    {
+                        let span = expr.span.to(self.prev_span());
+                        expr = Expr { kind: ExprKind::Generic { base: Box::new(expr), args }, span };
+                        continue;
+                    }
+                    expr = self.index_or_slice(expr)?;
                 }
                 Tok::LBrace if !self.no_brace && matches!(expr.kind, ExprKind::Path(_)) => {
                     let ExprKind::Path(path) = expr.kind else { unreachable!() };
@@ -949,6 +972,56 @@ impl Parser<'_> {
                 _ => return Ok(expr),
             }
         }
+    }
+
+    /// `[Type, ...]` directly followed by a call. Undone without diagnostics
+    /// when the brackets are not type arguments (23.27).
+    fn try_generic_arguments(&mut self) -> Option<Vec<TypeExpr>> {
+        let (pos, errors, recovering) = (self.pos, self.diags.list.len(), self.recovering);
+        let attempt = (|| -> PResult<Vec<TypeExpr>> {
+            self.expect(Tok::LBracket)?;
+            let mut args = vec![self.type_expr()?];
+            while self.eat(&Tok::Comma) && !self.at(&Tok::RBracket) {
+                args.push(self.type_expr()?);
+            }
+            self.expect(Tok::RBracket)?;
+            if !self.at(&Tok::LParen) {
+                return Err(());
+            }
+            Ok(args)
+        })();
+        if attempt.is_err() {
+            self.pos = pos;
+            self.diags.list.truncate(errors);
+            self.recovering = recovering;
+        }
+        attempt.ok()
+    }
+
+    /// `base[index]` or `base[start:end:step]` (23.22).
+    fn index_or_slice(&mut self, base: Expr) -> PResult<Expr> {
+        self.bump();
+        let no_brace = std::mem::replace(&mut self.no_brace, false);
+        let result = self.index_or_slice_inner(base);
+        self.no_brace = no_brace;
+        result
+    }
+
+    fn index_or_slice_inner(&mut self, base: Expr) -> PResult<Expr> {
+        let start = if self.at(&Tok::Colon) { None } else { Some(Box::new(self.expression()?)) };
+        if !self.eat(&Tok::Colon) {
+            let Some(index) = start else { return self.expected("index") };
+            self.expect(Tok::RBracket)?;
+            let span = base.span.to(self.prev_span());
+            return Ok(Expr { kind: ExprKind::Index { base: Box::new(base), index }, span });
+        }
+        let end =
+            if matches!(self.tok(), Tok::Colon | Tok::RBracket) { None } else { Some(Box::new(self.expression()?)) };
+        // A second `:` requires the step (23.22).
+        let step = if self.eat(&Tok::Colon) { Some(Box::new(self.expression()?)) } else { None };
+        self.expect(Tok::RBracket)?;
+        let span = base.span.to(self.prev_span());
+        Ok(Expr { kind: ExprKind::Slice { base: Box::new(base), start, end, step }, span })
     }
 
     fn call_arguments(&mut self) -> PResult<Vec<Arg>> {
@@ -1028,10 +1101,7 @@ impl Parser<'_> {
                 ExprKind::Block(block)
             }
             Tok::Kw(Kw::If) => return self.if_expression(),
-            Tok::LBracket => {
-                self.diags.unsupported(start, "collection literals");
-                return Err(());
-            }
+            Tok::LBracket => return self.bracket_literal(),
             Tok::Kw(kw @ (Kw::Scope | Kw::Unsafe | Kw::SelfValue)) => {
                 let what = format!("`{}`", kw.as_str());
                 self.diags.unsupported(start, &what);
@@ -1040,6 +1110,33 @@ impl Parser<'_> {
             _ => return self.expected("expression"),
         };
         Ok(Expr { kind, span: start.to(self.prev_span()) })
+    }
+
+    /// `[]`, `[a, b]`; map literals use `:` (23.23).
+    fn bracket_literal(&mut self) -> PResult<Expr> {
+        let start = self.bump().span;
+        let no_brace = std::mem::replace(&mut self.no_brace, false);
+        let result = (|| -> PResult<Vec<Expr>> {
+            let mut items = Vec::new();
+            if self.at(&Tok::Colon) {
+                self.diags.unsupported(start, "map literals");
+                return Err(());
+            }
+            while !self.at(&Tok::RBracket) {
+                items.push(self.expression()?);
+                if self.at(&Tok::Colon) {
+                    self.diags.unsupported(start, "map literals");
+                    return Err(());
+                }
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
+            }
+            self.expect(Tok::RBracket)?;
+            Ok(items)
+        })();
+        self.no_brace = no_brace;
+        Ok(Expr { kind: ExprKind::Array(result?), span: start.to(self.prev_span()) })
     }
 
     fn paren(&mut self) -> PResult<Expr> {

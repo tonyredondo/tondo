@@ -39,10 +39,10 @@ pub enum Stmt {
     Let(LocalId, Expr),
     /// `let pattern = value` with an irrefutable pattern.
     Destructure(Pattern, Expr),
-    /// Assignment to a binding or to a field path inside it.
+    /// Assignment to a binding or to a path inside it.
     Assign {
         local: LocalId,
-        path: Vec<u32>,
+        path: Vec<PlaceStep>,
         op: Option<BinOp>,
         value: Expr,
         span: Span,
@@ -57,6 +57,12 @@ pub enum Stmt {
     /// `for {}` when `condition` is `None`, otherwise `for condition {}`.
     Loop {
         condition: Option<Expr>,
+        body: Block,
+    },
+    /// `for local in array`: iterates a snapshot of the array by value.
+    ForArray {
+        local: LocalId,
+        array: Expr,
         body: Block,
     },
     /// `for local in start..end` over an integer range.
@@ -98,6 +104,18 @@ pub enum ExprKind {
     /// in source order.
     Variant(u32, Vec<(u32, Expr)>),
     Match(Box<Expr>, Vec<Arm>),
+    /// `[a, b, c]`
+    Array(Vec<Expr>),
+    /// `array[index]`
+    Index(Box<Expr>, Box<Expr>),
+    /// `array[start:end:step]`
+    Slice(Box<Expr>, [Option<Box<Expr>>; 3]),
+    /// An intrinsic array operation; the receiver comes first.
+    ArrayOp(ArrayOp, Vec<Expr>),
+    /// `array.push(value)` on a `var` place.
+    Push(Place, Box<Expr>),
+    /// `array.pop()` on a `var` place.
+    Pop(Place),
     /// `value?` on an option or result; the type is the payload's.
     Try(Box<Expr>),
     /// A numeric conversion (18.6). Its type is the target, or
@@ -119,6 +137,33 @@ pub enum ExprKind {
         source: String,
     },
     Error,
+}
+
+/// A binding and a path of fields and indices inside it.
+pub struct Place {
+    pub local: LocalId,
+    pub path: Vec<PlaceStep>,
+}
+
+pub enum PlaceStep {
+    Field(u32),
+    Index(Expr),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ArrayOp {
+    /// `Array.new[T]()`
+    New,
+    /// `Array.withCapacity[T](capacity)`
+    WithCapacity,
+    Length,
+    Get,
+    /// The checked `slice(start, end)` method.
+    SliceChecked,
+    Concat,
+    Repeat,
+    /// `value in array`; the value comes first.
+    Contains,
 }
 
 pub struct Arm {

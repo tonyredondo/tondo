@@ -15,10 +15,10 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{Callee, Program, StdFn};
+use crate::hir::{ArrayOp, Callee, Program, StdFn};
 use crate::mir::{Body, Const, Local, Operand, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, Ty, TyKind, Types};
+use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, SOME, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, UserFuncName, types,
@@ -33,6 +33,8 @@ const POINTER: ir::Type = types::I64;
 const IMMORTAL: u64 = u64::MAX;
 /// Size of a box header in the runtime (`BoxHeader`).
 const BOX_HEADER: i64 = 16;
+/// Size of an array header in the runtime (`ArrayHeader`); `len` is at 8.
+const ARRAY_HEADER: i64 = 24;
 
 /// Runtime entry points (see `tondo-runtime`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -58,6 +60,19 @@ enum Rt {
     BoxRelease,
     BoxUnique,
     ReportError,
+    ArrayNew,
+    ArrayRetain,
+    ArrayRelease,
+    ArrayUnique,
+    ArrayPush,
+    ArrayPop,
+    ArraySlice,
+    ArraySliceChecked,
+    ArrayConcat,
+    ArrayRepeat,
+    ArrayEq,
+    ArrayContains,
+    SbArray,
 }
 
 impl Rt {
@@ -85,6 +100,19 @@ impl Rt {
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
             Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
+            Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
+            Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
+            Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
+            Rt::ArrayUnique => ("tondo_rt_array_unique", &[I64, I64, I64, I64, I64], &[]),
+            Rt::ArrayPush => ("tondo_rt_array_push", &[I64, I64, I64, I64, I64], &[]),
+            Rt::ArrayPop => ("tondo_rt_array_pop", &[I64, I64, I64, I64, I64], &[I8]),
+            Rt::ArraySlice => ("tondo_rt_array_slice", &[I64, I64, I64, I64, I8, I64, I8, I64, I64], &[I64]),
+            Rt::ArraySliceChecked => ("tondo_rt_array_slice_checked", &[I64, I64, I64, I64, I64], &[I64]),
+            Rt::ArrayConcat => ("tondo_rt_array_concat", &[I64, I64, I64, I64, I64], &[I64]),
+            Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64], &[I64]),
+            Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
+            Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
+            Rt::SbArray => ("tondo_rt_sb_array", &[I64, I64, I64, I64], &[]),
         }
     }
 }
@@ -143,6 +171,8 @@ enum Glue {
     Retain,
     Release,
     Equal,
+    /// Appends the `Display` text of a value to a string builder.
+    Display,
 }
 
 fn int_type(int: IntTy) -> ir::Type {
@@ -239,7 +269,7 @@ impl Codegen<'_> {
             TyKind::Float(FloatTy::F64) => Class::Scalar(types::F64),
             TyKind::Char => Class::Scalar(types::I32),
             TyKind::Byte => Class::Scalar(types::I8),
-            TyKind::String => Class::Scalar(POINTER),
+            TyKind::String | TyKind::Array(_) => Class::Scalar(POINTER),
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -349,6 +379,9 @@ impl Codegen<'_> {
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
         let mut signature = self.module.make_signature();
         signature.params.push(AbiParam::new(POINTER));
+        if kind == Glue::Display {
+            signature.params.push(AbiParam::new(POINTER));
+        }
         if kind == Glue::Equal {
             signature.params.push(AbiParam::new(POINTER));
             signature.returns.push(AbiParam::new(types::I8));
@@ -516,6 +549,61 @@ impl Emit<'_, '_> {
         self.fb.ins().func_addr(POINTER, callee)
     }
 
+    /// A glue function's address, or null when a retain or release of `ty`
+    /// has nothing to do.
+    fn glue_or_null(&mut self, kind: Glue, ty: Ty) -> ir::Value {
+        if matches!(kind, Glue::Retain | Glue::Release) && !self.cg.types.needs_drop(ty) {
+            return self.fb.ins().iconst(POINTER, 0);
+        }
+        self.glue_address(kind, ty)
+    }
+
+    fn element_size(&mut self, element: Ty) -> ir::Value {
+        let size = self.cg.layout(element).size;
+        self.fb.ins().iconst(POINTER, size as i64)
+    }
+
+    /// Appends the `Display` text of `value` to `builder`.
+    fn append_display(&mut self, builder: ir::Value, ty: Ty, value: Val) {
+        let Val::Scalar(value) = value else { unreachable!("no Display for aggregates") };
+        match *self.cg.types.kind(self.cg.types.repr(ty)) {
+            TyKind::String => {
+                self.call_rt(Rt::SbStr, &[builder, value]);
+            }
+            TyKind::Bool => {
+                self.call_rt(Rt::SbBool, &[builder, value]);
+            }
+            TyKind::Float(FloatTy::F64) => {
+                self.call_rt(Rt::SbF64, &[builder, value]);
+            }
+            TyKind::Float(FloatTy::F32) => {
+                self.call_rt(Rt::SbF32, &[builder, value]);
+            }
+            TyKind::Char => {
+                self.call_rt(Rt::SbChar, &[builder, value]);
+            }
+            TyKind::Byte => {
+                let wide = self.fb.ins().uextend(types::I64, value);
+                self.call_rt(Rt::SbU64, &[builder, wide]);
+            }
+            TyKind::Int(int) => {
+                let wide = match (int.bits(), int.signed()) {
+                    (64, _) => value,
+                    (_, true) => self.fb.ins().sextend(types::I64, value),
+                    (_, false) => self.fb.ins().uextend(types::I64, value),
+                };
+                let rt = if int.signed() { Rt::SbI64 } else { Rt::SbU64 };
+                self.call_rt(rt, &[builder, wide]);
+            }
+            TyKind::Array(element) => {
+                let size = self.element_size(element);
+                let display = self.glue_address(Glue::Display, element);
+                self.call_rt(Rt::SbArray, &[builder, value, size, display]);
+            }
+            ref other => unreachable!("no Display for {other:?}"),
+        }
+    }
+
     fn string_ptr(&mut self, text: &str) -> ir::Value {
         let id = self.cg.string(text);
         let global = self.cg.module.declare_data_in_func(id, self.fb.func);
@@ -639,9 +727,19 @@ impl Emit<'_, '_> {
             return;
         }
         match (value, self.cg.layout(ty).shape) {
-            (Val::Scalar(pointer), _) => {
-                self.call_rt(if release { Rt::StrRelease } else { Rt::StrRetain }, &[pointer]);
-            }
+            (Val::Scalar(pointer), _) => match *self.cg.types.kind(self.cg.types.repr(ty)) {
+                TyKind::Array(element) if release => {
+                    let size = self.element_size(element);
+                    let glue = self.glue_or_null(Glue::Release, element);
+                    self.call_rt(Rt::ArrayRelease, &[pointer, size, glue]);
+                }
+                TyKind::Array(_) => {
+                    self.call_rt(Rt::ArrayRetain, &[pointer]);
+                }
+                _ => {
+                    self.call_rt(if release { Rt::StrRelease } else { Rt::StrRetain }, &[pointer]);
+                }
+            },
             (Val::Memory(base), Shape::Struct(_)) => {
                 let count = self.cg.types.components(ty).unwrap().len() as u32;
                 for index in 0..count {
@@ -676,8 +774,13 @@ impl Emit<'_, '_> {
     /// Structural equality (8.11): 1 when equal, 0 otherwise.
     fn equal(&mut self, ty: Ty, a: Val, b: Val) -> ir::Value {
         match (a, b) {
-            (Val::Scalar(a), Val::Scalar(b)) => match self.cg.types.kind(self.cg.types.repr(ty)) {
+            (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types.kind(self.cg.types.repr(ty)) {
                 TyKind::String => self.call_rt(Rt::StrEq, &[a, b]).unwrap(),
+                TyKind::Array(element) => {
+                    let size = self.element_size(element);
+                    let eq = self.glue_address(Glue::Equal, element);
+                    self.call_rt(Rt::ArrayEq, &[a, b, size, eq]).unwrap()
+                }
                 // IEEE equality: NaN equals nothing (8.11).
                 TyKind::Float(_) => self.fb.ins().fcmp(FloatCC::Equal, a, b),
                 _ => self.fb.ins().icmp(IntCC::Equal, a, b),
@@ -725,6 +828,11 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
         _ => None,
     };
     match (kind, enum_shape) {
+        (Glue::Display, _) => {
+            let value = e.value_at(params[1], ty);
+            e.append_display(params[0], ty, value);
+            e.fb.ins().return_(&[]);
+        }
         (Glue::Retain | Glue::Release, None) => {
             let value = e.value_at(params[0], ty);
             e.refcount(ty, value, kind == Glue::Release);
@@ -879,24 +987,118 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// The address of a place inside an aggregate local. When `write` is
     /// set, every box on the way is made unique first (copy-on-write).
     fn pointer_to(&mut self, place: &Place, write: bool) -> ir::Value {
+        // Where the value reached so far lives: in memory, or (only for an
+        // array held by the root local) in a variable.
         let mut base = match self.storage[place.local.0 as usize] {
-            Storage::Slot(slot) => self.e.fb.ins().stack_addr(POINTER, slot, 0),
-            Storage::Pointer(var) => self.e.fb.use_var(var),
-            Storage::Var(_) | Storage::Zero => unreachable!("address of a non-aggregate"),
+            Storage::Slot(slot) => Some(self.e.fb.ins().stack_addr(POINTER, slot, 0)),
+            Storage::Pointer(var) => Some(self.e.fb.use_var(var)),
+            Storage::Var(_) => None,
+            Storage::Zero => unreachable!("address of a zero-sized value"),
         };
         let mut ty = self.body.locals[place.local.0 as usize];
         for &proj in &place.path {
+            if let Proj::Index(index, span) = proj {
+                let element = project(self.e.cg.types, ty, proj);
+                let array = match base {
+                    Some(address) => {
+                        if write {
+                            self.make_unique(address, element);
+                        }
+                        self.e.fb.ins().load(POINTER, flags(), address, 0)
+                    }
+                    None => {
+                        let Storage::Var(var) = self.storage[place.local.0 as usize] else { unreachable!() };
+                        if write {
+                            let slot = self.spill(var);
+                            self.make_unique(slot, element);
+                            self.unspill(var, slot);
+                        }
+                        self.e.fb.use_var(var)
+                    }
+                };
+                base = Some(self.element_address(array, index, element, span));
+                ty = element;
+                continue;
+            }
+            let address = base.expect("fields live in memory");
             let slot = self.e.cg.slot(ty, proj);
             if slot.boxed && write {
-                let cell = self.e.offset(base, slot.offset);
+                let cell = self.e.offset(address, slot.offset);
                 let retain = self.e.glue_address(Glue::Retain, slot.ty);
                 let release = self.e.glue_address(Glue::Release, slot.ty);
                 self.e.call_rt(Rt::BoxUnique, &[cell, retain, release]);
             }
-            base = self.e.component_address(base, &slot);
+            base = Some(self.e.component_address(address, &slot));
             ty = slot.ty;
         }
-        base
+        base.expect("address of a scalar local")
+    }
+
+    /// The address of `array[index]`, panicking with `P0001` out of bounds.
+    /// A negative index counts from the end (10.3).
+    fn element_address(&mut self, array: ir::Value, index: Local, element: Ty, span: Span) -> ir::Value {
+        let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
+        let raw = self.scalar(&Operand::local(index));
+        let wrapped = self.e.fb.ins().iadd(raw, length);
+        let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, raw, 0);
+        let position = self.e.fb.ins().select(negative, wrapped, raw);
+        let outside = self.e.fb.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, position, length);
+        self.panic_if(outside, 1, span);
+        let size = self.e.cg.layout(element).size as i64;
+        let offset = self.e.fb.ins().imul_imm_s(position, size);
+        let address = self.e.fb.ins().iadd(array, offset);
+        self.e.fb.ins().iadd_imm_s(address, ARRAY_HEADER)
+    }
+
+    /// Makes the array stored at `slot` unique before a write (copy-on-write).
+    fn make_unique(&mut self, slot: ir::Value, element: Ty) {
+        let size = self.e.element_size(element);
+        let extra = self.e.fb.ins().iconst(POINTER, 0);
+        let retain = self.e.glue_or_null(Glue::Retain, element);
+        let release = self.e.glue_or_null(Glue::Release, element);
+        self.e.call_rt(Rt::ArrayUnique, &[slot, size, extra, retain, release]);
+    }
+
+    /// Stores a variable into a fresh stack slot so the runtime can update it.
+    fn spill(&mut self, var: Variable) -> ir::Value {
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        let value = self.e.fb.use_var(var);
+        self.e.fb.ins().store(flags(), value, address, 0);
+        address
+    }
+
+    fn unspill(&mut self, var: Variable, address: ir::Value) {
+        let value = self.e.fb.ins().load(POINTER, flags(), address, 0);
+        self.e.fb.def_var(var, value);
+    }
+
+    /// The address of the storage holding the array at `place`, spilled to
+    /// the stack when it lives in a variable; `unspill` it after the call.
+    fn array_slot(&mut self, place: &Place) -> (ir::Value, Option<Variable>) {
+        if let Storage::Var(var) = self.storage[place.local.0 as usize]
+            && place.path.is_empty()
+        {
+            return (self.spill(var), Some(var));
+        }
+        (self.pointer_to(place, true), None)
+    }
+
+    /// The address of a value, spilling a scalar to the stack.
+    fn in_memory(&mut self, ty: Ty, value: Val) -> ir::Value {
+        match value {
+            Val::Memory(address) => address,
+            Val::Scalar(value) => {
+                let size = self.e.cg.layout(ty).size.max(1);
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3);
+                let slot = self.e.fb.create_sized_stack_slot(data);
+                let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+                self.e.fb.ins().store(flags(), value, address, 0);
+                address
+            }
+            Val::Zero => self.e.fb.ins().iconst(POINTER, 0),
+        }
     }
 
     fn read(&mut self, place: &Place) -> Val {
@@ -1043,6 +1245,89 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     _ => Val::Scalar(self.convert_total(value, from, ty)),
                 }
             }
+            Rvalue::Array(values, retain) => {
+                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) else { unreachable!() };
+                let size = self.e.cg.layout(element).size as i64;
+                let size_value = self.e.fb.ins().iconst(POINTER, size);
+                let count = self.e.fb.ins().iconst(POINTER, values.len() as i64);
+                let array = self.e.call_rt(Rt::ArrayNew, &[size_value, count]).unwrap();
+                for (index, (value, retain)) in values.iter().zip(retain).enumerate() {
+                    let address = self.e.fb.ins().iadd_imm_s(array, ARRAY_HEADER + index as i64 * size);
+                    let value = self.operand(value);
+                    self.e.store_val(address, element, value);
+                    if *retain {
+                        let stored = self.e.value_at(address, element);
+                        self.e.refcount(element, stored, false);
+                    }
+                }
+                Val::Scalar(array)
+            }
+            Rvalue::ArrayOp(op, operands, span) => {
+                if let Some(value) = self.array_op(*op, operands, place, ty, *span) {
+                    value
+                } else {
+                    return;
+                }
+            }
+            Rvalue::Slice(base, parts, span) => {
+                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) else { unreachable!() };
+                let array = self.scalar(base);
+                let size = self.e.element_size(element);
+                let retain = self.e.glue_or_null(Glue::Retain, element);
+                let bound = |this: &mut Self, part: &Option<Operand>, default: i64| match part {
+                    Some(part) => (this.scalar(part), this.e.fb.ins().iconst(types::I8, 1)),
+                    None => (this.e.fb.ins().iconst(types::I64, default), this.e.fb.ins().iconst(types::I8, 0)),
+                };
+                let (start, has_start) = bound(self, &parts[0], 0);
+                let (end, has_end) = bound(self, &parts[1], 0);
+                let (step, _) = bound(self, &parts[2], 1);
+                let location = self.location(*span);
+                let args = [array, size, retain, start, has_start, end, has_end, step, location];
+                Val::Scalar(self.e.call_rt(Rt::ArraySlice, &args).unwrap())
+            }
+            Rvalue::Push(array_place, value, retain) => {
+                let array_ty = self.place_ty(array_place);
+                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(array_ty)) else {
+                    unreachable!()
+                };
+                let value = self.operand(value);
+                if *retain {
+                    self.e.refcount(element, value, false);
+                }
+                let source = self.in_memory(element, value);
+                let (slot, spilled) = self.array_slot(array_place);
+                let size = self.e.element_size(element);
+                let retain_glue = self.e.glue_or_null(Glue::Retain, element);
+                let release_glue = self.e.glue_or_null(Glue::Release, element);
+                self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain_glue, release_glue]);
+                if let Some(var) = spilled {
+                    self.unspill(var, slot);
+                }
+                // `push` cannot fail here (allocation failure aborts): `ok(())`.
+                let base = self.pointer_to(place, true);
+                let ok = self.e.fb.ins().iconst(types::I8, OK as i64);
+                self.e.fb.ins().store(flags(), ok, base, 0);
+                return;
+            }
+            Rvalue::Pop(array_place) => {
+                let array_ty = self.place_ty(array_place);
+                let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(array_ty)) else {
+                    unreachable!()
+                };
+                let base = self.pointer_to(place, true);
+                let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+                let out = self.e.offset(base, payload.offset);
+                let (slot, spilled) = self.array_slot(array_place);
+                let size = self.e.element_size(element);
+                let retain_glue = self.e.glue_or_null(Glue::Retain, element);
+                let release_glue = self.e.glue_or_null(Glue::Release, element);
+                let found = self.e.call_rt(Rt::ArrayPop, &[slot, out, size, retain_glue, release_glue]).unwrap();
+                if let Some(var) = spilled {
+                    self.unspill(var, slot);
+                }
+                self.e.fb.ins().store(flags(), found, base, 0);
+                return;
+            }
             Rvalue::Discriminant(source) => {
                 let source_ty = self.place_ty(source);
                 let value = self.read(source);
@@ -1058,6 +1343,109 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Concat(pieces) => Val::Scalar(self.concat(pieces)),
         };
         self.write(place, value);
+    }
+
+    /// An intrinsic array operation. Returns the value for scalar results;
+    /// results in memory are written to `place` directly.
+    fn array_op(&mut self, op: ArrayOp, operands: &[Operand], place: &Place, ty: Ty, span: Span) -> Option<Val> {
+        let types = self.e.cg.types;
+        let element_of = |ty: Ty| match *types.kind(types.repr(ty)) {
+            TyKind::Array(element) => element,
+            _ => unreachable!("not an array"),
+        };
+        Some(match op {
+            ArrayOp::New => {
+                let size = self.e.element_size(element_of(ty));
+                let zero = self.e.fb.ins().iconst(POINTER, 0);
+                Val::Scalar(self.e.call_rt(Rt::ArrayNew, &[size, zero]).unwrap())
+            }
+            ArrayOp::WithCapacity => {
+                let TyKind::Result(array_ty, _) = *types.kind(ty) else { unreachable!() };
+                let capacity = self.scalar(&operands[0]);
+                let size = self.e.element_size(element_of(array_ty));
+                let zero = self.e.fb.ins().iconst(POINTER, 0);
+                // The capacity is a hint; storage grows on demand.
+                let array = self.e.call_rt(Rt::ArrayNew, &[size, zero]).unwrap();
+                let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, capacity, 0);
+                let invalid = self.e.fb.ins().iconst(types::I8, 0);
+                let fine = self.e.fb.ins().iconst(types::I8, -1);
+                let error = self.e.fb.ins().select(negative, invalid, fine);
+                self.write_checked(place, ty, array, error);
+                // On failure the unused array is released.
+                let (release, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+                self.e.fb.ins().brif(negative, release, &[], done, &[]);
+                self.e.fb.switch_to_block(release);
+                self.e.refcount(array_ty, Val::Scalar(array), true);
+                self.e.fb.ins().jump(done, &[]);
+                self.e.fb.switch_to_block(done);
+                return None;
+            }
+            ArrayOp::Length => {
+                let array = self.scalar(&operands[0]);
+                Val::Scalar(self.e.fb.ins().load(types::I64, flags(), array, 8))
+            }
+            ArrayOp::Get => {
+                let array_ty = self.operand_ty(&operands[0]);
+                let element = element_of(array_ty);
+                let array = self.scalar(&operands[0]);
+                let raw = self.scalar(&operands[1]);
+                let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
+                let wrapped = self.e.fb.ins().iadd(raw, length);
+                let negative = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, raw, 0);
+                let position = self.e.fb.ins().select(negative, wrapped, raw);
+                let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, position, length);
+                let base = self.pointer_to(place, true);
+                self.e.fb.ins().store(flags(), inside, base, 0);
+                let (found, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+                self.e.fb.ins().brif(inside, found, &[], done, &[]);
+                self.e.fb.switch_to_block(found);
+                let size = self.e.cg.layout(element).size as i64;
+                let offset = self.e.fb.ins().imul_imm_s(position, size);
+                let address = self.e.fb.ins().iadd(array, offset);
+                let address = self.e.fb.ins().iadd_imm_s(address, ARRAY_HEADER);
+                let value = self.e.value_at(address, element);
+                let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+                self.e.init_component(base, &payload, value);
+                // The option owns a copy of the element.
+                self.e.refcount(element, value, false);
+                self.e.fb.ins().jump(done, &[]);
+                self.e.fb.switch_to_block(done);
+                return None;
+            }
+            ArrayOp::SliceChecked => {
+                let array_ty = self.operand_ty(&operands[0]);
+                let element = element_of(array_ty);
+                let array = self.scalar(&operands[0]);
+                let (start, end) = (self.scalar(&operands[1]), self.scalar(&operands[2]));
+                let size = self.e.element_size(element);
+                let retain = self.e.glue_or_null(Glue::Retain, element);
+                let slice = self.e.call_rt(Rt::ArraySliceChecked, &[array, size, retain, start, end]).unwrap();
+                let failed = self.e.fb.ins().icmp_imm_s(IntCC::Equal, slice, 0);
+                let invalid_index = self.e.fb.ins().iconst(types::I8, 1);
+                let fine = self.e.fb.ins().iconst(types::I8, -1);
+                let error = self.e.fb.ins().select(failed, invalid_index, fine);
+                self.write_checked(place, ty, slice, error);
+                return None;
+            }
+            ArrayOp::Concat | ArrayOp::Repeat => {
+                let element = element_of(ty);
+                let (a, b) = (self.scalar(&operands[0]), self.scalar(&operands[1]));
+                let size = self.e.element_size(element);
+                let retain = self.e.glue_or_null(Glue::Retain, element);
+                let location = self.location(span);
+                let rt = if op == ArrayOp::Concat { Rt::ArrayConcat } else { Rt::ArrayRepeat };
+                Val::Scalar(self.e.call_rt(rt, &[a, b, size, retain, location]).unwrap())
+            }
+            ArrayOp::Contains => {
+                let element = self.operand_ty(&operands[0]);
+                let value = self.operand(&operands[0]);
+                let address = self.in_memory(element, value);
+                let array = self.scalar(&operands[1]);
+                let size = self.e.element_size(element);
+                let eq = self.e.glue_address(Glue::Equal, element);
+                Val::Scalar(self.e.call_rt(Rt::ArrayContains, &[array, address, size, eq]).unwrap())
+            }
+        })
     }
 
     /// Builds the `!ConsoleError` result of a console operation from the
@@ -1322,38 +1710,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.call_rt(Rt::SbStr, &[builder, text]);
                 }
                 Piece::Value(operand, ty) => {
-                    let value = self.scalar(operand);
-                    match self.e.cg.types.kind(self.e.cg.types.repr(*ty)) {
-                        TyKind::String => {
-                            self.e.call_rt(Rt::SbStr, &[builder, value]);
-                        }
-                        TyKind::Bool => {
-                            self.e.call_rt(Rt::SbBool, &[builder, value]);
-                        }
-                        TyKind::Float(FloatTy::F64) => {
-                            self.e.call_rt(Rt::SbF64, &[builder, value]);
-                        }
-                        TyKind::Float(FloatTy::F32) => {
-                            self.e.call_rt(Rt::SbF32, &[builder, value]);
-                        }
-                        TyKind::Char => {
-                            self.e.call_rt(Rt::SbChar, &[builder, value]);
-                        }
-                        TyKind::Byte => {
-                            let wide = self.e.fb.ins().uextend(types::I64, value);
-                            self.e.call_rt(Rt::SbU64, &[builder, wide]);
-                        }
-                        TyKind::Int(int) => {
-                            let wide = match (int.bits(), int.signed()) {
-                                (64, _) => value,
-                                (_, true) => self.e.fb.ins().sextend(types::I64, value),
-                                (_, false) => self.e.fb.ins().uextend(types::I64, value),
-                            };
-                            let rt = if int.signed() { Rt::SbI64 } else { Rt::SbU64 };
-                            self.e.call_rt(rt, &[builder, wide]);
-                        }
-                        other => unreachable!("no Display for {other:?}"),
-                    }
+                    let value = self.operand(operand);
+                    self.e.append_display(builder, *ty, value);
                 }
             }
         }

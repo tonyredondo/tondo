@@ -122,7 +122,7 @@ impl Builder<'_> {
     }
 
     fn assign(&mut self, place: Place, rvalue: Rvalue, span: Span) {
-        self.push(Statement::Assign(place, rvalue, span));
+        self.push(Statement::Assign(place, Box::new(rvalue), span));
     }
 
     fn own(&mut self, local: Local) {
@@ -133,7 +133,8 @@ impl Builder<'_> {
 
     /// Evaluates `rvalue` into a new temporary; owned results join the frame.
     fn temp(&mut self, ty: Ty, rvalue: Rvalue, span: Span) -> Operand {
-        let owned = matches!(rvalue, Rvalue::Call(..) | Rvalue::Concat(_));
+        // Everything but a copy of a place produces a new value.
+        let owned = !matches!(rvalue, Rvalue::Use(_));
         let local = self.new_local(ty);
         self.assign(Place::local(local), rvalue, span);
         if owned {
@@ -447,7 +448,8 @@ impl Builder<'_> {
                 self.bind_pattern(pattern, &place);
             }
             hir::Stmt::Assign { local, path, op, value, span } => {
-                let place = Place { local: self.bind(*local), path: path.iter().map(|&i| Proj::Field(i)).collect() };
+                // The location (and its indices) is resolved before the value (13.8).
+                let place = self.place(*local, path);
                 let value = self.expr(value);
                 let ty = self.place_ty(&place);
                 match op {
@@ -498,6 +500,50 @@ impl Builder<'_> {
                 self.loop_body(body, exit, head);
                 self.switch_to(exit);
             }
+            hir::Stmt::ForArray { local, array, body } => {
+                // Iterate a snapshot: the loop sees the array as it was when
+                // the loop started, even if the body changes the binding.
+                let value = self.expr(array);
+                let snapshot = self.new_local(array.ty);
+                self.store(Place::local(snapshot), value, array.span);
+                self.frames.last_mut().unwrap().push(snapshot);
+                let length = Rvalue::ArrayOp(hir::ArrayOp::Length, vec![Operand::local(snapshot)], array.span);
+                let length = self.temp(Ty::INT, length, array.span);
+                let cursor = self.new_local(Ty::INT);
+                let zero = Rvalue::Use(Operand::Const(Const::Int(0, Ty::INT)));
+                self.assign(Place::local(cursor), zero, array.span);
+                let (head, body_block, step, exit) =
+                    (self.new_block(), self.new_block(), self.new_block(), self.new_block());
+                self.goto(head);
+                self.switch_to(head);
+                let more = Rvalue::Binary(BinOp::Lt, Operand::local(cursor), length);
+                let more = self.temp(Ty::BOOL, more, array.span);
+                self.terminate(Terminator::Branch(more, body_block, exit));
+                self.switch_to(body_block);
+                self.loops.push(LoopCx {
+                    break_to: exit,
+                    continue_to: step,
+                    scope_depth: self.scopes.len(),
+                    frame_depth: self.frames.len(),
+                });
+                // The element binding belongs to one iteration.
+                self.scopes.push(Vec::new());
+                let binding = self.bind(*local);
+                let element = Place::local(snapshot).index(cursor, array.span);
+                self.store(Place::local(binding), Operand::Copy(element), array.span);
+                if self.needs_drop(self.locals[binding.0 as usize]) {
+                    self.scopes.last_mut().unwrap().push(binding);
+                }
+                self.in_frame(|b| b.block(body));
+                let scope = self.scopes.pop().unwrap();
+                self.release_all(scope);
+                self.loops.pop();
+                self.goto(step);
+                self.switch_to(step);
+                self.assign(Place::local(cursor), Rvalue::Increment(Operand::local(cursor)), array.span);
+                self.goto(head);
+                self.switch_to(exit);
+            }
             hir::Stmt::ForRange { local, start, end, inclusive, body } => {
                 let ty = start.ty;
                 let start = self.expr(start);
@@ -541,6 +587,32 @@ impl Builder<'_> {
         }
     }
 
+    /// A local holding the value of an index expression.
+    fn index_local(&mut self, index: &hir::Expr) -> Local {
+        match self.expr(index) {
+            Operand::Copy(Place { local, path }) if path.is_empty() => local,
+            value => {
+                let local = self.new_local(Ty::INT);
+                self.assign(Place::local(local), Rvalue::Use(value), index.span);
+                local
+            }
+        }
+    }
+
+    fn place(&mut self, local: LocalId, path: &[hir::PlaceStep]) -> Place {
+        let mut place = Place::local(self.bind(local));
+        for step in path {
+            place = match step {
+                hir::PlaceStep::Field(index) => place.field(*index),
+                hir::PlaceStep::Index(index) => {
+                    let local = self.index_local(index);
+                    place.index(local, index.span)
+                }
+            };
+        }
+        place
+    }
+
     fn loop_body(&mut self, body: &hir::Block, break_to: BlockId, continue_to: BlockId) {
         self.loops.push(LoopCx {
             break_to,
@@ -548,7 +620,9 @@ impl Builder<'_> {
             scope_depth: self.scopes.len(),
             frame_depth: self.frames.len(),
         });
-        self.block(body);
+        // Each iteration owns its temporaries, including those of the
+        // body's final expression.
+        self.in_frame(|b| b.block(body));
         self.loops.pop();
         self.goto(continue_to);
     }
@@ -606,6 +680,46 @@ impl Builder<'_> {
                 self.variant(e.ty, *variant, components, e.span)
             }
             hir::ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms),
+            hir::ExprKind::Array(items) => {
+                let TyKind::Array(element) = *self.types.kind(e.ty) else { unreachable!() };
+                let values: Vec<Operand> = items.iter().map(|item| self.expr(item)).collect();
+                let counted = self.needs_drop(element);
+                let retain = values
+                    .iter()
+                    .map(|v| counted && matches!(v, Operand::Copy(_)) && !self.take_temporary(v))
+                    .collect();
+                self.temp(e.ty, Rvalue::Array(values, retain), e.span)
+            }
+            hir::ExprKind::Index(base, index) => {
+                let array_ty = base.ty;
+                let base = self.expr(base);
+                let base = self.place_of(base, array_ty);
+                let index = self.index_local(index);
+                Operand::Copy(base.index(index, e.span))
+            }
+            hir::ExprKind::Slice(base, parts) => {
+                let base = self.expr(base);
+                let parts = parts.each_ref().map(|part| part.as_ref().map(|p| self.expr(p)));
+                self.temp(e.ty, Rvalue::Slice(base, parts, e.span), e.span)
+            }
+            hir::ExprKind::ArrayOp(op, operands) => {
+                let operands = operands.iter().map(|o| self.expr(o)).collect();
+                self.temp(e.ty, Rvalue::ArrayOp(*op, operands, e.span), e.span)
+            }
+            hir::ExprKind::Push(place, value) => {
+                let place = self.place(place.local, &place.path);
+                let value = self.expr(value);
+                let TyKind::Array(element) = *self.types.kind(self.types.repr(self.place_ty(&place))) else {
+                    unreachable!()
+                };
+                let copied = matches!(value, Operand::Copy(_));
+                let retain = self.needs_drop(element) && copied && !self.take_temporary(&value);
+                self.temp(e.ty, Rvalue::Push(place, value, retain), e.span)
+            }
+            hir::ExprKind::Pop(place) => {
+                let place = self.place(place.local, &place.path);
+                self.temp(e.ty, Rvalue::Pop(place), e.span)
+            }
             hir::ExprKind::Try(inner) => {
                 let value = self.expr(inner);
                 let place = self.place_of(value, inner.ty);

@@ -1,0 +1,6 @@
+fn main() {
+    let values = [1]
+    let n = values.size()
+}
+
+// expect-error: E1001

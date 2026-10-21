@@ -93,6 +93,8 @@ pub enum TyKind {
     Option(Ty),
     /// `T ! E`: variants `ok(T)` (0) and `err(E)` (1).
     Result(Ty, Ty),
+    /// A reference-counted, copy-on-write sequence (10.2).
+    Array(Ty),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -328,7 +330,7 @@ impl Types {
             return known;
         }
         let repr = self.repr(ty);
-        let result = repr == Ty::STRING || {
+        let result = repr == Ty::STRING || matches!(self.kind(repr), TyKind::Array(_)) || {
             let parts = match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items,
                 (None, Some(variants)) => variants.concat(),
@@ -364,6 +366,7 @@ impl Types {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
+            TyKind::Array(element) => self.equatable_in(*element, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.equatable_in(t, visiting)),
@@ -381,6 +384,7 @@ impl Types {
             TyKind::Tuple(items) => items.iter().any(|&t| self.has_error(t)),
             TyKind::Option(inner) => self.has_error(*inner),
             TyKind::Result(ok, err) => self.has_error(*ok) || self.has_error(*err),
+            TyKind::Array(element) => self.has_error(*element),
             _ => false,
         }
     }
@@ -413,6 +417,7 @@ impl Types {
                 TyKind::Option(_) | TyKind::Result(..) => format!("({})?", self.display(*inner)),
                 _ => format!("{}?", self.display(*inner)),
             },
+            TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
             TyKind::Result(ok, err) if *ok == Ty::UNIT => format!("!{}", self.display(*err)),
             TyKind::Result(ok, err) => format!("{} ! {}", self.display(*ok), self.display(*err)),
         }
