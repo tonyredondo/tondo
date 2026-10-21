@@ -294,3 +294,12 @@ Imports of `std` modules are shared by the files of a program for now.
 `root:<file>` for a single file. `expected`, `actual`, `related` and `fixes`
 are `null` or empty until the checker records them as data; the messages
 already state the fix in words.
+
+## 2026-10-21 — The formatter prints the syntax tree back
+
+`tondo fmt` builds the document of 21.2 from the syntax tree rather than
+from a lossless tree: literals are copied from the source, the parser
+records which expressions were written in parentheses, and the lexer
+records comments, which return before or after the unit they touch.
+Ranges stay tight (`0..count`), as every example of the specification
+writes them, and a string of several lines stays on the line of its `=`.

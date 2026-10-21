@@ -10,6 +10,7 @@ usage:
   tondo run [<project>|<file.to>] [-- <argument>...]   compile and run a program
   tondo build [<project>|<file.to>] [--output <path>]  compile a native executable
   tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
+  tondo fmt [--check] <file.to>...                     format files canonically
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
   tondo version
 
@@ -29,6 +30,7 @@ fn main() -> ExitCode {
         "run" => run_command(&args[1..]),
         "build" => build_command(&args[1..]),
         "check" => check_command(&args[1..]),
+        "fmt" => fmt_command(&args[1..]),
         "version" | "--version" | "-V" => {
             println!("tondo {} (native, cranelift)", driver::VERSION);
             Ok(ExitCode::SUCCESS)
@@ -85,6 +87,39 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
     }
     Ok(if analyze(&path)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// Rewrites files in the canonical format (21), or with `--check` reports
+/// those that are not.
+fn fmt_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let check = args.iter().any(|a| a == "--check");
+    let files: Vec<&OsString> = args.iter().filter(|a| *a != "--check").collect();
+    if files.is_empty() {
+        return Err(format!("expected a source file\n{USAGE}"));
+    }
+    let mut status = ExitCode::SUCCESS;
+    for file in files {
+        let path = Path::new(file);
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let mut sources = tondo::source::SourceMap::default();
+        let index = sources.add(path, text.clone());
+        let mut diags = tondo::diag::Diagnostics::default();
+        let Some(formatted) = tondo::fmt::format(sources.file(index), &mut diags) else {
+            eprint!("{}", diags.render(&sources));
+            status = ExitCode::FAILURE;
+            continue;
+        };
+        if formatted == text {
+            continue;
+        }
+        if check {
+            eprintln!("{} is not formatted", path.display());
+            status = ExitCode::FAILURE;
+        } else {
+            std::fs::write(path, formatted).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        }
+    }
+    Ok(status)
 }
 
 fn build_command(args: &[OsString]) -> Result<ExitCode, String> {

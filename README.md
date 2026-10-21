@@ -29,7 +29,8 @@ toolchain (`cc`), which is used as the linker.
 cargo build --release
 target/release/tondo run program.to -- args      # compile (cached) and run
 target/release/tondo build program.to --output app
-target/release/tondo check program.to
+target/release/tondo check program.to            # --json for structured diagnostics
+target/release/tondo fmt program.to               # canonical format; --check to verify
 target/release/tondo script.to args              # for #!/usr/bin/env tondo
 ```
 

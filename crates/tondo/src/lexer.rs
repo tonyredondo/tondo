@@ -230,17 +230,31 @@ const FLOAT_SUFFIXES: [&str; 2] = ["f32", "f64"];
 
 /// Lexes a whole file, or the source range of an interpolated expression.
 pub fn lex(file: &SourceFile, range: Option<Span>, diags: &mut Diagnostics) -> Vec<Token> {
+    lex_with_comments(file, range, diags).0
+}
+
+/// The tokens and the spans of the comments, which the formatter keeps.
+pub fn lex_with_comments(file: &SourceFile, range: Option<Span>, diags: &mut Diagnostics) -> (Vec<Token>, Vec<Span>) {
     let (start, end) = match range {
         Some(span) => ((span.start - file.base) as usize, (span.end - file.base) as usize),
         None => (0, file.text.len()),
     };
-    let mut lexer =
-        Lexer { text: &file.text, base: file.base, pos: start, end, diags, raw: Vec::new(), delims: Vec::new() };
+    let mut lexer = Lexer {
+        text: &file.text,
+        base: file.base,
+        pos: start,
+        end,
+        diags,
+        raw: Vec::new(),
+        delims: Vec::new(),
+        comments: Vec::new(),
+    };
     if range.is_none() && file.text.starts_with("#!") {
         lexer.pos = file.text.find('\n').unwrap_or(file.text.len());
     }
     lexer.run();
-    significant_newlines(lexer.raw, file.base + end as u32)
+    let comments = lexer.comments;
+    (significant_newlines(lexer.raw, file.base + end as u32), comments)
 }
 
 enum Raw {
@@ -292,6 +306,7 @@ struct Lexer<'a> {
     diags: &'a mut Diagnostics,
     raw: Vec<Raw>,
     delims: Vec<Tok>,
+    comments: Vec<Span>,
 }
 
 impl Lexer<'_> {
@@ -351,6 +366,8 @@ impl Lexer<'_> {
                 }
                 '/' if self.rest().starts_with("//") => {
                     self.pos = self.rest().find('\n').map_or(self.end, |i| self.pos + i);
+                    let end = if self.text[..self.pos].ends_with('\r') { self.pos - 1 } else { self.pos };
+                    self.comments.push(self.span(start, end));
                 }
                 '/' if self.rest().starts_with("/*") => self.block_comment(),
                 '"' => self.string(false),
@@ -390,6 +407,7 @@ impl Lexer<'_> {
         if depth != 0 {
             self.error("E0002", start, start + 2, "unterminated block comment");
         }
+        self.comments.push(self.span(start, self.pos));
         if has_newline {
             self.newline(start);
         }

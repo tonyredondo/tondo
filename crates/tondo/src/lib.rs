@@ -6,6 +6,7 @@ pub mod codegen;
 pub mod diag;
 pub mod driver;
 pub mod exhaust;
+pub mod fmt;
 pub mod hir;
 pub mod lexer;
 pub mod lower;

@@ -6,9 +6,16 @@ use crate::lexer::{self, Kw, StrPart, Tok, Token};
 use crate::source::{SourceFile, Span};
 
 pub fn parse_file(file: &SourceFile, diags: &mut Diagnostics) -> Module {
+    parse_with_parens(file, diags).0
+}
+
+/// The module and the spans of the expressions written in parentheses,
+/// which the formatter keeps.
+pub fn parse_with_parens(file: &SourceFile, diags: &mut Diagnostics) -> (Module, Vec<Span>) {
     let tokens = lexer::lex(file, None, diags);
-    let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false };
-    parser.module()
+    let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, parens: Vec::new() };
+    let module = parser.module();
+    (module, parser.parens)
 }
 
 struct Parser<'a> {
@@ -20,6 +27,8 @@ struct Parser<'a> {
     recovering: bool,
     /// Inside an `if`/`for` header, where `{` starts the control block.
     no_brace: bool,
+    /// Expressions written in parentheses.
+    parens: Vec<Span>,
 }
 
 type PResult<T> = Result<T, ()>;
@@ -1550,7 +1559,9 @@ impl Parser<'_> {
                 self.diags.unsupported(start, "closures");
                 return Err(());
             }
-            return Ok(Expr { kind: first.kind, span: start.to(self.prev_span()) });
+            let span = start.to(self.prev_span());
+            self.parens.push(span);
+            return Ok(Expr { kind: first.kind, span });
         }
         let mut items = vec![first];
         while self.eat(&Tok::Comma) && !self.at(&Tok::RParen) {
@@ -1574,6 +1585,7 @@ impl Parser<'_> {
                         diags: &mut *self.diags,
                         recovering: false,
                         no_brace: false,
+                        parens: Vec::new(),
                     };
                     inner.skip_newlines();
                     let expr = inner.expression()?;
