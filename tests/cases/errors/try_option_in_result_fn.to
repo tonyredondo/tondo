@@ -1,0 +1,11 @@
+fn g(): Int? {
+    none
+}
+
+fn f(): Int ! String {
+    g()?
+}
+
+fn main() {}
+
+// expect-error: E1301

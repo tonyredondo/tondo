@@ -296,6 +296,14 @@ pub unsafe extern "C" fn tondo_rt_panic(code: u32, message: *const Str, location
     std::process::exit(PANIC_EXIT_CODE)
 }
 
+/// Reports the error a fallible `main` returned (spec 20.10).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_report_error(description: *const Str) {
+    flush_stdout();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(description) });
+    let _ = writeln!(std::io::stderr(), "error: {text}");
+}
+
 /// An internal invariant of the runtime or the generated code was broken.
 fn runtime_fault(message: &str) -> ! {
     flush_stdout();

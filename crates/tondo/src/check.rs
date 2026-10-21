@@ -8,7 +8,7 @@ use crate::diag::Diagnostics;
 use crate::hir::{self, Callee, FnId, LocalId, StdFn};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtId, AdtKind, Field, IntTy, Payload, StdType, Ty, TyKind, Types, Variant};
+use crate::types::{AdtId, AdtKind, ERR, Field, IntTy, NONE, OK, Payload, SOME, Ty, TyKind, Types, Variant};
 use std::collections::{HashMap, HashSet};
 
 pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics) -> Option<hir::Program> {
@@ -20,6 +20,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         type_names: HashMap::new(),
         aliases: Vec::new(),
         signatures: Vec::new(),
+        console_error: None,
     };
     checker.program(module)
 }
@@ -119,6 +120,8 @@ struct Checker<'a> {
     type_names: HashMap<String, TypeName>,
     aliases: Vec<AliasEntry>,
     signatures: Vec<Signature>,
+    /// `console.ConsoleError`, once `std.console` is imported.
+    console_error: Option<Ty>,
 }
 
 /// Per-function checking state.
@@ -128,6 +131,11 @@ struct FnCx {
     scopes: Vec<Vec<(String, LocalId)>>,
     /// Success type that `return` produces.
     result: Ty,
+    /// Error type of a fallible function (`T ! E`), or of a script whose
+    /// errors are still being inferred.
+    error: Option<Ty>,
+    /// A root script infers its error type from `?` and `fail` (20.3).
+    infer_error: bool,
     /// One entry per enclosing loop: whether a `break` targets it.
     loops: Vec<bool>,
     /// The current path has unconditionally left the enclosing block.
@@ -199,6 +207,17 @@ impl Checker<'_> {
         };
         let name = import.alias.as_ref().unwrap_or(import.path.last().unwrap());
         self.declare_module_name(name, ModuleName::Module(module));
+        if module == StdModule::Console && self.console_error.is_none() {
+            let unit = |name: &str| Variant { name: name.into(), payload: Payload::Unit };
+            let (io_id, io) = self.types.declare_adt("io.IoError".into());
+            let io_variants = ["Closed", "Cancelled", "InvalidData", "ResourceLimit", "Host"].map(unit).to_vec();
+            self.types.define_adt(io_id, AdtKind::Enum(io_variants));
+            let (id, ty) = self.types.declare_adt(format!("{}.ConsoleError", name.name));
+            let mut variants = ["Unavailable", "Closed", "Cancelled"].map(unit).to_vec();
+            variants.push(Variant { name: "Io".into(), payload: Payload::Tuple(vec![io]) });
+            self.types.define_adt(id, AdtKind::Enum(variants));
+            self.console_error = Some(ty);
+        }
     }
 
     fn declare_module_name(&mut self, name: &ast::Ident, value: ModuleName) {
@@ -376,9 +395,6 @@ impl Checker<'_> {
         }
         let params = f.params.iter().map(|p| self.resolve_type(&p.ty)).collect();
         let result = f.result.as_ref().map_or(Ty::UNIT, |t| self.resolve_type(t));
-        if matches!(self.types.kind(result), TyKind::Result(..)) {
-            self.diags.unsupported(f.result.as_ref().unwrap().span, "fallible functions");
-        }
         Signature { params, result }
     }
 
@@ -404,8 +420,16 @@ impl Checker<'_> {
         match &t.kind {
             ast::TypeKind::Path { segments, args } => {
                 if !args.is_empty() {
-                    self.diags.unsupported(t.span, "generic types");
-                    return Ty::ERROR;
+                    let args: Vec<Ty> = args.iter().map(|a| self.resolve_type(a)).collect();
+                    return match (segments[0].name.as_str(), args.as_slice()) {
+                        ("Option", [inner]) if segments.len() == 1 => self.types.intern(TyKind::Option(*inner)),
+                        ("Result", [ok, err]) if segments.len() == 1 => self.types.intern(TyKind::Result(*ok, *err)),
+                        ("Option" | "Result", _) if segments.len() == 1 => {
+                            self.diags.error("E1104", t.span, "wrong number of type arguments");
+                            Ty::ERROR
+                        }
+                        _ => self.unsupported_type(t.span, "generic types"),
+                    };
                 }
                 let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
                 match names.as_slice() {
@@ -424,7 +448,7 @@ impl Checker<'_> {
                     [module, "ConsoleError"]
                         if matches!(self.names.get(*module), Some(ModuleName::Module(StdModule::Console))) =>
                     {
-                        self.types.intern(TyKind::Std(StdType::ConsoleError))
+                        self.console_error.unwrap()
                     }
                     [single] if ["Float", "Float32", "Float64", "Char", "Byte"].contains(single) => {
                         let what = format!("type `{single}`");
@@ -447,7 +471,10 @@ impl Checker<'_> {
                 let err = self.resolve_type(err);
                 self.types.intern(TyKind::Result(ok, err))
             }
-            ast::TypeKind::Optional(_) => self.unsupported_type(t.span, "optional types"),
+            ast::TypeKind::Optional(inner) => {
+                let inner = self.resolve_type(inner);
+                self.types.intern(TyKind::Option(inner))
+            }
             ast::TypeKind::Union(_) => self.unsupported_type(t.span, "union types"),
             ast::TypeKind::Tuple(items) => {
                 let items = items.iter().map(|item| self.resolve_type(item)).collect();
@@ -468,12 +495,20 @@ impl Checker<'_> {
 
     // ---- functions -------------------------------------------------------
 
-    fn new_cx(result: Ty) -> FnCx {
+    /// A context for a body whose declared result is `result`. A `T ! E`
+    /// result makes the body fallible: it is written in terms of `T` (9.8).
+    fn new_cx(&self, result: Ty) -> FnCx {
+        let (success, error) = match self.types.kind(result) {
+            TyKind::Result(ok, err) => (*ok, Some(*err)),
+            _ => (result, None),
+        };
         FnCx {
             locals: Vec::new(),
             mutable: Vec::new(),
             scopes: vec![Vec::new()],
-            result,
+            result: success,
+            error,
+            infer_error: false,
             loops: Vec::new(),
             diverged: false,
         }
@@ -481,21 +516,44 @@ impl Checker<'_> {
 
     fn function(&mut self, f: &ast::FnDecl, id: FnId) -> hir::Function {
         let result = self.signatures[id.0 as usize].result;
-        let mut cx = Self::new_cx(result);
+        let mut cx = self.new_cx(result);
         let param_types = self.signatures[id.0 as usize].params.clone();
         let params =
             f.params.iter().zip(param_types).map(|(p, ty)| self.declare(&mut cx, &p.name, ty, false)).collect();
-        let body = self.block(&mut cx, &f.body, Some(result));
+        let success = cx.result;
+        let body = self.block(&mut cx, &f.body, Some(success));
         hir::Function { name: f.name.name.clone(), params, locals: cx.locals, result, body }
     }
 
-    /// The implicit `main` of a root script (spec 20.3).
+    /// The implicit `main` of a root script (spec 20.3). Its error type is
+    /// inferred from the `?` and `fail` in its statements.
     fn script_main(&mut self, statements: &[ast::Stmt]) -> hir::Function {
-        let mut cx = Self::new_cx(Ty::UNIT);
+        let mut cx = self.new_cx(Ty::UNIT);
+        cx.infer_error = true;
         let stmts = self.statements(&mut cx, statements);
         let ty = if cx.diverged { Ty::NEVER } else { Ty::UNIT };
         let body = hir::Block { stmts, tail: None, ty };
-        hir::Function { name: "main".into(), params: Vec::new(), locals: cx.locals, result: Ty::UNIT, body }
+        let result = match cx.error {
+            Some(error) => self.types.intern(TyKind::Result(Ty::UNIT, error)),
+            None => Ty::UNIT,
+        };
+        hir::Function { name: "main".into(), params: Vec::new(), locals: cx.locals, result, body }
+    }
+
+    /// The error type a `fail` or `?` may produce here, inferring it in a
+    /// root script; `None` in an infallible function.
+    fn error_channel(&mut self, cx: &mut FnCx, produced: Ty, span: Span, code: &'static str) -> Option<Ty> {
+        match cx.error {
+            Some(error) => Some(error),
+            None if cx.infer_error => {
+                cx.error = Some(produced);
+                Some(produced)
+            }
+            None => {
+                self.diags.error(code, span, "this function cannot fail; declare its result as `T ! E`");
+                None
+            }
+        }
     }
 
     fn lookup(&self, cx: &FnCx, name: &str) -> Option<LocalId> {
@@ -635,9 +693,13 @@ impl Checker<'_> {
                 cx.diverged = true;
                 Some(hir::Stmt::Return(value))
             }
-            ast::StmtKind::Fail(_) => {
-                self.diags.unsupported(stmt.span, "`fail`");
-                None
+            ast::StmtKind::Fail(value) => {
+                let declared = cx.error;
+                let value = self.expr(cx, value, declared);
+                let error = self.error_channel(cx, value.ty, stmt.span, "E1302")?;
+                let value = self.coerce(value, error);
+                cx.diverged = true;
+                Some(hir::Stmt::Fail(value))
             }
             ast::StmtKind::Break | ast::StmtKind::Continue => {
                 let is_break = matches!(stmt.kind, ast::StmtKind::Break);
@@ -805,9 +867,20 @@ impl Checker<'_> {
         Self::mk(hir::ExprKind::Error, Ty::ERROR, span)
     }
 
-    /// Reports a mismatch unless `value` already has (or diverges into) `expected`.
+    /// Reports a mismatch unless `value` already has (or diverges into)
+    /// `expected`. A `T` where `T?` is expected becomes `some(T)` (8.9).
     fn coerce(&mut self, value: hir::Expr, expected: Ty) -> hir::Expr {
-        if value.ty != expected && ![Ty::NEVER, Ty::ERROR].contains(&value.ty) && expected != Ty::ERROR {
+        if let TyKind::Option(inner) = self.types.kind(expected)
+            && value.ty == *inner
+        {
+            let span = value.span;
+            return Self::mk(hir::ExprKind::Variant(SOME, vec![(0, value)]), expected, span);
+        }
+        if value.ty != expected
+            && value.ty != Ty::NEVER
+            && !self.types.has_error(value.ty)
+            && !self.types.has_error(expected)
+        {
             let message = format!("expected {}, found {}", self.display(expected), self.display(value.ty));
             self.diags.error("E1102", value.span, message);
         }
@@ -854,7 +927,15 @@ impl Checker<'_> {
             ast::ExprKind::Match { scrutinee, arms } => self.match_expr(cx, scrutinee, arms, expected, span),
             ast::ExprKind::Record { path, fields } => self.record_literal(cx, path, fields, span),
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
-            ast::ExprKind::Try(_) => self.unsupported_expr(span, "`?` propagation"),
+            ast::ExprKind::Try(inner) => self.try_expr(cx, inner, span),
+            ast::ExprKind::None => match expected.map(|t| self.types.kind(t)) {
+                Some(TyKind::Option(_)) => Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), expected.unwrap(), span),
+                _ => {
+                    self.diags.error("E1304", span, "`none` needs an expected `T?` type");
+                    Self::error_expr(span)
+                }
+            },
+            ast::ExprKind::Construct(constructor, value) => self.construct(cx, constructor, value, expected, span),
             ast::ExprKind::Error => Self::error_expr(span),
         }
     }
@@ -1003,13 +1084,23 @@ impl Checker<'_> {
     /// Resolves `Enum.Variant`. Returns `None` when the path does not name a
     /// type, and `Some(None)` after reporting a bad variant.
     fn variant_path(&mut self, path: &[ast::Ident]) -> Option<Option<(Ty, u32)>> {
-        let [type_name, variant] = path else { return None };
-        let ty = match self.type_names.get(&type_name.name)? {
-            TypeName::Nominal(ty) => *ty,
-            TypeName::Alias(index) => {
-                let index = *index;
-                self.resolve_alias(index)
+        let (variant, type_path) = path.split_last()?;
+        let type_name = type_path.last()?;
+        let ty = match type_path {
+            [name] => match self.type_names.get(&name.name)? {
+                TypeName::Nominal(ty) => *ty,
+                TypeName::Alias(index) => {
+                    let index = *index;
+                    self.resolve_alias(index)
+                }
+            },
+            [module, name]
+                if name.name == "ConsoleError"
+                    && matches!(self.names.get(&module.name), Some(ModuleName::Module(StdModule::Console))) =>
+            {
+                self.console_error?
             }
+            _ => return None,
         };
         let found = match self.types.kind(ty) {
             TyKind::Adt(id) => match &self.types.adt(*id).kind {
@@ -1145,7 +1236,11 @@ impl Checker<'_> {
             ast::PatternKind::None if !context.in_match => {
                 return self.pattern_error(span, "`none` is a reserved keyword and cannot name a binding".into());
             }
-            ast::PatternKind::None => return self.unsupported_pattern(span, "`none` patterns"),
+            ast::PatternKind::None => match self.types.kind(ty) {
+                TyKind::Option(_) => hir::PatKind::Variant(NONE, Vec::new()),
+                TyKind::Error => hir::PatKind::Wildcard,
+                _ => return self.pattern_error(span, mismatch(self, "`none`")),
+            },
             ast::PatternKind::Tuple(items) => match self.types.kind(ty) {
                 TyKind::Tuple(types) if types.len() == items.len() => {
                     let types = types.clone();
@@ -1162,7 +1257,18 @@ impl Checker<'_> {
                 if let [name] = path.as_slice()
                     && CONTEXTUAL_CONSTRUCTORS.contains(&name.name.as_str())
                 {
-                    return self.unsupported_pattern(span, "`some`, `ok` and `err` patterns");
+                    let (variant, payload) = match (name.name.as_str(), self.types.kind(ty)) {
+                        ("some", TyKind::Option(inner)) => (SOME, *inner),
+                        ("ok", TyKind::Result(ok, _)) => (OK, *ok),
+                        ("err", TyKind::Result(_, err)) => (ERR, *err),
+                        (_, TyKind::Error) => return Self::wild(ty, span),
+                        _ => return self.pattern_error(span, mismatch(self, &format!("`{}(...)`", name.name))),
+                    };
+                    let [arg] = args.as_slice() else {
+                        return self.pattern_error(span, format!("`{}(...)` takes one pattern", name.name));
+                    };
+                    let inner = self.pattern(cx, arg, payload, context);
+                    return hir::Pattern { kind: hir::PatKind::Variant(variant, vec![inner]), ty, span };
                 }
                 if let Some(resolved) = self.variant_path(path) {
                     let Some((enum_ty, variant)) = resolved else { return Self::wild(ty, span) };
@@ -1311,6 +1417,75 @@ impl Checker<'_> {
         }
         let (values, _) = self.field_values(cx, ty, &fields, updates, false);
         Self::mk(hir::ExprKind::With(Box::new(base), values), ty, span)
+    }
+
+    /// `some(value)`, `ok(value)` or `err(value)`.
+    fn construct(
+        &mut self,
+        cx: &mut FnCx,
+        constructor: &str,
+        value: &ast::Expr,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let expected_kind = expected.map(|t| self.types.kind(t).clone());
+        let (variant, payload_ty, ty) = match (constructor, expected_kind) {
+            ("some", Some(TyKind::Option(inner))) => (SOME, Some(inner), expected),
+            ("some", _) => (SOME, None, None),
+            ("ok", Some(TyKind::Result(ok, _))) => (OK, Some(ok), expected),
+            ("err", Some(TyKind::Result(_, err))) => (ERR, Some(err), expected),
+            _ => {
+                let message = format!("`{constructor}(...)` needs an expected `T ! E` type");
+                self.diags.error("E1304", span, message);
+                self.expr(cx, value, None);
+                return Self::error_expr(span);
+            }
+        };
+        let value = self.expr(cx, value, payload_ty);
+        let value = match payload_ty {
+            Some(payload) => self.coerce(value, payload),
+            None => value,
+        };
+        let ty = ty.unwrap_or_else(|| self.types.intern(TyKind::Option(value.ty)));
+        Self::mk(hir::ExprKind::Variant(variant, vec![(0, value)]), ty, span)
+    }
+
+    /// `value?` propagates `none` or an error out of the enclosing function
+    /// and otherwise yields the payload (15.2).
+    fn try_expr(&mut self, cx: &mut FnCx, inner: &ast::Expr, span: Span) -> hir::Expr {
+        let value = self.expr(cx, inner, None);
+        match self.types.kind(value.ty).clone() {
+            TyKind::Option(payload) => {
+                if !matches!(self.types.kind(cx.result), TyKind::Option(_)) {
+                    let message = format!(
+                        "`?` on an option needs the function to return an option, but it returns {}",
+                        self.display(cx.result)
+                    );
+                    self.diags.error("E1301", span, message);
+                }
+                Self::mk(hir::ExprKind::Try(Box::new(value)), payload, span)
+            }
+            TyKind::Result(ok, error) => {
+                if let Some(channel) = self.error_channel(cx, error, span, "E1301")
+                    && channel != error
+                    && channel != Ty::ERROR
+                {
+                    let message = format!(
+                        "`?` would propagate {} but the function fails with {}",
+                        self.display(error),
+                        self.display(channel)
+                    );
+                    self.diags.error("E1301", span, message);
+                }
+                Self::mk(hir::ExprKind::Try(Box::new(value)), ok, span)
+            }
+            TyKind::Error => Self::error_expr(span),
+            _ => {
+                let message = format!("`?` applies to `T?` or `T ! E`, not {}", self.display(value.ty));
+                self.diags.error("E1301", span, message);
+                Self::error_expr(span)
+            }
+        }
     }
 
     fn unsupported_expr(&mut self, span: Span, what: &str) -> hir::Expr {
@@ -1493,7 +1668,7 @@ impl Checker<'_> {
                         return Self::error_expr(span);
                     }
                 };
-                let error = self.types.intern(TyKind::Std(StdType::ConsoleError));
+                let error = self.console_error.unwrap();
                 let result = self.types.intern(TyKind::Result(Ty::UNIT, error));
                 self.call_with(cx, Callee::Std(function), &[Ty::STRING], result, args, span)
             }

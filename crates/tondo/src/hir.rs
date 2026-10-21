@@ -50,6 +50,8 @@ pub enum Stmt {
     /// An evaluated expression whose value is dropped (`_ =` or a `Unit` statement).
     Expr(Expr),
     Return(Option<Expr>),
+    /// `fail error` in a fallible function.
+    Fail(Expr),
     Break,
     Continue,
     /// `for {}` when `condition` is `None`, otherwise `for condition {}`.
@@ -94,6 +96,8 @@ pub enum ExprKind {
     /// in source order.
     Variant(u32, Vec<(u32, Expr)>),
     Match(Box<Expr>, Vec<Arm>),
+    /// `value?` on an option or result; the type is the payload's.
+    Try(Box<Expr>),
     Call(Callee, Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     /// Arithmetic, bitwise and comparison operators; `and`/`or` short-circuit.

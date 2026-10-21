@@ -18,7 +18,7 @@ use crate::ast::{BinOp, UnaryOp};
 use crate::hir::{Callee, Program, StdFn};
 use crate::mir::{Body, Const, Local, Operand, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
-use crate::types::{IntTy, Ty, TyKind, Types};
+use crate::types::{AdtKind, ERR, IntTy, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
     self, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, UserFuncName, types,
@@ -54,6 +54,7 @@ enum Rt {
     BoxRetain,
     BoxRelease,
     BoxUnique,
+    ReportError,
 }
 
 impl Rt {
@@ -77,6 +78,7 @@ impl Rt {
             Rt::BoxRetain => ("tondo_rt_box_retain", &[I64], &[]),
             Rt::BoxRelease => ("tondo_rt_box_release", &[I64, I64], &[]),
             Rt::BoxUnique => ("tondo_rt_box_unique", &[I64, I64, I64], &[]),
+            Rt::ReportError => ("tondo_rt_report_error", &[I64], &[]),
         }
     }
 }
@@ -194,7 +196,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         cg.module.define_function(cg.functions[index], &mut context).map_err(|e| format!("{e:?}"))?;
         cg.module.clear_context(&mut context);
     }
-    cg.entry_point(program.main.0 as usize, &mut context, &mut builder_context)?;
+    let main = program.main.0 as usize;
+    cg.entry_point(main, bodies[main].result, &mut context, &mut builder_context)?;
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
@@ -226,8 +229,8 @@ impl Codegen<'_> {
             TyKind::Unit | TyKind::Never | TyKind::Error => Class::Zero,
             TyKind::Bool => Class::Scalar(types::I8),
             TyKind::Int(int) => Class::Scalar(int_type(*int)),
-            TyKind::String | TyKind::Result(..) | TyKind::Std(_) => Class::Scalar(POINTER),
-            TyKind::Tuple(_) | TyKind::Adt(_) => {
+            TyKind::String => Class::Scalar(POINTER),
+            TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) => {
                 let layout = self.layout(repr);
                 match layout.shape {
                     Shape::Enum { tag, .. } if layout.size == tag.bytes() => Class::Scalar(tag),
@@ -390,9 +393,13 @@ impl Codegen<'_> {
     }
 
     /// `tondo_main`, called by the runtime's C `main`.
+    /// `tondo_main`, called by the runtime's C `main`. It returns the process
+    /// status: 0, or 1 after reporting an error that a fallible `main`
+    /// returned (20.10).
     fn entry_point(
         &mut self,
         main: usize,
+        result: Ty,
         context: &mut cranelift_codegen::Context,
         fbc: &mut FunctionBuilderContext,
     ) -> Result<(), String> {
@@ -402,15 +409,61 @@ impl Codegen<'_> {
         context.func.signature = signature;
         context.func.name = UserFuncName::user(1, 0);
         {
-            let mut fb = FunctionBuilder::new(&mut context.func, fbc);
-            let block = fb.create_block();
-            fb.switch_to_block(block);
-            let callee = self.module.declare_func_in_func(self.functions[main], fb.func);
-            fb.ins().call(callee, &[]);
-            let status = fb.ins().iconst(types::I32, 0);
-            fb.ins().return_(&[status]);
-            fb.seal_all_blocks();
-            fb.finalize(self.module.isa().frontend_config());
+            let fb = FunctionBuilder::new(&mut context.func, fbc);
+            let mut e = Emit { cg: self, fb };
+            let block = e.fb.create_block();
+            e.fb.switch_to_block(block);
+            let callee = e.cg.module.declare_func_in_func(e.cg.functions[main], e.fb.func);
+            let value = match e.cg.class(result) {
+                Class::Memory => {
+                    let layout = e.cg.layout(result);
+                    let data = StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        layout.size,
+                        layout.align.trailing_zeros() as u8,
+                    );
+                    let slot = e.fb.create_sized_stack_slot(data);
+                    let address = e.fb.ins().stack_addr(POINTER, slot, 0);
+                    e.fb.ins().call(callee, &[address]);
+                    Val::Memory(address)
+                }
+                Class::Scalar(_) => {
+                    let call = e.fb.ins().call(callee, &[]);
+                    Val::Scalar(e.fb.inst_results(call)[0])
+                }
+                Class::Zero => {
+                    e.fb.ins().call(callee, &[]);
+                    Val::Zero
+                }
+            };
+            if let TyKind::Result(_, error) = *e.cg.types.kind(result) {
+                let tag = e.tag(result, value);
+                let failed = e.fb.ins().icmp_imm_s(IntCC::Equal, tag, ERR as i64);
+                let (report, done) = (e.fb.create_block(), e.fb.create_block());
+                e.fb.ins().brif(failed, report, &[], done, &[]);
+                e.fb.switch_to_block(report);
+                let error_value = match value {
+                    Val::Memory(address) => {
+                        let slot = e.cg.slot(result, Proj::Variant(ERR, 0));
+                        let address = e.component_address(address, &slot);
+                        e.value_at(address, error)
+                    }
+                    _ => Val::Zero,
+                };
+                let description = e.describe(error, error_value);
+                e.call_rt(Rt::ReportError, &[description]);
+                e.refcount(result, value, true);
+                let one = e.fb.ins().iconst(types::I32, 1);
+                e.fb.ins().return_(&[one]);
+                e.fb.switch_to_block(done);
+            }
+            // `main` returns an owned value; release it before exiting.
+            e.refcount(result, value, true);
+            let status = e.fb.ins().iconst(types::I32, 0);
+            e.fb.ins().return_(&[status]);
+            e.fb.seal_all_blocks();
+            let config = e.cg.module.isa().frontend_config();
+            e.fb.finalize(config);
         }
         self.module.define_function(id, context).map_err(|e| format!("{e:?}"))?;
         self.module.clear_context(context);
@@ -528,6 +581,38 @@ impl Emit<'_, '_> {
             }
             Val::Zero => self.fb.ins().iconst(types::I8, 0),
         }
+    }
+
+    /// A string describing an error that reached the end of `main`: its text
+    /// for a `String`, `Type.Variant` for an enum, otherwise the type name.
+    fn describe(&mut self, ty: Ty, value: Val) -> ir::Value {
+        let types = self.cg.types;
+        let repr = types.repr(ty);
+        if repr == Ty::STRING
+            && let Val::Scalar(text) = value
+        {
+            return text;
+        }
+        let names: Vec<String> = match types.kind(repr) {
+            TyKind::Adt(id) => match &types.adt(*id).kind {
+                AdtKind::Enum(variants) => {
+                    variants.iter().map(|v| format!("{}.{}", types.adt(*id).name, v.name)).collect()
+                }
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        if names.is_empty() || matches!(value, Val::Zero) {
+            return self.string_ptr(&types.display(ty));
+        }
+        let tag = self.tag(ty, value);
+        let mut description = self.string_ptr(&names[0]);
+        for (index, name) in names.iter().enumerate().skip(1) {
+            let text = self.string_ptr(name);
+            let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, index as i64);
+            description = self.fb.ins().select(is_this, text, description);
+        }
+        description
     }
 
     /// Retains or releases every counted value inside `value`.
@@ -881,6 +966,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return;
         }
         let value = match rvalue {
+            Rvalue::Call(callee @ Callee::Std(_), args) => {
+                let status = self.call(*callee, args, None).unwrap();
+                self.std_result(place, ty, status);
+                return;
+            }
             Rvalue::Call(callee, args) => {
                 let result = if class == Class::Memory { Some(self.pointer_to(place, true)) } else { None };
                 match self.call(*callee, args, result) {
@@ -928,6 +1018,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Concat(pieces) => Val::Scalar(self.concat(pieces)),
         };
         self.write(place, value);
+    }
+
+    /// Builds the `!ConsoleError` result of a console operation from the
+    /// runtime's status: 0 for `ok`, otherwise the error variant plus one.
+    fn std_result(&mut self, place: &Place, ty: Ty, status: ir::Value) {
+        let base = self.pointer_to(place, true);
+        let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, status, 0);
+        self.e.fb.ins().store(flags(), failed, base, 0);
+        let slot = self.e.cg.slot(ty, Proj::Variant(ERR, 0));
+        let code = self.e.fb.ins().iadd_imm_s(status, -1);
+        let code = self.e.fb.ins().ireduce(types::I8, code);
+        self.e.fb.ins().store(flags(), code, base, slot.offset as i32);
     }
 
     fn call(&mut self, callee: Callee, args: &[Operand], result: Option<ir::Value>) -> Option<ir::Value> {

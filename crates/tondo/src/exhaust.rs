@@ -182,6 +182,13 @@ fn render(types: &Types, ty: Ty, pat: &Pat) -> String {
         Ctor::Bool(b) => b.to_string(),
         Ctor::Value(_) => "_".into(),
         Ctor::Variant(v) => {
+            match (types.kind(types.repr(ty)), *v) {
+                (TyKind::Option(_), 0) => return "none".into(),
+                (TyKind::Option(inner), _) => return format!("some({})", parts(vec![*inner]).join("")),
+                (TyKind::Result(ok, _), 0) => return format!("ok({})", parts(vec![*ok]).join("")),
+                (TyKind::Result(_, err), _) => return format!("err({})", parts(vec![*err]).join("")),
+                _ => {}
+            }
             let TyKind::Adt(id) = types.kind(types.repr(ty)) else { return "_".into() };
             let adt = types.adt(*id);
             let AdtKind::Enum(variants) = &adt.kind else { return "_".into() };

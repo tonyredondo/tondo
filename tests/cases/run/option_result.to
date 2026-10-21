@@ -1,0 +1,71 @@
+import std.console
+
+enum ParseError {
+    Empty
+    Negative(Int)
+}
+
+fn parse(n: Int): Int ! ParseError {
+    if n == 0 {
+        fail ParseError.Empty
+    }
+    if n < 0 {
+        fail ParseError.Negative(n)
+    }
+    n * 10
+}
+
+fn sumTwo(a: Int, b: Int): Int ! ParseError {
+    let x = parse(a)?
+    let y = parse(b)?
+    x + y
+}
+
+fn find(names: (String, String, String), wanted: String): Int? {
+    if names.0 == wanted {
+        return 0
+    }
+    if names.1 == wanted {
+        return 1
+    }
+    if names.2 == wanted { some(2) } else { none }
+}
+
+fn firstTwo(names: (String, String, String), a: String, b: String): (Int, Int)? {
+    let i = find(names, a)?
+    let j = find(names, b)?
+    (i, j)
+}
+
+fn show(r: Int ! ParseError): String {
+    match r {
+        ok(v) => "ok {v}"
+        err(ParseError.Empty) => "empty"
+        err(ParseError.Negative(v)) => "negative {v}"
+    }
+}
+
+fn main(): !console.ConsoleError {
+    console.println(show(sumTwo(1, 2)))?
+    console.println(show(sumTwo(1, 0)))?
+    console.println(show(sumTwo(-5, 1)))?
+    let names = ("ana", "bea", "cris")
+    let found = match firstTwo(names, "cris", "ana") {
+        some((a, b)) => "{a},{b}"
+        none => "missing"
+    }
+    let missing = match firstTwo(names, "ana", "zoe") {
+        some(_) => "found"
+        none => "missing"
+    }
+    console.println("{found} {missing}")?
+    let maybe: String? = "x"
+    let nothing: String? = none
+    console.println("{maybe == some("x")} {nothing == none} {maybe == nothing}")?
+}
+
+// expect-stdout: ok 30
+// expect-stdout: empty
+// expect-stdout: negative -5
+// expect-stdout: 2,0 missing
+// expect-stdout: true true false

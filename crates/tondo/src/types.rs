@@ -70,12 +70,6 @@ impl IntTy {
     }
 }
 
-/// A nominal type provided by the standard library.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum StdType {
-    ConsoleError,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TyKind {
     /// Recovery type after an error; compatible with everything.
@@ -87,11 +81,20 @@ pub enum TyKind {
     Int(IntTy),
     /// Two or more elements; the empty tuple is `Unit`.
     Tuple(Vec<Ty>),
-    /// A nominal record or newtype declared in the program.
+    /// A nominal record, newtype or enum, declared in the program or by a
+    /// standard module.
     Adt(AdtId),
+    /// `T?`: variants `none` (0) and `some(T)` (1).
+    Option(Ty),
+    /// `T ! E`: variants `ok(T)` (0) and `err(E)` (1).
     Result(Ty, Ty),
-    Std(StdType),
 }
+
+/// Variant indices of the intrinsic enums.
+pub const NONE: u32 = 0;
+pub const SOME: u32 = 1;
+pub const OK: u32 = 0;
+pub const ERR: u32 = 1;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AdtId(pub u32);
@@ -237,9 +240,12 @@ impl Types {
         }
     }
 
-    /// Payload component types of each variant of an enum.
+    /// Payload component types of each variant of an enum, including the
+    /// intrinsic `Option` and `Result`.
     pub fn variants(&self, ty: Ty) -> Option<Vec<Vec<Ty>>> {
         match self.kind(self.repr(ty)) {
+            TyKind::Option(inner) => Some(vec![Vec::new(), vec![*inner]]),
+            TyKind::Result(ok, err) => Some(vec![vec![*ok], vec![*err]]),
             TyKind::Adt(id) => match &self.adt(*id).kind {
                 AdtKind::Enum(variants) => Some(variants.iter().map(|v| v.payload.types()).collect()),
                 _ => None,
@@ -258,6 +264,8 @@ impl Types {
     pub fn inline_components(&self, ty: Ty) -> Vec<Ty> {
         match self.kind(ty) {
             TyKind::Tuple(items) => items.clone(),
+            TyKind::Option(inner) => vec![*inner],
+            TyKind::Result(ok, err) => vec![*ok, *err],
             TyKind::Adt(id) => match &self.adt(*id).kind {
                 AdtKind::Record(fields) => fields.iter().map(|f| f.ty).collect(),
                 AdtKind::Newtype(inner) => vec![*inner],
@@ -340,6 +348,17 @@ impl Types {
         result
     }
 
+    /// Whether a type mentions the recovery type of an earlier error.
+    pub fn has_error(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Error => true,
+            TyKind::Tuple(items) => items.iter().any(|&t| self.has_error(t)),
+            TyKind::Option(inner) => self.has_error(*inner),
+            TyKind::Result(ok, err) => self.has_error(*ok) || self.has_error(*err),
+            _ => false,
+        }
+    }
+
     pub fn as_int(&self, ty: Ty) -> Option<IntTy> {
         match self.kind(ty) {
             TyKind::Int(int) => Some(*int),
@@ -360,9 +379,12 @@ impl Types {
                 format!("({})", items.join(", "))
             }
             TyKind::Adt(id) => self.adt(*id).name.clone(),
+            TyKind::Option(inner) => match self.kind(*inner) {
+                TyKind::Option(_) | TyKind::Result(..) => format!("({})?", self.display(*inner)),
+                _ => format!("{}?", self.display(*inner)),
+            },
             TyKind::Result(ok, err) if *ok == Ty::UNIT => format!("!{}", self.display(*err)),
             TyKind::Result(ok, err) => format!("{} ! {}", self.display(*ok), self.display(*err)),
-            TyKind::Std(StdType::ConsoleError) => "console.ConsoleError".into(),
         }
     }
 }

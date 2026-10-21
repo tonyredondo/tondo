@@ -1004,9 +1004,19 @@ impl Parser<'_> {
                 ExprKind::Str(self.string_segments(parts)?)
             }
             Tok::Ident(name) if CONTEXTUAL_CONSTRUCTORS.contains(&name.as_str()) && self.nth(1) == &Tok::LParen => {
-                let what = format!("`{name}(...)` construction");
-                self.diags.unsupported(start, &what);
-                return Err(());
+                let constructor = CONTEXTUAL_CONSTRUCTORS.iter().find(|c| **c == name).unwrap();
+                self.bump();
+                self.bump();
+                let no_brace = std::mem::replace(&mut self.no_brace, false);
+                let value = self.expression();
+                self.no_brace = no_brace;
+                let value = value?;
+                self.expect(Tok::RParen)?;
+                ExprKind::Construct(constructor, Box::new(value))
+            }
+            Tok::Kw(Kw::None) => {
+                self.bump();
+                ExprKind::None
             }
             Tok::Ident(name) => {
                 self.bump();
@@ -1022,7 +1032,7 @@ impl Parser<'_> {
                 self.diags.unsupported(start, "collection literals");
                 return Err(());
             }
-            Tok::Kw(kw @ (Kw::None | Kw::Scope | Kw::Unsafe | Kw::SelfValue)) => {
+            Tok::Kw(kw @ (Kw::Scope | Kw::Unsafe | Kw::SelfValue)) => {
                 let what = format!("`{}`", kw.as_str());
                 self.diags.unsupported(start, &what);
                 return Err(());

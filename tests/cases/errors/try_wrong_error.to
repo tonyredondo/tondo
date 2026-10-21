@@ -1,0 +1,19 @@
+enum A {
+    One
+}
+
+enum B {
+    Two
+}
+
+fn g(): Int ! A {
+    1
+}
+
+fn f(): Int ! B {
+    g()?
+}
+
+fn main() {}
+
+// expect-error: E1301

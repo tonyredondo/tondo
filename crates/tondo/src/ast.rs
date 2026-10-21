@@ -276,6 +276,10 @@ pub enum ExprKind {
     },
     Tuple(Vec<Expr>),
     Try(Box<Expr>),
+    /// `none`
+    None,
+    /// `some(value)`, `ok(value)` or `err(value)`: the constructor's name.
+    Construct(&'static str, Box<Expr>),
     /// Placeholder after a reported syntax error.
     Error,
 }

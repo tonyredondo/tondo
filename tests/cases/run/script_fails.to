@@ -1,0 +1,12 @@
+import std.console
+
+_ = console.println("start")
+let value = 3
+if value > 2 {
+    fail "too big: {value}"
+}
+_ = console.println("never")
+
+// A script infers its error type from `fail` and `?` (20.3).
+// expect-stdout: start
+// expect-exit: 1

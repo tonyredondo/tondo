@@ -1,0 +1,26 @@
+import std.console
+
+type Chain = (Int, Chain?)
+
+fn build(n: Int): Chain {
+    var chain = Chain((0, none))
+    for i in 1..=n {
+        chain = Chain((i, some(chain)))
+    }
+    chain
+}
+
+fn total(c: Chain): Int {
+    match c.value.1 {
+        some(rest) => c.value.0 + total(rest)
+        none => c.value.0
+    }
+}
+
+fn main() {
+    let c = build(100)
+    _ = console.println("{total(c)} {c == build(100)} {c == build(99)}")
+}
+
+// `Chain` contains itself through an option, so the option payload is boxed.
+// expect-stdout: 5050 true false

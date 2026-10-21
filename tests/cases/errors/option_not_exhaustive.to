@@ -1,0 +1,9 @@
+fn f(x: Int?): Int {
+    match x {
+        some(v) => v
+    }
+}
+
+fn main() {}
+
+// expect-error: E1204

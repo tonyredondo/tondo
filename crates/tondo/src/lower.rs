@@ -16,7 +16,7 @@ use crate::ast::BinOp;
 use crate::hir::{self, LocalId};
 use crate::mir::*;
 use crate::source::Span;
-use crate::types::{Ty, Types};
+use crate::types::{ERR, NONE, OK, SOME, Ty, TyKind, Types};
 
 pub fn lower(program: &hir::Program) -> Vec<Body> {
     program.functions.iter().map(|f| lower_function(&program.types, f)).collect()
@@ -354,7 +354,33 @@ impl Builder<'_> {
         }
     }
 
+    /// Whether the function is fallible (`T ! E`, 9.8).
+    fn fallible(&self) -> bool {
+        matches!(self.types.kind(self.function.result), TyKind::Result(..))
+    }
+
+    /// The type that `return` takes: the success type of a fallible function.
+    fn success_ty(&self) -> Ty {
+        match self.types.kind(self.function.result) {
+            TyKind::Result(ok, _) => *ok,
+            _ => self.function.result,
+        }
+    }
+
+    /// Returns `value`, as `ok(value)` from a fallible function.
     fn emit_return(&mut self, value: Operand) {
+        let value =
+            if self.fallible() { self.variant(self.function.result, OK, vec![value], Span::default()) } else { value };
+        self.exit(value);
+    }
+
+    /// Returns `err(error)` from a fallible function.
+    fn emit_fail(&mut self, error: Operand) {
+        let value = self.variant(self.function.result, ERR, vec![error], Span::default());
+        self.exit(value);
+    }
+
+    fn exit(&mut self, value: Operand) {
         let operand = match self.ret {
             Some(ret) => {
                 self.store(Place::local(ret), value, Span::default());
@@ -441,6 +467,10 @@ impl Builder<'_> {
             hir::Stmt::Return(value) => {
                 let value = value.as_ref().map_or(Operand::Const(Const::Unit), |v| self.expr(v));
                 self.emit_return(value);
+            }
+            hir::Stmt::Fail(error) => {
+                let error = self.expr(error);
+                self.emit_fail(error);
             }
             hir::Stmt::Break | hir::Stmt::Continue => {
                 let lp = self.loops.last().unwrap();
@@ -568,6 +598,27 @@ impl Builder<'_> {
                 self.variant(e.ty, *variant, components, e.span)
             }
             hir::ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms),
+            hir::ExprKind::Try(inner) => {
+                let value = self.expr(inner);
+                let place = self.place_of(value, inner.ty);
+                let is_option = matches!(self.types.kind(inner.ty), TyKind::Option(_));
+                let (failure, success) = if is_option { (NONE, SOME) } else { (ERR, OK) };
+                let tag_ty = self.types.tag_ty(inner.ty);
+                let tag = self.temp(tag_ty, Rvalue::Discriminant(place.clone()), e.span);
+                let failed = Rvalue::Binary(BinOp::Eq, tag, Operand::Const(Const::Int(failure as i128, tag_ty)));
+                let failed = self.temp(Ty::BOOL, failed, e.span);
+                let (exit, next) = (self.new_block(), self.new_block());
+                self.terminate(Terminator::Branch(failed, exit, next));
+                self.switch_to(exit);
+                if is_option {
+                    let none = self.variant(self.success_ty(), NONE, Vec::new(), e.span);
+                    self.emit_return(none);
+                } else {
+                    self.emit_fail(Operand::Copy(place.variant_field(ERR, 0)));
+                }
+                self.switch_to(next);
+                Operand::Copy(place.variant_field(success, 0))
+            }
             hir::ExprKind::Call(callee, args) => {
                 let args = args.iter().map(|a| self.expr(a)).collect();
                 let result = self.temp(e.ty, Rvalue::Call(*callee, args), e.span);
