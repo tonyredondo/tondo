@@ -47,6 +47,15 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// `values[start:end:step] = value`, or a compound form such as `+=`.
+    AssignSlice {
+        local: LocalId,
+        path: Vec<PlaceStep>,
+        bounds: [Option<Expr>; 3],
+        op: Option<BinOp>,
+        value: Expr,
+        span: Span,
+    },
     /// An evaluated expression whose value is dropped (`_ =` or a `Unit` statement).
     Expr(Expr),
     Return(Option<Expr>),

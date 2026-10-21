@@ -80,6 +80,8 @@ enum Rt {
     ArrayRepeat,
     ArrayEq,
     ArrayContains,
+    ArrayAssignSlice,
+    ArrayArith,
     ArrayInsert,
     ArrayRemoveAt,
     ArrayClear,
@@ -144,6 +146,10 @@ impl Rt {
             Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
+            Rt::ArrayAssignSlice => {
+                ("tondo_rt_array_assign_slice", &[I64, I64, I8, I64, I8, I64, I64, I64, I64, I64, I64], &[])
+            }
+            Rt::ArrayArith => ("tondo_rt_array_arith", &[I64, I32, I64, I32, I32, I32, I64], &[I64]),
             Rt::ArrayInsert => ("tondo_rt_array_insert", &[I64, I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayRemoveAt => ("tondo_rt_array_remove_at", &[I64, I64, I64, I64, I64, I64], &[I8]),
             Rt::ArrayClear => ("tondo_rt_array_clear", &[I64, I64, I64], &[]),
@@ -1313,6 +1319,71 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().iadd_imm_s(address, ARRAY_HEADER)
     }
 
+    /// The runtime arguments of `[start:end:step]`: each bound with a flag
+    /// for its presence, the step, and the location for panics.
+    fn slice_range(&mut self, parts: &[Option<Operand>; 3], span: Span) -> [ir::Value; 6] {
+        let bound = |this: &mut Self, part: &Option<Operand>, default: i64| match part {
+            Some(part) => (this.scalar(part), this.e.fb.ins().iconst(types::I8, 1)),
+            None => (this.e.fb.ins().iconst(types::I64, default), this.e.fb.ins().iconst(types::I8, 0)),
+        };
+        let (start, has_start) = bound(self, &parts[0], 0);
+        let (end, has_end) = bound(self, &parts[1], 0);
+        let (step, _) = bound(self, &parts[2], 1);
+        let location = self.location(span);
+        [start, has_start, end, has_end, step, location]
+    }
+
+    /// `values[start:end:step] = value` (10.5).
+    fn assign_slice(&mut self, target: &Place, parts: &[Option<Operand>; 3], value: &Operand, span: Span) {
+        let (element, _) = self.e.cg.sequence_parts(self.place_ty(target));
+        let range = self.slice_range(parts, span);
+        let source = self.scalar(value);
+        let size = self.e.element_size(element);
+        let retain = self.e.glue_or_null(Glue::Retain, element);
+        let release = self.e.glue_or_null(Glue::Release, element);
+        let (slot, spilled) = self.array_slot(target);
+        let [start, has_start, end, has_end, step, location] = range;
+        let args = [slot, start, has_start, end, has_end, step, source, size, retain, release, location];
+        self.e.call_rt(Rt::ArrayAssignSlice, &args);
+        if let Some(var) = spilled {
+            self.unspill(var, slot);
+        }
+    }
+
+    /// Lifted arithmetic over arrays (10.6), done by the runtime.
+    fn array_arithmetic(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
+        let mut args = Vec::new();
+        let mut number = Ty::ERROR;
+        for operand in [left, right] {
+            let mut ty = self.operand_ty(operand);
+            let value = self.operand(operand);
+            args.push(self.in_memory(ty, value));
+            let mut depth = 0;
+            while let TyKind::Array(element) = *self.e.cg.types.kind(self.e.cg.types.repr(ty)) {
+                ty = element;
+                depth += 1;
+            }
+            args.push(self.e.fb.ins().iconst(types::I32, depth));
+            number = ty;
+        }
+        let op = match op {
+            BinOp::Add => 0,
+            BinOp::Sub => 1,
+            BinOp::Mul => 2,
+            BinOp::Div => 3,
+            _ => 4,
+        };
+        let code = match *self.e.cg.types.kind(self.e.cg.types.repr(number)) {
+            TyKind::Int(int) => IntTy::ALL.iter().position(|&i| i == int).unwrap() as i64,
+            TyKind::Float(FloatTy::F32) => 8,
+            _ => 9,
+        };
+        args.push(self.e.fb.ins().iconst(types::I32, op));
+        args.push(self.e.fb.ins().iconst(types::I32, code));
+        args.push(self.location(span));
+        self.e.call_rt(Rt::ArrayArith, &args).unwrap()
+    }
+
     /// Stack space for a value of `ty` that the runtime writes.
     fn scratch(&mut self, ty: Ty) -> ir::Value {
         let size = self.e.cg.layout(ty).size.max(1);
@@ -1469,6 +1540,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Rvalue::Mutate(mutation, target, operands, retain, span) => {
                     self.mutate(*mutation, target, operands, retain, place, *span);
                 }
+                Rvalue::AssignSlice(target, bounds, value, span) => self.assign_slice(target, bounds, value, *span),
                 _ => {}
             }
             return;
@@ -1550,15 +1622,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::Slice(base, parts, span) => {
                 let sequence = self.scalar(base);
-                let bound = |this: &mut Self, part: &Option<Operand>, default: i64| match part {
-                    Some(part) => (this.scalar(part), this.e.fb.ins().iconst(types::I8, 1)),
-                    None => (this.e.fb.ins().iconst(types::I64, default), this.e.fb.ins().iconst(types::I8, 0)),
-                };
-                let (start, has_start) = bound(self, &parts[0], 0);
-                let (end, has_end) = bound(self, &parts[1], 0);
-                let (step, _) = bound(self, &parts[2], 1);
-                let location = self.location(*span);
-                let range = [start, has_start, end, has_end, step, location];
+                let range = self.slice_range(parts, *span);
                 Val::Scalar(if ty == Ty::STRING {
                     self.e.call_rt(Rt::StrSlice, &[&[sequence], &range[..]].concat()).unwrap()
                 } else {
@@ -1643,6 +1707,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     None => return,
                 }
             }
+            Rvalue::AssignSlice(..) => unreachable!("a slice assignment produces `Unit`"),
             Rvalue::Discriminant(source) => {
                 let source_ty = self.place_ty(source);
                 let value = self.read(source);
@@ -2183,6 +2248,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn binary(&mut self, op: BinOp, left: &Operand, right: &Operand, span: Span) -> ir::Value {
         let ty = self.operand_ty(left);
         let right_ty = self.operand_ty(right);
+        let is_array = |ty: Ty| matches!(self.e.cg.types.kind(self.e.cg.types.repr(ty)), TyKind::Array(_));
+        if !matches!(op, BinOp::Eq | BinOp::Ne) && (is_array(ty) || is_array(right_ty)) {
+            return self.array_arithmetic(op, left, right, span);
+        }
         if matches!(op, BinOp::Eq | BinOp::Ne) {
             let (a, b) = (self.operand(left), self.operand(right));
             let equal = self.e.equal(ty, a, b);

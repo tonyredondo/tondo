@@ -452,18 +452,40 @@ impl Builder<'_> {
                 let place = self.place(*local, path);
                 let value = self.expr(value);
                 let ty = self.place_ty(&place);
-                match op {
-                    Some(op) => self.assign(place.clone(), Rvalue::Binary(*op, Operand::Copy(place), value), *span),
-                    None if self.needs_drop(ty) => {
-                        // Keep the old value until the new one is stored, so
-                        // `x = x` and `x = f(x.field)` stay valid.
-                        let old = self.new_local(ty);
-                        self.assign(Place::local(old), Rvalue::Use(Operand::Copy(place.clone())), *span);
-                        self.store(place, value, *span);
-                        self.push(Statement::Release(Place::local(old)));
-                    }
-                    None => self.assign(place, Rvalue::Use(value), *span),
+                let rvalue = match op {
+                    Some(op) => Rvalue::Binary(*op, Operand::Copy(place.clone()), value),
+                    None => Rvalue::Use(value),
+                };
+                if self.needs_drop(ty) {
+                    // Keep the old value until the new one is stored, so
+                    // `x = x` and `x = f(x.field)` stay valid. A compound
+                    // assignment (lifted array arithmetic) builds a new value.
+                    let value = match rvalue {
+                        Rvalue::Use(value) => value,
+                        rvalue => self.temp(ty, rvalue, *span),
+                    };
+                    let old = self.new_local(ty);
+                    self.assign(Place::local(old), Rvalue::Use(Operand::Copy(place.clone())), *span);
+                    self.store(place, value, *span);
+                    self.push(Statement::Release(Place::local(old)));
+                } else {
+                    self.assign(place, rvalue, *span);
                 }
+            }
+            hir::Stmt::AssignSlice { local, path, bounds, op, value, span } => {
+                let place = self.place(*local, path);
+                let bounds = bounds.each_ref().map(|bound| bound.as_ref().map(|b| self.expr(b)));
+                let value = self.expr(value);
+                let ty = self.place_ty(&place);
+                let value = match op {
+                    Some(op) => {
+                        let current = Rvalue::Slice(Operand::Copy(place.clone()), bounds.clone(), *span);
+                        let current = self.temp(ty, current, *span);
+                        self.temp(ty, Rvalue::Binary(*op, current, value), *span)
+                    }
+                    None => value,
+                };
+                self.temp(Ty::UNIT, Rvalue::AssignSlice(place, bounds, value, *span), *span);
             }
             hir::Stmt::Expr(value) => {
                 self.expr(value);

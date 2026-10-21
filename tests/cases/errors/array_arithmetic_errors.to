@@ -1,0 +1,14 @@
+fn main() {
+    let a = [1, 2]
+    let b = [1.0, 2.0]
+    let mixed = a + b
+    let joined = ["x"] + ["y"]
+    var n = 1
+    n += a
+    let words = ["x"] * 2
+}
+
+// expect-error: E1102 cannot combine `Array[Int]` and `Array[Float]`: their numbers must have the same type
+// expect-error: E1102 to join arrays use `a.concat(b)`
+// expect-error: E1102 `+=` would change the target from `Int` to `Array[Int]`
+// expect-error: E1102 to repeat an array use `a.repeat(n)`

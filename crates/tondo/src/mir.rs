@@ -153,6 +153,9 @@ pub enum Rvalue {
     ArrayOp(ArrayOp, Vec<Operand>, Span),
     /// `array[start:end:step]`.
     Slice(Operand, [Option<Operand>; 3], Span),
+    /// Replaces the elements a slice of the array at the place selects with
+    /// those of an array of the same length.
+    AssignSlice(Place, [Option<Operand>; 3], Operand, Span),
     /// The number of elements of any collection, or of scalars of a string.
     Length(Operand),
     /// An intrinsic string operation, string first.

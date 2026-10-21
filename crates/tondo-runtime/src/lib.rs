@@ -654,6 +654,201 @@ pub unsafe extern "C" fn tondo_rt_array_slice(
     }
 }
 
+/// `values[start:end:step] = source`: replaces the selected elements with
+/// those of `source`, which must have as many (`P0006`). The source acts as
+/// a snapshot, so it may share elements or storage with the target.
+#[allow(clippy::too_many_arguments)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_assign_slice(
+    slot: *mut *mut ArrayHeader,
+    start: i64,
+    has_start: u8,
+    end: i64,
+    has_end: u8,
+    step: i64,
+    source: *mut ArrayHeader,
+    size: usize,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+    location: *const Str,
+) {
+    unsafe {
+        let (first, count) = slice_range((**slot).len, start, has_start, end, has_end, step, location);
+        if count != (*source).len {
+            tondo_rt_panic(6, std::ptr::null(), location);
+        }
+        let mut snapshot = vec![0u8; count * size];
+        for k in 0..count {
+            let value = element(source, size, k);
+            if let Some(retain) = retain {
+                retain(value);
+            }
+            std::ptr::copy_nonoverlapping(value, snapshot.as_mut_ptr().add(k * size), size);
+        }
+        tondo_rt_array_unique(slot, size, 0, retain, release);
+        let a = *slot;
+        for k in 0..count {
+            let target = element(a, size, (first + k as i64 * step) as usize);
+            if let Some(release) = release {
+                release(target);
+            }
+            std::ptr::copy_nonoverlapping(snapshot.as_ptr().add(k * size), target, size);
+        }
+    }
+}
+
+/// A number type of lifted arithmetic (10.6) with checked operations; the
+/// operation codes are `+ - * / %` in that order.
+trait Number: Copy {
+    unsafe fn apply(op: u32, a: Self, b: Self, location: *const Str) -> Self;
+}
+
+macro_rules! integer_numbers {
+    ($($t:ty),*) => {$(
+        impl Number for $t {
+            unsafe fn apply(op: u32, a: Self, b: Self, location: *const Str) -> Self {
+                let result = match op {
+                    0 => a.checked_add(b),
+                    1 => a.checked_sub(b),
+                    2 => a.checked_mul(b),
+                    _ if b == 0 => unsafe { tondo_rt_panic(3, std::ptr::null(), location) },
+                    3 => a.checked_div(b),
+                    // `MIN % -1` is 0 (18.3).
+                    _ => Some(a.wrapping_rem(b)),
+                };
+                result.unwrap_or_else(|| unsafe { tondo_rt_panic(5, std::ptr::null(), location) })
+            }
+        }
+    )*};
+}
+
+integer_numbers!(i8, i16, i32, i64, u8, u16, u32, u64);
+
+macro_rules! float_numbers {
+    ($($t:ty),*) => {$(
+        impl Number for $t {
+            unsafe fn apply(op: u32, a: Self, b: Self, _: *const Str) -> Self {
+                match op {
+                    0 => a + b,
+                    1 => a - b,
+                    2 => a * b,
+                    _ => a / b,
+                }
+            }
+        }
+    )*};
+}
+
+float_numbers!(f32, f64);
+
+unsafe fn apply_number<T: Number>(op: u32, a: *const u8, b: *const u8, out: *mut u8, location: *const Str) {
+    unsafe {
+        let value = T::apply(op, (a as *const T).read_unaligned(), (b as *const T).read_unaligned(), location);
+        (out as *mut T).write_unaligned(value);
+    }
+}
+
+/// Number types are coded as Int8, Int16, Int32, Int64, UInt8, UInt16,
+/// UInt32, UInt64, Float32 and Float64, from 0.
+fn number_size(number: u32) -> usize {
+    match number {
+        0 | 4 => 1,
+        1 | 5 => 2,
+        2 | 6 | 8 => 4,
+        _ => 8,
+    }
+}
+
+/// The size of a value nested `depth` arrays deep around numbers.
+fn nested_size(depth: u32, number: u32) -> usize {
+    if depth == 0 { number_size(number) } else { 8 }
+}
+
+/// The array stored at `value`.
+unsafe fn array_at(value: *const u8) -> *mut ArrayHeader {
+    unsafe { (value as *const *mut ArrayHeader).read() }
+}
+
+/// Paired arrays must have the same length at every level (`P0006`).
+unsafe fn check_shape(a: *const u8, da: u32, b: *const u8, db: u32, location: *const Str) {
+    if da == 0 || db == 0 {
+        return;
+    }
+    unsafe {
+        let (x, y) = (array_at(a), array_at(b));
+        if (*x).len != (*y).len {
+            tondo_rt_panic(6, std::ptr::null(), location);
+        }
+        if da > 1 && db > 1 {
+            for k in 0..(*x).len {
+                check_shape(element(x, 8, k), da - 1, element(y, 8, k), db - 1, location);
+            }
+        }
+    }
+}
+
+/// Writes `a op b` to `out`, where each operand is a number or an array
+/// nested `da`/`db` deep. Arrays are paired element by element and a
+/// number pairs with every element of an array.
+#[allow(clippy::too_many_arguments)]
+unsafe fn lifted(
+    a: *const u8,
+    da: u32,
+    b: *const u8,
+    db: u32,
+    op: u32,
+    number: u32,
+    out: *mut u8,
+    location: *const Str,
+) {
+    unsafe {
+        if da == 0 && db == 0 {
+            let apply = match number {
+                0 => apply_number::<i8>,
+                1 => apply_number::<i16>,
+                2 => apply_number::<i32>,
+                3 => apply_number::<i64>,
+                4 => apply_number::<u8>,
+                5 => apply_number::<u16>,
+                6 => apply_number::<u32>,
+                7 => apply_number::<u64>,
+                8 => apply_number::<f32>,
+                _ => apply_number::<f64>,
+            };
+            return apply(op, a, b, out, location);
+        }
+        let len = if da > 0 { (*array_at(a)).len } else { (*array_at(b)).len };
+        let size = nested_size(da.max(db) - 1, number);
+        let result = array_alloc(size, len, len);
+        for k in 0..len {
+            let x = if da > 0 { element(array_at(a), nested_size(da - 1, number), k) } else { a as *mut u8 };
+            let y = if db > 0 { element(array_at(b), nested_size(db - 1, number), k) } else { b as *mut u8 };
+            lifted(x, da.saturating_sub(1), y, db.saturating_sub(1), op, number, element(result, size, k), location);
+        }
+        (out as *mut *mut ArrayHeader).write(result);
+    }
+}
+
+/// Lifted arithmetic over arrays (10.6). `a` and `b` point to the operands;
+/// the whole shape is checked before the first operation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_array_arith(
+    a: *const u8,
+    da: u32,
+    b: *const u8,
+    db: u32,
+    op: u32,
+    number: u32,
+    location: *const Str,
+) -> *mut ArrayHeader {
+    unsafe {
+        check_shape(a, da, b, db, location);
+        let mut result: *mut ArrayHeader = std::ptr::null_mut();
+        lifted(a, da, b, db, op, number, &mut result as *mut _ as *mut u8, location);
+        result
+    }
+}
+
 /// The checked `slice(start, end)` method: null when the bounds are invalid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_slice_checked(

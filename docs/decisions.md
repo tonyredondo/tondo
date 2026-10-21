@@ -118,3 +118,13 @@ A deque shares the array's representation: the header records where the
 elements start, and the deque keeps them in the middle of storage at least
 twice their size, so both ends have room. Arrays always start at 0, so their
 generated code never reads that field.
+
+## 2026-10-21 — Lifted arithmetic in the runtime
+
+`+ - * / %` over arrays (10.6) call one runtime function that receives both
+operands, their array depths and the number type. It checks the whole shape
+first (`P0006`) and then computes in order with the checked scalar rules, so
+panics match the scalar operators. `a += b` builds the new array and then
+stores it, which gives the strong guarantee for free. A slice assignment of a
+different length also panics with `P0006`: 10.5 requires equal lengths but
+does not name the panic.

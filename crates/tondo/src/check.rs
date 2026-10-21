@@ -802,6 +802,9 @@ impl Checker<'_> {
         value: &ast::Expr,
         span: Span,
     ) -> Option<hir::Stmt> {
+        if let ast::ExprKind::Slice { base, start, end, step } = &target.kind {
+            return self.assign_slice(cx, base, [start, end, step], op, value, span);
+        }
         if let ast::ExprKind::Index { base, index } = &target.kind {
             let (local, path, ty) = self.place(cx, base)?;
             if let TyKind::Map(key, entry) = *self.types.kind(ty) {
@@ -833,8 +836,12 @@ impl Checker<'_> {
                 self.require_int(&value);
                 value
             }
+            Some(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem)) => {
+                self.compound_value(cx, op, ty, value, span)
+            }
             Some(op) => {
-                if self.types.as_int(ty).is_none() && ty != Ty::ERROR {
+                let bitwise = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error);
+                if !bitwise {
                     let message = format!("`{}=` cannot be applied to {}", op.as_str(), self.display(ty));
                     self.diags.error("E1102", span, message);
                 }
@@ -904,6 +911,72 @@ impl Checker<'_> {
         let (index, field_ty) = self.field_of(ty, field.0, field.1)?;
         path.extend(index.map(hir::PlaceStep::Field));
         Some((local, path, field_ty))
+    }
+
+    /// The value of `target op= value` for an arithmetic operator; the result
+    /// of `target op value` must keep the target's type.
+    fn compound_value(&mut self, cx: &mut FnCx, op: BinOp, target: Ty, value: &ast::Expr, span: Span) -> hir::Expr {
+        let expected = self.arithmetic_expected(value, target).or(Some(target));
+        let value = self.expr(cx, value, expected);
+        let value = if self.number_leaf(target).1 == 0 && self.number_leaf(value.ty).1 == 0 {
+            self.coerce(value, target)
+        } else {
+            value
+        };
+        let result = self.arithmetic(op, target, value.ty, span);
+        if result != target && result != Ty::ERROR && target != Ty::ERROR {
+            let message = format!(
+                "`{0}=` would change the target from {1} to {2}; bind the result instead: `let result = target {0} value`",
+                op.as_str(),
+                self.display(target),
+                self.display(result),
+            );
+            self.diags.error("E1102", span, message);
+        }
+        value
+    }
+
+    /// `values[start:end:step] = value` and its compound forms (10.5).
+    fn assign_slice(
+        &mut self,
+        cx: &mut FnCx,
+        base: &ast::Expr,
+        bounds: [&Option<Box<ast::Expr>>; 3],
+        op: Option<BinOp>,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Stmt> {
+        let (local, path, ty) = self.place(cx, base)?;
+        if !matches!(self.types.kind(ty), TyKind::Array(_)) {
+            let message = if ty == Ty::STRING {
+                "a `String` is immutable: build a new one, for example with interpolation".to_string()
+            } else {
+                format!("{} cannot be sliced", self.display(ty))
+            };
+            self.diags.error("E1102", base.span, message);
+            return None;
+        }
+        let bounds = bounds.map(|bound| {
+            bound.as_ref().map(|b| {
+                let value = self.expr(cx, b, Some(Ty::INT));
+                self.coerce(value, Ty::INT)
+            })
+        });
+        let value = match op {
+            None => {
+                let value = self.expr(cx, value, Some(ty));
+                self.coerce(value, ty)
+            }
+            Some(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem)) => {
+                self.compound_value(cx, op, ty, value, span)
+            }
+            Some(op) => {
+                let message = format!("`{}=` cannot be applied to a slice", op.as_str());
+                self.diags.error("E1102", span, message);
+                return None;
+            }
+        };
+        Some(hir::Stmt::AssignSlice { local, path, bounds, op, value, span })
     }
 
     /// The position and type of a field. The position is `None` for a
@@ -2425,6 +2498,117 @@ impl Checker<'_> {
         }
     }
 
+    /// The numbers inside nested arrays, and how many arrays deep they are.
+    fn number_leaf(&self, ty: Ty) -> (Ty, u32) {
+        match *self.types.kind(ty) {
+            TyKind::Array(element) => {
+                let (leaf, depth) = self.number_leaf(element);
+                (leaf, depth + 1)
+            }
+            _ => (ty, 0),
+        }
+    }
+
+    /// What an operand of arithmetic is expected to be given its peer: the
+    /// peer's number type in the operand's own literal shape (10.6). Only
+    /// literals take an expectation; other operands have their own type.
+    fn arithmetic_expected(&mut self, operand: &ast::Expr, peer: Ty) -> Option<Ty> {
+        match &operand.kind {
+            ast::ExprKind::Array(items) => match items.first() {
+                Some(first) => {
+                    let inner = self.arithmetic_expected(first, peer)?;
+                    Some(self.types.intern(TyKind::Array(inner)))
+                }
+                None => Some(peer),
+            },
+            _ if Self::is_untyped_literal(operand) => Some(self.number_leaf(peer).0),
+            _ => None,
+        }
+    }
+
+    /// Types the operands of an arithmetic operator. Without arrays they
+    /// share a type, as in `operands`; with arrays only their numbers must.
+    fn arithmetic_operands(
+        &mut self,
+        cx: &mut FnCx,
+        left: &ast::Expr,
+        right: &ast::Expr,
+        expected: Option<Ty>,
+    ) -> (hir::Expr, hir::Expr) {
+        let (left, right) = if Self::is_untyped_literal(left) && !Self::is_untyped_literal(right) {
+            let right = self.expr(cx, right, expected);
+            let shape = self.arithmetic_expected(left, right.ty);
+            (self.expr(cx, left, shape), right)
+        } else {
+            let left = self.expr(cx, left, expected);
+            let shape = self.arithmetic_expected(right, left.ty).or(Some(left.ty));
+            let right = self.expr(cx, right, shape);
+            (left, right)
+        };
+        if self.number_leaf(left.ty).1 > 0 || self.number_leaf(right.ty).1 > 0 || left.ty == Ty::NEVER {
+            return (left, right);
+        }
+        let right = self.coerce(right, left.ty);
+        (left, right)
+    }
+
+    /// The type of `left op right` for `+ - * / %`, lifted over arrays
+    /// (10.6): arrays pair element by element and a number pairs with every
+    /// element. Reports operands that do not combine.
+    fn arithmetic(&mut self, op: BinOp, left: Ty, right: Ty, span: Span) -> Ty {
+        let ((number, left_depth), (right_number, right_depth)) = (self.number_leaf(left), self.number_leaf(right));
+        if [number, right_number].iter().any(|&t| matches!(self.types.kind(t), TyKind::Error | TyKind::Never)) {
+            return if left_depth >= right_depth { left } else { right };
+        }
+        // Floats have no `%` operator; their remainder is a named operation (17.4).
+        let numeric = match self.types.kind(number) {
+            TyKind::Int(_) => true,
+            TyKind::Float(_) => op != BinOp::Rem,
+            _ => false,
+        };
+        if !numeric {
+            let mut message = format!("operator `{}` cannot be applied to {}", op.as_str(), self.display(left));
+            match (op, left_depth, right_depth) {
+                (BinOp::Add, _, _) if left == Ty::STRING => {
+                    message.push_str(": use interpolation, `\"{a}{b}\"`, or `a.concat(b)`")
+                }
+                (BinOp::Add, 1.., 1..) => message.push_str(": to join arrays use `a.concat(b)`"),
+                (BinOp::Mul, 1.., 0) if right == Ty::INT => message.push_str(": to repeat an array use `a.repeat(n)`"),
+                _ => {}
+            }
+            self.diags.error("E1102", span, message);
+            return Ty::ERROR;
+        }
+        if number != right_number {
+            // Without arrays, `arithmetic_operands` already reported this.
+            if left_depth > 0 || right_depth > 0 {
+                let message = format!(
+                    "operator `{}` cannot combine {} and {}: their numbers must have the same type",
+                    op.as_str(),
+                    self.display(left),
+                    self.display(right)
+                );
+                self.diags.error("E1102", span, message);
+            }
+            return Ty::ERROR;
+        }
+        self.lift(left, right)
+    }
+
+    fn lift(&mut self, left: Ty, right: Ty) -> Ty {
+        let element = |ty: Ty| match self.types.kind(ty) {
+            TyKind::Array(element) => Some(*element),
+            _ => None,
+        };
+        let inner = match (element(left), element(right)) {
+            (Some(a), Some(b)) => self.lift(a, b),
+            (Some(a), None) => self.lift(a, right),
+            (None, Some(b)) => self.lift(left, b),
+            (None, None) => return left,
+        };
+        self.types.intern(TyKind::Array(inner))
+    }
+
     /// Types two operands that must share a type. An unsuffixed literal on
     /// the left adopts the right operand's type; evaluation order is unchanged.
     fn operands(
@@ -2457,10 +2641,7 @@ impl Checker<'_> {
         span: Span,
     ) -> hir::Expr {
         let operator_error = |this: &mut Self, ty: Ty| {
-            let mut message = format!("operator `{}` cannot be applied to {}", op.as_str(), this.display(ty));
-            if op == BinOp::Add && ty == Ty::STRING {
-                message.push_str(": use interpolation, `\"{a}{b}\"`, or `a.concat(b)`");
-            }
+            let message = format!("operator `{}` cannot be applied to {}", op.as_str(), this.display(ty));
             this.diags.error("E1102", span, message);
         };
         let (left, right, ty) = match op {
@@ -2482,17 +2663,8 @@ impl Checker<'_> {
                 (left, right, ty)
             }
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                let (left, right) = self.operands(cx, left, right, expected);
-                // Floats have no `%` operator; their remainder is a named operation (17.4).
-                let allowed = match self.types.kind(left.ty) {
-                    TyKind::Int(_) | TyKind::Error | TyKind::Never => true,
-                    TyKind::Float(_) => op != BinOp::Rem,
-                    _ => false,
-                };
-                if !allowed {
-                    operator_error(self, left.ty);
-                }
-                let ty = left.ty;
+                let (left, right) = self.arithmetic_operands(cx, left, right, expected);
+                let ty = self.arithmetic(op, left.ty, right.ty, span);
                 (left, right, ty)
             }
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
