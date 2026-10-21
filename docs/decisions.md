@@ -180,10 +180,9 @@ replaces it with the implementation for the concrete `Self`, or with the
 trait's default body instantiated for it; coherence leaves at most one
 candidate. Interpolating a user type calls its `Display.display`; built-in
 values keep their intrinsic `Display`, and the user implementations needed
-by collections being displayed are recorded for code generation. The
-size-change termination check of 12.6 (`E1112`) is not implemented yet;
-until then, instantiation that grows without bound is caught during
-monomorphization.
+by collections being displayed are recorded for code generation.
+Implementations whose bounds could require themselves forever are rejected
+statically by the size-change check of 12.6 (`E1112`).
 
 ## 2026-10-21 — Closures are records of captures
 

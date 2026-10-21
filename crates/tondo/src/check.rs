@@ -131,6 +131,43 @@ enum FieldRef<'a> {
     Slot(u32),
 }
 
+/// The size of a term of a trait query relative to another (12.6).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+enum Size {
+    Less,
+    Equal,
+    Unknown,
+}
+
+/// Rows are the terms of a target query, columns those of the source.
+type Matrix = Vec<Vec<Size>>;
+
+/// The relation along `first` then `second`: `second ∘ first`, keeping the
+/// strongest relation through any intermediate term.
+fn compose(second: &Matrix, first: &Matrix) -> Matrix {
+    second
+        .iter()
+        .map(|row| {
+            (0..first.first().map_or(0, Vec::len))
+                .map(|column| {
+                    let mut best = Size::Unknown;
+                    for (middle, &step) in row.iter().enumerate() {
+                        let through = match (step, first[middle][column]) {
+                            (Size::Less, Size::Less | Size::Equal) | (Size::Equal, Size::Less) => Size::Less,
+                            (Size::Equal, Size::Equal) => Size::Equal,
+                            _ => Size::Unknown,
+                        };
+                        if through == Size::Less || (through == Size::Equal && best == Size::Unknown) {
+                            best = through;
+                        }
+                    }
+                    best
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Type arguments being inferred for some type parameters (12.1): from
 /// the expected type, then from the values given for them.
 struct Inference {
@@ -186,6 +223,7 @@ struct TraitMethod {
 /// An implementation (12.4); its methods are generic over the binders.
 struct ImplDef {
     intrinsic: bool,
+    span: Span,
     trait_id: TraitId,
     trait_args: Vec<Ty>,
     target: Ty,
@@ -355,6 +393,7 @@ impl Checker<'_> {
                 self.implementation(decl, &mut bodies);
             }
         }
+        self.check_termination();
 
         // Closure bodies are numbered after every declared function and the
         // script's `main`.
@@ -484,6 +523,7 @@ impl Checker<'_> {
             let target = self.types.instantiate(template, params.clone());
             self.impls.push(ImplDef {
                 intrinsic: true,
+                span: Span::default(),
                 trait_id: ITERATOR,
                 trait_args: vec![element],
                 target,
@@ -1144,7 +1184,117 @@ impl Checker<'_> {
                 self.diags.error("E1114", decl.span, message);
             }
         }
-        self.impls.push(ImplDef { intrinsic: false, trait_id, trait_args, target, generics: binders, methods });
+        self.impls.push(ImplDef {
+            intrinsic: false,
+            span: decl.span,
+            trait_id,
+            trait_args,
+            target,
+            generics: binders,
+            methods,
+        });
+    }
+
+    /// The size-change termination check of trait resolution (12.6). Each
+    /// generic implementation leads from the query of its header to each
+    /// trait bound of its binders, with a matrix relating their arguments
+    /// (`<` strictly smaller, `=` identical, `?` unknown). Every idempotent
+    /// composition that returns to the same trait must shrink some argument.
+    fn check_termination(&mut self) {
+        let mut edges: Vec<(TraitId, TraitId, Matrix, Span)> = Vec::new();
+        for implementation in self.impls.iter().filter(|i| !i.intrinsic) {
+            let mut source = implementation.trait_args.clone();
+            source.push(implementation.target);
+            for &binder in &implementation.generics {
+                for (trait_id, args) in self.bounds.get(&binder).cloned().unwrap_or_default() {
+                    let mut target = args;
+                    target.push(binder);
+                    let matrix = target
+                        .iter()
+                        .map(|&to| source.iter().map(|&from| self.size_relation(to, from)).collect())
+                        .collect();
+                    edges.push((implementation.trait_id, trait_id, matrix, implementation.span));
+                }
+            }
+        }
+        // Saturate the compositions of paths, remembering the traits passed.
+        let mut known: HashMap<(TraitId, TraitId, Matrix), (Vec<TraitId>, Span)> = HashMap::new();
+        let mut work: Vec<(TraitId, TraitId, Matrix, Vec<TraitId>, Span)> =
+            edges.iter().map(|(from, to, m, span)| (*from, *to, m.clone(), vec![*from, *to], *span)).collect();
+        while let Some((from, to, matrix, path, span)) = work.pop() {
+            if known.contains_key(&(from, to, matrix.clone())) {
+                continue;
+            }
+            for (next_from, next_to, next, _) in &edges {
+                if *next_from == to {
+                    let mut longer = path.clone();
+                    longer.push(*next_to);
+                    work.push((from, *next_to, compose(next, &matrix), longer, span));
+                }
+            }
+            known.insert((from, to, matrix), (path, span));
+        }
+        // Report each cycle once, in a stable order.
+        let mut cycles: Vec<(&Vec<TraitId>, &Matrix, Span)> = known
+            .iter()
+            .filter(|((from, to, matrix), _)| {
+                let shrinks = (0..matrix.len()).any(|i| matrix[i][i] == Size::Less);
+                from == to && compose(matrix, matrix) == *matrix && !shrinks
+            })
+            .map(|((_, _, matrix), (path, span))| (path, matrix, *span))
+            .collect();
+        cycles.sort_by_key(|(path, _, span)| (path.len(), path.iter().map(|t| t.0).collect::<Vec<_>>(), span.start));
+        let mut reported = HashSet::new();
+        for (path, matrix, span) in cycles {
+            if path.iter().any(|t| reported.contains(t)) {
+                continue;
+            }
+            reported.extend(path.iter().copied());
+            let names: Vec<String> = path.iter().map(|t| format!("`{}`", self.traits[t.0 as usize].name)).collect();
+            let shown: Vec<String> = matrix
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|c| match c {
+                            Size::Less => "<",
+                            Size::Equal => "=",
+                            Size::Unknown => "?",
+                        })
+                        .collect()
+                })
+                .collect();
+            let message = format!(
+                "resolving {} may never end: no type argument gets smaller along the way (matrix [{}]); bound a part of the target instead, as in `impl[T: Trait] Trait for Box[T]`",
+                names.join(" -> "),
+                shown.join("; ")
+            );
+            self.diags.error("E1112", span, message);
+        }
+    }
+
+    /// How the term `to` relates in size to `from` (12.6).
+    fn size_relation(&self, to: Ty, from: Ty) -> Size {
+        if to == from {
+            Size::Equal
+        } else if self.strict_subterm(to, from) {
+            Size::Less
+        } else {
+            Size::Unknown
+        }
+    }
+
+    /// Whether `part` is reached by descending at least once through the
+    /// arguments of `whole`'s type constructors.
+    fn strict_subterm(&self, part: Ty, whole: Ty) -> bool {
+        let children: Vec<Ty> = match self.types.kind(whole) {
+            TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => items.clone(),
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => vec![*t],
+            TyKind::Result(a, b) | TyKind::Map(a, b) => vec![*a, *b],
+            TyKind::Fn(params, result, _) => params.iter().copied().chain([*result]).collect(),
+            TyKind::Adt(_) => self.types.instance_of(whole).map_or(Vec::new(), |(_, args)| args.to_vec()),
+            _ => Vec::new(),
+        };
+        children.into_iter().any(|child| child == part || self.strict_subterm(part, child))
     }
 
     /// How an implementation's method differs from the trait's, if at all.

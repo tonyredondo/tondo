@@ -1,0 +1,35 @@
+trait Loop {
+    fn spin(self): Int
+}
+
+impl[T: Loop] Loop for T {
+    fn spin(self): Int {
+        0
+    }
+}
+
+trait Ping {
+    fn ping(self): Int
+}
+
+trait Pong {
+    fn pong(self): Int
+}
+
+impl[T: Pong] Ping for T {
+    fn ping(self): Int {
+        1
+    }
+}
+
+impl[T: Ping] Pong for T {
+    fn pong(self): Int {
+        2
+    }
+}
+
+fn main() {
+}
+
+// expect-error: E1112 resolving `Loop` -> `Loop` may never end
+// expect-error: E1112 resolving `Ping` -> `Pong` -> `Ping` may never end

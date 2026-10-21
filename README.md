@@ -65,7 +65,7 @@ Every milestone ends with programs that compile to native executables and run.
 |---|---|---|
 | **H0** | Integers with checked arithmetic, `Bool`, `String` with interpolation, functions, `let`/`var`, `if`, `for` (infinite, conditional, integer ranges), `break`/`continue`, `return`, `panic`/`assert`, `std.console.print`/`println`, root scripts, native codegen and linking | Done |
 | **H1** | Data: tuples, records, newtypes, aliases, enums (including recursive ones), `match` with exhaustiveness, patterns (including array patterns), `Option`/`Result` with `ok`/`err`/`some`/`none`, `?` and `fail`, fallible `main`, structural unions and error unions, `Char`, `Byte`, floats, numeric conversions, string indexing and slicing, `Array`/`Deque`/`Map`/`Set` with copy-on-write, array arithmetic and slice assignment | Done |
-| **H2** | Abstraction: methods, named arguments, variadics, generics (monomorphization), traits with static dispatch, closures and function values, iterators, opaque `impl` results | Done; pending: the size-change termination check of trait impls (12.6) |
+| **H2** | Abstraction: methods, named arguments, variadics, generics (monomorphization), traits with static dispatch, closures and function values, iterators, opaque `impl` results | Done |
 | **H3** | Ownership: affine values, `ref`/`mut`/`var` loans, `defer`, terminal resources, panic unwinding | Planned |
 | **H4** | Projects: modules and packages, `tondo.toml` and lockfile, canonical formatter (`tondo fmt`), JSON diagnostics | Planned |
 | **H5** | Concurrency: stackful tasks, `spawn`/`scope`/`Join`/`await`, cancellation, `select`, channels, `spawn thread` | Planned |

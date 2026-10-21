@@ -1,0 +1,40 @@
+import std.console
+
+trait Summary {
+    fn summarize(self): String
+}
+
+trait Render {
+    fn render(self): String
+}
+
+type Box[T] = { value: T }
+type Name = { text: String }
+
+impl Summary for Name {
+    fn summarize(self): String {
+        self.text
+    }
+}
+
+impl[T: Summary] Summary for Box[T] {
+    fn summarize(self): String {
+        "box({self.value.summarize()})"
+    }
+}
+
+impl[T: Summary] Render for T {
+    fn render(self): String {
+        "<{self.summarize()}>"
+    }
+}
+
+fn show[T: Render](value: T): String {
+    value.render()
+}
+
+fn main() {
+    console.println(show(Box { value: Box { value: Name { text: "a" } } }))
+}
+
+// expect-stdout: <box(box(a))>
