@@ -1,21 +1,21 @@
-fn noDiscard(): impl Display {
+fn noDiscard(): impl Display + ~Copy {
     "x"
 }
 
-fn mixed(flag: Bool): impl Display + Discard {
+fn mixed(flag: Bool): impl Display {
     if flag {
         return 1
     }
     "text"
 }
 
-fn unmet(): impl Iterator[Int] + Discard {
+fn unmet(): impl Iterator[Int] {
     5
 }
 
 fn main() {
 }
 
-// expect-error: E1117 an opaque result publishes `Discard`: write `impl Display + Discard`
+// expect-error: E1117 an opaque result never hides an obligation: write `impl Display + ~Copy + Discard`
 // expect-error: E1117 every path of an `impl` result returns one type
 // expect-error: E1117 `Int` does not implement `Iterator`, which the `impl` result publishes

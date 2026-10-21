@@ -2,9 +2,9 @@
 //!
 //! A value whose type is not `Copy` moves when it is used by value, and a
 //! value whose type is not `Discard` must be passed on or returned before
-//! its scope ends. In 0.1 such types are type parameters without those
-//! bounds and the composites holding them, so the analysis runs on each
-//! function before monomorphization. It follows the structured HIR:
+//! its scope ends. In 0.1 such types are type parameters declared `~Copy`
+//! and the composites holding them, so the analysis runs on each function
+//! before monomorphization. It follows the structured HIR:
 //! branches merge what may have moved, and a loop body is checked again
 //! with what its previous iteration moved.
 
@@ -129,7 +129,7 @@ impl Checker<'_> {
             let (name, ty, span) = (self.local(local).name.clone(), self.local(local).ty, self.local(local).span);
             let paths = if state == Some(Moved::Maybe) { "on some paths " } else { "" };
             let message = format!(
-                "`{name}` still holds its value {paths}when {leaving}, and its type {} may need to be consumed; pass it on or return it on every path, or bound the type by `Discard`",
+                "`{name}` still holds its value {paths}when {leaving}, and its type {} may need to be consumed; pass it on or return it on every path, or add `Discard` to its type parameter",
                 self.display(ty)
             );
             self.error("E1409", span, message);
@@ -192,7 +192,7 @@ impl Checker<'_> {
                 let holds = !whole || flow.moved.get(local) != Some(&Moved::Surely);
                 if op.is_none() && holds && !self.types.is_discard(ty) {
                     let message = format!(
-                        "assigning `{}` here would drop the value it holds, and its type {} may need to be consumed; pass that value on first, or bound the type by `Discard`",
+                        "assigning `{}` here would drop the value it holds, and its type {} may need to be consumed; pass that value on first, or add `Discard` to its type parameter",
                         self.local(*local).name,
                         self.display(ty)
                     );
@@ -349,7 +349,7 @@ impl Checker<'_> {
         match &pattern.kind {
             PatKind::Wildcard | PatKind::Array { rest: Some(None), .. } if !self.types.is_discard(pattern.ty) => {
                 let message = format!(
-                    "this pattern drops a part of type {}, which may need to be consumed; bind it to a name and pass it on, or bound the type by `Discard`",
+                    "this pattern drops a part of type {}, which may need to be consumed; bind it to a name and pass it on, or add `Discard` to its type parameter",
                     self.display(pattern.ty)
                 );
                 self.error("E1409", pattern.span, message);
@@ -367,7 +367,7 @@ impl Checker<'_> {
             let local = self.local(local);
             let when = if *state == Moved::Maybe { " on some paths" } else { "" };
             let message = format!(
-                "`{}` was moved{when} before this use, since its type {} is not `Copy`; use it before passing it on, or bound the type by `Copy`",
+                "`{}` was moved{when} before this use, since its type {} is not `Copy`; use it before passing it on, or remove `~Copy` from its type parameter",
                 local.name,
                 self.display(local.ty)
             );
@@ -407,7 +407,7 @@ impl Checker<'_> {
             && !self.types.is_copy(expr.ty)
         {
             let message = format!(
-                "this copies a value of type {} out of `{}`, but it is not `Copy`; bound the type by `Copy`, or take values out with `pop()`, `removeAt()` or a `for` loop",
+                "this copies a value of type {} out of `{}`, but it is not `Copy`; remove `~Copy` from its type parameter, or take values out with `pop()`, `removeAt()` or a `for` loop",
                 self.display(expr.ty),
                 self.local(root).name
             );
@@ -452,7 +452,7 @@ impl Checker<'_> {
             ExprKind::Field(base, _) if !copy && Self::root(base).is_some() => {
                 let root = Self::root(base).expect("checked above");
                 let message = format!(
-                    "moving a part of type {} out of `{}` would leave it incomplete; destructure the whole value with `let`, or bound the type by `Copy`",
+                    "moving a part of type {} out of `{}` would leave it incomplete; destructure the whole value with `let`, or remove `~Copy` from its type parameter",
                     self.display(expr.ty),
                     self.local(root).name
                 );
@@ -588,7 +588,7 @@ impl Checker<'_> {
                 let ty = self.place_ty(place.local, &place.path);
                 if *mutation == Mutation::Clear && !self.types.is_discard(ty) {
                     let message = format!(
-                        "`clear()` would drop the elements of `{}`, and its type {} may need to be consumed; take them out with `pop()` or a `for` loop, or bound the type by `Discard`",
+                        "`clear()` would drop the elements of `{}`, and its type {} may need to be consumed; take them out with `pop()` or a `for` loop, or add `Discard` to its type parameter",
                         self.local(place.local).name,
                         self.display(ty)
                     );

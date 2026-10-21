@@ -1,85 +1,87 @@
 type Pair[A, B] = { first: A, second: B }
 
-fn keep[T](value: T): T {
+fn keep[T: ~Copy](value: T): T {
     value
 }
 
-fn twice[T](value: T): (T, T) {
+fn twice[T: ~Copy](value: T): (T, T) {
     let first = keep(value)
     (first, value)
 }
 
-fn dropped[T](value: T): Int {
+fn dropped[T: ~Copy](value: T): Int {
     1
 }
 
-fn sometimes[T](value: T, flag: Bool, out: var Array[T]) {
+fn sometimes[T: ~Copy](value: T, flag: Bool, out: var Array[T]) {
     if flag {
         out.push(value)
     }
 }
 
-fn again[T](value: T, out: var Array[T]) {
+fn again[T: ~Copy](value: T, out: var Array[T]) {
     for _ in 0..2 {
         out.push(value)
     }
 }
 
-fn firstOf[A, B](pair: Pair[A, B]): A {
+fn firstOf[A: ~Copy, B](pair: Pair[A, B]): A {
     pair.first
 }
 
-fn element[T](values: Array[T]): T {
+fn element[T: ~Copy](values: Array[T]): T {
     values[0]
 }
 
-fn replace[T](value: T, other: T): T {
+fn replace[T: ~Copy](value: T, other: T): T {
     var current = value
     current = other
     current
 }
 
-fn ignore[T](value: T) {
+fn ignore[T: ~Copy](value: T) {
     _ = value
 }
 
-fn wildcard[A, B](pair: (A, B)): A {
+fn wildcard[A, B: ~Copy](pair: (A, B)): A {
     let (first, _) = pair
     first
 }
 
-fn Pair[A, B].take(self): A {
+fn Pair[A: ~Copy, B].take(self): A {
     self.first
 }
 
-fn reset[T](values: var Array[T]) {
+fn reset[T: ~Copy](values: var Array[T]) {
     values.clear()
 }
 
-fn each[T](values: Array[T]) {
+fn each[T: ~Copy](values: Array[T]) {
     for value in values {}
 }
 
-fn borrowed[T](value: ref T): T {
+fn borrowed[T: ~Copy](value: ref T): T {
     value
 }
 
-fn copies[T: Copy](value: T): T {
+fn copies[T](value: T): T {
     value
 }
 
-fn forward[T](value: T): T {
+fn forward[T: ~Copy](value: T): T {
     copies(value)
 }
 
+type Holder[T: ~Copy] = { value: T }
+
 fn main() {}
 
-// expect-error: E1401 `value` was moved before this use, since its type `T` is not `Copy`; use it before passing it on, or bound the type by `Copy`
-// expect-error: E1409 `value` still holds its value when the function ends, and its type `T` may need to be consumed; pass it on or return it on every path, or bound the type by `Discard`
+// expect-error: E1401 `value` was moved before this use, since its type `T` is not `Copy`; use it before passing it on, or remove `~Copy` from its type parameter
+// expect-error: E1409 `value` still holds its value when the function ends, and its type `T` may need to be consumed; pass it on or return it on every path, or add `Discard` to its type parameter
 // expect-error: E1409 `value` still holds its value on some paths when the function ends
 // expect-error: E1401 `value` was moved on some paths before this use
-// expect-error: E1406 moving a part of type `A` out of `pair` would leave it incomplete; destructure the whole value with `let`, or bound the type by `Copy`
-// expect-error: E1406 this copies a value of type `T` out of `values`, but it is not `Copy`; bound the type by `Copy`, or take values out with `pop()`, `removeAt()` or a `for` loop
+// expect-error: E1406 moving a part of type `A` out of `pair` would leave it incomplete; destructure the whole value with `let`, or remove `~Copy` from its type parameter
+// expect-error: E1406 this copies a value of type `T` out of `values`, but it is not `Copy`; remove `~Copy` from its type parameter, or take values out with `pop()`, `removeAt()` or a `for` loop
 // expect-error: E1408 assigning `current` here would drop the value it holds
 // expect-error: E1409 `_ =` drops a value of type `T`
 // expect-error: E1409 this pattern drops a part of type `B`
@@ -87,4 +89,5 @@ fn main() {}
 // expect-error: E1409 `clear()` would drop the elements of `values`, and its type `Array[T]` may need to be consumed
 // expect-error: E1409 `value` still holds its value when the iteration ends
 // expect-error: E1406 `value` is a loan, so its value of type `T` cannot be moved out of it
-// expect-error: E1105 `T` does not implement `Copy`, which `copies` requires of `T`
+// expect-error: E1105 `T` does not implement `Copy` (type parameters are `Copy` unless declared `~Copy`), which `copies` requires of `T`
+// expect-error: E1115 `~Copy` drops the `Copy` that parameters of functions, methods and impls assume; remove it here

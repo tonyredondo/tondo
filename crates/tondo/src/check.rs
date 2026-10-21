@@ -708,7 +708,7 @@ impl Checker<'_> {
                     self.diags.unsupported(name.span, "generic newtypes");
                     continue;
                 }
-                let params = self.declare_generics(generics);
+                let params = self.declare_generics(generics, false);
                 let template = self.types.declare_template(name.name.clone(), params.clone());
                 self.declare_type_name(name, TypeName::Template(template));
                 templates.push((item, name, template, generics, params));
@@ -748,7 +748,10 @@ impl Checker<'_> {
 
     /// Declares the parameters of a generic declaration with the
     /// capabilities their bounds grant.
-    fn declare_generics(&mut self, generics: &[ast::GenericParam]) -> Vec<Ty> {
+    /// Declares type parameters. Those of functions, methods and impls are
+    /// `Copy` unless they say `~Copy`; a type's parameters assume nothing
+    /// (12.1).
+    fn declare_generics(&mut self, generics: &[ast::GenericParam], code: bool) -> Vec<Ty> {
         let mut params = Vec::new();
         for generic in generics {
             if self.type_named(&generic.name.name).is_some()
@@ -757,7 +760,9 @@ impl Checker<'_> {
                 let message = format!("type parameter `{}` would shadow a visible type", generic.name.name);
                 self.diags.error("E1003", generic.name.span, message);
             }
-            params.push(self.types.declare_param(generic.name.name.clone()));
+            let param = self.types.declare_param(generic.name.name.clone());
+            self.types.param_mut(param).copy = code;
+            params.push(param);
         }
         // A bound may mention any parameter of the list.
         self.enter_generics(generics, &params);
@@ -772,6 +777,16 @@ impl Checker<'_> {
 
     /// Records what a bound lets generic code do with `param` (12.5).
     fn apply_bound(&mut self, param: Ty, bound: &ast::TypeExpr) {
+        if let ast::TypeKind::NotCopy = bound.kind {
+            let def = self.types.param_mut(param);
+            if !def.copy {
+                let message =
+                    "`~Copy` drops the `Copy` that parameters of functions, methods and impls assume; remove it here";
+                self.diags.error("E1115", bound.span, message);
+            }
+            def.copy = false;
+            return;
+        }
         let ast::TypeKind::Path { segments, args } = &bound.kind else {
             self.diags.error("E1105", bound.span, "a bound names a trait or capability");
             return;
@@ -938,7 +953,7 @@ impl Checker<'_> {
         let outer_count = outer.types.len();
         self.type_params.extend(outer.types.iter().cloned());
         let saved_self = std::mem::replace(&mut self.self_type, outer.self_type);
-        let binders = self.declare_generics(&f.owner_generics);
+        let binders = self.declare_generics(&f.owner_generics, true);
         self.enter_generics(&f.owner_generics, &binders);
         let owner = match owner {
             Some(key) => Some(self.receiver_type(key, &binders, f)),
@@ -948,7 +963,7 @@ impl Checker<'_> {
             // `Self` names the owner in an inherent method (12.3).
             self.self_type = owner;
         }
-        let own = self.declare_generics(&f.generics);
+        let own = self.declare_generics(&f.generics, true);
         self.enter_generics(&f.generics, &own);
         let (mut params, mut names, mut receiver, mut variadic) = (Vec::new(), Vec::new(), None, false);
         for (index, param) in f.params.iter().enumerate() {
@@ -1097,7 +1112,7 @@ impl Checker<'_> {
 
     /// Checks an implementation's header and registers its methods (12.4).
     fn implementation<'d>(&mut self, decl: &'d ast::ImplDecl, bodies: &mut Vec<&'d ast::FnDecl>) {
-        let binders = self.declare_generics(&decl.generics);
+        let binders = self.declare_generics(&decl.generics, true);
         self.enter_generics(&decl.generics, &binders);
         let resolved = self.trait_ref(&decl.trait_ref);
         let target = self.resolve_type(&decl.target);
@@ -1421,7 +1436,7 @@ impl Checker<'_> {
         let def = self.types.param(param)?;
         let (equatable, key, copy, discard) = (def.equatable, def.key, def.copy, def.discard);
         if copy && !self.types.is_copy(actual) {
-            return Some("`Copy`".into());
+            return Some("`Copy` (type parameters are `Copy` unless declared `~Copy`)".into());
         }
         if discard && !self.types.is_discard(actual) {
             return Some("`Discard`".into());
@@ -1552,12 +1567,16 @@ impl Checker<'_> {
         }
         let shown: Vec<String> = bounds.iter().map(|b| self.bound_text(b)).collect();
         let name = format!("impl {}", shown.join(" + "));
-        // An opaque result never hides an obligation: it publishes `Discard`.
-        if !shown.iter().any(|b| b == "Discard" || b == "Copy") {
-            let message = format!("an opaque result publishes `Discard`: write `{name} + Discard`");
+        // Like a type parameter, an opaque result is `Copy` unless it says
+        // `~Copy`, and then it must still publish `Discard`: it never hides
+        // an obligation.
+        let relaxed = bounds.iter().any(|b| matches!(b.kind, ast::TypeKind::NotCopy));
+        if relaxed && !shown.iter().any(|b| b == "Discard") {
+            let message = format!("an opaque result never hides an obligation: write `{name} + Discard`");
             self.diags.error("E1117", result.span, message);
         }
         let carrier = self.types.declare_param(name.clone());
+        self.types.param_mut(carrier).copy = true;
         for bound in bounds {
             self.apply_bound(carrier, bound);
         }
@@ -1893,6 +1912,10 @@ impl Checker<'_> {
             }
             ast::TypeKind::Opaque(_) => {
                 self.diags.error("E0004", t.span, "`impl Bound` only describes the result of a function");
+                Ty::ERROR
+            }
+            ast::TypeKind::NotCopy => {
+                self.diags.error("E0004", t.span, "`~Copy` only appears in a list of bounds");
                 Ty::ERROR
             }
             ast::TypeKind::Fn { params, variadic, result } => {
@@ -2441,7 +2464,7 @@ impl Checker<'_> {
                 if !self.types.is_discard(value.ty) && !self.types.has_error(value.ty) {
                     let ty = self.display(value.ty);
                     let message = format!(
-                        "`_ =` drops a value of type {ty}, which may need to be consumed; pass it on, or bound it by `Discard`"
+                        "`_ =` drops a value of type {ty}, which may need to be consumed; pass it on, or add `Discard` to its type parameter"
                     );
                     self.diags.error("E1409", value.span, message);
                 }

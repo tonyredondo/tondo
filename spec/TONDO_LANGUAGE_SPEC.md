@@ -1668,11 +1668,11 @@ sea `none` o esté vacío. Mover o desestructurar un compuesto transfiere las
 obligaciones a los nuevos propietarios; nunca las satisface por sí solo.
 Sobrescribir, descartar o dejar salir de scope un valor obligado es error, salvo
 que una operación terminal declarada lo consuma o un `defer` válido reserve ese
-consumo. Un parámetro genérico sin constraint `Discard` se considera
-potencialmente obligado: una implementación genérica debe transferirlo o
-consumirlo en todos los caminos y no puede abandonarlo de forma implícita. Como
-`Copy` implica `Discard`, cualquiera de los dos bounds puede demostrar abandono
-seguro, pero `Discard` no exige duplicación.
+consumo. Un parámetro genérico declarado `~Copy` sin constraint `Discard` se
+considera potencialmente obligado: una implementación genérica debe transferirlo
+o consumirlo en todos los caminos y no puede abandonarlo de forma implícita. Como
+`Copy` implica `Discard`, el `Copy` implícito de 12.1 o un bound `Discard`
+demuestran abandono seguro, pero `Discard` no exige duplicación.
 
 Todo tipo intrínseco u opaco con obligación terminal declara además exactamente
 una **acción de unwind**. No es una operación elegida por el programa ni una API
@@ -1766,7 +1766,7 @@ No cumplen `Copy`:
 - Un compuesto que contenga cualquier valor no `Copy`.
 - Handles en propiedad que la librería o una implementación intrínseca declare afines.
 
-`Copy` puede utilizarse como constraint genérico, pero un módulo no puede implementarlo manualmente ni alterar su derivación. Una API que necesite compartir identidad copiablemente utiliza `Ref[T]` o un handle explícitamente compartido; una API que necesite ownership único utiliza un valor afín.
+`Copy` puede utilizarse como constraint genérico, pero un módulo no puede implementarlo manualmente ni alterar su derivación. Los parámetros de tipo de funciones, métodos e `impl` lo cumplen implícitamente salvo que declaren `~Copy` (12.1). Una API que necesite compartir identidad copiablemente utiliza `Ref[T]` o un handle explícitamente compartido; una API que necesite ownership único utiliza un valor afín.
 
 `Discard` es la capacidad intrínseca cerrada complementaria a la obligación
 terminal:
@@ -1788,9 +1788,9 @@ terminal:
 - Un tipo opaco la declara como parte de su contrato. Declarar `Discard` y una
   obligación terminal a la vez es inválido.
 
-Un módulo no puede implementar `Discard` manualmente. Un bound `T: Discard`
-permite escribir consumidores genéricos que ignoren de forma segura valores
-afines sin exigir la capacidad más fuerte `Copy`.
+Un módulo no puede implementar `Discard` manualmente. Un bound
+`T: ~Copy + Discard` permite escribir consumidores genéricos que ignoren de forma
+segura valores afines sin exigir la capacidad más fuerte `Copy`.
 
 En tipos nominales recursivos, las capacidades estructurales se calculan como un punto fijo coinductivo: una referencia recursiva al mismo grupo no falla por sí sola, pero cualquier campo alcanzable que no cumpla la capacidad hace fallar al grupo correspondiente. La misma regla se utiliza para `Discard`, `Equatable`, `Key`, `Send` y `Share`.
 
@@ -2972,11 +2972,11 @@ En posición de tipo, `Iterator[T]` solo puede aparecer como constraint, en la
 cabecera de un `impl` o dentro del resultado opaco estático de 12.8; no es un tipo
 de valor ni borra la representación del cursor. No puede utilizarse por sí solo
 como field, parámetro o retorno. Una API devuelve un cursor nominal, utiliza
-`impl Iterator[T] + Discard` cuando puede ocultarlo sin obligación terminal, o es
+`impl Iterator[T]` cuando puede ocultarlo sin obligación terminal, o es
 genérica:
 
 ~~~tondo
-fn drain[T: Discard, I: Discard + Iterator[T]](cursor: I) {
+fn drain[T, I: Iterator[T]](cursor: I) {
     for item in cursor {
         _ = item
     }
@@ -3029,7 +3029,7 @@ Para las cinco fuentes intrínsecas, el compilador construye un tipo de cursor
 concreto definido por el lenguaje. Para cualquier otra fuente, la propia
 expresión ya es el cursor. Los adaptadores de librería también devuelven tipos de
 cursor concretos: nominales cuando exponen cleanup o identidad, y opcionalmente
-resultados `impl Iterator[T] + Discard` cuando pueden ocultarse. Nunca borran sus
+resultados `impl Iterator[T]` cuando pueden ocultarse. Nunca borran sus
 capacidades detrás de un valor `Iterator[T]`.
 
 Los cursores de las cinco fuentes intrínsecas tienen una representación de tipo
@@ -3224,7 +3224,7 @@ fn log(message: String)
 fn add(a: Int, b: Int): Int
 fn save(config: Config): !IoError
 fn load(path: Path): Config ! IoError
-fn makeCounter(): impl CallMut[fn(): Int] + Discard
+fn makeCounter(): impl CallMut[fn(): Int]
 ~~~
 
 Equivalencias:
@@ -3239,7 +3239,7 @@ con retorno y error     T ! E
 Los parámetros siempre declaran tipo. Una función que devuelve algo distinto de `Unit` siempre declara su tipo de éxito.
 
 `impl Bound` declara un éxito concreto pero opaco según 12.8; puede combinarse
-con un error exterior como `impl Iterator[Row] + Discard ! IoError`.
+con un error exterior como `impl Iterator[Row] ! IoError`.
 
 `->` no es un token de Tondo. `:` introduce el resultado completo de una función. Dentro de ese tipo, `!` separa el éxito y el error. Una función infallible que devuelve `Unit` omite por completo `: Unit`.
 
@@ -3390,7 +3390,7 @@ pub fn Point.distanceTo(self, other: Point): Float {
 Un método inherente sobre un tipo genérico declara los parámetros del propietario en el propio path. En esa posición los nombres son binders:
 
 ~~~tondo
-fn Pair[A: Copy, B: Copy].swapped(self): Pair[B, A] {
+fn Pair[A, B].swapped(self): Pair[B, A] {
     Pair[B, A] {
         first: self.second
         second: self.first
@@ -3401,7 +3401,7 @@ fn Pair[A: Copy, B: Copy].swapped(self): Pair[B, A] {
 Un método puede añadir después parámetros genéricos propios:
 
 ~~~tondo
-fn Box[T: Copy].map[U, F: Call[fn(T): U]](
+fn Box[T].map[U, F: Call[fn(T): U]](
     self,
     transform: F,
 ): Box[U] {
@@ -4213,10 +4213,28 @@ suspensión. Ninguna es un wrapper de retorno ni una segunda familia de APIs.
 ### 12.1 Genéricos
 
 ~~~tondo
-fn first[T: Copy](values: Array[T]): T? {
+fn first[T](values: Array[T]): T? {
     values.get(0)
 }
 ~~~
+
+Un parámetro de tipo declarado por una función, un método o un `impl` cumple
+`Copy` implícitamente: el código genérico ordinario copia, descarta e indexa sus
+valores sin escribir bounds, y solo acepta argumentos `Copy`. `~Copy` retira esa
+suposición en el código que también acepte valores afines; el parámetro queda
+con los bounds escritos, y `Discard` vuelve a permitir abandonarlo (8.10):
+
+~~~tondo
+fn keep[T: ~Copy](value: T): T {
+    value
+}
+~~~
+
+Los parámetros de una declaración de tipo y el `Self` y los parámetros de un
+trait no asumen ninguna capacidad: `Pair[Resource, Int]` es válido, y cada
+función o implementación decide qué exige. Las firmas intrínsecas que listan esta
+especificación y la librería estándar declaran sus requisitos exactos: en ellas un
+parámetro sin bounds acepta cualquier tipo.
 
 Múltiples parámetros:
 
@@ -4352,7 +4370,7 @@ namespace abierto ni hacer que su contrato dependa del orden de métodos.
 ### 12.5 Constraints
 
 ~~~tondo
-fn renderAll[T: Discard + Summary](values: Array[T]): Array[String] {
+fn renderAll[T: Summary](values: Array[T]): Array[String] {
     panic("cuerpo de ejemplo omitido")
 }
 ~~~
@@ -4360,7 +4378,7 @@ fn renderAll[T: Discard + Summary](values: Array[T]): Array[String] {
 Múltiples constraints:
 
 ~~~tondo
-fn compareAndRender[T: Discard + Compare + Summary](left: T, right: T): String {
+fn compareAndRender[T: Compare + Summary](left: T, right: T): String {
     panic("cuerpo de ejemplo omitido")
 }
 ~~~
@@ -4376,6 +4394,8 @@ resultados opacos utiliza el conjunto normalizado.
 estructurales cerradas. `Call[S]`, `CallMut[S]` y `CallOnce[S]` son protocolos
 cerrados de callable cuya `S` debe ser un tipo de función completo. Todos son
 bounds válidos, pero ningún módulo puede implementarlos manualmente.
+`~Copy` puede aparecer una vez en la lista de un parámetro de función, método o
+`impl`, o de un resultado opaco, y retira el `Copy` implícito de 12.1.
 La resolución aplica las implicaciones cerradas de 11.8, incluidas
 `Call[S] => CallMut[S]` y `(CallMut[S] + Discard) => CallOnce[S]`; no inventa
 otras relaciones entre firmas.
@@ -4383,7 +4403,7 @@ otras relaciones entre firmas.
 `Iterator[T]` es distinto: su contrato está predefinido por el lenguaje, pero los
 tipos de usuario sí pueden implementarlo. Se somete a coherencia, terminación y a
 la unicidad funcional adicional de 10.17. También puede publicarse como bound de
-un resultado opaco `impl Iterator[T] + Discard`, que conserva un cursor concreto.
+un resultado opaco `impl Iterator[T]`, que conserva un cursor concreto.
 
 ### 12.6 Coherencia
 
@@ -4520,7 +4540,7 @@ Una función libre, inherente o asociada puede ocultar el nombre de su tipo
 concreto de éxito y publicar únicamente los bounds que necesita el consumidor:
 
 ~~~tondo
-fn makeCounter(): impl CallMut[fn(): Int] + Discard {
+fn makeCounter(): impl CallMut[fn(): Int] {
     var count = 0
 
     (): Int {
@@ -4529,9 +4549,9 @@ fn makeCounter(): impl CallMut[fn(): Int] + Discard {
     }
 }
 
-fn enumerate[T: Copy](
+fn enumerate[T](
     values: Array[T],
-): impl Iterator[(Int, T)] + Discard {
+): impl Iterator[(Int, T)] {
     IndexCursor[T] { values, index: 0 }
 }
 ~~~
@@ -4551,10 +4571,10 @@ Reglas:
   canal visible `! E`. No aparece en parámetros, fields, aliases, funciones como
   valores, cierres, métodos de trait ni sus implementaciones.
 - La lista contiene uno o más traits, capacidades o protocolos válidos para un
-  generic bound. Sus implicaciones cerradas deben demostrar `Discard`; escribir
-  `Discard` directamente es la forma habitual y `Copy` también basta porque lo
-  implica. Así una firma opaca nunca esconde una obligación terminal ni el nombre
-  de su operación de cleanup. Un cursor que posea un recurso devuelve en cambio
+  generic bound. Como un parámetro de tipo, el resultado publica `Copy`
+  implícitamente; con `~Copy` la lista debe incluir `Discard`. Así una firma
+  opaca nunca esconde una obligación terminal ni el nombre de su operación de
+  cleanup. Un cursor que posea un recurso devuelve en cambio
   un tipo nominal visible con su operación terminal.
 - Todos los caminos normales de `return` y la expresión final deben producir
   exactamente un mismo tipo concreto después de aliases. Los caminos `Never` no
@@ -4577,22 +4597,22 @@ Reglas:
   declaración, nunca el nombre privado ni los fields capturados.
 
 Fuera de `decl_outcome_annotation`, `impl Bound` no forma una expresión de tipo y
-produce `E0004`. Dentro de una declaración admitida, un conjunto que no demuestre
-`Discard`, la ausencia de un testigo normal, retornos con tipos concretos
+produce `E0004`. Dentro de una declaración admitida, un conjunto con `~Copy` que
+no incluya `Discard`, la ausencia de un testigo normal, retornos con tipos concretos
 distintos o un bound no satisfecho producen `E1117`. Esta forma
 resuelve factories de cierres con estado y adaptadores concretos sin añadir trait
 objects ni borrar `Copy`, `Send`, `Share` o el modo de llamada declarado.
 
 ~~~tondo compile-fail E1117
-fn hiddenCounter(): impl Call[fn(): Int] {
+fn hiddenCounter(): impl Call[fn(): Int] + ~Copy {
     (): Int {
         1
     }
 }
 ~~~
 
-Aunque el cierre concreto sea descartable, el contrato opaco debe publicar o
-implicar `Discard`; el consumidor no depende de una propiedad escondida.
+Aunque el cierre concreto sea descartable, un contrato opaco `~Copy` debe
+publicar `Discard`; el consumidor no depende de una propiedad escondida.
 
 ### 12.9 Límites de los traits
 
@@ -5501,7 +5521,7 @@ fn readValue(): (Int | String) ! DecodeError
 ~~~
 
 En un resultado opaco, la lista de bounds termina antes del canal exterior:
-`fn open(): impl Iterator[Row] + Discard ! IoError`. El `+` pertenece a los
+`fn open(): impl Iterator[Row] + Send ! IoError`. El `+` pertenece a los
 bounds y `! IoError` a la función; no se requieren paréntesis adicionales.
 
 No es canónico:
@@ -7971,13 +7991,13 @@ type Loader = fn(): Int? ! IoError
 Entrada:
 
 ~~~text
-fn make():impl Iterator[Int]+Discard{build()}
+fn make():impl Iterator[Int]+Send{build()}
 ~~~
 
 Salida:
 
 ~~~text
-fn make(): impl Iterator[Int] + Discard {
+fn make(): impl Iterator[Int] + Send {
     build()
 }
 ~~~
@@ -8835,7 +8855,8 @@ generic_params  = "[", generic_param,
                   { ",", generic_param }, [ "," ], "]" ;
 
 generic_param   = identifier, [ ":", generic_bound ] ;
-generic_bound   = type_path, { "+", type_path } ;
+generic_bound   = bound_item, { "+", bound_item } ;
+bound_item      = type_path | "~", "Copy" ;
 
 generic_args    = "[", type_expr,
                   { ",", type_expr }, [ "," ], "]" ;
@@ -8844,7 +8865,7 @@ generic_args    = "[", type_expr,
 Cada elemento de `generic_bound` debe resolver a un trait, una capacidad
 intrínseca cerrada como `Copy`, `Discard`, `Equatable`, `Key`, `Send` o `Share`,
 o un protocolo cerrado `Call[S]`, `CallMut[S]` o `CallOnce[S]` cuya `S` sea un
-`function_type`.
+`function_type`. `~Copy` retira el `Copy` implícito de 12.1.
 
 ### 23.8 Paths
 
@@ -8927,7 +8948,7 @@ Restricciones contextuales:
 - Una unión como error debe agruparse: `T ! (E1 | E2)`.
 - Una función infallible que devuelve `Unit` omite la anotación completa. Cualquier otro resultado se introduce con `:`.
 - `opaque_outcome` se limita semánticamente a las declaraciones enumeradas en
-  12.8. Su `generic_bound` debe demostrar `Discard`; el `!` opcional pertenece al
+  12.8. Con `~Copy`, su `generic_bound` debe incluir `Discard`; el `!` opcional pertenece al
   canal exterior de la función y no al bound.
 - En `function_type_list`, `...T` puede aparecer como máximo una vez y únicamente al final.
 - `ref T`, `mut T` y `var T` forman parte del tipo de función y no pueden
@@ -9890,7 +9911,7 @@ impl Display for User {
     }
 }
 
-fn renderAll[T: Discard + Display](values: Array[T]): Array[String] {
+fn renderAll[T: Display](values: Array[T]): Array[String] {
     var output: Array[String] = []
 
     for value in values {
@@ -10998,8 +11019,8 @@ fn calculate(): Value
 fn save(): !Error
 fn load(): Value ! Error
 fn log(values: ...String)
-fn transform[T: Discard + Display](value: T): String
-fn makeCounter(): impl CallMut[fn(): Int] + Discard
+fn transform[T: Display](value: T): String
+fn makeCounter(): impl CallMut[fn(): Int]
 fn fetch(): Value ! Error suspends
 unsafe fn read(address: Pointer[Byte]): Byte
 ~~~
@@ -11035,7 +11056,7 @@ unsafe fn(Pointer[Byte]): B ! E
 Call[fn(A): B]      // solo como bound
 CallMut[fn(A): B]   // solo como bound
 CallOnce[fn(A): B]  // solo como bound
-fn makeIterator[T](): impl Iterator[T] + Discard
+fn makeIterator[T](): impl Iterator[T]
 ~~~
 
 ### Control
@@ -11115,8 +11136,12 @@ let count = inspect(ref values)
 ### Ownership y capacidades
 
 ~~~tondo
-fn duplicate[T: Copy](value: T): (T, T) {
+fn duplicate[T](value: T): (T, T) {
     (value, value)
+}
+
+fn forward[T: ~Copy](value: T): T {
+    value
 }
 
 scope {
@@ -11253,7 +11278,7 @@ opaque Resource
 
 fn Resource.release(resource: Resource)
 fn Resource.status(self): Status
-fn consume[T: Discard](value: T)
+fn consume[T: ~Copy + Discard](value: T)
 
 fn String.isEmpty(self): Bool
 fn String(value: Bytes): String ! Utf8Error

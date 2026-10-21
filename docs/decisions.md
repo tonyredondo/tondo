@@ -220,8 +220,7 @@ a cleanup is reported as suppressed and the other cleanups still run.
 ## 2026-10-21 — Ownership is checked on generic code before monomorphization
 
 Every concrete value of 0.1 is `Copy`, so moves and obligations (8.10) only
-concern type parameters without `Copy` or `Discard` bounds and the
-composites that hold them. The checker analyses each function's HIR once,
+concern type parameters declared `~Copy` and the composites that hold them. The checker analyses each function's HIR once,
 before monomorphization, following its structured control flow: branches
 merge "moved" into "moved on some paths", and a loop body is checked again
 with what its previous iteration moved. A use of a moved binding is
@@ -230,3 +229,15 @@ moving out of a loan is `E1406`; overwriting a value that cannot be
 dropped is `E1408`; and dropping one at a scope exit, with `_ =`, a `_`
 pattern or `clear()` is `E1409`. `E1404` is left for the terminal types
 that come with native handles. Closure bodies are not analysed yet.
+
+## 2026-10-21 — Type parameters are `Copy` unless they say `~Copy`
+
+Requiring `T: Copy` or `T: Discard` wherever generic code reads, indexes
+or drops a value put a bound on almost every generic function. Type
+parameters of functions, methods and impls, and opaque results, now assume
+`Copy`, as Swift assumes `Copyable`; `~Copy` drops the assumption for code
+that also accepts affine values, and `Discard` can be added back. A type's
+parameters and a trait's `Self` and parameters assume nothing, so data can
+hold anything and each function says what it needs. One relaxation keeps
+the syntax small: `~Copy + Discard` covers values that may be dropped but
+not copied.

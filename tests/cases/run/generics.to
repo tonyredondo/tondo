@@ -5,11 +5,11 @@ type Pair[A, B] = {
     second: B
 }
 
-fn Pair[A: Copy, B: Copy].swapped(self): Pair[B, A] {
+fn Pair[A, B].swapped(self): Pair[B, A] {
     Pair { first: self.second, second: self.first }
 }
 
-fn Pair[A: Discard, B].setFirst(mut self, value: A) {
+fn Pair[A, B].setFirst(mut self, value: A) {
     self.first = value
 }
 
@@ -37,7 +37,7 @@ fn walk[T](tree: Tree[T], out: Array[T]): Array[T] {
     }
 }
 
-fn first[T: Copy](values: Array[T]): T? {
+fn first[T](values: Array[T]): T? {
     values.get(0)
 }
 
@@ -45,7 +45,7 @@ fn identity[T](value: T): T {
     value
 }
 
-fn count[T: Equatable + Discard](values: Array[T], wanted: T): Int {
+fn count[T: Equatable](values: Array[T], wanted: T): Int {
     var total = 0
     for value in values {
         if value == wanted {
@@ -55,7 +55,7 @@ fn count[T: Equatable + Discard](values: Array[T], wanted: T): Int {
     total
 }
 
-fn keysOf[K: Key, V: Discard](map: Map[K, V]): Array[K] {
+fn keysOf[K: Key, V](map: Map[K, V]): Array[K] {
     var keys: Array[K] = []
     for (key, _) in map {
         keys.push(key)

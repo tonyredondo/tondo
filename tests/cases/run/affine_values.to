@@ -7,12 +7,12 @@ enum Slot[T] {
     Full(T)
 }
 
-fn swap[A, B](pair: Pair[A, B]): Pair[B, A] {
+fn swap[A: ~Copy, B: ~Copy](pair: Pair[A, B]): Pair[B, A] {
     let Pair { first, second } = pair
     Pair { first: second, second: first }
 }
 
-fn orElse[T](slot: Slot[T], fallback: T, spare: var Array[T]): T {
+fn orElse[T: ~Copy](slot: Slot[T], fallback: T, spare: var Array[T]): T {
     match slot {
         Slot.Full(value) => {
             spare.push(fallback)
@@ -22,7 +22,7 @@ fn orElse[T](slot: Slot[T], fallback: T, spare: var Array[T]): T {
     }
 }
 
-fn rotate[T](values: Array[T]): Array[T] {
+fn rotate[T: ~Copy](values: Array[T]): Array[T] {
     var rest = values
     let first = rest.removeAt(0)
     var out: Array[T] = []
@@ -36,13 +36,21 @@ fn rotate[T](values: Array[T]): Array[T] {
     out
 }
 
-fn latest[T](values: Array[T], seed: T, old: var Array[T]): T {
+fn latest[T: ~Copy](values: Array[T], seed: T, old: var Array[T]): T {
     var current = seed
     for value in values {
         old.push(current)
         current = value
     }
     current
+}
+
+fn count[T: ~Copy + Discard](values: Array[T]): Int {
+    var n = 0
+    for value in values {
+        n += 1
+    }
+    n
 }
 
 fn main() {
@@ -54,8 +62,10 @@ fn main() {
     var old: Array[String] = []
     let nothing: Array[String] = []
     console.println("{rotate([1, 2, 3])} {latest(["a", "b"], "z", var old)} {latest(nothing, "y", var old)} {old}")
+    console.println("{count(old)}")
 }
 
 // expect-stdout: one 1
 // expect-stdout: 3 5 [4]
 // expect-stdout: [2, 3, 1] b y [z, a]
+// expect-stdout: 2

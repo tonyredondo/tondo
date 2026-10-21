@@ -259,9 +259,9 @@ impl Parser<'_> {
             let name = self.ident()?;
             let mut bounds = Vec::new();
             if self.eat(&Tok::Colon) {
-                bounds.push(self.type_expr()?);
+                bounds.push(self.bound(false)?);
                 while self.eat(&Tok::Plus) {
-                    bounds.push(self.type_expr()?);
+                    bounds.push(self.bound(false)?);
                 }
             }
             params.push(GenericParam { name, bounds });
@@ -419,6 +419,20 @@ impl Parser<'_> {
         Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, suspends, body, span })
     }
 
+    /// One bound of a list: a type, or `~Copy`. In an opaque result each
+    /// bound is a path, since a `!` that follows belongs to the function.
+    fn bound(&mut self, opaque: bool) -> PResult<TypeExpr> {
+        let start = self.span();
+        if !self.eat(&Tok::Tilde) {
+            return if opaque { self.primary_type() } else { self.type_expr() };
+        }
+        let name = self.ident()?;
+        if name.name != "Copy" {
+            self.diags.error("E0004", name.span, "only `Copy` can be relaxed with `~`: write `~Copy`");
+        }
+        Ok(TypeExpr { kind: TypeKind::NotCopy, span: start.to(name.span) })
+    }
+
     /// A function's result: a type, or `impl A + B` with an optional
     /// `! E` channel (12.8), which no other position accepts.
     fn function_result(&mut self) -> PResult<TypeExpr> {
@@ -427,9 +441,9 @@ impl Parser<'_> {
             return self.type_expr();
         }
         // Each bound is a path; the `!` that may follow belongs to the function.
-        let mut bounds = vec![self.primary_type()?];
+        let mut bounds = vec![self.bound(true)?];
         while self.eat(&Tok::Plus) {
-            bounds.push(self.primary_type()?);
+            bounds.push(self.bound(true)?);
         }
         let opaque = TypeExpr { kind: TypeKind::Opaque(bounds), span: start.to(self.prev_span()) };
         if !self.eat(&Tok::Bang) {

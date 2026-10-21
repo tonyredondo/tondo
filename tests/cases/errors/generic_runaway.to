@@ -1,4 +1,4 @@
-fn grow[T: Discard](value: T, n: Int): Int {
+fn grow[T](value: T, n: Int): Int {
     if n == 0 {
         0
     } else {

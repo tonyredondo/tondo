@@ -974,7 +974,8 @@ impl Types {
 
     /// The closed `Copy` capability (8.10): values are duplicated implicitly
     /// and using them never moves them. In 0.1 only type parameters without
-    /// the bound, and composites holding them, are affine.
+    /// it (`~Copy`, or a type's or trait's), and composites holding them,
+    /// are affine.
     pub fn is_copy(&self, ty: Ty) -> bool {
         self.capability(ty, &mut Vec::new(), &|p| p.copy)
     }

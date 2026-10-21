@@ -30,7 +30,7 @@ fn collect[T, I: Iterator[T]](cursor: I): Array[T] {
     out
 }
 
-fn sum[I: Iterator[Int] + Discard](cursor: I): Int {
+fn sum[I: Iterator[Int]](cursor: I): Int {
     var total = 0
     var source = cursor
     for {

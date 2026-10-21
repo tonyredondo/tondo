@@ -247,6 +247,8 @@ pub enum TypeKind {
     Tuple(Vec<TypeExpr>),
     /// `impl A + B`: an opaque function result (12.8).
     Opaque(Vec<TypeExpr>),
+    /// `~Copy` in a list of bounds: drops the implicit `Copy` (12.1).
+    NotCopy,
     /// `fn(A, B): R`, the uniform function type (11.7).
     Fn {
         params: Vec<TypeExpr>,
