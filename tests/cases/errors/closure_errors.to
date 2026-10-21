@@ -1,0 +1,37 @@
+type Point = { x: Int }
+
+fn Point.moved(self): Point {
+    self
+}
+
+fn identity[T](value: T): T {
+    value
+}
+
+fn main() {
+    var count = 0
+    let increment = (): Int {
+        count += 1
+        count
+    }
+    let erased: fn(): Int = increment
+    let fixed = 10
+    let change = () {
+        fixed = 11
+    }
+    let untyped = (x) { x }
+    let number = 5
+    let called = number(1)
+    let f: fn(Int): Int = (x) { x }
+    let named = f(value: 1)
+    let method = Point.moved
+    let generic = identity
+}
+
+// expect-error: E1108 this closure changes its captures, so it cannot become `fn(): Int`
+// expect-error: E1411 cannot assign to `fixed`: it is not declared with `var`
+// expect-error: E1101 closure parameter `x` needs a type: `(x: Int) { ... }`
+// expect-error: E1102 `Int` cannot be called
+// expect-error: E1102 a call through a function value takes positional arguments
+// expect-error: E1102 a method is not a value; write a closure that calls it, such as `(x) { value.moved(x) }`
+// expect-error: E1101 `identity` is generic: specialize it, as in `identity[Int]`

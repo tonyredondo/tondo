@@ -1,0 +1,76 @@
+import std.console
+
+fn double(value: Int): Int {
+    value * 2
+}
+
+fn identity[T](value: T): T {
+    value
+}
+
+fn apply(value: Int, operation: fn(Int): Int): Int {
+    operation(value)
+}
+
+fn applyTwice[F: Call[fn(Int): Int]](value: Int, operation: F): Int {
+    operation(operation(value))
+}
+
+fn repeat[F: CallMut[fn(): Int]](times: Int, next: F): Array[Int] {
+    var results: Array[Int] = []
+    var step = next
+    for _ in 0..times {
+        results.push(step())
+    }
+    results
+}
+
+fn makeAdder(amount: Int): fn(Int): Int {
+    (value: Int): Int { value + amount }
+}
+
+fn mapAll[T, U, F: Call[fn(T): U]](values: Array[T], transform: F): Array[U] {
+    var out: Array[U] = []
+    for value in values {
+        out.push(transform(value))
+    }
+    out
+}
+
+fn main() {
+    let f: fn(Int): Int = double
+    console.println("{f(4)} {apply(5, double)} {apply(5, identity[Int])} {apply(5, identity)}")
+    let triple = (value: Int): Int { value * 3 }
+    console.println("{triple(2)} {applyTwice(1, triple)} {applyTwice(1, (x) { x + 10 })}")
+    let prefix = "item"
+    let label = (n: Int) { "{prefix}-{n}" }
+    console.println("{label(1)} {label(2)}")
+    var count = 0
+    var next = (): Int {
+        count += 1
+        count
+    }
+    console.println("{next()} {next()} {count}")
+    console.println("{repeat(3, next)} {next()}")
+    let addFive = makeAdder(5)
+    let erased: fn(Int): Int = triple
+    console.println("{addFive(1)} {apply(2, addFive)} {erased(7)} {apply(1, (x) { x - 1 })}")
+    let words = mapAll([1, 2, 3], (n: Int) { "#{n}" })
+    let lengths = mapAll(["a", "bb"], (text: String): Int { text.length() })
+    console.println("{words} {lengths}")
+    let base = 100
+    let outer = (x: Int): Int {
+        let inner = (y: Int): Int { x + y + base }
+        inner(1)
+    }
+    console.println("{outer(10)}")
+}
+
+// expect-stdout: 8 10 5 5
+// expect-stdout: 6 9 21
+// expect-stdout: item-1 item-2
+// expect-stdout: 1 2 0
+// expect-stdout: [3, 4, 5] 3
+// expect-stdout: 6 7 21 0
+// expect-stdout: [#1, #2, #3] [1, 2]
+// expect-stdout: 111

@@ -904,6 +904,22 @@ impl Builder<'_> {
                 self.switch_to(next);
                 Operand::Copy(place.variant_field(success, 0))
             }
+            hir::ExprKind::FnValue(id, _) => self.temp(e.ty, Rvalue::FnValue(*id), e.span),
+            hir::ExprKind::CallValue(callee, args) => {
+                let callee = self.expr(callee);
+                let args = args.iter().map(|a| self.expr(a)).collect();
+                let result = self.temp(e.ty, Rvalue::CallIndirect(callee, args), e.span);
+                if e.ty == Ty::NEVER {
+                    self.terminate(Terminator::Unreachable);
+                }
+                result
+            }
+            hir::ExprKind::Erase(closure, body) => {
+                let ty = closure.ty;
+                let value = self.expr(closure);
+                let retain = self.move_flags(std::slice::from_ref(&value), &[true], &[ty])[0];
+                self.temp(e.ty, Rvalue::Erase(value, *body, retain), e.span)
+            }
             hir::ExprKind::Call(callee, _, args) => {
                 let args = args.iter().map(|a| self.expr(a)).collect();
                 let result = self.temp(e.ty, Rvalue::Call(*callee, args), e.span);

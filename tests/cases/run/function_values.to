@@ -1,0 +1,36 @@
+import std.console
+
+type Handler = { name: String, callback: fn(String): String }
+
+fn shout(text: String): String {
+    "{text}!"
+}
+
+fn compose(f: fn(String): String, g: fn(String): String): fn(String): String {
+    (text: String): String { g(f(text)) }
+}
+
+fn main() {
+    let suffix = "-done"
+    let tags = ["a", "b"]
+    let tag = (text: String): String { "{text}{suffix}{tags.length()}" }
+    let handler = Handler { name: "h", callback: tag }
+    console.println(handler.callback("x"))
+    let pipeline: Array[fn(String): String] = [shout, tag, compose(shout, tag)]
+    for step in pipeline {
+        console.println(step("go"))
+    }
+    var log: Array[String] = []
+    var record = (entry: String) {
+        log.push(entry)
+    }
+    record("one")
+    record("two")
+    console.println("{log} {log.length()}")
+}
+
+// expect-stdout: x-done2
+// expect-stdout: go!
+// expect-stdout: go-done2
+// expect-stdout: go!-done2
+// expect-stdout: [] 0

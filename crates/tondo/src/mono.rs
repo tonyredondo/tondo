@@ -49,6 +49,29 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
 /// The trait whose method interpolation uses (see the checker).
 const DISPLAY: TraitId = TraitId(0);
 
+/// The place a value expression reads, if it reads one.
+fn place_of(value: Expr) -> Option<Place> {
+    let mut steps = Vec::new();
+    let mut current = value;
+    let local = loop {
+        match current.kind {
+            ExprKind::Local(local) => break local,
+            ExprKind::Field(base, index) => {
+                steps.push(PlaceStep::Field(index));
+                current = *base;
+            }
+            ExprKind::Retype(base) => current = *base,
+            ExprKind::Index(base, index) => {
+                steps.push(PlaceStep::Index(*index));
+                current = *base;
+            }
+            _ => return None,
+        }
+    };
+    steps.reverse();
+    Some(Place { local, path: steps })
+}
+
 struct Mono<'a> {
     types: &'a mut Types,
     functions: &'a [Function],
@@ -261,6 +284,31 @@ impl Mono<'_> {
                     },
                     Callee::Std(_) => {}
                 }
+            }
+            ExprKind::FnValue(id, type_args) => {
+                let types: Vec<Ty> = type_args.iter().map(|&t| self.types.subst(t, map)).collect();
+                type_args.clear();
+                *id = self.instance(*id, types);
+            }
+            ExprKind::CallValue(callee, args) => {
+                self.expr(callee, map);
+                self.exprs(args, map);
+                // A closure is called directly; its body borrows the closure.
+                if let Some((body, types, _)) = self.types.closure(callee.ty) {
+                    let body = self.instance(FnId(body), types);
+                    let callee =
+                        std::mem::replace(&mut **callee, Expr { kind: ExprKind::Unit, ty: Ty::UNIT, span: e.span });
+                    let (ty, span) = (callee.ty, callee.span);
+                    let place = place_of(callee).expect("the checker calls closures through places");
+                    let mut values = vec![Expr { kind: ExprKind::Loan(place), ty, span }];
+                    values.append(args);
+                    e.kind = ExprKind::Call(Callee::Fn(body), Vec::new(), values);
+                }
+            }
+            ExprKind::Erase(closure, body) => {
+                self.expr(closure, map);
+                let (id, types, _) = self.types.closure(closure.ty).expect("only a closure is erased");
+                *body = self.instance(FnId(id), types);
             }
             ExprKind::If(condition, then, otherwise) => {
                 self.expr(condition, map);

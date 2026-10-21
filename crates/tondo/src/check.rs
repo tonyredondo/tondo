@@ -9,7 +9,7 @@ use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
 use crate::types::{
-    AdtId, AdtKind, ERR, Field, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty, TyKind, Types, Variant,
+    AdtId, AdtKind, ClosureInfo, ERR, Field, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty, TyKind, Types, Variant,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -29,6 +29,9 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         trait_names: HashMap::new(),
         impls: Vec::new(),
         bounds: HashMap::new(),
+        call_bounds: HashMap::new(),
+        closure_base: 0,
+        closure_functions: Vec::new(),
         fn_scopes: Vec::new(),
         console_error: None,
         conversion_error: Ty::ERROR,
@@ -236,6 +239,13 @@ struct Checker<'a> {
     impls: Vec<ImplDef>,
     /// The traits each type parameter is bound by, with their arguments.
     bounds: HashMap<Ty, Vec<(TraitId, Vec<Ty>)>>,
+    /// The call protocol bounding a type parameter (11.8): whether it may
+    /// change its captures (`CallMut`/`CallOnce`), and its `fn(...)` type.
+    call_bounds: HashMap<Ty, (bool, Ty)>,
+    /// The `FnId` of the first closure body; closures are numbered after
+    /// every declared function.
+    closure_base: u32,
+    closure_functions: Vec<Option<hir::Function>>,
     /// The scope of each function's signature and body.
     fn_scopes: Vec<FnScope>,
     /// `console.ConsoleError`, once `std.console` is imported.
@@ -264,6 +274,25 @@ struct FnCx {
     loops: Vec<bool>,
     /// The current path has unconditionally left the enclosing block.
     diverged: bool,
+    /// For a closure body: the enclosing context, whose bindings it
+    /// captures by value when first used (11.8).
+    parent: Option<Box<FnCx>>,
+    /// The closure itself, the first parameter of its body.
+    env: Option<LocalId>,
+    captures: Vec<Capture>,
+    /// Whether the body changes a capture (`CallMut`).
+    mutates: bool,
+    /// A closure without a declared result infers it from its body.
+    infer_result: bool,
+}
+
+/// A binding a closure captures: read from `source` in the enclosing
+/// context when the closure is created.
+struct Capture {
+    name: String,
+    ty: Ty,
+    source: hir::Expr,
+    mutable: bool,
 }
 
 impl Checker<'_> {
@@ -311,6 +340,9 @@ impl Checker<'_> {
             }
         }
 
+        // Closure bodies are numbered after every declared function and the
+        // script's `main`.
+        self.closure_base = bodies.len() as u32 + u32::from(!module.statements.is_empty());
         let mut functions: Vec<hir::Function> =
             bodies.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
 
@@ -332,6 +364,7 @@ impl Checker<'_> {
             self.diags.error_without_span("E1806", "the program has no `main` function and no top-level statements");
             return None;
         };
+        functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
 
         if self.diags.has_errors() {
             return None;
@@ -588,12 +621,16 @@ impl Checker<'_> {
                 let message = format!("type parameter `{}` would shadow a visible type", generic.name.name);
                 self.diags.error("E1003", generic.name.span, message);
             }
-            let param = self.types.declare_param(generic.name.name.clone());
+            params.push(self.types.declare_param(generic.name.name.clone()));
+        }
+        // A bound may mention any parameter of the list.
+        self.enter_generics(generics, &params);
+        for (generic, &param) in generics.iter().zip(&params) {
             for bound in &generic.bounds {
                 self.apply_bound(param, bound);
             }
-            params.push(param);
         }
+        self.leave_generics(generics);
         params
     }
 
@@ -609,6 +646,20 @@ impl Checker<'_> {
             // Affine values arrive with ownership (H3); until then every
             // value can be copied, discarded and shared.
             ([name], true) if matches!(name.name.as_str(), "Copy" | "Discard" | "Send" | "Share") => {}
+            ([name], false) if matches!(name.name.as_str(), "Call" | "CallMut" | "CallOnce") => {
+                let [signature] = args.as_slice() else {
+                    self.diags.error("E1104", bound.span, "a call bound takes one function type: `Call[fn(A): B]`");
+                    return;
+                };
+                let signature = self.resolve_type(signature);
+                if !matches!(self.types.kind(signature), TyKind::Fn(..)) {
+                    self.diags.error("E1104", bound.span, "a call bound takes a function type: `Call[fn(A): B]`");
+                    return;
+                }
+                if self.call_bounds.insert(param, (name.name != "Call", signature)).is_some() {
+                    self.diags.error("E1115", bound.span, "a type parameter has one call bound");
+                }
+            }
             _ => {
                 if let Some((trait_id, args)) = self.trait_ref(bound) {
                     let bounds = self.bounds.entry(param).or_default();
@@ -1082,7 +1133,7 @@ impl Checker<'_> {
             }
             return generics.iter().all(|g| {
                 let actual = map.get(g).copied().unwrap_or(Ty::ERROR);
-                self.bound_holds(*g, actual, depth + 1).is_none()
+                self.bound_holds(*g, actual, &map, depth + 1).is_none()
             });
         }
         false
@@ -1090,7 +1141,7 @@ impl Checker<'_> {
 
     /// The first bound of the type parameter `param` that `actual` does not
     /// meet, as text for a diagnostic.
-    fn bound_holds(&mut self, param: Ty, actual: Ty, depth: usize) -> Option<String> {
+    fn bound_holds(&mut self, param: Ty, actual: Ty, map: &HashMap<Ty, Ty>, depth: usize) -> Option<String> {
         let def = self.types.param(param)?;
         let (equatable, key) = (def.equatable, def.key);
         if key && !self.types.is_key(actual) {
@@ -1099,13 +1150,65 @@ impl Checker<'_> {
         if equatable && !self.types.is_equatable(actual) {
             return Some("`Equatable`".into());
         }
+        if let Some((mutable, signature)) = self.call_bounds.get(&param).copied() {
+            let signature = self.types.subst(signature, map);
+            if let Some(problem) = self.callable_as(actual, mutable, signature) {
+                return Some(problem);
+            }
+        }
         let bounds = self.bounds.get(&param).cloned().unwrap_or_default();
         for (trait_id, args) in bounds {
+            let args: Vec<Ty> = args.iter().map(|&a| self.types.subst(a, map)).collect();
             if !self.satisfies_depth(actual, trait_id, &args, depth) {
                 return Some(format!("`{}`", self.traits[trait_id.0 as usize].name));
             }
         }
         None
+    }
+
+    /// What a closure passed for the type parameter `ty` with a call bound
+    /// should look like: the bound's signature with the arguments inferred
+    /// so far. An unknown result is left to the closure (`{error}`).
+    fn call_expectation(&mut self, inference: &Inference, ty: Ty) -> Option<Ty> {
+        let &(_, bound) = self.call_bounds.get(&ty)?;
+        let TyKind::Fn(params, result, variadic) = self.types.kind(bound).clone() else { return None };
+        let params = params.into_iter().map(|p| self.inferred(inference, p)).collect::<Option<Vec<Ty>>>()?;
+        let result = self.inferred(inference, result).unwrap_or(Ty::ERROR);
+        Some(self.types.intern(TyKind::Fn(params, result, variadic)))
+    }
+
+    /// Why `ty` cannot be called as `signature` with the protocol a call
+    /// bound demands (`Call` unless `mutable`), if it cannot (11.8).
+    fn callable_as(&mut self, ty: Ty, mutable: bool, signature: Ty) -> Option<String> {
+        let wanted = format!("`{}[{}]`", if mutable { "CallMut" } else { "Call" }, self.types.display(signature));
+        match self.callable(ty) {
+            Some((params, result, variadic, mutates)) => {
+                let found = self.types.intern(TyKind::Fn(params, result, variadic));
+                if found != signature {
+                    Some(format!("{wanted} (its signature is `{}`)", self.types.display(found)))
+                } else if mutates && !mutable {
+                    Some(format!("{wanted} (it changes its captures, so it is only `CallMut`)"))
+                } else {
+                    None
+                }
+            }
+            None if self.types.has_error(ty) => None,
+            None => Some(wanted),
+        }
+    }
+
+    /// How a value of `ty` is called: parameters, result, whether the last
+    /// parameter is variadic and whether calling may change it.
+    fn callable(&mut self, ty: Ty) -> Option<(Vec<Ty>, Ty, bool, bool)> {
+        if let TyKind::Fn(params, result, variadic) = self.types.kind(ty).clone() {
+            return Some((params, result, variadic, false));
+        }
+        if let Some(&(mutable, signature)) = self.call_bounds.get(&ty) {
+            let TyKind::Fn(params, result, variadic) = self.types.kind(signature).clone() else { unreachable!() };
+            return Some((params, result, variadic, mutable));
+        }
+        let (_, _, info) = self.types.closure(ty)?;
+        Some((info.params, info.result, info.variadic, info.mutates))
     }
 
     /// The type of `self` in a method of the owner keyed `key`: a generic
@@ -1360,7 +1463,14 @@ impl Checker<'_> {
                 let items = items.iter().map(|item| self.resolve_type(item)).collect();
                 self.types.intern(TyKind::Tuple(items))
             }
-            ast::TypeKind::Fn => self.unsupported_type(t.span, "function types"),
+            ast::TypeKind::Fn { params, variadic, result } => {
+                let mut types: Vec<Ty> = params.iter().map(|p| self.resolve_type(p)).collect();
+                if *variadic && let Some(last) = types.last_mut() {
+                    *last = self.types.intern(TyKind::Array(*last));
+                }
+                let result = result.as_ref().map_or(Ty::UNIT, |r| self.resolve_type(r));
+                self.types.intern(TyKind::Fn(types, result, *variadic))
+            }
         }
     }
 
@@ -1406,6 +1516,11 @@ impl Checker<'_> {
             infer_error: false,
             loops: Vec::new(),
             diverged: false,
+            parent: None,
+            env: None,
+            captures: Vec::new(),
+            mutates: false,
+            infer_result: false,
         }
     }
 
@@ -1481,6 +1596,137 @@ impl Checker<'_> {
         cx.scopes.iter().rev().flat_map(|s| s.iter().rev()).find(|(n, _)| n == name).map(|&(_, id)| id)
     }
 
+    /// Whether `name` is a binding of an enclosing function, which a
+    /// closure can capture.
+    fn visible_capture(&self, cx: &FnCx, name: &str) -> bool {
+        cx.parent
+            .as_deref()
+            .is_some_and(|parent| self.lookup(parent, name).is_some() || self.visible_capture(parent, name))
+    }
+
+    /// Reads the binding `name` of an enclosing function from inside a
+    /// closure, capturing it on first use (11.8).
+    fn capture(&mut self, cx: &mut FnCx, name: &str, span: Span) -> Option<hir::Expr> {
+        let env = cx.env?;
+        let index = match cx.captures.iter().position(|c| c.name == name) {
+            Some(index) => index,
+            None => {
+                let parent = cx.parent.as_deref_mut()?;
+                let (source, mutable) = match self.lookup(parent, name) {
+                    Some(local) => {
+                        let ty = parent.locals[local.0 as usize].ty;
+                        let mutable = parent.mutable[local.0 as usize] && Some(local) != parent.env;
+                        (Self::mk(hir::ExprKind::Local(local), ty, span), mutable)
+                    }
+                    None => {
+                        let source = self.capture(parent, name, span)?;
+                        let mutable = parent.captures.iter().any(|c| c.name == name && c.mutable);
+                        (source, mutable)
+                    }
+                };
+                cx.captures.push(Capture { name: name.into(), ty: source.ty, source, mutable });
+                cx.captures.len() - 1
+            }
+        };
+        let closure = Self::mk(hir::ExprKind::Local(env), cx.locals[env.0 as usize].ty, span);
+        Some(Self::mk(hir::ExprKind::Field(Box::new(closure), index as u32), cx.captures[index].ty, span))
+    }
+
+    /// A closure expression (11.8). Its type is an anonymous record of the
+    /// bindings it captures; its body is a function whose first parameter
+    /// is the closure, generic over the enclosing type parameters.
+    fn closure(&mut self, cx: &mut FnCx, closure: &ast::Closure, expected: Option<Ty>, span: Span) -> hir::Expr {
+        let expected =
+            expected.and_then(|t| self.callable(t)).map(|(params, result, variadic, _)| (params, result, variadic));
+        let mut params = Vec::new();
+        let mut variadic = false;
+        for (index, param) in closure.params.iter().enumerate() {
+            let ty = match (&param.ty, &expected) {
+                (Some(ty), _) => {
+                    let ty = self.resolve_type(ty);
+                    if param.variadic {
+                        variadic = true;
+                        self.types.intern(TyKind::Array(ty))
+                    } else {
+                        ty
+                    }
+                }
+                (None, Some((types, _, expected_variadic))) if index < types.len() => {
+                    variadic = *expected_variadic && index + 1 == types.len();
+                    types[index]
+                }
+                (None, _) => {
+                    let message =
+                        format!("closure parameter `{0}` needs a type: `({0}: Int) {{ ... }}`", param.name.name);
+                    self.diags.error("E1101", param.name.span, message);
+                    Ty::ERROR
+                }
+            };
+            params.push(ty);
+        }
+        let declared = closure
+            .result
+            .as_ref()
+            .map(|t| self.resolve_type(t))
+            .or(expected.as_ref().map(|e| e.1).filter(|&r| r != Ty::ERROR));
+        let generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
+        let template = self.types.declare_template("closure".into(), generics.clone());
+        let env_ty = self.types.instantiate(template, generics.clone());
+        let index = self.closure_functions.len();
+        self.closure_functions.push(None);
+        let body_id = FnId(self.closure_base + index as u32);
+        let info = ClosureInfo {
+            body: body_id.0,
+            params: params.clone(),
+            result: declared.unwrap_or(Ty::ERROR),
+            variadic,
+            mutates: false,
+        };
+        self.types.declare_closure(template, info);
+
+        // The body is checked in its own context, nested in the current one.
+        let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
+        inner.infer_result = declared.is_none();
+        let outer = std::mem::replace(cx, inner);
+        cx.parent = Some(Box::new(outer));
+        let env = self.hidden_local(cx, env_ty);
+        cx.mutable[env.0 as usize] = true;
+        cx.env = Some(env);
+        let mut locals = vec![env];
+        for (param, &ty) in closure.params.iter().zip(&params) {
+            locals.push(self.declare(cx, &param.name, ty, false));
+        }
+        let success = (!cx.infer_result).then_some(cx.result);
+        let body = self.block(cx, &closure.body, success);
+        let result = match declared {
+            Some(declared) => declared,
+            None if cx.result != Ty::ERROR => cx.result,
+            None => body.ty,
+        };
+        let parent = cx.parent.take().expect("a closure context has a parent");
+        let inner = std::mem::replace(cx, *parent);
+
+        let fields = inner.captures.iter().map(|c| Field { name: c.name.clone(), ty: c.ty }).collect();
+        self.types.define_template(template, AdtKind::Record(fields));
+        let info = self.types.closure_info_mut(template);
+        info.result = result;
+        info.mutates = inner.mutates;
+        let mut loans = vec![false; locals.len()];
+        loans[0] = true;
+        self.closure_functions[index] = Some(hir::Function {
+            name: "closure".into(),
+            generics,
+            params: locals,
+            loans,
+            locals: inner.locals,
+            result,
+            body,
+        });
+        // The closure value holds the captured values, read now.
+        let values = inner.captures.into_iter().enumerate().map(|(i, c)| (i as u32, c.source)).collect();
+        Self::mk(hir::ExprKind::Record(values), env_ty, span)
+    }
+
     /// A local that no name refers to, such as the value of `for _ in ...`.
     fn hidden_local(&mut self, cx: &mut FnCx, ty: Ty) -> LocalId {
         cx.locals.push(hir::Local { name: "_".into(), ty });
@@ -1489,7 +1735,10 @@ impl Checker<'_> {
     }
 
     fn declare(&mut self, cx: &mut FnCx, name: &ast::Ident, ty: Ty, mutable: bool) -> LocalId {
-        if self.lookup(cx, &name.name).is_some() || self.names.contains_key(&name.name) {
+        if self.lookup(cx, &name.name).is_some()
+            || self.visible_capture(cx, &name.name)
+            || self.names.contains_key(&name.name)
+        {
             let message = format!("`{}` would shadow a visible binding with the same name", name.name);
             self.diags.error("E1003", name.span, message);
         } else if INTRINSICS.contains(&name.name.as_str()) {
@@ -1605,6 +1854,12 @@ impl Checker<'_> {
             ast::StmtKind::Return(value) => {
                 let result = cx.result;
                 let value = match value {
+                    // A closure without a declared result takes it from its first `return`.
+                    Some(value) if cx.infer_result && result == Ty::ERROR => {
+                        let value = self.expr(cx, value, None);
+                        cx.result = value.ty;
+                        Some(value)
+                    }
                     Some(value) => {
                         let value = self.expr(cx, value, Some(result));
                         Some(self.coerce(value, result))
@@ -1713,6 +1968,25 @@ impl Checker<'_> {
         let (base, field) = match &target.kind {
             ast::ExprKind::Path(segments) => {
                 let root = &segments[0];
+                if self.lookup(cx, &root.name).is_none()
+                    && let Some(captured) = self.capture(cx, &root.name, root.span)
+                {
+                    // Assigning a capture changes the closure's own copy (11.8).
+                    let hir::ExprKind::Field(_, index) = captured.kind else { unreachable!() };
+                    if !cx.captures[index as usize].mutable {
+                        let message = format!("cannot assign to `{}`: it is not declared with `var`", root.name);
+                        self.diags.error("E1411", root.span, message);
+                    }
+                    cx.mutates = true;
+                    let mut ty = captured.ty;
+                    let mut path = vec![hir::PlaceStep::Field(index)];
+                    for segment in &segments[1..] {
+                        let (index, field_ty) = self.field_of(ty, FieldRef::Name(&segment.name), segment.span)?;
+                        path.extend(index.map(hir::PlaceStep::Field));
+                        ty = field_ty;
+                    }
+                    return Some((cx.env.unwrap(), path, ty));
+                }
                 let Some(local) = self.lookup(cx, &root.name) else {
                     let known = self.names.contains_key(&root.name);
                     let (code, message) = if known {
@@ -1938,6 +2212,26 @@ impl Checker<'_> {
         if value.ty == expected {
             return value;
         }
+        // A closure becomes a `fn(...)` value when it never changes its
+        // captures (11.8).
+        if let TyKind::Fn(..) = self.types.kind(expected)
+            && let Some((body, _, info)) = self.types.closure(value.ty)
+        {
+            let found = self.types.intern(TyKind::Fn(info.params, info.result, info.variadic));
+            if found == expected && !info.mutates {
+                let span = value.span;
+                return Self::mk(hir::ExprKind::Erase(Box::new(value), FnId(body)), expected, span);
+            }
+            if found == expected {
+                let message = format!(
+                    "this closure changes its captures, so it cannot become {}; take it as a type parameter bound by `CallMut[{}]`",
+                    self.display(expected),
+                    self.types.display(expected)
+                );
+                self.diags.error("E1108", value.span, message);
+                return value;
+            }
+        }
         // A value of a member's exact type is injected into a union (9.5).
         if let Some(member) = self.types.members(expected).and_then(|m| m.iter().position(|&t| t == value.ty)) {
             let span = value.span;
@@ -2001,6 +2295,20 @@ impl Checker<'_> {
             ast::ExprKind::Array(items) => self.array_literal(cx, items, expected, span),
             ast::ExprKind::Map(pairs) => self.map_literal(cx, pairs, expected, span),
             ast::ExprKind::Set(items) => self.set_literal(cx, items, expected, span),
+            ast::ExprKind::Index { base: function, index: argument } if self.specialization(cx, function).is_some() => {
+                // `identity[Int]` used as a value (11.7).
+                let id = self.specialization(cx, function).unwrap();
+                match Self::type_of_expr(argument) {
+                    Some(ty) => {
+                        let ty = self.resolve_type(&ty);
+                        self.fn_value(id, vec![ty], expected, span)
+                    }
+                    None => {
+                        self.diags.error("E1104", argument.span, "type arguments are types, such as `identity[Int]`");
+                        Self::error_expr(span)
+                    }
+                }
+            }
             ast::ExprKind::Index { base, index } => {
                 let base = self.expr(cx, base, None);
                 if let TyKind::Map(key, value) = *self.types.kind(base.ty) {
@@ -2037,16 +2345,34 @@ impl Checker<'_> {
                 let ty = base.ty;
                 Self::mk(hir::ExprKind::Slice(Box::new(base), parts), ty, span)
             }
-            ast::ExprKind::Generic { .. } => {
-                self.diags.error("E1102", span, "type arguments must be followed by a call");
-                Self::error_expr(span)
-            }
+            ast::ExprKind::Generic { base, args } => match &base.kind {
+                // `identity[Int]`: a specialized generic function as a value (11.7).
+                ast::ExprKind::Path(segments)
+                    if segments.len() == 1 && self.lookup(cx, &segments[0].name).is_none() =>
+                {
+                    match self.names.get(&segments[0].name).copied() {
+                        Some(ModuleName::Fn(id)) => {
+                            let explicit = args.iter().map(|a| self.resolve_type(a)).collect();
+                            self.fn_value(id, explicit, expected, span)
+                        }
+                        _ => {
+                            self.diags.error("E1102", span, "type arguments must be followed by a call");
+                            Self::error_expr(span)
+                        }
+                    }
+                }
+                _ => {
+                    self.diags.error("E1102", span, "type arguments must be followed by a call");
+                    Self::error_expr(span)
+                }
+            },
             ast::ExprKind::Match { scrutinee, arms } => self.match_expr(cx, scrutinee, arms, expected, span),
             ast::ExprKind::Record { path, type_args, fields } => {
                 self.record_literal(cx, path, type_args, fields, expected, span)
             }
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Try(inner) => self.try_expr(cx, inner, span),
+            ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::None => match self.union_member(expected, "none").map(|t| (t, self.types.kind(t))) {
                 Some((ty, TyKind::Option(_))) => Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), ty, span),
                 _ => {
@@ -2193,6 +2519,12 @@ impl Checker<'_> {
             (TyKind::Result(a, b), TyKind::Result(c, d)) | (TyKind::Map(a, b), TyKind::Map(c, d)) => {
                 self.unify(inference, a, c);
                 self.unify(inference, b, d);
+            }
+            (TyKind::Fn(params, result, _), TyKind::Fn(values, value, _)) if params.len() == values.len() => {
+                for (param, value) in params.into_iter().zip(values) {
+                    self.unify(inference, param, value);
+                }
+                self.unify(inference, result, value);
             }
             (TyKind::Adt(_), TyKind::Adt(_)) => {
                 if let (Some((template, args)), Some((other, values))) =
@@ -3217,6 +3549,14 @@ impl Checker<'_> {
             };
         }
         if matches!(self.types.kind(ty), TyKind::Adt(_)) {
+            // A field holding a function is called (11.5).
+            if self.record_has_field(ty, &method.name) {
+                let field = self.field_access(value, FieldRef::Name(&method.name), method.span, span);
+                if self.callable(field.ty).is_some() {
+                    return self.call_value(cx, field, args, None, span);
+                }
+                return self.no_method(ty, method, span);
+            }
             return self.no_method(ty, method, span);
         }
         if matches!(
@@ -3336,6 +3676,143 @@ impl Checker<'_> {
             _ => hir::ExprKind::StrOp(op, values),
         };
         Self::mk(kind, result, span)
+    }
+
+    /// The generic function a name refers to, when it is not a binding.
+    fn specialization(&self, cx: &FnCx, e: &ast::Expr) -> Option<FnId> {
+        let ast::ExprKind::Path(segments) = &e.kind else { return None };
+        let [name] = segments.as_slice() else { return None };
+        if self.lookup(cx, &name.name).is_some() || self.visible_capture(cx, &name.name) {
+            return None;
+        }
+        match self.names.get(&name.name) {
+            Some(&ModuleName::Fn(id)) if !self.signatures[id.0 as usize].generics.is_empty() => Some(id),
+            _ => None,
+        }
+    }
+
+    /// An expression written where a type is meant, as a type.
+    fn type_of_expr(e: &ast::Expr) -> Option<ast::TypeExpr> {
+        let kind = match &e.kind {
+            ast::ExprKind::Path(segments) => ast::TypeKind::Path { segments: segments.clone(), args: Vec::new() },
+            ast::ExprKind::Index { base, index } => {
+                let ast::TypeKind::Path { segments, .. } = Self::type_of_expr(base)?.kind else { return None };
+                ast::TypeKind::Path { segments, args: vec![Self::type_of_expr(index)?] }
+            }
+            _ => return None,
+        };
+        Some(ast::TypeExpr { kind, span: e.span })
+    }
+
+    /// A named function as a `fn(...)` value (11.7). A generic function is
+    /// specialized by explicit arguments or by the expected function type.
+    fn fn_value(&mut self, id: FnId, explicit: Vec<Ty>, expected: Option<Ty>, span: Span) -> hir::Expr {
+        let signature = self.signatures[id.0 as usize].clone();
+        if signature.receiver.is_some() {
+            let message = format!(
+                "a method is not a value; write a closure that calls it, such as `(x) {{ value.{}(x) }}`",
+                signature.name.rsplit('.').next().unwrap_or_default()
+            );
+            self.diags.error("E1102", span, message);
+            return Self::error_expr(span);
+        }
+        let mut inference = Inference::new(signature.generics.clone());
+        if !explicit.is_empty() {
+            if explicit.len() != signature.generics.len() {
+                let message =
+                    format!("expected {} type argument(s), found {}", signature.generics.len(), explicit.len());
+                self.diags.error("E1104", span, message);
+                return Self::error_expr(span);
+            }
+            inference.map.extend(signature.generics.iter().copied().zip(explicit));
+        }
+        let generic = self.types.intern(TyKind::Fn(signature.params.clone(), signature.result, signature.variadic));
+        if let Some(expected) = expected {
+            self.unify(&mut inference, generic, expected);
+        }
+        let Some(ty) = self.inferred(&inference, generic) else {
+            let message = format!(
+                "`{}` is generic: specialize it, as in `{}[Int]`, or give the expected `fn(...)` type",
+                signature.name, signature.name
+            );
+            self.diags.error("E1101", span, message);
+            return Self::error_expr(span);
+        };
+        let type_args = signature.generics.iter().map(|g| inference.map[g]).collect();
+        Self::mk(hir::ExprKind::FnValue(id, type_args), ty, span)
+    }
+
+    /// `value(args)` for a `fn(...)`, a closure or a type parameter with a
+    /// call bound (11.7, 11.8). Arguments are positional.
+    fn call_value(
+        &mut self,
+        cx: &mut FnCx,
+        callee: hir::Expr,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        if callee.ty == Ty::ERROR {
+            return Self::error_expr(span);
+        }
+        let Some((params, result, variadic, mutates)) = self.callable(callee.ty) else {
+            let message = format!("{} cannot be called", self.display(callee.ty));
+            self.diags.error("E1102", callee.span, message);
+            return Self::error_expr(span);
+        };
+        if let Some(arg) = args.iter().find(|a| a.name.is_some()) {
+            self.diags.error("E1102", arg.span, "a call through a function value takes positional arguments");
+            return Self::error_expr(span);
+        }
+        let names = (0..params.len()).map(|i| format!("argument{}", i + 1)).collect();
+        let signature = Signature {
+            params,
+            names,
+            receiver: None,
+            variadic,
+            result,
+            generics: Vec::new(),
+            name: "this function".into(),
+        };
+        // A placeholder callee; the checked arguments are what matters.
+        let target = CallTarget::new(Callee::Fn(FnId(u32::MAX)), signature, expected);
+        let call = self.call_signature(cx, target, None, args, span);
+        let hir::ExprKind::Call(_, _, values) = call.kind else { return call };
+        // A closure is called through a place it may change; a `var` binding
+        // keeps the changes, and anything else is copied first (11.8).
+        let direct = matches!(self.types.kind(callee.ty), TyKind::Fn(..));
+        let keep = !direct && self.var_place(cx, &callee) && mutates || !direct && !mutates && self.is_place(&callee);
+        if direct || keep {
+            return Self::mk(hir::ExprKind::CallValue(Box::new(callee), values), call.ty, span);
+        }
+        let local = self.hidden_local(cx, callee.ty);
+        let (ty, callee_span, result) = (callee.ty, callee.span, call.ty);
+        let read = Self::mk(hir::ExprKind::Local(local), ty, callee_span);
+        let call = Self::mk(hir::ExprKind::CallValue(Box::new(read), values), result, span);
+        let block = hir::Block { stmts: vec![hir::Stmt::Let(local, callee)], tail: Some(Box::new(call)), ty: result };
+        Self::mk(hir::ExprKind::Block(block), result, span)
+    }
+
+    /// Whether a value expression reads a place.
+    fn is_place(&self, value: &hir::Expr) -> bool {
+        match &value.kind {
+            hir::ExprKind::Local(_) => true,
+            hir::ExprKind::Field(base, _) | hir::ExprKind::Retype(base) | hir::ExprKind::Index(base, _) => {
+                self.is_place(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a value expression reads a place of a `var` binding.
+    fn var_place(&self, cx: &FnCx, value: &hir::Expr) -> bool {
+        match &value.kind {
+            hir::ExprKind::Local(local) => cx.mutable[local.0 as usize] && Some(*local) != cx.env,
+            hir::ExprKind::Field(base, _) | hir::ExprKind::Retype(base) | hir::ExprKind::Index(base, _) => {
+                self.var_place(cx, base)
+            }
+            _ => false,
+        }
     }
 
     /// `Trait.method(...)`, with `Self` given first in `explicit` or taken
@@ -3619,6 +4096,17 @@ impl Checker<'_> {
 
     fn path(&mut self, cx: &mut FnCx, segments: &[ast::Ident], expected: Option<Ty>, span: Span) -> hir::Expr {
         let first = &segments[0];
+        let captured = match self.lookup(cx, &first.name) {
+            Some(_) => None,
+            None => self.capture(cx, &first.name, first.span),
+        };
+        if let Some(mut value) = captured {
+            for segment in &segments[1..] {
+                let span = value.span.to(segment.span);
+                value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
+            }
+            return value;
+        }
         if let Some(local) = self.lookup(cx, &first.name) {
             let ty = cx.locals[local.0 as usize].ty;
             let mut value = Self::mk(hir::ExprKind::Local(local), ty, first.span);
@@ -3627,6 +4115,14 @@ impl Checker<'_> {
                 value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
             }
             return value;
+        }
+        // `Type.operation` as a value: an associated operation (11.7).
+        if let [type_name, operation] = segments
+            && !self.names.contains_key(&type_name.name)
+            && let Some(owner) = self.type_named(&type_name.name)
+            && let Some(&id) = self.methods.get(&(owner, operation.name.clone()))
+        {
+            return self.fn_value(id, Vec::new(), expected, span);
         }
         if let Some(resolved) = self.variant_path(segments) {
             let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
@@ -3642,7 +4138,11 @@ impl Checker<'_> {
             return Self::error_expr(span);
         }
         match self.names.get(&first.name) {
-            Some(ModuleName::Fn(_)) => self.unsupported_expr(span, "function values"),
+            Some(ModuleName::Fn(id)) if segments.len() == 1 => self.fn_value(*id, Vec::new(), expected, span),
+            Some(ModuleName::Fn(_)) => {
+                self.diags.error("E1102", span, "a function has no fields");
+                Self::error_expr(span)
+            }
             Some(ModuleName::Newtype(_)) => {
                 let message = format!("`{}` constructs a value: write `{}(value)`", first.name, first.name);
                 self.diags.error("E1102", span, message);
@@ -3683,7 +4183,11 @@ impl Checker<'_> {
     ) -> hir::Expr {
         match &callee.kind {
             ast::ExprKind::Field(receiver, method) => return self.method_call(cx, receiver, method, args, span),
-            ast::ExprKind::Path(segments) if segments.len() > 1 && self.lookup(cx, &segments[0].name).is_some() => {
+            ast::ExprKind::Path(segments)
+                if segments.len() > 1
+                    && (self.lookup(cx, &segments[0].name).is_some()
+                        || self.visible_capture(cx, &segments[0].name)) =>
+            {
                 let (method, prefix) = segments.split_last().unwrap();
                 let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
@@ -3695,11 +4199,14 @@ impl Checker<'_> {
             _ => {}
         }
         let ast::ExprKind::Path(segments) = &callee.kind else {
-            return self.unsupported_expr(callee.span, "calling this expression");
+            // Any other expression is a value to call (11.7).
+            let value = self.expr(cx, callee, None);
+            return self.call_value(cx, value, args, expected, span);
         };
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
-        if self.lookup(cx, names[0]).is_some() {
-            return self.unsupported_expr(callee.span, "calls through values");
+        if self.lookup(cx, names[0]).is_some() || self.visible_capture(cx, names[0]) {
+            let value = self.expr(cx, callee, None);
+            return self.call_value(cx, value, args, expected, span);
         }
         match names.as_slice() {
             ["String", "empty"] => {
@@ -4020,13 +4527,20 @@ impl Checker<'_> {
                     continue;
                 }
                 let ty = type_of(index);
-                let expected = self.inferred(&inference, ty);
+                let expected = self.inferred(&inference, ty).or_else(|| self.call_expectation(&inference, ty));
                 if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
                     continue;
                 }
                 let receiver_mode = (parameter_of(index) == 0).then_some(signature.receiver).flatten();
                 let value = self.argument_value(cx, arg, expected, receiver_mode);
                 self.unify(&mut inference, ty, value.ty);
+                // A callable bound to `F: Call[fn(A): B]` also fixes `A` and `B`.
+                if let Some(&(_, bound)) = self.call_bounds.get(&ty)
+                    && let Some((params, result, variadic, _)) = self.callable(value.ty)
+                {
+                    let found = self.types.intern(TyKind::Fn(params, result, variadic));
+                    self.unify(&mut inference, bound, found);
+                }
                 values[index] = Some(value);
             }
         }
@@ -4056,7 +4570,7 @@ impl Checker<'_> {
         let type_args: Vec<Ty> = signature.generics.iter().map(|g| inference.map[g]).collect();
         // The arguments must meet the bounds of the parameters they replace.
         for (&param, &actual) in signature.generics.iter().zip(&type_args) {
-            if let Some(missing) = self.bound_holds(param, actual, 0) {
+            if let Some(missing) = self.bound_holds(param, actual, &inference.map, 0) {
                 let message = format!(
                     "{} does not implement {missing}, which `{}` requires of `{}`",
                     self.display(actual),
@@ -4155,7 +4669,7 @@ impl Checker<'_> {
 
     /// An argument coerced to its final parameter type, or the loan of its
     /// place for a `mut self` or `var self` receiver.
-    fn finish_argument(&mut self, cx: &FnCx, value: hir::Expr, ty: Ty, receiver: Option<ast::Mode>) -> hir::Expr {
+    fn finish_argument(&mut self, cx: &mut FnCx, value: hir::Expr, ty: Ty, receiver: Option<ast::Mode>) -> hir::Expr {
         let value = self.coerce(value, ty);
         if !matches!(receiver, Some(ast::Mode::Mut | ast::Mode::Var)) || matches!(value.kind, hir::ExprKind::Loan(_)) {
             return value;
@@ -4169,7 +4683,7 @@ impl Checker<'_> {
 
     /// The `var` place a value expression denotes, for an operation that
     /// changes it (11.6); reports values that are not such a place.
-    fn loan_place(&mut self, cx: &FnCx, value: hir::Expr, operation: &str) -> Option<hir::Place> {
+    fn loan_place(&mut self, cx: &mut FnCx, value: hir::Expr, operation: &str) -> Option<hir::Place> {
         let span = value.span;
         let mut steps = Vec::new();
         let mut current = value;
@@ -4195,6 +4709,21 @@ impl Checker<'_> {
             }
         };
         steps.reverse();
+        if Some(local) == cx.env
+            && let Some(hir::PlaceStep::Field(index)) = steps.first()
+        {
+            // Changing a capture changes the closure's own copy (11.8).
+            let capture = &cx.captures[*index as usize];
+            if !capture.mutable {
+                let message = format!(
+                    "{operation} changes `{0}`, which is not declared with `var`: declare it as `var {0}`",
+                    capture.name
+                );
+                self.diags.error("E1411", span, message);
+            }
+            cx.mutates = true;
+            return Some(hir::Place { local, path: steps });
+        }
         if !cx.mutable[local.0 as usize] {
             let name = &cx.locals[local.0 as usize].name;
             let message =

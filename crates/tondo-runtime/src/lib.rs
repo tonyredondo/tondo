@@ -323,6 +323,72 @@ pub unsafe extern "C" fn tondo_rt_box_unique(slot: *mut *mut BoxHeader, retain: 
 }
 
 // ---------------------------------------------------------------------------
+// Function values
+// ---------------------------------------------------------------------------
+
+/// A `fn(...)` value (11.7): the code to call and, for a closure, its
+/// captures, which follow the header. The code receives the address of the
+/// captures first. Named functions are static objects with `rc == IMMORTAL`.
+#[repr(C)]
+pub struct FnObject {
+    rc: AtomicUsize,
+    release: Option<Glue>,
+    code: *const u8,
+    size: usize,
+}
+
+const FN_HEADER: usize = std::mem::size_of::<FnObject>();
+
+fn fn_layout(size: usize) -> Layout {
+    Layout::from_size_align(FN_HEADER + size, 8).expect("closure too large")
+}
+
+/// A function value whose `size` bytes of captures the caller initializes.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_fn_new(code: *const u8, size: usize, release: Option<Glue>) -> *mut FnObject {
+    let layout = fn_layout(size);
+    unsafe {
+        let ptr = alloc(layout) as *mut FnObject;
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        ptr.write(FnObject { rc: AtomicUsize::new(1), release, code, size });
+        LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+        ptr
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fn_retain(f: *mut FnObject) {
+    let rc = unsafe { &(*f).rc };
+    if rc.load(Ordering::Relaxed) != IMMORTAL {
+        rc.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fn_release(f: *mut FnObject) {
+    let rc = unsafe { &(*f).rc };
+    if rc.load(Ordering::Relaxed) == IMMORTAL {
+        return;
+    }
+    match rc.fetch_sub(1, Ordering::Release) {
+        1 => {
+            fence(Ordering::Acquire);
+            unsafe {
+                if let Some(release) = (*f).release {
+                    release((f as *mut u8).add(FN_HEADER));
+                }
+                LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+                dealloc(f as *mut u8, fn_layout((*f).size));
+            }
+        }
+        0 => runtime_fault("function value released after it was freed"),
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Arrays
 // ---------------------------------------------------------------------------
 

@@ -544,8 +544,32 @@ impl Parser<'_> {
                 self.expect(Tok::RParen)?;
                 Ok(TypeExpr { kind: TypeKind::Tuple(items), span: start.to(self.prev_span()) })
             }
-            Tok::Kw(Kw::Fn | Kw::Unsafe) => {
-                self.diags.unsupported(start, "function types");
+            Tok::Kw(Kw::Fn) => {
+                self.bump();
+                self.expect(Tok::LParen)?;
+                let (mut params, mut variadic) = (Vec::new(), false);
+                loop {
+                    self.skip_newlines();
+                    if self.at(&Tok::RParen) {
+                        break;
+                    }
+                    if matches!(self.tok(), Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var)) {
+                        self.diags.unsupported(self.span(), "loan parameters in function types");
+                        return Err(());
+                    }
+                    variadic = self.eat(&Tok::Ellipsis);
+                    params.push(self.type_expr()?);
+                    if !self.eat(&Tok::Comma) {
+                        break;
+                    }
+                }
+                self.skip_newlines();
+                self.expect(Tok::RParen)?;
+                let result = if self.eat(&Tok::Colon) { Some(Box::new(self.result_type()?)) } else { None };
+                Ok(TypeExpr { kind: TypeKind::Fn { params, variadic, result }, span: start.to(self.prev_span()) })
+            }
+            Tok::Kw(Kw::Unsafe) => {
+                self.diags.unsupported(start, "unsafe function types");
                 Err(())
             }
             _ => self.expected("type"),
@@ -1130,6 +1154,51 @@ impl Parser<'_> {
         }
     }
 
+    /// `(params): Result { body }` (11.8); `None`, with nothing consumed,
+    /// when the parentheses are not a closure's parameter list.
+    fn try_closure(&mut self) -> Option<PResult<Expr>> {
+        let (pos, errors, recovering) = (self.pos, self.diags.list.len(), self.recovering);
+        let start = self.span();
+        let header = (|| -> PResult<(Vec<ClosureParam>, Option<TypeExpr>)> {
+            self.expect(Tok::LParen)?;
+            let mut params = Vec::new();
+            loop {
+                self.skip_newlines();
+                if self.at(&Tok::RParen) {
+                    break;
+                }
+                let name = self.ident()?;
+                let (ty, variadic) = if self.eat(&Tok::Colon) {
+                    let variadic = self.eat(&Tok::Ellipsis);
+                    (Some(self.type_expr()?), variadic)
+                } else {
+                    (None, false)
+                };
+                params.push(ClosureParam { name, ty, variadic });
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
+            }
+            self.skip_newlines();
+            self.expect(Tok::RParen)?;
+            let result = if self.eat(&Tok::Colon) { Some(self.result_type()?) } else { None };
+            if !self.at(&Tok::LBrace) {
+                return Err(());
+            }
+            Ok((params, result))
+        })();
+        let Ok((params, result)) = header else {
+            self.pos = pos;
+            self.diags.list.truncate(errors);
+            self.recovering = recovering;
+            return None;
+        };
+        Some(self.block().map(|body| {
+            let span = start.to(body.span);
+            Expr { kind: ExprKind::Closure(Box::new(Closure { params, result, body })), span }
+        }))
+    }
+
     /// `[Type, ...]` directly followed by a call. Undone without diagnostics
     /// when the brackets are not type arguments (23.27).
     fn try_generic_arguments(&mut self) -> Option<Vec<TypeExpr>> {
@@ -1141,8 +1210,9 @@ impl Parser<'_> {
                 args.push(self.type_expr()?);
             }
             self.expect(Tok::RBracket)?;
-            // Type arguments precede a call or a record literal.
-            if !self.at(&Tok::LParen) && !(self.at(&Tok::LBrace) && !self.no_brace) {
+            // Type arguments precede a call or a record literal; an index
+            // never has several items.
+            if !self.at(&Tok::LParen) && !(self.at(&Tok::LBrace) && !self.no_brace) && args.len() < 2 {
                 return Err(());
             }
             Ok(args)
@@ -1303,7 +1373,14 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Path(vec![Ident { name, span: start }])
             }
-            Tok::LParen => return self.paren(),
+            Tok::LParen => {
+                if !self.no_brace
+                    && let Some(closure) = self.try_closure()
+                {
+                    return closure;
+                }
+                return self.paren();
+            }
             Tok::LBrace if !self.no_brace => {
                 let block = self.block()?;
                 ExprKind::Block(block)

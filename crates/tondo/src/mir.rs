@@ -4,7 +4,7 @@
 //! inserted during lowering, so code generation is a direct translation.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, MapOp, Mutation, StrOp};
+use crate::hir::{self, ArrayOp, Callee, MapOp, Mutation, StrOp};
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 
@@ -138,6 +138,13 @@ pub enum Rvalue {
     /// Unchecked `+ 1`, used by range iteration after its bound check.
     Increment(Operand),
     Call(Callee, Vec<Operand>),
+    /// A named function as a `fn(...)` value: a static object.
+    FnValue(hir::FnId),
+    /// A call through a `fn(...)` value.
+    CallIndirect(Operand, Vec<Operand>),
+    /// A closure boxed into a `fn(...)` value whose code is the body; the
+    /// flag retains captures copied rather than moved.
+    Erase(Operand, hir::FnId, bool),
     Concat(Vec<Piece>),
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.

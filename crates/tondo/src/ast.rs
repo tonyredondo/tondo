@@ -245,7 +245,12 @@ pub enum TypeKind {
     },
     Union(Vec<TypeExpr>),
     Tuple(Vec<TypeExpr>),
-    Fn,
+    /// `fn(A, B): R`, the uniform function type (11.7).
+    Fn {
+        params: Vec<TypeExpr>,
+        variadic: bool,
+        result: Option<Box<TypeExpr>>,
+    },
 }
 
 #[derive(Debug)]
@@ -370,12 +375,29 @@ pub enum ExprKind {
         args: Vec<TypeExpr>,
     },
     Try(Box<Expr>),
+    /// `(params): Result { body }` (11.8).
+    Closure(Box<Closure>),
     /// `none`
     None,
     /// `some(value)`, `ok(value)` or `err(value)`: the constructor's name.
     Construct(&'static str, Box<Expr>),
     /// Placeholder after a reported syntax error.
     Error,
+}
+
+#[derive(Debug)]
+pub struct Closure {
+    pub params: Vec<ClosureParam>,
+    pub result: Option<TypeExpr>,
+    pub body: Block,
+}
+
+#[derive(Debug)]
+pub struct ClosureParam {
+    pub name: Ident,
+    /// May be omitted when an expected function type gives it.
+    pub ty: Option<TypeExpr>,
+    pub variadic: bool,
 }
 
 #[derive(Debug)]

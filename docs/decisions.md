@@ -184,3 +184,16 @@ by collections being displayed are recorded for code generation. The
 size-change termination check of 12.6 (`E1112`) is not implemented yet;
 until then, instantiation that grows without bound is caught during
 monomorphization.
+
+## 2026-10-21 — Closures are records of captures
+
+Each closure expression has its own concrete type: an anonymous record of
+the bindings it captures, generic over the enclosing function's type
+parameters. Its body is a function whose first parameter borrows the
+closure, so a `var` closure keeps changes to its captures between calls,
+while calling it through anything else works on a copy (11.8). Bounds such
+as `F: Call[fn(Int): Int]` pass closures to generic code with direct calls
+after monomorphization. A `fn(...)` value is a reference-counted object
+holding code and captures: named functions are static objects with a thunk,
+and a closure that never changes its captures is boxed when coerced; a
+changing closure is rejected with `E1108`.

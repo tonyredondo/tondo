@@ -107,6 +107,9 @@ pub enum TyKind {
     /// A type parameter of a generic declaration (12.1). Generic code is
     /// checked once with parameters and monomorphized before lowering.
     Param(u32),
+    /// `fn(A, B): R`: a uniform function value (11.7), with whether its
+    /// last parameter is variadic. Values are reference-counted callables.
+    Fn(Vec<Ty>, Ty, bool),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -142,6 +145,21 @@ pub struct Template {
     pub params: Vec<Ty>,
     /// Filled in once the declaration is resolved.
     pub kind: Option<AdtKind>,
+}
+
+/// The body and signature of a closure expression (11.8). Its type is an
+/// anonymous record of captures, generic over the enclosing function's type
+/// parameters; `params` and `result` may mention them.
+#[derive(Clone)]
+pub struct ClosureInfo {
+    /// The `FnId` of the body, whose first parameter is the closure itself.
+    pub body: u32,
+    pub params: Vec<Ty>,
+    pub result: Ty,
+    pub variadic: bool,
+    /// Whether the body changes a capture, so calls need a `var` closure
+    /// (`CallMut`) and it cannot become a `fn(...)` value.
+    pub mutates: bool,
 }
 
 /// A type parameter and the closed capabilities its bounds grant.
@@ -197,6 +215,7 @@ pub struct Types {
     instances: HashMap<(TemplateId, Vec<Ty>), Ty>,
     /// Instances created before their template was defined.
     pending: Vec<AdtId>,
+    closures: HashMap<TemplateId, ClosureInfo>,
     /// Set when an instantiation nests without bound, such as a type whose
     /// field is the same type applied to a larger argument.
     pub runaway: Option<String>,
@@ -235,6 +254,7 @@ impl Default for Types {
             templates: Vec::new(),
             instances: HashMap::new(),
             pending: Vec::new(),
+            closures: HashMap::new(),
             runaway: None,
             reaches: RefCell::default(),
             needs_drop: RefCell::default(),
@@ -365,6 +385,27 @@ impl Types {
         }
     }
 
+    pub fn declare_closure(&mut self, template: TemplateId, info: ClosureInfo) {
+        self.closures.insert(template, info);
+    }
+
+    pub fn closure_info_mut(&mut self, template: TemplateId) -> &mut ClosureInfo {
+        self.closures.get_mut(&template).expect("a closure template")
+    }
+
+    /// For the type of a closure: its body and its signature with the
+    /// enclosing type parameters replaced by the instance's arguments.
+    pub fn closure(&mut self, ty: Ty) -> Option<(u32, Vec<Ty>, ClosureInfo)> {
+        let (template, args) = self.instance_of(ty)?;
+        let mut info = self.closures.get(&template)?.clone();
+        let args = args.to_vec();
+        let map: HashMap<Ty, Ty> =
+            self.templates[template.0 as usize].params.iter().copied().zip(args.iter().copied()).collect();
+        info.params = info.params.iter().map(|&p| self.subst(p, &map)).collect();
+        info.result = self.subst(info.result, &map);
+        Some((info.body, args, info))
+    }
+
     /// The template and arguments of an instance of a generic type.
     pub fn instance_of(&self, ty: Ty) -> Option<(TemplateId, &[Ty])> {
         match self.kind(ty) {
@@ -469,6 +510,11 @@ impl Types {
                 let members = each(self, &members);
                 self.union(&members)
             }
+            TyKind::Fn(params, result, variadic) => {
+                let params = each(self, &params);
+                let result = self.subst(result, map);
+                self.intern(TyKind::Fn(params, result, variadic))
+            }
             TyKind::Adt(id) => match self.adts[id.0 as usize].instance.clone() {
                 Some((template, args)) => {
                     let args = each(self, &args);
@@ -529,6 +575,10 @@ impl Types {
             (TyKind::Tuple(x), TyKind::Tuple(y)) | (TyKind::Union(x), TyKind::Union(y)) if x.len() == y.len() => {
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q))
             }
+            (TyKind::Fn(x, r, v), TyKind::Fn(y, s, w)) if x.len() == y.len() && v == w => {
+                let (r, s) = (*r, *s);
+                x.iter().zip(y).all(|(&p, &q)| each(self, p, q)) && each(self, r, s)
+            }
             (TyKind::Option(x), TyKind::Option(y))
             | (TyKind::Array(x), TyKind::Array(y))
             | (TyKind::Deque(x), TyKind::Deque(y))
@@ -553,6 +603,10 @@ impl Types {
         match self.kind(ty) {
             TyKind::Param(_) => out.push(ty),
             TyKind::Tuple(items) | TyKind::Union(items) => items.iter().for_each(|&t| self.params_in(t, out)),
+            TyKind::Fn(params, result, _) => {
+                params.iter().for_each(|&t| self.params_in(t, out));
+                self.params_in(*result, out);
+            }
             TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.params_in(*t, out),
             TyKind::Result(a, b) | TyKind::Map(a, b) => {
                 self.params_in(*a, out);
@@ -572,6 +626,7 @@ impl Types {
         match self.kind(ty) {
             TyKind::Param(_) => true,
             TyKind::Tuple(items) | TyKind::Union(items) => items.iter().any(|&t| self.has_params(t)),
+            TyKind::Fn(params, result, _) => params.iter().any(|&t| self.has_params(t)) || self.has_params(*result),
             TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.has_params(*t),
             TyKind::Result(a, b) | TyKind::Map(a, b) => self.has_params(*a) || self.has_params(*b),
             TyKind::Adt(id) => self.adts[id.0 as usize]
@@ -696,7 +751,7 @@ impl Types {
         let repr = self.repr(ty);
         let heap = matches!(
             self.kind(repr),
-            TyKind::String | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_)
+            TyKind::String | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) | TyKind::Fn(..)
         );
         let result = heap || {
             let parts = match (self.components(repr), self.variants(repr)) {
@@ -733,7 +788,12 @@ impl Types {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
-            TyKind::Float(_) | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) => false,
+            TyKind::Float(_)
+            | TyKind::Array(_)
+            | TyKind::Deque(_)
+            | TyKind::Map(..)
+            | TyKind::Set(_)
+            | TyKind::Fn(..) => false,
             TyKind::Param(index) => self.params[*index as usize].key,
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.key_in(t, visiting)),
@@ -772,6 +832,7 @@ impl Types {
             }
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
+            TyKind::Fn(..) => false,
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.equatable_in(t, visiting)),
@@ -792,6 +853,7 @@ impl Types {
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => self.has_error(*element),
             TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
             TyKind::Union(members) => members.iter().any(|&t| self.has_error(t)),
+            TyKind::Fn(params, result, _) => params.iter().any(|&t| self.has_error(t)) || self.has_error(*result),
             _ => false,
         }
     }
@@ -819,7 +881,18 @@ impl Types {
                 let items: Vec<String> = items.iter().map(|&t| self.display(t)).collect();
                 format!("({})", items.join(", "))
             }
-            TyKind::Adt(id) => self.adt(*id).name.clone(),
+            TyKind::Adt(id) => match &self.adt(*id).instance {
+                // A closure is shown by its signature.
+                Some((template, _)) if self.closures.contains_key(template) => {
+                    let info = &self.closures[template];
+                    let signature = TyKind::Fn(info.params.clone(), info.result, info.variadic);
+                    match self.map.get(&signature) {
+                        Some(&ty) => format!("closure {}", self.display(ty)),
+                        None => "closure".into(),
+                    }
+                }
+                _ => self.adt(*id).name.clone(),
+            },
             TyKind::Option(inner) => match self.kind(*inner) {
                 TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => format!("({})?", self.display(*inner)),
                 _ => format!("{}?", self.display(*inner)),
@@ -842,6 +915,20 @@ impl Types {
             }
             TyKind::Union(members) => members.iter().map(|&t| self.display(t)).collect::<Vec<_>>().join(" | "),
             TyKind::Param(index) => self.params[*index as usize].name.clone(),
+            TyKind::Fn(params, result, variadic) => {
+                let mut shown: Vec<String> = params.iter().map(|&t| self.display(t)).collect();
+                if *variadic && let Some(last) = shown.last_mut() {
+                    let element = match self.kind(*params.last().unwrap()) {
+                        TyKind::Array(element) => self.display(*element),
+                        _ => last.clone(),
+                    };
+                    *last = format!("...{element}");
+                }
+                match *result {
+                    Ty::UNIT => format!("fn({})", shown.join(", ")),
+                    _ => format!("fn({}): {}", shown.join(", "), self.display(*result)),
+                }
+            }
         }
     }
 }

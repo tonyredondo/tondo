@@ -31,6 +31,9 @@ use std::collections::HashMap;
 
 const POINTER: ir::Type = types::I64;
 const IMMORTAL: u64 = u64::MAX;
+/// Size of a function value's header in the runtime (`FnObject`): the code
+/// is at 16 and the captures follow the header.
+const FN_HEADER: i64 = 32;
 /// Size of a box header in the runtime (`BoxHeader`).
 const BOX_HEADER: i64 = 16;
 /// Size of an array header in the runtime (`ArrayHeader`): `len` is at 8 and
@@ -105,6 +108,9 @@ enum Rt {
     MapEntry,
     MapEq,
     MapClear,
+    FnNew,
+    FnRetain,
+    FnRelease,
     SbMap,
     StrHash,
 }
@@ -180,6 +186,9 @@ impl Rt {
             Rt::MapEntry => ("tondo_rt_map_entry", &[I64, I64], &[I64]),
             Rt::MapEq => ("tondo_rt_map_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::MapClear => ("tondo_rt_map_clear", &[I64, I64], &[]),
+            Rt::FnNew => ("tondo_rt_fn_new", &[I64, I64, I64], &[I64]),
+            Rt::FnRetain => ("tondo_rt_fn_retain", &[I64], &[]),
+            Rt::FnRelease => ("tondo_rt_fn_release", &[I64], &[]),
             Rt::SbMap => ("tondo_rt_sb_map", &[I64, I64, I64, I64], &[]),
             Rt::StrHash => ("tondo_rt_str_hash", &[I64], &[I64]),
         }
@@ -287,6 +296,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         map_glue: HashMap::new(),
         loans: bodies.iter().map(|body| body.loans.clone()).collect(),
         display: &program.display,
+        fn_values: HashMap::new(),
+        pending_thunks: Vec::new(),
     };
 
     for (index, body) in bodies.iter().enumerate() {
@@ -302,12 +313,19 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
     for (index, body) in bodies.iter().enumerate() {
         context.func.signature = cg.signature(body);
         context.func.name = UserFuncName::user(0, index as u32);
-        FnCodegen::new(&mut cg, body, &mut context.func, &mut builder_context).run();
+        FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
         cg.module.define_function(cg.functions[index], &mut context).map_err(|e| format!("{e:?}"))?;
         cg.module.clear_context(&mut context);
     }
     let main = program.main.0 as usize;
     cg.entry_point(main, bodies[main].result, &mut context, &mut builder_context)?;
+    while let Some((target, thunk)) = cg.pending_thunks.pop() {
+        context.func.signature = cg.module.declarations().get_function_decl(thunk).signature.clone();
+        context.func.name = UserFuncName::user(3, thunk.as_u32());
+        define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
+        cg.module.define_function(thunk, &mut context).map_err(|e| format!("{e:?}"))?;
+        cg.module.clear_context(&mut context);
+    }
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
@@ -335,6 +353,10 @@ struct Codegen<'a> {
     loans: Vec<Vec<bool>>,
     /// The user `Display.display` of types displayed inside collections.
     display: &'a HashMap<Ty, FnId>,
+    /// The static `fn(...)` object of each named function used as a value,
+    /// and its thunk with the uniform calling convention.
+    fn_values: HashMap<FnId, (DataId, FuncId)>,
+    pending_thunks: Vec<(FnId, FuncId)>,
 }
 
 impl Codegen<'_> {
@@ -349,9 +371,12 @@ impl Codegen<'_> {
             TyKind::Float(FloatTy::F64) => Class::Scalar(types::F64),
             TyKind::Char => Class::Scalar(types::I32),
             TyKind::Byte => Class::Scalar(types::I8),
-            TyKind::String | TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_) => {
-                Class::Scalar(POINTER)
-            }
+            TyKind::String
+            | TyKind::Array(_)
+            | TyKind::Deque(_)
+            | TyKind::Map(..)
+            | TyKind::Set(_)
+            | TyKind::Fn(..) => Class::Scalar(POINTER),
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -458,6 +483,52 @@ impl Codegen<'_> {
             signature.returns.push(AbiParam::new(ty));
         }
         signature
+    }
+
+    /// The calling convention of a `fn(...)` value: the result slot when
+    /// the result lives in memory, the captures' address, then the
+    /// parameters. Closure bodies and thunks follow it.
+    fn uniform_signature(&mut self, params: &[Ty], result: Ty) -> ir::Signature {
+        let mut signature = self.module.make_signature();
+        if self.class(result) == Class::Memory {
+            signature.params.push(AbiParam::new(POINTER));
+        }
+        signature.params.push(AbiParam::new(POINTER));
+        for &param in params {
+            match self.class(param) {
+                Class::Zero => {}
+                Class::Scalar(ty) => signature.params.push(AbiParam::new(ty)),
+                Class::Memory => signature.params.push(AbiParam::new(POINTER)),
+            }
+        }
+        if let Class::Scalar(ty) = self.class(result) {
+            signature.returns.push(AbiParam::new(ty));
+        }
+        signature
+    }
+
+    /// The static `fn(...)` object of a named function, created on first use.
+    fn fn_value(&mut self, id: FnId, body: &Body) -> DataId {
+        if let Some(&(data, _)) = self.fn_values.get(&id) {
+            return data;
+        }
+        let params: Vec<Ty> = body.params.iter().map(|p| body.locals[p.0 as usize]).collect();
+        let signature = self.uniform_signature(&params, body.result);
+        let name = format!("tondo_thunk{}", id.0);
+        let thunk = self.module.declare_function(&name, Linkage::Local, &signature).expect("thunk declaration");
+        let data =
+            self.module.declare_data(&format!("tondo_fn{}", id.0), Linkage::Local, false, false).expect("fn value");
+        let mut description = DataDescription::new();
+        let mut bytes = vec![0u8; FN_HEADER as usize];
+        bytes[..8].copy_from_slice(&IMMORTAL.to_le_bytes());
+        description.define(bytes.into_boxed_slice());
+        description.set_align(8);
+        let reference = self.module.declare_func_in_data(thunk, &mut description);
+        description.write_function_addr(16, reference);
+        self.module.define_data(data, &description).expect("fn value definition");
+        self.fn_values.insert(id, (data, thunk));
+        self.pending_thunks.push((id, thunk));
+        data
     }
 
     fn glue_signature(&mut self, kind: Glue) -> ir::Signature {
@@ -988,6 +1059,9 @@ impl Emit<'_, '_> {
                 TyKind::Map(..) | TyKind::Set(_) => {
                     self.call_rt(Rt::MapRetain, &[pointer]);
                 }
+                TyKind::Fn(..) => {
+                    self.call_rt(if release { Rt::FnRelease } else { Rt::FnRetain }, &[pointer]);
+                }
                 _ => {
                     self.call_rt(if release { Rt::StrRelease } else { Rt::StrRetain }, &[pointer]);
                 }
@@ -1188,6 +1262,32 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
     e.fb.finalize(config);
 }
 
+/// A thunk with the uniform convention of `fn(...)` values that ignores the
+/// captures' address and calls the named function `target`.
+fn define_thunk(
+    cg: &mut Codegen,
+    body: &Body,
+    target: FnId,
+    func: &mut ir::Function,
+    fbc: &mut FunctionBuilderContext,
+) {
+    let mut fb = FunctionBuilder::new(func, fbc);
+    let entry = fb.create_block();
+    fb.append_block_params_for_function_params(entry);
+    fb.switch_to_block(entry);
+    let mut params = fb.block_params(entry).to_vec();
+    // Drop the captures' address, which follows the result slot if any.
+    let env = usize::from(cg.class(body.result) == Class::Memory);
+    params.remove(env);
+    let callee = cg.module.declare_func_in_func(cg.functions[target.0 as usize], fb.func);
+    let call = fb.ins().call(callee, &params);
+    let results = fb.inst_results(call).to_vec();
+    fb.ins().return_(&results);
+    fb.seal_all_blocks();
+    let config = cg.module.isa().frontend_config();
+    fb.finalize(config);
+}
+
 /// Where a MIR local lives.
 #[derive(Copy, Clone)]
 enum Storage {
@@ -1201,6 +1301,8 @@ enum Storage {
 struct FnCodegen<'a, 'b> {
     e: Emit<'a, 'b>,
     body: &'a Body,
+    /// Every function, for named functions used as values.
+    bodies: &'a [Body],
     blocks: Vec<ir::Block>,
     storage: Vec<Storage>,
 }
@@ -1209,6 +1311,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn new(
         cg: &'a mut Codegen<'b>,
         body: &'a Body,
+        bodies: &'a [Body],
         func: &'a mut ir::Function,
         fbc: &'a mut FunctionBuilderContext,
     ) -> Self {
@@ -1232,7 +1335,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             });
         }
-        FnCodegen { e: Emit { cg, fb }, body, blocks, storage }
+        FnCodegen { e: Emit { cg, fb }, body, bodies, blocks, storage }
     }
 
     fn run(mut self) {
@@ -1606,6 +1709,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Rvalue::Call(callee, args) => {
                     self.call(*callee, args, None);
                 }
+                Rvalue::CallIndirect(callee, args) => {
+                    self.call_indirect(callee, args, None);
+                }
                 Rvalue::Mutate(mutation, target, operands, retain, span) => {
                     self.mutate(*mutation, target, operands, retain, place, *span);
                 }
@@ -1806,6 +1912,34 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Rvalue::AssignSlice(..) => unreachable!("a slice assignment produces `Unit`"),
+            Rvalue::CallIndirect(callee, args) => {
+                let result = if class == Class::Memory { Some(self.pointer_to(place, true)) } else { None };
+                match self.call_indirect(callee, args, result) {
+                    Some(value) if result.is_none() => Val::Scalar(value),
+                    _ => return,
+                }
+            }
+            Rvalue::FnValue(id) => {
+                let data = self.e.cg.fn_value(*id, &self.bodies[id.0 as usize]);
+                let global = self.e.cg.module.declare_data_in_func(data, self.e.fb.func);
+                Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
+            }
+            Rvalue::Erase(closure, body, retain) => {
+                let env = self.operand_ty(closure);
+                let value = self.operand(closure);
+                if *retain {
+                    self.e.refcount(env, value, false);
+                }
+                let callee =
+                    self.e.cg.module.declare_func_in_func(self.e.cg.functions[body.0 as usize], self.e.fb.func);
+                let code = self.e.fb.ins().func_addr(POINTER, callee);
+                let size = self.e.fb.ins().iconst(POINTER, self.e.cg.layout(env).size as i64);
+                let release = self.e.glue_or_null(Glue::Release, env);
+                let object = self.e.call_rt(Rt::FnNew, &[code, size, release]).unwrap();
+                let captures = self.e.fb.ins().iadd_imm_s(object, FN_HEADER);
+                self.e.store_val(captures, env, value);
+                Val::Scalar(object)
+            }
             Rvalue::Discriminant(source) => {
                 let source_ty = self.place_ty(source);
                 let value = self.read(source);
@@ -2284,6 +2418,29 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.unspill(var, slot);
         }
         result
+    }
+
+    /// A call through a `fn(...)` value: its code receives the captures'
+    /// address first (see `Codegen::uniform_signature`).
+    fn call_indirect(&mut self, callee: &Operand, args: &[Operand], result: Option<ir::Value>) -> Option<ir::Value> {
+        let TyKind::Fn(params, result_ty, _) = self.e.cg.types.kind(self.operand_ty(callee)).clone() else {
+            unreachable!("an indirect call goes through a `fn(...)` value")
+        };
+        let object = self.scalar(callee);
+        let code = self.e.fb.ins().load(POINTER, flags(), object, 16);
+        let captures = self.e.fb.ins().iadd_imm_s(object, FN_HEADER);
+        let mut values: Vec<ir::Value> = result.into_iter().collect();
+        values.push(captures);
+        for arg in args {
+            match self.operand(arg) {
+                Val::Scalar(value) | Val::Memory(value) => values.push(value),
+                Val::Zero => {}
+            }
+        }
+        let signature = self.e.cg.uniform_signature(&params, result_ty);
+        let signature = self.e.fb.import_signature(signature);
+        let call = self.e.fb.ins().call_indirect(signature, code, &values);
+        self.e.fb.inst_results(call).first().copied()
     }
 
     /// The address a loan of `place` passes; a local held in a variable is

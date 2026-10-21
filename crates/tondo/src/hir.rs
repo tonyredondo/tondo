@@ -184,6 +184,14 @@ pub enum ExprKind {
     Convert(Box<Expr>),
     /// A call with the type arguments of a generic callee (empty otherwise).
     Call(Callee, Vec<Ty>, Vec<Expr>),
+    /// A named function used as a `fn(...)` value, with its type arguments.
+    FnValue(FnId, Vec<Ty>),
+    /// A call through a value: a `fn(...)`, a closure, or a type parameter
+    /// bound by `Call`, `CallMut` or `CallOnce`. Monomorphization turns a
+    /// call of a closure into a direct call of its body.
+    CallValue(Box<Expr>, Vec<Expr>),
+    /// A closure made into a `fn(...)` value; the `FnId` is its body.
+    Erase(Box<Expr>, FnId),
     Unary(UnaryOp, Box<Expr>),
     /// Arithmetic, bitwise and comparison operators; `and`/`or` short-circuit.
     Binary(BinOp, Box<Expr>, Box<Expr>),
