@@ -34,7 +34,51 @@ use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
 use std::rc::Rc;
 
 pub fn lower(program: &hir::Program) -> Vec<Body> {
-    program.functions.iter().map(|f| lower_function(&program.types, f)).collect()
+    let lower_all = |waits: Option<&[bool]>| -> Vec<Body> {
+        program.functions.iter().map(|f| lower_function(&program.types, f, waits)).collect()
+    };
+    let plain = lower_all(None);
+    let waits = waiting(&plain);
+    if !waits.contains(&true) {
+        return plain;
+    }
+    lower_all(Some(&waits))
+}
+
+/// Which functions may wait and end early when their task is cancelled
+/// (11.15): those that use such an operation, call a function value, or
+/// call a function that may.
+fn waiting(bodies: &[Body]) -> Vec<bool> {
+    let mut waits = vec![false; bodies.len()];
+    let mut calls = vec![Vec::new(); bodies.len()];
+    for (index, body) in bodies.iter().enumerate() {
+        let rvalues = body.blocks.iter().flat_map(|b| &b.stmts).filter_map(|s| match s {
+            Statement::Assign(_, rvalue, _) => Some(&**rvalue),
+            _ => None,
+        });
+        for rvalue in rvalues {
+            match rvalue {
+                Rvalue::Call(hir::Callee::Fn(id), _) => calls[index].push(id.0 as usize),
+                Rvalue::Call(hir::Callee::Std(hir::StdFn::TimeSleep), _)
+                | Rvalue::CallIndirect(..)
+                | Rvalue::Select(..) => waits[index] = true,
+                Rvalue::TaskOp(op, ..) if op.waits() => waits[index] = true,
+                _ => {}
+            }
+        }
+    }
+    loop {
+        let mut changed = false;
+        for index in 0..bodies.len() {
+            if !waits[index] && calls[index].iter().any(|&c| waits[c]) {
+                waits[index] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            return waits;
+        }
+    }
 }
 
 struct LoopCx {
@@ -66,9 +110,14 @@ struct Builder<'a> {
     frames: Vec<Vec<Local>>,
     loops: Vec<LoopCx>,
     ret: Option<Local>,
+    /// Which functions may wait, once known; `None` lowers without
+    /// cancellation points.
+    waits: Option<&'a [bool]>,
+    /// Inside the lowering of a cleanup, which has no cancellation points.
+    cleaning: usize,
 }
 
-fn lower_function(types: &Types, function: &hir::Function) -> Body {
+fn lower_function(types: &Types, function: &hir::Function, waits: Option<&[bool]>) -> Body {
     let mut b = Builder {
         types,
         function,
@@ -80,6 +129,8 @@ fn lower_function(types: &Types, function: &hir::Function) -> Body {
         frames: vec![Vec::new()],
         loops: Vec::new(),
         ret: None,
+        waits,
+        cleaning: 0,
     };
     b.current = b.new_block();
     let params = function.params.iter().map(|&p| b.bind(p)).collect();
@@ -415,9 +466,11 @@ impl Builder<'_> {
             Exit::Defer(call) => {
                 // Unregister it first, so a panic in the cleanup cannot run it again.
                 self.push(Statement::DeferPop);
+                self.cleaning += 1;
                 self.in_frame(|b| {
                     b.expr(&call);
                 });
+                self.cleaning -= 1;
             }
         }
     }
@@ -439,6 +492,40 @@ impl Builder<'_> {
         }
         for exit in scopes {
             self.exit_action(exit);
+        }
+    }
+
+    /// After an operation that may wait: a cancelled task unwinds from here
+    /// as a `return` does, releasing what the function owns and running its
+    /// cleanups, and returns zeros its caller never uses (11.15).
+    fn cancellation_point(&mut self, span: Span) {
+        if self.waits.is_none() || self.cleaning > 0 {
+            return;
+        }
+        let cancelled = self.temp(Ty::BOOL, Rvalue::Cancelled, span);
+        let (unwind, next) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(cancelled, unwind, next));
+        self.switch_to(unwind);
+        let result = match self.ret {
+            Some(ret) => {
+                self.push(Statement::Clear(ret));
+                Operand::local(ret)
+            }
+            None => Operand::Const(Const::Unit),
+        };
+        self.cleaning += 1;
+        self.cleanup_to(0, 0);
+        self.cleaning -= 1;
+        self.terminate(Terminator::Return(result));
+        self.switch_to(next);
+    }
+
+    /// Whether a call may wait (see `waiting`).
+    fn call_waits(&self, callee: hir::Callee) -> bool {
+        match callee {
+            hir::Callee::Fn(id) => self.waits.is_some_and(|w| w[id.0 as usize]),
+            hir::Callee::Std(hir::StdFn::TimeSleep) => true,
+            _ => false,
         }
     }
 
@@ -1192,6 +1279,9 @@ impl Builder<'_> {
                 let (operands, regions) = self.call_operands(args, e.span);
                 let result = self.temp(e.ty, Rvalue::CallIndirect(callee, operands), e.span);
                 self.finish_call(e.ty, regions);
+                if e.ty != Ty::NEVER {
+                    self.cancellation_point(e.span);
+                }
                 result
             }
             hir::ExprKind::Erase(closure, body) => {
@@ -1216,12 +1306,19 @@ impl Builder<'_> {
                     .map(|i| matches!(op, hir::TaskOp::GroupAdd | hir::TaskOp::Send) && i == 1)
                     .collect();
                 let flags = self.move_flags(&values, &moves, &types);
-                self.temp(e.ty, Rvalue::TaskOp(*op, values, flags, e.span), e.span)
+                let result = self.temp(e.ty, Rvalue::TaskOp(*op, values, flags, e.span), e.span);
+                if op.waits() {
+                    self.cancellation_point(e.span);
+                }
+                result
             }
             hir::ExprKind::Call(callee, _, args) => {
                 let (operands, regions) = self.call_operands(args, e.span);
                 let result = self.temp(e.ty, Rvalue::Call(*callee, operands), e.span);
                 self.finish_call(e.ty, regions);
+                if e.ty != Ty::NEVER && self.call_waits(*callee) {
+                    self.cancellation_point(e.span);
+                }
                 result
             }
             hir::ExprKind::Unary(op, operand) => {
@@ -1294,10 +1391,10 @@ impl Builder<'_> {
     }
 
     /// `group.wait()` (11.12): the results in the order the tasks were
-    /// added or, when they are `R ! E`, the first error. For results the
-    /// runtime first waits for every task or for the first that fails,
-    /// which is then the only one taken. Each result taken is moved into
-    /// the array or the error.
+    /// added or, when they are `R ! E`, the first error. The runtime first
+    /// waits for every task or, for results, for the first that fails,
+    /// which cancels the others and is then the only one taken. Each result
+    /// taken is moved into the array or the error.
     fn group_wait(&mut self, e: &hir::Expr, group: &hir::Expr) -> Operand {
         let span = e.span;
         let item = self.types.handle_result(group.ty);
@@ -1307,11 +1404,9 @@ impl Builder<'_> {
             _ => (e.ty, false),
         };
         let group = self.expr(group);
-        let index = if fallible {
-            self.temp(Ty::INT, Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone()], vec![false], span), span)
-        } else {
-            Operand::Const(Const::Int(-1, Ty::INT))
-        };
+        let settle = Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone()], vec![false], span);
+        let index = self.temp(Ty::INT, settle, span);
+        self.cancellation_point(span);
         let values = self.new_local(array);
         self.assign(Place::local(values), Rvalue::ArrayOp(hir::ArrayOp::New, Vec::new(), span), span);
         let result = self.new_local(e.ty);
@@ -1378,6 +1473,7 @@ impl Builder<'_> {
         }
         let outs: Vec<Local> = cases.iter().map(|c| c.out).collect();
         let won = self.temp(Ty::INT, Rvalue::Select(cases, otherwise.is_none(), span), span);
+        self.cancellation_point(span);
         let has_value = e.ty != Ty::UNIT && e.ty != Ty::NEVER;
         let result = has_value.then(|| self.new_local(e.ty));
         let join = self.new_block();

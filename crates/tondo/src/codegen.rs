@@ -143,6 +143,10 @@ enum Rt {
     Sleep,
     ReceiveTimeout,
     Select,
+    Cancelled,
+    JoinWaitTimeout,
+    JoinCancel,
+    GroupCancel,
 }
 
 impl Rt {
@@ -250,6 +254,10 @@ impl Rt {
             Rt::Sleep => ("tondo_rt_sleep", &[I64], &[]),
             Rt::ReceiveTimeout => ("tondo_rt_channel_receive_timeout", &[I64, I64, I64], &[I8]),
             Rt::Select => ("tondo_rt_select", &[I64, I64, I8, I64], &[I64]),
+            Rt::Cancelled => ("tondo_rt_cancelled", &[], &[I8]),
+            Rt::JoinWaitTimeout => ("tondo_rt_join_wait_timeout", &[I64, I64, I64], &[I8]),
+            Rt::JoinCancel => ("tondo_rt_join_cancel", &[I64], &[]),
+            Rt::GroupCancel => ("tondo_rt_group_cancel", &[I64], &[]),
         }
     }
 }
@@ -2134,6 +2142,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release]).unwrap())
             }
             Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
+            Rvalue::Cancelled => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
             Rvalue::TaskOp(op, operands, retain, span) => match self.task_op(*op, operands, retain, place, *span) {
                 Some(value) => value,
                 None => return,
@@ -2456,15 +2465,23 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::ChannelSend, &[values[0], source, location]);
                 None
             }
-            TaskOp::Receive | TaskOp::ReceiveTimeout => {
-                let item = item.expect("a receiver");
+            TaskOp::Receive | TaskOp::ReceiveTimeout | TaskOp::WaitTimeout => {
+                let item = item.expect("a receiver or a join");
                 let out = self.scratch(item);
-                let found = if op == TaskOp::Receive {
-                    self.e.call_rt(Rt::ChannelReceive, &[values[0], out]).unwrap()
-                } else {
-                    self.e.call_rt(Rt::ReceiveTimeout, &[values[0], out, values[1]]).unwrap()
+                let found = match op {
+                    TaskOp::Receive => self.e.call_rt(Rt::ChannelReceive, &[values[0], out]),
+                    TaskOp::ReceiveTimeout => self.e.call_rt(Rt::ReceiveTimeout, &[values[0], out, values[1]]),
+                    _ => self.e.call_rt(Rt::JoinWaitTimeout, &[values[0], out, values[1]]),
                 };
-                self.removal_result(place, ty, item, out, found)
+                self.removal_result(place, ty, item, out, found.unwrap())
+            }
+            TaskOp::Cancel => {
+                self.e.call_rt(Rt::JoinCancel, &[values[0]]);
+                None
+            }
+            TaskOp::GroupCancel => {
+                self.e.call_rt(Rt::GroupCancel, &[values[0]]);
+                None
             }
             TaskOp::Close => {
                 self.e.call_rt(Rt::ChannelClose, &[values[0]]);

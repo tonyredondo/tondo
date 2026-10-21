@@ -1,0 +1,149 @@
+import std.console
+import std.time
+
+fn note(text: String) {
+    console.println(text)
+}
+
+fn forever(inbox: Receiver[Int]): Int {
+    defer note("cleanup: forever")
+    var total = 0
+    for value in inbox {
+        total += value
+    }
+    total
+}
+
+fn sleeper(n: Int): String {
+    defer note("cleanup: sleeper {n}")
+    time.sleep(time.seconds(60))
+    "slept {n}"
+}
+
+fn parent(): String {
+    defer note("cleanup: parent")
+    let child = spawn sleeper(7)
+    child.wait()
+}
+
+fn checked(n: Int): Int ! String {
+    if n == 2 {
+        time.sleep(time.milliseconds(5))
+        fail "bad {n}"
+    }
+    time.sleep(time.seconds(60))
+    n
+}
+
+// Unwinding releases what each frame owns and runs its cleanups.
+fn deep(level: Int, inbox: Receiver[String], ack: Sender[Int]): (String, Int) {
+    let owned = "level {level}"
+    defer note("unwind {owned}")
+    if level == 0 {
+        for text in inbox {
+            note("got {text}")
+            ack.send(1)
+        }
+        return ("done", 0)
+    }
+    let (text, count) = deep(level - 1, inbox, ack)
+    ("{text}+", count + 1)
+}
+
+fn blockedSend(out: Sender[String]) {
+    defer note("unwind sender")
+    out.send("first")
+    out.send("second {1}")
+}
+
+fn selecting(out: Sender[String], inbox: Receiver[String]): String {
+    defer note("unwind select")
+    select {
+        out.send("pending {2}") => "sent"
+        inbox.receive() => "received"
+    }
+}
+
+fn busy(): Int {
+    var total = 0
+    for i in 0..100000 {
+        total += i % 3
+    }
+    total
+}
+
+fn main() {
+    let (sender, receiver) = channel[Int]()
+    let job = spawn forever(receiver)
+    sender.send(1)
+    job.cancel()
+    console.println("cancelled forever")
+
+    let slow = spawn sleeper(1)
+    match slow.wait(timeout: time.milliseconds(10)) {
+        some(text) => console.println(text)
+        none => console.println("timed out")
+    }
+
+    let tree = spawn parent()
+    tree.cancel()
+    console.println("cancelled the tree")
+
+    // The first error cancels the other tasks.
+    var group = Group.new[Int ! String]()
+    for n in 1..=3 {
+        group.add(spawn checked(n))
+    }
+    match group.wait() {
+        ok(values) => console.println("ok {values}")
+        err(error) => console.println("failed: {error}")
+    }
+
+    var many = Group.new[String]()
+    for n in 10..13 {
+        many.add(spawn sleeper(n))
+    }
+    many.cancel()
+    console.println("cancelled the group")
+
+    let (texts, inbox) = channel[String]()
+    let (ack, acks) = channel[Int]()
+    let nested = spawn deep(2, inbox, ack)
+    texts.send("one")
+    _ = acks.receive()
+    nested.cancel()
+
+    let (full, rest) = channel[String](1)
+    let blocked = spawn blockedSend(full)
+    blocked.cancel()
+
+    let (nobody, never) = channel[String](0)
+    let (quiet, empty) = channel[String]()
+    let waiting = spawn selecting(nobody, empty)
+    waiting.cancel()
+
+    // A task that does not wait runs to its end.
+    let computing = spawn busy()
+    computing.cancel()
+    console.println("done")
+}
+
+// expect-stdout: cleanup: forever
+// expect-stdout: cancelled forever
+// expect-stdout: cleanup: sleeper 1
+// expect-stdout: timed out
+// expect-stdout: cleanup: sleeper 7
+// expect-stdout: cleanup: parent
+// expect-stdout: cancelled the tree
+// expect-stdout: failed: bad 2
+// expect-stdout: cleanup: sleeper 10
+// expect-stdout: cleanup: sleeper 11
+// expect-stdout: cleanup: sleeper 12
+// expect-stdout: cancelled the group
+// expect-stdout: got one
+// expect-stdout: unwind level 0
+// expect-stdout: unwind level 1
+// expect-stdout: unwind level 2
+// expect-stdout: unwind sender
+// expect-stdout: unwind select
+// expect-stdout: done

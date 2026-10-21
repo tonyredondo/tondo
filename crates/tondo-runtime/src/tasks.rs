@@ -220,6 +220,13 @@ struct Task {
     /// Its `defer` cleanups, innermost last (13.7).
     cleanups: Vec<(Cleanup, usize)>,
     state: AtomicU8,
+    /// Set by `cancel` (11.15): the task's waits end at once, and compiled
+    /// code unwinds after them.
+    cancelled: AtomicBool,
+    /// The wait the task is blocked in, which a cancellation claims;
+    /// guarded by `waiting_lock`.
+    waiting: *const Wait,
+    waiting_lock: AtomicBool,
     finished: bool,
     main: bool,
 }
@@ -527,6 +534,9 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         join,
         cleanups: Vec::new(),
         state: AtomicU8::new(RUNNING),
+        cancelled: AtomicBool::new(false),
+        waiting: std::ptr::null(),
+        waiting_lock: AtomicBool::new(false),
         finished: false,
         main: join.is_null(),
     }))
@@ -577,6 +587,8 @@ pub fn run_cleanups() {
 // ---------------------------------------------------------------------------
 
 const NONE: usize = usize::MAX;
+/// The index a cancellation claims a wait with.
+const CANCELLED: usize = usize::MAX - 1;
 
 /// A task's wait for the first of one or more operations. The objects it
 /// waits on point to it until the task removes itself, and timers hold it,
@@ -602,14 +614,59 @@ impl Wait {
     }
 
     /// Parks until the operation that claimed the wait notifies the task;
-    /// returns its index.
+    /// returns its index, or `CANCELLED` if the task is cancelled first.
     fn block(&self) -> usize {
+        let task = unsafe { &mut *self.task };
+        lock(&task.waiting_lock);
+        if task.cancelled.load(Ordering::Acquire) && self.claim(CANCELLED) {
+            unlock(&task.waiting_lock);
+            return CANCELLED;
+        }
+        task.waiting = self;
+        unlock(&task.waiting_lock);
+        let fired = self.block_fully();
+        lock(&task.waiting_lock);
+        task.waiting = std::ptr::null();
+        unlock(&task.waiting_lock);
+        fired
+    }
+
+    /// Parks until the operation that claimed the wait notifies the task,
+    /// even if it is cancelled: how a release waits for a task.
+    fn block_fully(&self) -> usize {
         loop {
             park();
             let fired = self.fired.load(Ordering::Acquire);
             if fired != NONE {
                 return fired;
             }
+        }
+    }
+}
+
+/// Whether the current task is cancelled.
+fn cancelled() -> bool {
+    let task = current();
+    !task.is_null() && unsafe { (*task).cancelled.load(Ordering::Acquire) }
+}
+
+/// Checked by compiled code after every call that may wait: a cancelled
+/// task unwinds from there.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_cancelled() -> u8 {
+    cancelled() as u8
+}
+
+/// Cancels a running task: marks it and ends the wait it is blocked in.
+unsafe fn cancel_task(task: *mut Task) {
+    unsafe {
+        let t = &mut *task;
+        t.cancelled.store(true, Ordering::SeqCst);
+        lock(&t.waiting_lock);
+        let woken = !t.waiting.is_null() && (*t.waiting).claim(CANCELLED);
+        unlock(&t.waiting_lock);
+        if woken {
+            notify(task);
         }
     }
 }
@@ -628,7 +685,7 @@ fn unlock(flag: &AtomicBool) {
 /// `time.sleep(delay)` in nanoseconds; no wait when it is not positive.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_sleep(nanos: i64) {
-    if nanos <= 0 {
+    if nanos <= 0 || cancelled() {
         return;
     }
     let wait = Wait::new();
@@ -658,6 +715,8 @@ pub struct JoinObject {
     /// The group that observes the task's end, and its index there.
     group: *mut GroupObject,
     index: usize,
+    /// The task, alive while it is not done.
+    task: *mut Task,
 }
 
 /// Starts a task that calls the closure `body`, a `fn` object it takes,
@@ -691,6 +750,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         release,
         group: std::ptr::null_mut(),
         index: 0,
+        task: std::ptr::null_mut(),
     }));
     let code = unsafe { *(body.add(16) as *const *const u8) };
     let kind = match kind {
@@ -700,7 +760,9 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         3 => ResultKind::Float32,
         _ => ResultKind::Memory,
     };
-    schedule(new_task(task_stack(), body, code, kind, join));
+    let task = new_task(task_stack(), body, code, kind, join);
+    unsafe { (*join).task = task };
+    schedule(task);
     join
 }
 
@@ -726,19 +788,43 @@ unsafe fn complete(join: *mut JoinObject) {
     }
 }
 
-/// Waits until the task is done.
-unsafe fn finish(join: *mut JoinObject) {
+/// Waits until the task is done; false if the waiting task is cancelled
+/// first, unless `fully`.
+unsafe fn finish(join: *mut JoinObject, fully: bool) -> bool {
     unsafe {
         let j = &mut *join;
         lock(&j.lock);
         if j.done {
             unlock(&j.lock);
-            return;
+            return true;
         }
         let wait = Wait::new();
         j.waiters.push((Arc::as_ptr(&wait), 0));
         unlock(&j.lock);
-        wait.block();
+        if fully {
+            wait.block_fully();
+            return true;
+        }
+        if wait.block() != CANCELLED {
+            return true;
+        }
+        lock(&j.lock);
+        j.waiters.retain(|&(w, _)| w != Arc::as_ptr(&wait));
+        unlock(&j.lock);
+        false
+    }
+}
+
+/// Cancels the task of a join and waits until it is done (11.15).
+unsafe fn cancel_join(join: *mut JoinObject) {
+    unsafe {
+        let j = &mut *join;
+        lock(&j.lock);
+        if !j.done {
+            cancel_task(j.task);
+        }
+        unlock(&j.lock);
+        finish(join, true);
     }
 }
 
@@ -753,13 +839,40 @@ unsafe fn take(join: *mut JoinObject, out: *mut u8) {
 }
 
 /// `job.wait()`: waits for the task and moves its result into `out`. The
-/// handle is released as usual by its owner.
+/// handle is released as usual by its owner. A cancelled waiter gets zeros.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_join_wait(join: *mut JoinObject, out: *mut u8) {
     unsafe {
-        finish(join);
-        take(join, out);
+        if !cancelled() && finish(join, false) {
+            take(join, out);
+        } else {
+            std::ptr::write_bytes(out, 0, (*join).size);
+        }
     }
+}
+
+/// `job.wait(timeout: delay)`: the result into `out` and 1, or 0 after
+/// cancelling the task when it does not finish within `nanos`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_join_wait_timeout(join: *mut JoinObject, out: *mut u8, nanos: i64) -> u8 {
+    let mut cases = [
+        Case { kind: WAIT, found: 0, handle: join as *mut u8, value: out, nanos: 0 },
+        Case { kind: SLEEP, found: 0, handle: std::ptr::null_mut(), value: std::ptr::null_mut(), nanos },
+    ];
+    match unsafe { select(&mut cases, true, std::ptr::null()) } {
+        0 => 1,
+        1 => {
+            unsafe { cancel_join(join) };
+            0
+        }
+        _ => 0,
+    }
+}
+
+/// `job.cancel()`: cancels the task and waits until it is done.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_join_cancel(join: *mut JoinObject) {
+    unsafe { cancel_join(join) }
 }
 
 #[unsafe(no_mangle)]
@@ -785,7 +898,11 @@ pub unsafe extern "C" fn tondo_rt_join_release(join: *mut JoinObject) {
 
 unsafe fn free_join(join: *mut JoinObject) {
     unsafe {
-        finish(join);
+        // A cancelled task cancels the tasks it still owns (11.15).
+        if cancelled() {
+            cancel_join(join);
+        }
+        finish(join, true);
         if !(*join).taken
             && let Some(release) = (*join).release
         {
@@ -882,13 +999,18 @@ unsafe fn group_completed(group: *mut GroupObject, index: usize) -> Option<*mut 
     }
 }
 
-/// Waits, with the group locked, until a task finishes; returns locked.
-unsafe fn group_block(g: &mut GroupObject) {
+/// Waits, with the group locked, until a task finishes; returns locked,
+/// and false if the waiting task is cancelled.
+unsafe fn group_block(g: &mut GroupObject) -> bool {
     let wait = Wait::new();
     g.waiter = Some((Arc::as_ptr(&wait), 0));
     unlock(&g.lock);
-    wait.block();
+    let fired = wait.block();
     lock(&g.lock);
+    if g.waiter.is_some_and(|(w, _)| w == Arc::as_ptr(&wait)) {
+        g.waiter = None;
+    }
+    fired != CANCELLED
 }
 
 /// `group.length()`: the tasks whose results the group still holds.
@@ -928,33 +1050,55 @@ pub unsafe extern "C" fn tondo_rt_group_next(group: *mut GroupObject, out: *mut 
         let g = &mut *group;
         lock(&g.lock);
         loop {
-            if let Some(found) = group_try_next(g, out) {
+            if let Some(found) = group_try_next(g, out).filter(|_| !cancelled()) {
                 unlock(&g.lock);
                 return found as u8;
             }
-            group_block(g);
+            if cancelled() || !group_block(g) {
+                unlock(&g.lock);
+                return 0;
+            }
         }
     }
 }
 
 /// The first part of `group.wait()`: waits until every task finished or,
-/// for results, one finished with an error; returns the index of that
-/// task, or -1.
+/// for results, one finished with an error, which cancels the others;
+/// returns the index of that task, -1, or -2 if the waiting task is
+/// cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
     unsafe {
         let g = &mut *group;
         lock(&g.lock);
         loop {
+            if cancelled() {
+                unlock(&g.lock);
+                return -2;
+            }
             if let Some(index) = g.failed.filter(|&i| !g.taken[i]) {
                 unlock(&g.lock);
+                tondo_rt_group_cancel(group);
                 return index as i64;
             }
             if g.running == 0 {
                 unlock(&g.lock);
                 return -1;
             }
-            group_block(g);
+            if !group_block(g) {
+                unlock(&g.lock);
+                return -2;
+            }
+        }
+    }
+}
+
+/// `group.cancel()`: cancels the tasks still running and waits for them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_group_cancel(group: *mut GroupObject) {
+    unsafe {
+        for index in 0..(*group).joins.len() {
+            cancel_join((&(*group).joins)[index]);
         }
     }
 }
@@ -975,7 +1119,7 @@ pub unsafe extern "C" fn tondo_rt_group_take(group: *mut GroupObject, index: i64
         g.taken[index] = true;
         let join = g.joins[index];
         unlock(&g.lock);
-        finish(join);
+        finish(join, true);
         take(join, out);
         1
     }
@@ -1195,6 +1339,10 @@ unsafe fn try_receive(c: &mut ChannelObject, out: *mut u8) -> Option<(bool, Opti
 pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value: *mut u8, location: *const Str) {
     unsafe {
         let c = &mut *(*sender).channel;
+        if cancelled() {
+            drop_unsent(c, value);
+            return;
+        }
         lock(&c.lock);
         if c.closed {
             unlock(&c.lock);
@@ -1209,19 +1357,36 @@ pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value:
         let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value, state: 0 };
         c.sending.push_back(&mut waiter);
         unlock(&c.lock);
-        wait.block();
+        if wait.block() == CANCELLED {
+            lock(&c.lock);
+            c.sending.retain(|w| *w != &raw mut waiter);
+            unlock(&c.lock);
+            drop_unsent(c, value);
+            return;
+        }
         if std::ptr::read_volatile(&waiter.state) == CLOSED {
             closed_panic(location);
         }
     }
 }
 
+/// A value a cancelled task did not send: it was the channel's to release.
+unsafe fn drop_unsent(c: &ChannelObject, value: *mut u8) {
+    if let Some(release) = c.release {
+        unsafe { release(value) };
+    }
+}
+
 /// `receiver.receive()`: moves the next value into `out` and returns 1, or
-/// returns 0 once the channel is closed and empty.
+/// returns 0 once the channel is closed and empty, or if the task is
+/// cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, out: *mut u8) -> u8 {
     unsafe {
         let c = &mut *channel;
+        if cancelled() {
+            return 0;
+        }
         lock(&c.lock);
         if let Some((found, woken)) = try_receive(c, out) {
             unlock(&c.lock);
@@ -1232,7 +1397,12 @@ pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, o
         let mut waiter = Waiter { wait: Arc::as_ptr(&wait), index: 0, value: out, state: 0 };
         c.receiving.push_back(&mut waiter);
         unlock(&c.lock);
-        wait.block();
+        if wait.block() == CANCELLED {
+            lock(&c.lock);
+            c.receiving.retain(|w| *w != &raw mut waiter);
+            unlock(&c.lock);
+            return 0;
+        }
         (std::ptr::read_volatile(&waiter.state) == MOVED) as u8
     }
 }
@@ -1377,7 +1547,8 @@ fn random(bound: usize) -> usize {
 
 /// `select` over `count` operations at `cases`: completes the first that
 /// is ready, chosen at random among those ready, and returns its index;
-/// with `blocking` 0 (an `else` arm) returns -1 when none is.
+/// with `blocking` 0 (an `else` arm) returns -1 when none is, and -2 when
+/// the task is cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_select(cases: *mut Case, count: usize, blocking: u8, location: *const Str) -> i64 {
     let cases = unsafe { std::slice::from_raw_parts_mut(cases, count) };
@@ -1385,6 +1556,9 @@ pub unsafe extern "C" fn tondo_rt_select(cases: *mut Case, count: usize, blockin
 }
 
 unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i64 {
+    if cancelled() {
+        return -2;
+    }
     unsafe {
         // Every object is locked, once and in address order, from checking
         // readiness until the task is registered everywhere.
@@ -1450,6 +1624,11 @@ unsafe fn select(cases: &mut [Case], blocking: bool, location: *const Str) -> i6
             }
         }
         let sleeps = cases.iter().enumerate().filter(|&(i, c)| c.kind == SLEEP && i != won).count();
+        if won == CANCELLED {
+            unlock_all(&locks);
+            timers_ended(sleeps);
+            return -2;
+        }
         // The operation that won is complete but for what this task does.
         let case = &mut cases[won];
         match case.kind {

@@ -170,8 +170,11 @@ pub enum Rvalue {
     /// copied operands to retain as they move in, as a join into a group.
     TaskOp(TaskOp, Vec<Operand>, Vec<bool>, Span),
     /// `select` (11.14): completes one of the operations and gives its
-    /// index, or -1 for `else` when the flag (blocking) is false.
+    /// index, -1 for `else` when the flag (blocking) is false, or -2 when
+    /// the task is cancelled.
     Select(Vec<SelectCase>, bool, Span),
+    /// Whether the current task is cancelled (11.15).
+    Cancelled,
     Concat(Vec<Piece>),
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.

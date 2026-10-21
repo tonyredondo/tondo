@@ -3909,7 +3909,9 @@ de `group.wait()` cancelan tareas. La cancelación es cooperativa: la tarea se
 detiene en su siguiente espera, o al instante si ya está esperando. La operación
 que esperaba no devuelve nada; la tarea termina ejecutando sus `defer` y
 liberando sus valores, y sus propios `Join` y grupos pendientes se cancelan
-también. Un cálculo que no espera no se interrumpe. Cuando `cancel()` regresa, la
+también. Un cálculo que no espera no se interrumpe. Una espera dentro de un
+`defer` de la tarea cancelada también termina al instante, salvo la de sus
+propias tareas, que se cancelan y se esperan. Cuando `cancel()` regresa, la
 tarea ya terminó.
 
 ---

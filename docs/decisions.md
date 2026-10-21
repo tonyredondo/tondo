@@ -377,3 +377,17 @@ operations are ready and registers itself, as Go does, which makes the
 check and the registration one step. Timers live in a heap that idle
 workers sleep on; a wait that ends another way leaves its timer behind, and
 those are purged once they are most of the heap.
+
+## 2026-10-21 — Cancellation unwinds through ordinary returns
+
+A cancelled task must run its `defer`s and release its values, but a panic
+ends the process and so only runs cleanups. Cancellation instead reuses the
+paths `return` already has: after every call that may wait, compiled code
+asks the runtime whether the task is cancelled and, if so, returns at once
+through the function's cleanup, with zeros its caller never uses. Which
+calls may wait comes from a whole-program pass over the lowered functions
+(any waiting operation, call through a function value, or call of a
+function that may wait), so code that never waits pays nothing. Waiting
+operations end at once in a cancelled task and leave zeros where a result
+would go; zeroed values release safely. Releasing a `Join` or a `Group`
+from a cancelled task cancels those tasks too and waits for them.

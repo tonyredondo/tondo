@@ -338,6 +338,12 @@ pub enum TaskOp {
     IsClosed,
     /// `receiver.receive(timeout: delay)`: `T?`
     ReceiveTimeout,
+    /// `job.wait(timeout: delay)`: `T?`, cancelling the task when it is late.
+    WaitTimeout,
+    /// `job.cancel()`
+    Cancel,
+    /// `group.cancel()`
+    GroupCancel,
 }
 
 impl TaskOp {
@@ -345,10 +351,26 @@ impl TaskOp {
     /// reading it: a consumed handle or a value moved into it.
     pub fn takes(self, index: usize) -> bool {
         match self {
-            TaskOp::Wait | TaskOp::GroupWait | TaskOp::Channel => true,
+            TaskOp::Wait | TaskOp::WaitTimeout | TaskOp::Cancel | TaskOp::GroupCancel => index == 0,
+            TaskOp::GroupWait | TaskOp::Channel => true,
             TaskOp::GroupAdd | TaskOp::Send => index == 1,
             _ => false,
         }
+    }
+
+    /// Whether the operation waits and ends at once when the task is
+    /// cancelled, after which compiled code unwinds (11.15).
+    pub fn waits(self) -> bool {
+        matches!(
+            self,
+            TaskOp::Wait
+                | TaskOp::WaitTimeout
+                | TaskOp::GroupNext
+                | TaskOp::GroupSettle
+                | TaskOp::Send
+                | TaskOp::Receive
+                | TaskOp::ReceiveTimeout
+        )
     }
 }
 

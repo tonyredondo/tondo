@@ -2647,7 +2647,8 @@ impl Checker<'_> {
             (Handle::Group, "next") => T::GroupNext,
             (Handle::Group, "length" | "isEmpty") => T::GroupLength,
             (Handle::Group, "wait") => T::GroupWait,
-            (Handle::Join | Handle::Group, "cancel") => return self.unsupported_expr(span, "`cancel()`"),
+            (Handle::Join, "cancel") => T::Cancel,
+            (Handle::Group, "cancel") => T::GroupCancel,
             (Handle::Sender, "send") => T::Send,
             (Handle::Sender, "close") => T::Close,
             (Handle::Sender, "copy") => T::CopySender,
@@ -2657,14 +2658,14 @@ impl Checker<'_> {
         };
         let timeout = matches!(args, [arg] if arg.name.as_ref().is_some_and(|n| n.name == "timeout"));
         let op = match op {
-            T::Wait if timeout => return self.unsupported_expr(span, "`wait(timeout:)`"),
+            T::Wait if timeout => T::WaitTimeout,
             T::Receive if timeout => T::ReceiveTimeout,
             op => op,
         };
         let params = match op {
             T::GroupAdd => vec![self.types.handle(Handle::Join, result)],
             T::Send => vec![result],
-            T::ReceiveTimeout => match self.duration {
+            T::ReceiveTimeout | T::WaitTimeout => match self.duration {
                 Some(duration) => vec![duration],
                 None => {
                     let message =
@@ -2696,8 +2697,8 @@ impl Checker<'_> {
         }
         let result = match op {
             T::Wait => result,
-            T::GroupAdd | T::Send | T::Close => Ty::UNIT,
-            T::GroupNext | T::Receive | T::ReceiveTimeout => self.types.intern(TyKind::Option(result)),
+            T::GroupAdd | T::Send | T::Close | T::Cancel | T::GroupCancel => Ty::UNIT,
+            T::GroupNext | T::Receive | T::ReceiveTimeout | T::WaitTimeout => self.types.intern(TyKind::Option(result)),
             T::CopySender => ty,
             T::IsClosed => Ty::BOOL,
             T::GroupWait => match *self.types.kind(result) {
