@@ -321,3 +321,20 @@ after the package, and a package imports its own modules and the aliases it
 declares. The toolchain specification was rewritten around this; targets,
 capabilities, generators, compiled interfaces and the internal JSON
 manifests of the earlier draft were removed.
+
+## 2026-10-21 — Concurrency without colors
+
+Functions are not colored: any call may wait, and waiting stops the task,
+not the thread. There is no `await`, `suspends`, `selectable`, `@sync`,
+`scope` or `spawn thread`. `spawn call()` returns a `Join[T]` whose `wait()`
+gives the call's result, with an optional `timeout:` that cancels the task;
+an unconsumed `Join` is waited when its block ends, so no task outlives its
+owner and nobody writes anything to ensure it. `Group[T]` covers dynamic sets
+(first error cancels the rest), channels carry streams (`channel[T]()`
+unbounded, `channel[T](n)` bounded, closed when the last moved `Sender`
+disappears), `select` waits for the first of `receive`, `send`, `wait`,
+`next` and `sleep`, and `std.sync` holds shared state. `Group`, `oneshot`'s
+role, unbounded channels and timeouts were kept or added after review: the
+aim is a middle ground, not channels for everything. `oneshot` and
+`AsyncIterator` were dropped: `Join` covers a future result, and any
+`Iterator` may wait in `next`.

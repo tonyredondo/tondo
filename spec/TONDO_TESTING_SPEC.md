@@ -65,7 +65,7 @@ El sistema de testing de Tondo persigue catorce objetivos:
 2. Agrupar tests y compartir un recurso costoso requiere únicamente una `suite`
    léxica; no clases, annotations ni registro runtime.
 3. El test utiliza exactamente el lenguaje normal: `assert`, `?`, `match`,
-   `defer`, `for`, `scope`, `spawn`, `await`, ownership y préstamos conservan su
+   `defer`, `for`, `spawn`, `wait`, `select`, ownership y préstamos conservan su
    significado.
 4. Logs, tags, fallo inmediato y skip explícito funcionan también desde helpers
    y concurrencia estructurada sin obligar a recibir ni propagar un
@@ -213,7 +213,7 @@ plan cerrado. El tracker puede secuenciar ese slice antes del resto de la
 librería estándar, pero no sustituirlo por nombres, duraciones o bridges
 privados del runner.
 
-### 2.5 Dependencia de cleanup suspendible general
+### 2.5 Cleanup que espera
 
 Testing no añade `beforeAll`, `afterAll`, callbacks de teardown ni una operación
 privada para esperar cleanup. Tondo 0.1 admite en cualquier función o entrada
@@ -229,27 +229,22 @@ La grammar consolidada de Tondo 0.1 contiene:
 defer_stmt = "defer", ( postfix_expression | block ) ;
 ~~~
 
-El `postfix_expression` debe terminar en un `call_suffix`. El compilador infiere
-si el cleanup suspende desde la llamada o desde las llamadas directas de un
-bloque; el registro nunca ejecuta ni inicia la operación.
+El `postfix_expression` debe terminar en un `call_suffix`. El cleanup puede
+esperar como cualquier llamada; el registro nunca ejecuta ni inicia la
+operación.
 
 La llamada no se inicia al registrar el `defer`; sus operandos y ownership se
 reservan con las reglas ordinarias y se invoca y espera al abandonar el scope,
 en su posición LIFO. La forma:
 
-- Solo acepta una llamada `fn(...): Unit` infallible; su efecto suspendible se
-  infiere desde la operación registrada, sin otra sintaxis.
-- Cuenta como punto de suspensión. Un test, setup o script, y cualquier función
-  o cierre, infiere el efecto sin una keyword adicional; `@sync`/`@nosuspend`
-  rechaza esta forma con `E1601`.
+- Solo acepta una llamada `fn(...): Unit` infallible, que puede esperar como
+  cualquier llamada.
 - Admite como máximo el mismo único operando afín propietario que un `defer` de
   llamada ordinario.
-- La variante de bloque también infiere suspensión, pero no puede usar `await`,
-  `spawn` o `scope`, propagar un error ni crear un hook de testing.
+- La variante de bloque puede esperar, pero no puede usar `spawn`, propagar un
+  error ni crear un hook de testing.
 - Ejecuta las demás entradas de cleanup aunque produzca pánico y conserva la
   precedencia general de pánicos suprimidos.
-- Conserva las reglas ordinarias de liveness y `Send` para todo valor reservado
-  en el frame suspendible.
 - No se cancela por la salida cooperativa que inició el unwind; timeout,
   resource limit, interrupción externa o pérdida de aislamiento continúan
   pudiendo terminarla.
@@ -271,7 +266,7 @@ suite remoteApi {
 ~~~
 
 Un backend no puede implementarla bloqueando un worker del host ni ocultando el
-cleanup suspendible. Si el target no puede conducir la llamada durante unwind, debe rechazar
+cleanup que espera. Si el target no puede conducir la llamada durante unwind, debe rechazar
 el artefacto por capability antes de ejecutar tests.
 
 ## 3. Declaraciones `suite` y `test`
@@ -448,8 +443,6 @@ El símbolo sintético no puede escribirse ni observarse desde fuente. El body:
 - Infiere localmente una unión cerrada `E` de errores, como el `main` implícito
   de un script.
 - Es infallible cuando no propaga ni produce errores.
-- Se vuelve suspendible cuando contiene una operación que exige suspensión, con las
-  mismas reglas que el `main` implícito.
 - Puede usar `return`, que sale únicamente del test actual.
 - Puede usar `fail` y `?`; ambos alimentan el canal inferido `E`.
 
@@ -473,10 +466,10 @@ transferencia de control que intente abandonar el setup utiliza `E1205`. Una
 suite tampoco produce un `SuiteResult` visible; el runner conserva su lifecycle
 en el reporte de tooling.
 
-### 4.2 Suspensión y concurrencia
+### 4.2 Esperas y concurrencia
 
-No se escribe `async test` ni `async suite`. Las llamadas suspendibles esperan
-automáticamente en el body y el efecto se infiere; `await` solo consume `Join`.
+No se escribe `async test` ni `async suite`: un test espera y usa `spawn` como
+cualquier función, y `job.wait()` recoge el resultado de una tarea.
 
 ~~~tondo
 test loadsConfiguration {
@@ -504,13 +497,11 @@ cancelación y cleanup conservan exactamente la semántica general:
 
 ~~~tondo
 test downloadsBothDocuments {
-    scope {
-        let first = spawn download("/first")
-        let second = spawn download("/second")
+    let first = spawn download("/first")
+    let second = spawn download("/second")
 
-        assert((await first?).length() > 0)
-        assert((await second?).length() > 0)
-    }
+    assert(first.wait()?.length() > 0)
+    assert(second.wait()?.length() > 0)
 }
 ~~~
 
@@ -538,7 +529,7 @@ Dentro de una suite, un `defer` registrado por el setup pertenece al scope
 léxico de esa suite. Se ejecuta después de que terminen todos sus descendientes
 seleccionados, en LIFO y con las reglas ordinarias. Si el setup falla antes de
 alcanzar los miembros, se ejecutan los defers que ya hubiera registrado. La
-forma general `defer` de 2.5 permite finalizar un recurso suspendible sin
+forma general `defer` de 2.5 permite finalizar un recurso esperando sin
 introducir un hook de suite; conserva resultado `Unit` infallible, ownership,
 orden, pánico y límites de cualquier otro cleanup.
 
@@ -1092,8 +1083,7 @@ hoja construye sus fixtures propias mediante helpers y `defer`.
 
 ### 7.4 Inicio y terminación de entradas
 
-El runner conduce cada body de test y setup de suite —síncronos o suspendibles según la
-inferencia ordinaria— y cada teardown síncrono hasta uno de estos terminales:
+El runner conduce cada body de test y setup de suite y cada teardown hasta uno de estos terminales:
 
 - Retorno normal.
 - Error recuperable no manejado.
@@ -1283,7 +1273,7 @@ haya sido abandonada.
 
 ### 7.9 Dominio de tiempo virtual determinista
 
-`testing.withVirtualTime` ejecuta una closure suspendible exactamente una vez dentro
+`testing.withVirtualTime` ejecuta una closure exactamente una vez dentro
 de un dominio temporal nuevo. El dominio pertenece al intento y a la fase que
 alcanzó la llamada; no sustituye el reloj de otras hojas, otras fases, suites
 descendientes ni código ejecutado antes o después de la closure.
@@ -1296,20 +1286,19 @@ import std.time
 
 test requestTimesOut {
     testing.withVirtualTime((clock) {
-        scope {
-            let timeout: time.Duration = requestTimeout()
-            let result = spawn requestWithTimeout(timeout)
+        let timeout: time.Duration = requestTimeout()
+        let result = spawn requestWithTimeout(timeout)
 
-            clock.advance(timeout)
+        clock.advance(timeout)
 
-            assert(await result == RequestOutcome.TimedOut)
-        }
+        assert(result.wait() == RequestOutcome.TimedOut)
     })?
 }
 ~~~
 
-`withVirtualTime` no sustituye a `scope`: todo `spawn` conserva su propietario
-léxico y ninguna task puede sobrevivir a la closure. El cierre recibe
+Toda tarea creada dentro de la closure se espera a más tardar al terminar su
+bloque (11.11 de la especificación del lenguaje), así que ninguna sobrevive a la
+closure. El cierre recibe
 `ref VirtualTime`; el controlador no puede moverse, almacenarse ni escapar de
 esa región. La closure devuelve `Unit`, puede ser fallible y propaga su unión de
 error al body o fase exterior sin envolverla. Pánico, skip, cancelación y cleanup
@@ -1317,8 +1306,8 @@ conservan sus reglas ordinarias y siempre desmontan el dominio antes de terminar
 el intento. La llamada a `withVirtualTime` debe iniciarse directamente en la
 expresión ordinaria; su espera implícita no puede sustituirse por `spawn`,
 porque el cambio de proveedor de reloj es una frontera léxica del intento y no
-una tarea concurrente. `await` no acepta esta llamada directa. Las tareas
-que se quieran controlar se crean dentro de la closure y de un `scope`.
+una tarea concurrente. Las tareas que se quieran controlar se crean dentro de la
+closure.
 
 Dentro del dominio:
 
@@ -1358,7 +1347,7 @@ bloqueadas, el scheduler aplica exactamente una de estas acciones:
 3. Si no existe un evento interno capaz de progresar, produce `P2003`
    `test-virtual-time-deadlock`.
 
-Por ello un `await` ordinario puede atravesar horas de backoff virtual sin
+Por ello un `wait()` ordinario puede atravesar horas de backoff virtual sin
 consumirlas en tiempo real. El reloj nunca avanza automáticamente mientras haya
 una task runnable o una espera externa no durable.
 
@@ -2331,11 +2320,11 @@ pub fn snapshot(name: String, actual: String)
 
 pub fn withVirtualTime[
     E,
-    F: Send + CallOnce[fn(ref VirtualTime): Unit ! E suspends],
-](body: F): ! E suspends
+    F: Send + CallOnce[fn(ref VirtualTime): Unit ! E],
+](body: F): ! E
 
-pub fn VirtualTime.settle(self) suspends
-pub fn VirtualTime.advance(self, duration: time.Duration) suspends
+pub fn VirtualTime.settle(self)
+pub fn VirtualTime.advance(self, duration: time.Duration)
 ~~~
 
 Se utilizan mediante resolución de módulo ordinaria:
@@ -2378,7 +2367,7 @@ valores ni sobrecargas variádicas en Tondo 0.1.
 
 `withVirtualTime` es genérica únicamente sobre la unión de error y el tipo
 concreto del cierre. Exige `CallOnce` porque ejecuta el body una vez y `Send`
-porque su frame suspendible puede migrar. Un body infallible infiere `E = Never`; uno
+porque su tarea puede cambiar de thread. Un body infallible infiere `E = Never`; uno
 fallible conserva exactamente `E`. La llamada usa el `?` ordinario para
 propagar ese canal; con `E = Never` no existe rama `err` ejecutable. No existe
 type erasure, allocation de callback ni wrapper `Task`.
@@ -2386,9 +2375,8 @@ type erasure, allocation de callback ni wrapper `Task`.
 `VirtualTime` es un tipo opaco test-only con `Send`, sin `Copy`, `Share`,
 `Equatable`, `Key` ni `Display`. El usuario nunca lo construye ni posee:
 `withVirtualTime` presta un único controlador al cierre y lo revoca al
-terminarlo. `settle` y `advance` son suspendibles porque conducir otras tasks es un
-punto de suspensión visible; no esconden bloqueo detrás de una llamada
-síncrona.
+terminarlo. `settle` y `advance` esperan, porque conducir otras tareas es una
+espera visible.
 
 Estas operaciones son intrínsecas y selladas dentro de un artefacto de test:
 
@@ -2688,23 +2676,21 @@ test retriesAfterBackoff {
     let probe = RetryProbe.new()
 
     testing.withVirtualTime((clock) {
-        scope {
-            let result = spawn fetchWithRetry(probe, delay)
+        let result = spawn fetchWithRetry(probe, delay)
 
-            clock.settle()
-            assert(probe.attemptCount() == 1)
+        clock.settle()
+        assert(probe.attemptCount() == 1)
 
-            clock.advance(delay)
-            assert(await result == expectedResponse())
-            assert(probe.attemptCount() == 2)
-        }
+        clock.advance(delay)
+        assert(result.wait() == expectedResponse())
+        assert(probe.attemptCount() == 2)
     })?
 }
 ~~~
 
 `settle` demuestra que el primer intento terminó y el segundo permanece detrás
 del timer sin elegir una pausa real aproximada. `advance` cruza exactamente el
-deadline y el `await` final usa la misma implementación de backoff que
+deadline y el `wait()` final usa la misma implementación de backoff que
 producción. `RetryProbe` es un double ordinario y seguro para concurrencia; no
 forma parte del runner.
 
@@ -2722,7 +2708,7 @@ suite messageBroker {
 }
 ~~~
 
-`Broker.stop` es una llamada suspendible infallible que consume el owner. El runner no
+`Broker.stop` es una llamada infallible que espera y que consume el owner. El runner no
 ejecuta un callback oculto: al abandonar la suite alcanza el `defer`
 general, lo espera bajo el timeout de teardown y solo después finaliza el
 envelope.
@@ -2889,12 +2875,8 @@ El resto reutiliza diagnósticos existentes:
 Selector vacío, glob inválido, CODEOWNERS inválido, opciones de
 retry/repeat/shard/order/report/artifacts/snapshot, interrupción, timeout e
 infraestructura son diagnósticos del toolchain, no nuevos errores de compilación
-`E`. Tondo 0.1 infiere el cleanup suspendible en la forma general de `defer`
-fijada en 2.5. `E1608` rechaza `await`, `spawn`, `scope`, error o resultado no
-`Unit` dentro del cleanup; `E1601` conserva la
-frontera no suspendible de `@sync`/`@nosuspend`, `E1610` queda para un `await` o
-`scope` fuera de una entrada válida, y las violaciones de ownership/liveness
-conservan sus códigos `E14xx`.
+`E`. El cleanup sigue la forma general de `defer` fijada en 2.5, y las
+violaciones de ownership conservan sus códigos `E14xx`.
 
 La frontera de tooling dinámico del runner se describe en
 [`docs/contracts/diagnostic-tooling.md`](./docs/contracts/diagnostic-tooling.md)
@@ -3860,7 +3842,7 @@ versionada. El grupo cubre como mínimo:
 12. `testing.tags`, merge idempotente, `P2002` por conflicto, atribución desde
     helpers/tasks, uso durante cleanup, presupuesto de output y prohibición de
     usar tags runtime para discovery, selección, sharding u orden.
-13. Setup síncrono, suspendible, infallible y fallible inferido.
+13. Setup que espera o no, infallible y fallible inferido.
 14. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
 15. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
 16. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
@@ -3931,7 +3913,7 @@ versionada. El grupo cubre como mínimo:
 45. `virtual_time` por intento en JSON `/7`, orden y contadores canónicos,
     reinicio exacto entre retries, `tondo.virtual_time` en JUnit `/4`, duración
     JUnit real y equivalencia VM/backend para el mismo corpus temporal.
-46. `defer` suspendible en Tondo 0.1: inferencia para llamada o bloque infallible, ownership afín,
+46. `defer` que espera en Tondo 0.1: inferencia para llamada o bloque infallible, ownership afín,
     inferencia en test/setup/script y funciones, cleanup
     LIFO esperado, pánico/límites y rechazo de cualquier forma alternativa sin
     introducir hooks de suite.
@@ -4001,7 +3983,7 @@ test loadsValue {
 }
 ~~~
 
-### Cleanup suspendible
+### Cleanup que espera
 
 ~~~tondo
 suite serviceGroup {
@@ -4057,11 +4039,9 @@ test expiresAtDeadline {
     let timeout = operationTimeout()
 
     testing.withVirtualTime((clock) {
-        scope {
-            let result = spawn operation(timeout)
-            clock.advance(timeout)
-            assert(await result == OperationOutcome.TimedOut)
-        }
+        let result = spawn operation(timeout)
+        clock.advance(timeout)
+        assert(result.wait() == OperationOutcome.TimedOut)
     })?
 }
 ~~~
@@ -4100,5 +4080,5 @@ tondo test \
 > sobre las APIs de producción. Ownership, inputs, sharding, orden y reportes
 > son políticas explícitas del runner; glob selecciona sin depender del host,
 > retry confirma un fallo y repeat busca inestabilidad en fronteras nuevas.
-> Cleanup suspendible reutiliza `defer`, no hooks. El resto del código continúa
+> El cleanup que espera reutiliza `defer`, no hooks. El resto del código continúa
 > siendo Tondo ordinario.

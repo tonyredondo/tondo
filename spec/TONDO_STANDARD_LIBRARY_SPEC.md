@@ -82,7 +82,7 @@ convierte en API de STD-0.1 hasta que su módulo cumpla la
 La Standard Library debe ser:
 
 1. **Pequeña:** cada concepto tiene una superficie mínima y justificada.
-2. **Regular:** las mismas reglas de error, ownership y suspendible se aplican en
+2. **Regular:** las mismas reglas de error, ownership y espera se aplican en
    todos los módulos.
 3. **Explícita:** I/O, reloj, entorno, proceso y demás efectos aparecen en el
    módulo, la firma y la capability.
@@ -159,7 +159,7 @@ reparten así:
 
 | Documento | Autoridad |
 |---|---|
-| [`TONDO_LANGUAGE_SPEC.md`](./TONDO_LANGUAGE_SPEC.md) | Sintaxis, tipos, ownership, suspendible, módulos, imports, prelude, intrinsics, `derive` y límites de reflection |
+| [`TONDO_LANGUAGE_SPEC.md`](./TONDO_LANGUAGE_SPEC.md) | Sintaxis, tipos, ownership, tareas, módulos, imports, prelude, intrinsics, `derive` y límites de reflection |
 | [`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md) | Proyectos, `tondo.toml`, dependencias, `tondo.lock`, caché y comandos |
 | [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) | Testing Tondo 0.1, runner y núcleo sellado de `std.testing` |
 | Este documento | API estándar, reglas comunes, catálogo de módulos y distribución de la stdlib |
@@ -298,7 +298,7 @@ Son cambios incompatibles, como mínimo:
 
 - Retirar o renombrar un módulo, tipo, función, método, constante o variante.
 - Cambiar un parámetro, resultado, error, constraint, receiver o variadicidad.
-- Añadir o retirar `suspendible` o `unsafe`.
+- Añadir o retirar `unsafe`.
 - Cambiar una operación infallible por fallible o a la inversa.
 - Añadir una variante a un enum que el consumidor puede comprobar
   exhaustivamente.
@@ -508,7 +508,7 @@ Un módulo puede contener un núcleo core y una extensión capability-gated cuan
 la separación conserva una identidad coherente. El caso inicial es `std.time`:
 
 - `Duration` y sus operaciones puras son core.
-- Las operaciones que consultan o suspenden contra un proveedor monotónico
+- Las operaciones que consultan o esperan contra un proveedor monotónico
   requieren `clock`.
 - El calendario civil, parsing y aritmética son core cuando el target ha
   seleccionado el bundle de zonas versionado. Consultar la hora de pared
@@ -550,7 +550,7 @@ otro lenguaje.
 En particular:
 
 - No se duplican función libre y método para la misma operación.
-- No se añade un sufijo `Async`; `suspendible` ya forma parte de la firma.
+- No se añade un sufijo `Async`: una operación que espera es una función ordinaria.
 - No se añade un prefijo `try`; `! E` ya muestra que la operación falla.
 - No se ofrecen variantes que solo cambian entre tuple y argumentos.
 - No se usan booleanos para elegir comportamientos con semántica distinta.
@@ -798,225 +798,78 @@ No materializa un array de forma oculta detrás de una API anunciada como lazy.
 
 ---
 
-## 9. Sincronía, suspensión y cancelación
+## 9. Tareas, esperas y cancelación
 
-### 9.1 Suspensión visible y selección
+### 9.1 Esperas sin colores
 
-Todas las operaciones se declaran con `fn`. El compilador infiere un efecto de
-suspensión cuando el cuerpo llama a una operación `suspends`, consume un `Join`, itera
-un `AsyncIterator` o registra cleanup suspendible. Las llamadas suspendibles
-ordinarias esperan automáticamente y devuelven el resultado lógico; no crean un
-wrapper `Task`/`Future` ni una segunda API.
-
-La interfaz pública imprime `suspends` después del outcome y lo incluye en el
-hash ABI. Una declaración sin cuerpo debe escribirlo; una implementación con
-cuerpo puede declararlo o dejar que el compilador lo infiera. El marcador
-explícito fija la promesa pública aunque la ruta actual complete de inmediato.
-`@sync`/`@nosuspend` garantiza que una función no suspende, es incompatible con
-un efecto suspendible y rechaza cualquier llamada suspendible.
-
-Una operación que además admite la expresión núcleo `select` publica
-`selectable` en lugar de `suspends`. Esta capacidad implica suspensión, pero
-añade prepare/register/commit/rollback atómico, forma parte de interfaz y ABI y
-no se infiere por llamar a otra operación seleccionable. La stdlib no publica
-`async.select`, objetos `Case` ni una segunda familia de operaciones: aporta
-operaciones `selectable` a la única construcción de control del lenguaje.
-
-Una operación síncrona:
-
-- Retorna sin punto de suspensión.
-- No espera de forma oculta a una task Tondo.
-- No ejecuta una callback suspendible.
-- No bloquea indefinidamente un worker cooperativo.
+Las operaciones de la librería son funciones ordinarias. Una operación que
+espera a otra tarea o al host —un `Join`, un canal, un timer, un archivo, un
+socket o un proceso— detiene la tarea actual, no el thread, y devuelve su
+resultado lógico como cualquier llamada (11.10 de la especificación del
+lenguaje). No existen marcas `suspends` ni `selectable`, variantes `Async` ni
+wrappers `Task`/`Future`.
 
 ### 9.2 Una forma por operación
 
-STD-0.1 no duplica automáticamente cada operación como `read` y `readAsync`.
-El módulo elige una forma canónica según el efecto real:
+STD-0.1 no duplica operaciones como `read` y `readAsync`. Cada operación tiene
+una sola forma: esperar es la forma normal de una operación que espera, y
+construir un plan inerte o consultar metadata ya disponible no espera. La
+concurrencia se obtiene con `spawn` sobre cualquier llamada.
 
-- Cálculo y transformación de memoria: síncrono.
-- Espera potencialmente no acotada de host: función suspendible, esperada
-  automáticamente en la forma ordinaria. `await` se reserva para consumir un
-  `Join` pendiente.
-- Construcción inerte de un plan: síncrona.
-- Operación que solo consulta metadata ya materializada: síncrona.
+### 9.3 Tareas, grupos y canales
 
-Si una forma bloqueante es necesaria, su módulo, nombre y documentación hacen
-visible esa decisión; no comparte nombre con una operación suspendible de
-semántica diferente.
-
-### 9.3 `spawn`, `Join` y `oneshot`
-
-`spawn call()` devuelve un `Join[T, E]` afín; `spawn thread call()` solicita un
-thread del sistema operativo. Ambos se consumen con `await handle` y están
-sujetos a ownership estructurado: un scope debe esperar, cancelar, detach o
-transferir cada handle. `cancel` solicita cancelación y el `Join` aún requiere
-`await handle`; `detach`
-consume el handle y lo entrega a un supervisor, sin permitir préstamos locales.
-
-`std.async.oneshot[T, E]` divide una operación en `Waiter` y `Completer`. El
-waiter se consume una vez; `Waiter.wait()` es una llamada `selectable` y por
-tanto espera implícitamente, mientras que un valor `Waiter` o `Join` sin
-consumir solo puede convertirse en resultado mediante `await handle`. Completar,
-fallar o cancelar es atómico y una segunda finalización produce
-`AlreadyCompleted`. No hay callbacks ni scheduler implícito.
-
-`AsyncIterator[T]` y `for item in source` cubren streams lazy con backpressure
-cuando la fuente no tiene un iterador síncrono. Cada elemento espera un `next`,
-el efecto se infiere y el cierre ocurre al salir. Si una fuente implementa
-también `Iterator[T]`, el protocolo síncrono tiene precedencia; no existe
-`for await`. La materialización solo ocurre mediante
-`collect(limit:)`, con un límite finito y sin publicar arrays parciales. La
-adaptación de `std.channel.Receiver` pertenece a STD-0.1B y está cerrada para
-la VM hosted en `STD-CHANNEL-ASYNC-ITER-001`; su contrato separado mantiene
-la frontera de lowering AOT y no es una dependencia de esta superficie A.
-
-La superficie nominal mínima de `std.async` es:
+`spawn`, `Join[T]`, `Group[T]` y los canales pertenecen al lenguaje y al preludio
+(11.11–11.14 de la especificación del lenguaje):
 
 ~~~tondo pseudocode
-pub type Join[T, E]
-pub type Waiter[T, E]
-pub type Completer[T, E]
-pub type AlreadyCompleted
+pub fn Join.wait(self): T
+pub fn Join.wait(self, timeout: time.Duration): T?
+pub fn Join.cancel(self)
 
-pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
-pub fn Waiter.wait(var self): T ! E selectable
-pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
-pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
-pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
+pub fn Group.new[T](): Group[T]
+pub fn Group.add(var self, job: Join[T])
+pub fn Group.wait(self): Array[T]        // Array[R] ! E cuando T es R ! E
+pub fn Group.next(var self): T?
+pub fn Group.cancel(self)
+pub fn Group.length(self): Int
+pub fn Group.isEmpty(self): Bool
 
-pub trait AsyncIterator[T] {
-    fn next(mut self): T? suspends
-    fn close(iterator: Self) suspends
-}
-
-pub fn AsyncIterator.collect[T: Send, I: AsyncIterator[T] + Send](iterator: I, limit: Int): Array[T] ! CollectionError suspends
+pub fn channel[T](capacity: Int): (Sender[T], Receiver[T])   // sin capacidad: sin límite
+pub fn Sender.send(self, value: T)
+pub fn Sender.close(self)
+pub fn Sender.copy(self): Sender[T]
+pub fn Sender.isClosed(self): Bool
+pub fn Receiver.receive(self): T?
+pub fn Receiver.receive(self, timeout: time.Duration): T?
+pub fn Receiver.isClosed(self): Bool
 ~~~
 
-`Join` no expone constructor, poller ni callback: solo nace de `spawn` y se
-consume con `await`. `Waiter.wait` es la operación `selectable` de la pareja, se
-espera implícitamente en una llamada ordinaria y puede competir sin consumir el
-waiter perdedor;
-`Completer` puede completarse desde otro task o thread que cumpla `Send`. La
-segunda finalización no cambia el resultado de la primera y devuelve
-`AlreadyCompleted` de forma atómica.
+`wait` y `receive` admiten el argumento nombrado opcional `timeout`, y `channel`
+su capacidad opcional; son formas intrínsecas del preludio, no sobrecargas que
+un módulo pueda declarar.
 
-La superficie ejecutable y sus siete requisitos verificables están indexados en
-[`testing/stdlib-async.json`](./testing/stdlib-async.json) y el documento
-normativo fuente es [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
+### 9.4 Cancelación
 
-`AsyncIterator.close(iterator: Self)` consumes the final cursor state. Both
-`for` and `collect` call it exactly once on every exit, including zero or
-negative collect limits, cancellation and unwind. Implementations provide an
-explicit close method; Copy cursors retain ordinary by-value Copy semantics.
-Affine cursors cannot be reused after consumption; retained channel access
-requires an explicit `fork`. `STD-CHANNEL-OWNERSHIP-001` verifies this public
-hosted ownership boundary with source-bound quality and exact-checkout CI.
+La cancelación es cooperativa (11.15): una tarea cancelada se detiene en su
+siguiente espera, ejecuta sus `defer`, libera sus valores y cancela sus propias
+tareas pendientes. Cada operación que espera a un recurso externo documenta qué
+datos parciales puede haber producido y qué cleanup completa al cancelarse. No se
+promete interrumpir un cálculo que no espera.
 
-### 9.4 Coordinación de múltiples operaciones
+### 9.5 Timeouts y deadlines
 
-`std.async.Group[T, E]` es el único owner estándar para un número dinámico de
-`Join[T, E]` homogéneos. Sustituye el contador manual de un `WaitGroup`, la
-agregación de `WhenAll` y el owner de `WhenAny` sin publicar `Task`, `Future`,
-callbacks ni un scheduler alternativo. Un `Join` movido al grupo deja de ser
-obligación del caller y cada operación del grupo conserva la cancelación
-estructurada y el cleanup del `scope` de procedencia.
+Un timeout se expresa con un `time.Duration`, nunca con un entero sin unidad, y
+usa tiempo monotónico. `job.wait(timeout:)` y `receiver.receive(timeout:)` cubren
+los casos frecuentes; `select` con `time.sleep` combina un límite con varias
+operaciones. Ninguna API instala timeouts ocultos ni convierte un timeout en
+pánico.
 
-~~~tondo pseudocode
-pub type Group[T, E]
-pub type Completion[T, E] = {
-    index: Int
-    outcome: T ! E
-}
+### 9.6 Scheduler y progreso
 
-pub fn group[T, E](): Group[T, E]
-pub fn Group.add(var self, job: Join[T, E]): Unit
-pub fn Group.all(self): Array[T] ! E suspends
-pub fn Group.settle(self): Array[T ! E] suspends
-pub fn Group.next(var self): Completion[T, E]? selectable
-pub fn Group.cancel(self): Unit suspends
-~~~
-
-`all` devuelve los éxitos en orden de inserción. Un error recuperable solicita
-cancelación de los hijos restantes, drena sus cleanups y después retorna el
-error; si varios errores estaban confirmados, el menor índice de inserción fija
-el principal. `settle` espera todos los hijos sin cancelar por `E` y conserva un
-outcome por posición. `next` retira la siguiente finalización observable y usa
-`Completion.index` para correlacionarla con la inserción; su orden puede variar
-con el scheduler. `cancel` consume y drena todo el grupo. Ninguna de estas
-llamadas lleva `await` en fuente: son operaciones suspendibles directas; `next`
-puede además aparecer en `select` sin retirar una finalización si pierde. Un
-`Group` vivo es afín y no cumple `Discard`.
-
-Un conjunto fijo heterogéneo conserva handles separados y usa `select` cuando
-necesita la primera finalización; los handles perdedores continúan siendo owners
-del caller. Un conjunto dinámico homogéneo usa `Group.next`. STD-0.1 no añade
-variadic generics heterogéneos, tuples awaitables ni overloads por aridad para
-abreviar ese caso. `Group[Unit, E]` cubre espera de workers sin `add`/`done`
-manuales.
-
-La superficie ejecutable cubre `Join`, `oneshot`, `AsyncIterator` y el adapter
-`selectable` de `Waiter.wait`. Los adapters de tiempo (`sleep` y `Timer.wait`)
-usan la misma entrada de selección; `Group` pertenece a la extensión STD-0.1B
-y tiene su contrato machine-readable en
-[`testing/stdlib-async-group.json`](./testing/stdlib-async-group.json). La
-implementación hosted de VM está verificada por
-`STD-ASYNC-GROUP-IMPL-001` mediante el fixture
-`tests/runtime/m11-std-async-group-001.to`. La frontera del runtime nativo está
-verificada sobre el mismo corpus por `STD-ASYNC-GROUP-CONF-001`, cuyo contrato
-es [`testing/stdlib-async-group-conformance.json`](./testing/stdlib-async-group-conformance.json);
-esto cubre el ABI del runtime, no inventa todavía lowering AOT ni un scheduler
-async portable. El modelo, la batería hosted y el fuzzing están cerrados
-por `STD-ASYNC-GROUP-TEST-001` y registrados en
-[`testing/stdlib-async-group-test.json`](./testing/stdlib-async-group-test.json);
-el presupuesto hosted de latencia, throughput, allocations, memoria lógica,
-wakeups y tail latency está cerrado por `STD-ASYNC-GROUP-PERF-001` y registrado
-en [`testing/stdlib-async-group-performance.json`](./testing/stdlib-async-group-performance.json).
-La documentación ejecutable queda cerrada por `STD-ASYNC-GROUP-DOC-001` en
-[`docs/contracts/stdlib-async-group.md`](./docs/contracts/stdlib-async-group.md).
-La evidencia de conformance nativa queda limitada al runtime ABI hasta que
-exista lowering AOT async portable; la API continúa siendo un borrador no
-publicado hasta cerrar la promoción de la stdlib y ese lowering.
-
-### 9.5 Scheduler y backpressure
-
-Una API suspendible de host:
-
-- No bloquea el único worker cooperativo mientras espera I/O.
-- Mantiene vivos sus argumentos y roots durante la suspensión.
-- Respeta backpressure y límites finitos.
-- No crea tasks detached; el caller usa `spawn` si necesita concurrencia.
-- Publica los puntos de cancelación.
-- Completa o limpia todo recurso antes de entregar su outcome terminal.
-
-La implementación puede usar event loops, workers o primitivas del sistema
-siempre que esos detalles no cambien el contrato.
-
-### 9.6 Cancelación
-
-Una operación cancelable documenta:
-
-- En qué puntos observa la señal.
-- Qué datos parciales pueden haberse emitido.
-- Qué cleanup completa antes de regresar.
-- Si el error previo, el pánico o la cancelación tiene prioridad.
-- Si el caller puede reintentar de forma segura.
-
-No se promete preempción de código CPU. La cancelación continúa siendo
-cooperativa.
-
-### 9.7 Timeouts y deadlines
-
-Un timeout o deadline:
-
-- Se recibe mediante tipo temporal estándar, no como entero sin unidad.
-- Utiliza tiempo monotónico para duración operacional.
-- No consulta calendario civil.
-- No mezcla instantes de proveedores distintos.
-- No se convierte en un pánico.
-- Declara si incluye cola, suspensión, cleanup o solo la operación principal.
-
-Una API no instala timeouts ambientales invisibles.
+El runtime reparte las tareas entre varios threads, uno por núcleo, y las mueve
+entre ellos libremente. Una operación de la librería que espera al host no
+bloquea su thread: detiene la tarea y deja correr a las demás. La garantía de
+progreso y sus límites se definen en 16.14 de la especificación del lenguaje.
 
 ---
 
@@ -1416,9 +1269,7 @@ Sus APIs concretas deberán distinguir:
 
 Un reader o writer concreto conserva el owner de su módulo y satisface los
 protocolos mediante dispatch estático. `read`, `write`, `flush`, `readAll` y
-`writeAll` se declaran como `fn` con `suspends` en sus contratos sin cuerpo; una
-implementación con cuerpo puede conservarlo explícitamente o inferirlo. Una
-llamada ordinaria espera automáticamente; `await` sobre esa llamada es `E1611`.
+`writeAll` esperan al host como cualquier llamada (sección 9).
 No hay variantes
 `readAsync` ni `writeAsync`. STD-0.1 no exige type erasure, vtables ni
 un stream dinámico común para almacenar implementaciones heterogéneas.
@@ -1429,16 +1280,16 @@ La superficie mínima de `std.io` es:
 enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
 enum ReadResult { Data(Bytes), Eof }
 trait Reader {
-    fn read(var self, max: Int): ReadResult ! IoError suspends
+    fn read(var self, max: Int): ReadResult ! IoError
 }
 trait Writer {
-    fn write(var self, data: Bytes): Int ! IoError suspends
-    fn flush(var self): Unit ! IoError suspends
+    fn write(var self, data: Bytes): Int ! IoError
+    fn flush(var self): Unit ! IoError
 }
 fn defaultLimits(): IoLimits
 fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
-fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError suspends
-fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError suspends
+fn readAll[R: Reader](reader: var R, policy: IoLimits): Bytes ! IoError
+fn writeAll[W: Writer](writer: var W, data: Bytes): Unit ! IoError
 type IoLimits
 ```
 
@@ -1509,8 +1360,8 @@ ocultos, extensiones vacías y separadores finales.
 ### 10.5 Filesystem hosted
 
 `std.fs` es la frontera capability-gated para observar y mutar el filesystem.
-Todas sus operaciones que pueden tocar el host son `suspendible`; `std.path` sigue
-siendo puro y síncrono. Importar `std.fs` no concede `filesystem`: el target debe
+Todas sus operaciones que pueden tocar el host esperan sin bloquear el thread;
+`std.path` sigue siendo puro y no espera. Importar `std.fs` no concede `filesystem`: el target debe
 declarar explícitamente esa capability y el compilador rechaza el módulo con
 `E1008` antes del lowering cuando falta. El owner público es:
 
@@ -1520,13 +1371,13 @@ type Directory
 enum FileKind { File, Directory, Symlink, Other }
 type Metadata = { kind: FileKind, size: Int, readOnly: Bool }
 enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
-fn open(path: Path, mode: OpenMode): File ! FsError suspends
-fn openDirectory(path: Path): Directory ! FsError suspends
-fn metadata(path: Path): Metadata ! FsError suspends
-fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends
-fn File.write(var self, data: Bytes): Int ! FsError suspends
-fn File.flush(var self): Unit ! FsError suspends
-fn Directory.list(var self): Array[Path] ! FsError suspends
+fn open(path: Path, mode: OpenMode): File ! FsError
+fn openDirectory(path: Path): Directory ! FsError
+fn metadata(path: Path): Metadata ! FsError
+fn File.read(var self, max: Int): Option[Bytes] ! FsError
+fn File.write(var self, data: Bytes): Int ! FsError
+fn File.flush(var self): Unit ! FsError
+fn Directory.list(var self): Array[Path] ! FsError
 ```
 
 `Metadata` is an ordinary value with public fields, immutable by default.
@@ -1555,7 +1406,7 @@ exhaustive matching; neither requires a host handle.
 directorio, hace flush y rename. Los límites globales de bytes, entradas y
 trabajo se comprueban antes de materializar bytes o entradas: un rechazo es
 atómico y no publica resultados parciales. El cleanup se ejecuta en las rutas
-normales, durante unwind y al cancelar una operación suspendible. El host no
+normales, durante unwind y al cancelar la tarea que espera. El host no
 sigue enlaces simbólicos al eliminar un recurso temporal y no incluye paths
 físicos ni contenido en `FsError`; la operación de rename no promete
 durabilidad de hardware. The executable evidence is tracked by
@@ -1662,7 +1513,7 @@ Cada operación publica, cuando sea material:
 - Si puede activar COW.
 - Si materializa una secuencia.
 - Si realiza I/O.
-- Si bloquea o suspende.
+- Si espera.
 - Si su coste depende de bytes, scalars, elementos o profundidad.
 
 Una garantía utiliza worst-case, amortizada o esperada de forma explícita. No
@@ -1921,7 +1772,6 @@ actualizar esta especificación y el tracker antes de implementar.
 | Métodos de tipos intrínsecos | Core | — | 0.1 | Option, Result, String, Array, Map, Set, Range e Iterator |
 | `std.bytes` | Core | — | 0.1 | `Bytes`, builders y conversión binaria explícita |
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
-| `std.async` | Core | — | 0.1 | `Join`, `oneshot`, `Group`, cancelación cooperativa y adaptación `AsyncIterator` |
 | `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
 | `std.format` | Core | — | 0.1 | Formatting explícito sobre `Display`, sin reflection |
 | `std.serialization` | Core | — | 0.1 | Traits estáticos, eventos estructurales y contratos compartidos de encode/decode |
@@ -1938,9 +1788,8 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.path` | Core | — | 0.1 | Paths nativos y operaciones puramente léxicas |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
-| `std.channel` | Core | — | 0.1 | Canales tipados con endpoints separados, cierre, backpressure y selección cancelable |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
-| `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre el modelo async único |
+| `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre las tareas del lenguaje |
 | `std.log` | Core + gated | `console`, `filesystem` o `network` por sink | 0.1 | Eventos estructurados, niveles, backpressure y sinks explícitos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Capability-gated | `environment` | 0.1 | Argumentos y environment runtime explícitos |
@@ -1958,7 +1807,7 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.io` posee los protocolos y errores compartidos; los handles concretos y
   sus efectos pertenecen a módulos capability-gated.
 - `std.path` no toca el filesystem.
-- `std.time.Duration` es usable sin `clock`; consultar tiempo o suspenderse
+- `std.time.Duration` es usable sin `clock`; consultar tiempo o esperar
   contra un proveedor requiere `clock`.
 - El calendario civil, parsing y aritmética son core cuando el target ha
   seleccionado el bundle de zonas versionado. Consultar la hora de pared
@@ -1975,9 +1824,8 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.encoding`, `std.yaml`, `std.toml` y `std.cbor` reutilizan `std.io` y
   `std.serialization`; no introducen otro facade universal ni árboles
   heterogéneos compartidos entre formatos.
-- `std.channel`, `std.sync` y `std.executor` reutilizan el único modelo suspendible,
-  de ownership y de memoria del lenguaje; ninguna API crea tasks desligadas o
-  un segundo tipo de future.
+- `std.sync` y `std.executor` reutilizan las tareas, el ownership y el modelo de
+  memoria del lenguaje; ninguna API crea tareas desligadas ni un tipo de future.
 - `std.time` separa estrictamente el reloj monotónico del calendario civil. El
   time-base de `Duration`, `Instant`, timers y deadlines pertenece a STD-0.1A;
   los tipos civiles y los datos de zona horaria versionados pertenecen al
@@ -1992,7 +1840,7 @@ actualizar esta especificación y el tracker antes de implementar.
   sustituto del reloj UTC.
 - `std.log` define eventos puros en core; cada sink declara sus capabilities y
   política de backpressure sin alterar silenciosamente el control del programa.
-  FileSink.create is suspends: it opens its explicit path in the constructor
+  FileSink.create waits on the host: it opens its explicit path in the constructor
   and returns opening errors there. STD-LOG-HOST-001 implements the production
   hosted sink boundary, including both command streams and their observation
   adapters. Native logging remains a separate gate.
@@ -2032,8 +1880,7 @@ La implementación usa dos gates internos sin crear versiones distintas:
 - **STD-0.1B / S1** completa el contrato e implementación de `std.encoding`,
   `std.yaml`, `std.toml`,
   `std.cbor`, calendario civil y zonas de `std.time`, `std.regex`, `std.uuid`,
-  `std.channel`, `std.sync`, `std.executor`, `std.log` y `std.net` sobre VM y
-  backend nativo.
+  `std.sync`, `std.executor`, `std.log` y `std.net` sobre el backend nativo.
 
 S1A no es una release ni permite publicar una stdlib incompleta como 0.1.0.
 Todos los módulos de ambas fases comparten una distribución, PackageId y
@@ -2122,7 +1969,7 @@ pub fn Instant.isBefore(self, other: Instant): Bool ! ClockError
 pub fn Instant.isAfter(self, other: Instant): Bool ! ClockError
 ~~~
 
-`now` es síncrona, no suspende y devuelve instantes no decrecientes. El
+`now` no espera y devuelve instantes no decrecientes. El
 proveedor puede devolver dos veces el mismo valor cuando su resolución es más
 gruesa que un nanosegundo. `resolution` devuelve una duración positiva y
 estable para el proveedor activo; la resolución efectiva y su método de
@@ -2144,53 +1991,21 @@ consultarse, la operación devuelve `ClockError.Unavailable`, nunca usa un
 fallback wall-clock y nunca produce un pánico. Consultar el instante no
 bloquea ni crea una task.
 
-#### 14.3.3 Suspensión, timers y deadlines
-
-Un deadline es un `Instant` del proveedor activo; STD-0.1 no introduce un
-wrapper `Deadline` adicional. `deadline(after)` permite duraciones firmadas
-para representar también un deadline ya vencido. Las esperas y timers solo
-aceptan retrasos no negativos:
+#### 14.3.3 Esperas y deadlines
 
 ~~~tondo pseudocode
-pub fn sleep(delay: Duration): Unit ! ClockError selectable
-
-pub type Timer
-
-pub fn Timer.after(delay: Duration): Timer ! ClockError
-pub fn Timer.at(deadline: Instant): Timer ! ClockError
-pub fn Timer.wait(self): Unit ! ClockError selectable
-pub fn Timer.cancel(self): Unit
+pub fn milliseconds(count: Int): Duration
+pub fn seconds(count: Int): Duration
+pub fn sleep(delay: Duration)
 ~~~
 
-`sleep` es la comodidad sin ownership visible; `Timer` es la forma explícita
-cuando el programa necesita armar, transferir o cancelar un timer. No son dos
-semánticas de reloj: ambas registran un único evento one-shot en el mismo
-proveedor. Un retraso negativo produce `ClockError.InvalidDelay`; cero es válido
-y conserva un punto de suspensión suspendible. Un deadline vencido hace que `wait`
-termine sin esperar.
-
-`Timer` es afín, no es `Copy`, `Share`, `Equatable` ni `Key`, y puede moverse
-entre tasks que cumplan `Send`. `after` y `at` reservan el descriptor de forma
-atómica y devuelven `ClockError.ResourceLimit` sin dejar un timer parcial.
-`wait` consume el timer, espera hasta que el proveedor observe su deadline y
-constituye un punto cooperativo de cancelación. Tanto `sleep` como `wait` son
-`selectable`: si pierden, desregistran el evento y `wait` conserva el `Timer`
-para la rama perdedora. No se despierta antes del
-deadline; el proveedor real puede completar después por latencia del target.
-`cancel` también consume el timer, es síncrono y completa la desregistración
-antes de retornar. Un timer no tiene
-reset, repetición ni finalizador de usuario; `wait` o `cancel` son sus únicas
-operaciones terminales. Si una cancelación estructurada interrumpe `wait`, el
-runtime desregistra el timer antes de propagar la cancelación y no la convierte
-en una variante añadida a `ClockError`.
-
-Un timer creado con `Timer.at` rechaza con `DomainMismatch` un instante de otro
-proveedor o dominio. La carrera entre expiración y cancelación se resuelve por
-el orden de linealización del proveedor; nunca se entregan dos outcomes. Un
-timer real no garantiza despertar exactamente en el deadline: no despierta
-antes de él y su latencia posterior pertenece al target. El proveedor virtual
-de `std.testing` sí observa los deadlines exactamente y conserva el orden
-estable de creación fijado en `TONDO_TESTING_SPEC.md`.
+`sleep` detiene la tarea al menos `delay` y es una operación válida de `select`
+(11.14 de la especificación del lenguaje); un retraso cero o negativo no espera.
+`milliseconds` y `seconds` construyen duraciones y producen el pánico `P0005`
+si el valor no cabe. Un deadline es un `Instant` del proveedor activo. El reloj
+real no despierta antes del retraso y su latencia posterior pertenece al target;
+el proveedor virtual de `std.testing` observa los retrasos exactamente y
+conserva el orden estable de creación fijado en `TONDO_TESTING_SPEC.md`.
 
 #### 14.3.4 Sustitución virtual y separación civil
 
@@ -2347,7 +2162,7 @@ una zona ausente por UTC.
 
 `CivilClock.now` y `CivilClock.sample` son las únicas lecturas del reloj de
 pared y requieren `civil-clock`; `sample` requiere además `clock`. Son llamadas
-síncronas y no `selectable`. La muestra devuelve un `CivilAnchor` con un
+que no esperan. La muestra devuelve un `CivilAnchor` con un
 `Instant` monotónico y un `UtcDateTime` observados en la misma frontera. Sus
 conversiones son aritmética comprobada dentro del dominio/horizonte del
 ancla, no una conversión Unix ni una lectura viva posterior. Si los dominios no
@@ -2362,232 +2177,15 @@ idénticos. Los hooks privados de diagnóstico omiten payloads por defecto.
 
 ### 14.4 Concurrencia de aplicación de STD-0.1B
 
-Esta sección fija el shape y los invariantes que deben cerrar los contratos
-exhaustivos de `std.async`, `std.channel`, `std.sync` y `std.executor`. Es una
-superficie objetivo de STD-0.1B: `std.async.Group` ya está disponible en la VM
-hosted como implementación de referencia, pero el resto de símbolos siguen
-siendo contratos hasta que sus leaves estén cerradas. Ningún módulo puede
-promocionarse hasta que exista
-trazabilidad por firma y se cierren sus celdas de modelo, tests, fuzzing,
-rendimiento, conformidad y documentación.
-
-#### 14.4.1 Grupos de trabajo estructurado
-
-`std.async.Group[T, E]` tiene la superficie y semántica fijadas en la
-[sección 9.4](#94-coordinación-de-múltiples-operaciones). Es el agregado
-homogéneo para esperar todos los hijos, observar todos sus outcomes o consumir
-finalizaciones según ocurren. No existe `WaitGroup`: esperar workers sin valor
-usa `Group[Unit, E]`, por lo que nadie puede descoordinar manualmente un
-contador de los hijos que realmente existen.
-
-El grupo es afín, adopta cada `Join` que recibe y debe consumirse con `all`,
-`settle` o `cancel`. `next` retira una finalización, pero no elimina la
-obligación de cerrar el grupo restante. Es una utilidad de coordinación, no un
-executor: no inicia trabajo, no acepta closures y no crea un segundo scheduler.
-La implementación hosted conserva este contrato en el scheduler cooperativo
-único; la frontera ABI del runtime nativo ya está verificada por
-`STD-ASYNC-GROUP-CONF-001`, mientras el lowering AOT async portable se mantiene
-como trabajo posterior del backend. Su extensión contractual general vive en
-[`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md) y la guía
-normativa de uso ejecutable en
-[`docs/contracts/stdlib-async-group.md`](./docs/contracts/stdlib-async-group.md),
-cerrada por `STD-ASYNC-GROUP-DOC-001`.
-El presupuesto de rendimiento hosted se especifica en
-[`docs/contracts/stdlib-async-group-performance.md`](./docs/contracts/stdlib-async-group-performance.md):
-el probe cubre cardinalidades 1/8/64 y conserva muestras P50/P95/P99 sin
-convertir una medición de VM en una promesa sobre el backend nativo.
-
-#### 14.4.2 Canales y productor/consumidor
-
-Un canal separa nominalmente sus dos capacidades. `Sender[T]` y `Receiver[T]`
-son handles no `Copy`; `fork` crea de forma explícita otro endpoint sobre la
-misma identidad sin copiar ningún mensaje. Ambos son `Send + Share` cuando
-`T: Send`. `Sender[T]` cumple `Discard`: descartarlo equivale a cerrar ese
-sender. `Receiver[T]` conserva una obligación terminal porque puede ser el
-último owner de mensajes afines pendientes.
-
-The compiler ownership repair is tracked separately by
-[`STD-CHANNEL-OWNERSHIP-001`](./docs/contracts/stdlib-channel-ownership.md).
-Its hosted tests enforce these existing capabilities by exact standard
-identity, independently rederive them in bytecode, and preserve current owner
-state in affine defer. The consuming iterator correction covers private close
-scopes and collection at every limit; a retained receiver must be an explicit
-fork. Source-bound quality, all 360 functional steps and exact-checkout Linux
-CI verify this public hosted ownership repair. Previous
-transport and private native ABI evidence keep their original scopes.
-
-El último sender cerrado hace que `receive` produzca `none` después de drenar
-el buffer. `Receiver.close` consume ese receiver; si era el último, cierra la
-recepción, despierta a los senders con su payload intacto y devuelve todos los
-mensajes ya comprometidos en orden. Si aún existen receivers, devuelve un array
-vacío. Ninguna ruta descarta un mensaje silenciosamente.
-
-La superficie mínima que debe cerrar `STD-CONC-001` es:
-
-El registro machine-readable y sus negativos ejecutables viven en
-[`testing/stdlib-channel.json`](./testing/stdlib-channel.json); el contrato
-normativo ampliado está en
-[`docs/contracts/stdlib-channel.md`](./docs/contracts/stdlib-channel.md).
-`STD-CONC-001` queda cerrado como contrato runtime-facing, pero no promociona
-una implementación pública antes de sus leaves `STD-CHANNEL-*`. La ejecución
-de `STD-CHANNEL-IMPL-001` ya está verificada en la VM hosted y en el ABI nativo
-privado: el scheduler conserva waiters y commit FIFO, mientras el runtime
-nativo usa capacidades opacas `u64`, `Mutex`/`Condvar` y un carrier interno para
-el drenado terminal. La adaptación `Receiver[T] -> AsyncIterator[T]` bajo
-`T: Discard` queda verificada en la VM hosted por
-[`testing/stdlib-channel-async-iter.json`](./testing/stdlib-channel-async-iter.json)
-y [`docs/contracts/stdlib-channel-async-iter.md`](./docs/contracts/stdlib-channel-async-iter.md).
-El modelo, las regresiones y el fuzzing acotado de
-[`testing/stdlib-channel-test.json`](./testing/stdlib-channel-test.json) y
-[`docs/contracts/stdlib-channel-test.md`](./docs/contracts/stdlib-channel-test.md)
-ya están verificados para `STD-CHANNEL-TEST-001`. La evidencia no reclama
-lowering AOT de canales y conserva cerradas las hojas CONF y DOC. La línea
-base target-qualified de rendimiento para `STD-CHANNEL-PERF-001` queda
-registrada en
-[`testing/stdlib-channel-performance.json`](./testing/stdlib-channel-performance.json)
-y [`docs/contracts/stdlib-channel-performance.md`](./docs/contracts/stdlib-channel-performance.md):
-nueve workloads explícitos 1:1, n:1 y n:m, tres warmups y 27 muestras por
-workload sobre `tondo-vm-hosted` / `bytecode-vm`, con latencia de cola,
-throughput, memoria lógica, backpressure y wakeups. Esta evidencia no reclama
-contención nativa, fast paths algorítmicos ni lowering AOT; `native_aot` sigue
-`not-claimed`. La conformance observable compartida de
-`STD-CHANNEL-CONF-001` queda registrada en
-[`testing/stdlib-channel-conformance.json`](./testing/stdlib-channel-conformance.json)
-y [`docs/contracts/stdlib-channel-conformance.md`](./docs/contracts/stdlib-channel-conformance.md):
-ocho casos sobre VM hosted y ABI nativo privado cubren FIFO, rendezvous,
-errores con payload intacto, drenado terminal, wakeups, cleanup diferido y el
-límite explícito de `select` nativo. La guía ejecutable de
-`STD-CHANNEL-DOC-001` queda cerrada en
-[`docs/contracts/stdlib-channel.md`](./docs/contracts/stdlib-channel.md), con
-cinco composiciones y el checker
-`scripts/stdlib-channel-doc-check.sh`. El siguiente bloque secuencial es
-`STD-EXEC-IMPL-001`.
-
-~~~tondo pseudocode
-pub type Sender[T]
-pub type Receiver[T]
-pub enum ChannelError {
-    InvalidCapacity
-    ResourceLimit
-}
-pub enum SendError[T] {
-    Closed(T)
-    ResourceLimit(T)
-}
-pub enum TrySendError[T] {
-    Full(T)
-    Closed(T)
-    ResourceLimit(T)
-}
-pub enum TryReceive[T] {
-    Item(T)
-    Empty
-    Closed
-}
-
-pub fn bounded[T: Send](capacity: Int): (Sender[T], Receiver[T]) ! ChannelError
-pub fn unbounded[T: Send](): (Sender[T], Receiver[T]) ! ChannelError
-pub fn Sender.fork(ref self): Sender[T] ! ChannelError
-pub fn Sender.send(ref self, value: T): Unit ! SendError[T] selectable
-pub fn Sender.trySend(ref self, value: T): Unit ! TrySendError[T]
-pub fn Sender.close(self): Unit
-pub fn Receiver.fork(ref self): Receiver[T] ! ChannelError
-pub fn Receiver.receive(ref self): T? selectable
-pub fn Receiver.tryReceive(ref self): TryReceive[T]
-pub fn Receiver.close(self): Array[T]
-~~~
-
-`bounded(0)` es rendezvous; una capacidad positiva aplica backpressure antes de
-aceptar el siguiente elemento. Una capacidad negativa produce
-`ChannelError.InvalidCapacity`; si no se pueden reservar las estructuras,
-produce `ChannelError.ResourceLimit`. La forma sin límite se llama `unbounded`
-para que su riesgo de memoria nunca sea un default oculto: también queda sujeta
-a un límite finito del perfil de recursos y puede devolver
-`SendError.ResourceLimit(value)`.
-
-`Sender` y `Receiver` no son `Copy` ni `Clone`; `fork` comparte identidad de
-forma explícita. El sender satisface `Discard` y cerrar ese endpoint consume su
-owner. El receiver no se puede abandonar implícitamente y debe cerrar su
-obligación terminal. El payload de `send` se mueve solo al comprometerse; si la
-operación no se compromete, `Closed(value)`, `Full(value)` o
-`ResourceLimit(value)` lo devuelve intacto. `trySend` nunca suspende.
-
-El canal sigue los estados `open`, `sender-closed`, `receiver-closed` y
-`drained`. El último sender cierra la entrada, pero los receivers drenan el
-buffer antes de observar `none`. El último receiver cierra la salida, despierta
-a los senders con sus payloads intactos y devuelve los valores ya comprometidos
-en un array FIFO; si quedan receivers, devuelve un array vacío y no retira esos
-valores. Ninguna ruta descarta silenciosamente ownership pendiente.
-
-`send` y `receive` son seleccionables mediante el protocolo núcleo
-`prepare → commit → rollback`: preparar no mueve ni retira, exactamente un
-ganador hace la linearización y los perdedores se desregistran sin mutar el
-canal. Cancelar una espera conserva el payload del sender o el valor del canal
-y ejecuta cleanup antes del unwind. Los waiters compatibles del mismo canal se
-atienden por FIFO de registro; los empates entre canales usan la rotación justa
-de `select` y no crean un orden global nuevo.
-
-`Receiver[T]` implementa `AsyncIterator[T]` cuando `T: Discard`: cada iteración
-espera implícitamente, preserva backpressure y termina al cerrar y drenar el
-canal. El bound es necesario porque salir pronto del `for` puede cerrar el
-último receiver y la sintaxis de iteración no tiene un resultado donde devolver
-mensajes pendientes afines. Para esos valores se usa `receive` y
-`Receiver.close` explícitos. No existe una variante `AsyncChannel`, una
-operación `receiveAsync`, una materialización intermedia dentro de `for` ni un
-`collect` específico del canal; `AsyncIterator.collect(limit:)` sigue siendo la
-extensión genérica de `std.async`.
-
-El runtime puede emitir hooks privados en `std.channel` para
-`create`, `sender.fork`, `receiver.fork`, `send.prepare`, `send.commit`,
-`send.rollback`, `receive.prepare`, `receive.commit`, `receive.rollback`,
-`sender.close`, `receiver.close`, `wake` y `drain`. Cada evento lleva
-`run_id`, `task_id`, `channel_id`, `endpoint_id`, `event_sequence`, `state`,
-`capacity`, `queued` y `source_revision`; los payloads se omiten por defecto.
-`DIAG-RUNTIME-001` consume estos eventos, que no forman una API pública.
-
-#### 14.4.3 Selección cancelable
-
-La selección pertenece a la expresión núcleo `select`; no existe
-`std.async.select`, un builder, un macro ni tipos públicos de caso. La stdlib
-expone una sola operación lógica y la marca `selectable` cuando puede registrar
-readiness, hacer commit una vez y revertir un perdedor. Una llamada ordinaria a
-esa misma operación espera implícitamente, de modo que no aparecen pares
-`send`/`sendAsync`, `receive`/`receiveCase` o `sleep`/`afterCase`.
-
-`Sender.send` y `Receiver.receive` son seleccionables. También lo son
-`Waiter.wait`, `time.sleep`, `Timer.wait`, `Group.next` y la finalización de un
-`Join` mediante la forma núcleo `await handle`. Los módulos posteriores pueden
-marcar otras operaciones únicamente si demuestran el mismo protocolo; una
-firma `suspends` no se vuelve seleccionable por pertenecer a I/O, red o proceso.
-Los resultados heterogéneos se convierten en un enum o unión explícita en los
-cuerpos de los brazos y no dependen de `Any`, reflection ni overloads por
-aridad.
-
-Toda implementación de selección debe demostrar estas propiedades antes de
-publicar su ABI exacta:
-
-- Exactamente un brazo se compromete y se observa una vez.
-- Los casos perdedores se desregistran atómicamente sin perder wakeups.
-- Un payload afín de un envío perdedor no se pierde, duplica ni consume.
-- Cancelar o destruir la selección desregistra todos los casos antes de liberar
-  su estado.
-- La política estándar es justa bajo contención continuada. Una prioridad
-  sesgada, si se admitiera, debe tener nombre explícito; nunca es el default.
-- `else` solo gana cuando ningún brazo está listo tras el registro inicial y no
-  introduce polling oculto.
-- Una selección sin brazo operacional es `E1613` y todos sus límites de memoria
-  son finitos y observables.
-
-`STD-CONC-001` debe cerrar el protocolo de registro de canal, ownership, errores
-y fairness sin inventar una segunda representación pública. Ese cierre de spec
-precede a implementación: marcar una firma `selectable` sin una prueba de
-commit/rollback cancel-safe no satisface STD-0.1B.
+Las tareas, los grupos, los canales y `select` pertenecen al lenguaje y al
+preludio (sección 9.3 y 11.11–11.14 de la especificación del lenguaje). Esta
+sección describe los módulos que los complementan para el estado compartido.
 
 #### 14.4.4 Sincronización compartida
 
 `std.sync` proporciona `Mutex[T]`, `RwLock[T]`, guards afines, variables de
 condición, `Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics tipados con orden de
-memoria explícito. Un lock o permiso contendido suspende la task; no bloquea un
+memoria explícito. Un lock o permiso contendido detiene la tarea; no bloquea un
 worker cooperativo. Guards y permits liberan exactamente una vez por consumo,
 `defer`, cancelación o unwind.
 
@@ -2686,14 +2284,14 @@ continúan sin reclamarse.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y
-a sus errores nominales. Tampoco existe `WaitGroup`; `scope` y
-`Group[Unit, E]` expresan la vida de los hijos sin un contador separado. Los
+a sus errores nominales. Tampoco existe `WaitGroup`: `Group[Unit]` expresa la
+vida de los hijos sin un contador separado. Los
 atomics exigen seleccionar el memory ordering en la operación; la API no oculta
 un orden débil como default. La guía `STD-SYNC-DOC-001` convierte estas reglas
 en ejemplos ejecutables: ordenación explícita para evitar deadlocks, cleanup y
 cancelación sin poisoning, los cinco literales cualificados, CAS fuerte, `for`
 directo débil frente a `snapshot()` coherente y la elección visible entre una
-queue no bloqueante y `std.channel` con espera/backpressure.
+queue no bloqueante y un canal con espera y backpressure.
 
 Los tipos compartidos publican `Send`/`Share` solo cuando sus parámetros y la
 implementación interior lo demuestran. `threads` es necesario para semántica
@@ -2731,40 +2329,40 @@ pub enum CompareExchange[T] { Exchanged(T) Mismatch(T) }
 pub type Atomic[T]
 
 pub fn mutex[T: Send](value: T): Mutex[T] ! SyncError
-pub fn Mutex.lock(ref self): MutexGuard[T] ! SyncError suspends
+pub fn Mutex.lock(ref self): MutexGuard[T] ! SyncError
 pub fn Mutex.tryLock(ref self): MutexGuard[T]?
 pub fn MutexGuard.get(ref self): ref T
 pub fn MutexGuard.getMut(mut self): mut T
 pub fn MutexGuard.unlock(self): Unit
 
 pub fn rwLock[T: Send](value: T): RwLock[T] ! SyncError
-pub fn RwLock.read(ref self): ReadGuard[T] ! SyncError suspends
+pub fn RwLock.read(ref self): ReadGuard[T] ! SyncError
 pub fn RwLock.tryRead(ref self): ReadGuard[T]?
 pub fn ReadGuard.get(ref self): ref T
 pub fn ReadGuard.unlock(self): Unit
-pub fn RwLock.write(ref self): WriteGuard[T] ! SyncError suspends
+pub fn RwLock.write(ref self): WriteGuard[T] ! SyncError
 pub fn RwLock.tryWrite(ref self): WriteGuard[T]?
 pub fn WriteGuard.get(ref self): ref T
 pub fn WriteGuard.getMut(mut self): mut T
 pub fn WriteGuard.unlock(self): Unit
 
 pub fn condition(): Condition ! SyncError
-pub fn Condition.wait[T](ref self, var guard: MutexGuard[T]): MutexGuard[T] suspends
+pub fn Condition.wait[T](ref self, var guard: MutexGuard[T]): MutexGuard[T]
 pub fn Condition.notifyOne(ref self): Unit
 pub fn Condition.notifyAll(ref self): Unit
 
 pub fn semaphore(capacity: Int): Semaphore ! SyncError
-pub fn Semaphore.acquire(ref self): Permit suspends
+pub fn Semaphore.acquire(ref self): Permit
 pub fn Semaphore.tryAcquire(ref self): Permit?
 pub fn Permit.release(self): Unit
 
 pub fn once[T, E](): Once[T, E]
 pub fn Once.get(ref self): ref T?
-pub fn Once.getOrInit(ref self, init: fn(): T ! E suspends): ref T ! E suspends
+pub fn Once.getOrInit(ref self, init: fn(): T ! E): ref T ! E
 pub fn Once.isReady(ref self): Bool
 
 pub fn barrier(parties: Int): Barrier ! SyncError
-pub fn Barrier.wait(ref self): BarrierRole ! SyncError suspends
+pub fn Barrier.wait(ref self): BarrierRole ! SyncError
 
 pub fn atomic[T: Copy + Equatable + Send + Share](value: T): Atomic[T]
 pub fn Atomic.load(ref self, order: MemoryOrder): T
@@ -2783,7 +2381,7 @@ caller mantiene su bucle de predicado. `semaphore` exige capacidad positiva,
 `Once` resetea a `uninitialized` tras error/cancelación/pánico del initializer y
 `Barrier` rompe la generación ante cancelación. Los atomics exigen un
 `MemoryOrder` constante de compilación, CAS fuerte sin fallo espurio y ningún
-orden por defecto. Ninguna de estas operaciones es `selectable`.
+orden por defecto. Ninguna de estas operaciones es un brazo de `select`.
 
 ##### 14.4.4.1 Colecciones compartidas
 
@@ -2814,11 +2412,10 @@ Las operaciones reutilizan el `CollectionError` canónico de `std.collections`:
 `InvalidIndex` para slots inválidos y `ResourceLimit` cuando no pueden completar
 una reserva o snapshot. `std.sync` no publica un error de colección paralelo.
 
-Las operaciones individuales son linealizables. Una operación marcada
-`suspends` puede completar por un fast path sin crear frame, pero conserva el
-efecto público para poder ceder o aparcar bajo contención sin bloquear un worker.
-Ninguna de estas operaciones es `selectable`: readiness y backpressure
-pertenecen a canales y a la expresión núcleo `select`.
+Las operaciones individuales son linealizables. Una operación puede completar
+por un fast path o detener la tarea bajo contención sin bloquear el thread.
+Ninguna de estas operaciones es un brazo de `select`: readiness y backpressure
+pertenecen a los canales y a `select`.
 
 ##### 14.4.4.2 Array, map y set compartidos
 
@@ -2827,22 +2424,22 @@ La superficie mínima es:
 ~~~tondo pseudocode
 pub fn sync.Array.length(ref self): Int
 pub fn sync.Array.isEmpty(ref self): Bool
-pub fn sync.Array.get(ref self, index: Int): T? suspends
-pub fn sync.Array.set(ref self, index: Int, value: T): T ! CollectionError suspends
+pub fn sync.Array.get(ref self, index: Int): T?
+pub fn sync.Array.set(ref self, index: Int, value: T): T ! CollectionError
 pub fn sync.Array[T: Copy + Equatable + Send + Share].compareExchange(
     ref self,
     index: Int,
     expected: T,
     desired: T,
-): sync.CompareExchange[T] ! CollectionError suspends
-pub fn sync.Array.snapshot(ref self): Array[T] ! CollectionError suspends
+): sync.CompareExchange[T] ! CollectionError
+pub fn sync.Array.snapshot(ref self): Array[T] ! CollectionError
 
 pub fn sync.Map.length(ref self): Int
 pub fn sync.Map.isEmpty(ref self): Bool
-pub fn sync.Map.get(ref self, key: K): V? suspends
-pub fn sync.Map.contains(ref self, key: K): Bool suspends
-pub fn sync.Map.insert(ref self, key: K, value: V): V? ! CollectionError suspends
-pub fn sync.Map.remove(ref self, key: K): V? suspends
+pub fn sync.Map.get(ref self, key: K): V?
+pub fn sync.Map.contains(ref self, key: K): Bool
+pub fn sync.Map.insert(ref self, key: K, value: V): V? ! CollectionError
+pub fn sync.Map.remove(ref self, key: K): V?
 pub fn sync.Map[
     K: Key + Send + Share,
     V: Copy + Equatable + Send + Share,
@@ -2851,15 +2448,15 @@ pub fn sync.Map[
     key: K,
     expected: V?,
     desired: V?,
-): sync.CompareExchange[V?] ! CollectionError suspends
-pub fn sync.Map.snapshot(ref self): Map[K, V] ! CollectionError suspends
+): sync.CompareExchange[V?] ! CollectionError
+pub fn sync.Map.snapshot(ref self): Map[K, V] ! CollectionError
 
 pub fn sync.Set.length(ref self): Int
 pub fn sync.Set.isEmpty(ref self): Bool
-pub fn sync.Set.contains(ref self, key: K): Bool suspends
-pub fn sync.Set.insert(ref self, key: K): Bool ! CollectionError suspends
-pub fn sync.Set.remove(ref self, key: K): Bool suspends
-pub fn sync.Set.snapshot(ref self): Set[K] ! CollectionError suspends
+pub fn sync.Set.contains(ref self, key: K): Bool
+pub fn sync.Set.insert(ref self, key: K): Bool ! CollectionError
+pub fn sync.Set.remove(ref self, key: K): Bool
+pub fn sync.Set.snapshot(ref self): Set[K] ! CollectionError
 ~~~
 
 `sync.Array` tiene longitud fija desde su construcción. Cada slot mantiene un
@@ -2889,21 +2486,21 @@ cola). Su superficie deliberadamente pequeña es:
 ~~~tondo pseudocode
 pub fn sync.Stack.length(ref self): Int
 pub fn sync.Stack.isEmpty(ref self): Bool
-pub fn sync.Stack.push(ref self, value: T) suspends
-pub fn sync.Stack.pop(ref self): T? suspends
-pub fn sync.Stack[T: Copy + Send + Share].get(ref self, index: Int): T? suspends
+pub fn sync.Stack.push(ref self, value: T)
+pub fn sync.Stack.pop(ref self): T?
+pub fn sync.Stack[T: Copy + Send + Share].get(ref self, index: Int): T?
 pub fn sync.Stack[T: Copy + Send + Share].snapshot(
     ref self,
-): Array[T] ! CollectionError suspends
+): Array[T] ! CollectionError
 
 pub fn sync.Queue.length(ref self): Int
 pub fn sync.Queue.isEmpty(ref self): Bool
-pub fn sync.Queue.push(ref self, value: T) suspends
-pub fn sync.Queue.popFront(ref self): T? suspends
-pub fn sync.Queue[T: Copy + Send + Share].get(ref self, index: Int): T? suspends
+pub fn sync.Queue.push(ref self, value: T)
+pub fn sync.Queue.popFront(ref self): T?
+pub fn sync.Queue[T: Copy + Send + Share].get(ref self, index: Int): T?
 pub fn sync.Queue[T: Copy + Send + Share].snapshot(
     ref self,
-): Array[T] ! CollectionError suspends
+): Array[T] ! CollectionError
 ~~~
 
 `push` no es fallible, igual que en `Deque`: no poder reservar memoria es
@@ -2911,7 +2508,7 @@ agotamiento de recursos. `pop` y `popFront` transfieren ownership únicamente al
 caller ganador y devuelven `none` inmediatamente cuando la estructura está
 vacía. No hay `waitPop`, `waitPopFront`, sufijos `Async` ni una queue con
 backpressure oculta. Esperar un productor, limitar capacidad o seleccionar entre
-fuentes utiliza `std.channel`. `get` y `snapshot` dejan el elemento en la
+fuentes utiliza un canal. `get` y `snapshot` dejan el elemento en la
 estructura y por eso solo existen cuando copiarlo y observarlo concurrentemente
 es seguro; `get` devuelve `none` fuera de rango y los índices negativos cuentan
 desde el final, como en `Deque`.
@@ -2976,9 +2573,8 @@ producen copias sin ejecutar `pop` ni `popFront`.
 Solo se permiten bindings por valor. `for ref`, `for mut` y `for var` se
 rechazan porque el almacenamiento puede cambiar concurrentemente. La iteración
 de stack y queue existe únicamente bajo `T: Copy + Send + Share`. Cada `next`
-puede ceder o aparcar bajo contención, por lo que el cursor implementa
-`AsyncIterator`, el `for` espera implícitamente y la función consumidora infiere
-`suspends`. Salir pronto o cancelar libera cualquier protección de reclamación
+puede detener la tarea bajo contención, como cualquier `next` (10.18 de la
+especificación del lenguaje). Salir pronto o cancelar libera cualquier protección de reclamación
 sin bloquear posteriores writers.
 
 El orden directo es índice ascendente para array, inserción linearizada para
@@ -2990,7 +2586,7 @@ serialización, aritmética de colecciones y cualquier decisión que necesite un
 solo instante se realizan sobre el snapshot, no directamente sobre el owner.
 `sync.Stack` es LIFO y `sync.Queue` es FIFO-MPMC; `pop`/`popFront` devuelven
 `none` sin esperar. La espera, el rendezvous y el backpressure pertenecen a
-`std.channel.bounded(0)`, `bounded(n)` o `unbounded()` cuando se elige de forma
+los canales (`channel[T](0)`, `channel[T](n)` o `channel[T]()`), elegidos de forma
 explícita, no a una queue oculta.
 
 ##### 14.4.4.5 Estrategia de implementación y progreso
@@ -3022,8 +2618,8 @@ el lowering AOT genérico sigue sin declararse implementado.
   evitan duplicar una generación.
 - Reclamation coopera con el GC y protege ABA, use-after-free y doble drop. Una
   implementación nativa alternativa debe demostrar el mismo ownership.
-- Tras contención repetida se aplica backoff, yield o parking suspendible
-  acotado; nunca spin ilimitado ni bloqueo inadvertido del executor.
+- Tras contención repetida se aplica backoff, yield o parking acotado de la
+  tarea; nunca spin ilimitado ni bloqueo inadvertido de un thread.
 
 El algoritmo concreto puede cambiar por target cuando los benchmarks lo
 justifiquen, pero no la linearización, el orden, los outcomes ni los efectos
@@ -3035,11 +2631,11 @@ schedulers adversarios.
 
 #### 14.4.5 Executors, pools y actores
 
-`std.executor` construye políticas de ejecución sobre `scope`, `spawn`,
-`Group`, canales y sincronización; no publica otro handle de tarea. Sus pools
+`std.executor` construye políticas de ejecución sobre `spawn`, `Group`, canales
+y sincronización; no publica otro handle de tarea. Sus pools
 tienen capacidad y shutdown explícitos. El bridge bloqueante mueve trabajo a
-workers host acotados y su operación lógica declara `suspends`, de modo que el
-caller la llama secuencialmente o usa el `spawn` ordinario para solaparla.
+workers host acotados y su operación lógica espera como cualquier llamada, de
+modo que el caller la llama secuencialmente o usa el `spawn` ordinario para solaparla.
 
 Un actor es un owner de estado con mailbox tipado y ciclo de vida estructurado,
 no una excepción al ownership. Shutdown, cancelación, saturación, pánico del
@@ -3053,8 +2649,7 @@ registro machine-readable en
 [`testing/stdlib-executor.json`](./testing/stdlib-executor.json). Ese registro
 fija capacidad, backpressure, actores, bridge bloqueante, lifecycle,
 capabilities y eventos privados. `STD-EXEC-IMPL-001` queda cerrado para la
-implementación cooperativa hosted de pools, `Join`, lifecycle, actores y envíos
-`selectable`; `STD-EXEC-HOST-001` queda cerrado para el bridge hosted de
+implementación cooperativa hosted de pools, `Join`, lifecycle, actores y envíos; `STD-EXEC-HOST-001` queda cerrado para el bridge hosted de
 `BlockingPool` y la lane privada de tokens del runtime nativo target-qualified
 `x86_64-unknown-linux-gnu`; el informe queda en
 `target/reliability/evidence/stdlib-executor-implementation.json`.
@@ -3083,7 +2678,7 @@ hosted ya verifica la
 adquisición explícita `Actor.ref(ref self): ActorRef[M]` como proyección de
 identidad no consumidora y ejecuta handlers cooperativos con mailbox FIFO,
 estado mutable conservado y propagación terminal de `E` por `Actor.stop`.
-También verifica `ActorRef.send` como operación `selectable` transaccional:
+También verifica `ActorRef.send` como operación transaccional:
 `prepare` no muta ni consume el mensaje, un único `commit` lo linealiza en la
 mailbox y `rollback` desregistra el waiter conservando el payload afín para el
 perdedor o `else`. Esta observación mantiene la frontera target-qualified: el
@@ -3105,8 +2700,8 @@ host or conformance leaves or establish native ABI/AOT coverage.
 import nunca abre sockets, consulta DNS, lee proxies o certificados, crea tasks
 ni toca el entorno. `clock` solo es necesario cuando el caller construye un
 `NetOptions` con un `Instant` de deadline; `none` no instala un timeout
-ambiental. Las operaciones suspendibles siguen el modelo único de Tondo: una
-llamada directa espera implícitamente y el solapamiento usa el `spawn`/`Join`
+ambiental. Las operaciones que esperan siguen el modelo único de Tondo: una
+llamada espera sin marcas y el solapamiento usa el `spawn`/`Join`
 ordinario, sin `connectAsync`, futures o una API paralela.
 
 El contrato normativo y el registro único son
@@ -3120,10 +2715,8 @@ El contrato normativo y el registro único son
   deadlines monotónicos y cancelación cooperativa con cleanup antes de publicar
   `Timeout` o salir del scope;
 - TCP con partial I/O observable, `ReadResult.Eof`, `TcpStream.shutdown` antes
-  de `split`, mitades afines de lectura/escritura y `selectable` únicamente en
-  `accept` y lectura;
-- UDP con datagrams atómicos, `DatagramTooLarge` sin truncación y recepción
-  `selectable`, sin promesas de entrega, orden o unicidad; y
+  de `split` y mitades afines de lectura/escritura;
+- UDP con datagrams atómicos y `DatagramTooLarge` sin truncación, sin promesas de entrega, orden o unicidad; y
 - una frontera TLS target-declared con `PlatformRoots` por defecto, SNI y
   verificación de hostname, sin modo inseguro, downgrade a plaintext ni
   publicación del stream antes del handshake.
@@ -3246,8 +2839,8 @@ pub fn Base64Options.urlSafe(limits: EncodingLimits): Base64Options
 pub fn Base64Options.urlSafeUnpadded(limits: EncodingLimits): Base64Options
 pub fn Base64Options.encode(self, input: Bytes): Bytes ! EncodingError
 pub fn Base64Options.decode(self, input: Bytes): Bytes ! EncodingError
-pub fn Base64Options.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError suspends
-pub fn Base64Options.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError suspends
+pub fn Base64Options.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError
+pub fn Base64Options.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError
 pub fn Base64Options.encoder(self): Base64Encoder ! EncodingError
 pub fn Base64Options.decoder(self): Base64Decoder ! EncodingError
 
@@ -3256,8 +2849,8 @@ pub fn HexOptions.upper(limits: EncodingLimits): HexOptions
 pub fn HexOptions.anyCase(limits: EncodingLimits): HexOptions
 pub fn HexOptions.encode(self, input: Bytes): Bytes ! EncodingError
 pub fn HexOptions.decode(self, input: Bytes): Bytes ! EncodingError
-pub fn HexOptions.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError suspends
-pub fn HexOptions.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError suspends
+pub fn HexOptions.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError
+pub fn HexOptions.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError
 pub fn HexOptions.encoder(self): HexEncoder ! EncodingError
 pub fn HexOptions.decoder(self): HexDecoder ! EncodingError
 ~~~
@@ -3277,8 +2870,7 @@ incrementales `Base64Encoder`/`Base64Decoder`/`HexEncoder`/`HexDecoder`.
 error. Los handles son afines y quedan terminales tras `finish` o error. Los
 límites acumulados de input/output se comprueban antes de publicar; un fallo de
 límite en `push` no cambia el carry. Los adapters `Reader`/`Writer` usan
-`std.io` y el único modelo de suspensión de Tondo, sin APIs `Async` duplicadas
-ni operaciones `selectable`.
+`std.io` y el único modelo de espera de Tondo, sin APIs `Async` duplicadas.
 
 La ruta escalar es el oráculo. SIMD y multiversionado solo pueden promoverse
 después de demostrar equivalencia de bytes, errores, offsets, límites y
@@ -3362,7 +2954,6 @@ owner-wide fuzz promotion, performance and conformance require separate proof.
 | `std.math` | `stdlib-core` | cerrado | numéricos intrínsecos |
 | `std.format` | `stdlib-core` | cerrado | `Display`, `std.bytes` |
 | `std.io` | `stdlib-core` | cerrado | `Bytes` |
-| `std.async` | `stdlib-core` | cerrado | `Join`, `oneshot`, `AsyncIterator` |
 | `std.serialization` | `stdlib-core` | cerrado | `std.io`, `std.bytes` |
 | `std.console` | `stdlib-hosted` | cerrado | `std.io`, capability `console` |
 | `std.path` | `stdlib-hosted` | cerrado | `String`, `Bytes` |
@@ -3698,7 +3289,7 @@ Secondary descriptors expose query methods, with no public fields:
   `mode(): ParameterMode`. `ParameterMode` is the closed enum
   `Value | Ref | Mut | Var`. Positions and ordinals start at zero.
 - `FunctionInfo`: `parameters(): Array[ParameterInfo]`, `outcome(): TypeInfo`,
-  `variadic(): Bool`, `suspends(): Bool`, `isUnsafe(): Bool`. A variadic tail
+  `variadic(): Bool`, `isUnsafe(): Bool`. A variadic tail
   occupies the last parameter position, describes its element type and has
   `Value` mode. The outcome includes the complete `Result` or `Option` type.
 
@@ -3886,8 +3477,8 @@ pub fn raw(input: Bytes): Raw ! JsonError
 pub unsafe fn rawUnchecked(input: Bytes): Raw
 pub fn JsonReader.next(var self): JsonEvent? ! JsonError
 pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
-pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError suspends
-pub fn JsonWriter.finish(var self): Unit ! JsonError suspends
+pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
+pub fn JsonWriter.finish(var self): Unit ! JsonError
 ~~~
 
 Los tipos, options, limits, eventos y errores exhaustivos están cerrados en el
@@ -3944,8 +3535,8 @@ pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackEr
 pub unsafe fn rawUnchecked(input: Bytes): Raw
 pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
 pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
-pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError suspends
-pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError suspends
+pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
+pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError
 ~~~
 
 El catálogo completo de `Value`, ext/timestamp, policies, limits,
@@ -4028,12 +3619,6 @@ exact source, inventory and manifest identities. `--plan` validates declarations
 only. This scoped conformance does not change the separate FUZZ or performance
 cells and cannot promote the other standard-library owners or the S1A seal.
 
-`std.async` retains its verified hosted implementation. Its model/test/fuzz
-stage remains partial and global conformance pending; the owner performance
-stage is explicitly not applicable with a recorded reason. The contract has
-five indexed callables, including direct and spawned `collect(limit:)` routes.
-Those observations do not promote the whole library.
-
 `STD-DOC-001` is recorded in `testing/stdlib-documentation.json`. Each owner
 has normative contracts and separate kernel, bridge and public API boundaries.
 The API field describes static callable traceability; missing signatures keep
@@ -4107,8 +3692,8 @@ pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
 pub fn descriptor[T](): ProtoDescriptor[T]
 pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
 pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
-pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError suspends
-pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError suspends
+pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
+pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError
 ~~~
 
 La implementación portable vive en `crates/tondo-stdlib/src/protobuf_api.rs`:
@@ -4148,7 +3733,7 @@ document boundaries, anchors y aliases. `YamlError` conserva kind, byte offset,
 línea, columna y path `Key`/`Index`; ningún límite publica un valor parcial. La
 entrada es UTF-8, la indentación usa espacios, `true`/`false` son los únicos
 booleanos implícitos y fechas/timestamps permanecen texto. El owner no requiere
-capability, no consulta el entorno y no publica operaciones `selectable`.
+capability y no consulta el entorno.
 
 El contrato machine-readable, la documentación operativa y sus checks negativos
 son [`testing/stdlib-yaml.json`](./testing/stdlib-yaml.json),
@@ -4194,7 +3779,7 @@ scalar stdlib, sin ABI YAML nativo ni lowering AOT. `native_aot_lowering` sigue
 verifican el subset seguro YAML 1.2 Core, la selección explícita de policies,
 los límites finitos, costes, ownership, errores y ejemplos materializados y
 streaming. La fixture usa únicamente rutas CLI hosted verificadas; la firma
-suspendible `YamlWriter.toWriter` permanece como contrato estático y cobertura
+`YamlWriter.toWriter` permanece como contrato estático y cobertura
 directa del host hasta que el dispatcher async registre esa operación
 (`writer-boundary: static-contract-only-until-async-dispatch`,
 `native_aot_lowering: not-claimed`,
@@ -4222,7 +3807,7 @@ se rechazan antes de publicar un valor.
 El reader/writer usa eventos con frames y worklists acotados. Los spans son
 half-open en bytes UTF-8, con línea/columna y path `Key`/`Index`; el parser es
 invariante al chunking y no publica resultados parciales. Solo la frontera de
-`std.io.Reader`/`Writer` suspende y no existe una API `selectable` duplicada.
+`std.io.Reader`/`Writer` espera y no existe una API duplicada.
 
 El kernel Rust de tondo-stdlib queda verificado por STD-TOML-IMPL-001 con
 TomlValue/TomlValueView, parser con spans, fechas civiles de nanosegundo,
@@ -4310,8 +3895,8 @@ dinámico intermedio.
 containers y chunks indefinidos (`StartBytes`/`ByteChunk`/`EndBytes` y sus
 equivalentes de texto). Usan frames/worklists explícitos, son invariantes al
 fragmentar la entrada y quedan terminales tras `finish`, EOF inválido, límite
-o error de I/O. Solo las fronteras `std.io.Reader`/`Writer` suspenden; no hay
-API async duplicada ni `selectable`.
+o error de I/O. Solo las fronteras `std.io.Reader`/`Writer` esperan; no hay
+API async duplicada.
 
 El modo ordinario acepta formas no mínimas y conserva bits de NaN. El modo
 `encodeDeterministic` aplica los requisitos core de RFC 8949: additional
@@ -4514,8 +4099,7 @@ conservar valores externos de cualquier versión o variante; los generadores
 solo producen la variante RFC 9562. La ausencia de capabilities es `E1008` y
 los fallos del provider se normalizan a `UuidError` sin fallback ambiental.
 
-`Uuid.v4`, `Uuid.v5` y `Uuid.v7` son síncronas y no `selectable`; no existe una
-API async duplicada. Los límites cubren texto (45 bytes), bytes (16), nombre
+`Uuid.v4`, `Uuid.v5` y `Uuid.v7` no esperan; no existe una API async duplicada. Los límites cubren texto (45 bytes), bytes (16), nombre
 v5 (16 MiB), requests de entropía y heap; cualquier exceso falla antes de
 publicar un resultado. Comparación y hash son lexicográficos sobre los bytes,
 independientes del timestamp o la versión. El camino scalar de ancho fijo es el
@@ -4632,16 +4216,15 @@ un owner explícito de un sink: no existe logger global, fallback implícito a
 stderr, worker detached, queue ilimitada o configuración desde environment.
 `ConsoleSink` requiere `console`, `FileSink` requiere `filesystem` y un sink
 de red implementa el mismo protocolo sobre un writer/transporte explícito con
-`network`; DNS, TLS y retry pertenecen a sus owners. `Block` suspende y espera
-capacidad, `Reject` devuelve `LogError.Backpressure` sin consumir el evento y
+`network`; DNS, TLS y retry pertenecen a sus owners. `Block` espera capacidad, `Reject` devuelve `LogError.Backpressure` sin consumir el evento y
 `Drop` devuelve `LogReceipt.Dropped`. Todo sink es finito y sus llamadas
 concurrentes se linearizan por orden de commit; `flush` y `close` conservan
 errores, cancelación y cleanup visibles.
 
 The protocol uses a plain `LogSink` trait. `Logger[S: LogSink + Share]`
-declares its bounds explicitly; the suspendible trait methods imply `Send`.
+declares its bounds explicitly.
 `LogSink.close(sink: Self)` and `Logger[S].close(logger: Logger[S])` consume
-their values. `Logger[S].create` is `suspends`, including the cleanup of a
+their values. `Logger[S].create` may wait, including for the cleanup of a
 sink when construction fails. Builtin sinks are affine; user sinks retain
 their own structural capabilities, and the logger owns one logical value.
 `LogReceipt.Filtered` identifies an event excluded by the minimum-level
@@ -4650,8 +4233,8 @@ before any write. A later `Io` remains visible, can leave a physical prefix
 and makes the sink terminal. Cleanup errors remain visible through terminal
 logger close. These guarantees do not require transactional stdout or files.
 
-La superficie no duplica APIs async: `Logger.emit`, `flush` y `close` son
-`suspends` y una llamada directa espera automáticamente; no hay
+La superficie no duplica APIs async: `Logger.emit`, `flush` y `close` esperan
+como cualquier llamada; no hay
 `logAsync`, polling ni `std.log.select`. El core de eventos no requiere host,
 las capabilities solo aparecen en los constructores de sinks y la ausencia
 produce `E1008`. El oracle scalar recorre valores anidados con frames
@@ -4791,8 +4374,7 @@ Antes de considerarse especificado, cada módulo debe incluir:
 
 ### 15.4 Ejecución
 
-- Síncrona o suspendible.
-- Puntos de suspensión.
+- Si espera y en qué puntos.
 - Puntos de cancelación.
 - Backpressure.
 - Cleanup normal y anormal.
@@ -4888,7 +4470,7 @@ Una API capability-gated prueba además:
 - Cleanup.
 - Matriz de targets publicada.
 
-Una API suspendible prueba además:
+Una API que espera prueba además:
 
 - Suspensión real.
 - Progreso de otras tasks.
@@ -5023,8 +4605,8 @@ No forman parte de STD-0.1:
 - RPC y gRPC; Protobuf y la frontera de red sí pertenecen a STD-0.1.
 - Formatos adicionales a JSON, MessagePack, Protobuf, YAML, TOML y CBOR.
 - Aleatoriedad y entropía de usuario.
-- Streams suspendible generales o reactivos; los protocolos acotados de byte I/O de
-  `std.io`, sockets de `std.net` y canales de `std.channel` sí pertenecen a
+- Streams generales o reactivos; los protocolos acotados de byte I/O de
+  `std.io`, sockets de `std.net` y los canales del lenguaje sí pertenecen a
   0.1.
 - Priority queues.
 - Decimal, BigInt y Complex.
@@ -5073,10 +4655,10 @@ declare rechaza el programa estáticamente con `E1008`. La superficie pública
 pub fn stdin(): Input ! ConsoleError
 pub fn stdout(): Output ! ConsoleError
 pub fn stderr(): Output ! ConsoleError
-pub fn readLine(input: var Input): String? ! ConsoleError suspends
+pub fn readLine(input: var Input): String? ! ConsoleError
 pub fn print(value: String)
 pub fn println(value: String)
-pub fn flush(): Unit ! ConsoleError suspends
+pub fn flush(): Unit ! ConsoleError
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ~~~
 
@@ -5092,14 +4674,13 @@ hay terminal, locale, encoding o newline ambiental implícito. `readLine` solo
 avanza el cursor después de aceptar una línea UTF-8 completa, devuelve `none`
 en EOF y devuelve un `ConsoleError` tipado sin consumir datos cuando recibe
 UTF-8 inválido. `print` y `println` solo anexan al buffer
-de salida ordenado del runtime, nunca esperan al sistema operativo y por eso no
-declaran `suspends`; `println` añade un único LF. Como solo anexan, no pueden
+de salida ordenado del runtime y nunca esperan al sistema operativo; `println` añade un único LF. Como solo anexan, no pueden
 fallar y devuelven `Unit`: una llamada es una sentencia ordinaria, sin `_ =`.
 
 El runtime entrega el buffer sin intervención del programa: cuando se llena,
 en cada línea si stdout es una terminal, antes de leer de stdin y al terminar
 el programa. Un programa nunca necesita llamar a `flush`. `flush` es la única
-frontera de entrega explícita, suspendible y terminal para el writer
+frontera de entrega explícita, que espera y es terminal para el writer
 correspondiente: entrega lo pendiente y devuelve el primer fallo de entrega
 ocurrido desde el anterior `flush`. Un fallo que el programa no observe se
 reporta al terminar en stderr como `error: standard output: …` y el proceso
@@ -5164,7 +4745,7 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
 - [ ] La matriz edición/target/perfil/capabilities está versionada.
 - [ ] Todas las unidades privilegiadas están fijadas por hash.
 - [ ] No existe búsqueda ambiental o de red durante compilación.
-- [ ] Cada API documenta errores, pánicos, ownership, suspendible, orden y coste.
+- [ ] Cada API documenta errores, pánicos, ownership, esperas, orden y coste.
 - [ ] Todas las capabilities ausentes producen rechazo estático.
 - [ ] Los tipos y errores tienen un propietario canónico.
 - [ ] Los módulos core no dependen de host.
