@@ -7597,8 +7597,13 @@ Estas reglas determinan dónde aparecen las primitivas anteriores:
   desde el primer `.` comienza en una nueva línea indentada cuatro espacios; el
   punto es el primer carácter no blanco.
 - Una llave de bloque abre en la misma línea que su header. Un bloque vacío se
-  emite `{}`. Cualquier bloque no vacío utiliza `hardline`, contenido indentado y
-  `hardline` antes de `}`; nunca se aplana.
+  emite `{}`. Un bloque no vacío utiliza `hardline`, contenido indentado y
+  `hardline` antes de `}`, salvo un bloque que produce un valor —el cuerpo de un
+  cierre, un bloque usado como expresión y las ramas de un `if` con `else`— y
+  contiene solo una expresión sin comentarios: forma el `group`
+  `"{" + indent(softline + expresión) + softline + "}"` y se emite
+  `{ expresión }` cuando cabe. Las ramas de una cadena `if`/`else` forman un
+  único grupo: caben todas en una línea o se parten todas.
 - `} else {` y `} else if ... {` forman una misma línea lógica.
 - Declaraciones de nivel superior se separan por exactamente una línea vacía.
   Dentro de un bloque hay un `hardline` entre unidades; si la fuente tenía una o
@@ -7624,6 +7629,7 @@ U+0020:
 | `!E` de resultado sin éxito | Ninguno entre `!` y `E`. |
 | `T ! E`, `A | B`, bounds `A + B` | Uno a ambos lados del operador. |
 | Operadores binarios, asignación y `=>` | Uno a ambos lados. |
+| Rangos `a..b` y `a..=b` | Ninguno. |
 | `-`, `~` unarios | Ninguno antes del operando. |
 | `not`, `await`, `spawn`, y modos de llamada `ref`/`mut`/`var` | Uno después. |
 | Keyword seguida de nombre o expresión | Uno cuando el token siguiente no es un delimitador de llamada. |
@@ -8014,6 +8020,20 @@ Salida:
 ~~~text
 let inverse = -(-value)
 let nested = (value?)?
+~~~
+
+Entrada:
+
+~~~text
+let double=(n:Int):Int{n*2}
+let larger=if a>b{a}else{b}
+~~~
+
+Salida:
+
+~~~text
+let double = (n: Int): Int { n * 2 }
+let larger = if a > b { a } else { b }
 ~~~
 
 La suite oficial de una implementación debe incluir estos pares, el caso vacío

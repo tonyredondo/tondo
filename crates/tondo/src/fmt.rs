@@ -624,6 +624,79 @@ impl Formatter<'_> {
         concat(vec![text("{"), indent(concat(body)), Doc::Hardline, text("}")])
     }
 
+    /// `if ... else if ... else ...`: with an `else` and only a value in
+    /// each branch, one group that stays on one line when it fits;
+    /// otherwise blocks.
+    fn if_chain(&mut self, expr: &Expr) -> Doc {
+        let mut branches: Vec<(Option<&Expr>, &Block)> = Vec::new();
+        let mut current = expr;
+        let mut last_else = None;
+        while let ExprKind::If { condition, then, otherwise } = &current.kind {
+            branches.push((Some(condition), then));
+            match otherwise.as_deref() {
+                Some(next @ Expr { kind: ExprKind::If { .. }, .. }) if !self.parenthesized(next) => current = next,
+                Some(Expr { kind: ExprKind::Block(block), .. }) => {
+                    branches.push((None, block));
+                    break;
+                }
+                Some(other) => {
+                    last_else = Some(other);
+                    break;
+                }
+                None => break,
+            }
+        }
+        let simple =
+            branches.last().is_some_and(|(c, _)| c.is_none()) && branches.iter().all(|(_, b)| self.is_simple(b));
+        let mut docs = Vec::new();
+        for (index, (condition, block)) in branches.into_iter().enumerate() {
+            if index > 0 {
+                docs.push(text(" else "));
+            }
+            if let Some(condition) = condition {
+                docs.push(text("if "));
+                docs.push(self.expr(condition));
+                docs.push(text(" "));
+            }
+            if simple {
+                let value = self.expr(block.tail.as_ref().unwrap());
+                docs.push(concat(vec![
+                    text("{"),
+                    indent(concat(vec![Doc::Softline, value])),
+                    Doc::Softline,
+                    text("}"),
+                ]));
+            } else {
+                docs.push(self.block(block));
+            }
+        }
+        if let Some(other) = last_else {
+            docs.push(text(" else "));
+            docs.push(self.expr(other));
+        }
+        if simple { group(concat(docs)) } else { concat(docs) }
+    }
+
+    /// Whether a block holds only a value and no comments.
+    fn is_simple(&self, block: &Block) -> bool {
+        block.stmts.is_empty()
+            && block.tail.is_some()
+            && !self.comments.iter().any(|c| c.start >= block.span.start && c.end <= block.span.end)
+    }
+
+    /// A block that produces a value: `{ value }` on one line when it holds
+    /// only an expression without comments and fits; otherwise a block.
+    fn value_block(&mut self, block: &Block) -> Doc {
+        let has_comments = self.comments.get(self.next).is_some_and(|c| c.start < block.span.end);
+        match &block.tail {
+            Some(tail) if block.stmts.is_empty() && !has_comments => {
+                let value = self.expr(tail);
+                group(concat(vec![text("{"), indent(concat(vec![Doc::Softline, value])), Doc::Softline, text("}")]))
+            }
+            _ => self.block(block),
+        }
+    }
+
     fn stmt(&mut self, stmt: &Stmt) -> Doc {
         match &stmt.kind {
             StmtKind::Let { mutable, pattern, ty, value } => {
@@ -802,18 +875,8 @@ impl Formatter<'_> {
                 }
                 group(concat(docs))
             }
-            ExprKind::If { condition, then, otherwise } => {
-                let mut docs = vec![text("if "), self.expr(condition), text(" "), self.block(then)];
-                if let Some(otherwise) = otherwise {
-                    docs.push(text(" else "));
-                    docs.push(match &otherwise.kind {
-                        ExprKind::If { .. } | ExprKind::Block(_) => self.expr(otherwise),
-                        _ => concat(vec![text("{ "), self.expr(otherwise), text(" }")]),
-                    });
-                }
-                concat(docs)
-            }
-            ExprKind::Block(block) => self.block(block),
+            ExprKind::If { .. } => self.if_chain(expr),
+            ExprKind::Block(block) => self.value_block(block),
             ExprKind::Match { scrutinee, arms } => {
                 let mut body = Vec::new();
                 for arm in arms {
@@ -886,7 +949,7 @@ impl Formatter<'_> {
                     docs.push(self.ty(result));
                 }
                 docs.push(text(" "));
-                docs.push(self.block(&closure.body));
+                docs.push(self.value_block(&closure.body));
                 concat(docs)
             }
             ExprKind::Construct(name, value) => concat(vec![text(format!("{name}(")), self.expr(value), text(")")]),
@@ -1211,6 +1274,10 @@ mod tests {
                 "fn make(): impl Iterator[Int] + Send {\n    build()\n}\n",
             ),
             ("let inverse=- -value\nlet nested=value? ?\n", "let inverse = -(-value)\nlet nested = (value?)?\n"),
+            (
+                "let double=(n:Int):Int{n*2}\nlet larger=if a>b{a}else{b}\n",
+                "let double = (n: Int): Int { n * 2 }\nlet larger = if a > b { a } else { b }\n",
+            ),
         ];
         for (input, output) in pairs {
             assert_eq!(format(input), output, "formatting {input:?}");

@@ -303,3 +303,7 @@ records which expressions were written in parentheses, and the lexer
 records comments, which return before or after the unit they touch.
 Ranges stay tight (`0..count`), as every example of the specification
 writes them, and a string of several lines stays on the line of its `=`.
+A block that produces a value and holds only an expression (a closure
+body, a block used as a value, the branches of an `if` with `else`) stays
+on one line when it fits, so short lambdas and conditional values read as
+in Kotlin or Swift; function bodies and loops are always blocks.
