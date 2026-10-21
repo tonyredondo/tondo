@@ -15,6 +15,8 @@ pub struct Analysis {
     pub sources: SourceMap,
     pub diags: Diagnostics,
     pub program: Option<hir::Program>,
+    /// Who owns the diagnostics (22.3): the package or the single file.
+    pub source_id: String,
 }
 
 /// Reads, parses and checks a program: a project directory (toolchain 3)
@@ -22,12 +24,18 @@ pub struct Analysis {
 pub fn analyze(path: &Path) -> Result<Analysis, String> {
     let mut sources = SourceMap::default();
     let mut diags = Diagnostics::default();
+    let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
     let module = if path.is_dir() {
         let project = project::discover(path)?;
+        source_id = format!("pkg:{}", project.name);
         let mut modules: Vec<modules::ModuleSource> = Vec::new();
         let mut root = 0;
         for (index, file) in project.files.iter().enumerate() {
-            let Some(parsed) = parse(&file.path, &mut sources, &mut diags)? else { continue };
+            let parsed = parse(&file.path, &mut sources, &mut diags)?;
+            let logical = file.path.strip_prefix(path).unwrap_or(&file.path);
+            let logical = logical.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+            sources.set_identity(sources.len() - 1, logical, file.module.join("."));
+            let Some(parsed) = parsed else { continue };
             let position = match modules.iter().position(|m| m.path == file.module) {
                 Some(position) => position,
                 None => {
@@ -41,18 +49,20 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
             modules[position].files.push((parsed, index == project.root));
         }
         if diags.has_errors() {
-            return Ok(Analysis { sources, diags, program: None });
+            diags.sort(&sources);
+            return Ok(Analysis { sources, diags, program: None, source_id });
         }
         modules::link(modules, root, &mut diags)
     } else {
         match parse(path, &mut sources, &mut diags)? {
             Some(module) => module,
-            None => return Ok(Analysis { sources, diags, program: None }),
+            None => return Ok(Analysis { sources, diags, program: None, source_id }),
         }
     };
     let program = if diags.has_errors() { None } else { check::check(&module, &sources, &mut diags) };
     let program = program.and_then(|program| mono::monomorphize(program, &mut diags));
-    Ok(Analysis { sources, diags, program })
+    diags.sort(&sources);
+    Ok(Analysis { sources, diags, program, source_id })
 }
 
 /// Reads and parses one source file; `None` when it cannot be lexed.

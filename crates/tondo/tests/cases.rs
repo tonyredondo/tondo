@@ -155,3 +155,21 @@ fn run_all(mut paths: Vec<PathBuf>, name: &str) {
     });
     assert!(failures.is_empty(), "{} of {} cases failed:\n\n{}", failures.len(), paths.len(), failures.join("\n\n"));
 }
+
+#[test]
+fn json_diagnostics() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("json");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("unknown.to");
+    std::fs::write(&path, "fn main() {\n    missing()\n}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).arg("check").arg(&path).arg("--json").output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(!output.status.success());
+    let expected = concat!(
+        r#""severity":"error","code":"E1001","message":"unknown name `missing`","source_id":"root:unknown.to","#,
+        r#""module":"unknown","file":"unknown.to","#,
+        r#""range":{"start":{"byte":16,"line":1,"column":4},"end":{"byte":23,"line":1,"column":11}},"#,
+        r#""expected":null,"actual":null,"related":[],"fixes":[]}]"#
+    );
+    assert!(json.starts_with(r#"[{"id":"diag:"#) && json.trim_end().ends_with(expected), "{json}");
+}

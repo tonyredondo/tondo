@@ -24,12 +24,22 @@ impl Span {
 pub struct SourceFile {
     pub name: String,
     pub path: PathBuf,
+    /// The canonical logical path and module of the file (22.6).
+    pub logical: String,
+    pub module: String,
     pub text: String,
     pub base: u32,
     line_starts: Vec<u32>,
 }
 
 impl SourceFile {
+    /// Zero-based byte offset, line and column (in scalars) of a global
+    /// offset within the file.
+    pub fn position(&self, offset: u32) -> (u32, usize, usize) {
+        let (line, column) = self.line_col(offset);
+        (offset - self.base, line - 1, column - 1)
+    }
+
     /// One-based line and column (in characters) of a global offset.
     pub fn line_col(&self, offset: u32) -> (usize, usize) {
         let local = (offset - self.base) as usize;
@@ -61,8 +71,24 @@ impl SourceMap {
         let mut line_starts = vec![0];
         line_starts.extend(text.match_indices('\n').map(|(i, _)| i as u32 + 1));
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into());
-        self.files.push(SourceFile { name, path: path.to_owned(), text, base, line_starts });
+        let module = path.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into());
+        let logical = name.clone();
+        self.files.push(SourceFile { name, path: path.to_owned(), logical, module, text, base, line_starts });
         self.files.len() - 1
+    }
+
+    /// Sets where a file belongs within its package.
+    pub fn set_identity(&mut self, index: usize, logical: String, module: String) {
+        self.files[index].logical = logical;
+        self.files[index].module = module;
+    }
+
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
     }
 
     pub fn file(&self, index: usize) -> &SourceFile {

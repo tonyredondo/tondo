@@ -9,12 +9,12 @@ const USAGE: &str = "\
 usage:
   tondo run [<project>|<file.to>] [-- <argument>...]   compile and run a program
   tondo build [<project>|<file.to>] [--output <path>]  compile a native executable
-  tondo check [<project>|<file.to>]                    report diagnostics only
+  tondo check [<project>|<file.to>] [--json]           report diagnostics only (as JSON)
   tondo <file.to> [<argument>...]                      run a script (for #! lines)
   tondo version
 
-A project is a directory with src/main.to, or with main.to or tondo.toml;
-the current directory when none is given.";
+A project is a directory with src/main.to, or with main.to or tondo.toml,
+given as <project> or with --project <dir>; the current directory by default.";
 
 /// Exit status for usage and toolchain failures (distinct from program errors).
 const TOOL_FAILURE: u8 = 3;
@@ -48,8 +48,9 @@ fn main() -> ExitCode {
 
 /// The program to compile, and the arguments after it.
 fn source_argument(args: &[OsString]) -> (PathBuf, &[OsString]) {
-    match args.first() {
-        Some(path) if path != "--" && !path.to_string_lossy().starts_with('-') => (PathBuf::from(path), &args[1..]),
+    match args {
+        [flag, dir, rest @ ..] if flag == "--project" => (PathBuf::from(dir), rest),
+        [path, rest @ ..] if path != "--" && !path.to_string_lossy().starts_with('-') => (PathBuf::from(path), rest),
         _ => (PathBuf::from("."), args),
     }
 }
@@ -73,8 +74,15 @@ fn analyze(path: &Path) -> Result<Option<driver::Analysis>, String> {
 
 fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (path, rest) = source_argument(args);
-    if !rest.is_empty() {
-        return Err(format!("unexpected arguments\n{USAGE}"));
+    let json = match rest {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => return Err(format!("unexpected arguments\n{USAGE}")),
+    };
+    if json {
+        let analysis = driver::analyze(&path)?;
+        print!("{}", analysis.diags.render_json(&analysis.sources, &analysis.source_id));
+        return Ok(if analysis.program.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
     }
     Ok(if analyze(&path)?.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }

@@ -286,3 +286,11 @@ cycles with their path (`E1006`); the checker knows the module of each
 declaration and of the code it checks, for `priv` fields, private
 operations, public APIs that expose private types (`E1503`) and coherence.
 Imports of `std` modules are shared by the files of a program for now.
+
+## 2026-10-21 — JSON diagnostics without structured types yet
+
+`tondo check --json` prints the diagnostics in the form of 22.3, ordered as
+22.6, with SHA-256 ids. `source_id` is `pkg:<name>` for a project and
+`root:<file>` for a single file. `expected`, `actual`, `related` and `fixes`
+are `null` or empty until the checker records them as data; the messages
+already state the fix in words.
