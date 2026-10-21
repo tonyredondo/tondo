@@ -1,0 +1,25 @@
+type Cursor = { n: Int }
+type Plain = { n: Int }
+
+impl Iterator[Int] for Cursor {
+    fn next(mut self): Int? {
+        none
+    }
+}
+
+impl Iterator[String] for Cursor {
+    fn next(mut self): String? {
+        none
+    }
+}
+
+fn main() {
+    for item in (Plain { n: 1 }) {
+    }
+    for some(x) in (Cursor { n: 1 }) {
+    }
+}
+
+// expect-error: E1113 `Cursor` already implements `Iterator`; a type yields one element type
+// expect-error: E1206 `Plain` cannot be iterated: implement `Iterator[T]` for it
+// expect-error: E1202 `some(...)` cannot match a value of type `Int`

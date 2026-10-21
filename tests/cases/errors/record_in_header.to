@@ -1,0 +1,9 @@
+type Point = { x: Int }
+
+fn main() {
+    match Point { x: 1 } {
+        _ => {}
+    }
+}
+
+// expect-error: E0004 a record literal in a header needs parentheses: `(Type { field: value })`

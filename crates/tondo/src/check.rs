@@ -9,7 +9,8 @@ use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
 use crate::types::{
-    AdtId, AdtKind, ClosureInfo, ERR, Field, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty, TyKind, Types, Variant,
+    AdtId, AdtKind, ClosureInfo, CursorKind, ERR, Field, IntTy, NONE, OK, Payload, SOME, TemplateId, Ty, TyKind, Types,
+    Variant,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -30,6 +31,7 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         impls: Vec::new(),
         bounds: HashMap::new(),
         call_bounds: HashMap::new(),
+        cursor_templates: HashMap::new(),
         closure_base: 0,
         closure_functions: Vec::new(),
         fn_scopes: Vec::new(),
@@ -160,6 +162,10 @@ impl CallTarget {
 
 /// The prelude trait used by interpolation (19.6).
 const DISPLAY: TraitId = TraitId(0);
+/// The prelude trait `for` consumes (10.17).
+const ITERATOR: TraitId = TraitId(1);
+/// User traits are numbered after the prelude's.
+const PRELUDE_TRAITS: u32 = 2;
 
 /// A trait declaration (12.3). Its methods' signatures are generic over
 /// `Self`, the trait's parameters and their own.
@@ -178,6 +184,7 @@ struct TraitMethod {
 
 /// An implementation (12.4); its methods are generic over the binders.
 struct ImplDef {
+    intrinsic: bool,
     trait_id: TraitId,
     trait_args: Vec<Ty>,
     target: Ty,
@@ -242,6 +249,9 @@ struct Checker<'a> {
     /// The call protocol bounding a type parameter (11.8): whether it may
     /// change its captures (`CallMut`/`CallOnce`), and its `fn(...)` type.
     call_bounds: HashMap<Ty, (bool, Ty)>,
+    /// The cursor types of maps and sets, by what they yield and whether
+    /// they belong to a set.
+    cursor_templates: HashMap<(CursorKind, bool), TemplateId>,
     /// The `FnId` of the first closure body; closures are numbered after
     /// every declared function.
     closure_base: u32,
@@ -382,6 +392,7 @@ impl Checker<'_> {
             .impls
             .iter()
             .map(|i| hir::ImplInfo {
+                intrinsic: i.intrinsic,
                 trait_id: i.trait_id,
                 trait_args: i.trait_args.clone(),
                 target: i.target,
@@ -415,6 +426,66 @@ impl Checker<'_> {
         self.traits.push(TraitDef { name: "Display".into(), self_param, params: Vec::new(), methods: vec![display] });
         self.trait_names.insert("Display".into(), DISPLAY);
         self.bounds.insert(self_param, vec![(DISPLAY, Vec::new())]);
+        // `trait Iterator[T] { fn next(mut self): T? }` (10.17).
+        let self_param = self.types.declare_param("Self".into());
+        let element = self.types.declare_param("T".into());
+        let signature = Signature {
+            params: vec![self_param],
+            names: vec!["self".into()],
+            receiver: Some(ast::Mode::Mut),
+            variadic: false,
+            result: self.types.intern(TyKind::Option(element)),
+            generics: vec![self_param, element],
+            name: "Iterator.next".into(),
+        };
+        let next = TraitMethod { name: "next".into(), signature, default: None };
+        self.traits.push(TraitDef { name: "Iterator".into(), self_param, params: vec![element], methods: vec![next] });
+        self.trait_names.insert("Iterator".into(), ITERATOR);
+        self.bounds.insert(self_param, vec![(ITERATOR, vec![element])]);
+        // The cursors of maps and sets: a collection and a position.
+        for (kind, set) in [
+            (CursorKind::Entries, false),
+            (CursorKind::Keys, false),
+            (CursorKind::Values, false),
+            (CursorKind::Values, true),
+        ] {
+            let key = self.types.declare_param("K".into());
+            self.types.param_mut(key).key = true;
+            let value = self.types.declare_param("V".into());
+            let (params, collection) = if set {
+                (vec![key], self.types.intern(TyKind::Set(key)))
+            } else {
+                (vec![key, value], self.map_type(key, value))
+            };
+            let name = match (kind, set) {
+                (_, true) => "SetValues",
+                (CursorKind::Entries, _) => "MapEntries",
+                (CursorKind::Keys, _) => "MapKeys",
+                (CursorKind::Values, _) => "MapValues",
+            };
+            let template = self.types.declare_template(name.into(), params.clone());
+            let fields = vec![
+                Field { name: "collection".into(), ty: collection },
+                Field { name: "position".into(), ty: Ty::INT },
+            ];
+            self.types.define_template(template, AdtKind::Record(fields));
+            self.types.declare_cursor(template, kind);
+            let element = match (kind, set) {
+                (CursorKind::Entries, false) => self.types.intern(TyKind::Tuple(vec![key, value])),
+                (CursorKind::Values, false) => value,
+                _ => key,
+            };
+            let target = self.types.instantiate(template, params.clone());
+            self.impls.push(ImplDef {
+                intrinsic: true,
+                trait_id: ITERATOR,
+                trait_args: vec![element],
+                target,
+                generics: params,
+                methods: vec![None],
+            });
+            self.cursor_templates.insert((kind, set), template);
+        }
         let (id, ty) = self.types.declare_adt("NumericConversionError".into());
         let variants = ["OutOfRange", "NotFinite", "NotIntegral"]
             .map(|name| Variant { name: name.into(), payload: Payload::Unit })
@@ -878,7 +949,7 @@ impl Checker<'_> {
             self.trait_names.insert(name.name.clone(), id);
         }
         for (index, decl) in traits.iter().enumerate() {
-            let id = TraitId(index as u32 + 1);
+            let id = TraitId(index as u32 + PRELUDE_TRAITS);
             let (self_param, params) =
                 (self.traits[id.0 as usize].self_param, self.traits[id.0 as usize].params.clone());
             self.enter_generics(&decl.generics, &params);
@@ -896,7 +967,7 @@ impl Checker<'_> {
     /// The signatures of each trait's methods, and the bodies of defaults.
     fn trait_methods<'d>(&mut self, traits: &[&'d ast::TraitDecl], bodies: &mut Vec<&'d ast::FnDecl>) {
         for (index, decl) in traits.iter().enumerate() {
-            let id = TraitId(index as u32 + 1);
+            let id = TraitId(index as u32 + PRELUDE_TRAITS);
             let def = &self.traits[id.0 as usize];
             let mut types = vec![("Self".to_string(), def.self_param)];
             types.extend(decl.generics.iter().map(|g| g.name.name.clone()).zip(def.params.iter().copied()));
@@ -985,6 +1056,20 @@ impl Checker<'_> {
                 self.diags.error("E1114", generic.name.span, message);
             }
         }
+        // A type has at most one `Iterator`, whatever it yields (10.17).
+        if trait_id == ITERATOR {
+            let earlier: Vec<(Ty, Vec<Ty>)> =
+                self.impls.iter().filter(|i| i.trait_id == ITERATOR).map(|i| (i.target, i.generics.clone())).collect();
+            for (other, generics) in earlier {
+                let vars: Vec<Ty> = binders.iter().chain(&generics).copied().collect();
+                if self.types.unify_both(target, other, &vars, &mut HashMap::new()) {
+                    let message =
+                        format!("`{target_name}` already implements `Iterator`; a type yields one element type");
+                    self.diags.error("E1113", decl.span, message);
+                    return;
+                }
+            }
+        }
         let earlier: Vec<(Vec<Ty>, Ty, Vec<Ty>)> = self
             .impls
             .iter()
@@ -1045,7 +1130,7 @@ impl Checker<'_> {
                 self.diags.error("E1114", decl.span, message);
             }
         }
-        self.impls.push(ImplDef { trait_id, trait_args, target, generics: binders, methods });
+        self.impls.push(ImplDef { intrinsic: false, trait_id, trait_args, target, generics: binders, methods });
     }
 
     /// How an implementation's method differs from the trait's, if at all.
@@ -1164,6 +1249,50 @@ impl Checker<'_> {
             }
         }
         None
+    }
+
+    /// Infers parameters that only appear in trait bounds of others, such
+    /// as `T` in `I: Iterator[T]`, from the implementation of the type
+    /// inferred for the bounded parameter when only one can apply.
+    fn infer_from_bounds(&mut self, inference: &mut Inference) {
+        for var in inference.vars.clone() {
+            let Some(&actual) = inference.map.get(&var) else { continue };
+            for (trait_id, args) in self.bounds.get(&var).cloned().unwrap_or_default() {
+                if args.iter().all(|&a| self.inferred(inference, a).is_some()) {
+                    continue;
+                }
+                let found: Vec<Vec<Ty>> = if self.types.param(actual).is_some() {
+                    self.bounds
+                        .get(&actual)
+                        .into_iter()
+                        .flatten()
+                        .filter(|(t, _)| *t == trait_id)
+                        .map(|(_, a)| a.clone())
+                        .collect()
+                } else {
+                    let candidates: Vec<(Ty, Vec<Ty>, Vec<Ty>)> = self
+                        .impls
+                        .iter()
+                        .filter(|i| i.trait_id == trait_id)
+                        .map(|i| (i.target, i.trait_args.clone(), i.generics.clone()))
+                        .collect();
+                    candidates
+                        .into_iter()
+                        .filter_map(|(target, trait_args, generics)| {
+                            let mut map = HashMap::new();
+                            self.types
+                                .matches(target, actual, &generics, &mut map)
+                                .then(|| trait_args.iter().map(|&a| self.types.subst(a, &map)).collect())
+                        })
+                        .collect()
+                };
+                if let [values] = found.as_slice() {
+                    for (&arg, &value) in args.iter().zip(values) {
+                        self.unify(inference, arg, value);
+                    }
+                }
+            }
+        }
     }
 
     /// What a closure passed for the type parameter `ty` with a call bound
@@ -2157,11 +2286,17 @@ impl Checker<'_> {
                         // A map yields its entries as `(key, value)` (10.13).
                         TyKind::Map(key, value) => self.types.intern(TyKind::Tuple(vec![key, value])),
                         TyKind::Error => Ty::ERROR,
-                        _ => {
-                            let message = format!("{} cannot be iterated", self.display(source.ty));
-                            self.diags.error("E1206", source.span, message);
-                            return None;
-                        }
+                        _ => match self.iterator_element(source.ty) {
+                            Some(element) => return Some(self.for_cursor(cx, pattern, source, element, body)),
+                            None => {
+                                let message = format!(
+                                    "{} cannot be iterated: implement `Iterator[T]` for it, or iterate a collection",
+                                    self.display(source.ty)
+                                );
+                                self.diags.error("E1206", source.span, message);
+                                return None;
+                            }
+                        },
                     };
                     cx.scopes.push(Vec::new());
                     let pattern =
@@ -3578,6 +3713,26 @@ impl Checker<'_> {
             TyKind::Error => return Self::error_expr(span),
             _ => return self.no_method(ty, method, span),
         };
+        if let Some(cursor) = match (method.name.as_str(), &kind) {
+            ("entries", TyKind::Map(..)) => Some(CursorKind::Entries),
+            ("keys", TyKind::Map(..)) => Some(CursorKind::Keys),
+            ("values", TyKind::Map(..) | TyKind::Set(_)) => Some(CursorKind::Values),
+            _ => None,
+        } {
+            // A lazy cursor over the collection, in insertion order (10.2.3).
+            if !args.is_empty() {
+                return self.arity_error(span, 0, args.len());
+            }
+            let (set, args) = match kind {
+                TyKind::Set(element) => (true, vec![element]),
+                TyKind::Map(key, value) => (false, vec![key, value]),
+                _ => unreachable!("a map or set"),
+            };
+            let template = self.cursor_templates[&(cursor, set)];
+            let cursor = self.types.instantiate(template, args);
+            let start = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);
+            return Self::mk(hir::ExprKind::Record(vec![(0, value), (1, start)]), cursor, span);
+        }
         match method.name.as_str() {
             "length" | "isEmpty" => {
                 if !args.is_empty() {
@@ -3845,6 +4000,68 @@ impl Checker<'_> {
         let target =
             CallTarget { prebound, ..CallTarget::new(Callee::Trait(trait_id, index as u32), signature, expected) };
         self.call_signature(cx, target, None, args, span)
+    }
+
+    /// The `for` loop over a cursor of type `ty` yielding `element` (10.17):
+    /// the loop owns a copy and calls `Iterator.next` until `none`.
+    fn for_cursor(
+        &mut self,
+        cx: &mut FnCx,
+        pattern: &ast::Pattern,
+        source: hir::Expr,
+        element: Ty,
+        body: &ast::Block,
+    ) -> hir::Stmt {
+        let (ty, span) = (source.ty, source.span);
+        let cursor = self.hidden_local(cx, ty);
+        cx.mutable[cursor.0 as usize] = true;
+        let option = self.types.intern(TyKind::Option(element));
+        let loan = Self::mk(hir::ExprKind::Loan(hir::Place { local: cursor, path: Vec::new() }), ty, span);
+        let next =
+            Self::mk(hir::ExprKind::Call(Callee::Trait(ITERATOR, 0), vec![ty, element], vec![loan]), option, span);
+        cx.scopes.push(Vec::new());
+        let pattern = self.pattern(cx, pattern, element, PatternContext { in_match: false, mutable: false });
+        if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
+            let message = format!("this pattern can fail, for example on `{missing}`");
+            self.diags.error("E1201", pattern.span, message);
+        }
+        cx.loops.push(false);
+        let body = self.block(cx, body, Some(Ty::UNIT));
+        cx.loops.pop();
+        cx.scopes.pop();
+        let pattern_span = pattern.span;
+        let some = hir::Pattern { kind: hir::PatKind::Variant(SOME, vec![pattern]), ty: option, span: pattern_span };
+        let none = hir::Pattern { kind: hir::PatKind::Variant(NONE, Vec::new()), ty: option, span: pattern_span };
+        let stop = hir::Block { stmts: vec![hir::Stmt::Break], tail: None, ty: Ty::NEVER };
+        let arms = vec![
+            hir::Arm { pattern: some, guard: None, body: Self::mk(hir::ExprKind::Block(body), Ty::UNIT, span) },
+            hir::Arm { pattern: none, guard: None, body: Self::mk(hir::ExprKind::Block(stop), Ty::NEVER, span) },
+        ];
+        let step = Self::mk(hir::ExprKind::Match(Box::new(next), arms), Ty::UNIT, span);
+        let body = hir::Block { stmts: vec![hir::Stmt::Expr(step)], tail: None, ty: Ty::UNIT };
+        let stmts = vec![hir::Stmt::Let(cursor, source), hir::Stmt::Loop { condition: None, body }];
+        hir::Stmt::Expr(Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }), Ty::UNIT, span))
+    }
+
+    /// The element type of a cursor: a type implementing `Iterator[T]` or a
+    /// type parameter bound by it.
+    fn iterator_element(&mut self, ty: Ty) -> Option<Ty> {
+        if self.types.param(ty).is_some() {
+            return self.bounds.get(&ty)?.iter().find(|(t, _)| *t == ITERATOR).map(|(_, args)| args[0]);
+        }
+        let candidates: Vec<(Ty, Ty, Vec<Ty>)> = self
+            .impls
+            .iter()
+            .filter(|i| i.trait_id == ITERATOR)
+            .map(|i| (i.target, i.trait_args[0], i.generics.clone()))
+            .collect();
+        for (target, element, generics) in candidates {
+            let mut map = HashMap::new();
+            if self.types.matches(target, ty, &generics, &mut map) {
+                return Some(self.types.subst(element, &map));
+            }
+        }
+        None
     }
 
     /// A method that changes a collection's extent or contents; the
@@ -4547,6 +4764,7 @@ impl Checker<'_> {
         if let Some(expected) = expected {
             self.unify(&mut inference, signature.result, expected);
         }
+        self.infer_from_bounds(&mut inference);
         let unknown: Vec<String> = signature
             .generics
             .iter()

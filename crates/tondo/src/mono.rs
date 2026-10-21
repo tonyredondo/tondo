@@ -8,7 +8,7 @@ use crate::hir::{
     Block, Callee, Expr, ExprKind, FnId, Function, ImplInfo, PatKind, Pattern, Place, PlaceStep, Program, Segment,
     Stmt, TraitId, TraitInfo,
 };
-use crate::types::{Ty, TyKind, Types};
+use crate::types::{CursorKind, Ty, TyKind, Types};
 use std::collections::{HashMap, VecDeque};
 
 /// Instantiation depth beyond which a generic function is considered to
@@ -48,6 +48,15 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
 
 /// The trait whose method interpolation uses (see the checker).
 const DISPLAY: TraitId = TraitId(0);
+
+/// What a trait method of a concrete `Self` is.
+enum Resolved {
+    Fn(FnId, Vec<Ty>),
+    /// The intrinsic `Display` of a built-in value.
+    Display,
+    /// `next` of an intrinsic cursor.
+    Cursor(CursorKind),
+}
 
 /// The place a value expression reads, if it reads one.
 fn place_of(value: Expr) -> Option<Place> {
@@ -256,7 +265,7 @@ impl Mono<'_> {
                     self.expr(part, map);
                 }
             }
-            ExprKind::Loan(place) => self.place(place, map),
+            ExprKind::Loan(place) | ExprKind::CursorNext(place, _) => self.place(place, map),
             ExprKind::Mutate(_, place, values) => {
                 self.place(place, map);
                 self.exprs(values, map);
@@ -274,12 +283,18 @@ impl Mono<'_> {
                 match *callee {
                     Callee::Fn(id) => *callee = Callee::Fn(self.instance(id, types)),
                     Callee::Trait(trait_id, method) => match self.resolve(trait_id, method, &types) {
-                        Some((id, types)) => *callee = Callee::Fn(self.instance(id, types)),
+                        Resolved::Fn(id, types) => *callee = Callee::Fn(self.instance(id, types)),
                         // A built-in value displays itself.
-                        None => {
+                        Resolved::Display => {
                             let value = args.pop().expect("`display` has a receiver");
                             self.collect_display(value.ty);
                             e.kind = ExprKind::Interpolate(vec![Segment::Value(value)]);
+                        }
+                        Resolved::Cursor(kind) => {
+                            let Some(Expr { kind: ExprKind::Loan(place), .. }) = args.pop() else {
+                                unreachable!("`next` borrows its cursor")
+                            };
+                            e.kind = ExprKind::CursorNext(place, kind);
                         }
                     },
                     Callee::Std(_) => {}
@@ -336,12 +351,12 @@ impl Mono<'_> {
     /// The function and type arguments of a trait method for a concrete
     /// `Self` (the first of `types`); `None` for the intrinsic `Display` of
     /// built-in values. The checker guarantees an implementation exists.
-    fn resolve(&mut self, trait_id: TraitId, method: u32, types: &[Ty]) -> Option<(FnId, Vec<Ty>)> {
+    fn resolve(&mut self, trait_id: TraitId, method: u32, types: &[Ty]) -> Resolved {
         let self_ty = types[0];
         let count = self.traits[trait_id.0 as usize].param_count;
         let (trait_args, own) = types[1..].split_at(count);
         if trait_id == DISPLAY && !matches!(self.types.kind(self_ty), TyKind::Adt(_)) {
-            return None;
+            return Resolved::Display;
         }
         for implementation in self.impls.iter().filter(|i| i.trait_id == trait_id) {
             let mut map = HashMap::new();
@@ -354,16 +369,19 @@ impl Mono<'_> {
             if !matched {
                 continue;
             }
-            return Some(match implementation.methods[method as usize] {
+            if implementation.intrinsic {
+                return Resolved::Cursor(self.types.cursor(self_ty).expect("an intrinsic cursor"));
+            }
+            return match implementation.methods[method as usize] {
                 Some(id) => {
                     let binders = implementation.generics.iter().map(|g| map[g]);
-                    (id, binders.chain(own.iter().copied()).collect())
+                    Resolved::Fn(id, binders.chain(own.iter().copied()).collect())
                 }
                 None => {
                     let default = self.traits[trait_id.0 as usize].defaults[method as usize];
-                    (default.expect("a method without implementation has a default"), types.to_vec())
+                    Resolved::Fn(default.expect("a method without implementation has a default"), types.to_vec())
                 }
-            });
+            };
         }
         panic!("no implementation of trait {} for {}", trait_id.0, self.types.display(self_ty));
     }
@@ -376,7 +394,7 @@ impl Mono<'_> {
             TyKind::Map(key, value) => vec![key, value],
             TyKind::Adt(_) => {
                 if !self.display.contains_key(&ty)
-                    && let Some((id, types)) = self.resolve(DISPLAY, 0, &[ty])
+                    && let Resolved::Fn(id, types) = self.resolve(DISPLAY, 0, &[ty])
                 {
                     let instance = self.instance(id, types);
                     self.display.insert(ty, instance);

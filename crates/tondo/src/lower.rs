@@ -16,7 +16,7 @@ use crate::ast::BinOp;
 use crate::hir::{self, LocalId};
 use crate::mir::*;
 use crate::source::Span;
-use crate::types::{ERR, NONE, OK, SOME, Ty, TyKind, Types};
+use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
 
 pub fn lower(program: &hir::Program) -> Vec<Body> {
     program.functions.iter().map(|f| lower_function(&program.types, f)).collect()
@@ -443,6 +443,40 @@ impl Builder<'_> {
             return Operand::local(result);
         }
         self.variant(to, index(from), vec![error], span)
+    }
+
+    /// `next` of an intrinsic cursor (10.17): `some` of the entry, key or
+    /// value at its position, which then advances, or `none` at the end.
+    fn cursor_next(&mut self, cursor: &hir::Place, kind: CursorKind, e: &hir::Expr) -> Operand {
+        let cursor = self.place(cursor.local, &cursor.path);
+        let (collection, position) = (cursor.field(0), cursor.field(1));
+        let length = self.temp(Ty::INT, Rvalue::Length(Operand::Copy(collection.clone())), e.span);
+        let more = Rvalue::Binary(BinOp::Lt, Operand::Copy(position.clone()), length);
+        let more = self.temp(Ty::BOOL, more, e.span);
+        let result = self.new_local(e.ty);
+        let (found, done, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.terminate(Terminator::Branch(more, found, done));
+        self.switch_to(found);
+        let index = self.new_local(Ty::INT);
+        self.assign(Place::local(index), Rvalue::Use(Operand::Copy(position.clone())), e.span);
+        let element = collection.index(index, e.span);
+        let is_map = matches!(self.types.kind(self.place_ty(&collection)), TyKind::Map(..));
+        let value = match (kind, is_map) {
+            (CursorKind::Keys, true) => element.field(0),
+            (CursorKind::Values, true) => element.field(1),
+            _ => element,
+        };
+        let some = self.variant(e.ty, SOME, vec![Operand::Copy(value)], e.span);
+        self.store(Place::local(result), some, e.span);
+        self.assign(position.clone(), Rvalue::Increment(Operand::Copy(position)), e.span);
+        self.goto(join);
+        self.switch_to(done);
+        let none = self.variant(e.ty, NONE, Vec::new(), e.span);
+        self.store(Place::local(result), none, e.span);
+        self.goto(join);
+        self.switch_to(join);
+        self.own(result);
+        Operand::local(result)
     }
 
     /// Returns `value`, as `ok(value)` from a fallible function.
@@ -905,6 +939,7 @@ impl Builder<'_> {
                 Operand::Copy(place.variant_field(success, 0))
             }
             hir::ExprKind::FnValue(id, _) => self.temp(e.ty, Rvalue::FnValue(*id), e.span),
+            hir::ExprKind::CursorNext(cursor, kind) => self.cursor_next(cursor, *kind, e),
             hir::ExprKind::CallValue(callee, args) => {
                 let callee = self.expr(callee);
                 let args = args.iter().map(|a| self.expr(a)).collect();

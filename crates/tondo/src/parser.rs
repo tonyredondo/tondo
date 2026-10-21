@@ -727,7 +727,21 @@ impl Parser<'_> {
             self.expression().map(ForHeader::Condition)
         };
         self.no_brace = no_brace;
-        Ok(StmtKind::For { header: header?, body: self.block()? })
+        let header = header?;
+        if let ForHeader::In { source, .. } | ForHeader::Condition(source) = &header {
+            self.record_in_header(source)?;
+        }
+        Ok(StmtKind::For { header, body: self.block()? })
+    }
+
+    /// A record literal cannot follow a header expression directly, since
+    /// its `{` would open the body (23.27); suggests the parentheses.
+    fn record_in_header(&mut self, header: &Expr) -> PResult<()> {
+        let path = matches!(header.kind, ExprKind::Path(_) | ExprKind::Generic { .. });
+        if path && self.at(&Tok::LBrace) && matches!(self.nth(1), Tok::Ident(_)) && self.nth(2) == &Tok::Colon {
+            return self.error("a record literal in a header needs parentheses: `(Type { field: value })`");
+        }
+        Ok(())
     }
 
     // ---- expressions -----------------------------------------------------
@@ -758,7 +772,9 @@ impl Parser<'_> {
         let no_brace = std::mem::replace(&mut self.no_brace, true);
         let scrutinee = self.expression();
         self.no_brace = no_brace;
-        let scrutinee = Box::new(scrutinee?);
+        let scrutinee = scrutinee?;
+        self.record_in_header(&scrutinee)?;
+        let scrutinee = Box::new(scrutinee);
         let no_brace = std::mem::replace(&mut self.no_brace, false);
         let arms = self.match_arms();
         self.no_brace = no_brace;
@@ -975,7 +991,9 @@ impl Parser<'_> {
         let no_brace = std::mem::replace(&mut self.no_brace, true);
         let condition = self.expression();
         self.no_brace = no_brace;
-        let condition = Box::new(condition?);
+        let condition = condition?;
+        self.record_in_header(&condition)?;
+        let condition = Box::new(condition);
         let then = self.block()?;
         let otherwise = if self.eat_kw(Kw::Else) {
             if self.at_kw(Kw::If) {

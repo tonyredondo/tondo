@@ -1,0 +1,82 @@
+import std.console
+
+type Countdown = { from: Int }
+
+impl Iterator[Int] for Countdown {
+    fn next(mut self): Int? {
+        if self.from == 0 {
+            return none
+        }
+        self.from -= 1
+        some(self.from + 1)
+    }
+}
+
+type Words = { text: Array[String], index: Int }
+
+impl Iterator[(Int, String)] for Words {
+    fn next(mut self): (Int, String)? {
+        let word = self.text.get(self.index)?
+        self.index += 1
+        some((self.index, word))
+    }
+}
+
+fn collect[T, I: Iterator[T]](cursor: I): Array[T] {
+    var out: Array[T] = []
+    for item in cursor {
+        out.push(item)
+    }
+    out
+}
+
+fn sum[I: Iterator[Int]](cursor: I): Int {
+    var total = 0
+    var source = cursor
+    for {
+        match source.next() {
+            some(n) => {
+                total += n
+            }
+            none => {
+                break
+            }
+        }
+    }
+    total
+}
+
+fn main() {
+    var countdown = Countdown { from: 3 }
+    for n in countdown {
+        console.print("{n} ")
+    }
+    console.println("| {countdown.from}")
+    for (position, word) in (Words { text: ["a", "b"], index: 0 }) {
+        console.print("{position}:{word} ")
+    }
+    console.println("")
+    console.println("{collect(Countdown { from: 4 })} {sum(Countdown { from: 4 })}")
+    let ages = ["ana": 32, "leo": 28]
+    console.println("{collect(ages.entries()).length()} {collect(ages.keys())} {collect(ages.values())}")
+    var keys = ages.keys()
+    let first = Iterator.next(mut keys)
+    let second = Iterator.next(mut keys)
+    let third = Iterator.next(mut keys)
+    console.println("{first == some("ana")} {second == some("leo")} {third == none}")
+    for (name, age) in ages.entries() {
+        if age > 30 {
+            console.println("{name} {age}")
+        }
+    }
+    let tags = Set["x", "y"]
+    console.println("{collect(tags.values())}")
+}
+
+// expect-stdout: 3 2 1 | 3
+// expect-stdout: 1:a 2:b 
+// expect-stdout: [4, 3, 2, 1] 10
+// expect-stdout: 2 [ana, leo] [32, 28]
+// expect-stdout: true true true
+// expect-stdout: ana 32
+// expect-stdout: [x, y]

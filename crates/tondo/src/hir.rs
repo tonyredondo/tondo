@@ -2,7 +2,7 @@
 
 use crate::ast::{BinOp, UnaryOp};
 use crate::source::Span;
-use crate::types::{Ty, Types};
+use crate::types::{CursorKind, Ty, Types};
 use std::collections::HashMap;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -37,6 +37,8 @@ pub struct TraitInfo {
 /// An implementation of a trait for a target (12.4). Its methods are
 /// generic over the binders, then their own parameters.
 pub struct ImplInfo {
+    /// Implemented by the compiler: an intrinsic cursor's `Iterator`.
+    pub intrinsic: bool,
     pub trait_id: TraitId,
     pub trait_args: Vec<Ty>,
     pub target: Ty,
@@ -192,6 +194,9 @@ pub enum ExprKind {
     CallValue(Box<Expr>, Vec<Expr>),
     /// A closure made into a `fn(...)` value; the `FnId` is its body.
     Erase(Box<Expr>, FnId),
+    /// `Iterator.next` of the intrinsic cursor at the place: the next entry,
+    /// key or value of its map or set, or `none`.
+    CursorNext(Place, CursorKind),
     Unary(UnaryOp, Box<Expr>),
     /// Arithmetic, bitwise and comparison operators; `and`/`or` short-circuit.
     Binary(BinOp, Box<Expr>, Box<Expr>),

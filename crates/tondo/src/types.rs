@@ -162,6 +162,15 @@ pub struct ClosureInfo {
     pub mutates: bool,
 }
 
+/// What an intrinsic cursor of a map or set yields (10.17): such cursors
+/// implement `Iterator` without source.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CursorKind {
+    Entries,
+    Keys,
+    Values,
+}
+
 /// A type parameter and the closed capabilities its bounds grant.
 pub struct ParamDef {
     pub name: String,
@@ -216,6 +225,7 @@ pub struct Types {
     /// Instances created before their template was defined.
     pending: Vec<AdtId>,
     closures: HashMap<TemplateId, ClosureInfo>,
+    cursors: HashMap<TemplateId, CursorKind>,
     /// Set when an instantiation nests without bound, such as a type whose
     /// field is the same type applied to a larger argument.
     pub runaway: Option<String>,
@@ -255,6 +265,7 @@ impl Default for Types {
             instances: HashMap::new(),
             pending: Vec::new(),
             closures: HashMap::new(),
+            cursors: HashMap::new(),
             runaway: None,
             reaches: RefCell::default(),
             needs_drop: RefCell::default(),
@@ -383,6 +394,15 @@ impl Types {
                 _ => self.pending.push(adt),
             }
         }
+    }
+
+    pub fn declare_cursor(&mut self, template: TemplateId, kind: CursorKind) {
+        self.cursors.insert(template, kind);
+    }
+
+    /// What the intrinsic cursor of type `ty` yields, if it is one.
+    pub fn cursor(&self, ty: Ty) -> Option<CursorKind> {
+        self.cursors.get(&self.instance_of(ty)?.0).copied()
     }
 
     pub fn declare_closure(&mut self, template: TemplateId, info: ClosureInfo) {
