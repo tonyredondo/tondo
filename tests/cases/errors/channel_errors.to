@@ -1,0 +1,25 @@
+fn produce(numbers: Sender[Int]) {
+    numbers.send(1)
+}
+
+fn main() {
+    let (sender, receiver) = channel[Int](4)
+    produce(sender)
+    sender.send(2)
+    let untyped = channel(4)
+    receiver.send(1)
+    let (texts, lines) = channel[String]()
+    texts.send(5)
+    let labeled = channel[Int](label: 3)
+}
+
+fn shadow() {
+    let channel = 3
+}
+
+// expect-error: E1401 `sender` was moved before this use, since its type `Sender[Int]` is not `Copy`; use it before passing it on, or pass `sender.copy()` to keep sending here
+// expect-error: E1101 `channel` needs the type of its values
+// expect-error: E1001 `Receiver[Int]` has no method `send`
+// expect-error: E1102 expected `String`, found `Int`
+// expect-error: E1102 `channel` takes its capacity
+// expect-error: E1005 `channel` is a reserved intrinsic name

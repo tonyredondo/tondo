@@ -7,7 +7,7 @@
 //! first task. More workers start, one per core, when the program first
 //! spawns a task.
 
-use super::{Glue, LIVE_OBJECTS, flush_stdout, runtime_fault};
+use super::{Glue, LIVE_OBJECTS, Str, flush_stdout, runtime_fault, tondo_rt_panic};
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::io::Write;
@@ -320,6 +320,13 @@ fn work(main: bool) -> i32 {
 }
 
 fn deadlock() -> ! {
+    // Several idle workers may see it at once; one reports it.
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    if REPORTED.swap(true, Ordering::SeqCst) {
+        loop {
+            std::thread::park();
+        }
+    }
     flush_stdout();
     let _ = writeln!(std::io::stderr(), "panic[P0013]: deadlock: every task is waiting");
     std::process::exit(super::PANIC_EXIT_CODE)
@@ -592,6 +599,9 @@ pub unsafe extern "C" fn tondo_rt_handle_retain(handle: *mut u8) {
 /// (11.11) and frees its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_join_release(join: *mut JoinObject) {
+    if join.is_null() {
+        return;
+    }
     unsafe {
         if (*join).rc.fetch_sub(1, Ordering::Release) != 1 {
             return;
@@ -792,6 +802,9 @@ pub unsafe extern "C" fn tondo_rt_group_take(group: *mut GroupObject, index: i64
 /// and frees their results.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_group_release(group: *mut GroupObject) {
+    if group.is_null() {
+        return;
+    }
     unsafe {
         if (*group).rc.fetch_sub(1, Ordering::Release) != 1 {
             return;
@@ -803,6 +816,283 @@ pub unsafe extern "C" fn tondo_rt_group_release(group: *mut GroupObject) {
             free_join((&(*group).joins)[index]);
         }
         drop(Box::from_raw(group));
+        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Channels
+// ---------------------------------------------------------------------------
+
+/// A task waiting on a channel, on its own stack: the value it sends, or
+/// where the value it receives goes, and how the wait ended.
+struct Waiter {
+    task: *mut Task,
+    value: *mut u8,
+    state: u8,
+}
+
+const WAITING: u8 = 0;
+const MOVED: u8 = 1;
+const CLOSED: u8 = 2;
+
+/// A channel (11.13). `rc` counts the `Receiver` handles and the sender
+/// objects; `senders` counts the latter, and the channel closes when it
+/// reaches zero. A receiver only waits while the buffer is empty, and a
+/// sender only while it is full.
+#[repr(C)]
+pub struct ChannelObject {
+    rc: AtomicUsize,
+    lock: AtomicBool,
+    closed: bool,
+    senders: usize,
+    /// `usize::MAX` when unbounded; 0 for a rendezvous.
+    capacity: usize,
+    size: usize,
+    align: usize,
+    release: Option<Glue>,
+    /// The buffered values' bytes, `count` values of `size` bytes each.
+    buffer: VecDeque<u8>,
+    count: usize,
+    receiving: VecDeque<*mut Waiter>,
+    sending: VecDeque<*mut Waiter>,
+}
+
+/// A `Sender` handle: one per `channel` or `copy()`, shared by the
+/// program's references to it.
+#[repr(C)]
+pub struct SenderObject {
+    rc: AtomicUsize,
+    channel: *mut ChannelObject,
+}
+
+/// `channel[T](capacity)` without its sender: the `Receiver`. A negative
+/// capacity panics with `P0001`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_channel_new(
+    capacity: i64,
+    bounded: u8,
+    size: usize,
+    align: usize,
+    release: Option<Glue>,
+    location: *const Str,
+) -> *mut ChannelObject {
+    if bounded != 0 && capacity < 0 {
+        unsafe { tondo_rt_panic(1, std::ptr::null(), location) };
+    }
+    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    Box::into_raw(Box::new(ChannelObject {
+        rc: AtomicUsize::new(1),
+        lock: AtomicBool::new(false),
+        closed: false,
+        senders: 0,
+        capacity: if bounded != 0 { capacity as usize } else { usize::MAX },
+        size,
+        align: align.max(1),
+        release,
+        buffer: VecDeque::new(),
+        count: 0,
+        receiving: VecDeque::new(),
+        sending: VecDeque::new(),
+    }))
+}
+
+/// A new `Sender` of the channel: the one `channel` returns, or `copy()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sender_new(channel: *mut ChannelObject) -> *mut SenderObject {
+    unsafe {
+        let c = &mut *channel;
+        lock(&c.lock);
+        c.senders += 1;
+        unlock(&c.lock);
+        c.rc.fetch_add(1, Ordering::Relaxed);
+    }
+    LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
+    Box::into_raw(Box::new(SenderObject { rc: AtomicUsize::new(1), channel }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sender_copy(sender: *mut SenderObject) -> *mut SenderObject {
+    unsafe { tondo_rt_sender_new((*sender).channel) }
+}
+
+/// Moves the value at the front of the buffer, `size` bytes, into `out`.
+fn pop_bytes(buffer: &mut VecDeque<u8>, out: *mut u8, size: usize) {
+    let (front, back) = buffer.as_slices();
+    let first = front.len().min(size);
+    unsafe {
+        std::ptr::copy_nonoverlapping(front.as_ptr(), out, first);
+        std::ptr::copy_nonoverlapping(back.as_ptr(), out.add(first), size - first);
+    }
+    buffer.drain(..size);
+}
+
+/// Ends the waits of a channel that just closed; returns who to wake.
+fn close_waits(c: &mut ChannelObject) -> Vec<*mut Task> {
+    c.closed = true;
+    let waiters = c.receiving.drain(..).chain(c.sending.drain(..));
+    waiters
+        .map(|w| unsafe {
+            (*w).state = CLOSED;
+            (*w).task
+        })
+        .collect()
+}
+
+fn closed_panic(location: *const Str) -> ! {
+    unsafe { tondo_rt_panic(12, std::ptr::null(), location) }
+}
+
+/// `sender.send(value)`: moves the value at `value` into the channel,
+/// waiting while it is full; panics with `P0012` if it is closed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_channel_send(sender: *mut SenderObject, value: *mut u8, location: *const Str) {
+    unsafe {
+        let c = &mut *(*sender).channel;
+        lock(&c.lock);
+        if c.closed {
+            unlock(&c.lock);
+            closed_panic(location);
+        }
+        if let Some(receiver) = c.receiving.pop_front() {
+            std::ptr::copy_nonoverlapping(value, (*receiver).value, c.size);
+            (*receiver).state = MOVED;
+            let task = (*receiver).task;
+            unlock(&c.lock);
+            wake(task);
+            return;
+        }
+        if c.count < c.capacity {
+            c.buffer.extend(std::slice::from_raw_parts(value, c.size));
+            c.count += 1;
+            unlock(&c.lock);
+            return;
+        }
+        let mut waiter = Waiter { task: current(), value, state: WAITING };
+        c.sending.push_back(&mut waiter);
+        park(Some(&c.lock));
+        if std::ptr::read_volatile(&waiter.state) == CLOSED {
+            closed_panic(location);
+        }
+    }
+}
+
+/// `receiver.receive()`: moves the next value into `out` and returns 1, or
+/// returns 0 once the channel is closed and empty.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_channel_receive(channel: *mut ChannelObject, out: *mut u8) -> u8 {
+    unsafe {
+        let c = &mut *channel;
+        lock(&c.lock);
+        if c.count > 0 {
+            pop_bytes(&mut c.buffer, out, c.size);
+            c.count -= 1;
+            // A sender waiting for room moves its value in.
+            if let Some(sender) = c.sending.pop_front() {
+                c.buffer.extend(std::slice::from_raw_parts((*sender).value, c.size));
+                c.count += 1;
+                (*sender).state = MOVED;
+                let task = (*sender).task;
+                unlock(&c.lock);
+                wake(task);
+                return 1;
+            }
+            unlock(&c.lock);
+            return 1;
+        }
+        // A rendezvous: take the value from a waiting sender.
+        if let Some(sender) = c.sending.pop_front() {
+            std::ptr::copy_nonoverlapping((*sender).value, out, c.size);
+            (*sender).state = MOVED;
+            let task = (*sender).task;
+            unlock(&c.lock);
+            wake(task);
+            return 1;
+        }
+        if c.closed {
+            unlock(&c.lock);
+            return 0;
+        }
+        let mut waiter = Waiter { task: current(), value: out, state: WAITING };
+        c.receiving.push_back(&mut waiter);
+        park(Some(&c.lock));
+        (std::ptr::read_volatile(&waiter.state) == MOVED) as u8
+    }
+}
+
+/// `sender.close()`: later sends panic, and receivers get what is buffered
+/// and then `none`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_channel_close(sender: *mut SenderObject) {
+    unsafe {
+        let c = &mut *(*sender).channel;
+        lock(&c.lock);
+        let woken = if c.closed { Vec::new() } else { close_waits(c) };
+        unlock(&c.lock);
+        woken.into_iter().for_each(wake);
+    }
+}
+
+/// `isClosed()` of a `Sender` (`sender` is 1) or a `Receiver`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_channel_closed(handle: *mut u8, sender: u8) -> u8 {
+    unsafe {
+        let c = if sender != 0 { &*(*(handle as *mut SenderObject)).channel } else { &*(handle as *mut ChannelObject) };
+        lock(&c.lock);
+        let closed = c.closed;
+        unlock(&c.lock);
+        closed as u8
+    }
+}
+
+/// Releases a `Sender`; the channel closes when its last one goes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sender_release(sender: *mut SenderObject) {
+    if sender.is_null() {
+        return;
+    }
+    unsafe {
+        if (*sender).rc.fetch_sub(1, Ordering::Release) != 1 {
+            return;
+        }
+        std::sync::atomic::fence(Ordering::Acquire);
+        let sender = Box::from_raw(sender);
+        LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+        let c = &mut *sender.channel;
+        lock(&c.lock);
+        c.senders -= 1;
+        let woken = if c.senders == 0 && !c.closed { close_waits(c) } else { Vec::new() };
+        unlock(&c.lock);
+        woken.into_iter().for_each(wake);
+        tondo_rt_receiver_release(sender.channel);
+    }
+}
+
+/// Releases a `Receiver`, or a sender's hold on its channel; the last one
+/// frees the channel and the values still buffered.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_receiver_release(channel: *mut ChannelObject) {
+    if channel.is_null() {
+        return;
+    }
+    unsafe {
+        if (*channel).rc.fetch_sub(1, Ordering::Release) != 1 {
+            return;
+        }
+        std::sync::atomic::fence(Ordering::Acquire);
+        let mut c = Box::from_raw(channel);
+        if let Some(release) = c.release
+            && c.size > 0
+        {
+            let layout = std::alloc::Layout::from_size_align(c.size, c.align).unwrap();
+            let value = std::alloc::alloc(layout);
+            while c.count > 0 {
+                pop_bytes(&mut c.buffer, value, c.size);
+                c.count -= 1;
+                release(value);
+            }
+            std::alloc::dealloc(value, layout);
+        }
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
     }
 }

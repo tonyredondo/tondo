@@ -299,7 +299,7 @@ impl Signature {
     }
 }
 
-const INTRINSICS: [&str; 2] = ["panic", "assert"];
+const INTRINSICS: [&str; 3] = ["panic", "assert", "channel"];
 
 struct Checker<'a> {
     types: Types,
@@ -1901,6 +1901,8 @@ impl Checker<'_> {
                         ("Deque", [element]) if segments.len() == 1 => self.types.intern(TyKind::Deque(*element)),
                         ("Join", [result]) if segments.len() == 1 => self.types.handle(Handle::Join, *result),
                         ("Group", [result]) if segments.len() == 1 => self.types.handle(Handle::Group, *result),
+                        ("Sender", [value]) if segments.len() == 1 => self.types.handle(Handle::Sender, *value),
+                        ("Receiver", [value]) if segments.len() == 1 => self.types.handle(Handle::Receiver, *value),
                         ("Map", [key, value]) if segments.len() == 1 => {
                             self.require_key(*key, t.span);
                             self.map_type(*key, *value)
@@ -1909,9 +1911,11 @@ impl Checker<'_> {
                             self.require_key(*element, t.span);
                             self.types.intern(TyKind::Set(*element))
                         }
-                        ("Option" | "Result" | "Array" | "Deque" | "Map" | "Set" | "Join" | "Group", _)
-                            if segments.len() == 1 =>
-                        {
+                        (
+                            "Option" | "Result" | "Array" | "Deque" | "Map" | "Set" | "Join" | "Group" | "Sender"
+                            | "Receiver",
+                            _,
+                        ) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
                             Ty::ERROR
                         }
@@ -2121,7 +2125,7 @@ impl Checker<'_> {
         self.type_params = outer_types;
         self.self_type = outer_self;
         self.implementing = outer_implementing;
-        let function = hir::Function {
+        let mut function = hir::Function {
             name: signature.name,
             generics: signature.generics,
             params,
@@ -2130,13 +2134,14 @@ impl Checker<'_> {
             locals: cx.locals,
             result: signature.result,
             body,
+            moves: HashSet::new(),
         };
-        self.ownership(&function, &cx.params);
+        self.ownership(&mut function, &cx.params);
         function
     }
 
     /// Checks moves and obligations (8.10) once the body is typed.
-    fn ownership(&mut self, function: &hir::Function, params: &[Option<ast::Mode>]) {
+    fn ownership(&mut self, function: &mut hir::Function, params: &[Option<ast::Mode>]) {
         let (signatures, traits) = (&self.signatures, &self.traits);
         let modes = |callee: Callee| match callee {
             Callee::Fn(id) => signatures.get(id.0 as usize).map(|s| s.modes.clone()).unwrap_or_default(),
@@ -2153,7 +2158,7 @@ impl Checker<'_> {
             })
             .collect();
         let context = crate::ownership::Context { params, modes: &modes, bound_modes: &bound_modes };
-        crate::ownership::check(&mut self.types, function, context, self.diags);
+        function.moves = crate::ownership::check(&mut self.types, function, context, self.diags);
     }
 
     /// The implicit `main` of a root script (spec 20.3). Its error type is
@@ -2168,7 +2173,7 @@ impl Checker<'_> {
             Some(error) => self.types.intern(TyKind::Result(Ty::UNIT, error)),
             None => Ty::UNIT,
         };
-        let function = hir::Function {
+        let mut function = hir::Function {
             name: "main".into(),
             generics: Vec::new(),
             params: Vec::new(),
@@ -2177,8 +2182,9 @@ impl Checker<'_> {
             locals: cx.locals,
             result,
             body,
+            moves: HashSet::new(),
         };
-        self.ownership(&function, &cx.params);
+        self.ownership(&mut function, &cx.params);
         function
     }
 
@@ -2369,7 +2375,7 @@ impl Checker<'_> {
             [true].into_iter().chain(modes.iter().map(|m| matches!(m, ast::Mode::Mut | ast::Mode::Var))).collect();
         let mut params = inner.params;
         params[locals[0].0 as usize] = Some(ast::Mode::Mut);
-        let function = hir::Function {
+        let mut function = hir::Function {
             name: "closure".into(),
             generics,
             params: locals,
@@ -2378,10 +2384,11 @@ impl Checker<'_> {
             locals: inner.locals,
             result,
             body,
+            moves: HashSet::new(),
         };
         // A cleanup runs once, so it may give its captures away.
         if !deferred {
-            self.ownership(&function, &params);
+            self.ownership(&mut function, &params);
         }
         self.closure_functions[index] = Some(function);
         // The closure value holds the captured values, read now.
@@ -2506,6 +2513,7 @@ impl Checker<'_> {
             locals: vec![hir::Local { name: format!("<{name}>"), ty: env_ty, span }],
             result,
             body,
+            moves: HashSet::new(),
         }));
         let values = values.into_iter().enumerate().map(|(i, a)| (i as u32, a)).collect();
         Self::mk(hir::ExprKind::Record(values), env_ty, span)
@@ -2580,7 +2588,35 @@ impl Checker<'_> {
         }
     }
 
-    /// The methods of `Join` and `Group` (11.11, 11.12).
+    /// `channel[T]()` or `channel[T](capacity)` (11.13): the two ends of a
+    /// new channel, unbounded without a capacity.
+    fn channel(&mut self, cx: &mut FnCx, type_args: &[ast::TypeExpr], args: &[ast::Arg], span: Span) -> hir::Expr {
+        let [value] = type_args else {
+            self.diags.error("E1104", span, "`channel` takes one type argument, the type of its values");
+            return Self::error_expr(span);
+        };
+        let value = self.resolve_type(value);
+        let capacity = match args {
+            [] => None,
+            [arg] if arg.name.as_ref().is_none_or(|n| n.name == "capacity") => {
+                let capacity = self.expr(cx, &arg.value, Some(Ty::INT));
+                Some(self.coerce(capacity, Ty::INT))
+            }
+            [arg] => {
+                let message = "`channel` takes its capacity, as in `channel[T](16)` or `channel[T](capacity: 16)`";
+                self.diags.error("E1102", arg.span, message);
+                return Self::error_expr(span);
+            }
+            _ => return self.arity_error(span, 1, args.len()),
+        };
+        let sender = self.types.handle(Handle::Sender, value);
+        let receiver = self.types.handle(Handle::Receiver, value);
+        let ty = self.types.intern(TyKind::Tuple(vec![sender, receiver]));
+        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Channel, capacity.into_iter().collect()), ty, span)
+    }
+
+    /// The methods of `Join`, `Group`, `Sender` and `Receiver` (11.11 to
+    /// 11.13); `result` is the type of their results or values.
     #[allow(clippy::too_many_arguments)]
     fn handle_method(
         &mut self,
@@ -2601,15 +2637,23 @@ impl Checker<'_> {
             (Handle::Group, "length" | "isEmpty") => T::GroupLength,
             (Handle::Group, "wait") => T::GroupWait,
             (Handle::Join | Handle::Group, "cancel") => return self.unsupported_expr(span, "`cancel()`"),
+            (Handle::Sender, "send") => T::Send,
+            (Handle::Sender, "close") => T::Close,
+            (Handle::Sender, "copy") => T::CopySender,
+            (Handle::Sender | Handle::Receiver, "isClosed") => T::IsClosed,
+            (Handle::Receiver, "receive") => T::Receive,
             _ => return self.no_method(ty, method, span),
         };
         let params = match op {
             T::GroupAdd => vec![self.types.handle(Handle::Join, result)],
+            T::Send => vec![result],
             _ => Vec::new(),
         };
         if args.len() != params.len() {
-            if op == T::Wait && args.iter().any(|a| a.name.as_ref().is_some_and(|n| n.name == "timeout")) {
-                return self.unsupported_expr(span, "`wait(timeout:)`");
+            if matches!(op, T::Wait | T::Receive)
+                && args.iter().any(|a| a.name.as_ref().is_some_and(|n| n.name == "timeout"))
+            {
+                return self.unsupported_expr(span, &format!("`{}(timeout:)`", method.name));
             }
             return self.arity_error(span, params.len(), args.len());
         }
@@ -2631,8 +2675,10 @@ impl Checker<'_> {
         }
         let result = match op {
             T::Wait => result,
-            T::GroupAdd => Ty::UNIT,
-            T::GroupNext => self.types.intern(TyKind::Option(result)),
+            T::GroupAdd | T::Send | T::Close => Ty::UNIT,
+            T::GroupNext | T::Receive => self.types.intern(TyKind::Option(result)),
+            T::CopySender => ty,
+            T::IsClosed => Ty::BOOL,
             T::GroupWait => match *self.types.kind(result) {
                 TyKind::Result(value, error) => {
                     let values = self.types.intern(TyKind::Array(value));
@@ -3316,6 +3362,9 @@ impl Checker<'_> {
                 else {
                     let source = self.expr(cx, source, None);
                     let element = match *self.types.kind(source.ty) {
+                        TyKind::Handle(Handle::Receiver, element) => {
+                            return Some(self.for_receiver(cx, pattern, source, element, body));
+                        }
                         TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => element,
                         TyKind::String => Ty::CHAR,
                         // A map yields its entries as `(key, value)` (10.13).
@@ -4962,6 +5011,11 @@ impl Checker<'_> {
             let target = CallTarget { explicit, ..CallTarget::new(Callee::Fn(id), signature, expected) };
             return self.call_signature(cx, target, None, args, span);
         }
+        if let ["channel"] = names.as_slice()
+            && self.lookup(cx, "channel").is_none()
+        {
+            return self.channel(cx, type_args, args, span);
+        }
         if let ["Group", "new"] = names.as_slice() {
             let [result] = type_args else {
                 self.diags.error("E1104", span, "`Group.new` takes one type argument, the tasks' result");
@@ -5460,6 +5514,40 @@ impl Checker<'_> {
         let loan = Self::mk(hir::ExprKind::Loan(hir::Place { local: cursor, path: Vec::new() }), ty, span);
         let next =
             Self::mk(hir::ExprKind::Call(Callee::Trait(ITERATOR, 0), vec![ty, element], vec![loan]), option, span);
+        self.until_none(cx, pattern, element, body, (cursor, source), next)
+    }
+
+    /// `for value in receiver` (11.13): receives until the channel is
+    /// closed and empty.
+    fn for_receiver(
+        &mut self,
+        cx: &mut FnCx,
+        pattern: &ast::Pattern,
+        source: hir::Expr,
+        element: Ty,
+        body: &ast::Block,
+    ) -> hir::Stmt {
+        let (ty, span) = (source.ty, source.span);
+        let receiver = self.hidden_local(cx, ty);
+        let option = self.types.intern(TyKind::Option(element));
+        let read = Self::mk(hir::ExprKind::Local(receiver), ty, span);
+        let next = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Receive, vec![read]), option, span);
+        self.until_none(cx, pattern, element, body, (receiver, source), next)
+    }
+
+    /// A loop that binds `pattern` to each value `next` gives until `none`,
+    /// after storing `source` in a hidden local.
+    fn until_none(
+        &mut self,
+        cx: &mut FnCx,
+        pattern: &ast::Pattern,
+        element: Ty,
+        body: &ast::Block,
+        (cursor, source): (LocalId, hir::Expr),
+        next: hir::Expr,
+    ) -> hir::Stmt {
+        let span = source.span;
+        let option = next.ty;
         cx.scopes.push(Vec::new());
         let context = PatternContext { in_match: false, mutable: false, loans: Loans::None };
         let pattern = self.pattern(cx, pattern, element, context);
@@ -5898,6 +5986,11 @@ impl Checker<'_> {
         }
         if let ["Array", "new" | "withCapacity"] | ["Deque" | "Group", "new"] = names.as_slice() {
             let message = format!("`{0}.{1}` needs its element type: `{0}.{1}[T](...)`", names[0], names[1]);
+            self.diags.error("E1101", span, message);
+            return Self::error_expr(span);
+        }
+        if let ["channel"] = names.as_slice() {
+            let message = "`channel` needs the type of its values: `channel[T]()`, or `channel[T](capacity)`";
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
         }

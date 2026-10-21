@@ -112,6 +112,9 @@ pub enum Statement {
     /// Makes the local the address of the place, made unique first: a
     /// binding that borrows an element of a collection (13.3).
     Lend(Local, Place),
+    /// Zeroes a binding whose value moved away, so that releasing it at
+    /// the end of its scope releases nothing.
+    Clear(Local),
 }
 
 #[derive(Clone, Debug)]
@@ -165,7 +168,7 @@ pub enum Rvalue {
     Spawn(Operand, bool),
     /// An operation of a `Join` or a `Group`, receiver first; flags mark
     /// copied operands to retain as they move in, as a join into a group.
-    TaskOp(TaskOp, Vec<Operand>, Vec<bool>),
+    TaskOp(TaskOp, Vec<Operand>, Vec<bool>, Span),
     Concat(Vec<Piece>),
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.

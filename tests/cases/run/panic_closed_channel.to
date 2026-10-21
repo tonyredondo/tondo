@@ -1,0 +1,15 @@
+import std.console
+
+fn main() {
+    let (sender, receiver) = channel[String](4)
+    sender.send("kept")
+    sender.close()
+    match receiver.receive() {
+        some(text) => console.println(text),
+        none => console.println("none"),
+    }
+    sender.send("late")
+}
+
+// expect-stdout: kept
+// expect-panic: P0012

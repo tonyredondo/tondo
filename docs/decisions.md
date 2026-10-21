@@ -351,3 +351,15 @@ task, which is how an unconsumed `Join` waits at the end of its block. When
 every worker is idle and nothing can run, the program panics with `P0013`.
 A single queue keeps the scheduler small; work stealing can replace it when
 measurements show contention.
+
+## 2026-10-21 — A move gives the references away
+
+Values are reference-counted and calls borrow their arguments, so moving a
+value used to be a copy, with the source released at the end of its scope.
+That is invisible for ordinary values, but not for a `Sender`, whose channel
+closes when the last one disappears, or for a `Join`. The ownership analysis
+now records where a binding that is not `Copy` moves; lowering hands its
+references to a temporary there and zeroes the binding, so the end of the
+scope releases nothing. Moving a sender into `spawn` or into a call therefore
+closes the channel when that task or call is done with it. Releases accept a
+zeroed value, which needs no drop flags.

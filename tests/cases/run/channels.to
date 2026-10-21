@@ -1,0 +1,117 @@
+import std.console
+
+type Outbox = {
+    name: String
+    out: Sender[String]
+}
+
+fn produce(numbers: Sender[Int], count: Int) {
+    for value in 0..count {
+        numbers.send(value)
+    }
+}
+
+// Moving the sender into the task closes the channel when the task ends.
+fn sum(count: Int): Int {
+    let (sender, receiver) = channel[Int](16)
+    spawn produce(sender, count)
+    var total = 0
+    for value in receiver {
+        total += value
+    }
+    total
+}
+
+fn words(out: Sender[String]) {
+    out.send("alpha")
+    out.send("beta")
+    out.close()
+}
+
+fn consume(inbox: Receiver[Int], results: Sender[Int]) {
+    var total = 0
+    for value in inbox {
+        total += value
+    }
+    results.send(total)
+}
+
+fn report(box: Outbox) {
+    box.out.send("from {box.name}")
+}
+
+fn main() {
+    console.println("sum {sum(1000)}")
+
+    let (sender, receiver) = channel[String]()
+    console.println("open {sender.isClosed()}")
+    spawn words(sender)
+    for word in receiver {
+        console.println(word)
+    }
+    console.println("closed {receiver.isClosed()}")
+
+    // A rendezvous with two producers; `copy()` makes the second sender.
+    let (first, values) = channel[Int](0)
+    let second = first.copy()
+    spawn produce(first, 3)
+    spawn produce(second, 2)
+    var count = 0
+    for _ in values {
+        count += 1
+    }
+    console.println("received {count}")
+
+    // A call that takes the sender closes the channel when it returns.
+    let (direct, inbox) = channel[Int]()
+    produce(direct, 4)
+    var total = 0
+    for value in inbox {
+        total += value
+    }
+    console.println("direct {total}")
+    match inbox.receive() {
+        some(value) => console.println("late {value}")
+        none => console.println("drained")
+    }
+
+    // Receivers are shared: each value reaches one consumer.
+    let (work, jobs) = channel[Int](8)
+    let (results, totals) = channel[Int]()
+    var consumers = Group.new[Unit]()
+    for _ in 0..4 {
+        consumers.add(spawn consume(jobs, results.copy()))
+    }
+    for value in 1..=100 {
+        work.send(value)
+    }
+    work.close()
+    _ = consumers.wait()
+    results.close()
+    var grand = 0
+    for part in totals {
+        grand += part
+    }
+    console.println("shared {grand}")
+
+    let (out, lines) = channel[String]()
+    report(Outbox { name: "box", out: out })
+    for line in lines {
+        console.println(line)
+    }
+
+    // Values nobody receives are released with the channel.
+    let (spare, unread) = channel[String]()
+    spare.send("never read")
+}
+
+// expect-stdout: sum 499500
+// expect-stdout: open false
+// expect-stdout: alpha
+// expect-stdout: beta
+// expect-stdout: closed true
+// expect-stdout: received 5
+// expect-stdout: direct 6
+// expect-stdout: drained
+// expect-stdout: shared 5050
+// expect-stdout: from box

@@ -70,6 +70,10 @@ pub unsafe extern "C" fn tondo_rt_str_retain(s: *const Str) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
+    // Releasing a binding whose value moved away does nothing: it is zero.
+    if s.is_null() {
+        return;
+    }
     let rc = unsafe { &(*s).rc };
     if rc.load(Ordering::Relaxed) == IMMORTAL {
         return;
@@ -290,6 +294,9 @@ pub unsafe extern "C" fn tondo_rt_box_retain(b: *mut BoxHeader) {
 /// Releases a box; the last release releases the value's contents and frees it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_box_release(b: *mut BoxHeader, release: Option<Glue>) {
+    if b.is_null() {
+        return;
+    }
     match unsafe { (*b).rc.fetch_sub(1, Ordering::Release) } {
         1 => {
             fence(Ordering::Acquire);
@@ -370,6 +377,9 @@ pub unsafe extern "C" fn tondo_rt_fn_retain(f: *mut FnObject) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fn_release(f: *mut FnObject) {
+    if f.is_null() {
+        return;
+    }
     let rc = unsafe { &(*f).rc };
     if rc.load(Ordering::Relaxed) == IMMORTAL {
         return;
@@ -457,6 +467,9 @@ pub unsafe extern "C" fn tondo_rt_array_retain(a: *mut ArrayHeader) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_release(a: *mut ArrayHeader, size: usize, release: Option<Glue>) {
+    if a.is_null() {
+        return;
+    }
     match unsafe { (*a).rc.fetch_sub(1, Ordering::Release) } {
         1 => {
             fence(Ordering::Acquire);
@@ -1254,6 +1267,9 @@ unsafe fn release_entries(m: &mut MapObject, glue: &MapGlue) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_release(m: *mut MapObject, glue: *const MapGlue) {
+    if m.is_null() {
+        return;
+    }
     match unsafe { (*m).rc.fetch_sub(1, Ordering::Release) } {
         1 => {
             fence(Ordering::Acquire);
@@ -1668,6 +1684,8 @@ fn panic_name(code: u32) -> &'static str {
         9 => "duplicate-dynamic-map-key",
         10 => "invalid-shift-count",
         11 => "invalid-repeat-count",
+        12 => "closed-channel",
+        13 => "deadlock",
         _ => "unknown",
     }
 }

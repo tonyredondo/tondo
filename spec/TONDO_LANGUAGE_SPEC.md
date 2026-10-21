@@ -3834,7 +3834,7 @@ terminar su bloque, igual que un `Join`.
 `channel[T](capacity)` crea un canal y devuelve sus dos extremos,
 `(Sender[T], Receiver[T])`. Sin capacidad el canal no tiene límite; con capacidad
 `n`, `send` espera mientras haya `n` valores pendientes; con `0`, cada envío
-espera a que alguien reciba:
+espera a que alguien reciba. Una capacidad negativa produce el pánico `P0001`:
 
 ~~~tondo
 fn produce(numbers: Sender[Int], count: Int) {

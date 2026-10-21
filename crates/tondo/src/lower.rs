@@ -1033,7 +1033,22 @@ impl Builder<'_> {
             hir::ExprKind::Str(text) => Operand::Const(Const::Str(text.clone())),
             hir::ExprKind::Unit => Operand::Const(Const::Unit),
             hir::ExprKind::Local(id) => {
-                Operand::local(self.hir_locals[id.0 as usize].expect("local lowered before use"))
+                let local = self.hir_locals[id.0 as usize].expect("local lowered before use");
+                // A binding whose type is not `Copy` gives its references
+                // away where it moves, so a `Sender` closes its channel and a
+                // `Join` waits when its new owner is done with it. Parameters
+                // are the caller's.
+                if self.function.moves.contains(&(*id, e.span))
+                    && !self.types.is_copy(e.ty)
+                    && !self.function.params.contains(id)
+                {
+                    let moved = self.temp(e.ty, Rvalue::Use(Operand::local(local)), e.span);
+                    let Operand::Copy(Place { local: temp, .. }) = moved else { unreachable!() };
+                    self.own(temp);
+                    self.push(Statement::Clear(local));
+                    return moved;
+                }
+                Operand::local(local)
             }
             hir::ExprKind::Aggregate(items) => {
                 let components = items.iter().map(|item| self.expr(item)).collect();
@@ -1195,10 +1210,12 @@ impl Builder<'_> {
             hir::ExprKind::TaskOp(op, operands) => {
                 let types: Vec<Ty> = operands.iter().map(|o| o.ty).collect();
                 let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
-                // `add` moves the join into the group.
-                let moves: Vec<bool> = (0..values.len()).map(|i| *op == hir::TaskOp::GroupAdd && i == 1).collect();
+                // A join moves into a group, and a value into a channel.
+                let moves: Vec<bool> = (0..values.len())
+                    .map(|i| matches!(op, hir::TaskOp::GroupAdd | hir::TaskOp::Send) && i == 1)
+                    .collect();
                 let flags = self.move_flags(&values, &moves, &types);
-                self.temp(e.ty, Rvalue::TaskOp(*op, values, flags), e.span)
+                self.temp(e.ty, Rvalue::TaskOp(*op, values, flags, e.span), e.span)
             }
             hir::ExprKind::Call(callee, _, args) => {
                 let (operands, regions) = self.call_operands(args, e.span);
@@ -1290,7 +1307,7 @@ impl Builder<'_> {
         };
         let group = self.expr(group);
         let index = if fallible {
-            self.temp(Ty::INT, Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone()], vec![false]), span)
+            self.temp(Ty::INT, Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone()], vec![false], span), span)
         } else {
             Operand::Const(Const::Int(-1, Ty::INT))
         };
@@ -1301,7 +1318,7 @@ impl Builder<'_> {
         self.goto(head);
         self.switch_to(head);
         let taken = self.new_local(option);
-        let take = Rvalue::TaskOp(hir::TaskOp::GroupTake, vec![group, index], vec![false, false]);
+        let take = Rvalue::TaskOp(hir::TaskOp::GroupTake, vec![group, index], vec![false, false], span);
         self.assign(Place::local(taken), take, span);
         let taken = Place::local(taken);
         let some = self.tag_is(&taken, option, SOME, span);

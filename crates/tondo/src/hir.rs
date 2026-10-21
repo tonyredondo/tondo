@@ -3,7 +3,7 @@
 use crate::ast::{BinOp, UnaryOp};
 use crate::source::Span;
 use crate::types::{CursorKind, Ty, Types};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FnId(pub u32);
@@ -63,6 +63,10 @@ pub struct Function {
     /// the body's value is the result, even when that is a `T ! E`.
     pub fallible: bool,
     pub body: Block,
+    /// The reads of a binding that move its value away, by binding and
+    /// position; lowering releases a binding's references there instead of
+    /// at the end of its scope.
+    pub moves: HashSet<(LocalId, Span)>,
 }
 
 #[derive(Clone)]
@@ -317,6 +321,30 @@ pub enum TaskOp {
     /// Used by `GroupWait`: the result at an index, or the first one not
     /// taken when it is -1, as `T?`.
     GroupTake,
+    /// `channel[T]()` or `channel[T](capacity)`: `(Sender[T], Receiver[T])`.
+    Channel,
+    /// `sender.send(value)`
+    Send,
+    /// `receiver.receive()`: `T?`
+    Receive,
+    /// `sender.close()`
+    Close,
+    /// `sender.copy()`
+    CopySender,
+    /// `isClosed()` of a sender or a receiver.
+    IsClosed,
+}
+
+impl TaskOp {
+    /// Whether the operation takes its operand at `index` rather than
+    /// reading it: a consumed handle or a value moved into it.
+    pub fn takes(self, index: usize) -> bool {
+        match self {
+            TaskOp::Wait | TaskOp::GroupWait | TaskOp::Channel => true,
+            TaskOp::GroupAdd | TaskOp::Send => index == 1,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

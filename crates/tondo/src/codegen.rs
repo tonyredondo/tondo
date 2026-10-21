@@ -129,6 +129,15 @@ enum Rt {
     GroupSettle,
     GroupTake,
     GroupRelease,
+    ChannelNew,
+    SenderNew,
+    SenderCopy,
+    ChannelSend,
+    ChannelReceive,
+    ChannelClose,
+    ChannelClosed,
+    SenderRelease,
+    ReceiverRelease,
 }
 
 impl Rt {
@@ -224,6 +233,15 @@ impl Rt {
             Rt::GroupSettle => ("tondo_rt_group_settle", &[I64], &[I64]),
             Rt::GroupTake => ("tondo_rt_group_take", &[I64, I64, I64], &[I8]),
             Rt::GroupRelease => ("tondo_rt_group_release", &[I64], &[]),
+            Rt::ChannelNew => ("tondo_rt_channel_new", &[I64, I8, I64, I64, I64, I64], &[I64]),
+            Rt::SenderNew => ("tondo_rt_sender_new", &[I64], &[I64]),
+            Rt::SenderCopy => ("tondo_rt_sender_copy", &[I64], &[I64]),
+            Rt::ChannelSend => ("tondo_rt_channel_send", &[I64, I64, I64], &[]),
+            Rt::ChannelReceive => ("tondo_rt_channel_receive", &[I64, I64], &[I8]),
+            Rt::ChannelClose => ("tondo_rt_channel_close", &[I64], &[]),
+            Rt::ChannelClosed => ("tondo_rt_channel_closed", &[I64, I8], &[I8]),
+            Rt::SenderRelease => ("tondo_rt_sender_release", &[I64], &[]),
+            Rt::ReceiverRelease => ("tondo_rt_receiver_release", &[I64], &[]),
         }
     }
 }
@@ -1103,7 +1121,8 @@ impl Emit<'_, '_> {
                     let rt = match handle {
                         Handle::Join => Rt::JoinRelease,
                         Handle::Group => Rt::GroupRelease,
-                        Handle::Sender | Handle::Receiver => unreachable!("channels arrive in H5.2"),
+                        Handle::Sender => Rt::SenderRelease,
+                        Handle::Receiver => Rt::ReceiverRelease,
                     };
                     self.call_rt(rt, &[pointer]);
                 }
@@ -1791,6 +1810,34 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Statement::DeferPop => {
                 self.e.call_rt(Rt::DeferPop, &[]);
             }
+            Statement::Clear(local) => {
+                let place = Place::local(*local);
+                let ty = self.place_ty(&place);
+                match self.e.cg.class(ty) {
+                    Class::Zero => {}
+                    Class::Scalar(clif) if clif.is_float() => {
+                        let zero = self.e.fb.ins().f64const(0.0);
+                        let zero = if clif == types::F32 { self.e.fb.ins().fdemote(types::F32, zero) } else { zero };
+                        self.write(&place, Val::Scalar(zero));
+                    }
+                    Class::Scalar(clif) => {
+                        let zero = self.e.fb.ins().iconst(clif, 0);
+                        self.write(&place, Val::Scalar(zero));
+                    }
+                    Class::Memory => {
+                        let address = self.pointer_to(&place, false);
+                        let size = self.e.cg.layout(ty).size;
+                        let mut offset = 0;
+                        for width in [types::I64, types::I32, types::I16, types::I8] {
+                            let zero = self.e.fb.ins().iconst(width, 0);
+                            while offset + width.bytes() <= size {
+                                self.e.fb.ins().store(flags(), zero, address, offset as i32);
+                                offset += width.bytes();
+                            }
+                        }
+                    }
+                }
+            }
             Statement::Lend(local, place) => {
                 if let Storage::Pointer(var) = self.storage[local.0 as usize] {
                     let address = self.pointer_to(place, true);
@@ -1824,8 +1871,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Rvalue::Mutate(mutation, target, operands, retain, span) => {
                     self.mutate(*mutation, target, operands, retain, place, *span);
                 }
-                Rvalue::TaskOp(op, operands, retain) => {
-                    self.task_op(*op, operands, retain, place);
+                Rvalue::TaskOp(op, operands, retain, span) => {
+                    self.task_op(*op, operands, retain, place, *span);
                 }
                 Rvalue::AssignSlice(target, bounds, value, span) => self.assign_slice(target, bounds, value, *span),
                 Rvalue::CheckRegion(array, region, other, span) => self.check_region(array, region, other, *span),
@@ -2078,7 +2125,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let release = self.e.glue_or_null(Glue::Release, result);
                 Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release]).unwrap())
             }
-            Rvalue::TaskOp(op, operands, retain) => match self.task_op(*op, operands, retain, place) {
+            Rvalue::TaskOp(op, operands, retain, span) => match self.task_op(*op, operands, retain, place, *span) {
                 Some(value) => value,
                 None => return,
             },
@@ -2326,11 +2373,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// moved to `out` when `found` is 1, otherwise `none`.
     /// An operation of a `Join` or a `Group` (see the runtime's `tasks`):
     /// the value to store at `place`, or `None` once it is stored.
-    fn task_op(&mut self, op: TaskOp, operands: &[Operand], retain: &[bool], place: &Place) -> Option<Val> {
+    fn task_op(&mut self, op: TaskOp, operands: &[Operand], retain: &[bool], place: &Place, span: Span) -> Option<Val> {
         let ty = self.place_ty(place);
         let handle_ty = operands.first().map(|o| self.operand_ty(o));
         let item = handle_ty.map(|t| self.e.cg.types.handle_result(t));
-        let values: Vec<ir::Value> = operands.iter().map(|o| self.scalar(o)).collect();
+        // Handles and indices are scalars; the value `send` moves is read
+        // where it is used.
+        let scalars = if op == TaskOp::Send { &operands[..1] } else { operands };
+        let values: Vec<ir::Value> = scalars.iter().map(|o| self.scalar(o)).collect();
         match op {
             TaskOp::Wait => {
                 let item = item.expect("a join");
@@ -2363,6 +2413,56 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             TaskOp::GroupLength => Some(Val::Scalar(self.e.call_rt(Rt::GroupLength, &[values[0]]).unwrap())),
             TaskOp::GroupSettle => Some(Val::Scalar(self.e.call_rt(Rt::GroupSettle, &[values[0]]).unwrap())),
+            TaskOp::Channel => {
+                let sender_ty = self.e.cg.types.components(ty).expect("a pair of ends")[0];
+                let value = self.e.cg.types.handle_result(sender_ty);
+                let (capacity, bounded) = match values.first() {
+                    Some(&capacity) => (capacity, 1),
+                    None => (self.e.fb.ins().iconst(types::I64, 0), 0),
+                };
+                let bounded = self.e.fb.ins().iconst(types::I8, bounded);
+                let layout = self.e.cg.layout(value);
+                let size = self.e.fb.ins().iconst(POINTER, layout.size as i64);
+                let align = self.e.fb.ins().iconst(POINTER, layout.align as i64);
+                let release = self.e.glue_or_null(Glue::Release, value);
+                let location = self.location(span);
+                let channel =
+                    self.e.call_rt(Rt::ChannelNew, &[capacity, bounded, size, align, release, location]).unwrap();
+                let sender = self.e.call_rt(Rt::SenderNew, &[channel]).unwrap();
+                let pair = self.scratch(ty);
+                for (index, end) in [sender, channel].into_iter().enumerate() {
+                    let slot = self.e.cg.slot(ty, Proj::Field(index as u32));
+                    self.e.fb.ins().store(flags(), end, pair, slot.offset as i32);
+                }
+                Some(Val::Memory(pair))
+            }
+            TaskOp::Send => {
+                let item = item.expect("a sender");
+                let value = self.operand(&operands[1]);
+                if retain[1] {
+                    self.e.refcount(item, value, false);
+                }
+                let source = self.copy_to_stack(item, value);
+                let location = self.location(span);
+                self.e.call_rt(Rt::ChannelSend, &[values[0], source, location]);
+                None
+            }
+            TaskOp::Receive => {
+                let item = item.expect("a receiver");
+                let out = self.scratch(item);
+                let found = self.e.call_rt(Rt::ChannelReceive, &[values[0], out]).unwrap();
+                self.removal_result(place, ty, item, out, found)
+            }
+            TaskOp::Close => {
+                self.e.call_rt(Rt::ChannelClose, &[values[0]]);
+                None
+            }
+            TaskOp::CopySender => Some(Val::Scalar(self.e.call_rt(Rt::SenderCopy, &[values[0]]).unwrap())),
+            TaskOp::IsClosed => {
+                let sender = matches!(self.e.cg.types.kind(handle_ty.unwrap()), TyKind::Handle(Handle::Sender, _));
+                let sender = self.e.fb.ins().iconst(types::I8, sender as i64);
+                Some(Val::Scalar(self.e.call_rt(Rt::ChannelClosed, &[values[0], sender]).unwrap()))
+            }
             TaskOp::GroupWait => unreachable!("lowered to a loop"),
         }
     }

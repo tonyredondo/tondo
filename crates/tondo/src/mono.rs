@@ -92,6 +92,7 @@ impl Mono<'_> {
             locals: Vec::new(),
             result: Ty::UNIT,
             body: Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
+            moves: Default::default(),
         };
         if !args.is_empty() {
             let shown: Vec<String> = args.iter().map(|&a| self.types.display(a)).collect();

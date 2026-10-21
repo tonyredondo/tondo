@@ -12,10 +12,10 @@ use crate::ast::Mode;
 use crate::diag::Diagnostics;
 use crate::hir::{
     ArrayOp, Block, Callee, Expr, ExprKind, Function, LocalId, MapOp, Mutation, PatKind, Pattern, PlaceStep, Segment,
-    Stmt, TaskOp,
+    Stmt,
 };
 use crate::source::Span;
-use crate::types::{Ty, TyKind, Types};
+use crate::types::{Handle, Ty, TyKind, Types};
 use std::collections::HashMap as Map;
 use std::collections::{HashMap, HashSet};
 
@@ -71,8 +71,14 @@ pub struct Context<'a> {
     pub bound_modes: &'a Map<Ty, Vec<Mode>>,
 }
 
-/// Checks the moves and obligations of `function`.
-pub fn check(types: &mut Types, function: &Function, context: Context, diags: &mut Diagnostics) {
+/// Checks the moves and obligations of `function`, and returns where a
+/// binding that is not `Copy` moves: its reads that give its value away.
+pub fn check(
+    types: &mut Types,
+    function: &Function,
+    context: Context,
+    diags: &mut Diagnostics,
+) -> HashSet<(LocalId, Span)> {
     let Context { params, modes, bound_modes } = context;
     let mut checker = Checker {
         types,
@@ -84,6 +90,7 @@ pub fn check(types: &mut Types, function: &Function, context: Context, diags: &m
         scopes: Vec::new(),
         loops: Vec::new(),
         reported: HashSet::new(),
+        moves: HashSet::new(),
     };
     // Parameters passed by value belong to the body; loans do not.
     let owned = function.params.iter().copied().filter(|p| params[p.0 as usize] == Some(Mode::Value)).collect();
@@ -91,6 +98,7 @@ pub fn check(types: &mut Types, function: &Function, context: Context, diags: &m
     if let Some(flow) = checker.block(&function.body, Flow::default()) {
         checker.settle(0, &flow, "the function ends");
     }
+    checker.moves
 }
 
 struct Checker<'a> {
@@ -105,6 +113,7 @@ struct Checker<'a> {
     loops: Vec<Loop>,
     /// What was reported, as `(code, position)`: loops are checked twice.
     reported: HashSet<(&'static str, u32)>,
+    moves: HashSet<(LocalId, Span)>,
 }
 
 impl Checker<'_> {
@@ -407,11 +416,14 @@ impl Checker<'_> {
         if let Some(state) = flow.moved.get(&local) {
             let local = self.local(local);
             let when = if *state == Moved::Maybe { " on some paths" } else { "" };
+            let hint = match self.types.kind(local.ty) {
+                TyKind::Handle(Handle::Sender, _) => format!(", or pass `{}.copy()` to keep sending here", local.name),
+                _ => self.copy_hint(local.ty).into(),
+            };
             let message = format!(
-                "`{}` was moved{when} before this use, since its type {} is not `Copy`; use it before passing it on{}",
+                "`{}` was moved{when} before this use, since its type {} is not `Copy`; use it before passing it on{hint}",
                 local.name,
                 self.display(local.ty),
-                self.copy_hint(local.ty)
             );
             self.error("E1401", span, message);
         }
@@ -510,6 +522,7 @@ impl Checker<'_> {
                         self.error("E1406", expr.span, message);
                     } else {
                         flow.moved.insert(*local, Moved::Surely);
+                        self.moves.insert((*local, expr.span));
                     }
                 }
                 Some(flow)
@@ -716,9 +729,13 @@ impl Checker<'_> {
             ExprKind::Convert(inner) | ExprKind::Panic(inner) | ExprKind::Erase(inner, _) | ExprKind::Spawn(inner) => {
                 self.consume(inner, flow)
             }
-            // `length()` reads a group; the other operations take their
-            // operands, and lend the group's place to `add` and `next`.
-            ExprKind::TaskOp(op, operands) => self.all(operands, flow, *op != TaskOp::GroupLength),
+            ExprKind::TaskOp(op, operands) => {
+                let mut flow = flow;
+                for (index, operand) in operands.iter().enumerate() {
+                    flow = if op.takes(index) { self.consume(operand, flow)? } else { self.observe(operand, flow)? };
+                }
+                Some(flow)
+            }
             ExprKind::Assert { condition, parts, .. } => {
                 let flow = self.consume(condition, flow)?;
                 self.all(parts, flow, false)

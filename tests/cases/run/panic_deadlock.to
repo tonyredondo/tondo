@@ -1,0 +1,18 @@
+import std.console
+
+fn drain(inbox: Receiver[Int]) {
+    for value in inbox {
+        console.println("got {value}")
+    }
+}
+
+// `main` keeps the sender, so the channel never closes.
+fn main() {
+    let (sender, receiver) = channel[Int]()
+    sender.send(1)
+    let job = spawn drain(receiver)
+    job.wait()
+}
+
+// expect-stdout: got 1
+// expect-panic: P0013
