@@ -80,9 +80,7 @@ impl Builder<'_> {
     }
 
     fn place_ty(&self, place: &Place) -> Ty {
-        place.path.iter().fold(self.locals[place.local.0 as usize], |ty, &index| {
-            self.types.components(ty).expect("field path")[index as usize]
-        })
+        place.path.iter().fold(self.locals[place.local.0 as usize], |ty, &proj| project(self.types, ty, proj))
     }
 
     fn new_local(&mut self, ty: Ty) -> Local {
@@ -172,6 +170,22 @@ impl Builder<'_> {
     /// moved if it is a temporary of the frame, and retained otherwise.
     fn aggregate(&mut self, ty: Ty, components: Vec<Operand>, span: Span) -> Operand {
         let types = self.types.components(ty).expect("aggregate type");
+        self.construct(ty, None, types, components, span)
+    }
+
+    fn variant(&mut self, ty: Ty, variant: u32, components: Vec<Operand>, span: Span) -> Operand {
+        let types = self.types.variants(ty).expect("enum type")[variant as usize].clone();
+        self.construct(ty, Some(variant), types, components, span)
+    }
+
+    fn construct(
+        &mut self,
+        ty: Ty,
+        variant: Option<u32>,
+        types: Vec<Ty>,
+        components: Vec<Operand>,
+        span: Span,
+    ) -> Operand {
         let mut retains = Vec::new();
         for ((index, component), &component_ty) in components.iter().enumerate().zip(&types) {
             let copied = matches!(component, Operand::Copy(_));
@@ -180,12 +194,146 @@ impl Builder<'_> {
             }
         }
         let local = self.new_local(ty);
-        self.assign(Place::local(local), Rvalue::Aggregate(components), span);
+        let place = Place::local(local);
+        let rvalue = match variant {
+            Some(variant) => Rvalue::Variant(variant, components),
+            None => Rvalue::Aggregate(components),
+        };
+        self.assign(place.clone(), rvalue, span);
         for index in retains {
-            self.push(Statement::Retain(Place::local(local).field(index)));
+            let component = match variant {
+                Some(variant) => place.variant_field(variant, index),
+                None => place.field(index),
+            };
+            self.push(Statement::Retain(component));
         }
         self.own(local);
         Operand::local(local)
+    }
+
+    /// A place holding `value`; constants are materialized in a temporary.
+    fn place_of(&mut self, value: Operand, ty: Ty) -> Place {
+        match value {
+            Operand::Copy(place) => place,
+            constant => {
+                let local = self.new_local(ty);
+                self.assign(Place::local(local), Rvalue::Use(constant), Span::default());
+                Place::local(local)
+            }
+        }
+    }
+
+    /// Branches to `fail` unless the value at `place` matches `pattern`.
+    fn test_pattern(&mut self, pattern: &hir::Pattern, place: &Place, fail: BlockId) {
+        match &pattern.kind {
+            hir::PatKind::Wildcard | hir::PatKind::Binding(_) | hir::PatKind::Literal(hir::Literal::Unit) => {}
+            hir::PatKind::Literal(literal) => {
+                let constant = match literal {
+                    hir::Literal::Int(value) => Const::Int(*value, pattern.ty),
+                    hir::Literal::Bool(value) => Const::Bool(*value),
+                    hir::Literal::Str(text) => Const::Str(text.clone()),
+                    hir::Literal::Unit => unreachable!(),
+                };
+                let rvalue = Rvalue::Binary(BinOp::Eq, Operand::Copy(place.clone()), Operand::Const(constant));
+                self.branch_on(rvalue, pattern.span, fail);
+            }
+            hir::PatKind::Fields(fields) => {
+                for (index, field) in fields.iter().enumerate() {
+                    self.test_pattern(field, &place.field(index as u32), fail);
+                }
+            }
+            hir::PatKind::Variant(variant, fields) => {
+                if self.types.variants(pattern.ty).is_some_and(|v| v.len() > 1) {
+                    let tag_ty = self.types.tag_ty(pattern.ty);
+                    let tag = self.temp(tag_ty, Rvalue::Discriminant(place.clone()), pattern.span);
+                    let expected = Operand::Const(Const::Int(*variant as i128, tag_ty));
+                    self.branch_on(Rvalue::Binary(BinOp::Eq, tag, expected), pattern.span, fail);
+                }
+                for (index, field) in fields.iter().enumerate() {
+                    self.test_pattern(field, &place.variant_field(*variant, index as u32), fail);
+                }
+            }
+            hir::PatKind::Newtype(inner) => self.test_pattern(inner, place, fail),
+        }
+    }
+
+    fn branch_on(&mut self, condition: Rvalue, span: Span, fail: BlockId) {
+        let matched = self.temp(Ty::BOOL, condition, span);
+        let next = self.new_block();
+        self.terminate(Terminator::Branch(matched, next, fail));
+        self.switch_to(next);
+    }
+
+    /// Copies the matched components into the pattern's bindings, which the
+    /// current scope then owns.
+    fn bind_pattern(&mut self, pattern: &hir::Pattern, place: &Place) {
+        match &pattern.kind {
+            hir::PatKind::Wildcard | hir::PatKind::Literal(_) => {}
+            hir::PatKind::Binding(id) => {
+                let local = self.bind(*id);
+                self.store(Place::local(local), Operand::Copy(place.clone()), pattern.span);
+                if self.needs_drop(self.locals[local.0 as usize]) {
+                    self.scopes.last_mut().unwrap().push(local);
+                }
+            }
+            hir::PatKind::Fields(fields) => {
+                for (index, field) in fields.iter().enumerate() {
+                    self.bind_pattern(field, &place.field(index as u32));
+                }
+            }
+            hir::PatKind::Variant(variant, fields) => {
+                for (index, field) in fields.iter().enumerate() {
+                    self.bind_pattern(field, &place.variant_field(*variant, index as u32));
+                }
+            }
+            hir::PatKind::Newtype(inner) => self.bind_pattern(inner, place),
+        }
+    }
+
+    fn match_expr(&mut self, e: &hir::Expr, scrutinee: &hir::Expr, arms: &[hir::Arm]) -> Operand {
+        let value = self.expr(scrutinee);
+        let place = self.place_of(value, scrutinee.ty);
+        let has_value = e.ty != Ty::UNIT && e.ty != Ty::NEVER;
+        let result = has_value.then(|| self.new_local(e.ty));
+        let join = self.new_block();
+        for arm in arms {
+            let next = self.new_block();
+            let scope_depth = self.scopes.len();
+            self.scopes.push(Vec::new());
+            self.test_pattern(&arm.pattern, &place, next);
+            self.bind_pattern(&arm.pattern, &place);
+            if let Some(guard) = &arm.guard {
+                let passed = self.in_frame(|b| b.expr(guard));
+                let (body, failed) = (self.new_block(), self.new_block());
+                self.terminate(Terminator::Branch(passed, body, failed));
+                // A false guard releases the arm's bindings before trying the next arm.
+                self.switch_to(failed);
+                let frames = self.frames.len();
+                self.cleanup_to(scope_depth, frames);
+                self.goto(next);
+                self.switch_to(body);
+            }
+            self.in_frame(|b| {
+                let value = b.expr(&arm.body);
+                if let Some(result) = result.filter(|_| arm.body.ty != Ty::NEVER) {
+                    b.store(Place::local(result), value, e.span);
+                }
+            });
+            let scope = self.scopes.pop().unwrap();
+            self.release_all(scope);
+            self.goto(join);
+            self.switch_to(next);
+        }
+        // Exhaustiveness was checked; no value reaches past the last arm.
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(join);
+        match result {
+            Some(result) => {
+                self.own(result);
+                Operand::local(result)
+            }
+            None => Operand::Const(Const::Unit),
+        }
     }
 
     fn release_all(&mut self, locals: Vec<Local>) {
@@ -265,8 +413,13 @@ impl Builder<'_> {
                     self.scopes.last_mut().unwrap().push(local);
                 }
             }
+            hir::Stmt::Destructure(pattern, value) => {
+                let value = self.expr(value);
+                let place = self.place_of(value, pattern.ty);
+                self.bind_pattern(pattern, &place);
+            }
             hir::Stmt::Assign { local, path, op, value, span } => {
-                let place = Place { local: self.bind(*local), path: path.clone() };
+                let place = Place { local: self.bind(*local), path: path.iter().map(|&i| Proj::Field(i)).collect() };
                 let value = self.expr(value);
                 let ty = self.place_ty(&place);
                 match op {
@@ -406,6 +559,15 @@ impl Builder<'_> {
             },
             // Newtypes share their value's representation.
             hir::ExprKind::Retype(inner) => self.expr(inner),
+            hir::ExprKind::Variant(variant, values) => {
+                let count = self.types.variants(e.ty).expect("enum")[*variant as usize].len();
+                let mut components = vec![Operand::Const(Const::Unit); count];
+                for (index, value) in values {
+                    components[*index as usize] = self.expr(value);
+                }
+                self.variant(e.ty, *variant, components, e.span)
+            }
+            hir::ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms),
             hir::ExprKind::Call(callee, args) => {
                 let args = args.iter().map(|a| self.expr(a)).collect();
                 let result = self.temp(e.ty, Rvalue::Call(*callee, args), e.span);

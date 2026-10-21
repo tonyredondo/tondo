@@ -1,0 +1,69 @@
+import std.console
+
+enum Msg {
+    Text(String)
+    Pair { key: String, value: String }
+    Quit
+}
+
+type Person = {
+    name: String
+    best: Friend
+}
+
+enum Friend {
+    Nobody
+    Someone(Person)
+}
+
+fn render(m: Msg): String {
+    match m {
+        Msg.Text(t) if t == "skip" => "skipped"
+        Msg.Text(t) => "text:{t}"
+        Msg.Pair { key, value } if key == value => "same:{key}"
+        Msg.Pair { key, value } => "{key}={value}"
+        Msg.Quit => "quit"
+    }
+}
+
+fn command(word: String): Int {
+    match word {
+        "start" => 1
+        "stop" => 2
+        _ => 0
+    }
+}
+
+fn names(p: Person): String {
+    match p.best {
+        Friend.Nobody => p.name
+        Friend.Someone(other) => "{p.name}>{names(other)}"
+    }
+}
+
+fn main() {
+    var out = ""
+    for i in 0..300 {
+        let m = if i % 3 == 0 {
+            Msg.Text("skip")
+        } else if i % 3 == 1 {
+            Msg.Pair { key: "k{i}", value: "v" }
+        } else {
+            Msg.Text("t{i}")
+        }
+        out = render(m)
+    }
+    _ = console.println("{out} {render(Msg.Pair { key: "a", value: "a" })} {render(Msg.Quit)}")
+    _ = console.println("{command("start")} {command("stop")} {command("other")}")
+    let c = Person { name: "C", best: Friend.Nobody }
+    let b = Person { name: "B", best: Friend.Someone(c) }
+    var a = Person { name: "A", best: Friend.Someone(b) }
+    let before = a
+    a.name = "A2"
+    _ = console.println("{names(a)} {names(before)} {a == before}")
+}
+
+// Guards that fail must release the bindings of their arm.
+// expect-stdout: text:t299 same:a quit
+// expect-stdout: 1 2 0
+// expect-stdout: A2>B>C A>B>C false

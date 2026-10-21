@@ -69,3 +69,22 @@ the representation of their value. MIR addresses fields through places
 (`local` plus a field path); retain and release recurse through the counted
 components of a type. This keeps code generation direct; scalar replacement of
 small aggregates is a possible later optimization.
+
+## 2026-10-21 — Enums, boxes and glue functions
+
+Enums store a tag (one byte up to 256 variants) followed by a payload area
+shared by all variants; payload-free enums are plain scalars. Recursive types
+need indirection (9.10): every cycle of inline storage passes through a
+nominal type, so the edge into a nominal type of the same cycle is stored as
+a box, a reference-counted heap cell. Copies share boxes and a write through a
+box first makes it unique (copy-on-write), which preserves value semantics.
+Retain and release of structs are emitted inline and stop at boxes and enums,
+which use generated per-type glue functions; the runtime calls the release
+glue when a box dies. Productivity is a least fixed point, so only recursive
+types without any finite value are rejected (E1107).
+
+## 2026-10-21 — Exhaustiveness with witnesses
+
+`match` exhaustiveness and unreachable arms use Maranget's usefulness
+algorithm. Errors name a value that is not covered, such as `Shape.Point` or
+`(false, true)`, which gives the programmer (or an LLM) the exact arm to add.

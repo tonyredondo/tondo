@@ -1,0 +1,16 @@
+enum Shape {
+    Circle(Int)
+    Point
+}
+
+fn f(s: Shape): Int {
+    match s {
+        Shape.Circle(_) => 1
+        Shape.Point => 2
+        Shape.Circle(3) => 3
+    }
+}
+
+fn main() {}
+
+// expect-error: E1203

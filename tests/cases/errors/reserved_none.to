@@ -2,4 +2,4 @@ fn main() {
     let none = 1
 }
 
-// expect-error: E0004
+// expect-error: E1202

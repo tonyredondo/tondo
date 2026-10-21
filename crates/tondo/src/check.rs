@@ -8,7 +8,7 @@ use crate::diag::Diagnostics;
 use crate::hir::{self, Callee, FnId, LocalId, StdFn};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtKind, Field, IntTy, StdType, Ty, TyKind, Types};
+use crate::types::{AdtId, AdtKind, Field, IntTy, Payload, StdType, Ty, TyKind, Types, Variant};
 use std::collections::{HashMap, HashSet};
 
 pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics) -> Option<hir::Program> {
@@ -88,6 +88,14 @@ enum ModuleName {
     Module(StdModule),
     /// The constructor `Name(value)` of a newtype (8.8).
     Newtype(Ty),
+}
+
+#[derive(Copy, Clone)]
+struct PatternContext {
+    /// In a `match` arm, where a bare `ok`/`err`/`some` binding is rejected.
+    in_match: bool,
+    /// Bindings introduced by `var`.
+    mutable: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -224,15 +232,9 @@ impl Checker<'_> {
     fn declare_types(&mut self, items: &[ast::Item]) {
         let mut declared = Vec::new();
         for item in items {
-            match item {
-                ast::Item::Type(decl) => {
-                    let (id, ty) = self.types.declare_adt(decl.name.name.clone());
-                    self.declare_type_name(&decl.name, TypeName::Nominal(ty));
-                    if let ast::TypeBody::Newtype(_) = decl.body {
-                        self.declare_module_name(&decl.name, ModuleName::Newtype(ty));
-                    }
-                    declared.push((decl, id, ty));
-                }
+            let name = match item {
+                ast::Item::Type(decl) => &decl.name,
+                ast::Item::Enum(decl) => &decl.name,
                 ast::Item::Alias(decl) => {
                     let entry = AliasEntry {
                         target: decl.target.clone(),
@@ -242,64 +244,108 @@ impl Checker<'_> {
                     };
                     self.aliases.push(entry);
                     self.declare_type_name(&decl.name, TypeName::Alias(self.aliases.len() - 1));
+                    continue;
                 }
-                ast::Item::Fn(_) => {}
+                ast::Item::Fn(_) => continue,
+            };
+            let (id, ty) = self.types.declare_adt(name.name.clone());
+            self.declare_type_name(name, TypeName::Nominal(ty));
+            if let ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(_), .. }) = item {
+                self.declare_module_name(name, ModuleName::Newtype(ty));
             }
+            declared.push((item, name, id));
         }
-        for &(decl, id, _) in &declared {
-            let kind = match &decl.body {
-                ast::TypeBody::Newtype(inner) => AdtKind::Newtype(self.resolve_type(inner)),
-                ast::TypeBody::Record(fields) => {
-                    let mut seen = HashSet::new();
-                    let mut resolved = Vec::new();
-                    for field in fields {
-                        if !seen.insert(field.name.name.as_str()) {
-                            let message = format!("field `{}` is declared more than once", field.name.name);
-                            self.diags.error("E1002", field.name.span, message);
-                        }
-                        resolved.push(Field { name: field.name.name.clone(), ty: self.resolve_type(&field.ty) });
-                    }
-                    AdtKind::Record(resolved)
+        for &(item, _, id) in &declared {
+            let kind = match item {
+                ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Newtype(inner), .. }) => {
+                    AdtKind::Newtype(self.resolve_type(inner))
                 }
+                ast::Item::Type(ast::TypeDecl { body: ast::TypeBody::Record(fields), .. }) => {
+                    AdtKind::Record(self.field_decls(fields))
+                }
+                ast::Item::Enum(decl) => {
+                    let mut seen = HashSet::new();
+                    let mut variants = Vec::new();
+                    for variant in &decl.variants {
+                        if !seen.insert(variant.name.name.as_str()) {
+                            let message = format!("variant `{}` is declared more than once", variant.name.name);
+                            self.diags.error("E1002", variant.name.span, message);
+                        }
+                        let payload = match &variant.payload {
+                            ast::VariantPayload::Unit => Payload::Unit,
+                            ast::VariantPayload::Tuple(items) => {
+                                Payload::Tuple(items.iter().map(|t| self.resolve_type(t)).collect())
+                            }
+                            ast::VariantPayload::Record(fields) => Payload::Record(self.field_decls(fields)),
+                        };
+                        variants.push(Variant { name: variant.name.name.clone(), payload });
+                    }
+                    AdtKind::Enum(variants)
+                }
+                _ => unreachable!(),
             };
             self.types.define_adt(id, kind);
         }
         for index in 0..self.aliases.len() {
             self.resolve_alias(index);
         }
-        // Productivity (9.10): every nominal type is stored inline for now,
-        // so any type that contains itself has no finite value.
-        for &(decl, id, ty) in &declared {
-            let mut visited = HashSet::new();
-            let components = match &self.types.adt(id).kind {
-                AdtKind::Newtype(inner) => vec![*inner],
-                AdtKind::Record(fields) => fields.iter().map(|f| f.ty).collect(),
-            };
-            if components.iter().any(|&c| self.reaches(c, ty, &mut visited)) {
-                let message = format!("type `{}` contains itself and has no finite value", decl.name.name);
-                self.diags.error("E1107", decl.name.span, message);
+        self.check_productivity(&declared);
+    }
+
+    fn field_decls(&mut self, fields: &[ast::FieldDecl]) -> Vec<Field> {
+        let mut seen = HashSet::new();
+        let mut resolved = Vec::new();
+        for field in fields {
+            if !seen.insert(field.name.name.as_str()) {
+                let message = format!("field `{}` is declared more than once", field.name.name);
+                self.diags.error("E1002", field.name.span, message);
+            }
+            resolved.push(Field { name: field.name.name.clone(), ty: self.resolve_type(&field.ty) });
+        }
+        resolved
+    }
+
+    /// Productivity (9.10) as a least fixed point: a nominal type is
+    /// productive once some finite value of it can be built from productive
+    /// components. A recursive type that never becomes productive is an error.
+    fn check_productivity(&mut self, declared: &[(&ast::Item, &ast::Ident, AdtId)]) {
+        let mut productive: HashSet<AdtId> = HashSet::new();
+        loop {
+            let before = productive.len();
+            for &(_, _, id) in declared {
+                if !productive.contains(&id) && self.adt_productive(id, &productive) {
+                    productive.insert(id);
+                }
+            }
+            if productive.len() == before {
+                break;
+            }
+        }
+        for &(_, name, id) in declared {
+            let ty = self.types.intern(TyKind::Adt(id));
+            if !productive.contains(&id) && self.types.reaches(ty, ty) {
+                let message = format!("type `{}` contains itself and has no finite value", name.name);
+                self.diags.error("E1107", name.span, message);
                 self.types.define_adt(id, AdtKind::Newtype(Ty::ERROR));
             }
         }
     }
 
-    fn reaches(&self, ty: Ty, target: Ty, visited: &mut HashSet<Ty>) -> bool {
-        if ty == target {
-            return true;
+    fn adt_productive(&self, id: AdtId, productive: &HashSet<AdtId>) -> bool {
+        let all = |types: Vec<Ty>| types.iter().all(|&t| self.ty_productive(t, productive));
+        match &self.types.adt(id).kind {
+            AdtKind::Newtype(inner) => self.ty_productive(*inner, productive),
+            AdtKind::Record(fields) => all(fields.iter().map(|f| f.ty).collect()),
+            AdtKind::Enum(variants) => variants.iter().any(|v| all(v.payload.types())),
         }
-        if !visited.insert(ty) {
-            return false;
-        }
+    }
+
+    fn ty_productive(&self, ty: Ty, productive: &HashSet<AdtId>) -> bool {
         match self.types.kind(ty) {
-            TyKind::Tuple(items) => items.clone().iter().any(|&t| self.reaches(t, target, visited)),
-            TyKind::Adt(id) => match &self.types.adt(*id).kind {
-                AdtKind::Newtype(inner) => self.reaches(*inner, target, visited),
-                AdtKind::Record(fields) => {
-                    let fields: Vec<Ty> = fields.iter().map(|f| f.ty).collect();
-                    fields.iter().any(|&t| self.reaches(t, target, visited))
-                }
-            },
-            _ => false,
+            TyKind::Adt(id) => productive.contains(id),
+            TyKind::Tuple(items) => items.iter().all(|&t| self.ty_productive(t, productive)),
+            TyKind::Never => false,
+            _ => true,
         }
     }
 
@@ -524,11 +570,10 @@ impl Checker<'_> {
 
     fn statement(&mut self, cx: &mut FnCx, stmt: &ast::Stmt) -> Option<hir::Stmt> {
         match &stmt.kind {
-            ast::StmtKind::Let { mutable, name, ty, value } => {
+            ast::StmtKind::Let { mutable, pattern, ty, value } => {
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));
                 let Some(value) = value else {
-                    let message = format!("`{}` must be initialized where it is declared", name.name);
-                    self.diags.error("E1109", stmt.span, message);
+                    self.diags.error("E1109", stmt.span, "a binding must be initialized where it is declared");
                     return None;
                 };
                 let value = self.expr(cx, value, declared);
@@ -537,12 +582,23 @@ impl Checker<'_> {
                     None => value,
                 };
                 cx.diverged |= value.ty == Ty::NEVER;
-                if name.name == "_" {
-                    return Some(hir::Stmt::Expr(value));
-                }
                 let ty = declared.unwrap_or(value.ty);
-                let local = self.declare(cx, name, ty, *mutable);
-                Some(hir::Stmt::Let(local, value))
+                match &pattern.kind {
+                    ast::PatternKind::Wildcard => Some(hir::Stmt::Expr(value)),
+                    ast::PatternKind::Binding(name) => {
+                        let local = self.declare(cx, name, ty, *mutable);
+                        Some(hir::Stmt::Let(local, value))
+                    }
+                    _ => {
+                        let pattern =
+                            self.pattern(cx, pattern, ty, PatternContext { in_match: false, mutable: *mutable });
+                        if let Some(missing) = crate::exhaust::refutation(&self.types, ty, &pattern) {
+                            let message = format!("this pattern can fail, for example on `{missing}`; use `match`");
+                            self.diags.error("E1201", pattern.span, message);
+                        }
+                        Some(hir::Stmt::Destructure(pattern, value))
+                    }
+                }
             }
             ast::StmtKind::Assign { target, op, value } => self.assign(cx, target, *op, value, stmt.span),
             ast::StmtKind::Discard(value) => {
@@ -688,6 +744,7 @@ impl Checker<'_> {
                     fields.iter().position(|f| f.name == name).map(|i| (Some(i as u32), fields[i].ty))
                 }
                 AdtKind::Newtype(inner) => (name == "value").then_some((None, *inner)),
+                AdtKind::Enum(_) => None,
             },
             _ => None,
         };
@@ -794,6 +851,7 @@ impl Checker<'_> {
                 self.field_access(base, FieldRef::Slot(*slot), span, span)
             }
             ast::ExprKind::Tuple(items) => self.tuple(cx, items, expected, span),
+            ast::ExprKind::Match { scrutinee, arms } => self.match_expr(cx, scrutinee, arms, expected, span),
             ast::ExprKind::Record { path, fields } => self.record_literal(cx, path, fields, span),
             ast::ExprKind::With { base, updates } => self.with_expr(cx, base, updates, span),
             ast::ExprKind::Try(_) => self.unsupported_expr(span, "`?` propagation"),
@@ -895,6 +953,18 @@ impl Checker<'_> {
         inits: &[ast::FieldInit],
         span: Span,
     ) -> hir::Expr {
+        if let Some(resolved) = self.variant_path(path) {
+            let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
+            let Payload::Record(fields) = self.payload(ty, variant) else {
+                let message = format!("`{}` does not take named fields", Self::path_text(path));
+                self.diags.error("E1102", span, message);
+                return Self::error_expr(span);
+            };
+            let fields: Vec<(String, Ty)> = fields.into_iter().map(|f| (f.name, f.ty)).collect();
+            let (values, seen) = self.field_values(cx, ty, &fields, inits, true);
+            self.report_missing(&fields, &seen, span);
+            return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
+        }
         let [name] = path else {
             return self.unsupported_expr(span, "qualified record literals");
         };
@@ -914,12 +984,320 @@ impl Checker<'_> {
             return Self::error_expr(span);
         };
         let (values, seen) = self.field_values(cx, ty, &fields, inits, true);
-        let missing: Vec<&str> = fields.iter().zip(&seen).filter(|(_, s)| !**s).map(|((n, _), _)| n.as_str()).collect();
+        self.report_missing(&fields, &seen, span);
+        Self::mk(hir::ExprKind::Record(values), ty, span)
+    }
+
+    fn report_missing(&mut self, fields: &[(String, Ty)], seen: &[bool], span: Span) {
+        let missing: Vec<&str> = fields.iter().zip(seen).filter(|(_, s)| !**s).map(|((n, _), _)| n.as_str()).collect();
         if !missing.is_empty() {
-            let message = format!("record construction is missing fields: {}", missing.join(", "));
+            let message = format!("construction is missing fields: {}", missing.join(", "));
             self.diags.error("E1102", span, message);
         }
-        Self::mk(hir::ExprKind::Record(values), ty, span)
+    }
+
+    fn path_text(path: &[ast::Ident]) -> String {
+        path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".")
+    }
+
+    /// Resolves `Enum.Variant`. Returns `None` when the path does not name a
+    /// type, and `Some(None)` after reporting a bad variant.
+    fn variant_path(&mut self, path: &[ast::Ident]) -> Option<Option<(Ty, u32)>> {
+        let [type_name, variant] = path else { return None };
+        let ty = match self.type_names.get(&type_name.name)? {
+            TypeName::Nominal(ty) => *ty,
+            TypeName::Alias(index) => {
+                let index = *index;
+                self.resolve_alias(index)
+            }
+        };
+        let found = match self.types.kind(ty) {
+            TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                AdtKind::Enum(variants) => Some(variants.iter().position(|v| v.name == variant.name)),
+                _ => None,
+            },
+            _ => None,
+        };
+        match found {
+            Some(Some(index)) => Some(Some((ty, index as u32))),
+            Some(None) => {
+                let message = format!("enum `{}` has no variant `{}`", type_name.name, variant.name);
+                self.diags.error("E1001", variant.span, message);
+                Some(None)
+            }
+            None if ty == Ty::ERROR => Some(None),
+            None => {
+                let message = format!("`{}` is not an enum", type_name.name);
+                self.diags.error("E1102", type_name.span, message);
+                Some(None)
+            }
+        }
+    }
+
+    fn payload(&self, ty: Ty, variant: u32) -> Payload {
+        let TyKind::Adt(id) = self.types.kind(ty) else { unreachable!() };
+        let AdtKind::Enum(variants) = &self.types.adt(*id).kind else { unreachable!() };
+        variants[variant as usize].payload.clone()
+    }
+
+    fn match_expr(
+        &mut self,
+        cx: &mut FnCx,
+        scrutinee: &ast::Expr,
+        arms: &[ast::MatchArm],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let scrutinee = self.expr(cx, scrutinee, None);
+        let mut result = expected;
+        let mut out = Vec::new();
+        for arm in arms {
+            cx.scopes.push(Vec::new());
+            let outer = std::mem::replace(&mut cx.diverged, false);
+            let pattern =
+                self.pattern(cx, &arm.pattern, scrutinee.ty, PatternContext { in_match: true, mutable: false });
+            let guard = arm.guard.as_ref().map(|guard| {
+                let guard = self.expr(cx, guard, Some(Ty::BOOL));
+                self.coerce(guard, Ty::BOOL)
+            });
+            let body = match &arm.body {
+                ast::ArmBody::Expr(body) => {
+                    let value = self.expr(cx, body, result);
+                    match result {
+                        Some(expected) => self.coerce(value, expected),
+                        None => value,
+                    }
+                }
+                ast::ArmBody::Transfer(stmt) => {
+                    let stmts = self.statement(cx, stmt).into_iter().collect();
+                    let block = hir::Block { stmts, tail: None, ty: Ty::NEVER };
+                    Self::mk(hir::ExprKind::Block(block), Ty::NEVER, stmt.span)
+                }
+            };
+            if result.is_none() && body.ty != Ty::NEVER && body.ty != Ty::ERROR {
+                result = Some(body.ty);
+            }
+            cx.diverged = outer;
+            cx.scopes.pop();
+            out.push(hir::Arm { pattern, guard, body });
+        }
+        let checked: Vec<(&hir::Pattern, bool)> = out.iter().map(|a| (&a.pattern, a.guard.is_some())).collect();
+        if scrutinee.ty != Ty::ERROR && !checked.iter().any(|(p, _)| p.ty == Ty::ERROR) {
+            let report = crate::exhaust::check_match(&self.types, scrutinee.ty, &checked);
+            for index in report.unreachable {
+                self.diags.error("E1203", out[index].pattern.span, "this arm is covered by earlier arms");
+            }
+            if let Some(missing) = report.missing {
+                let message = format!("`match` is not exhaustive: `{missing}` is not covered");
+                self.diags.error("E1204", span, message);
+            }
+        }
+        let all_diverge = out.iter().all(|a| a.body.ty == Ty::NEVER);
+        let ty = if all_diverge { Ty::NEVER } else { result.unwrap_or(Ty::UNIT) };
+        Self::mk(hir::ExprKind::Match(Box::new(scrutinee), out), ty, span)
+    }
+
+    fn pattern_error(&mut self, span: Span, message: String) -> hir::Pattern {
+        self.diags.error("E1202", span, message);
+        hir::Pattern { kind: hir::PatKind::Wildcard, ty: Ty::ERROR, span }
+    }
+
+    /// Checks a pattern against a value of type `ty`, declaring its bindings
+    /// in the current scope.
+    fn pattern(&mut self, cx: &mut FnCx, p: &ast::Pattern, ty: Ty, context: PatternContext) -> hir::Pattern {
+        let span = p.span;
+        let mismatch = |this: &Self, what: &str| format!("{what} cannot match a value of type {}", this.display(ty));
+        let kind = match &p.kind {
+            ast::PatternKind::Wildcard => hir::PatKind::Wildcard,
+            ast::PatternKind::Binding(name) => {
+                let message = match name.name.as_str() {
+                    "None" => Some("`None` is not a Tondo pattern; write `none`".to_string()),
+                    "Some" | "Ok" | "Err" => Some(format!(
+                        "`{}` is not a Tondo pattern; write `{}(...)`",
+                        name.name,
+                        name.name.to_lowercase()
+                    )),
+                    n if context.in_match && CONTEXTUAL_CONSTRUCTORS.contains(&n) => {
+                        Some(format!("`{n}` without parentheses would match any value; write `{n}(...)` or rename it"))
+                    }
+                    _ => None,
+                };
+                if let Some(message) = message {
+                    return self.pattern_error(name.span, message);
+                }
+                hir::PatKind::Binding(self.declare(cx, name, ty, context.mutable))
+            }
+            ast::PatternKind::Literal(expr) => {
+                let value = self.expr(cx, expr, Some(ty));
+                let literal = match value.kind {
+                    hir::ExprKind::Int(v) => hir::Literal::Int(v),
+                    hir::ExprKind::Bool(b) => hir::Literal::Bool(b),
+                    hir::ExprKind::Str(s) => hir::Literal::Str(s),
+                    hir::ExprKind::Unit => hir::Literal::Unit,
+                    _ => return self.unsupported_pattern(span, "this literal pattern"),
+                };
+                if value.ty != ty && ty != Ty::ERROR && value.ty != Ty::ERROR {
+                    let message = mismatch(self, &format!("a {} literal", self.display(value.ty)));
+                    return self.pattern_error(span, message);
+                }
+                hir::PatKind::Literal(literal)
+            }
+            ast::PatternKind::None if !context.in_match => {
+                return self.pattern_error(span, "`none` is a reserved keyword and cannot name a binding".into());
+            }
+            ast::PatternKind::None => return self.unsupported_pattern(span, "`none` patterns"),
+            ast::PatternKind::Tuple(items) => match self.types.kind(ty) {
+                TyKind::Tuple(types) if types.len() == items.len() => {
+                    let types = types.clone();
+                    let fields = items.iter().zip(types).map(|(item, t)| self.pattern(cx, item, t, context)).collect();
+                    hir::PatKind::Fields(fields)
+                }
+                TyKind::Error => hir::PatKind::Wildcard,
+                _ => {
+                    let message = mismatch(self, &format!("a tuple pattern of {} elements", items.len()));
+                    return self.pattern_error(span, message);
+                }
+            },
+            ast::PatternKind::Constructor { path, args } => {
+                if let [name] = path.as_slice()
+                    && CONTEXTUAL_CONSTRUCTORS.contains(&name.name.as_str())
+                {
+                    return self.unsupported_pattern(span, "`some`, `ok` and `err` patterns");
+                }
+                if let Some(resolved) = self.variant_path(path) {
+                    let Some((enum_ty, variant)) = resolved else { return Self::wild(ty, span) };
+                    if enum_ty != ty {
+                        let message = mismatch(self, &format!("a `{}` pattern", Self::path_text(path)));
+                        return self.pattern_error(span, message);
+                    }
+                    let Payload::Tuple(types) = self.payload(ty, variant) else {
+                        let message = format!("`{}` has no positional payload", Self::path_text(path));
+                        return self.pattern_error(span, message);
+                    };
+                    if types.len() != args.len() {
+                        let message = format!("`{}` has {} payload values", Self::path_text(path), types.len());
+                        return self.pattern_error(span, message);
+                    }
+                    let fields = args.iter().zip(types).map(|(arg, t)| self.pattern(cx, arg, t, context)).collect();
+                    hir::PatKind::Variant(variant, fields)
+                } else if let [name] = path.as_slice()
+                    && let Some(&ModuleName::Newtype(newtype)) = self.names.get(&name.name)
+                {
+                    if newtype != ty {
+                        let message = mismatch(self, &format!("a `{}` pattern", name.name));
+                        return self.pattern_error(span, message);
+                    }
+                    let [arg] = args.as_slice() else {
+                        return self.pattern_error(span, format!("`{}(...)` takes one pattern", name.name));
+                    };
+                    let TyKind::Adt(id) = self.types.kind(ty) else { unreachable!() };
+                    let AdtKind::Newtype(inner) = self.types.adt(*id).kind else { unreachable!() };
+                    hir::PatKind::Newtype(Box::new(self.pattern(cx, arg, inner, context)))
+                } else {
+                    let message = format!("`{}` is not a constructor", Self::path_text(path));
+                    return self.pattern_error(span, message);
+                }
+            }
+            ast::PatternKind::Record { path, fields, rest } => {
+                let (record_ty, declared, variant) = if let Some(resolved) = self.variant_path(path) {
+                    let Some((enum_ty, variant)) = resolved else { return Self::wild(ty, span) };
+                    let Payload::Record(fields) = self.payload(enum_ty, variant) else {
+                        let message = format!("`{}` has no named fields", Self::path_text(path));
+                        return self.pattern_error(span, message);
+                    };
+                    (enum_ty, fields.into_iter().map(|f| (f.name, f.ty)).collect(), Some(variant))
+                } else if let [name] = path.as_slice()
+                    && let Some(TypeName::Nominal(record)) = self.type_names.get(&name.name)
+                {
+                    let record = *record;
+                    let Some(fields) = self.record_fields(record, name.span) else { return Self::wild(ty, span) };
+                    (record, fields, None)
+                } else {
+                    let message = format!("`{}` is not a record type or variant", Self::path_text(path));
+                    return self.pattern_error(span, message);
+                };
+                if record_ty != ty {
+                    let message = mismatch(self, &format!("a `{}` pattern", Self::path_text(path)));
+                    return self.pattern_error(span, message);
+                }
+                let patterns = self.field_patterns(cx, &declared, fields, *rest, context, span);
+                match variant {
+                    Some(variant) => hir::PatKind::Variant(variant, patterns),
+                    None => hir::PatKind::Fields(patterns),
+                }
+            }
+            ast::PatternKind::Path(path) => {
+                let Some(resolved) = self.variant_path(path) else {
+                    let message = format!("`{}` is not a variant", Self::path_text(path));
+                    return self.pattern_error(span, message);
+                };
+                let Some((enum_ty, variant)) = resolved else { return Self::wild(ty, span) };
+                if enum_ty != ty {
+                    let message = mismatch(self, &format!("`{}`", Self::path_text(path)));
+                    return self.pattern_error(span, message);
+                }
+                if !matches!(self.payload(ty, variant), Payload::Unit) {
+                    let message = format!("`{}` has a payload; match it explicitly", Self::path_text(path));
+                    return self.pattern_error(span, message);
+                }
+                hir::PatKind::Variant(variant, Vec::new())
+            }
+        };
+        hir::Pattern { kind, ty, span }
+    }
+
+    fn wild(ty: Ty, span: Span) -> hir::Pattern {
+        hir::Pattern { kind: hir::PatKind::Wildcard, ty, span }
+    }
+
+    fn unsupported_pattern(&mut self, span: Span, what: &str) -> hir::Pattern {
+        self.diags.unsupported(span, what);
+        hir::Pattern { kind: hir::PatKind::Wildcard, ty: Ty::ERROR, span }
+    }
+
+    fn field_patterns(
+        &mut self,
+        cx: &mut FnCx,
+        declared: &[(String, Ty)],
+        fields: &[ast::FieldPattern],
+        rest: bool,
+        context: PatternContext,
+        span: Span,
+    ) -> Vec<hir::Pattern> {
+        let mut patterns: Vec<Option<hir::Pattern>> = (0..declared.len()).map(|_| None).collect();
+        for field in fields {
+            let Some(index) = declared.iter().position(|(n, _)| *n == field.name.name) else {
+                let message = format!("there is no field `{}`", field.name.name);
+                self.diags.error("E1202", field.name.span, message);
+                continue;
+            };
+            if patterns[index].is_some() {
+                let message = format!("field `{}` appears more than once", field.name.name);
+                self.diags.error("E1202", field.name.span, message);
+                continue;
+            }
+            let ty = declared[index].1;
+            let pattern = match &field.pattern {
+                Some(pattern) => self.pattern(cx, pattern, ty, context),
+                None => {
+                    let binding =
+                        ast::Pattern { kind: ast::PatternKind::Binding(field.name.clone()), span: field.name.span };
+                    self.pattern(cx, &binding, ty, context)
+                }
+            };
+            patterns[index] = Some(pattern);
+        }
+        let missing: Vec<&str> =
+            declared.iter().zip(&patterns).filter(|(_, p)| p.is_none()).map(|((n, _), _)| n.as_str()).collect();
+        if !rest && !missing.is_empty() {
+            let message = format!("pattern does not mention {}; add `..` to ignore them", missing.join(", "));
+            self.diags.error("E1202", span, message);
+        }
+        patterns
+            .into_iter()
+            .zip(declared)
+            .map(|(p, (_, ty))| p.unwrap_or(hir::Pattern { kind: hir::PatKind::Wildcard, ty: *ty, span }))
+            .collect()
     }
 
     fn with_expr(&mut self, cx: &mut FnCx, base: &ast::Expr, updates: &[ast::FieldInit], span: Span) -> hir::Expr {
@@ -988,6 +1366,15 @@ impl Checker<'_> {
             }
             return value;
         }
+        if let Some(resolved) = self.variant_path(segments) {
+            let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
+            if let Payload::Unit = self.payload(ty, variant) {
+                return Self::mk(hir::ExprKind::Variant(variant, Vec::new()), ty, span);
+            }
+            let message = format!("`{}` needs a payload", Self::path_text(segments));
+            self.diags.error("E1102", span, message);
+            return Self::error_expr(span);
+        }
         match self.names.get(&first.name) {
             Some(ModuleName::Fn(_)) => self.unsupported_expr(span, "function values"),
             Some(ModuleName::Newtype(_)) => {
@@ -1030,6 +1417,27 @@ impl Checker<'_> {
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
         if self.lookup(cx, names[0]).is_some() {
             return self.unsupported_expr(callee.span, "method calls and calls through values");
+        }
+        if let Some(resolved) = self.variant_path(segments) {
+            let Some((ty, variant)) = resolved else { return Self::error_expr(span) };
+            let Payload::Tuple(types) = self.payload(ty, variant) else {
+                let message = format!("`{}` does not take positional values", Self::path_text(segments));
+                self.diags.error("E1102", span, message);
+                return Self::error_expr(span);
+            };
+            if types.len() != args.len() {
+                return self.arity_error(span, types.len(), args.len());
+            }
+            let values = args
+                .iter()
+                .zip(types)
+                .enumerate()
+                .map(|(index, (arg, ty))| {
+                    let value = self.expr(cx, &arg.value, Some(ty));
+                    (index as u32, self.coerce(value, ty))
+                })
+                .collect();
+            return Self::mk(hir::ExprKind::Variant(variant, values), ty, span);
         }
         match (names.as_slice(), self.names.get(names[0]).copied()) {
             (["panic"], _) => {

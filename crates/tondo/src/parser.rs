@@ -215,6 +215,7 @@ impl Parser<'_> {
         match self.tok() {
             Tok::Kw(Kw::Fn) => Ok(Some(Item::Fn(self.function(public, start)?))),
             Tok::Kw(Kw::Type) => Ok(Some(Item::Type(self.type_declaration(public, start)?))),
+            Tok::Kw(Kw::Enum) => Ok(Some(Item::Enum(self.enum_declaration(public, start)?))),
             Tok::Kw(Kw::Alias) => {
                 self.bump();
                 let name = self.ident()?;
@@ -255,6 +256,42 @@ impl Parser<'_> {
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
         Ok(TypeDecl { public, name, body, span })
+    }
+
+    fn enum_declaration(&mut self, public: bool, start: Span) -> PResult<EnumDecl> {
+        self.bump();
+        let name = self.ident()?;
+        self.no_generics()?;
+        self.expect(Tok::LBrace)?;
+        let mut variants = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.eat(&Tok::RBrace) {
+                break;
+            }
+            let name = self.ident()?;
+            let payload = match self.tok() {
+                Tok::LParen => {
+                    self.bump();
+                    let mut items = Vec::new();
+                    while !self.at(&Tok::RParen) {
+                        items.push(self.type_expr()?);
+                        if !self.eat(&Tok::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(Tok::RParen)?;
+                    VariantPayload::Tuple(items)
+                }
+                Tok::LBrace => VariantPayload::Record(self.record_body()?),
+                _ => VariantPayload::Unit,
+            };
+            variants.push(VariantDecl { name, payload });
+            self.field_separator()?;
+        }
+        let span = start.to(self.prev_span());
+        self.end_of_statement()?;
+        Ok(EnumDecl { public, name, variants, span })
     }
 
     /// `{ [priv] name: Type, ... }` separated by commas or newlines.
@@ -501,32 +538,12 @@ impl Parser<'_> {
         let kind = match self.tok().clone() {
             Tok::Kw(kw @ (Kw::Let | Kw::Var)) => {
                 self.bump();
-                let name = self.ident()?;
+                let pattern = self.pattern()?;
                 let ty = if self.eat(&Tok::Colon) { Some(self.type_expr()?) } else { None };
                 let value = if self.eat(&Tok::Eq) { Some(self.expression()?) } else { None };
-                StmtKind::Let { mutable: kw == Kw::Var, name, ty, value }
+                StmtKind::Let { mutable: kw == Kw::Var, pattern, ty, value }
             }
-            Tok::Kw(Kw::Return) => {
-                self.bump();
-                let value = if matches!(self.tok(), Tok::Newline | Tok::RBrace | Tok::Eof) {
-                    None
-                } else {
-                    Some(self.expression()?)
-                };
-                StmtKind::Return(value)
-            }
-            Tok::Kw(Kw::Fail) => {
-                self.bump();
-                StmtKind::Fail(self.expression()?)
-            }
-            Tok::Kw(Kw::Break) => {
-                self.bump();
-                StmtKind::Break
-            }
-            Tok::Kw(Kw::Continue) => {
-                self.bump();
-                StmtKind::Continue
-            }
+            Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => self.transfer()?,
             Tok::Kw(Kw::For) => self.for_statement()?,
             Tok::Kw(Kw::Defer) => {
                 self.diags.unsupported(start, "`defer`");
@@ -599,7 +616,8 @@ impl Parser<'_> {
     fn expression(&mut self) -> PResult<Expr> {
         match self.tok() {
             Tok::Kw(Kw::If) => self.if_expression(),
-            Tok::Kw(kw @ (Kw::Match | Kw::Select)) => {
+            Tok::Kw(Kw::Match) => self.match_expression(),
+            Tok::Kw(kw @ Kw::Select) => {
                 let what = format!("`{}` expressions", kw.as_str());
                 self.diags.unsupported(self.span(), &what);
                 Err(())
@@ -613,6 +631,164 @@ impl Parser<'_> {
                 }
                 Ok(expr)
             }
+        }
+    }
+
+    fn match_expression(&mut self) -> PResult<Expr> {
+        let start = self.bump().span;
+        let no_brace = std::mem::replace(&mut self.no_brace, true);
+        let scrutinee = self.expression();
+        self.no_brace = no_brace;
+        let scrutinee = Box::new(scrutinee?);
+        let no_brace = std::mem::replace(&mut self.no_brace, false);
+        let arms = self.match_arms();
+        self.no_brace = no_brace;
+        let arms = arms?;
+        Ok(Expr { kind: ExprKind::Match { scrutinee, arms }, span: start.to(self.prev_span()) })
+    }
+
+    fn match_arms(&mut self) -> PResult<Vec<MatchArm>> {
+        self.expect(Tok::LBrace)?;
+        let mut arms = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.eat(&Tok::RBrace) {
+                return Ok(arms);
+            }
+            let pattern = self.pattern()?;
+            let guard = if self.eat_kw(Kw::If) { Some(self.expression()?) } else { None };
+            self.expect(Tok::FatArrow)?;
+            let body = match self.tok() {
+                Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => {
+                    let start = self.span();
+                    let kind = self.transfer()?;
+                    ArmBody::Transfer(Box::new(Stmt { kind, span: start.to(self.prev_span()) }))
+                }
+                _ => ArmBody::Expr(self.expression()?),
+            };
+            arms.push(MatchArm { span: pattern.span.to(self.prev_span()), pattern, guard, body });
+            // An arm ends at a new line or a comma (23.17).
+            if !self.eat(&Tok::Comma) && !self.at(&Tok::Newline) && !self.at(&Tok::RBrace) {
+                return self.expected("a new line after the match arm");
+            }
+        }
+    }
+
+    /// `return`, `fail`, `break` or `continue` (shared by statements and arms).
+    fn transfer(&mut self) -> PResult<StmtKind> {
+        Ok(match self.bump().tok {
+            Tok::Kw(Kw::Return) => {
+                let value = if matches!(self.tok(), Tok::Newline | Tok::RBrace | Tok::Eof | Tok::Comma) {
+                    None
+                } else {
+                    Some(self.expression()?)
+                };
+                StmtKind::Return(value)
+            }
+            Tok::Kw(Kw::Fail) => StmtKind::Fail(self.expression()?),
+            Tok::Kw(Kw::Break) => StmtKind::Break,
+            _ => StmtKind::Continue,
+        })
+    }
+
+    // ---- patterns --------------------------------------------------------
+
+    fn pattern(&mut self) -> PResult<Pattern> {
+        let start = self.span();
+        let kind = match self.tok().clone() {
+            Tok::Ident(name) if name == "_" => {
+                self.bump();
+                PatternKind::Wildcard
+            }
+            Tok::Kw(Kw::None) => {
+                self.bump();
+                PatternKind::None
+            }
+            Tok::Kw(Kw::True | Kw::False) | Tok::Int { .. } | Tok::Float { .. } | Tok::Char(_) => {
+                PatternKind::Literal(self.primary()?)
+            }
+            Tok::Str(parts) => {
+                if parts.iter().any(|p| matches!(p, StrPart::Expr(_))) {
+                    return self.error("an interpolated string is not a pattern");
+                }
+                PatternKind::Literal(self.primary()?)
+            }
+            Tok::Minus if matches!(self.nth(1), Tok::Int { .. } | Tok::Float { .. }) => {
+                PatternKind::Literal(self.unary()?)
+            }
+            Tok::LParen => {
+                self.bump();
+                if self.eat(&Tok::RParen) {
+                    PatternKind::Literal(Expr { kind: ExprKind::Unit, span: start.to(self.prev_span()) })
+                } else {
+                    let first = self.pattern()?;
+                    if self.eat(&Tok::RParen) {
+                        return Ok(Pattern { kind: first.kind, span: start.to(self.prev_span()) });
+                    }
+                    let mut items = vec![first];
+                    while self.eat(&Tok::Comma) && !self.at(&Tok::RParen) {
+                        items.push(self.pattern()?);
+                    }
+                    self.expect(Tok::RParen)?;
+                    PatternKind::Tuple(items)
+                }
+            }
+            Tok::Ident(_) => {
+                let mut path = vec![self.ident()?];
+                while self.eat(&Tok::Dot) {
+                    path.push(self.ident()?);
+                }
+                match self.tok() {
+                    Tok::LParen => {
+                        self.bump();
+                        let mut args = Vec::new();
+                        while !self.at(&Tok::RParen) {
+                            args.push(self.pattern()?);
+                            if !self.eat(&Tok::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(Tok::RParen)?;
+                        PatternKind::Constructor { path, args }
+                    }
+                    Tok::LBrace => {
+                        let (fields, rest) = self.field_patterns()?;
+                        PatternKind::Record { path, fields, rest }
+                    }
+                    _ if path.len() == 1 => PatternKind::Binding(path.pop().unwrap()),
+                    _ => PatternKind::Path(path),
+                }
+            }
+            Tok::LBracket => {
+                self.diags.unsupported(start, "array patterns");
+                return Err(());
+            }
+            Tok::Kw(Kw::Ref | Kw::Mut | Kw::Var) => {
+                self.diags.unsupported(start, "loan patterns");
+                return Err(());
+            }
+            _ => return self.expected("pattern"),
+        };
+        Ok(Pattern { kind, span: start.to(self.prev_span()) })
+    }
+
+    fn field_patterns(&mut self) -> PResult<(Vec<FieldPattern>, bool)> {
+        self.expect(Tok::LBrace)?;
+        let mut fields = Vec::new();
+        let mut rest = false;
+        loop {
+            self.skip_newlines();
+            if self.eat(&Tok::RBrace) {
+                return Ok((fields, rest));
+            }
+            if self.eat(&Tok::DotDot) {
+                rest = true;
+            } else {
+                let name = self.field_name()?;
+                let pattern = if self.eat(&Tok::Colon) { Some(self.pattern()?) } else { None };
+                fields.push(FieldPattern { name, pattern });
+            }
+            self.field_separator()?;
         }
     }
 

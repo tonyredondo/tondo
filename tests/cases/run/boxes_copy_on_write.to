@@ -1,0 +1,32 @@
+import std.console
+
+type Person = {
+    name: String
+    best: Friend
+}
+
+enum Friend {
+    Nobody
+    Someone(Person)
+}
+
+fn names(p: Person): String {
+    match p.best {
+        Friend.Nobody => p.name
+        Friend.Someone(other) => "{p.name}>{names(other)}"
+    }
+}
+
+fn main() {
+    let b = Person { name: "B", best: Friend.Nobody }
+    var a = Person { name: "A", best: Friend.Someone(b) }
+    let shared = a
+    a.best = Friend.Someone(Person { name: "Z", best: Friend.Nobody })
+    var c = shared
+    c.best = Friend.Nobody
+    _ = console.println("{names(a)} {names(shared)} {names(c)}")
+}
+
+// `Person` and `Friend` contain each other, so `best` lives in a box that
+// copies share; writing through it makes it unique first.
+// expect-stdout: A>Z A>B A

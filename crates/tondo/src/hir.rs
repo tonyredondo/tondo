@@ -37,6 +37,8 @@ pub struct Block {
 
 pub enum Stmt {
     Let(LocalId, Expr),
+    /// `let pattern = value` with an irrefutable pattern.
+    Destructure(Pattern, Expr),
     /// Assignment to a binding or to a field path inside it.
     Assign {
         local: LocalId,
@@ -88,6 +90,10 @@ pub enum ExprKind {
     With(Box<Expr>, Vec<(u32, Expr)>),
     /// Newtype construction or `.value`: same representation, new type.
     Retype(Box<Expr>),
+    /// An enum value: the variant and its payload as `(component, value)`
+    /// in source order.
+    Variant(u32, Vec<(u32, Expr)>),
+    Match(Box<Expr>, Vec<Arm>),
     Call(Callee, Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     /// Arithmetic, bitwise and comparison operators; `and`/`or` short-circuit.
@@ -104,6 +110,38 @@ pub enum ExprKind {
         source: String,
     },
     Error,
+}
+
+pub struct Arm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: Expr,
+}
+
+pub struct Pattern {
+    pub kind: PatKind,
+    pub ty: Ty,
+    pub span: Span,
+}
+
+pub enum PatKind {
+    Wildcard,
+    Binding(LocalId),
+    Literal(Literal),
+    /// Tuple elements or record fields, one pattern per component.
+    Fields(Vec<Pattern>),
+    /// An enum variant with one pattern per payload component.
+    Variant(u32, Vec<Pattern>),
+    /// `Newtype(pattern)`: the same value seen as the newtype's value.
+    Newtype(Box<Pattern>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Literal {
+    Int(i128),
+    Bool(bool),
+    Str(String),
+    Unit,
 }
 
 pub enum Segment {

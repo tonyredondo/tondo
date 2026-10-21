@@ -14,11 +14,19 @@ pub struct Local(pub u32);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BlockId(pub u32);
 
-/// A local or a field path inside it (tuple elements and record fields).
+/// One step of a place: a tuple element or record field, or a payload
+/// component of an enum value known to hold that variant.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Proj {
+    Field(u32),
+    Variant(u32, u32),
+}
+
+/// A local or a path inside it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
     pub local: Local,
-    pub path: Vec<u32>,
+    pub path: Vec<Proj>,
 }
 
 impl Place {
@@ -26,10 +34,28 @@ impl Place {
         Place { local, path: Vec::new() }
     }
 
-    pub fn field(&self, index: u32) -> Place {
+    fn with(&self, proj: Proj) -> Place {
         let mut path = self.path.clone();
-        path.push(index);
+        path.push(proj);
         Place { local: self.local, path }
+    }
+
+    pub fn field(&self, index: u32) -> Place {
+        self.with(Proj::Field(index))
+    }
+
+    pub fn variant_field(&self, variant: u32, index: u32) -> Place {
+        self.with(Proj::Variant(variant, index))
+    }
+}
+
+/// The type of the component a projection selects inside `ty`.
+pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
+    match proj {
+        Proj::Field(index) => types.components(ty).expect("field of an aggregate")[index as usize],
+        Proj::Variant(variant, index) => {
+            types.variants(ty).expect("payload of an enum")[variant as usize][index as usize]
+        }
     }
 }
 
@@ -45,9 +71,7 @@ pub struct Body {
 
 impl Body {
     pub fn place_ty(&self, types: &Types, place: &Place) -> Ty {
-        place.path.iter().fold(self.locals[place.local.0 as usize], |ty, &index| {
-            types.components(ty).expect("field path through an aggregate")[index as usize]
-        })
+        place.path.iter().fold(self.locals[place.local.0 as usize], |ty, &proj| project(types, ty, proj))
     }
 }
 
@@ -97,6 +121,10 @@ pub enum Rvalue {
     /// A tuple or record from its components in declaration order. The
     /// destination is always a fresh local, so components never alias it.
     Aggregate(Vec<Operand>),
+    /// An enum value of the given variant, from its payload components.
+    Variant(u32, Vec<Operand>),
+    /// The variant index of an enum value, as the enum's tag type.
+    Discriminant(Place),
 }
 
 pub enum Piece {

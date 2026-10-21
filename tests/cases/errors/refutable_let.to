@@ -1,0 +1,10 @@
+enum Shape {
+    Circle(Int)
+    Point
+}
+
+fn main() {
+    let Shape.Circle(r) = Shape.Point
+}
+
+// expect-error: E1201

@@ -1,0 +1,10 @@
+fn f(p: (Bool, Bool)): Int {
+    match p {
+        (true, _) => 1
+        (false, false) => 2
+    }
+}
+
+fn main() {}
+
+// expect-error: E1204

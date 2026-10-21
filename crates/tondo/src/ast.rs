@@ -28,6 +28,80 @@ pub enum Item {
     Fn(FnDecl),
     Type(TypeDecl),
     Alias(AliasDecl),
+    Enum(EnumDecl),
+}
+
+#[derive(Debug)]
+pub struct EnumDecl {
+    pub public: bool,
+    pub name: Ident,
+    pub variants: Vec<VariantDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct VariantDecl {
+    pub name: Ident,
+    pub payload: VariantPayload,
+}
+
+#[derive(Debug)]
+pub enum VariantPayload {
+    Unit,
+    Tuple(Vec<TypeExpr>),
+    Record(Vec<FieldDecl>),
+}
+
+#[derive(Debug)]
+pub struct Pattern {
+    pub kind: PatternKind,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub enum PatternKind {
+    Wildcard,
+    Binding(Ident),
+    /// An integer, boolean, string or `()` literal, possibly negated.
+    Literal(Expr),
+    /// `none`
+    None,
+    Tuple(Vec<Pattern>),
+    /// `Enum.Variant(...)`, `some(...)`, `ok(...)`, `err(...)` or `Newtype(...)`.
+    Constructor {
+        path: Vec<Ident>,
+        args: Vec<Pattern>,
+    },
+    /// `Type { field, field: pattern, .. }`
+    Record {
+        path: Vec<Ident>,
+        fields: Vec<FieldPattern>,
+        rest: bool,
+    },
+    /// A qualified payload-free variant: `Enum.Variant`.
+    Path(Vec<Ident>),
+}
+
+#[derive(Debug)]
+pub struct FieldPattern {
+    pub name: Ident,
+    /// `None` for the shorthand `name`, which binds `name`.
+    pub pattern: Option<Pattern>,
+}
+
+#[derive(Debug)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: ArmBody,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub enum ArmBody {
+    Expr(Expr),
+    /// `return`, `fail`, `break` or `continue` written directly after `=>`.
+    Transfer(Box<Stmt>),
 }
 
 /// `type Name = { fields }` (record) or `type Name = T` (newtype).
@@ -120,7 +194,7 @@ pub struct Stmt {
 pub enum StmtKind {
     Let {
         mutable: bool,
-        name: Ident,
+        pattern: Pattern,
         ty: Option<TypeExpr>,
         value: Option<Expr>,
     },
@@ -196,6 +270,10 @@ pub enum ExprKind {
         otherwise: Option<Box<Expr>>,
     },
     Block(Block),
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
     Tuple(Vec<Expr>),
     Try(Box<Expr>),
     /// Placeholder after a reported syntax error.
