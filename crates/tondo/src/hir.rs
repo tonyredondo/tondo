@@ -3,6 +3,7 @@
 use crate::ast::{BinOp, UnaryOp};
 use crate::source::Span;
 use crate::types::{Ty, Types};
+use std::collections::HashMap;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FnId(pub u32);
@@ -14,6 +15,33 @@ pub struct Program {
     pub types: Types,
     pub functions: Vec<Function>,
     pub main: FnId,
+    pub traits: Vec<TraitInfo>,
+    pub impls: Vec<ImplInfo>,
+    /// After monomorphization: the user `Display.display` of each type whose
+    /// values are displayed inside collections.
+    pub display: HashMap<Ty, FnId>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TraitId(pub u32);
+
+/// What monomorphization needs to know about a trait (12.3).
+pub struct TraitInfo {
+    pub name: String,
+    /// The default body of each method, generic over `Self`, the trait's
+    /// parameters and the method's own.
+    pub defaults: Vec<Option<FnId>>,
+    pub param_count: usize,
+}
+
+/// An implementation of a trait for a target (12.4). Its methods are
+/// generic over the binders, then their own parameters.
+pub struct ImplInfo {
+    pub trait_id: TraitId,
+    pub trait_args: Vec<Ty>,
+    pub target: Ty,
+    pub generics: Vec<Ty>,
+    pub methods: Vec<Option<FnId>>,
 }
 
 #[derive(Clone)]
@@ -325,6 +353,10 @@ pub enum Segment {
 pub enum Callee {
     Fn(FnId),
     Std(StdFn),
+    /// A trait method, by trait and index; its type arguments are `Self`,
+    /// the trait's parameters and the method's own. Monomorphization
+    /// replaces it with the implementation for the concrete `Self`.
+    Trait(TraitId, u32),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

@@ -480,6 +480,74 @@ impl Types {
         }
     }
 
+    /// Whether `pattern` matches `actual` when the parameters in `vars` are
+    /// bound consistently in `map`; selects implementations (12.6).
+    pub fn matches(&self, pattern: Ty, actual: Ty, vars: &[Ty], map: &mut HashMap<Ty, Ty>) -> bool {
+        if vars.contains(&pattern) {
+            return match map.get(&pattern) {
+                Some(&bound) => bound == actual,
+                None => {
+                    map.insert(pattern, actual);
+                    true
+                }
+            };
+        }
+        if pattern == actual {
+            return true;
+        }
+        self.same_shape(pattern, actual, &mut |types, a, b| types.matches(a, b, vars, map))
+    }
+
+    /// Whether `a` and `b` become equal for some binding of the parameters
+    /// in `vars` on either side; decides overlapping implementations (12.6).
+    pub fn unify_both(&self, a: Ty, b: Ty, vars: &[Ty], map: &mut HashMap<Ty, Ty>) -> bool {
+        let resolve = |mut ty: Ty, map: &HashMap<Ty, Ty>| {
+            while let Some(&next) = map.get(&ty) {
+                ty = next;
+            }
+            ty
+        };
+        let (a, b) = (resolve(a, map), resolve(b, map));
+        if a == b {
+            return true;
+        }
+        if vars.contains(&a) {
+            map.insert(a, b);
+            return true;
+        }
+        if vars.contains(&b) {
+            map.insert(b, a);
+            return true;
+        }
+        self.same_shape(a, b, &mut |types, x, y| types.unify_both(x, y, vars, map))
+    }
+
+    /// Whether `a` and `b` have the same outer constructor and `each` holds
+    /// for every pair of corresponding components.
+    fn same_shape(&self, a: Ty, b: Ty, each: &mut dyn FnMut(&Self, Ty, Ty) -> bool) -> bool {
+        match (self.kind(a), self.kind(b)) {
+            (TyKind::Tuple(x), TyKind::Tuple(y)) | (TyKind::Union(x), TyKind::Union(y)) if x.len() == y.len() => {
+                x.iter().zip(y).all(|(&p, &q)| each(self, p, q))
+            }
+            (TyKind::Option(x), TyKind::Option(y))
+            | (TyKind::Array(x), TyKind::Array(y))
+            | (TyKind::Deque(x), TyKind::Deque(y))
+            | (TyKind::Set(x), TyKind::Set(y)) => each(self, *x, *y),
+            (TyKind::Result(p, q), TyKind::Result(r, t)) | (TyKind::Map(p, q), TyKind::Map(r, t)) => {
+                let (p, q, r, t) = (*p, *q, *r, *t);
+                each(self, p, r) && each(self, q, t)
+            }
+            (TyKind::Adt(_), TyKind::Adt(_)) => match (self.instance_of(a), self.instance_of(b)) {
+                (Some((x, xs)), Some((y, ys))) if x == y => {
+                    let pairs: Vec<(Ty, Ty)> = xs.iter().copied().zip(ys.iter().copied()).collect();
+                    pairs.into_iter().all(|(p, q)| each(self, p, q))
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// The type parameters `ty` mentions.
     pub fn params_in(&self, ty: Ty, out: &mut Vec<Ty>) {
         match self.kind(ty) {

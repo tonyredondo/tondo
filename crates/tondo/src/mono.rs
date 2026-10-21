@@ -4,8 +4,11 @@
 //! see concrete types.
 
 use crate::diag::Diagnostics;
-use crate::hir::{Block, Callee, ExprKind, FnId, Function, PatKind, Pattern, Place, PlaceStep, Program, Segment, Stmt};
-use crate::types::{Ty, Types};
+use crate::hir::{
+    Block, Callee, Expr, ExprKind, FnId, Function, ImplInfo, PatKind, Pattern, Place, PlaceStep, Program, Segment,
+    Stmt, TraitId, TraitInfo,
+};
+use crate::types::{Ty, TyKind, Types};
 use std::collections::{HashMap, VecDeque};
 
 /// Instantiation depth beyond which a generic function is considered to
@@ -13,13 +16,16 @@ use std::collections::{HashMap, VecDeque};
 const MAX_DEPTH: usize = 32;
 
 pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program> {
-    let Program { mut types, functions, main } = program;
+    let Program { mut types, functions, main, traits, impls, .. } = program;
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
+        traits: &traits,
+        impls: &impls,
         instances: HashMap::new(),
         queue: VecDeque::new(),
         out: Vec::new(),
+        display: HashMap::new(),
         runaway: None,
     };
     let main = mono.instance(main, Vec::new());
@@ -35,14 +41,22 @@ pub fn monomorphize(program: Program, diags: &mut Diagnostics) -> Option<Program
         diags.error_without_span("E1112", message);
         return None;
     }
+    let display = std::mem::take(&mut mono.display);
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
-    Some(Program { types, functions, main })
+    Some(Program { types, functions, main, traits, impls, display })
 }
+
+/// The trait whose method interpolation uses (see the checker).
+const DISPLAY: TraitId = TraitId(0);
 
 struct Mono<'a> {
     types: &'a mut Types,
     functions: &'a [Function],
+    traits: &'a [TraitInfo],
+    impls: &'a [ImplInfo],
     instances: HashMap<(FnId, Vec<Ty>), FnId>,
+    /// The user `Display.display` of types displayed inside collections.
+    display: HashMap<Ty, FnId>,
     queue: VecDeque<(FnId, Vec<Ty>, FnId)>,
     out: Vec<Option<Function>>,
     runaway: Option<String>,
@@ -158,13 +172,13 @@ impl Mono<'_> {
         self.steps(&mut place.path, map);
     }
 
-    fn exprs(&mut self, exprs: &mut [crate::hir::Expr], map: &HashMap<Ty, Ty>) {
+    fn exprs(&mut self, exprs: &mut [Expr], map: &HashMap<Ty, Ty>) {
         for e in exprs {
             self.expr(e, map);
         }
     }
 
-    fn expr(&mut self, e: &mut crate::hir::Expr, map: &HashMap<Ty, Ty>) {
+    fn expr(&mut self, e: &mut Expr, map: &HashMap<Ty, Ty>) {
         e.ty = self.ty(e.ty, map);
         match &mut e.kind {
             ExprKind::Int(_)
@@ -232,10 +246,20 @@ impl Mono<'_> {
             }
             ExprKind::Call(callee, type_args, args) => {
                 self.exprs(args, map);
-                if let Callee::Fn(id) = callee {
-                    let args: Vec<Ty> = type_args.iter().map(|&t| self.types.subst(t, map)).collect();
-                    *callee = Callee::Fn(self.instance(*id, args));
-                    type_args.clear();
+                let types: Vec<Ty> = type_args.iter().map(|&t| self.types.subst(t, map)).collect();
+                type_args.clear();
+                match *callee {
+                    Callee::Fn(id) => *callee = Callee::Fn(self.instance(id, types)),
+                    Callee::Trait(trait_id, method) => match self.resolve(trait_id, method, &types) {
+                        Some((id, types)) => *callee = Callee::Fn(self.instance(id, types)),
+                        // A built-in value displays itself.
+                        None => {
+                            let value = args.pop().expect("`display` has a receiver");
+                            self.collect_display(value.ty);
+                            e.kind = ExprKind::Interpolate(vec![Segment::Value(value)]);
+                        }
+                    },
+                    Callee::Std(_) => {}
                 }
             }
             ExprKind::If(condition, then, otherwise) => {
@@ -250,6 +274,7 @@ impl Mono<'_> {
                 for segment in segments {
                     if let Segment::Value(value) = segment {
                         self.expr(value, map);
+                        self.collect_display(value.ty);
                     }
                 }
             }
@@ -257,6 +282,63 @@ impl Mono<'_> {
                 self.expr(condition, map);
                 self.exprs(parts, map);
             }
+        }
+    }
+
+    /// The function and type arguments of a trait method for a concrete
+    /// `Self` (the first of `types`); `None` for the intrinsic `Display` of
+    /// built-in values. The checker guarantees an implementation exists.
+    fn resolve(&mut self, trait_id: TraitId, method: u32, types: &[Ty]) -> Option<(FnId, Vec<Ty>)> {
+        let self_ty = types[0];
+        let count = self.traits[trait_id.0 as usize].param_count;
+        let (trait_args, own) = types[1..].split_at(count);
+        if trait_id == DISPLAY && !matches!(self.types.kind(self_ty), TyKind::Adt(_)) {
+            return None;
+        }
+        for implementation in self.impls.iter().filter(|i| i.trait_id == trait_id) {
+            let mut map = HashMap::new();
+            let matched = self.types.matches(implementation.target, self_ty, &implementation.generics, &mut map)
+                && implementation
+                    .trait_args
+                    .iter()
+                    .zip(trait_args)
+                    .all(|(&p, &a)| self.types.matches(p, a, &implementation.generics, &mut map));
+            if !matched {
+                continue;
+            }
+            return Some(match implementation.methods[method as usize] {
+                Some(id) => {
+                    let binders = implementation.generics.iter().map(|g| map[g]);
+                    (id, binders.chain(own.iter().copied()).collect())
+                }
+                None => {
+                    let default = self.traits[trait_id.0 as usize].defaults[method as usize];
+                    (default.expect("a method without implementation has a default"), types.to_vec())
+                }
+            });
+        }
+        panic!("no implementation of trait {} for {}", trait_id.0, self.types.display(self_ty));
+    }
+
+    /// Records the user `Display` of the types a displayed collection holds,
+    /// which code generation calls element by element.
+    fn collect_display(&mut self, ty: Ty) {
+        let parts = match self.types.kind(ty).clone() {
+            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => vec![element],
+            TyKind::Map(key, value) => vec![key, value],
+            TyKind::Adt(_) => {
+                if !self.display.contains_key(&ty)
+                    && let Some((id, types)) = self.resolve(DISPLAY, 0, &[ty])
+                {
+                    let instance = self.instance(id, types);
+                    self.display.insert(ty, instance);
+                }
+                return;
+            }
+            _ => return,
+        };
+        for part in parts {
+            self.collect_display(part);
         }
     }
 

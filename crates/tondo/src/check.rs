@@ -5,7 +5,7 @@
 
 use crate::ast::{self, BinOp, UnaryOp};
 use crate::diag::Diagnostics;
-use crate::hir::{self, Callee, FnId, LocalId, StdFn};
+use crate::hir::{self, Callee, FnId, LocalId, StdFn, TraitId};
 use crate::parser::CONTEXTUAL_CONSTRUCTORS;
 use crate::source::{SourceMap, Span};
 use crate::types::{
@@ -24,6 +24,12 @@ pub fn check(module: &ast::Module, sources: &SourceMap, diags: &mut Diagnostics)
         signatures: Vec::new(),
         methods: HashMap::new(),
         type_params: Vec::new(),
+        self_type: None,
+        traits: Vec::new(),
+        trait_names: HashMap::new(),
+        impls: Vec::new(),
+        bounds: HashMap::new(),
+        fn_scopes: Vec::new(),
         console_error: None,
         conversion_error: Ty::ERROR,
         collection_error: Ty::ERROR,
@@ -133,12 +139,55 @@ impl Inference {
 }
 
 /// What a call invokes: the callee, its signature, explicit type arguments
-/// (empty when inferred) and the type the call is expected to have.
+/// (empty when inferred), arguments already known and the type the call is
+/// expected to have.
 struct CallTarget {
     callee: Callee,
     signature: Signature,
     explicit: Vec<Ty>,
+    prebound: HashMap<Ty, Ty>,
     expected: Option<Ty>,
+}
+
+impl CallTarget {
+    fn new(callee: Callee, signature: Signature, expected: Option<Ty>) -> CallTarget {
+        CallTarget { callee, signature, explicit: Vec::new(), prebound: HashMap::new(), expected }
+    }
+}
+
+/// The prelude trait used by interpolation (19.6).
+const DISPLAY: TraitId = TraitId(0);
+
+/// A trait declaration (12.3). Its methods' signatures are generic over
+/// `Self`, the trait's parameters and their own.
+struct TraitDef {
+    name: String,
+    self_param: Ty,
+    params: Vec<Ty>,
+    methods: Vec<TraitMethod>,
+}
+
+struct TraitMethod {
+    name: String,
+    signature: Signature,
+    default: Option<FnId>,
+}
+
+/// An implementation (12.4); its methods are generic over the binders.
+struct ImplDef {
+    trait_id: TraitId,
+    trait_args: Vec<Ty>,
+    target: Ty,
+    generics: Vec<Ty>,
+    methods: Vec<Option<FnId>>,
+}
+
+/// The type names a function sees besides the module's: generic parameters
+/// in scope and what `Self` means.
+#[derive(Clone, Default)]
+struct FnScope {
+    types: Vec<(String, Ty)>,
+    self_type: Option<Ty>,
 }
 
 #[derive(Clone)]
@@ -153,13 +202,15 @@ struct Signature {
     result: Ty,
     /// Type parameters: a generic owner's binders, then the function's own.
     generics: Vec<Ty>,
+    /// The name diagnostics use for the callee.
+    name: String,
 }
 
 impl Signature {
     /// The signature of a standard function taking `params` by value.
     fn simple(params: Vec<Ty>, result: Ty) -> Signature {
         let names = (0..params.len()).map(|i| format!("argument{i}")).collect();
-        Signature { params, names, receiver: None, variadic: false, result, generics: Vec::new() }
+        Signature { params, names, receiver: None, variadic: false, result, generics: Vec::new(), name: String::new() }
     }
 }
 
@@ -178,6 +229,15 @@ struct Checker<'a> {
     methods: HashMap<(Ty, String), FnId>,
     /// Type parameters in scope, innermost last.
     type_params: Vec<(String, Ty)>,
+    /// What `Self` names here, inside a trait, an impl or a method.
+    self_type: Option<Ty>,
+    traits: Vec<TraitDef>,
+    trait_names: HashMap<String, TraitId>,
+    impls: Vec<ImplDef>,
+    /// The traits each type parameter is bound by, with their arguments.
+    bounds: HashMap<Ty, Vec<(TraitId, Vec<Ty>)>>,
+    /// The scope of each function's signature and body.
+    fn_scopes: Vec<FnScope>,
     /// `console.ConsoleError`, once `std.console` is imported.
     console_error: Option<Ty>,
     /// The prelude's `NumericConversionError`.
@@ -213,6 +273,15 @@ impl Checker<'_> {
         }
 
         self.declare_types(&module.items);
+        let traits: Vec<&ast::TraitDecl> = module
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Trait(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        self.declare_traits(&traits);
         let fns: Vec<&ast::FnDecl> = module
             .items
             .iter()
@@ -221,19 +290,29 @@ impl Checker<'_> {
                 _ => None,
             })
             .collect();
-        for (index, f) in fns.iter().enumerate() {
-            let id = FnId(index as u32);
+        // Every function with a body, in `FnId` order.
+        let mut bodies: Vec<&ast::FnDecl> = Vec::new();
+        for f in &fns {
+            let id = FnId(bodies.len() as u32);
             let owner = f.owner.as_ref().map(|owner| self.method_owner(owner));
-            let signature = self.signature(f, owner);
+            let signature = self.signature(f, owner, FnScope::default());
             let receiver = signature.receiver;
             self.signatures.push(signature);
+            bodies.push(f);
             match owner {
                 Some(owner) => self.declare_method(f, owner, receiver.is_some(), id),
                 None => self.declare_module_name(&f.name, ModuleName::Fn(id)),
             }
         }
+        self.trait_methods(&traits, &mut bodies);
+        for item in &module.items {
+            if let ast::Item::Impl(decl) = item {
+                self.implementation(decl, &mut bodies);
+            }
+        }
 
-        let mut functions: Vec<hir::Function> = fns.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
+        let mut functions: Vec<hir::Function> =
+            bodies.iter().zip(0..).map(|(f, i)| self.function(f, FnId(i))).collect();
 
         let explicit_main = match self.names.get("main") {
             Some(ModuleName::Fn(id)) => Some(*id),
@@ -257,10 +336,52 @@ impl Checker<'_> {
         if self.diags.has_errors() {
             return None;
         }
-        Some(hir::Program { types: std::mem::take(&mut self.types), functions, main })
+        let traits = self
+            .traits
+            .iter()
+            .map(|t| hir::TraitInfo {
+                name: t.name.clone(),
+                defaults: t.methods.iter().map(|m| m.default).collect(),
+                param_count: t.params.len(),
+            })
+            .collect();
+        let impls = self
+            .impls
+            .iter()
+            .map(|i| hir::ImplInfo {
+                trait_id: i.trait_id,
+                trait_args: i.trait_args.clone(),
+                target: i.target,
+                generics: i.generics.clone(),
+                methods: i.methods.clone(),
+            })
+            .collect();
+        Some(hir::Program {
+            types: std::mem::take(&mut self.types),
+            functions,
+            main,
+            traits,
+            impls,
+            display: HashMap::new(),
+        })
     }
 
     fn declare_prelude(&mut self) {
+        // `trait Display { fn display(self): String }` (19.6).
+        let self_param = self.types.declare_param("Self".into());
+        let signature = Signature {
+            params: vec![self_param],
+            names: vec!["self".into()],
+            receiver: Some(ast::Mode::Ref),
+            variadic: false,
+            result: Ty::STRING,
+            generics: vec![self_param],
+            name: "Display.display".into(),
+        };
+        let display = TraitMethod { name: "display".into(), signature, default: None };
+        self.traits.push(TraitDef { name: "Display".into(), self_param, params: Vec::new(), methods: vec![display] });
+        self.trait_names.insert("Display".into(), DISPLAY);
+        self.bounds.insert(self_param, vec![(DISPLAY, Vec::new())]);
         let (id, ty) = self.types.declare_adt("NumericConversionError".into());
         let variants = ["OutOfRange", "NotFinite", "NotIntegral"]
             .map(|name| Variant { name: name.into(), payload: Payload::Unit })
@@ -406,7 +527,7 @@ impl Checker<'_> {
                     self.declare_type_name(&decl.name, TypeName::Alias(self.aliases.len() - 1));
                     continue;
                 }
-                ast::Item::Fn(_) => continue,
+                ast::Item::Fn(_) | ast::Item::Trait(_) | ast::Item::Impl(_) => continue,
             };
             let generics = match item {
                 ast::Item::Type(decl) => &decl.generics,
@@ -489,7 +610,14 @@ impl Checker<'_> {
             // value can be copied, discarded and shared.
             ([name], true) if matches!(name.name.as_str(), "Copy" | "Discard" | "Send" | "Share") => {}
             _ => {
-                self.diags.unsupported(bound.span, "trait bounds");
+                if let Some((trait_id, args)) = self.trait_ref(bound) {
+                    let bounds = self.bounds.entry(param).or_default();
+                    if bounds.contains(&(trait_id, args.clone())) {
+                        self.diags.error("E1115", bound.span, "this bound is repeated");
+                    } else {
+                        bounds.push((trait_id, args));
+                    }
+                }
             }
         }
     }
@@ -613,15 +741,27 @@ impl Checker<'_> {
         self.aliases[index].resolved.unwrap()
     }
 
-    fn signature(&mut self, f: &ast::FnDecl, owner: Option<Ty>) -> Signature {
+    /// The signature of `f` declared in `outer` (an impl or trait scope, or
+    /// the module), recording the scope its body is checked in.
+    fn signature(&mut self, f: &ast::FnDecl, owner: Option<Ty>, outer: FnScope) -> Signature {
         if f.suspends {
             self.diags.unsupported(f.span, "`suspends` functions");
         }
+        let outer_count = outer.types.len();
+        self.type_params.extend(outer.types.iter().cloned());
+        let saved_self = std::mem::replace(&mut self.self_type, outer.self_type);
         let binders = self.declare_generics(&f.owner_generics);
         self.enter_generics(&f.owner_generics, &binders);
+        let owner = match owner {
+            Some(key) => Some(self.receiver_type(key, &binders, f)),
+            None => self.self_type,
+        };
+        if f.owner.is_some() {
+            // `Self` names the owner in an inherent method (12.3).
+            self.self_type = owner;
+        }
         let own = self.declare_generics(&f.generics);
         self.enter_generics(&f.generics, &own);
-        let owner = owner.map(|key| self.receiver_type(key, &binders, f));
         let (mut params, mut names, mut receiver, mut variadic) = (Vec::new(), Vec::new(), None, false);
         for (index, param) in f.params.iter().enumerate() {
             let ty = match &param.ty {
@@ -656,10 +796,316 @@ impl Checker<'_> {
             names.push(param.name.name.clone());
         }
         let result = f.result.as_ref().map_or(Ty::UNIT, |t| self.resolve_type(t));
+        let scope = FnScope { types: self.type_params.clone(), self_type: self.self_type };
         self.leave_generics(&f.generics);
         self.leave_generics(&f.owner_generics);
-        let generics = binders.into_iter().chain(own).collect();
-        Signature { params, names, receiver, variadic, result, generics }
+        self.type_params.truncate(self.type_params.len() - outer_count);
+        self.self_type = saved_self;
+        let outer_generics: Vec<Ty> = outer.types.iter().map(|&(_, t)| t).collect();
+        let generics = outer_generics.into_iter().chain(binders).chain(own).collect();
+        let name = match &f.owner {
+            Some(owner) => format!("{}.{}", owner.name, f.name.name),
+            None => f.name.name.clone(),
+        };
+        self.fn_scopes.push(scope);
+        Signature { params, names, receiver, variadic, result, generics, name }
+    }
+
+    /// Declares the traits of the module: names and parameters first, so
+    /// that bounds can mention any of them, then their bounds (12.3).
+    fn declare_traits(&mut self, traits: &[&ast::TraitDecl]) {
+        for decl in traits {
+            let name = &decl.name;
+            if self.trait_names.contains_key(&name.name) || self.type_names.contains_key(&name.name) {
+                let message = format!("`{}` is already declared", name.name);
+                self.diags.error("E1002", name.span, message);
+            }
+            let self_param = self.types.declare_param("Self".into());
+            let params = decl.generics.iter().map(|g| self.types.declare_param(g.name.name.clone())).collect();
+            let id = TraitId(self.traits.len() as u32);
+            self.traits.push(TraitDef { name: name.name.clone(), self_param, params, methods: Vec::new() });
+            self.trait_names.insert(name.name.clone(), id);
+        }
+        for (index, decl) in traits.iter().enumerate() {
+            let id = TraitId(index as u32 + 1);
+            let (self_param, params) =
+                (self.traits[id.0 as usize].self_param, self.traits[id.0 as usize].params.clone());
+            self.enter_generics(&decl.generics, &params);
+            for (generic, &param) in decl.generics.iter().zip(&params) {
+                for bound in &generic.bounds {
+                    self.apply_bound(param, bound);
+                }
+            }
+            self.leave_generics(&decl.generics);
+            // Inside the trait, `Self` implements it.
+            self.bounds.entry(self_param).or_default().push((id, params));
+        }
+    }
+
+    /// The signatures of each trait's methods, and the bodies of defaults.
+    fn trait_methods<'d>(&mut self, traits: &[&'d ast::TraitDecl], bodies: &mut Vec<&'d ast::FnDecl>) {
+        for (index, decl) in traits.iter().enumerate() {
+            let id = TraitId(index as u32 + 1);
+            let def = &self.traits[id.0 as usize];
+            let mut types = vec![("Self".to_string(), def.self_param)];
+            types.extend(decl.generics.iter().map(|g| g.name.name.clone()).zip(def.params.iter().copied()));
+            let scope = FnScope { types, self_type: Some(def.self_param) };
+            let mut seen = HashSet::new();
+            for f in &decl.methods {
+                if !seen.insert(f.name.name.as_str()) {
+                    let message = format!("`{}` declares `{}` more than once", decl.name.name, f.name.name);
+                    self.diags.error("E1002", f.name.span, message);
+                    continue;
+                }
+                let mut signature = self.signature(f, None, scope.clone());
+                signature.name = format!("{}.{}", decl.name.name, f.name.name);
+                let default = match &f.body {
+                    Some(_) => {
+                        let fn_id = FnId(bodies.len() as u32);
+                        self.signatures.push(signature.clone());
+                        bodies.push(f);
+                        Some(fn_id)
+                    }
+                    None => {
+                        self.fn_scopes.pop();
+                        None
+                    }
+                };
+                self.traits[id.0 as usize].methods.push(TraitMethod { name: f.name.name.clone(), signature, default });
+            }
+        }
+    }
+
+    /// The trait a bound or implementation names, with its arguments.
+    fn trait_ref(&mut self, t: &ast::TypeExpr) -> Option<(TraitId, Vec<Ty>)> {
+        let ast::TypeKind::Path { segments, args } = &t.kind else {
+            self.diags.error("E1105", t.span, "expected a trait");
+            return None;
+        };
+        let [name] = segments.as_slice() else {
+            self.diags.error("E1105", t.span, "expected a trait");
+            return None;
+        };
+        let Some(&id) = self.trait_names.get(&name.name) else {
+            let message = format!("unknown trait `{}`", name.name);
+            self.diags.error("E1001", name.span, message);
+            return None;
+        };
+        let args: Vec<Ty> = args.iter().map(|a| self.resolve_type(a)).collect();
+        let expected = self.traits[id.0 as usize].params.len();
+        if args.len() != expected {
+            let message = format!("`{}` takes {expected} type argument(s), found {}", name.name, args.len());
+            self.diags.error("E1104", t.span, message);
+            return None;
+        }
+        Some((id, args))
+    }
+
+    /// Checks an implementation's header and registers its methods (12.4).
+    fn implementation<'d>(&mut self, decl: &'d ast::ImplDecl, bodies: &mut Vec<&'d ast::FnDecl>) {
+        let binders = self.declare_generics(&decl.generics);
+        self.enter_generics(&decl.generics, &binders);
+        let resolved = self.trait_ref(&decl.trait_ref);
+        let target = self.resolve_type(&decl.target);
+        self.leave_generics(&decl.generics);
+        let Some((trait_id, trait_args)) = resolved else { return };
+        if target == Ty::ERROR {
+            return;
+        }
+        let trait_name = self.traits[trait_id.0 as usize].name.clone();
+        let target_name = self.types.display(target);
+        // Coherence (12.6): the module owns the trait or the target's nominal type.
+        let local_trait = trait_id != DISPLAY;
+        let local_target = matches!(self.types.kind(target), TyKind::Adt(_)) && self.types.repr(target) != Ty::ERROR;
+        if !local_trait && !local_target {
+            let message = format!(
+                "`impl {trait_name} for {target_name}` implements a prelude trait for a type this module does not own; wrap it in a newtype, such as `type Name = {target_name}`"
+            );
+            self.diags.error("E1114", decl.target.span, message);
+            return;
+        }
+        let mut mentioned = Vec::new();
+        self.types.params_in(target, &mut mentioned);
+        trait_args.iter().for_each(|&a| self.types.params_in(a, &mut mentioned));
+        for (generic, binder) in decl.generics.iter().zip(&binders) {
+            if !mentioned.contains(binder) {
+                let message =
+                    format!("`{}` must appear in the trait or the target of the implementation", generic.name.name);
+                self.diags.error("E1114", generic.name.span, message);
+            }
+        }
+        let earlier: Vec<(Vec<Ty>, Ty, Vec<Ty>)> = self
+            .impls
+            .iter()
+            .filter(|i| i.trait_id == trait_id)
+            .map(|i| (i.trait_args.clone(), i.target, i.generics.clone()))
+            .collect();
+        for (other_args, other_target, other_generics) in earlier {
+            if self.headers_overlap((&trait_args, target, &binders), (&other_args, other_target, &other_generics)) {
+                let message = format!(
+                    "`impl {trait_name} for {target_name}` overlaps an earlier implementation for `{}`",
+                    self.types.display(other_target)
+                );
+                self.diags.error("E1111", decl.span, message);
+                return;
+            }
+        }
+        // Each method must match the trait's signature with `Self` and the
+        // trait's parameters substituted.
+        let def = &self.traits[trait_id.0 as usize];
+        let mut map: HashMap<Ty, Ty> = HashMap::from([(def.self_param, target)]);
+        map.extend(def.params.iter().copied().zip(trait_args.iter().copied()));
+        let declared: Vec<(String, Signature, bool)> =
+            def.methods.iter().map(|m| (m.name.clone(), m.signature.clone(), m.default.is_some())).collect();
+        let mut types: Vec<(String, Ty)> =
+            decl.generics.iter().map(|g| g.name.name.clone()).zip(binders.iter().copied()).collect();
+        types.dedup();
+        let scope = FnScope { types, self_type: Some(target) };
+        let mut methods = vec![None; declared.len()];
+        for f in &decl.methods {
+            let Some(index) = declared.iter().position(|(name, ..)| *name == f.name.name) else {
+                let message = format!(
+                    "`{trait_name}` has no method `{}`; an operation of `{target_name}` alone is an inherent method `fn {target_name}.{}(...)`",
+                    f.name.name, f.name.name
+                );
+                self.diags.error("E1114", f.name.span, message);
+                continue;
+            };
+            if methods[index].is_some() {
+                let message = format!("`{}` is implemented more than once", f.name.name);
+                self.diags.error("E1114", f.name.span, message);
+                continue;
+            }
+            let id = FnId(bodies.len() as u32);
+            let mut signature = self.signature(f, None, scope.clone());
+            signature.name = format!("{trait_name}.{}", f.name.name);
+            let expected = &declared[index].1;
+            if let Some(problem) = self.signature_mismatch(expected, &signature, &map, binders.len()) {
+                let message = format!("`{}` does not match `{trait_name}`: {problem}", f.name.name);
+                self.diags.error("E1114", f.name.span, message);
+            }
+            self.signatures.push(signature);
+            bodies.push(f);
+            methods[index] = Some(id);
+        }
+        for ((name, _, has_default), provided) in declared.iter().zip(&methods) {
+            if provided.is_none() && !has_default {
+                let message = format!("`impl {trait_name} for {target_name}` is missing `{name}`");
+                self.diags.error("E1114", decl.span, message);
+            }
+        }
+        self.impls.push(ImplDef { trait_id, trait_args, target, generics: binders, methods });
+    }
+
+    /// How an implementation's method differs from the trait's, if at all.
+    fn signature_mismatch(
+        &mut self,
+        expected: &Signature,
+        found: &Signature,
+        map: &HashMap<Ty, Ty>,
+        binders: usize,
+    ) -> Option<String> {
+        // `map` binds `Self` and the trait's parameters, which come first.
+        let own_expected = &expected.generics[map.len()..];
+        let own_found = &found.generics[binders..];
+        if own_expected.len() != own_found.len() {
+            return Some(format!("{} type parameter(s) are expected", own_expected.len()));
+        }
+        let mut map = map.clone();
+        map.extend(own_expected.iter().copied().zip(own_found.iter().copied()));
+        if expected.receiver != found.receiver {
+            return Some("a different receiver".into());
+        }
+        if expected.params.len() != found.params.len() || expected.variadic != found.variadic {
+            return Some(format!("{} parameter(s) are expected", expected.params.len()));
+        }
+        for (index, (&want, &got)) in expected.params.iter().zip(&found.params).enumerate() {
+            let want = self.types.subst(want, &map);
+            if want != got && !self.types.has_error(got) {
+                let name = &expected.names[index];
+                return Some(format!("parameter `{name}` must be {}", self.display(want)));
+            }
+        }
+        let result = self.types.subst(expected.result, &map);
+        if result != found.result && !self.types.has_error(found.result) {
+            return Some(format!("the result must be {}", self.display(result)));
+        }
+        None
+    }
+
+    /// Whether two implementation headers can describe the same pair of
+    /// trait arguments and target (12.6).
+    fn headers_overlap(&mut self, a: (&[Ty], Ty, &[Ty]), b: (&[Ty], Ty, &[Ty])) -> bool {
+        let vars: Vec<Ty> = a.2.iter().chain(b.2).copied().collect();
+        let mut map = HashMap::new();
+        let left: Vec<Ty> = a.0.iter().copied().chain([a.1]).collect();
+        let right: Vec<Ty> = b.0.iter().copied().chain([b.1]).collect();
+        left.iter().zip(&right).all(|(&x, &y)| self.types.unify_both(x, y, &vars, &mut map))
+    }
+
+    /// Whether `ty` implements `trait_id` with `args` (12.5): by a bound of a
+    /// type parameter, intrinsically (`Display` of built-in values), or by an
+    /// implementation whose bounds hold.
+    fn satisfies(&mut self, ty: Ty, trait_id: TraitId, args: &[Ty]) -> bool {
+        self.satisfies_depth(ty, trait_id, args, 0)
+    }
+
+    fn satisfies_depth(&mut self, ty: Ty, trait_id: TraitId, args: &[Ty], depth: usize) -> bool {
+        if depth > 32 || self.types.has_error(ty) || ty == Ty::NEVER {
+            return true;
+        }
+        if self.types.param(ty).is_some() {
+            return self.bounds.get(&ty).is_some_and(|b| b.iter().any(|(t, a)| *t == trait_id && a == args));
+        }
+        if trait_id == DISPLAY {
+            let parts: Option<Vec<Ty>> = match self.types.kind(ty) {
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Char | TyKind::Byte | TyKind::Bool | TyKind::String => {
+                    Some(Vec::new())
+                }
+                TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => Some(vec![*element]),
+                TyKind::Map(key, value) => Some(vec![*key, *value]),
+                _ => None,
+            };
+            if let Some(parts) = parts {
+                return parts.into_iter().all(|part| self.satisfies_depth(part, DISPLAY, &[], depth + 1));
+            }
+        }
+        let candidates: Vec<usize> = (0..self.impls.len()).filter(|&i| self.impls[i].trait_id == trait_id).collect();
+        for index in candidates {
+            let (target, trait_args, generics) =
+                (self.impls[index].target, self.impls[index].trait_args.clone(), self.impls[index].generics.clone());
+            let mut map = HashMap::new();
+            let matched = self.types.matches(target, ty, &generics, &mut map)
+                && trait_args.iter().zip(args).all(|(&p, &a)| self.types.matches(p, a, &generics, &mut map));
+            if !matched {
+                continue;
+            }
+            return generics.iter().all(|g| {
+                let actual = map.get(g).copied().unwrap_or(Ty::ERROR);
+                self.bound_holds(*g, actual, depth + 1).is_none()
+            });
+        }
+        false
+    }
+
+    /// The first bound of the type parameter `param` that `actual` does not
+    /// meet, as text for a diagnostic.
+    fn bound_holds(&mut self, param: Ty, actual: Ty, depth: usize) -> Option<String> {
+        let def = self.types.param(param)?;
+        let (equatable, key) = (def.equatable, def.key);
+        if key && !self.types.is_key(actual) {
+            return Some("`Key`".into());
+        }
+        if equatable && !self.types.is_equatable(actual) {
+            return Some("`Equatable`".into());
+        }
+        let bounds = self.bounds.get(&param).cloned().unwrap_or_default();
+        for (trait_id, args) in bounds {
+            if !self.satisfies_depth(actual, trait_id, &args, depth) {
+                return Some(format!("`{}`", self.traits[trait_id.0 as usize].name));
+            }
+        }
+        None
     }
 
     /// The type of `self` in a method of the owner keyed `key`: a generic
@@ -835,6 +1281,25 @@ impl Checker<'_> {
                 {
                     return param;
                 }
+                if let ["Self"] = names.as_slice() {
+                    return self.self_type.unwrap_or_else(|| {
+                        self.diags.error(
+                            "E1001",
+                            t.span,
+                            "`Self` only exists in a trait, an implementation or a method",
+                        );
+                        Ty::ERROR
+                    });
+                }
+                if let [name] = names.as_slice()
+                    && self.trait_names.contains_key(*name)
+                {
+                    let message = format!(
+                        "a trait is not a type; take a type parameter bound by it: `fn name[T: {name}](value: T)`"
+                    );
+                    self.diags.error("E1110", t.span, message);
+                    return Ty::ERROR;
+                }
                 match names.as_slice() {
                     ["Int" | "Int64"] => Ty::INT,
                     ["Int8"] => Ty::int(IntTy::I8),
@@ -946,9 +1411,9 @@ impl Checker<'_> {
 
     fn function(&mut self, f: &ast::FnDecl, id: FnId) -> hir::Function {
         let signature = self.signatures[id.0 as usize].clone();
-        let (binders, own) = signature.generics.split_at(f.owner_generics.len());
-        self.enter_generics(&f.owner_generics, binders);
-        self.enter_generics(&f.generics, own);
+        let scope = self.fn_scopes[id.0 as usize].clone();
+        let outer_types = std::mem::replace(&mut self.type_params, scope.types);
+        let outer_self = std::mem::replace(&mut self.self_type, scope.self_type);
         let mut cx = self.new_cx(signature.result);
         let mut params = Vec::new();
         let mut loans = Vec::new();
@@ -959,15 +1424,11 @@ impl Checker<'_> {
             loans.push(loan);
         }
         let success = cx.result;
-        let body = self.block(&mut cx, &f.body, Some(success));
-        let name = match &f.owner {
-            Some(owner) => format!("{}.{}", owner.name, f.name.name),
-            None => f.name.name.clone(),
-        };
-        self.leave_generics(&f.generics);
-        self.leave_generics(&f.owner_generics);
+        let body = self.block(&mut cx, f.body.as_ref().expect("functions with an id have a body"), Some(success));
+        self.type_params = outer_types;
+        self.self_type = outer_self;
         hir::Function {
-            name,
+            name: signature.name,
             generics: signature.generics,
             params,
             loans,
@@ -2496,22 +2957,6 @@ impl Checker<'_> {
         }
     }
 
-    fn displayable(&self, ty: Ty) -> bool {
-        match self.types.kind(ty) {
-            TyKind::Int(_)
-            | TyKind::Float(_)
-            | TyKind::Char
-            | TyKind::Byte
-            | TyKind::Bool
-            | TyKind::String
-            | TyKind::Error
-            | TyKind::Never => true,
-            TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => self.displayable(*element),
-            TyKind::Map(key, value) => self.displayable(*key) && self.displayable(*value),
-            _ => false,
-        }
-    }
-
     /// A map type; its entry tuple `(K, V)` is interned too, for iteration.
     fn map_type(&mut self, key: Ty, value: Ty) -> Ty {
         self.types.intern(TyKind::Tuple(vec![key, value]));
@@ -2653,13 +3098,20 @@ impl Checker<'_> {
             return self.unsupported_expr(span, "generic calls");
         };
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        if let [trait_name, _] = names.as_slice()
+            && let Some(&trait_id) = self.trait_names.get(*trait_name)
+            && !self.names.contains_key(*trait_name)
+        {
+            let explicit: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
+            return self.trait_call(cx, trait_id, &segments[1], explicit, args, expected, span);
+        }
         if let [name] = names.as_slice()
             && self.lookup(cx, name).is_none()
             && let Some(ModuleName::Fn(id)) = self.names.get(*name).copied()
         {
             let explicit = type_args.iter().map(|t| self.resolve_type(t)).collect();
             let signature = self.signatures[id.0 as usize].clone();
-            let target = CallTarget { callee: Callee::Fn(id), signature, explicit, expected };
+            let target = CallTarget { explicit, ..CallTarget::new(Callee::Fn(id), signature, expected) };
             return self.call_signature(cx, target, None, args, span);
         }
         if let ["Map" | "Set", "new"] = names.as_slice() {
@@ -2729,7 +3181,40 @@ impl Checker<'_> {
         let ty = value.ty;
         let key = self.owner_key(ty);
         if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
-            return self.dot_call(cx, id, value, method, args, span);
+            let signature = self.signatures[id.0 as usize].clone();
+            return self.dot_call(cx, Callee::Fn(id), signature, HashMap::new(), value, method, args, span);
+        }
+        if self.types.param(ty).is_some() {
+            // A type parameter has the methods of the traits it is bound by (12.7).
+            let bounds = self.bounds.get(&ty).cloned().unwrap_or_default();
+            let found: Vec<(TraitId, Vec<Ty>, usize)> = bounds
+                .iter()
+                .filter_map(|(t, a)| {
+                    let index = self.traits[t.0 as usize].methods.iter().position(|m| m.name == method.name)?;
+                    Some((*t, a.clone(), index))
+                })
+                .collect();
+            return match found.as_slice() {
+                [(trait_id, trait_args, index)] => {
+                    let def = &self.traits[trait_id.0 as usize];
+                    let signature = def.methods[*index].signature.clone();
+                    let mut prebound = HashMap::from([(def.self_param, ty)]);
+                    prebound.extend(def.params.iter().copied().zip(trait_args.iter().copied()));
+                    let callee = Callee::Trait(*trait_id, *index as u32);
+                    self.dot_call(cx, callee, signature, prebound, value, method, args, span)
+                }
+                [] => self.no_method(ty, method, span),
+                _ => {
+                    let names: Vec<String> = found
+                        .iter()
+                        .map(|(t, ..)| format!("`{}.{}(value)`", self.traits[t.0 as usize].name, method.name))
+                        .collect();
+                    let message =
+                        format!("`{}` comes from more than one bound; write {}", method.name, names.join(" or "));
+                    self.diags.error("E1004", method.span, message);
+                    Self::error_expr(span)
+                }
+            };
         }
         if matches!(self.types.kind(ty), TyKind::Adt(_)) {
             return self.no_method(ty, method, span);
@@ -2853,6 +3338,38 @@ impl Checker<'_> {
         Self::mk(kind, result, span)
     }
 
+    /// `Trait.method(...)`, with `Self` given first in `explicit` or taken
+    /// from the receiver argument (12.7).
+    #[allow(clippy::too_many_arguments)]
+    fn trait_call(
+        &mut self,
+        cx: &mut FnCx,
+        trait_id: TraitId,
+        method: &ast::Ident,
+        explicit: Vec<Ty>,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let def = &self.traits[trait_id.0 as usize];
+        let Some(index) = def.methods.iter().position(|m| m.name == method.name) else {
+            let message = format!("trait `{}` has no method `{}`", def.name, method.name);
+            self.diags.error("E1001", method.span, message);
+            return Self::error_expr(span);
+        };
+        let signature = def.methods[index].signature.clone();
+        // `Trait.op[Self, Own...]`: the trait's parameters come from its bounds.
+        let mut prebound = HashMap::new();
+        if let Some((&self_ty, own)) = explicit.split_first() {
+            prebound.insert(def.self_param, self_ty);
+            let own_params = &signature.generics[1 + def.params.len()..];
+            prebound.extend(own_params.iter().copied().zip(own.iter().copied()));
+        }
+        let target =
+            CallTarget { prebound, ..CallTarget::new(Callee::Trait(trait_id, index as u32), signature, expected) };
+        self.call_signature(cx, target, None, args, span)
+    }
+
     /// A method that changes a collection's extent or contents; the
     /// receiver must be a `var` place (10.5).
     fn mutation_call(
@@ -2903,16 +3420,18 @@ impl Checker<'_> {
 
     /// `value.method(args)` for an inherent method (11.5): the receiver is
     /// borrowed, or loaned for `mut self` and `var self`.
+    #[allow(clippy::too_many_arguments)]
     fn dot_call(
         &mut self,
         cx: &mut FnCx,
-        id: FnId,
+        callee: Callee,
+        signature: Signature,
+        prebound: HashMap<Ty, Ty>,
         receiver: hir::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
-        let signature = self.signatures[id.0 as usize].clone();
         let ty = receiver.ty;
         let receiver = match signature.receiver {
             None => {
@@ -2934,7 +3453,7 @@ impl Checker<'_> {
             }
             Some(_) => receiver,
         };
-        let target = CallTarget { callee: Callee::Fn(id), signature, explicit: Vec::new(), expected: None };
+        let target = CallTarget { prebound, ..CallTarget::new(callee, signature, None) };
         self.call_signature(cx, target, Some(receiver), args, span)
     }
 
@@ -2942,9 +3461,25 @@ impl Checker<'_> {
         let mut message = format!("{} has no method `{}`", self.display(ty), method.name);
         if let Some(hint) = self.method_hint(ty, &method.name) {
             message = format!("{message}: {hint}");
+        } else if let Some(trait_name) = self.implemented_trait_with(ty, &method.name) {
+            // Implementations do not add methods to dot-calls on concrete types (12.7).
+            message = format!(
+                "{message}: `{0}` comes from the trait `{trait_name}`; call `{trait_name}.{0}(value, ...)`",
+                method.name
+            );
         }
         self.diags.error("E1001", method.span, message);
         Self::error_expr(span)
+    }
+
+    /// A trait with a method named `name` that `ty` implements, if any.
+    fn implemented_trait_with(&mut self, ty: Ty, name: &str) -> Option<String> {
+        let candidates: Vec<TraitId> = (0..self.traits.len() as u32)
+            .map(TraitId)
+            .filter(|t| self.traits[t.0 as usize].params.is_empty())
+            .filter(|t| self.traits[t.0 as usize].methods.iter().any(|m| m.name == name))
+            .collect();
+        candidates.into_iter().find(|&t| self.satisfies(ty, t, &[])).map(|t| self.traits[t.0 as usize].name.clone())
     }
 
     /// The canonical spelling of a method that other languages name
@@ -3053,13 +3588,28 @@ impl Checker<'_> {
                 ast::StrSegment::Text(text) => out.push(hir::Segment::Text(text.clone())),
                 ast::StrSegment::Expr(e) => {
                     let value = self.expr(cx, e, None);
-                    if !self.displayable(value.ty) {
+                    if !self.satisfies(value.ty, DISPLAY, &[]) {
                         let mut message = format!("{} does not implement `Display`", self.display(value.ty));
                         if self.types.members(value.ty).is_some() {
                             message.push_str(": `match` on its members to format each one");
+                        } else if matches!(self.types.kind(value.ty), TyKind::Adt(_)) {
+                            let name = self.types.display(value.ty);
+                            message.push_str(&format!(
+                                ": add `impl Display for {name} {{ fn display(self): String {{ ... }} }}`"
+                            ));
                         }
                         self.diags.error("E1105", value.span, message);
+                        out.push(hir::Segment::Value(value));
+                        continue;
                     }
+                    // A user type or a type parameter is displayed by `Display.display`.
+                    let value = if matches!(self.types.kind(value.ty), TyKind::Adt(_) | TyKind::Param(_)) {
+                        let (ty, span) = (value.ty, value.span);
+                        let call = hir::ExprKind::Call(Callee::Trait(DISPLAY, 0), vec![ty], vec![value]);
+                        Self::mk(call, Ty::STRING, span)
+                    } else {
+                        value
+                    };
                     out.push(hir::Segment::Value(value));
                 }
             }
@@ -3175,6 +3725,13 @@ impl Checker<'_> {
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
         }
+        // `Trait.method(value, ...)` calls an implementation explicitly (12.7).
+        if let [trait_name, _] = names.as_slice()
+            && let Some(&trait_id) = self.trait_names.get(*trait_name)
+            && !self.names.contains_key(*trait_name)
+        {
+            return self.trait_call(cx, trait_id, &segments[1], Vec::new(), args, expected, span);
+        }
         // `Type.operation(...)`: an associated operation, or a method with
         // its receiver written first (11.5). Operations and variants never
         // share a name.
@@ -3184,7 +3741,7 @@ impl Checker<'_> {
         {
             if let Some(id) = self.methods.get(&(owner, operation.to_string())).copied() {
                 let signature = self.signatures[id.0 as usize].clone();
-                let target = CallTarget { callee: Callee::Fn(id), signature, explicit: Vec::new(), expected };
+                let target = CallTarget::new(Callee::Fn(id), signature, expected);
                 return self.call_signature(cx, target, None, args, span);
             }
             if self.types.variants(owner).is_none()
@@ -3284,7 +3841,7 @@ impl Checker<'_> {
             }
             ([_], Some(ModuleName::Fn(id))) => {
                 let signature = self.signatures[id.0 as usize].clone();
-                let target = CallTarget { callee: Callee::Fn(id), signature, explicit: Vec::new(), expected };
+                let target = CallTarget::new(Callee::Fn(id), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
             ([_, member], Some(ModuleName::Module(StdModule::Console))) => {
@@ -3308,7 +3865,7 @@ impl Checker<'_> {
                     }
                 };
                 let signature = Signature::simple(params, result);
-                let target = CallTarget { callee: Callee::Std(function), signature, explicit: Vec::new(), expected };
+                let target = CallTarget::new(Callee::Std(function), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
             ([name], None) if Self::numeric_type(name).is_some() => {
@@ -3357,7 +3914,7 @@ impl Checker<'_> {
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
-        let CallTarget { callee, signature, explicit, expected } = target;
+        let CallTarget { callee, signature, explicit, prebound, expected } = target;
         let signature = &signature;
         let first = receiver.is_some() as usize;
         let count = signature.params.len() - first;
@@ -3429,6 +3986,7 @@ impl Checker<'_> {
         }
         // Type arguments come from explicit arguments, then from the values.
         let mut inference = Inference::new(signature.generics.clone());
+        inference.map.extend(prebound);
         if !explicit.is_empty() {
             if explicit.len() != signature.generics.len() {
                 let message =
@@ -3496,6 +4054,34 @@ impl Checker<'_> {
             *value = Some(self.finish_argument(cx, raw, ty, receiver_mode));
         }
         let type_args: Vec<Ty> = signature.generics.iter().map(|g| inference.map[g]).collect();
+        // The arguments must meet the bounds of the parameters they replace.
+        for (&param, &actual) in signature.generics.iter().zip(&type_args) {
+            if let Some(missing) = self.bound_holds(param, actual, 0) {
+                let message = format!(
+                    "{} does not implement {missing}, which `{}` requires of `{}`",
+                    self.display(actual),
+                    signature.name,
+                    self.types.display(param)
+                );
+                self.diags.error("E1105", span, message);
+                return Self::error_expr(span);
+            }
+        }
+        if let Callee::Trait(trait_id, _) = callee {
+            let def = &self.traits[trait_id.0 as usize];
+            let self_ty = inference.map[&def.self_param];
+            let trait_args: Vec<Ty> = def.params.iter().map(|p| inference.map[p]).collect();
+            if !self.satisfies(self_ty, trait_id, &trait_args) {
+                let trait_name = self.traits[trait_id.0 as usize].name.clone();
+                let message = format!(
+                    "{} does not implement `{trait_name}`: add `impl {trait_name} for {}`",
+                    self.display(self_ty),
+                    self.types.display(self_ty)
+                );
+                self.diags.error("E1105", span, message);
+                return Self::error_expr(span);
+            }
+        }
         let result = self.types.subst(signature.result, &inference.map);
         let mut ordered: Vec<(Option<usize>, hir::Expr)> = Vec::new();
         if let Some(receiver) = receiver {

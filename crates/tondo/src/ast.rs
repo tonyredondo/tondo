@@ -29,6 +29,28 @@ pub enum Item {
     Type(TypeDecl),
     Alias(AliasDecl),
     Enum(EnumDecl),
+    Trait(TraitDecl),
+    Impl(ImplDecl),
+}
+
+/// `trait Name[Params] { fn ... }`: required methods have no body (12.3).
+#[derive(Debug)]
+pub struct TraitDecl {
+    pub public: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub methods: Vec<FnDecl>,
+    pub span: Span,
+}
+
+/// `impl[Binders] Trait[Args] for Target { fn ... }` (12.4).
+#[derive(Debug)]
+pub struct ImplDecl {
+    pub generics: Vec<GenericParam>,
+    pub trait_ref: TypeExpr,
+    pub target: TypeExpr,
+    pub methods: Vec<FnDecl>,
+    pub span: Span,
 }
 
 /// `T` or `T: Bound + Bound` in a generic declaration (12.1).
@@ -166,7 +188,8 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub result: Option<TypeExpr>,
     pub suspends: bool,
-    pub body: Block,
+    /// `None` for a required method of a trait.
+    pub body: Option<Block>,
     pub span: Span,
 }
 

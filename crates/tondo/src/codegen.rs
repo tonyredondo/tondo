@@ -15,7 +15,7 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, MapOp, Mutation, Program, StdFn, StrOp};
+use crate::hir::{ArrayOp, Callee, FnId, MapOp, Mutation, Program, StdFn, StrOp};
 use crate::mir::{Body, Const, Local, Operand, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, SOME, Ty, TyKind, Types};
@@ -286,6 +286,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         pending_glue: Vec::new(),
         map_glue: HashMap::new(),
         loans: bodies.iter().map(|body| body.loans.clone()).collect(),
+        display: &program.display,
     };
 
     for (index, body) in bodies.iter().enumerate() {
@@ -332,6 +333,8 @@ struct Codegen<'a> {
     map_glue: HashMap<Ty, DataId>,
     /// Which parameters of each function are loans (`Body::loans`).
     loans: Vec<Vec<bool>>,
+    /// The user `Display.display` of types displayed inside collections.
+    display: &'a HashMap<Ty, FnId>,
 }
 
 impl Codegen<'_> {
@@ -757,6 +760,19 @@ impl Emit<'_, '_> {
 
     /// Appends the `Display` text of `value` to `builder`.
     fn append_display(&mut self, builder: ir::Value, ty: Ty, value: Val) {
+        if let Some(&id) = self.cg.display.get(&ty) {
+            // A user type: its `Display.display` returns an owned string.
+            let args: Vec<ir::Value> = match value {
+                Val::Scalar(v) | Val::Memory(v) => vec![v],
+                Val::Zero => Vec::new(),
+            };
+            let callee = self.cg.module.declare_func_in_func(self.cg.functions[id.0 as usize], self.fb.func);
+            let call = self.fb.ins().call(callee, &args);
+            let text = self.fb.inst_results(call)[0];
+            self.call_rt(Rt::SbStr, &[builder, text]);
+            self.call_rt(Rt::StrRelease, &[text]);
+            return;
+        }
         let Val::Scalar(value) = value else { unreachable!("no Display for aggregates") };
         match *self.cg.types.kind(self.cg.types.repr(ty)) {
             TyKind::String => {
@@ -2239,6 +2255,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let loans = match callee {
             Callee::Fn(id) => self.e.cg.loans[id.0 as usize].clone(),
             Callee::Std(_) => Vec::new(),
+            Callee::Trait(..) => unreachable!("trait calls are resolved by monomorphization"),
         };
         let mut spilled = Vec::new();
         for (index, arg) in args.iter().enumerate() {
@@ -2261,6 +2278,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::ConsolePrint) => self.e.call_rt(Rt::ConsolePrint, &values),
             Callee::Std(StdFn::ConsolePrintln) => self.e.call_rt(Rt::ConsolePrintln, &values),
             Callee::Std(StdFn::ConsoleFlush) => self.e.call_rt(Rt::ConsoleFlush, &values),
+            Callee::Trait(..) => unreachable!("trait calls are resolved by monomorphization"),
         };
         for (var, slot) in spilled {
             self.unspill(var, slot);

@@ -216,6 +216,8 @@ impl Parser<'_> {
             Tok::Kw(Kw::Fn) => Ok(Some(Item::Fn(self.function(public, start)?))),
             Tok::Kw(Kw::Type) => Ok(Some(Item::Type(self.type_declaration(public, start)?))),
             Tok::Kw(Kw::Enum) => Ok(Some(Item::Enum(self.enum_declaration(public, start)?))),
+            Tok::Kw(Kw::Trait) => Ok(Some(Item::Trait(self.trait_declaration(public, start)?))),
+            Tok::Kw(Kw::Impl) => Ok(Some(Item::Impl(self.impl_declaration(start)?))),
             Tok::Kw(Kw::Alias) => {
                 self.bump();
                 let name = self.ident()?;
@@ -410,10 +412,53 @@ impl Parser<'_> {
         self.expect(Tok::RParen)?;
         let result = if self.eat(&Tok::Colon) { Some(self.type_expr()?) } else { None };
         let suspends = self.eat_kw(Kw::Suspends);
-        let body = self.block()?;
-        let span = start.to(body.span);
+        // A required method of a trait ends at its signature.
+        let body = if self.at(&Tok::LBrace) { Some(self.block()?) } else { None };
+        let span = start.to(self.prev_span());
         self.end_of_statement()?;
         Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, suspends, body, span })
+    }
+
+    fn trait_declaration(&mut self, public: bool, start: Span) -> PResult<TraitDecl> {
+        self.bump();
+        let name = self.ident()?;
+        let generics = self.generic_params()?;
+        let methods = self.method_block()?;
+        let span = start.to(self.prev_span());
+        self.end_of_statement()?;
+        Ok(TraitDecl { public, name, generics, methods, span })
+    }
+
+    fn impl_declaration(&mut self, start: Span) -> PResult<ImplDecl> {
+        self.bump();
+        let generics = self.generic_params()?;
+        let trait_ref = self.type_expr()?;
+        self.expect(Tok::Kw(Kw::For))?;
+        let no_brace = std::mem::replace(&mut self.no_brace, true);
+        let target = self.type_expr();
+        self.no_brace = no_brace;
+        let target = target?;
+        let methods = self.method_block()?;
+        let span = start.to(self.prev_span());
+        self.end_of_statement()?;
+        Ok(ImplDecl { generics, trait_ref, target, methods, span })
+    }
+
+    /// `{ fn ... }` of a trait or implementation.
+    fn method_block(&mut self) -> PResult<Vec<FnDecl>> {
+        self.expect(Tok::LBrace)?;
+        let mut methods = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.eat(&Tok::RBrace) {
+                return Ok(methods);
+            }
+            let start = self.span();
+            if !self.at_kw(Kw::Fn) {
+                return self.expected("`fn`");
+            }
+            methods.push(self.function(false, start)?);
+        }
     }
 
     // ---- types -----------------------------------------------------------

@@ -1,0 +1,119 @@
+import std.console
+
+trait Summary {
+    fn summarize(self): String
+
+    fn headline(self): String {
+        "[{self.summarize()}]"
+    }
+}
+
+trait Shape {
+    fn area(self): Int
+    fn scale(mut self, factor: Int)
+}
+
+trait Make {
+    fn make(seed: Int): Self
+}
+
+type User = { name: String, age: Int }
+type Square = { side: Int }
+type Box[T] = { value: T }
+
+impl Summary for User {
+    fn summarize(self): String {
+        "{self.name} ({self.age})"
+    }
+}
+
+impl Display for User {
+    fn display(self): String {
+        "User {self.name}"
+    }
+}
+
+impl Shape for Square {
+    fn area(self): Int {
+        self.side * self.side
+    }
+
+    fn scale(mut self, factor: Int) {
+        self.side *= factor
+    }
+}
+
+impl Make for Square {
+    fn make(seed: Int): Square {
+        Square { side: seed }
+    }
+}
+
+impl[T: Display] Display for Box[T] {
+    fn display(self): String {
+        "Box({self.value})"
+    }
+}
+
+impl[T: Summary] Summary for Box[T] {
+    fn summarize(self): String {
+        "box of {self.value.summarize()}"
+    }
+
+    fn headline(self): String {
+        "<{Summary.summarize(self)}>"
+    }
+}
+
+fn describe[T: Summary](value: T): String {
+    value.headline()
+}
+
+fn totalArea[S: Shape](shapes: Array[S]): Int {
+    var total = 0
+    for shape in shapes {
+        total += shape.area()
+    }
+    total
+}
+
+fn grow[S: Shape](shape: S): S {
+    var copy = shape
+    copy.scale(3)
+    copy
+}
+
+fn render[T: Display](values: Array[T]): String {
+    var out = ""
+    for value in values {
+        out = "{out}{value};"
+    }
+    out
+}
+
+fn build[T: Make](seed: Int): T {
+    Make.make[T](seed)
+}
+
+fn main() {
+    let ada = User { name: "Ada", age: 36 }
+    console.println(describe(ada))
+    console.println(Summary.summarize(ada))
+    console.println(describe(Box { value: ada }))
+    console.println("{ada} {Box { value: 7 }} {[ada, ada]} {Box { value: ada }}")
+    console.println(render([1, 2]))
+    console.println(render([ada]))
+    let squares = [Square { side: 2 }, Square { side: 3 }]
+    console.println("{totalArea(squares)} {grow(Square { side: 1 }).side}")
+    let made: Square = build(5)
+    console.println("{made.side} {Make.make[Square](4).side}")
+}
+
+// expect-stdout: [Ada (36)]
+// expect-stdout: Ada (36)
+// expect-stdout: <box of Ada (36)>
+// expect-stdout: User Ada Box(7) [User Ada, User Ada] Box(User Ada)
+// expect-stdout: 1;2;
+// expect-stdout: User Ada;
+// expect-stdout: 13 3
+// expect-stdout: 5 4

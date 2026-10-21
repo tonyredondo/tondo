@@ -170,3 +170,17 @@ generic record or enum, such as `Pair[Int, String]`, is an ordinary nominal
 type whose fields are the template's with the arguments substituted; it
 reuses every layout and glue path. Instantiations that keep growing, such
 as polymorphic recursion, are rejected instead of looping.
+
+## 2026-10-21 — Traits resolve at monomorphization
+
+A call to a trait method, through a bound (`value.summarize()` with
+`T: Summary`) or qualified (`Summary.summarize(value)`), is checked against
+the trait's signature with `Self` as a type argument. Monomorphization
+replaces it with the implementation for the concrete `Self`, or with the
+trait's default body instantiated for it; coherence leaves at most one
+candidate. Interpolating a user type calls its `Display.display`; built-in
+values keep their intrinsic `Display`, and the user implementations needed
+by collections being displayed are recorded for code generation. The
+size-change termination check of 12.6 (`E1112`) is not implemented yet;
+until then, instantiation that grows without bound is caught during
+monomorphization.
