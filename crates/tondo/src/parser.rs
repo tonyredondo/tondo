@@ -410,13 +410,36 @@ impl Parser<'_> {
         }
         self.skip_newlines();
         self.expect(Tok::RParen)?;
-        let result = if self.eat(&Tok::Colon) { Some(self.type_expr()?) } else { None };
+        let result = if self.eat(&Tok::Colon) { Some(self.function_result()?) } else { None };
         let suspends = self.eat_kw(Kw::Suspends);
         // A required method of a trait ends at its signature.
         let body = if self.at(&Tok::LBrace) { Some(self.block()?) } else { None };
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
         Ok(FnDecl { public, owner, owner_generics, name, generics, params, result, suspends, body, span })
+    }
+
+    /// A function's result: a type, or `impl A + B` with an optional
+    /// `! E` channel (12.8), which no other position accepts.
+    fn function_result(&mut self) -> PResult<TypeExpr> {
+        let start = self.span();
+        if !self.eat_kw(Kw::Impl) {
+            return self.type_expr();
+        }
+        // Each bound is a path; the `!` that may follow belongs to the function.
+        let mut bounds = vec![self.primary_type()?];
+        while self.eat(&Tok::Plus) {
+            bounds.push(self.primary_type()?);
+        }
+        let opaque = TypeExpr { kind: TypeKind::Opaque(bounds), span: start.to(self.prev_span()) };
+        if !self.eat(&Tok::Bang) {
+            return Ok(opaque);
+        }
+        let err = self.error_type()?;
+        Ok(TypeExpr {
+            span: start.to(err.span),
+            kind: TypeKind::Result { ok: Some(Box::new(opaque)), err: Box::new(err) },
+        })
     }
 
     fn trait_declaration(&mut self, public: bool, start: Span) -> PResult<TraitDecl> {

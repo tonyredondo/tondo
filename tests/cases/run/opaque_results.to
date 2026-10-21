@@ -1,0 +1,53 @@
+import std.console
+
+type IndexCursor[T] = { values: Array[T], index: Int }
+
+impl[T] Iterator[(Int, T)] for IndexCursor[T] {
+    fn next(mut self): (Int, T)? {
+        let value = self.values.get(self.index)?
+        self.index += 1
+        some((self.index - 1, value))
+    }
+}
+
+fn enumerate[T](values: Array[T]): impl Iterator[(Int, T)] + Discard {
+    IndexCursor { values, index: 0 }
+}
+
+fn makeCounter(start: Int): impl CallMut[fn(): Int] + Discard {
+    var count = start
+    (): Int {
+        count += 1
+        count
+    }
+}
+
+fn labels(): impl Display + Discard {
+    "labels"
+}
+
+fn firstWord(text: String): impl Display + Discard ! String {
+    if text.isEmpty() {
+        fail "empty"
+    }
+    text
+}
+
+fn main() {
+    for (index, word) in enumerate(["a", "b", "c"]) {
+        console.print("{index}={word} ")
+    }
+    console.println("")
+    var counter = makeCounter(10)
+    console.println("{counter()} {counter()} {counter()}")
+    console.println("{labels()}")
+    match firstWord("hi") {
+        ok(word) => console.println("ok {word}")
+        err(message) => console.println("err {message}")
+    }
+}
+
+// expect-stdout: 0=a 1=b 2=c 
+// expect-stdout: 11 12 13
+// expect-stdout: labels
+// expect-stdout: ok hi

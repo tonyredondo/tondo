@@ -245,6 +245,8 @@ pub enum TypeKind {
     },
     Union(Vec<TypeExpr>),
     Tuple(Vec<TypeExpr>),
+    /// `impl A + B`: an opaque function result (12.8).
+    Opaque(Vec<TypeExpr>),
     /// `fn(A, B): R`, the uniform function type (11.7).
     Fn {
         params: Vec<TypeExpr>,

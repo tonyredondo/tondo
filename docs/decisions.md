@@ -197,3 +197,12 @@ after monomorphization. A `fn(...)` value is a reference-counted object
 holding code and captures: named functions are static objects with a thunk,
 and a closure that never changes its captures is boxed when coerced; a
 changing closure is rejected with `E1108`.
+
+## 2026-10-21 — Opaque results are revealed by monomorphization
+
+An `impl A + B` result (12.8) is an opaque type over the function's type
+parameters whose bounds are those of a hidden parameter, so callers use it
+like a bounded type parameter. The checker infers its witness from the
+body, requires one concrete type on every path, checks it against the
+published bounds and requires `Discard`. Monomorphization replaces the
+opaque type with the witness instantiated for each call.

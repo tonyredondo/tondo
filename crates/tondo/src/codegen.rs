@@ -364,7 +364,9 @@ impl Codegen<'_> {
         let repr = self.types.repr(ty);
         match self.types.kind(repr) {
             TyKind::Unit | TyKind::Never | TyKind::Error => Class::Zero,
-            TyKind::Param(_) => unreachable!("type parameters are monomorphized before code generation"),
+            TyKind::Param(_) | TyKind::Opaque(..) => {
+                unreachable!("monomorphization leaves only concrete types")
+            }
             TyKind::Bool => Class::Scalar(types::I8),
             TyKind::Int(int) => Class::Scalar(int_type(*int)),
             TyKind::Float(FloatTy::F32) => Class::Scalar(types::F32),

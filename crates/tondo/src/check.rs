@@ -917,7 +917,11 @@ impl Checker<'_> {
             params.push(ty);
             names.push(param.name.name.clone());
         }
-        let result = f.result.as_ref().map_or(Ty::UNIT, |t| self.resolve_type(t));
+        let all_generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
+        let result = match &f.result {
+            Some(result) => self.result_type(result, f, all_generics),
+            None => Ty::UNIT,
+        };
         let scope = FnScope { types: self.type_params.clone(), self_type: self.self_type };
         self.leave_generics(&f.generics);
         self.leave_generics(&f.owner_generics);
@@ -1190,8 +1194,8 @@ impl Checker<'_> {
         if depth > 32 || self.types.has_error(ty) || ty == Ty::NEVER {
             return true;
         }
-        if self.types.param(ty).is_some() {
-            return self.bounds.get(&ty).is_some_and(|b| b.iter().any(|(t, a)| *t == trait_id && a == args));
+        if self.is_abstract(ty) {
+            return self.bounds_of(ty).iter().any(|(t, a)| *t == trait_id && a == args);
         }
         if trait_id == DISPLAY {
             let parts: Option<Vec<Ty>> = match self.types.kind(ty) {
@@ -1261,14 +1265,8 @@ impl Checker<'_> {
                 if args.iter().all(|&a| self.inferred(inference, a).is_some()) {
                     continue;
                 }
-                let found: Vec<Vec<Ty>> = if self.types.param(actual).is_some() {
-                    self.bounds
-                        .get(&actual)
-                        .into_iter()
-                        .flatten()
-                        .filter(|(t, _)| *t == trait_id)
-                        .map(|(_, a)| a.clone())
-                        .collect()
+                let found: Vec<Vec<Ty>> = if self.is_abstract(actual) {
+                    self.bounds_of(actual).into_iter().filter(|(t, _)| *t == trait_id).map(|(_, a)| a).collect()
                 } else {
                     let candidates: Vec<(Ty, Vec<Ty>, Vec<Ty>)> = self
                         .impls
@@ -1332,12 +1330,120 @@ impl Checker<'_> {
         if let TyKind::Fn(params, result, variadic) = self.types.kind(ty).clone() {
             return Some((params, result, variadic, false));
         }
-        if let Some(&(mutable, signature)) = self.call_bounds.get(&ty) {
+        if let Some((mutable, signature)) = self.call_bound_of(ty) {
             let TyKind::Fn(params, result, variadic) = self.types.kind(signature).clone() else { unreachable!() };
             return Some((params, result, variadic, mutable));
         }
         let (_, _, info) = self.types.closure(ty)?;
         Some((info.params, info.result, info.variadic, info.mutates))
+    }
+
+    /// A function's result type, where `impl A + B` (12.8) declares an
+    /// opaque type with those bounds over the function's type parameters.
+    fn result_type(&mut self, result: &ast::TypeExpr, f: &ast::FnDecl, generics: Vec<Ty>) -> Ty {
+        let (bounds, error) = match &result.kind {
+            ast::TypeKind::Opaque(bounds) => (bounds, None),
+            ast::TypeKind::Result { ok: Some(ok), err } if matches!(ok.kind, ast::TypeKind::Opaque(_)) => {
+                let ast::TypeKind::Opaque(bounds) = &ok.kind else { unreachable!() };
+                (bounds, Some(err))
+            }
+            _ => return self.resolve_type(result),
+        };
+        if f.owner.is_none() && self.self_type.is_some() {
+            self.diags.error(
+                "E0004",
+                result.span,
+                "trait methods and their implementations cannot return `impl Bound`",
+            );
+            return Ty::ERROR;
+        }
+        let shown: Vec<String> = bounds.iter().map(|b| self.bound_text(b)).collect();
+        let name = format!("impl {}", shown.join(" + "));
+        // An opaque result never hides an obligation: it publishes `Discard`.
+        if !shown.iter().any(|b| b == "Discard" || b == "Copy") {
+            let message = format!("an opaque result publishes `Discard`: write `{name} + Discard`");
+            self.diags.error("E1117", result.span, message);
+        }
+        let carrier = self.types.declare_param(name.clone());
+        for bound in bounds {
+            self.apply_bound(carrier, bound);
+        }
+        let opaque = self.types.declare_opaque(name, generics, carrier);
+        match error {
+            Some(error) => {
+                let error = self.resolve_type(error);
+                self.types.intern(TyKind::Result(opaque, error))
+            }
+            None => opaque,
+        }
+    }
+
+    /// Records the concrete type an opaque result hides: every normal path
+    /// returns it and it meets the published bounds (12.8).
+    fn record_witness(&mut self, cx: &FnCx, opaque: Ty, body: &hir::Block, f: &ast::FnDecl) {
+        let span = f.result.as_ref().map_or(f.name.span, |r| r.span);
+        let returned = cx.result;
+        let witness = match (returned, body.ty) {
+            (Ty::ERROR, tail) => tail,
+            (returned, Ty::NEVER) => returned,
+            (returned, tail) if returned == tail || self.types.has_error(tail) => returned,
+            (returned, tail) => {
+                let message = format!(
+                    "every path of an `impl` result returns one type, but this returns {} and {}",
+                    self.display(returned),
+                    self.display(tail)
+                );
+                self.diags.error("E1117", span, message);
+                returned
+            }
+        };
+        if witness == Ty::NEVER {
+            self.diags.error("E1117", span, "an `impl` result needs a path that returns a value; use `Never` instead");
+        }
+        let carrier = self.types.opaque(opaque).unwrap().0.carrier;
+        if !self.types.has_error(witness)
+            && witness != Ty::NEVER
+            && let Some(missing) = self.bound_holds(carrier, witness, &HashMap::new(), 0)
+        {
+            let message =
+                format!("{} does not implement {missing}, which the `impl` result publishes", self.display(witness));
+            self.diags.error("E1117", span, message);
+        }
+        self.types.set_witness(opaque, witness);
+    }
+
+    /// The source text of a bound, for the name of an opaque type.
+    fn bound_text(&self, bound: &ast::TypeExpr) -> String {
+        self.sources.file_of(bound.span.start).slice(bound.span).to_string()
+    }
+
+    /// The traits bounding a type parameter or an opaque result, with
+    /// arguments for the opaque result's type arguments.
+    fn bounds_of(&mut self, ty: Ty) -> Vec<(TraitId, Vec<Ty>)> {
+        if let Some((def, args)) = self.types.opaque(ty) {
+            let map: HashMap<Ty, Ty> = def.generics.iter().copied().zip(args.iter().copied()).collect();
+            let bounds = self.bounds.get(&def.carrier).cloned().unwrap_or_default();
+            return bounds
+                .into_iter()
+                .map(|(t, a)| (t, a.into_iter().map(|x| self.types.subst(x, &map)).collect()))
+                .collect();
+        }
+        self.bounds.get(&ty).cloned().unwrap_or_default()
+    }
+
+    /// The call bound of a type parameter or an opaque result.
+    fn call_bound_of(&mut self, ty: Ty) -> Option<(bool, Ty)> {
+        if let Some((def, args)) = self.types.opaque(ty) {
+            let map: HashMap<Ty, Ty> = def.generics.iter().copied().zip(args.iter().copied()).collect();
+            let (mutable, signature) = self.call_bounds.get(&def.carrier).copied()?;
+            return Some((mutable, self.types.subst(signature, &map)));
+        }
+        self.call_bounds.get(&ty).copied()
+    }
+
+    /// Whether only bounds describe `ty`: a type parameter or an opaque result.
+    fn is_abstract(&self, ty: Ty) -> bool {
+        self.types.param(ty).is_some() || self.types.opaque(ty).is_some()
     }
 
     /// The type of `self` in a method of the owner keyed `key`: a generic
@@ -1592,6 +1698,10 @@ impl Checker<'_> {
                 let items = items.iter().map(|item| self.resolve_type(item)).collect();
                 self.types.intern(TyKind::Tuple(items))
             }
+            ast::TypeKind::Opaque(_) => {
+                self.diags.error("E0004", t.span, "`impl Bound` only describes the result of a function");
+                Ty::ERROR
+            }
             ast::TypeKind::Fn { params, variadic, result } => {
                 let mut types: Vec<Ty> = params.iter().map(|p| self.resolve_type(p)).collect();
                 if *variadic && let Some(last) = types.last_mut() {
@@ -1658,7 +1768,25 @@ impl Checker<'_> {
         let scope = self.fn_scopes[id.0 as usize].clone();
         let outer_types = std::mem::replace(&mut self.type_params, scope.types);
         let outer_self = std::mem::replace(&mut self.self_type, scope.self_type);
-        let mut cx = self.new_cx(signature.result);
+        // An opaque result's witness is inferred from the body (12.8).
+        let opaque = match self.types.kind(signature.result) {
+            TyKind::Opaque(..) => Some(signature.result),
+            TyKind::Result(ok, _) if matches!(self.types.kind(*ok), TyKind::Opaque(..)) => Some(*ok),
+            _ => None,
+        };
+        let mut cx = match opaque {
+            Some(opaque) => {
+                let open = match self.types.kind(signature.result) {
+                    TyKind::Result(_, error) => self.types.intern(TyKind::Result(Ty::ERROR, *error)),
+                    _ => Ty::ERROR,
+                };
+                let mut cx = self.new_cx(open);
+                cx.infer_result = true;
+                let _ = opaque;
+                cx
+            }
+            None => self.new_cx(signature.result),
+        };
         let mut params = Vec::new();
         let mut loans = Vec::new();
         for (param, ty) in f.params.iter().zip(signature.params) {
@@ -1667,8 +1795,11 @@ impl Checker<'_> {
             params.push(self.declare(&mut cx, &param.name, ty, loan));
             loans.push(loan);
         }
-        let success = cx.result;
-        let body = self.block(&mut cx, f.body.as_ref().expect("functions with an id have a body"), Some(success));
+        let success = (!cx.infer_result).then_some(cx.result);
+        let body = self.block(&mut cx, f.body.as_ref().expect("functions with an id have a body"), success);
+        if let Some(opaque) = opaque {
+            self.record_witness(&cx, opaque, &body, f);
+        }
         self.type_params = outer_types;
         self.self_type = outer_self;
         hir::Function {
@@ -3651,9 +3782,9 @@ impl Checker<'_> {
             let signature = self.signatures[id.0 as usize].clone();
             return self.dot_call(cx, Callee::Fn(id), signature, HashMap::new(), value, method, args, span);
         }
-        if self.types.param(ty).is_some() {
+        if self.is_abstract(ty) {
             // A type parameter has the methods of the traits it is bound by (12.7).
-            let bounds = self.bounds.get(&ty).cloned().unwrap_or_default();
+            let bounds = self.bounds_of(ty);
             let found: Vec<(TraitId, Vec<Ty>, usize)> = bounds
                 .iter()
                 .filter_map(|(t, a)| {
@@ -4046,8 +4177,8 @@ impl Checker<'_> {
     /// The element type of a cursor: a type implementing `Iterator[T]` or a
     /// type parameter bound by it.
     fn iterator_element(&mut self, ty: Ty) -> Option<Ty> {
-        if self.types.param(ty).is_some() {
-            return self.bounds.get(&ty)?.iter().find(|(t, _)| *t == ITERATOR).map(|(_, args)| args[0]);
+        if self.is_abstract(ty) {
+            return self.bounds_of(ty).into_iter().find(|(t, _)| *t == ITERATOR).map(|(_, args)| args[0]);
         }
         let candidates: Vec<(Ty, Ty, Vec<Ty>)> = self
             .impls
@@ -4297,7 +4428,10 @@ impl Checker<'_> {
                         continue;
                     }
                     // A user type or a type parameter is displayed by `Display.display`.
-                    let value = if matches!(self.types.kind(value.ty), TyKind::Adt(_) | TyKind::Param(_)) {
+                    let value = if matches!(
+                        self.types.kind(value.ty),
+                        TyKind::Adt(_) | TyKind::Param(_) | TyKind::Opaque(..)
+                    ) {
                         let (ty, span) = (value.ty, value.span);
                         let call = hir::ExprKind::Call(Callee::Trait(DISPLAY, 0), vec![ty], vec![value]);
                         Self::mk(call, Ty::STRING, span)

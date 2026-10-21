@@ -110,6 +110,20 @@ pub enum TyKind {
     /// `fn(A, B): R`: a uniform function value (11.7), with whether its
     /// last parameter is variadic. Values are reference-counted callables.
     Fn(Vec<Ty>, Ty, bool),
+    /// The result `impl Bound` of a function (12.8) applied to the
+    /// function's type arguments. Callers only know its bounds;
+    /// monomorphization replaces it with the witness its body returns.
+    Opaque(u32, Vec<Ty>),
+}
+
+/// An opaque result: its bounds are those of `carrier`, a type parameter
+/// declared for it, and `witness` is the concrete type, written in terms of
+/// the function's type parameters, once its body is checked.
+pub struct OpaqueDef {
+    pub name: String,
+    pub generics: Vec<Ty>,
+    pub carrier: Ty,
+    pub witness: Option<Ty>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -226,6 +240,7 @@ pub struct Types {
     pending: Vec<AdtId>,
     closures: HashMap<TemplateId, ClosureInfo>,
     cursors: HashMap<TemplateId, CursorKind>,
+    opaques: Vec<OpaqueDef>,
     /// Set when an instantiation nests without bound, such as a type whose
     /// field is the same type applied to a larger argument.
     pub runaway: Option<String>,
@@ -266,6 +281,7 @@ impl Default for Types {
             pending: Vec::new(),
             closures: HashMap::new(),
             cursors: HashMap::new(),
+            opaques: Vec::new(),
             runaway: None,
             reaches: RefCell::default(),
             needs_drop: RefCell::default(),
@@ -393,6 +409,124 @@ impl Types {
                 Some((template, _)) if template == id => self.define_instance(adt),
                 _ => self.pending.push(adt),
             }
+        }
+    }
+
+    pub fn declare_opaque(&mut self, name: String, generics: Vec<Ty>, carrier: Ty) -> Ty {
+        self.opaques.push(OpaqueDef { name, generics: generics.clone(), carrier, witness: None });
+        self.intern(TyKind::Opaque(self.opaques.len() as u32 - 1, generics))
+    }
+
+    pub fn opaque(&self, ty: Ty) -> Option<(&OpaqueDef, &[Ty])> {
+        match self.kind(ty) {
+            TyKind::Opaque(id, args) => Some((&self.opaques[*id as usize], args)),
+            _ => None,
+        }
+    }
+
+    pub fn set_witness(&mut self, ty: Ty, witness: Ty) {
+        let TyKind::Opaque(id, _) = *self.kind(ty) else { panic!("not an opaque type") };
+        self.opaques[id as usize].witness = Some(witness);
+    }
+
+    /// `ty` with every opaque result replaced by its witness, for
+    /// monomorphized code.
+    pub fn reveal(&mut self, ty: Ty) -> Ty {
+        let mut found = Vec::new();
+        self.opaques_in(ty, &mut found);
+        if found.is_empty() {
+            return ty;
+        }
+        let mut map = HashMap::new();
+        for opaque in found {
+            let TyKind::Opaque(id, args) = self.kind(opaque).clone() else { unreachable!() };
+            let def = &self.opaques[id as usize];
+            let (generics, witness) = (def.generics.clone(), def.witness.expect("checked bodies have witnesses"));
+            let inner: HashMap<Ty, Ty> = generics.into_iter().zip(args).collect();
+            let witness = self.subst(witness, &inner);
+            let witness = self.reveal(witness);
+            map.insert(opaque, witness);
+        }
+        self.replace(ty, &map)
+    }
+
+    fn opaques_in(&self, ty: Ty, out: &mut Vec<Ty>) {
+        match self.kind(ty) {
+            TyKind::Opaque(..) => out.push(ty),
+            TyKind::Tuple(items) | TyKind::Union(items) => items.iter().for_each(|&t| self.opaques_in(t, out)),
+            TyKind::Fn(params, result, _) => {
+                params.iter().for_each(|&t| self.opaques_in(t, out));
+                self.opaques_in(*result, out);
+            }
+            TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.opaques_in(*t, out),
+            TyKind::Result(a, b) | TyKind::Map(a, b) => {
+                self.opaques_in(*a, out);
+                self.opaques_in(*b, out);
+            }
+            TyKind::Adt(id) => {
+                if let Some((_, args)) = &self.adts[id.0 as usize].instance {
+                    args.iter().for_each(|&t| self.opaques_in(t, out));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `ty` with whole types replaced according to `map`.
+    fn replace(&mut self, ty: Ty, map: &HashMap<Ty, Ty>) -> Ty {
+        if let Some(&to) = map.get(&ty) {
+            return to;
+        }
+        let each =
+            |types: &mut Self, items: &[Ty]| -> Vec<Ty> { items.iter().map(|&t| types.replace(t, map)).collect() };
+        match self.kind(ty).clone() {
+            TyKind::Tuple(items) => {
+                let items = each(self, &items);
+                self.intern(TyKind::Tuple(items))
+            }
+            TyKind::Union(items) => {
+                let items = each(self, &items);
+                self.union(&items)
+            }
+            TyKind::Fn(params, result, variadic) => {
+                let params = each(self, &params);
+                let result = self.replace(result, map);
+                self.intern(TyKind::Fn(params, result, variadic))
+            }
+            TyKind::Option(t) => {
+                let t = self.replace(t, map);
+                self.intern(TyKind::Option(t))
+            }
+            TyKind::Array(t) => {
+                let t = self.replace(t, map);
+                self.intern(TyKind::Array(t))
+            }
+            TyKind::Deque(t) => {
+                let t = self.replace(t, map);
+                self.intern(TyKind::Deque(t))
+            }
+            TyKind::Set(t) => {
+                let t = self.replace(t, map);
+                self.intern(TyKind::Set(t))
+            }
+            TyKind::Result(a, b) => {
+                let (a, b) = (self.replace(a, map), self.replace(b, map));
+                self.intern(TyKind::Result(a, b))
+            }
+            TyKind::Map(a, b) => {
+                let (a, b) = (self.replace(a, map), self.replace(b, map));
+                self.intern(TyKind::Tuple(vec![a, b]));
+                self.intern(TyKind::Option(b));
+                self.intern(TyKind::Map(a, b))
+            }
+            TyKind::Adt(id) => match self.adts[id.0 as usize].instance.clone() {
+                Some((template, args)) => {
+                    let args = each(self, &args);
+                    self.instantiate(template, args)
+                }
+                None => ty,
+            },
+            _ => ty,
         }
     }
 
@@ -535,6 +669,10 @@ impl Types {
                 let result = self.subst(result, map);
                 self.intern(TyKind::Fn(params, result, variadic))
             }
+            TyKind::Opaque(id, args) => {
+                let args = each(self, &args);
+                self.intern(TyKind::Opaque(id, args))
+            }
             TyKind::Adt(id) => match self.adts[id.0 as usize].instance.clone() {
                 Some((template, args)) => {
                     let args = each(self, &args);
@@ -595,6 +733,7 @@ impl Types {
             (TyKind::Tuple(x), TyKind::Tuple(y)) | (TyKind::Union(x), TyKind::Union(y)) if x.len() == y.len() => {
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q))
             }
+            (TyKind::Opaque(i, x), TyKind::Opaque(j, y)) if i == j => x.iter().zip(y).all(|(&p, &q)| each(self, p, q)),
             (TyKind::Fn(x, r, v), TyKind::Fn(y, s, w)) if x.len() == y.len() && v == w => {
                 let (r, s) = (*r, *s);
                 x.iter().zip(y).all(|(&p, &q)| each(self, p, q)) && each(self, r, s)
@@ -622,7 +761,9 @@ impl Types {
     pub fn params_in(&self, ty: Ty, out: &mut Vec<Ty>) {
         match self.kind(ty) {
             TyKind::Param(_) => out.push(ty),
-            TyKind::Tuple(items) | TyKind::Union(items) => items.iter().for_each(|&t| self.params_in(t, out)),
+            TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => {
+                items.iter().for_each(|&t| self.params_in(t, out))
+            }
             TyKind::Fn(params, result, _) => {
                 params.iter().for_each(|&t| self.params_in(t, out));
                 self.params_in(*result, out);
@@ -645,7 +786,9 @@ impl Types {
     pub fn has_params(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Param(_) => true,
-            TyKind::Tuple(items) | TyKind::Union(items) => items.iter().any(|&t| self.has_params(t)),
+            TyKind::Tuple(items) | TyKind::Union(items) | TyKind::Opaque(_, items) => {
+                items.iter().any(|&t| self.has_params(t))
+            }
             TyKind::Fn(params, result, _) => params.iter().any(|&t| self.has_params(t)) || self.has_params(*result),
             TyKind::Option(t) | TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) => self.has_params(*t),
             TyKind::Result(a, b) | TyKind::Map(a, b) => self.has_params(*a) || self.has_params(*b),
@@ -815,6 +958,7 @@ impl Types {
             | TyKind::Set(_)
             | TyKind::Fn(..) => false,
             TyKind::Param(index) => self.params[*index as usize].key,
+            TyKind::Opaque(id, _) => self.key_in(self.opaques[*id as usize].carrier, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.key_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.key_in(t, visiting)),
@@ -853,6 +997,7 @@ impl Types {
             TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
             TyKind::Fn(..) => false,
+            TyKind::Opaque(id, _) => self.equatable_in(self.opaques[*id as usize].carrier, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.equatable_in(t, visiting)),
@@ -935,6 +1080,7 @@ impl Types {
             }
             TyKind::Union(members) => members.iter().map(|&t| self.display(t)).collect::<Vec<_>>().join(" | "),
             TyKind::Param(index) => self.params[*index as usize].name.clone(),
+            TyKind::Opaque(id, _) => self.opaques[*id as usize].name.clone(),
             TyKind::Fn(params, result, variadic) => {
                 let mut shown: Vec<String> = params.iter().map(|&t| self.display(t)).collect();
                 if *variadic && let Some(last) = shown.last_mut() {

@@ -126,7 +126,8 @@ impl Mono<'_> {
     }
 
     fn ty(&mut self, ty: Ty, map: &HashMap<Ty, Ty>) -> Ty {
-        self.types.subst(ty, map)
+        let ty = self.types.subst(ty, map);
+        self.types.reveal(ty)
     }
 
     fn function(&mut self, f: &mut Function, map: &HashMap<Ty, Ty>) {
@@ -278,7 +279,7 @@ impl Mono<'_> {
             }
             ExprKind::Call(callee, type_args, args) => {
                 self.exprs(args, map);
-                let types: Vec<Ty> = type_args.iter().map(|&t| self.types.subst(t, map)).collect();
+                let types: Vec<Ty> = type_args.iter().map(|&t| self.ty(t, map)).collect();
                 type_args.clear();
                 match *callee {
                     Callee::Fn(id) => *callee = Callee::Fn(self.instance(id, types)),
@@ -301,7 +302,7 @@ impl Mono<'_> {
                 }
             }
             ExprKind::FnValue(id, type_args) => {
-                let types: Vec<Ty> = type_args.iter().map(|&t| self.types.subst(t, map)).collect();
+                let types: Vec<Ty> = type_args.iter().map(|&t| self.ty(t, map)).collect();
                 type_args.clear();
                 *id = self.instance(*id, types);
             }
