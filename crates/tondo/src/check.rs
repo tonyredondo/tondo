@@ -485,7 +485,15 @@ impl Checker<'_> {
                         ("Option", [inner]) if segments.len() == 1 => self.types.intern(TyKind::Option(*inner)),
                         ("Result", [ok, err]) if segments.len() == 1 => self.types.intern(TyKind::Result(*ok, *err)),
                         ("Array", [element]) if segments.len() == 1 => self.types.intern(TyKind::Array(*element)),
-                        ("Option" | "Result" | "Array", _) if segments.len() == 1 => {
+                        ("Map", [key, value]) if segments.len() == 1 => {
+                            self.require_key(*key, t.span);
+                            self.map_type(*key, *value)
+                        }
+                        ("Set", [element]) if segments.len() == 1 => {
+                            self.require_key(*element, t.span);
+                            self.types.intern(TyKind::Set(*element))
+                        }
+                        ("Option" | "Result" | "Array" | "Map" | "Set", _) if segments.len() == 1 => {
                             self.diags.error("E1104", t.span, "wrong number of type arguments");
                             Ty::ERROR
                         }
@@ -618,6 +626,13 @@ impl Checker<'_> {
 
     fn lookup(&self, cx: &FnCx, name: &str) -> Option<LocalId> {
         cx.scopes.iter().rev().flat_map(|s| s.iter().rev()).find(|(n, _)| n == name).map(|&(_, id)| id)
+    }
+
+    /// A local that no name refers to, such as the value of `for _ in ...`.
+    fn hidden_local(&mut self, cx: &mut FnCx, ty: Ty) -> LocalId {
+        cx.locals.push(hir::Local { name: "_".into(), ty });
+        cx.mutable.push(false);
+        LocalId(cx.locals.len() as u32 - 1)
     }
 
     fn declare(&mut self, cx: &mut FnCx, name: &ast::Ident, ty: Ty, mutable: bool) -> LocalId {
@@ -785,6 +800,25 @@ impl Checker<'_> {
         value: &ast::Expr,
         span: Span,
     ) -> Option<hir::Stmt> {
+        if let ast::ExprKind::Index { base, index } = &target.kind {
+            let (local, path, ty) = self.place(cx, base)?;
+            if let TyKind::Map(key, entry) = *self.types.kind(ty) {
+                // `map[key] = value` inserts or replaces (10.11); there is no
+                // compound form because the key may be absent.
+                if op.is_some() {
+                    self.diags.error("E1411", span, "a map entry has no compound assignment; read it with `get` first");
+                    return None;
+                }
+                let key_value = self.expr(cx, index, Some(key));
+                let key_value = self.coerce(key_value, key);
+                let new = self.expr(cx, value, Some(entry));
+                let new = self.coerce(new, entry);
+                let result = self.types.intern(TyKind::Option(entry));
+                let place = hir::Place { local, path };
+                let insert = hir::ExprKind::MapMutate(hir::MapMutation::Insert, place, vec![key_value, new]);
+                return Some(hir::Stmt::Expr(Self::mk(insert, result, span)));
+            }
+        }
         let (local, path, ty) = self.place(cx, target)?;
         let value = match op {
             Some(BinOp::Shl | BinOp::Shr) => {
@@ -909,31 +943,45 @@ impl Checker<'_> {
                 cx.loops.pop();
                 Some(hir::Stmt::Loop { condition: Some(condition), body })
             }
-            ast::ForHeader::In { binding, source } => {
+            ast::ForHeader::In { pattern, source } => {
                 let ast::ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) = &source.kind
                 else {
-                    let array = self.expr(cx, source, None);
-                    let element = match *self.types.kind(array.ty) {
-                        TyKind::Array(element) => element,
+                    let source = self.expr(cx, source, None);
+                    let element = match *self.types.kind(source.ty) {
+                        TyKind::Array(element) | TyKind::Set(element) => element,
+                        // A map yields its entries as `(key, value)` (10.13).
+                        TyKind::Map(key, value) => self.types.intern(TyKind::Tuple(vec![key, value])),
                         TyKind::Error => Ty::ERROR,
                         _ => {
-                            let message = format!("{} cannot be iterated", self.display(array.ty));
-                            self.diags.error("E1206", array.span, message);
+                            let message = format!("{} cannot be iterated", self.display(source.ty));
+                            self.diags.error("E1206", source.span, message);
                             return None;
                         }
                     };
                     cx.scopes.push(Vec::new());
-                    let local = self.declare(cx, binding, element, false);
+                    let pattern =
+                        self.pattern(cx, pattern, element, PatternContext { in_match: false, mutable: false });
+                    if let Some(missing) = crate::exhaust::refutation(&self.types, element, &pattern) {
+                        let message = format!("this pattern can fail, for example on `{missing}`");
+                        self.diags.error("E1201", pattern.span, message);
+                    }
                     cx.loops.push(false);
                     let body = self.block(cx, body, Some(Ty::UNIT));
                     cx.loops.pop();
                     cx.scopes.pop();
-                    return Some(hir::Stmt::ForArray { local, array, body });
+                    return Some(hir::Stmt::ForEach { pattern, source, body });
                 };
                 let (start, end) = self.operands(cx, start, end, None);
                 self.require_int(&start);
                 cx.scopes.push(Vec::new());
-                let local = self.declare(cx, binding, start.ty, false);
+                let local = match &pattern.kind {
+                    ast::PatternKind::Binding(binding) => self.declare(cx, binding, start.ty, false),
+                    ast::PatternKind::Wildcard => self.hidden_local(cx, start.ty),
+                    _ => {
+                        self.diags.error("E1206", pattern.span, "a range yields integers; bind them to a name");
+                        self.hidden_local(cx, start.ty)
+                    }
+                };
                 cx.loops.push(false);
                 let body = self.block(cx, body, Some(Ty::UNIT));
                 cx.loops.pop();
@@ -1011,8 +1059,17 @@ impl Checker<'_> {
             }
             ast::ExprKind::Tuple(items) => self.tuple(cx, items, expected, span),
             ast::ExprKind::Array(items) => self.array_literal(cx, items, expected, span),
+            ast::ExprKind::Map(pairs) => self.map_literal(cx, pairs, expected, span),
+            ast::ExprKind::Set(items) => self.set_literal(cx, items, expected, span),
             ast::ExprKind::Index { base, index } => {
                 let base = self.expr(cx, base, None);
+                if let TyKind::Map(key, value) = *self.types.kind(base.ty) {
+                    // Reading a map entry yields `V?`: absence is normal (10.10).
+                    let index = self.expr(cx, index, Some(key));
+                    let index = self.coerce(index, key);
+                    let ty = self.types.intern(TyKind::Option(value));
+                    return Self::mk(hir::ExprKind::MapOp(hir::MapOp::Get, vec![base, index]), ty, span);
+                }
                 let TyKind::Array(element) = *self.types.kind(base.ty) else {
                     return self.not_indexable(base, span);
                 };
@@ -1615,9 +1672,104 @@ impl Checker<'_> {
             | TyKind::String
             | TyKind::Error
             | TyKind::Never => true,
-            TyKind::Array(element) => self.displayable(*element),
+            TyKind::Array(element) | TyKind::Set(element) => self.displayable(*element),
+            TyKind::Map(key, value) => self.displayable(*key) && self.displayable(*value),
             _ => false,
         }
+    }
+
+    /// A map type; its entry tuple `(K, V)` is interned too, for iteration.
+    fn map_type(&mut self, key: Ty, value: Ty) -> Ty {
+        self.types.intern(TyKind::Tuple(vec![key, value]));
+        self.types.intern(TyKind::Option(value));
+        self.types.intern(TyKind::Map(key, value))
+    }
+
+    fn require_key(&mut self, ty: Ty, span: Span) {
+        if !self.types.is_key(ty) {
+            let message = format!("{} cannot be a map key or set element: it is not `Key`", self.display(ty));
+            self.diags.error("E1105", span, message);
+        }
+    }
+
+    fn map_literal(
+        &mut self,
+        cx: &mut FnCx,
+        pairs: &[(ast::Expr, ast::Expr)],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let (mut key, mut value) = match expected.map(|t| self.types.kind(t)) {
+            Some(TyKind::Map(key, value)) => (Some(*key), Some(*value)),
+            _ => (None, None),
+        };
+        let mut entries = Vec::new();
+        let mut constants: Vec<(hir::Literal, Span)> = Vec::new();
+        for (k, v) in pairs {
+            let k = self.expr(cx, k, key);
+            let k = match key {
+                Some(key) => self.coerce(k, key),
+                None => {
+                    key = Some(k.ty);
+                    k
+                }
+            };
+            let constant = match &k.kind {
+                hir::ExprKind::Int(v) => Some(hir::Literal::Int(*v)),
+                hir::ExprKind::Str(s) => Some(hir::Literal::Str(s.clone())),
+                hir::ExprKind::Bool(b) => Some(hir::Literal::Bool(*b)),
+                hir::ExprKind::Char(c) => Some(hir::Literal::Char(*c)),
+                _ => None,
+            };
+            if let Some(constant) = constant {
+                if constants.iter().any(|(c, _)| *c == constant) {
+                    self.diags.error("E1116", k.span, "this key appears more than once in the literal");
+                }
+                constants.push((constant, k.span));
+            }
+            let v = self.expr(cx, v, value);
+            let v = match value {
+                Some(value) => self.coerce(v, value),
+                None => {
+                    value = Some(v.ty);
+                    v
+                }
+            };
+            entries.push((k, v));
+        }
+        let (Some(key), Some(value)) = (key, value) else {
+            self.diags.error("E1101", span, "an empty map literal needs an expected `Map[K, V]` type");
+            return Self::error_expr(span);
+        };
+        self.require_key(key, span);
+        let ty = self.map_type(key, value);
+        Self::mk(hir::ExprKind::Map(entries), ty, span)
+    }
+
+    fn set_literal(&mut self, cx: &mut FnCx, items: &[ast::Expr], expected: Option<Ty>, span: Span) -> hir::Expr {
+        let mut element = match expected.map(|t| self.types.kind(t)) {
+            Some(TyKind::Set(element)) => Some(*element),
+            _ => None,
+        };
+        let mut values = Vec::new();
+        for item in items {
+            let value = self.expr(cx, item, element);
+            let value = match element {
+                Some(element) => self.coerce(value, element),
+                None => {
+                    element = Some(value.ty);
+                    value
+                }
+            };
+            values.push(value);
+        }
+        let Some(element) = element else {
+            self.diags.error("E1101", span, "an empty set literal needs an expected `Set[T]` type");
+            return Self::error_expr(span);
+        };
+        self.require_key(element, span);
+        let ty = self.types.intern(TyKind::Set(element));
+        Self::mk(hir::ExprKind::Set(values), ty, span)
     }
 
     fn not_indexable(&mut self, base: hir::Expr, span: Span) -> hir::Expr {
@@ -1666,6 +1818,27 @@ impl Checker<'_> {
             return self.unsupported_expr(span, "generic calls");
         };
         let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        if let ["Map" | "Set", "new"] = names.as_slice() {
+            let types: Vec<Ty> = type_args.iter().map(|t| self.resolve_type(t)).collect();
+            let ty = match (names[0], types.as_slice()) {
+                ("Map", [key, value]) => {
+                    self.require_key(*key, span);
+                    self.map_type(*key, *value)
+                }
+                ("Set", [element]) => {
+                    self.require_key(*element, span);
+                    self.types.intern(TyKind::Set(*element))
+                }
+                _ => {
+                    self.diags.error("E1104", span, "wrong number of type arguments");
+                    return Self::error_expr(span);
+                }
+            };
+            if !args.is_empty() {
+                return self.arity_error(span, 0, args.len());
+            }
+            return Self::mk(hir::ExprKind::MapOp(hir::MapOp::New, Vec::new()), ty, span);
+        }
         let (op, params) = match names.as_slice() {
             ["Array", "new"] => (hir::ArrayOp::New, Vec::new()),
             ["Array", "withCapacity"] => (hir::ArrayOp::WithCapacity, vec![Ty::INT]),
@@ -1704,6 +1877,34 @@ impl Checker<'_> {
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
+        if matches!(method.name.as_str(), "insert" | "remove") {
+            // These change the collection's extent and need a `var` receiver.
+            let Some((local, path, ty)) = self.place(cx, receiver) else { return Self::error_expr(span) };
+            let place = hir::Place { local, path };
+            let mutation = if method.name == "insert" { hir::MapMutation::Insert } else { hir::MapMutation::Remove };
+            let (params, result) = match (self.types.kind(ty).clone(), mutation) {
+                (TyKind::Map(key, value), hir::MapMutation::Insert) => {
+                    (vec![key, value], self.types.intern(TyKind::Option(value)))
+                }
+                (TyKind::Map(key, value), hir::MapMutation::Remove) => {
+                    (vec![key], self.types.intern(TyKind::Option(value)))
+                }
+                (TyKind::Set(element), _) => (vec![element], Ty::BOOL),
+                _ => return self.no_method(ty, method, span),
+            };
+            if args.len() != params.len() {
+                return self.arity_error(span, params.len(), args.len());
+            }
+            let values = args
+                .iter()
+                .zip(params)
+                .map(|(a, t)| {
+                    let v = self.expr(cx, &a.value, Some(t));
+                    self.coerce(v, t)
+                })
+                .collect();
+            return Self::mk(hir::ExprKind::MapMutate(mutation, place, values), result, span);
+        }
         if matches!(method.name.as_str(), "push" | "pop") {
             // These change the array's length and need a `var` receiver (10.5).
             let Some((local, path, ty)) = self.place(cx, receiver) else { return Self::error_expr(span) };
@@ -1726,6 +1927,17 @@ impl Checker<'_> {
             };
         }
         let value = self.expr(cx, receiver, None);
+        if let TyKind::Map(key, _) | TyKind::Set(key) = *self.types.kind(value.ty) {
+            let (op, result) = match (method.name.as_str(), self.types.kind(value.ty).clone()) {
+                ("get", TyKind::Map(_, entry)) => (hir::MapOp::Get, self.types.intern(TyKind::Option(entry))),
+                ("contains", _) => (hir::MapOp::Contains, Ty::BOOL),
+                _ => return self.no_method(value.ty, method, span),
+            };
+            let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+            let arg = self.expr(cx, &arg.value, Some(key));
+            let arg = self.coerce(arg, key);
+            return Self::mk(hir::ExprKind::MapOp(op, vec![value, arg]), result, span);
+        }
         let TyKind::Array(element) = *self.types.kind(value.ty) else {
             if value.ty == Ty::ERROR {
                 return Self::error_expr(span);
@@ -2201,6 +2413,12 @@ impl Checker<'_> {
             }
             BinOp::In => {
                 let container = self.expr(cx, right, None);
+                if let TyKind::Map(element, _) | TyKind::Set(element) = *self.types.kind(container.ty) {
+                    let item = self.expr(cx, left, Some(element));
+                    let item = self.coerce(item, element);
+                    let op = hir::MapOp::Contains;
+                    return Self::mk(hir::ExprKind::MapOp(op, vec![container, item]), Ty::BOOL, span);
+                }
                 let TyKind::Array(element) = *self.types.kind(container.ty) else {
                     if container.ty != Ty::ERROR {
                         let message = format!("`in` is not defined for {}", self.display(container.ty));

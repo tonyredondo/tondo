@@ -221,7 +221,7 @@ pub enum StmtKind {
 pub enum ForHeader {
     Infinite,
     Condition(Expr),
-    In { binding: Ident, source: Expr },
+    In { pattern: Pattern, source: Expr },
 }
 
 #[derive(Debug)]
@@ -277,6 +277,10 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
     /// `[a, b, c]`
     Array(Vec<Expr>),
+    /// `[key: value, ...]` or `[:]`
+    Map(Vec<(Expr, Expr)>),
+    /// `Set[a, b]`
+    Set(Vec<Expr>),
     Index {
         base: Box<Expr>,
         index: Box<Expr>,

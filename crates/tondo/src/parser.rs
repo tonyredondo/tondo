@@ -593,17 +593,34 @@ impl Parser<'_> {
         Ok(Stmt { kind, span })
     }
 
+    /// Whether the `for` header has an `in` at its top level, which makes it
+    /// an iteration (23.16).
+    fn header_has_in(&self) -> bool {
+        let mut depth = 0usize;
+        for token in &self.tokens[self.pos..] {
+            match token.tok {
+                Tok::Kw(Kw::In) if depth == 0 => return true,
+                Tok::LBrace if depth == 0 => return false,
+                Tok::LParen | Tok::LBracket | Tok::LBrace => depth += 1,
+                Tok::RParen | Tok::RBracket | Tok::RBrace => depth = depth.saturating_sub(1),
+                Tok::Eof | Tok::Newline if depth == 0 => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn for_statement(&mut self) -> PResult<StmtKind> {
         self.bump();
         if self.at(&Tok::LBrace) {
             return Ok(StmtKind::For { header: ForHeader::Infinite, body: self.block()? });
         }
-        let in_header = matches!(self.tok(), Tok::Ident(_)) && self.nth(1) == &Tok::Kw(Kw::In);
+        let in_header = self.header_has_in();
         let no_brace = std::mem::replace(&mut self.no_brace, true);
         let header = if in_header {
-            let binding = self.ident()?;
-            self.bump();
-            self.expression().map(|source| ForHeader::In { binding, source })
+            let pattern = self.pattern()?;
+            self.expect(Tok::Kw(Kw::In))?;
+            self.expression().map(|source| ForHeader::In { pattern, source })
         } else {
             self.expression().map(ForHeader::Condition)
         };
@@ -953,6 +970,15 @@ impl Parser<'_> {
                     let span = expr.span.to(self.prev_span());
                     expr = Expr { kind: ExprKind::Try(Box::new(expr)), span };
                 }
+                Tok::LBracket if matches!(&expr.kind, ExprKind::Path(path) if path.len() == 1 && path[0].name == "Set") =>
+                {
+                    // `Set[...]` in expression position is a set literal (23.24).
+                    let ExprKind::Array(items) = self.bracket_literal()?.kind else {
+                        return self.error("a set literal lists values: `Set[a, b]`");
+                    };
+                    let span = expr.span.to(self.prev_span());
+                    expr = Expr { kind: ExprKind::Set(items), span };
+                }
                 Tok::LBracket => {
                     if matches!(expr.kind, ExprKind::Path(_))
                         && let Some(args) = self.try_generic_arguments()
@@ -1116,27 +1142,36 @@ impl Parser<'_> {
     fn bracket_literal(&mut self) -> PResult<Expr> {
         let start = self.bump().span;
         let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let result = (|| -> PResult<Vec<Expr>> {
-            let mut items = Vec::new();
-            if self.at(&Tok::Colon) {
-                self.diags.unsupported(start, "map literals");
-                return Err(());
+        let result = (|| -> PResult<ExprKind> {
+            if self.at(&Tok::Colon) && self.nth(1) == &Tok::RBracket {
+                self.bump();
+                self.bump();
+                return Ok(ExprKind::Map(Vec::new()));
             }
-            while !self.at(&Tok::RBracket) {
+            if self.eat(&Tok::RBracket) {
+                return Ok(ExprKind::Array(Vec::new()));
+            }
+            let first = self.expression()?;
+            if self.eat(&Tok::Colon) {
+                // A `:` after the first entry's key makes it a map (23.23).
+                let mut pairs = vec![(first, self.expression()?)];
+                while self.eat(&Tok::Comma) && !self.at(&Tok::RBracket) {
+                    let key = self.expression()?;
+                    self.expect(Tok::Colon)?;
+                    pairs.push((key, self.expression()?));
+                }
+                self.expect(Tok::RBracket)?;
+                return Ok(ExprKind::Map(pairs));
+            }
+            let mut items = vec![first];
+            while self.eat(&Tok::Comma) && !self.at(&Tok::RBracket) {
                 items.push(self.expression()?);
-                if self.at(&Tok::Colon) {
-                    self.diags.unsupported(start, "map literals");
-                    return Err(());
-                }
-                if !self.eat(&Tok::Comma) {
-                    break;
-                }
             }
             self.expect(Tok::RBracket)?;
-            Ok(items)
+            Ok(ExprKind::Array(items))
         })();
         self.no_brace = no_brace;
-        Ok(Expr { kind: ExprKind::Array(result?), span: start.to(self.prev_span()) })
+        Ok(Expr { kind: result?, span: start.to(self.prev_span()) })
     }
 
     fn paren(&mut self) -> PResult<Expr> {

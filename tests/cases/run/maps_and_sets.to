@@ -1,0 +1,61 @@
+import std.console
+
+enum Color {
+    Red
+    Green
+}
+
+type Pos = { x: Int, y: Int }
+
+fn main() {
+    var ages = ["ana": 32, "leo": 28]
+    let before = ages
+    ages["eva"] = 41
+    ages["ana"] = 33
+    let removed = ages.remove("leo")
+    _ = console.println("{ages} {before} {removed == some(28)} {ages.remove("zoe") == none}")
+    _ = console.println("{ages["ana"] == some(33)} {ages["nobody"] == none} {"eva" in ages} {"leo" in ages}")
+    for (name, age) in ages {
+        _ = console.println("{name} -> {age}")
+    }
+    var counts: Map[String, Int] = [:]
+    for word in ["a", "b", "a", "c", "a", "b"] {
+        counts[word] = match counts[word] {
+            some(n) => n + 1
+            none => 1
+        }
+    }
+    _ = console.println("{counts} {counts == ["c": 1, "b": 2, "a": 3]}")
+    var seen = Set["read", "write"]
+    let added = seen.insert("exec")
+    let again = seen.insert("read")
+    let gone = seen.remove("write")
+    _ = console.println("{seen} {added} {again} {gone} {"read" in seen} {seen == Set["exec", "read"]}")
+    var grid: Map[(Int, Int), Color] = [:]
+    grid[(0, 0)] = Color.Red
+    grid[(1, 2)] = Color.Green
+    let cell = grid[(1, 2)] == some(Color.Green)
+    var places = Map.new[Pos, String]()
+    _ = places.insert(Pos { x: 1, y: 2 }, "home")
+    let home = places.get(Pos { x: 1, y: 2 }) == some("home")
+    var colors = Set.new[Color]()
+    _ = colors.insert(Color.Red)
+    _ = console.println("{cell} {home} {Color.Red in colors} {Color.Green in colors}")
+    var big = Map.new[Int, String]()
+    for i in 0..2000 {
+        big[i] = "v{i}"
+    }
+    for i in 0..1990 {
+        _ = big.remove(i)
+    }
+    _ = console.println("{big}")
+}
+
+// expect-stdout: [ana: 33, eva: 41] [ana: 32, leo: 28] true true
+// expect-stdout: true true true false
+// expect-stdout: ana -> 33
+// expect-stdout: eva -> 41
+// expect-stdout: [a: 3, b: 2, c: 1] true
+// expect-stdout: Set[read, exec] true false true true true
+// expect-stdout: true true true false
+// expect-stdout: [1990: v1990, 1991: v1991, 1992: v1992, 1993: v1993, 1994: v1994, 1995: v1995, 1996: v1996, 1997: v1997, 1998: v1998, 1999: v1999]

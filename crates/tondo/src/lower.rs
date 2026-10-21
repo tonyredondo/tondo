@@ -500,14 +500,14 @@ impl Builder<'_> {
                 self.loop_body(body, exit, head);
                 self.switch_to(exit);
             }
-            hir::Stmt::ForArray { local, array, body } => {
-                // Iterate a snapshot: the loop sees the array as it was when
-                // the loop started, even if the body changes the binding.
+            hir::Stmt::ForEach { pattern, source: array, body } => {
+                // Iterate a snapshot: the loop sees the collection as it was
+                // when the loop started, even if the body changes the binding.
                 let value = self.expr(array);
                 let snapshot = self.new_local(array.ty);
                 self.store(Place::local(snapshot), value, array.span);
                 self.frames.last_mut().unwrap().push(snapshot);
-                let length = Rvalue::ArrayOp(hir::ArrayOp::Length, vec![Operand::local(snapshot)], array.span);
+                let length = Rvalue::Length(Operand::local(snapshot));
                 let length = self.temp(Ty::INT, length, array.span);
                 let cursor = self.new_local(Ty::INT);
                 let zero = Rvalue::Use(Operand::Const(Const::Int(0, Ty::INT)));
@@ -526,14 +526,10 @@ impl Builder<'_> {
                     scope_depth: self.scopes.len(),
                     frame_depth: self.frames.len(),
                 });
-                // The element binding belongs to one iteration.
+                // The element bindings belong to one iteration.
                 self.scopes.push(Vec::new());
-                let binding = self.bind(*local);
                 let element = Place::local(snapshot).index(cursor, array.span);
-                self.store(Place::local(binding), Operand::Copy(element), array.span);
-                if self.needs_drop(self.locals[binding.0 as usize]) {
-                    self.scopes.last_mut().unwrap().push(binding);
-                }
+                self.bind_pattern(pattern, &element);
                 self.in_frame(|b| b.block(body));
                 let scope = self.scopes.pop().unwrap();
                 self.release_all(scope);
@@ -585,6 +581,19 @@ impl Builder<'_> {
                 self.switch_to(exit);
             }
         }
+    }
+
+    /// For operands that move into a collection: which must be retained
+    /// because they were copied rather than taken from a temporary.
+    fn move_flags(&mut self, operands: &[Operand], moves: &[bool], types: &[Ty]) -> Vec<bool> {
+        operands
+            .iter()
+            .zip(moves)
+            .zip(types)
+            .map(|((operand, &moves), &ty)| {
+                moves && self.needs_drop(ty) && matches!(operand, Operand::Copy(_)) && !self.take_temporary(operand)
+            })
+            .collect()
     }
 
     /// A local holding the value of an index expression.
@@ -719,6 +728,46 @@ impl Builder<'_> {
             hir::ExprKind::Pop(place) => {
                 let place = self.place(place.local, &place.path);
                 self.temp(e.ty, Rvalue::Pop(place), e.span)
+            }
+            hir::ExprKind::Map(entries) => {
+                let map = self.temp(e.ty, Rvalue::MapOp(hir::MapOp::New, Vec::new(), e.span), e.span);
+                let Operand::Copy(place) = map.clone() else { unreachable!() };
+                let TyKind::Map(_, value) = *self.types.kind(e.ty) else { unreachable!() };
+                let result = self.types.lookup(&TyKind::Option(value));
+                for (key, value) in entries {
+                    let operands = vec![self.expr(key), self.expr(value)];
+                    let flags = self.move_flags(&operands, &[true, true], &[key.ty, value.ty]);
+                    let rvalue = Rvalue::MapMutate(hir::MapMutation::Insert, place.clone(), operands, flags);
+                    // A repeated dynamic key replaces the value (10.12); the
+                    // replaced one is released with this temporary.
+                    self.temp(result.expect("the checker interns `V?` with every map"), rvalue, e.span);
+                }
+                map
+            }
+            hir::ExprKind::Set(items) => {
+                let set = self.temp(e.ty, Rvalue::MapOp(hir::MapOp::New, Vec::new(), e.span), e.span);
+                let Operand::Copy(place) = set.clone() else { unreachable!() };
+                for item in items {
+                    let operands = vec![self.expr(item)];
+                    let flags = self.move_flags(&operands, &[true], &[item.ty]);
+                    let rvalue = Rvalue::MapMutate(hir::MapMutation::Insert, place.clone(), operands, flags);
+                    self.temp(Ty::BOOL, rvalue, e.span);
+                }
+                set
+            }
+            hir::ExprKind::MapOp(op, operands) => {
+                let operands = operands.iter().map(|o| self.expr(o)).collect();
+                self.temp(e.ty, Rvalue::MapOp(*op, operands, e.span), e.span)
+            }
+            hir::ExprKind::MapMutate(mutation, place, values) => {
+                let place = self.place(place.local, &place.path);
+                let types: Vec<Ty> = values.iter().map(|v| v.ty).collect();
+                let operands: Vec<Operand> = values.iter().map(|v| self.expr(v)).collect();
+                // Inserted keys and values move into the collection; a removal
+                // only looks the key up.
+                let moves = vec![*mutation == hir::MapMutation::Insert; operands.len()];
+                let flags = self.move_flags(&operands, &moves, &types);
+                self.temp(e.ty, Rvalue::MapMutate(*mutation, place, operands, flags), e.span)
             }
             hir::ExprKind::Try(inner) => {
                 let value = self.expr(inner);

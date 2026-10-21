@@ -4,7 +4,7 @@
 //! inserted during lowering, so code generation is a direct translation.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee};
+use crate::hir::{ArrayOp, Callee, MapMutation, MapOp};
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 
@@ -63,9 +63,13 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
         Proj::Variant(variant, index) => {
             types.variants(ty).expect("payload of an enum")[variant as usize][index as usize]
         }
+        // Iteration also indexes maps (entries as `(K, V)`) and sets.
         Proj::Index(..) => match types.kind(types.repr(ty)) {
-            TyKind::Array(element) => *element,
-            _ => unreachable!("index of a non-array"),
+            TyKind::Array(element) | TyKind::Set(element) => *element,
+            TyKind::Map(key, value) => {
+                types.lookup(&TyKind::Tuple(vec![*key, *value])).expect("map entry type is interned")
+            }
+            _ => unreachable!("index of a non-collection"),
         },
     }
 }
@@ -154,6 +158,13 @@ pub enum Rvalue {
     Push(Place, Operand, bool),
     /// Removes the last element of the array at the place.
     Pop(Place),
+    /// The number of elements of an array, map or set.
+    Length(Operand),
+    /// A map or set query, collection first.
+    MapOp(MapOp, Vec<Operand>, Span),
+    /// `insert` or `remove` on the map or set at the place (made unique
+    /// first); flags mark copied operands to retain as they move in.
+    MapMutate(MapMutation, Place, Vec<Operand>, Vec<bool>),
 }
 
 pub enum Piece {

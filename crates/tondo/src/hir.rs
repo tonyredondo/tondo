@@ -59,10 +59,11 @@ pub enum Stmt {
         condition: Option<Expr>,
         body: Block,
     },
-    /// `for local in array`: iterates a snapshot of the array by value.
-    ForArray {
-        local: LocalId,
-        array: Expr,
+    /// `for pattern in source` over an array, map or set: iterates a
+    /// snapshot by value, in order (10.12).
+    ForEach {
+        pattern: Pattern,
+        source: Expr,
         body: Block,
     },
     /// `for local in start..end` over an integer range.
@@ -116,6 +117,14 @@ pub enum ExprKind {
     Push(Place, Box<Expr>),
     /// `array.pop()` on a `var` place.
     Pop(Place),
+    /// `[key: value, ...]`
+    Map(Vec<(Expr, Expr)>),
+    /// `Set[a, b]`
+    Set(Vec<Expr>),
+    /// A map or set query; the collection comes first.
+    MapOp(MapOp, Vec<Expr>),
+    /// `insert` or `remove` on a `var` map or set place.
+    MapMutate(MapMutation, Place, Vec<Expr>),
     /// `value?` on an option or result; the type is the payload's.
     Try(Box<Expr>),
     /// A numeric conversion (18.6). Its type is the target, or
@@ -164,6 +173,24 @@ pub enum ArrayOp {
     Repeat,
     /// `value in array`; the value comes first.
     Contains,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MapOp {
+    /// `Map.new[K, V]()` or `Set.new[K]()`
+    New,
+    /// `map[key]` and `map.get(key)`: `V?`
+    Get,
+    /// `key in map`, `value in set` and `contains`; the collection comes first.
+    Contains,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum MapMutation {
+    /// Map: `V?` with the replaced value. Set: `true` when newly added.
+    Insert,
+    /// Map: `V?` with the removed value. Set: `true` when it was present.
+    Remove,
 }
 
 pub struct Arm {

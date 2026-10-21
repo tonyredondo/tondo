@@ -15,7 +15,7 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, Program, StdFn};
+use crate::hir::{ArrayOp, Callee, MapMutation, MapOp, Program, StdFn};
 use crate::mir::{Body, Const, Local, Operand, Piece, Place, Proj, Rvalue, Statement, Terminator, project};
 use crate::source::{SourceMap, Span};
 use crate::types::{AdtKind, ERR, FloatTy, IntTy, OK, SOME, Ty, TyKind, Types};
@@ -73,6 +73,17 @@ enum Rt {
     ArrayEq,
     ArrayContains,
     SbArray,
+    MapNew,
+    MapRetain,
+    MapRelease,
+    MapFind,
+    MapInsert,
+    MapRemove,
+    MapLen,
+    MapEntry,
+    MapEq,
+    SbMap,
+    StrHash,
 }
 
 impl Rt {
@@ -113,6 +124,17 @@ impl Rt {
             Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
             Rt::SbArray => ("tondo_rt_sb_array", &[I64, I64, I64, I64], &[]),
+            Rt::MapNew => ("tondo_rt_map_new", &[I64, I64], &[I64]),
+            Rt::MapRetain => ("tondo_rt_map_retain", &[I64], &[]),
+            Rt::MapRelease => ("tondo_rt_map_release", &[I64, I64], &[]),
+            Rt::MapFind => ("tondo_rt_map_find", &[I64, I64, I64], &[I64]),
+            Rt::MapInsert => ("tondo_rt_map_insert", &[I64, I64, I64, I64, I64], &[I8]),
+            Rt::MapRemove => ("tondo_rt_map_remove", &[I64, I64, I64, I64], &[I8]),
+            Rt::MapLen => ("tondo_rt_map_len", &[I64], &[I64]),
+            Rt::MapEntry => ("tondo_rt_map_entry", &[I64, I64], &[I64]),
+            Rt::MapEq => ("tondo_rt_map_eq", &[I64, I64, I64, I64], &[I8]),
+            Rt::SbMap => ("tondo_rt_sb_map", &[I64, I64, I64, I64], &[]),
+            Rt::StrHash => ("tondo_rt_str_hash", &[I64], &[I64]),
         }
     }
 }
@@ -173,6 +195,8 @@ enum Glue {
     Equal,
     /// Appends the `Display` text of a value to a string builder.
     Display,
+    /// Hashes a `Key` value.
+    Hash,
 }
 
 fn int_type(int: IntTy) -> ir::Type {
@@ -213,6 +237,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap) -> Resul
         layouts: HashMap::new(),
         glue: HashMap::new(),
         pending_glue: Vec::new(),
+        map_glue: HashMap::new(),
     };
 
     for (index, body) in bodies.iter().enumerate() {
@@ -256,6 +281,7 @@ struct Codegen<'a> {
     layouts: HashMap<Ty, Layout>,
     glue: HashMap<(Glue, Ty), FuncId>,
     pending_glue: Vec<(Glue, Ty, FuncId)>,
+    map_glue: HashMap<Ty, DataId>,
 }
 
 impl Codegen<'_> {
@@ -269,7 +295,7 @@ impl Codegen<'_> {
             TyKind::Float(FloatTy::F64) => Class::Scalar(types::F64),
             TyKind::Char => Class::Scalar(types::I32),
             TyKind::Byte => Class::Scalar(types::I8),
-            TyKind::String | TyKind::Array(_) => Class::Scalar(POINTER),
+            TyKind::String | TyKind::Array(_) | TyKind::Map(..) | TyKind::Set(_) => Class::Scalar(POINTER),
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -386,7 +412,59 @@ impl Codegen<'_> {
             signature.params.push(AbiParam::new(POINTER));
             signature.returns.push(AbiParam::new(types::I8));
         }
+        if kind == Glue::Hash {
+            signature.returns.push(AbiParam::new(types::I64));
+        }
         signature
+    }
+
+    /// The key and value of a map or set: `(K, V)`, with `Unit` for sets.
+    fn map_parts(&self, ty: Ty) -> (Ty, Ty) {
+        match *self.types.kind(self.types.repr(ty)) {
+            TyKind::Map(key, value) => (key, value),
+            TyKind::Set(element) => (element, Ty::UNIT),
+            _ => unreachable!("not a map or set"),
+        }
+    }
+
+    /// Entry size and value offset, laid out like the tuple `(K, V)`.
+    fn entry_layout(&mut self, ty: Ty) -> (u32, u32) {
+        let (key, value) = self.map_parts(ty);
+        let (key, value) = (self.layout(key), self.layout(value));
+        let offset = key.size.next_multiple_of(value.align);
+        ((offset + value.size).next_multiple_of(key.align.max(value.align)), offset)
+    }
+
+    /// The static table of glue functions the runtime uses for a map or set.
+    fn map_glue(&mut self, ty: Ty) -> DataId {
+        let ty = self.types.repr(ty);
+        if let Some(&id) = self.map_glue.get(&ty) {
+            return id;
+        }
+        let (key, value) = self.map_parts(ty);
+        let name = format!("tondo_map_glue{}", self.map_glue.len());
+        let id = self.module.declare_data(&name, Linkage::Local, false, false).expect("glue table");
+        let mut data = DataDescription::new();
+        data.define(vec![0u8; 48].into_boxed_slice());
+        data.set_align(8);
+        let entries = [
+            (Glue::Hash, key, true),
+            (Glue::Equal, key, true),
+            (Glue::Retain, key, self.types.needs_drop(key)),
+            (Glue::Release, key, self.types.needs_drop(key)),
+            (Glue::Retain, value, self.types.needs_drop(value)),
+            (Glue::Release, value, self.types.needs_drop(value)),
+        ];
+        for (index, (kind, ty, present)) in entries.into_iter().enumerate() {
+            if present {
+                let function = self.glue(kind, ty);
+                let reference = self.module.declare_func_in_data(function, &mut data);
+                data.write_function_addr(index as u32 * 8, reference);
+            }
+        }
+        self.module.define_data(id, &data).expect("glue table definition");
+        self.map_glue.insert(ty, id);
+        id
     }
 
     /// The glue function of `kind` for values of type `ty`, defined later.
@@ -558,6 +636,56 @@ impl Emit<'_, '_> {
         self.glue_address(kind, ty)
     }
 
+    fn map_glue_address(&mut self, ty: Ty) -> ir::Value {
+        let id = self.cg.map_glue(ty);
+        let global = self.cg.module.declare_data_in_func(id, self.fb.func);
+        self.fb.ins().symbol_value(POINTER, global)
+    }
+
+    /// Mixes `value` into a running hash.
+    fn mix(&mut self, hash: ir::Value, value: ir::Value) -> ir::Value {
+        let combined = self.fb.ins().bxor(hash, value);
+        self.fb.ins().imul_imm_s(combined, 0x100_0000_01b3)
+    }
+
+    /// A 64-bit hash of a `Key` value (8.12).
+    fn hash(&mut self, ty: Ty, value: Val) -> ir::Value {
+        let seed = self.fb.ins().iconst(types::I64, 0xcbf2_9ce4_8422_2325u64 as i64);
+        match value {
+            Val::Zero => seed,
+            Val::Scalar(value) => {
+                let word = match *self.cg.types.kind(self.cg.types.repr(ty)) {
+                    TyKind::String => self.call_rt(Rt::StrHash, &[value]).unwrap(),
+                    TyKind::Int(int) if int.signed() && int.bits() < 64 => self.fb.ins().sextend(types::I64, value),
+                    _ => match self.cg.scalar_type(ty).bits() {
+                        64 => value,
+                        _ => self.fb.ins().uextend(types::I64, value),
+                    },
+                };
+                self.mix(seed, word)
+            }
+            Val::Memory(address) => match self.cg.layout(ty).shape {
+                Shape::Struct(_) => {
+                    let count = self.cg.types.components(ty).unwrap().len() as u32;
+                    let mut hash = seed;
+                    for index in 0..count {
+                        let slot = self.cg.slot(ty, Proj::Field(index));
+                        let part = self.component_address(address, &slot);
+                        let part = if slot.boxed {
+                            self.call_glue(Glue::Hash, slot.ty, &[part]).unwrap()
+                        } else {
+                            let value = self.value_at(part, slot.ty);
+                            self.hash(slot.ty, value)
+                        };
+                        hash = self.mix(hash, part);
+                    }
+                    hash
+                }
+                _ => self.call_glue(Glue::Hash, ty, &[address]).unwrap(),
+            },
+        }
+    }
+
     fn element_size(&mut self, element: Ty) -> ir::Value {
         let size = self.cg.layout(element).size;
         self.fb.ins().iconst(POINTER, size as i64)
@@ -599,6 +727,16 @@ impl Emit<'_, '_> {
                 let size = self.element_size(element);
                 let display = self.glue_address(Glue::Display, element);
                 self.call_rt(Rt::SbArray, &[builder, value, size, display]);
+            }
+            TyKind::Map(key, entry) => {
+                let key = self.glue_address(Glue::Display, key);
+                let entry = self.glue_address(Glue::Display, entry);
+                self.call_rt(Rt::SbMap, &[builder, value, key, entry]);
+            }
+            TyKind::Set(element) => {
+                let element = self.glue_address(Glue::Display, element);
+                let none = self.fb.ins().iconst(POINTER, 0);
+                self.call_rt(Rt::SbMap, &[builder, value, element, none]);
             }
             ref other => unreachable!("no Display for {other:?}"),
         }
@@ -736,6 +874,13 @@ impl Emit<'_, '_> {
                 TyKind::Array(_) => {
                     self.call_rt(Rt::ArrayRetain, &[pointer]);
                 }
+                TyKind::Map(..) | TyKind::Set(_) if release => {
+                    let glue = self.map_glue_address(ty);
+                    self.call_rt(Rt::MapRelease, &[pointer, glue]);
+                }
+                TyKind::Map(..) | TyKind::Set(_) => {
+                    self.call_rt(Rt::MapRetain, &[pointer]);
+                }
                 _ => {
                     self.call_rt(if release { Rt::StrRelease } else { Rt::StrRetain }, &[pointer]);
                 }
@@ -780,6 +925,16 @@ impl Emit<'_, '_> {
                     let size = self.element_size(element);
                     let eq = self.glue_address(Glue::Equal, element);
                     self.call_rt(Rt::ArrayEq, &[a, b, size, eq]).unwrap()
+                }
+                TyKind::Map(_, value) => {
+                    let glue = self.map_glue_address(ty);
+                    let value_eq = self.glue_address(Glue::Equal, value);
+                    self.call_rt(Rt::MapEq, &[a, b, glue, value_eq]).unwrap()
+                }
+                TyKind::Set(_) => {
+                    let glue = self.map_glue_address(ty);
+                    let none = self.fb.ins().iconst(POINTER, 0);
+                    self.call_rt(Rt::MapEq, &[a, b, glue, none]).unwrap()
                 }
                 // IEEE equality: NaN equals nothing (8.11).
                 TyKind::Float(_) => self.fb.ins().fcmp(FloatCC::Equal, a, b),
@@ -832,6 +987,40 @@ fn define_glue(cg: &mut Codegen, kind: Glue, ty: Ty, func: &mut ir::Function, fb
             let value = e.value_at(params[1], ty);
             e.append_display(params[0], ty, value);
             e.fb.ins().return_(&[]);
+        }
+        (Glue::Hash, None) => {
+            let value = e.value_at(params[0], ty);
+            let hash = e.hash(ty, value);
+            e.fb.ins().return_(&[hash]);
+        }
+        (Glue::Hash, Some((_, count))) => {
+            // The tag, then the active variant's payload.
+            let tag = e.tag(ty, Val::Memory(params[0]));
+            let tag_word = e.fb.ins().uextend(types::I64, tag);
+            let seed = e.fb.ins().iconst(types::I64, 0xcbf2_9ce4_8422_2325u64 as i64);
+            let start = e.mix(seed, tag_word);
+            for variant in 0..count {
+                let components = e.cg.types.variants(ty).unwrap()[variant as usize].len() as u32;
+                let (this, next) = (e.fb.create_block(), e.fb.create_block());
+                let is_this = e.fb.ins().icmp_imm_s(IntCC::Equal, tag, variant as i64);
+                e.fb.ins().brif(is_this, this, &[], next, &[]);
+                e.fb.switch_to_block(this);
+                let mut hash = start;
+                for index in 0..components {
+                    let slot = e.cg.slot(ty, Proj::Variant(variant, index));
+                    let part = e.component_address(params[0], &slot);
+                    let part = if slot.boxed {
+                        e.call_glue(Glue::Hash, slot.ty, &[part]).unwrap()
+                    } else {
+                        let value = e.value_at(part, slot.ty);
+                        e.hash(slot.ty, value)
+                    };
+                    hash = e.mix(hash, part);
+                }
+                e.fb.ins().return_(&[hash]);
+                e.fb.switch_to_block(next);
+            }
+            e.fb.ins().return_(&[start]);
         }
         (Glue::Retain | Glue::Release, None) => {
             let value = e.value_at(params[0], ty);
@@ -997,6 +1186,22 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         };
         let mut ty = self.body.locals[place.local.0 as usize];
         for &proj in &place.path {
+            if let Proj::Index(index, _) = proj
+                && matches!(self.e.cg.types.kind(self.e.cg.types.repr(ty)), TyKind::Map(..) | TyKind::Set(_))
+            {
+                // Iteration over a map or set: the entry at a valid position.
+                let map = match base {
+                    Some(address) => self.e.fb.ins().load(POINTER, flags(), address, 0),
+                    None => {
+                        let Storage::Var(var) = self.storage[place.local.0 as usize] else { unreachable!() };
+                        self.e.fb.use_var(var)
+                    }
+                };
+                let position = self.scalar(&Operand::local(index));
+                base = Some(self.e.call_rt(Rt::MapEntry, &[map, position]).unwrap());
+                ty = project(self.e.cg.types, ty, proj);
+                continue;
+            }
             if let Proj::Index(index, span) = proj {
                 let element = project(self.e.cg.types, ty, proj);
                 let array = match base {
@@ -1327,6 +1532,95 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 self.e.fb.ins().store(flags(), found, base, 0);
                 return;
+            }
+            Rvalue::Length(collection) => {
+                let collection_ty = self.operand_ty(collection);
+                let value = self.scalar(collection);
+                Val::Scalar(match self.e.cg.types.kind(self.e.cg.types.repr(collection_ty)) {
+                    TyKind::Array(_) => self.e.fb.ins().load(types::I64, flags(), value, 8),
+                    _ => self.e.call_rt(Rt::MapLen, &[value]).unwrap(),
+                })
+            }
+            Rvalue::MapOp(op, operands, _) => match op {
+                MapOp::New => {
+                    let (size, offset) = self.e.cg.entry_layout(ty);
+                    let size = self.e.fb.ins().iconst(POINTER, size as i64);
+                    let offset = self.e.fb.ins().iconst(POINTER, offset as i64);
+                    Val::Scalar(self.e.call_rt(Rt::MapNew, &[size, offset]).unwrap())
+                }
+                MapOp::Contains | MapOp::Get => {
+                    let map_ty = self.operand_ty(&operands[0]);
+                    let (key, value) = self.e.cg.map_parts(map_ty);
+                    let map = self.scalar(&operands[0]);
+                    let key_value = self.operand(&operands[1]);
+                    let key_address = self.in_memory(key, key_value);
+                    let glue = self.e.map_glue_address(map_ty);
+                    let found = self.e.call_rt(Rt::MapFind, &[map, key_address, glue]).unwrap();
+                    let present = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, found, 0);
+                    if *op == MapOp::Contains {
+                        Val::Scalar(present)
+                    } else {
+                        // `some(value)` owns a copy of the stored value.
+                        let base = self.pointer_to(place, true);
+                        self.e.fb.ins().store(flags(), present, base, 0);
+                        let (copy, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+                        self.e.fb.ins().brif(present, copy, &[], done, &[]);
+                        self.e.fb.switch_to_block(copy);
+                        let stored = self.e.value_at(found, value);
+                        let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+                        self.e.init_component(base, &payload, stored);
+                        self.e.refcount(value, stored, false);
+                        self.e.fb.ins().jump(done, &[]);
+                        self.e.fb.switch_to_block(done);
+                        return;
+                    }
+                }
+            },
+            Rvalue::MapMutate(mutation, map_place, operands, retain) => {
+                let map_ty = self.place_ty(map_place);
+                let (key, value) = self.e.cg.map_parts(map_ty);
+                let is_set = matches!(self.e.cg.types.kind(self.e.cg.types.repr(map_ty)), TyKind::Set(_));
+                let values: Vec<Val> = operands.iter().map(|o| self.operand(o)).collect();
+                for ((value, &retain), operand) in values.iter().zip(retain).zip(operands) {
+                    if retain {
+                        let ty = self.operand_ty(operand);
+                        self.e.refcount(ty, *value, false);
+                    }
+                }
+                let key_address = self.in_memory(key, values[0]);
+                // A map's result is `V?`: the replaced or removed value goes
+                // straight into its payload. A set's result is a `Bool`.
+                let (base, out) = if is_set {
+                    (None, key_address)
+                } else {
+                    let base = self.pointer_to(place, true);
+                    let payload = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+                    (Some(base), self.e.offset(base, payload.offset))
+                };
+                let glue = self.e.map_glue_address(map_ty);
+                let (slot, spilled) = self.array_slot(map_place);
+                let flag = match mutation {
+                    MapMutation::Insert => {
+                        let value_address = match values.get(1) {
+                            Some(&v) => self.in_memory(value, v),
+                            None => key_address,
+                        };
+                        self.e.call_rt(Rt::MapInsert, &[slot, key_address, value_address, out, glue]).unwrap()
+                    }
+                    MapMutation::Remove => self.e.call_rt(Rt::MapRemove, &[slot, key_address, out, glue]).unwrap(),
+                };
+                if let Some(var) = spilled {
+                    self.unspill(var, slot);
+                }
+                match base {
+                    Some(base) => {
+                        self.e.fb.ins().store(flags(), flag, base, 0);
+                        return;
+                    }
+                    // Set insert reports whether the value was new.
+                    None if *mutation == MapMutation::Insert => Val::Scalar(self.e.fb.ins().bxor_imm_u(flag, 1)),
+                    None => Val::Scalar(flag),
+                }
             }
             Rvalue::Discriminant(source) => {
                 let source_ty = self.place_ty(source);

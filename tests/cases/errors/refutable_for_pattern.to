@@ -1,0 +1,7 @@
+fn main() {
+    let values = [some(1), none]
+    for some(v) in values {
+    }
+}
+
+// expect-error: E1201

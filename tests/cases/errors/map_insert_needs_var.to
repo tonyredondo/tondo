@@ -1,0 +1,6 @@
+fn main() {
+    let m = ["a": 1]
+    _ = m.insert("b", 2)
+}
+
+// expect-error: E1411

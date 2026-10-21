@@ -95,6 +95,10 @@ pub enum TyKind {
     Result(Ty, Ty),
     /// A reference-counted, copy-on-write sequence (10.2).
     Array(Ty),
+    /// An insertion-ordered hash map (10.9).
+    Map(Ty, Ty),
+    /// An insertion-ordered set (10.15).
+    Set(Ty),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -209,6 +213,11 @@ impl Types {
         self.kinds.push(kind.clone());
         self.map.insert(kind, ty);
         ty
+    }
+
+    /// An already interned type.
+    pub fn lookup(&self, kind: &TyKind) -> Option<Ty> {
+        self.map.get(kind).copied()
     }
 
     pub fn kind(&self, ty: Ty) -> &TyKind {
@@ -330,7 +339,8 @@ impl Types {
             return known;
         }
         let repr = self.repr(ty);
-        let result = repr == Ty::STRING || matches!(self.kind(repr), TyKind::Array(_)) || {
+        let heap = matches!(self.kind(repr), TyKind::String | TyKind::Array(_) | TyKind::Map(..) | TyKind::Set(_));
+        let result = heap || {
             let parts = match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items,
                 (None, Some(variants)) => variants.concat(),
@@ -341,6 +351,38 @@ impl Types {
             parts.iter().any(|&part| self.is_boxed(repr, part) || self.needs_drop(part))
         };
         self.needs_drop.borrow_mut().insert(ty, result);
+        result
+    }
+
+    /// The closed `Key` capability (8.12): equality is total and hashing is
+    /// stable, so floats and collections are excluded.
+    pub fn is_key(&self, ty: Ty) -> bool {
+        self.key_in(ty, &mut Vec::new())
+    }
+
+    fn key_in(&self, ty: Ty, visiting: &mut Vec<Ty>) -> bool {
+        if visiting.contains(&ty) {
+            return true;
+        }
+        visiting.push(ty);
+        let repr = self.repr(ty);
+        let result = match self.kind(repr) {
+            TyKind::Int(_)
+            | TyKind::Char
+            | TyKind::Byte
+            | TyKind::Bool
+            | TyKind::String
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error => true,
+            TyKind::Float(_) | TyKind::Array(_) | TyKind::Map(..) | TyKind::Set(_) => false,
+            _ => match (self.components(repr), self.variants(repr)) {
+                (Some(items), _) => items.iter().all(|&t| self.key_in(t, visiting)),
+                (None, Some(variants)) => variants.concat().iter().all(|&t| self.key_in(t, visiting)),
+                (None, None) => false,
+            },
+        };
+        visiting.pop();
         result
     }
 
@@ -366,7 +408,8 @@ impl Types {
             | TyKind::Unit
             | TyKind::Never
             | TyKind::Error => true,
-            TyKind::Array(element) => self.equatable_in(*element, visiting),
+            TyKind::Array(element) | TyKind::Set(element) => self.equatable_in(*element, visiting),
+            TyKind::Map(key, value) => self.equatable_in(*key, visiting) && self.equatable_in(*value, visiting),
             _ => match (self.components(repr), self.variants(repr)) {
                 (Some(items), _) => items.iter().all(|&t| self.equatable_in(t, visiting)),
                 (None, Some(variants)) => variants.concat().iter().all(|&t| self.equatable_in(t, visiting)),
@@ -384,7 +427,8 @@ impl Types {
             TyKind::Tuple(items) => items.iter().any(|&t| self.has_error(t)),
             TyKind::Option(inner) => self.has_error(*inner),
             TyKind::Result(ok, err) => self.has_error(*ok) || self.has_error(*err),
-            TyKind::Array(element) => self.has_error(*element),
+            TyKind::Array(element) | TyKind::Set(element) => self.has_error(*element),
+            TyKind::Map(key, value) => self.has_error(*key) || self.has_error(*value),
             _ => false,
         }
     }
@@ -418,6 +462,8 @@ impl Types {
                 _ => format!("{}?", self.display(*inner)),
             },
             TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
+            TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
+            TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
             TyKind::Result(ok, err) if *ok == Ty::UNIT => format!("!{}", self.display(*err)),
             TyKind::Result(ok, err) => format!("{} ! {}", self.display(*ok), self.display(*err)),
         }

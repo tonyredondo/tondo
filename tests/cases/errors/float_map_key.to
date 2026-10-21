@@ -1,0 +1,5 @@
+fn main() {
+    let m: Map[Float, Int] = [:]
+}
+
+// expect-error: E1105
