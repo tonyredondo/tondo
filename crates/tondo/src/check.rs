@@ -2962,7 +2962,12 @@ impl Checker<'_> {
             _ => state,
         };
         let option = |this: &mut Self, t: Ty| this.types.intern(TyKind::Option(t));
-        let int = |value: i128| mk(hir::ExprKind::Int(value), Ty::INT, span);
+        if handle.collection() {
+            return self.shared_method(cx, receiver, handle, state, method, args, span);
+        }
+        if handle == Handle::Atomic && atomic_scalar(&self.types, state) {
+            return self.atomic_method(cx, receiver, state, method, args, span);
+        }
         match (handle, name) {
             (Handle::Semaphore | Handle::Permit | Handle::Barrier, _) => {
                 let (op, result) = match (handle, name) {
@@ -3052,15 +3057,6 @@ impl Checker<'_> {
                 })
             }
             (Handle::Mutex | Handle::RwLock, "get") | (Handle::Atomic, "load") | (Handle::Once, "get") => {
-                if !arity(self, 0) {
-                    return Self::error_expr(span);
-                }
-                self.locked(cx, receiver, Shared, Vec::new(), span, |_, _, lock| (Vec::new(), lock.state()))
-            }
-            (
-                Handle::SyncArray | Handle::SyncMap | Handle::SyncSet | Handle::SyncStack | Handle::SyncQueue,
-                "snapshot",
-            ) => {
                 if !arity(self, 0) {
                     return Self::error_expr(span);
                 }
@@ -3221,209 +3217,211 @@ impl Checker<'_> {
                     )
                 })
             }
-            (handle, "length" | "isEmpty") if handle.collection() => {
-                if !arity(self, 0) {
-                    return Self::error_expr(span);
-                }
-                self.locked(cx, receiver, Shared, Vec::new(), span, |_, _, lock| {
-                    let length = lock.mk(hir::ExprKind::Length(Box::new(lock.state())), Ty::INT);
-                    if name == "length" {
-                        return (Vec::new(), length);
-                    }
-                    (
-                        Vec::new(),
-                        lock.mk(hir::ExprKind::Binary(BinOp::Eq, Box::new(length), Box::new(int(0))), Ty::BOOL),
-                    )
-                })
-            }
-            (Handle::SyncArray | Handle::SyncStack | Handle::SyncQueue, "get") => {
-                if !arity(self, 1) {
-                    return Self::error_expr(span);
-                }
-                let index = value_arg(self, cx, 0, Ty::INT);
-                let result = option(self, element);
-                self.locked(cx, receiver, Shared, vec![index], span, |_, _, lock| {
-                    (
-                        Vec::new(),
-                        lock.mk(hir::ExprKind::ArrayOp(hir::ArrayOp::Get, vec![lock.state(), lock.arg(0)]), result),
-                    )
-                })
-            }
-            (Handle::SyncArray, "set" | "compareExchange") => {
-                let count = if name == "set" { 2 } else { 3 };
-                if !arity(self, count) {
-                    return Self::error_expr(span);
-                }
-                let mut values = vec![value_arg(self, cx, 0, Ty::INT)];
-                for index in 1..count {
-                    values.push(value_arg(self, cx, index, element));
-                }
-                if name == "compareExchange" && !self.types.is_equatable(element) {
-                    let message = format!(
-                        "`compareExchange` compares the elements, but {} is not `Equatable`",
-                        self.display(element)
-                    );
-                    self.diags.error("E1105", span, message);
-                    return Self::error_expr(span);
-                }
-                let (template, _) = self.compare_exchange.expect("declared with the module");
-                let outcome = if name == "set" { element } else { self.types.instantiate(template, vec![element]) };
-                let result = self.types.intern(TyKind::Result(outcome, self.collection_error));
-                let current = self.hidden_local(cx, element);
-                let found = option(self, element);
-                let error = self.collection_error;
-                self.locked(cx, receiver, Exclusive, values, span, |_, _, lock| {
-                    let read = lock.mk(hir::ExprKind::Local(current), element);
-                    let ok = |value: hir::Expr| lock.mk(hir::ExprKind::Variant(OK, vec![(0, value)]), result);
-                    let at = vec![hir::PlaceStep::Index(lock.arg(0))];
-                    let store = lock.assign(at, None, lock.arg(if name == "set" { 1 } else { 2 }));
-                    let changed = if name == "set" {
-                        let block =
-                            hir::Block { stmts: vec![store], tail: Some(Box::new(ok(read.clone()))), ty: result };
-                        lock.mk(hir::ExprKind::Block(block), result)
-                    } else {
-                        let same = lock.mk(
-                            hir::ExprKind::Binary(BinOp::Eq, Box::new(read.clone()), Box::new(lock.arg(1))),
-                            Ty::BOOL,
-                        );
-                        let exchanged = ok(lock.mk(hir::ExprKind::Variant(0, vec![(0, read.clone())]), outcome));
-                        let then = hir::Block { stmts: vec![store], tail: Some(Box::new(exchanged)), ty: result };
-                        let mismatch = ok(lock.mk(hir::ExprKind::Variant(1, vec![(0, read.clone())]), outcome));
-                        lock.mk(hir::ExprKind::If(Box::new(same), then, Some(Box::new(mismatch))), result)
-                    };
-                    let invalid = lock.mk(hir::ExprKind::Variant(1, Vec::new()), error);
-                    let pattern = |kind: hir::PatKind| hir::Pattern { kind, ty: found, span };
-                    let arms = vec![
-                        hir::Arm {
-                            pattern: pattern(hir::PatKind::Variant(
-                                SOME,
-                                vec![hir::Pattern { kind: hir::PatKind::Binding(current), ty: element, span }],
-                            )),
-                            guard: None,
-                            body: changed,
-                        },
-                        hir::Arm {
-                            pattern: pattern(hir::PatKind::Variant(NONE, Vec::new())),
-                            guard: None,
-                            body: lock.mk(hir::ExprKind::Variant(ERR, vec![(0, invalid)]), result),
-                        },
-                    ];
-                    let get =
-                        lock.mk(hir::ExprKind::ArrayOp(hir::ArrayOp::Get, vec![lock.state(), lock.arg(0)]), found);
-                    (Vec::new(), lock.mk(hir::ExprKind::Match(Box::new(get), arms), result))
-                })
-            }
-            (Handle::SyncMap | Handle::SyncSet, "get" | "contains") => {
-                if !arity(self, 1) || (handle == Handle::SyncSet && name == "get") {
-                    return self.no_method(ty, method, span);
-                }
-                let (key, entry) = match *self.types.kind(state) {
-                    TyKind::Map(key, value) => (key, Some(value)),
-                    _ => (element, None),
-                };
-                let key_value = value_arg(self, cx, 0, key);
-                let (op, result) = match entry {
-                    Some(entry) if name == "get" => (hir::MapOp::Get, option(self, entry)),
-                    _ => (hir::MapOp::Contains, Ty::BOOL),
-                };
-                self.locked(cx, receiver, Shared, vec![key_value], span, |_, _, lock| {
-                    (Vec::new(), lock.mk(hir::ExprKind::MapOp(op, vec![lock.state(), lock.arg(0)]), result))
-                })
-            }
-            (Handle::SyncMap | Handle::SyncSet, "insert" | "remove")
-            | (Handle::SyncStack | Handle::SyncQueue, "push")
-            | (Handle::SyncStack, "pop")
-            | (Handle::SyncQueue, "popFront") => {
-                use hir::Mutation as M;
-                let (key, entry) = match *self.types.kind(state) {
-                    TyKind::Map(key, value) => (key, Some(value)),
-                    _ => (element, None),
-                };
-                let (mutation, params, result) = match (name, entry) {
-                    ("insert", Some(value)) => (M::Insert, vec![key, value], option(self, value)),
-                    ("remove", Some(value)) => (M::Remove, vec![key], option(self, value)),
-                    ("insert", None) => (M::Insert, vec![key], Ty::BOOL),
-                    ("remove", None) => (M::Remove, vec![key], Ty::BOOL),
-                    ("push", _) => (M::Push, vec![element], Ty::UNIT),
-                    ("pop", _) => (M::Pop, Vec::new(), option(self, element)),
-                    _ => (M::PopFront, Vec::new(), option(self, element)),
-                };
-                if !arity(self, params.len()) {
-                    return Self::error_expr(span);
-                }
-                let values: Vec<hir::Expr> =
-                    params.iter().enumerate().map(|(i, &t)| value_arg(self, cx, i, t)).collect();
-                let count = values.len();
-                self.locked(cx, receiver, Exclusive, values, span, |_, _, lock| {
-                    let operands = (0..count).map(|i| lock.arg(i)).collect();
-                    (Vec::new(), lock.mk(hir::ExprKind::Mutate(mutation, lock.place(), operands), result))
-                })
-            }
-            (Handle::SyncMap, "compareExchange") => {
-                if !arity(self, 3) {
-                    return Self::error_expr(span);
-                }
-                let TyKind::Map(key, entry) = *self.types.kind(state) else { return Self::error_expr(span) };
-                if !self.types.is_equatable(entry) {
-                    let message = format!(
-                        "`compareExchange` compares the values, but {} is not `Equatable`",
-                        self.display(entry)
-                    );
-                    self.diags.error("E1105", span, message);
-                    return Self::error_expr(span);
-                }
-                let maybe = option(self, entry);
-                let values =
-                    vec![value_arg(self, cx, 0, key), value_arg(self, cx, 1, maybe), value_arg(self, cx, 2, maybe)];
-                let (template, _) = self.compare_exchange.expect("declared with the module");
-                let outcome = self.types.instantiate(template, vec![maybe]);
-                let current = self.hidden_local(cx, maybe);
-                let desired = self.hidden_local(cx, entry);
-                self.locked(cx, receiver, Exclusive, values, span, |_, _, lock| {
-                    let read = lock.mk(hir::ExprKind::Local(current), maybe);
-                    let get = lock.mk(hir::ExprKind::MapOp(hir::MapOp::Get, vec![lock.state(), lock.arg(0)]), maybe);
-                    let pattern = |kind: hir::PatKind, ty: Ty| hir::Pattern { kind, ty, span };
-                    let insert = lock.mk(
-                        hir::ExprKind::Mutate(
-                            hir::Mutation::Insert,
-                            lock.place(),
-                            vec![lock.arg(0), lock.mk(hir::ExprKind::Local(desired), entry)],
-                        ),
-                        maybe,
-                    );
-                    let remove =
-                        lock.mk(hir::ExprKind::Mutate(hir::Mutation::Remove, lock.place(), vec![lock.arg(0)]), maybe);
-                    let arms = vec![
-                        hir::Arm {
-                            pattern: pattern(
-                                hir::PatKind::Variant(SOME, vec![pattern(hir::PatKind::Binding(desired), entry)]),
-                                maybe,
-                            ),
-                            guard: None,
-                            body: insert,
-                        },
-                        hir::Arm {
-                            pattern: pattern(hir::PatKind::Variant(NONE, Vec::new()), maybe),
-                            guard: None,
-                            body: remove,
-                        },
-                    ];
-                    let change = lock.mk(hir::ExprKind::Match(Box::new(lock.arg(2)), arms), maybe);
-                    let same = lock
-                        .mk(hir::ExprKind::Binary(BinOp::Eq, Box::new(read.clone()), Box::new(lock.arg(1))), Ty::BOOL);
-                    let exchanged = lock.mk(hir::ExprKind::Variant(0, vec![(0, read.clone())]), outcome);
-                    let then = hir::Block {
-                        stmts: vec![hir::Stmt::Expr(change)],
-                        tail: Some(Box::new(exchanged)),
-                        ty: outcome,
-                    };
-                    let mismatch = lock.mk(hir::ExprKind::Variant(1, vec![(0, read)]), outcome);
-                    let decide = lock.mk(hir::ExprKind::If(Box::new(same), then, Some(Box::new(mismatch))), outcome);
-                    (vec![hir::Stmt::Let(current, get)], decide)
-                })
-            }
             _ => self.no_method(ty, method, span),
         }
+    }
+
+    /// The operations of the shared collections (14.4.4.2), each one call
+    /// of the runtime.
+    #[allow(clippy::too_many_arguments)]
+    fn shared_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        handle: Handle,
+        state: Ty,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        use hir::SharedOp as S;
+        let ty = receiver.ty;
+        let name = method.name.as_str();
+        let (key, entry, element) = match *self.types.kind(state) {
+            TyKind::Map(key, value) => (key, value, key),
+            TyKind::Set(key) => (key, Ty::UNIT, key),
+            TyKind::Array(t) | TyKind::Deque(t) => (Ty::INT, t, t),
+            _ => return Self::error_expr(span),
+        };
+        let option = |this: &mut Self, t: Ty| this.types.intern(TyKind::Option(t));
+        let (op, params, result) = match (handle, name) {
+            (_, "length" | "isEmpty") => (S::Length, Vec::new(), Ty::INT),
+            (_, "snapshot") => (S::Snapshot, Vec::new(), state),
+            (Handle::SyncMap, "get") => (S::Get, vec![key], option(self, entry)),
+            (Handle::SyncMap | Handle::SyncSet, "contains") => (S::Contains, vec![key], Ty::BOOL),
+            (Handle::SyncMap, "insert") => (S::Insert, vec![key, entry], option(self, entry)),
+            (Handle::SyncSet, "insert") => (S::Insert, vec![key], Ty::BOOL),
+            (Handle::SyncMap, "remove") => (S::Remove, vec![key], option(self, entry)),
+            (Handle::SyncSet, "remove") => (S::Remove, vec![key], Ty::BOOL),
+            (Handle::SyncArray | Handle::SyncStack | Handle::SyncQueue, "get") => {
+                (S::Get, vec![Ty::INT], option(self, element))
+            }
+            (Handle::SyncStack | Handle::SyncQueue, "push") => (S::Push, vec![element], Ty::UNIT),
+            (Handle::SyncStack, "pop") | (Handle::SyncQueue, "popFront") => (S::Pop, Vec::new(), option(self, element)),
+            (Handle::SyncArray, "set") => (S::Set, vec![Ty::INT, element], option(self, element)),
+            (Handle::SyncArray, "compareExchange") => (S::Exchange, vec![Ty::INT, element, element], Ty::INT),
+            (Handle::SyncMap, "compareExchange") => {
+                let maybe = option(self, entry);
+                (S::Exchange, vec![key, maybe, maybe], Ty::INT)
+            }
+            _ => return self.no_method(ty, method, span),
+        };
+        if args.len() != params.len() {
+            return self.arity_error(span, params.len(), args.len());
+        }
+        if op == S::Exchange && !self.types.is_equatable(entry) {
+            let message = format!("`compareExchange` compares values, but {} is not `Equatable`", self.display(entry));
+            self.diags.error("E1105", span, message);
+            return Self::error_expr(span);
+        }
+        let mut values = vec![receiver];
+        for (arg, ty) in args.iter().zip(params) {
+            let value = self.expr(cx, &arg.value, Some(ty));
+            values.push(self.coerce(value, ty));
+        }
+        let int = |value: i128| Self::mk(hir::ExprKind::Int(value), Ty::INT, span);
+        match op {
+            S::Length if name == "isEmpty" => {
+                let length = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Shared(op), values), Ty::INT, span);
+                Self::mk(hir::ExprKind::Binary(BinOp::Eq, Box::new(length), Box::new(int(0))), Ty::BOOL, span)
+            }
+            S::Set => {
+                // The replaced value, or `InvalidIndex` outside the array.
+                let replaced = option(self, element);
+                let result = self.types.intern(TyKind::Result(element, self.collection_error));
+                let old = self.hidden_local(cx, element);
+                let set = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Shared(op), values), replaced, span);
+                let pattern = |kind: hir::PatKind, ty: Ty| hir::Pattern { kind, ty, span };
+                let read = Self::mk(hir::ExprKind::Local(old), element, span);
+                let invalid = Self::mk(hir::ExprKind::Variant(1, Vec::new()), self.collection_error, span);
+                let arms = vec![
+                    hir::Arm {
+                        pattern: pattern(
+                            hir::PatKind::Variant(SOME, vec![pattern(hir::PatKind::Binding(old), element)]),
+                            replaced,
+                        ),
+                        guard: None,
+                        body: Self::mk(hir::ExprKind::Variant(OK, vec![(0, read)]), result, span),
+                    },
+                    hir::Arm {
+                        pattern: pattern(hir::PatKind::Variant(NONE, Vec::new()), replaced),
+                        guard: None,
+                        body: Self::mk(hir::ExprKind::Variant(ERR, vec![(0, invalid)]), result, span),
+                    },
+                ];
+                Self::mk(hir::ExprKind::Match(Box::new(set), arms), result, span)
+            }
+            S::Exchange => {
+                // The runtime writes the value it saw into `seen` and gives a
+                // code; see `tondo_rt_shared_map_exchange` and the array's.
+                let seen = self.hidden_local(cx, entry);
+                let zero = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Zeroed, Vec::new()), entry, span);
+                values.push(Self::mk(hir::ExprKind::Loan(hir::Place { local: seen, path: Vec::new() }), entry, span));
+                let code = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Shared(op), values), Ty::INT, span);
+                let (template, _) = self.compare_exchange.expect("declared with the module");
+                let read = Self::mk(hir::ExprKind::Local(seen), entry, span);
+                let pattern = |value: Option<i128>| hir::Pattern {
+                    kind: value.map_or(hir::PatKind::Wildcard, |v| hir::PatKind::Literal(hir::Literal::Int(v))),
+                    ty: Ty::INT,
+                    span,
+                };
+                let (arms, result) = if handle == Handle::SyncMap {
+                    let maybe = option(self, entry);
+                    let outcome = self.types.instantiate(template, vec![maybe]);
+                    let value = |present: bool| match present {
+                        true => Self::mk(hir::ExprKind::Variant(SOME, vec![(0, read.clone())]), maybe, span),
+                        false => Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), maybe, span),
+                    };
+                    let arm = |code: Option<i128>, variant: u32, present: bool| hir::Arm {
+                        pattern: pattern(code),
+                        guard: None,
+                        body: Self::mk(hir::ExprKind::Variant(variant, vec![(0, value(present))]), outcome, span),
+                    };
+                    (
+                        vec![arm(Some(0), 1, false), arm(Some(1), 0, false), arm(Some(2), 1, true), arm(None, 0, true)],
+                        outcome,
+                    )
+                } else {
+                    let outcome = self.types.instantiate(template, vec![element]);
+                    let result = self.types.intern(TyKind::Result(outcome, self.collection_error));
+                    let ok = |variant: u32| {
+                        let outcome = Self::mk(hir::ExprKind::Variant(variant, vec![(0, read.clone())]), outcome, span);
+                        Self::mk(hir::ExprKind::Variant(OK, vec![(0, outcome)]), result, span)
+                    };
+                    let invalid = Self::mk(hir::ExprKind::Variant(1, Vec::new()), self.collection_error, span);
+                    let arms = vec![
+                        hir::Arm {
+                            pattern: pattern(Some(0)),
+                            guard: None,
+                            body: Self::mk(hir::ExprKind::Variant(ERR, vec![(0, invalid)]), result, span),
+                        },
+                        hir::Arm { pattern: pattern(Some(1)), guard: None, body: ok(0) },
+                        hir::Arm { pattern: pattern(None), guard: None, body: ok(1) },
+                    ];
+                    (arms, result)
+                };
+                let decide = Self::mk(hir::ExprKind::Match(Box::new(code), arms), result, span);
+                let block =
+                    hir::Block { stmts: vec![hir::Stmt::Let(seen, zero)], tail: Some(Box::new(decide)), ty: result };
+                Self::mk(hir::ExprKind::Block(block), result, span)
+            }
+            _ => Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Shared(op), values), result, span),
+        }
+    }
+
+    /// The operations of a `sync.Atomic` of an integer, `Bool`, `Char` or
+    /// `Byte`, done with atomic instructions.
+    fn atomic_method(
+        &mut self,
+        cx: &mut FnCx,
+        receiver: hir::Expr,
+        state: Ty,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        use hir::AtomicOp as A;
+        let ty = receiver.ty;
+        let (op, count, result) = match method.name.as_str() {
+            "load" => (A::Load, 0, state),
+            "store" => (A::Store, 1, Ty::UNIT),
+            "swap" => (A::Swap, 1, state),
+            "add" => (A::Add, 1, state),
+            "compareExchange" => (A::Exchange, 2, state),
+            _ => return self.no_method(ty, method, span),
+        };
+        if args.len() != count {
+            return self.arity_error(span, count, args.len());
+        }
+        if op == A::Add && self.types.as_int(state).is_none() {
+            let message = format!("`add` counts in integers, but this atomic holds {}", self.display(state));
+            self.diags.error("E1102", method.span, message);
+            return Self::error_expr(span);
+        }
+        let mut values = vec![receiver];
+        for arg in args {
+            let value = self.expr(cx, &arg.value, Some(state));
+            values.push(self.coerce(value, state));
+        }
+        if op != A::Exchange {
+            return Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Atomic(op), values), result, span);
+        }
+        // `Exchanged(seen)` when the value seen is the one expected.
+        let expected = self.hidden_local(cx, state);
+        let seen = self.hidden_local(cx, state);
+        let read = |local: LocalId| Self::mk(hir::ExprKind::Local(local), state, span);
+        let given = values.remove(1);
+        values.insert(1, read(expected));
+        let exchange = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Atomic(op), values), state, span);
+        let (template, _) = self.compare_exchange.expect("declared with the module");
+        let outcome = self.types.instantiate(template, vec![state]);
+        let same =
+            Self::mk(hir::ExprKind::Binary(BinOp::Eq, Box::new(read(seen)), Box::new(read(expected))), Ty::BOOL, span);
+        let variant = |index: u32| Self::mk(hir::ExprKind::Variant(index, vec![(0, read(seen))]), outcome, span);
+        let then = hir::Block { stmts: Vec::new(), tail: Some(Box::new(variant(0))), ty: outcome };
+        let decide = Self::mk(hir::ExprKind::If(Box::new(same), then, Some(Box::new(variant(1)))), outcome, span);
+        let stmts = vec![hir::Stmt::Let(expected, given), hir::Stmt::Let(seen, exchange)];
+        Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(decide)), ty: outcome }), outcome, span)
     }
 
     /// `channel[T]()` or `channel[T](capacity)` (11.13): the two ends of a
@@ -4218,10 +4216,9 @@ impl Checker<'_> {
                                 self.diags.error("E1206", pattern.span, message);
                                 return None;
                             }
-                            let span = source.span;
-                            self.locked(cx, source, hir::LockMode::Shared, Vec::new(), span, |_, _, lock| {
-                                (Vec::new(), lock.state())
-                            })
+                            let (span, state) = (source.span, self.types.handle_result(source.ty));
+                            let snapshot = hir::TaskOp::Shared(hir::SharedOp::Snapshot);
+                            Self::mk(hir::ExprKind::TaskOp(snapshot, vec![source]), state, span)
                         }
                         _ => source,
                     };
@@ -7956,6 +7953,12 @@ impl Checker<'_> {
 
 /// Whether a `for` pattern borrows: `Some(true)` with any `mut` or `var`
 /// binding, `Some(false)` with only `ref` ones (13.3).
+/// Whether a `sync.Atomic` of `ty` uses atomic instructions rather than a
+/// lock: integers, `Bool`, `Char` and `Byte`.
+fn atomic_scalar(types: &Types, ty: Ty) -> bool {
+    types.as_int(ty).is_some() || [Ty::BOOL, Ty::CHAR, Ty::BYTE].contains(&ty)
+}
+
 fn loan_kind(pattern: &ast::Pattern) -> Option<bool> {
     let mut found = None;
     let mut note = |mode: ast::Mode| {

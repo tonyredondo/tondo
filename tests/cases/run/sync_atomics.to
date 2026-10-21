@@ -1,0 +1,31 @@
+import std.console
+import std.sync
+
+fn main() {
+    let flag = sync.Atomic(false)
+    match flag.compareExchange(false, true) {
+        sync.CompareExchange.Exchanged(_) => console.println("flag set")
+        sync.CompareExchange.Mismatch(_) => console.println("already set")
+    }
+    console.println("{flag.load()} {flag.swap(false)} {flag.load()}")
+    let letter = sync.Atomic('a')
+    letter.store('z')
+    console.println("{letter.load()}")
+    let start: UInt8 = 250
+    let small = sync.Atomic(start)
+    console.println("{small.add(5)}")
+    let low: Int8 = -100
+    let negative = sync.Atomic(low)
+    console.println("{negative.add(-28)}")
+    let name = sync.Atomic("first")
+    console.println("{name.swap("second")} {name.load()}")
+    _ = small.add(1)
+}
+
+// expect-stdout: flag set
+// expect-stdout: true true false
+// expect-stdout: z
+// expect-stdout: 255
+// expect-stdout: -128
+// expect-stdout: first second
+// expect-panic: P0005

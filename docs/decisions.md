@@ -409,3 +409,22 @@ snapshots cost O(1); the checker turns every operation into a block that
 takes the lock and runs the ordinary operation on a loan of the state.
 Taking a lock the task already holds panics with `P0014` instead of
 hanging.
+
+## 2026-10-21 — Shared collections are built for contention
+
+A collection behind one lock is something any program can write; the
+standard library's are worth having only if tasks rarely wait for each
+other. `sync.Map` and `sync.Set` follow .NET's `ConcurrentDictionary`:
+readers walk the buckets without locks, a writer locks one of several
+stripes per core, and growing locks them all and copies the nodes.
+`sync.Queue` is a lock-free queue of segments in which producers and
+consumers never block each other, `sync.Stack` is a Treiber stack whose
+nodes record the depth, so `length()` is one read, and `sync.Array` locks
+stripes of slots. Without a garbage collector, memory a reader may still
+see is freed through epochs. Two semantics follow from this, as in .NET,
+Java and Go: shared maps and sets have no order, and their `length()` sums
+per-stripe counters without locking, so it is exact only when no writes
+run concurrently. Atomics of integers, `Bool`, `Char` and `Byte` use
+hardware instructions. The task lock was also reworked: one compare-and-
+swap when free, a short spin, then parking, and releasing lets a running
+task take it ahead of the woken one, which avoids lock convoys.

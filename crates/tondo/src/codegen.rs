@@ -15,7 +15,7 @@
 //! last reference to a box goes away.
 
 use crate::ast::{BinOp, UnaryOp};
-use crate::hir::{ArrayOp, Callee, FnId, LockMode, MapOp, Mutation, Program, StdFn, StrOp, TaskOp};
+use crate::hir::{ArrayOp, AtomicOp, Callee, FnId, LockMode, MapOp, Mutation, Program, SharedOp, StdFn, StrOp, TaskOp};
 use crate::mir::{
     Body, Const, Local, Operand, Overlap, Piece, Place, Proj, Rvalue, SelectCase, Statement, Terminator, project,
 };
@@ -160,6 +160,40 @@ enum Rt {
     BarrierNew,
     BarrierWait,
     BarrierRelease,
+    SharedMapFrom,
+    SharedMapGet,
+    SharedMapInsert,
+    SharedMapRemove,
+    SharedMapExchange,
+    SharedMapLength,
+    SharedMapSnapshot,
+    SharedMapRelease,
+    SharedQueueFrom,
+    SharedQueuePush,
+    SharedQueuePop,
+    SharedQueueGet,
+    SharedQueueLength,
+    SharedQueueSnapshot,
+    SharedQueueRelease,
+    SharedStackFrom,
+    SharedStackPush,
+    SharedStackPop,
+    SharedStackGet,
+    SharedStackLength,
+    SharedStackSnapshot,
+    SharedStackRelease,
+    SharedArrayFrom,
+    SharedArrayGet,
+    SharedArraySet,
+    SharedArrayExchange,
+    SharedArrayLength,
+    SharedArraySnapshot,
+    SharedArrayRelease,
+    AtomicLoad,
+    AtomicStore,
+    AtomicSwap,
+    AtomicExchange,
+    AtomicAdd,
 }
 
 impl Rt {
@@ -284,6 +318,40 @@ impl Rt {
             Rt::BarrierNew => ("tondo_rt_barrier_new", &[I64, I64], &[I64]),
             Rt::BarrierWait => ("tondo_rt_barrier_wait", &[I64], &[I8]),
             Rt::BarrierRelease => ("tondo_rt_barrier_release", &[I64], &[]),
+            Rt::SharedMapFrom => ("tondo_rt_shared_map_from", &[I64, I64, I64, I64], &[I64]),
+            Rt::SharedMapGet => ("tondo_rt_shared_map_get", &[I64, I64, I64], &[I8]),
+            Rt::SharedMapInsert => ("tondo_rt_shared_map_insert", &[I64, I64, I64, I64, I8], &[I8]),
+            Rt::SharedMapRemove => ("tondo_rt_shared_map_remove", &[I64, I64, I64], &[I8]),
+            Rt::SharedMapExchange => ("tondo_rt_shared_map_exchange", &[I64, I64, I64, I64, I64, I64], &[I8]),
+            Rt::SharedMapLength => ("tondo_rt_shared_map_length", &[I64], &[I64]),
+            Rt::SharedMapSnapshot => ("tondo_rt_shared_map_snapshot", &[I64], &[I64]),
+            Rt::SharedMapRelease => ("tondo_rt_shared_map_release", &[I64], &[]),
+            Rt::SharedQueueFrom => ("tondo_rt_shared_queue_from", &[I64, I64, I64, I64], &[I64]),
+            Rt::SharedQueuePush => ("tondo_rt_shared_queue_push", &[I64, I64], &[]),
+            Rt::SharedQueuePop => ("tondo_rt_shared_queue_pop", &[I64, I64], &[I8]),
+            Rt::SharedQueueGet => ("tondo_rt_shared_queue_get", &[I64, I64, I64], &[I8]),
+            Rt::SharedQueueLength => ("tondo_rt_shared_queue_length", &[I64], &[I64]),
+            Rt::SharedQueueSnapshot => ("tondo_rt_shared_queue_snapshot", &[I64], &[I64]),
+            Rt::SharedQueueRelease => ("tondo_rt_shared_queue_release", &[I64], &[]),
+            Rt::SharedStackFrom => ("tondo_rt_shared_stack_from", &[I64, I64, I64, I64], &[I64]),
+            Rt::SharedStackPush => ("tondo_rt_shared_stack_push", &[I64, I64], &[]),
+            Rt::SharedStackPop => ("tondo_rt_shared_stack_pop", &[I64, I64], &[I8]),
+            Rt::SharedStackGet => ("tondo_rt_shared_stack_get", &[I64, I64, I64], &[I8]),
+            Rt::SharedStackLength => ("tondo_rt_shared_stack_length", &[I64], &[I64]),
+            Rt::SharedStackSnapshot => ("tondo_rt_shared_stack_snapshot", &[I64], &[I64]),
+            Rt::SharedStackRelease => ("tondo_rt_shared_stack_release", &[I64], &[]),
+            Rt::SharedArrayFrom => ("tondo_rt_shared_array_from", &[I64, I64, I64, I64], &[I64]),
+            Rt::SharedArrayGet => ("tondo_rt_shared_array_get", &[I64, I64, I64], &[I8]),
+            Rt::SharedArraySet => ("tondo_rt_shared_array_set", &[I64, I64, I64, I64], &[I8]),
+            Rt::SharedArrayExchange => ("tondo_rt_shared_array_exchange", &[I64, I64, I64, I64, I64, I64], &[I8]),
+            Rt::SharedArrayLength => ("tondo_rt_shared_array_length", &[I64], &[I64]),
+            Rt::SharedArraySnapshot => ("tondo_rt_shared_array_snapshot", &[I64], &[I64]),
+            Rt::SharedArrayRelease => ("tondo_rt_shared_array_release", &[I64], &[]),
+            Rt::AtomicLoad => ("tondo_rt_atomic_load", &[I64, I8], &[I64]),
+            Rt::AtomicStore => ("tondo_rt_atomic_store", &[I64, I8, I64], &[]),
+            Rt::AtomicSwap => ("tondo_rt_atomic_swap", &[I64, I8, I64], &[I64]),
+            Rt::AtomicExchange => ("tondo_rt_atomic_exchange", &[I64, I8, I64, I64], &[I64]),
+            Rt::AtomicAdd => ("tondo_rt_atomic_add", &[I64, I8, I8, I64, I64], &[I64]),
         }
     }
 }
@@ -1169,6 +1237,10 @@ impl Emit<'_, '_> {
                         Handle::Permit => Rt::PermitRelease,
                         Handle::Barrier => Rt::BarrierRelease,
                         Handle::Guard => Rt::SyncUnlock,
+                        Handle::SyncMap | Handle::SyncSet => Rt::SharedMapRelease,
+                        Handle::SyncQueue => Rt::SharedQueueRelease,
+                        Handle::SyncStack => Rt::SharedStackRelease,
+                        Handle::SyncArray => Rt::SharedArrayRelease,
                         _ => Rt::SyncRelease,
                     };
                     self.call_rt(rt, &[pointer]);
@@ -2433,6 +2505,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// the value to store at `place`, or `None` once it is stored.
     fn task_op(&mut self, op: TaskOp, operands: &[Operand], retain: &[bool], place: &Place, span: Span) -> Option<Val> {
         let ty = self.place_ty(place);
+        match op {
+            TaskOp::Shared(shared) => return self.shared_op(shared, operands, retain, place),
+            TaskOp::Atomic(atomic) => return Some(self.atomic_op(atomic, operands, ty, span)),
+            TaskOp::Zeroed => return Some(self.zeroed(ty)),
+            TaskOp::SyncNew => {
+                let TyKind::Handle(handle, state) = *self.e.cg.types.kind(ty) else { unreachable!() };
+                if handle.collection() {
+                    return Some(Val::Scalar(self.shared_new(handle, state, &operands[0], retain[0])));
+                }
+            }
+            _ => {}
+        }
         let handle_ty = operands.first().map(|o| self.operand_ty(o));
         let item = handle_ty.map(|t| self.e.cg.types.handle_result(t));
         // Handles and indices are scalars; the value `send` moves is read
@@ -2587,6 +2671,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Some(Val::Scalar(self.e.call_rt(Rt::ChannelClosed, &[values[0], sender]).unwrap()))
             }
             TaskOp::GroupWait => unreachable!("lowered to a loop"),
+            TaskOp::Shared(_) | TaskOp::Atomic(_) | TaskOp::Zeroed => unreachable!("handled above"),
         }
     }
 
@@ -2674,6 +2759,244 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.e.fb.switch_to_block(next);
         }
         won
+    }
+
+    /// A value of zeros, which releases nothing.
+    fn zeroed(&mut self, ty: Ty) -> Val {
+        match self.e.cg.class(ty) {
+            Class::Zero => Val::Zero,
+            Class::Scalar(t) if t.is_float() => {
+                let zero = self.e.fb.ins().f64const(0.0);
+                Val::Scalar(if t == types::F32 { self.e.fb.ins().fdemote(types::F32, zero) } else { zero })
+            }
+            Class::Scalar(t) => Val::Scalar(self.e.fb.ins().iconst(t, 0)),
+            Class::Memory => {
+                let address = self.scratch(ty);
+                let size = self.e.cg.layout(ty).size;
+                let config = self.e.cg.module.target_config();
+                self.e.fb.emit_small_memset(config, address, 0, size as u64, 8, flags());
+                Val::Memory(address)
+            }
+        }
+    }
+
+    /// The address of a value an operation reads, retained first when the
+    /// operation takes it over and it was copied rather than moved.
+    fn address_of(&mut self, operand: &Operand, retain: bool) -> ir::Value {
+        let ty = self.operand_ty(operand);
+        let value = self.operand(operand);
+        if retain {
+            self.e.refcount(ty, value, false);
+        }
+        self.copy_to_stack(ty, value)
+    }
+
+    /// A shared collection made from the value collection it takes over.
+    fn shared_new(&mut self, handle: Handle, state: Ty, source: &Operand, retain: bool) -> ir::Value {
+        let value = self.operand(source);
+        if retain {
+            self.e.refcount(state, value, false);
+        }
+        let pointer = match value {
+            Val::Scalar(pointer) => pointer,
+            _ => unreachable!("collections are pointers"),
+        };
+        if let Handle::SyncMap | Handle::SyncSet = handle {
+            let (size, offset) = self.e.cg.entry_layout(state);
+            let size = self.e.fb.ins().iconst(POINTER, size as i64);
+            let offset = self.e.fb.ins().iconst(POINTER, offset as i64);
+            let glue = self.e.map_glue_address(state);
+            return self.e.call_rt(Rt::SharedMapFrom, &[pointer, size, offset, glue]).unwrap();
+        }
+        let (element, _) = self.e.cg.sequence_parts(state);
+        let size = self.e.element_size(element);
+        let retain = self.e.glue_or_null(Glue::Retain, element);
+        let release = self.e.glue_or_null(Glue::Release, element);
+        let rt = match handle {
+            Handle::SyncQueue => Rt::SharedQueueFrom,
+            Handle::SyncStack => Rt::SharedStackFrom,
+            _ => Rt::SharedArrayFrom,
+        };
+        self.e.call_rt(rt, &[pointer, size, retain, release]).unwrap()
+    }
+
+    /// `present` and the address of the payload of an option value, or of
+    /// scratch space when it has no payload.
+    fn option_parts(&mut self, ty: Ty, value: Val) -> (ir::Value, ir::Value) {
+        let TyKind::Option(payload) = *self.e.cg.types.kind(ty) else { unreachable!() };
+        let tag = self.e.tag(ty, value);
+        let present = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, tag, 0);
+        let address = match value {
+            Val::Memory(base) => {
+                let slot = self.e.cg.slot(ty, Proj::Variant(SOME, 0));
+                self.e.offset(base, slot.offset)
+            }
+            _ => self.scratch(payload),
+        };
+        let null = self.e.fb.ins().iconst(POINTER, 0);
+        (present, self.e.fb.ins().select(present, address, null))
+    }
+
+    /// An operation of a shared collection (see the runtime's `shared`).
+    fn shared_op(&mut self, op: SharedOp, operands: &[Operand], retain: &[bool], place: &Place) -> Option<Val> {
+        let ty = self.place_ty(place);
+        let TyKind::Handle(handle, state) = *self.e.cg.types.kind(self.operand_ty(&operands[0])) else {
+            unreachable!("a shared collection")
+        };
+        let collection = self.scalar(&operands[0]);
+        let map = matches!(handle, Handle::SyncMap | Handle::SyncSet);
+        let (key, value) = if map { self.e.cg.map_parts(state) } else { (Ty::INT, self.e.cg.sequence_parts(state).0) };
+        let rt = |op: SharedOp| match (handle, op) {
+            (Handle::SyncMap | Handle::SyncSet, SharedOp::Length) => Rt::SharedMapLength,
+            (Handle::SyncMap | Handle::SyncSet, _) => Rt::SharedMapSnapshot,
+            (Handle::SyncQueue, SharedOp::Length) => Rt::SharedQueueLength,
+            (Handle::SyncQueue, _) => Rt::SharedQueueSnapshot,
+            (Handle::SyncStack, SharedOp::Length) => Rt::SharedStackLength,
+            (Handle::SyncStack, _) => Rt::SharedStackSnapshot,
+            (_, SharedOp::Length) => Rt::SharedArrayLength,
+            _ => Rt::SharedArraySnapshot,
+        };
+        match op {
+            SharedOp::Length | SharedOp::Snapshot => Some(Val::Scalar(self.e.call_rt(rt(op), &[collection]).unwrap())),
+            SharedOp::Contains => {
+                let key = self.address_of(&operands[1], false);
+                let null = self.e.fb.ins().iconst(POINTER, 0);
+                Some(Val::Scalar(self.e.call_rt(Rt::SharedMapGet, &[collection, key, null]).unwrap()))
+            }
+            SharedOp::Get | SharedOp::Pop | SharedOp::Remove if !(handle == Handle::SyncSet) => {
+                let out = self.scratch(value);
+                let found = match (handle, op) {
+                    (Handle::SyncMap, SharedOp::Get) | (Handle::SyncMap, _) => {
+                        let key = self.address_of(&operands[1], false);
+                        let rt = if op == SharedOp::Get { Rt::SharedMapGet } else { Rt::SharedMapRemove };
+                        self.e.call_rt(rt, &[collection, key, out])
+                    }
+                    (_, SharedOp::Pop) => {
+                        let rt = if handle == Handle::SyncQueue { Rt::SharedQueuePop } else { Rt::SharedStackPop };
+                        self.e.call_rt(rt, &[collection, out])
+                    }
+                    _ => {
+                        let index = self.scalar(&operands[1]);
+                        let rt = match handle {
+                            Handle::SyncQueue => Rt::SharedQueueGet,
+                            Handle::SyncStack => Rt::SharedStackGet,
+                            _ => Rt::SharedArrayGet,
+                        };
+                        self.e.call_rt(rt, &[collection, index, out])
+                    }
+                };
+                self.removal_result(place, ty, value, out, found.unwrap())
+            }
+            SharedOp::Remove => {
+                let key = self.address_of(&operands[1], false);
+                let null = self.e.fb.ins().iconst(POINTER, 0);
+                Some(Val::Scalar(self.e.call_rt(Rt::SharedMapRemove, &[collection, key, null]).unwrap()))
+            }
+            SharedOp::Insert => {
+                let key_address = self.address_of(&operands[1], retain[1]);
+                let _ = key;
+                if handle == Handle::SyncSet {
+                    let unit = self.e.fb.ins().iconst(POINTER, 8);
+                    let keep = self.e.fb.ins().iconst(types::I8, 1);
+                    let present =
+                        self.e.call_rt(Rt::SharedMapInsert, &[collection, key_address, unit, unit, keep]).unwrap();
+                    return Some(Val::Scalar(self.e.fb.ins().icmp_imm_s(IntCC::Equal, present, 0)));
+                }
+                let value_address = self.address_of(&operands[2], retain[2]);
+                let old = self.scratch(value);
+                let keep = self.e.fb.ins().iconst(types::I8, 0);
+                let present =
+                    self.e.call_rt(Rt::SharedMapInsert, &[collection, key_address, value_address, old, keep]).unwrap();
+                self.removal_result(place, ty, value, old, present)
+            }
+            SharedOp::Get | SharedOp::Pop => unreachable!("sets have no `get` or `pop`"),
+            SharedOp::Push => {
+                let address = self.address_of(&operands[1], retain[1]);
+                let rt = if handle == Handle::SyncQueue { Rt::SharedQueuePush } else { Rt::SharedStackPush };
+                self.e.call_rt(rt, &[collection, address]);
+                None
+            }
+            SharedOp::Set => {
+                let index = self.scalar(&operands[1]);
+                let address = self.address_of(&operands[2], retain[2]);
+                let old = self.scratch(value);
+                let found = self.e.call_rt(Rt::SharedArraySet, &[collection, index, address, old]).unwrap();
+                self.removal_result(place, ty, value, old, found)
+            }
+            SharedOp::Exchange => {
+                let Operand::Copy(seen) = &operands[4] else { unreachable!("the place for the value seen") };
+                // Zeros stay when nothing was seen; they release nothing.
+                let out = self.scratch(value);
+                let config = self.e.cg.module.target_config();
+                let size = self.e.cg.layout(value).size;
+                self.e.fb.emit_small_memset(config, out, 0, size as u64, 8, flags());
+                let equal = self.e.glue_address(Glue::Equal, value);
+                let code = if map {
+                    let key = self.address_of(&operands[1], false);
+                    let expected_ty = self.operand_ty(&operands[2]);
+                    let expected = self.operand(&operands[2]);
+                    let (_, expected) = self.option_parts(expected_ty, expected);
+                    let desired_ty = self.operand_ty(&operands[3]);
+                    let desired = self.operand(&operands[3]);
+                    if retain[3] {
+                        self.e.refcount(desired_ty, desired, false);
+                    }
+                    let desired = match desired {
+                        Val::Scalar(_) => self.in_memory(desired_ty, desired),
+                        _ => self.copy_to_stack(desired_ty, desired),
+                    };
+                    let (_, desired) = self.option_parts(desired_ty, Val::Memory(desired));
+                    self.e.call_rt(Rt::SharedMapExchange, &[collection, key, expected, desired, out, equal])
+                } else {
+                    let index = self.scalar(&operands[1]);
+                    let expected = self.address_of(&operands[2], false);
+                    let desired = self.address_of(&operands[3], retain[3]);
+                    self.e.call_rt(Rt::SharedArrayExchange, &[collection, index, expected, desired, out, equal])
+                };
+                let value = self.e.value_at(out, value);
+                self.write(seen, value);
+                Some(Val::Scalar(self.e.fb.ins().uextend(types::I64, code.unwrap())))
+            }
+        }
+    }
+
+    /// An operation of an atomic integer, `Bool`, `Char` or `Byte`.
+    fn atomic_op(&mut self, op: AtomicOp, operands: &[Operand], ty: Ty, span: Span) -> Val {
+        let TyKind::Handle(_, state) = *self.e.cg.types.kind(self.operand_ty(&operands[0])) else { unreachable!() };
+        let Class::Scalar(clif) = self.e.cg.class(state) else { unreachable!("a scalar") };
+        let cell = self.scalar(&operands[0]);
+        let width = self.e.fb.ins().iconst(types::I8, clif.bytes() as i64);
+        let word = |this: &mut Self, operand: &Operand| {
+            let value = this.scalar(operand);
+            if clif == types::I64 { value } else { this.e.fb.ins().uextend(types::I64, value) }
+        };
+        let result = match op {
+            AtomicOp::Load => self.e.call_rt(Rt::AtomicLoad, &[cell, width]),
+            AtomicOp::Store => {
+                let value = word(self, &operands[1]);
+                self.e.call_rt(Rt::AtomicStore, &[cell, width, value]);
+                return Val::Zero;
+            }
+            AtomicOp::Swap => {
+                let value = word(self, &operands[1]);
+                self.e.call_rt(Rt::AtomicSwap, &[cell, width, value])
+            }
+            AtomicOp::Exchange => {
+                let expected = word(self, &operands[1]);
+                let desired = word(self, &operands[2]);
+                self.e.call_rt(Rt::AtomicExchange, &[cell, width, expected, desired])
+            }
+            AtomicOp::Add => {
+                let delta = word(self, &operands[1]);
+                let signed = self.e.cg.types.as_int(state).is_some_and(|i| i.signed());
+                let signed = self.e.fb.ins().iconst(types::I8, signed as i64);
+                let location = self.location(span);
+                self.e.call_rt(Rt::AtomicAdd, &[cell, width, signed, delta, location])
+            }
+        };
+        let _ = ty;
+        let result = result.unwrap();
+        Val::Scalar(if clif == types::I64 { result } else { self.e.fb.ins().ireduce(clif, result) })
     }
 
     fn removal_result(&mut self, place: &Place, ty: Ty, element: Ty, out: ir::Value, found: ir::Value) -> Option<Val> {

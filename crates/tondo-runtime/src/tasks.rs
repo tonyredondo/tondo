@@ -227,6 +227,8 @@ pub(crate) struct Task {
     /// guarded by `waiting_lock`.
     waiting: *const Wait,
     waiting_lock: AtomicBool,
+    /// The `std.sync` locks it holds, and whether exclusively.
+    pub(crate) held: Vec<(usize, bool)>,
     finished: bool,
     main: bool,
 }
@@ -537,6 +539,7 @@ fn new_task(stack: Stack, body: *mut u8, code: *const u8, kind: ResultKind, join
         cancelled: AtomicBool::new(false),
         waiting: std::ptr::null(),
         waiting_lock: AtomicBool::new(false),
+        held: Vec::new(),
         finished: false,
         main: join.is_null(),
     }))

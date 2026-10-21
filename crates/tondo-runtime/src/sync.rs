@@ -11,19 +11,20 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 // Shared state
 // ---------------------------------------------------------------------------
 
-/// The state of a `Mutex`, `RwLock`, `Atomic`, `Once` or shared collection,
-/// and its lock: several tasks may hold it to read, one to change it. `rc`
-/// counts the program's handles.
+/// The state of a `Mutex`, `RwLock`, `Atomic` or `Once`, and its lock:
+/// several tasks may hold it to read, one to change it. Taking a free lock
+/// is one atomic operation on `state`; a task that finds it taken spins a
+/// little and then parks in `waiting`. Releasing it wakes one waiter, which
+/// tries again, so a task that is running can take it first instead of
+/// waiting for the woken one to be scheduled. `rc` counts the handles.
 #[repr(C)]
 pub struct SyncObject {
     rc: AtomicUsize,
-    lock: AtomicBool,
-    /// The tasks holding it to read, once per hold, and the one holding it
-    /// to change it.
-    readers: Vec<*mut Task>,
-    writer: *mut Task,
-    /// Tasks waiting to take it, and whether to change it.
-    waiting: VecDeque<(*const Wait, bool)>,
+    /// `WRITER`, `PARKED`, and the number of readers in units of `READER`.
+    state: AtomicUsize,
+    /// Guards `waiting` and `changes`.
+    queue: AtomicBool,
+    waiting: VecDeque<*const Wait>,
     /// Tasks in `updateWhen` waiting for the value to change.
     changes: Vec<*const Wait>,
     value: *mut u8,
@@ -32,8 +33,14 @@ pub struct SyncObject {
     release: Option<Glue>,
 }
 
+const WRITER: usize = 1;
+/// Some task waits in `waiting` or `changes`.
+const PARKED: usize = 2;
+const READER: usize = 4;
+
 const SHARED: u8 = 0;
 const TRY: u8 = 2;
+const SPIN_ROUNDS: u32 = 8;
 
 /// A new cell for a value of `size` bytes, which compiled code stores at
 /// `tondo_rt_sync_value`.
@@ -44,9 +51,8 @@ pub extern "C" fn tondo_rt_sync_new(size: usize, align: usize, release: Option<G
     LIVE_OBJECTS.fetch_add(1, Ordering::Relaxed);
     Box::into_raw(Box::new(SyncObject {
         rc: AtomicUsize::new(1),
-        lock: AtomicBool::new(false),
-        readers: Vec::new(),
-        writer: std::ptr::null_mut(),
+        state: AtomicUsize::new(0),
+        queue: AtomicBool::new(false),
         waiting: VecDeque::new(),
         changes: Vec::new(),
         value: unsafe { std::alloc::alloc(layout) },
@@ -67,89 +73,108 @@ pub unsafe extern "C" fn tondo_rt_sync_value(handle: usize) -> *mut u8 {
     if handle == 0 { std::ptr::null_mut() } else { unsafe { (*object(handle)).value } }
 }
 
-fn free_for(o: &SyncObject, exclusive: bool) -> bool {
-    o.writer.is_null() && (!exclusive || o.readers.is_empty())
+/// Takes the lock if it is free for this kind of hold.
+fn try_take(o: &SyncObject, exclusive: bool) -> bool {
+    let mut state = o.state.load(Ordering::Relaxed);
+    loop {
+        let next = if exclusive {
+            if state & !PARKED != 0 {
+                return false;
+            }
+            state | WRITER
+        } else {
+            if state & WRITER != 0 {
+                return false;
+            }
+            state + READER
+        };
+        match o.state.compare_exchange_weak(state, next, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(seen) => state = seen,
+        }
+    }
 }
 
-fn hold(o: &mut SyncObject, task: *mut Task, exclusive: bool) {
-    if exclusive {
-        o.writer = task;
-    } else {
-        o.readers.push(task);
-    }
+/// The locks the current task holds.
+fn held() -> &'static mut Vec<(usize, bool)> {
+    unsafe { &mut (*current()).held }
 }
 
 /// Takes the lock to read (`mode` 0), to change (1), or to change if it is
 /// free (2). Returns the guard, or 0 when `try` finds it taken or the task
-/// is cancelled. Taking it again from the task that holds it panics with
-/// `P0014`.
+/// is cancelled. Taking it again from the task that holds it, in a way
+/// that would wait forever, panics with `P0014`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sync_lock(object: *mut SyncObject, mode: u8, location: *const Str) -> usize {
     if cancelled() {
         return 0;
     }
-    let me = current();
     let exclusive = mode != SHARED;
-    let guard = object as usize | (!exclusive) as usize;
-    unsafe {
-        let o = &mut *object;
-        lock(&o.lock);
-        if o.writer == me || (exclusive && o.readers.contains(&me)) {
-            unlock(&o.lock);
-            tondo_rt_panic(14, std::ptr::null(), location);
-        }
-        if free_for(o, exclusive) {
-            hold(o, me, exclusive);
-            unlock(&o.lock);
+    let address = object as usize;
+    let holds = held();
+    if holds.iter().any(|&(o, alone)| o == address && (exclusive || alone)) {
+        unsafe { tondo_rt_panic(14, std::ptr::null(), location) };
+    }
+    let guard = address | (!exclusive) as usize;
+    let o = unsafe { &mut *object };
+    let mut spins = 0;
+    loop {
+        if try_take(o, exclusive) {
+            held().push((address, exclusive));
             return guard;
         }
         if mode == TRY {
-            unlock(&o.lock);
             return 0;
+        }
+        // Locks are usually held briefly: spin a little before parking.
+        if spins < SPIN_ROUNDS {
+            for _ in 0..1 << spins {
+                std::hint::spin_loop();
+            }
+            spins += 1;
+            continue;
         }
         let wait = Wait::new();
-        o.waiting.push_back((Arc::as_ptr(&wait), exclusive));
-        unlock(&o.lock);
+        lock(&o.queue);
+        o.state.fetch_or(PARKED, Ordering::AcqRel);
+        if try_take(o, exclusive) {
+            unlock(&o.queue);
+            held().push((address, exclusive));
+            return guard;
+        }
+        o.waiting.push_back(Arc::as_ptr(&wait));
+        unlock(&o.queue);
         if wait.block() == CANCELLED {
-            lock(&o.lock);
-            o.waiting.retain(|&(w, _)| w != Arc::as_ptr(&wait));
-            unlock(&o.lock);
+            lock(&o.queue);
+            o.waiting.retain(|&w| w != Arc::as_ptr(&wait));
+            unlock(&o.queue);
             return 0;
         }
-        // Whoever released it made this task a holder before notifying it.
-        guard
+        spins = 0;
     }
 }
 
-/// Gives up a hold, with the object locked, and hands the lock to the
-/// tasks waiting for it; returns the tasks to notify.
-unsafe fn give_up(o: &mut SyncObject, exclusive: bool) -> Vec<*mut Task> {
+/// Wakes one task waiting for the lock and, after a change, every task
+/// waiting in `updateWhen`; with the queue locked. Returns the tasks.
+unsafe fn wake(o: &mut SyncObject, changed: bool) -> Vec<*mut Task> {
     let mut woken = Vec::new();
     unsafe {
-        if exclusive {
-            o.writer = std::ptr::null_mut();
-            // The value may have changed: `updateWhen` checks it again.
+        if changed {
             for wait in o.changes.drain(..) {
                 if (*wait).claim(0) {
                     woken.push((*wait).task);
                 }
             }
-        } else {
-            let me = current();
-            if let Some(index) = o.readers.iter().position(|&r| r == me) {
-                o.readers.swap_remove(index);
-            }
         }
-        while let Some(&(wait, wants)) = o.waiting.front() {
-            if !free_for(o, wants) {
+        while let Some(wait) = o.waiting.pop_front() {
+            if (*wait).claim(0) {
+                woken.push((*wait).task);
                 break;
             }
-            o.waiting.pop_front();
-            if (*wait).claim(0) {
-                hold(o, (*wait).task, wants);
-                woken.push((*wait).task);
-            }
         }
+    }
+    if o.waiting.is_empty() && o.changes.is_empty() {
+        o.state.fetch_and(!PARKED, Ordering::AcqRel);
     }
     woken
 }
@@ -160,12 +185,25 @@ pub unsafe extern "C" fn tondo_rt_sync_unlock(guard: usize) {
     if guard == 0 {
         return;
     }
+    let exclusive = guard & 1 == 0;
+    let address = object(guard) as usize;
+    let holds = held();
+    if let Some(index) = holds.iter().position(|&(o, _)| o == address) {
+        holds.swap_remove(index);
+    }
     unsafe {
         let o = &mut *object(guard);
-        lock(&o.lock);
-        let woken = give_up(o, guard & 1 == 0);
-        unlock(&o.lock);
-        woken.into_iter().for_each(notify);
+        let before = if exclusive {
+            o.state.fetch_and(!WRITER, Ordering::Release)
+        } else {
+            o.state.fetch_sub(READER, Ordering::Release)
+        };
+        if before & PARKED != 0 {
+            lock(&o.queue);
+            let woken = wake(o, exclusive);
+            unlock(&o.queue);
+            woken.into_iter().for_each(notify);
+        }
     }
 }
 
@@ -178,15 +216,22 @@ pub unsafe extern "C" fn tondo_rt_sync_await(guard: usize) -> usize {
         let object = object(guard);
         let o = &mut *object;
         let wait = Wait::new();
-        lock(&o.lock);
-        let woken = give_up(o, true);
+        // Registering and releasing happen together, so no change is missed.
+        lock(&o.queue);
+        let woken = wake(o, true);
         o.changes.push(Arc::as_ptr(&wait));
-        unlock(&o.lock);
+        o.state.fetch_or(PARKED, Ordering::AcqRel);
+        o.state.fetch_and(!WRITER, Ordering::Release);
+        unlock(&o.queue);
+        let holds = held();
+        if let Some(index) = holds.iter().position(|&(h, _)| h == object as usize) {
+            holds.swap_remove(index);
+        }
         woken.into_iter().for_each(notify);
         if wait.block() == CANCELLED {
-            lock(&o.lock);
+            lock(&o.queue);
             o.changes.retain(|&w| w != Arc::as_ptr(&wait));
-            unlock(&o.lock);
+            unlock(&o.queue);
             return 0;
         }
         tondo_rt_sync_lock(object, 1, std::ptr::null())
@@ -405,5 +450,105 @@ pub unsafe extern "C" fn tondo_rt_barrier_release(barrier: *mut BarrierObject) {
         std::sync::atomic::fence(Ordering::Acquire);
         drop(Box::from_raw(barrier));
         LIVE_OBJECTS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Atomics of integers, `Bool`, `Char` and `Byte`
+// ---------------------------------------------------------------------------
+
+/// The value of an atomic cell, `width` bytes wide, read or changed with
+/// hardware atomics; values travel zero-extended in a `u64`.
+macro_rules! word {
+    ($object:expr, $width:expr, |$atomic:ident| $body:expr) => {{
+        let value = unsafe { (*$object).value };
+        match $width {
+            1 => {
+                let $atomic = unsafe { &*(value as *const std::sync::atomic::AtomicU8) };
+                ($body) as u64
+            }
+            2 => {
+                let $atomic = unsafe { &*(value as *const std::sync::atomic::AtomicU16) };
+                ($body) as u64
+            }
+            4 => {
+                let $atomic = unsafe { &*(value as *const std::sync::atomic::AtomicU32) };
+                ($body) as u64
+            }
+            _ => {
+                let $atomic = unsafe { &*(value as *const std::sync::atomic::AtomicU64) };
+                ($body) as u64
+            }
+        }
+    }};
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_atomic_load(object: *mut SyncObject, width: u8) -> u64 {
+    word!(object, width, |a| a.load(Ordering::SeqCst))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_atomic_store(object: *mut SyncObject, width: u8, value: u64) {
+    word!(object, width, |a| {
+        a.store(value as _, Ordering::SeqCst);
+        0u8
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_atomic_swap(object: *mut SyncObject, width: u8, value: u64) -> u64 {
+    word!(object, width, |a| a.swap(value as _, Ordering::SeqCst))
+}
+
+/// Stores `desired` if the value is `expected`; returns the value seen.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_atomic_exchange(
+    object: *mut SyncObject,
+    width: u8,
+    expected: u64,
+    desired: u64,
+) -> u64 {
+    word!(
+        object,
+        width,
+        |a| match a.compare_exchange(expected as _, desired as _, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(seen) | Err(seen) => seen,
+        }
+    )
+}
+
+/// `add(delta)` on an integer of `width` bytes, signed when `signed`;
+/// returns the new value, or panics with `P0005` when it does not fit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_atomic_add(
+    object: *mut SyncObject,
+    width: u8,
+    signed: u8,
+    delta: u64,
+    location: *const Str,
+) -> u64 {
+    let bits = width as u32 * 8;
+    let decode = |raw: u64| -> i128 {
+        if signed != 0 {
+            let shift = 64 - bits;
+            (((raw << shift) as i64) >> shift) as i128
+        } else {
+            (raw & (u64::MAX >> (64 - bits))) as i128
+        }
+    };
+    let (low, high) =
+        if signed != 0 { (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1) } else { (0, (1i128 << bits) - 1) };
+    let delta = decode(delta);
+    loop {
+        let current = unsafe { tondo_rt_atomic_load(object, width) };
+        let next = decode(current) + delta;
+        if next < low || next > high {
+            unsafe { tondo_rt_panic(5, std::ptr::null(), location) };
+        }
+        let next = next as u64 & (u64::MAX >> (64 - bits));
+        if unsafe { tondo_rt_atomic_exchange(object, width, current, next) } == current {
+            return next;
+        }
     }
 }

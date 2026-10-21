@@ -2187,7 +2187,8 @@ sección describe los módulos que los complementan para el estado compartido.
 sincronización y colecciones compartidas. Cada valor de sus tipos es un handle
 hacia un estado compartido: copiarlo copia el handle, no el contenido, y todos
 cumplen `Copy`, `Discard`, `Send` y `Share` salvo `Permit`. Ninguno cumple
-`Equatable` ni `Key`. Cada operación es linealizable. Un lock, permiso o barrera
+`Equatable` ni `Key`. Las operaciones son linealizables, salvo el recuento de
+`sync.Map` y `sync.Set` descrito en 14.4.4.2. Un lock, permiso o barrera
 disputado detiene la tarea, no el thread, y la espera termina al cancelar la
 tarea (11.15 de la especificación del lenguaje). Ninguna de estas operaciones es
 un brazo de `select`: esperar un valor, limitar capacidad o elegir entre fuentes
@@ -2268,7 +2269,8 @@ let id = requests.add(1)
 - `Barrier(n).wait()` espera a que lleguen `n` tareas y devuelve `true` en
   exactamente una de ellas por ronda; después la barrera se reutiliza.
 - `Atomic` no expone un orden de memoria: todas sus operaciones son
-  secuencialmente consistentes. `compareExchange` nunca falla de forma espuria:
+  secuencialmente consistentes. Con enteros, `Bool`, `Char` y `Byte` usa
+  instrucciones atómicas; con otros tipos, un lock. `compareExchange` nunca falla de forma espuria:
   `Exchanged(previous)` si el valor coincidía y se reemplazó, y
   `Mismatch(observed)` si no. `add` devuelve el valor nuevo y produce `P0005`
   si no cabe.
@@ -2335,15 +2337,22 @@ no hay elementos. Un índice negativo cuenta desde el final. `sync.Array.set` y
 `sync.Map.compareExchange`, `expected = none` compara con la ausencia y
 `desired = none` elimina la entrada.
 
-`snapshot()` devuelve en O(1) una colección de valor con el estado de un único
-instante, en el orden de la colección: índice, inserción, o de la base a la cima
-de la pila y del frente al fondo de la cola. `for value in shared` recorre el
+`snapshot()` copia en una colección de valor el estado de un único instante: por
+índice en `sync.Array`, de la base a la cima en `sync.Stack` y del frente al
+fondo en `sync.Queue`. `sync.Map` y `sync.Set` no conservan un orden: su
+`snapshot()` sigue un orden sin especificar. `for value in shared` recorre el
 `snapshot()` tomado al empezar el bucle y no ve los cambios posteriores; solo
 admite bindings por valor.
 
-La implementación actual protege cada colección con un lock y guarda una
-colección de valor con copy-on-write; los algoritmos pueden cambiar sin cambiar
-la linealización, el orden ni los resultados observables.
+Las colecciones están hechas para la menor contención posible. `sync.Map` y
+`sync.Set` leen sin locks y cada escritura bloquea solo la franja de la tabla
+donde cae su clave; `sync.Queue` y `sync.Stack` no usan locks; `sync.Array`
+bloquea solo la franja de posiciones de cada operación. `length()` e
+`isEmpty()` tampoco toman locks: son exactos en `sync.Array`, `sync.Stack` y
+`sync.Queue`, y en `sync.Map` y `sync.Set` suman un contador por franja, de
+modo que son exactos cuando no hay escrituras concurrentes y, si las hay,
+pueden contar unas y no otras. Las demás operaciones son linealizables.
+`snapshot()` es O(n).
 
 #### 14.4.5 Executors, pools y actores
 

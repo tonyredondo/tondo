@@ -1322,13 +1322,7 @@ impl Builder<'_> {
                 let values: Vec<Operand> = operands.iter().map(|o| self.expr(o)).collect();
                 // A join moves into a group, a value into a channel, and a
                 // state into its cell.
-                let moves: Vec<bool> = (0..values.len())
-                    .map(|i| match op {
-                        hir::TaskOp::GroupAdd | hir::TaskOp::Send => i == 1,
-                        hir::TaskOp::SyncNew => i == 0,
-                        _ => false,
-                    })
-                    .collect();
+                let moves: Vec<bool> = (0..values.len()).map(|i| op.moves_in(i)).collect();
                 let flags = self.move_flags(&values, &moves, &types);
                 let result = self.temp(e.ty, Rvalue::TaskOp(*op, values, flags, e.span), e.span);
                 if op.waits() {

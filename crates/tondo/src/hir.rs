@@ -386,6 +386,48 @@ pub enum TaskOp {
     BarrierNew,
     /// `barrier.wait()`
     BarrierWait,
+    /// An operation of a shared collection; the collection comes first.
+    Shared(SharedOp),
+    /// An operation of a `sync.Atomic` of an integer, `Bool`, `Char` or
+    /// `Byte`, done with atomic instructions.
+    Atomic(AtomicOp),
+    /// A value of zeros, which releases nothing: the place an exchange
+    /// writes what it saw.
+    Zeroed,
+}
+
+/// The operations of the shared collections (standard library 14.4.4.2).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SharedOp {
+    /// By key or index: `V?` or `T?`.
+    Get,
+    Contains,
+    /// Map: `V?`, the replaced value. Set: whether the key was present.
+    Insert,
+    /// Map: `V?`. Set: whether the key was present.
+    Remove,
+    /// `compareExchange`: the collection, the key or index, the expected
+    /// and desired values, and the loan of the place for the value seen;
+    /// gives a code (see the runtime).
+    Exchange,
+    Push,
+    /// `pop` of a stack, `popFront` of a queue.
+    Pop,
+    /// `set(index, value)` of a shared array: the replaced value, or `none`
+    /// outside it.
+    Set,
+    Length,
+    Snapshot,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AtomicOp {
+    Load,
+    Store,
+    Swap,
+    /// `compareExchange(expected, desired)`: the value seen.
+    Exchange,
+    Add,
 }
 
 impl TaskOp {
@@ -400,7 +442,19 @@ impl TaskOp {
             | TaskOp::SyncNew
             | TaskOp::PermitRelease => index == 0,
             TaskOp::GroupWait | TaskOp::Channel => true,
-            TaskOp::GroupAdd | TaskOp::Send => index == 1,
+            op => op.moves_in(index),
+        }
+    }
+
+    /// Whether the operation takes over its operand at `index`, which the
+    /// caller retains for it when it is not a temporary.
+    pub fn moves_in(self, index: usize) -> bool {
+        match self {
+            TaskOp::GroupAdd | TaskOp::Send | TaskOp::Shared(SharedOp::Push) => index == 1,
+            TaskOp::SyncNew => index == 0,
+            TaskOp::Shared(SharedOp::Insert) => index >= 1,
+            TaskOp::Shared(SharedOp::Set) => index == 2,
+            TaskOp::Shared(SharedOp::Exchange) => index == 3,
             _ => false,
         }
     }

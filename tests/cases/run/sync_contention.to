@@ -1,0 +1,110 @@
+import std.console
+import std.sync
+
+fn orZero(found: Int?): Int {
+    match found {
+        some(value) => value
+        none => 0
+    }
+}
+
+// Many tasks at once on one map, which grows meanwhile.
+fn mapWorker(map: sync.Map[String, Int], id: Int, count: Int) {
+    for i in 0..count {
+        let key = "k{i % 500}"
+        _ = map.insert("{key}-{id}", i)
+        _ = map.get(key)
+        if i % 3 == 0 {
+            _ = map.remove("{key}-{id}")
+        }
+    }
+}
+
+fn counter(map: sync.Map[String, Int], count: Int) {
+    for _ in 0..count {
+        for {
+            let seen = map.get("total")
+            match map.compareExchange("total", seen, some(orZero(seen) + 1)) {
+                sync.CompareExchange.Exchanged(_) => break
+                sync.CompareExchange.Mismatch(_) => continue
+            }
+        }
+    }
+}
+
+fn producer(queue: sync.Queue[String], id: Int, count: Int) {
+    for i in 0..count {
+        queue.push("{id}:{i}")
+    }
+}
+
+fn consumer(queue: sync.Queue[String], taken: sync.Atomic[Int], target: Int): Int {
+    var mine = 0
+    for taken.load() < target {
+        match queue.popFront() {
+            some(_) => {
+                mine += 1
+                _ = taken.add(1)
+            }
+            none => {}
+        }
+    }
+    mine
+}
+
+fn stacker(stack: sync.Stack[Int], count: Int): Int {
+    var popped = 0
+    for i in 0..count {
+        stack.push(i)
+        match stack.pop() {
+            some(_) => {
+                popped += 1
+            }
+            none => {}
+        }
+    }
+    popped
+}
+
+fn main() {
+    let map = sync.Map.new[String, Int]()
+    var group = Group.new[Unit]()
+    for id in 0..8 {
+        group.add(spawn mapWorker(map, id, 3000))
+    }
+    for _ in 0..4 {
+        group.add(spawn counter(map, 2500))
+    }
+    _ = group.wait()
+    console.println("map {map.length()} total {orZero(map.get("total"))}")
+
+    let queue = sync.Queue.new[String]()
+    let taken = sync.Atomic(0)
+    var producers = Group.new[Unit]()
+    var consumers = Group.new[Int]()
+    for id in 0..4 {
+        producers.add(spawn producer(queue, id, 20000))
+        consumers.add(spawn consumer(queue, taken, 80000))
+    }
+    _ = producers.wait()
+    var consumed = 0
+    for mine in consumers.wait() {
+        consumed += mine
+    }
+    console.println("queue consumed {consumed} left {queue.length()}")
+
+    let stack = sync.Stack.new[Int]()
+    var stackers = Group.new[Int]()
+    for _ in 0..8 {
+        stackers.add(spawn stacker(stack, 20000))
+    }
+    var popped = 0
+    for count in stackers.wait() {
+        popped += count
+    }
+    console.println("stack popped {popped} left {stack.length()}")
+}
+
+// expect-stdout: map 2673 total 10000
+// expect-stdout: queue consumed 80000 left 0
+// expect-stdout: stack popped 160000 left 0

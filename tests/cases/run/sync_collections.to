@@ -42,9 +42,14 @@ fn main() {
     console.println(
         "{undo.snapshot()} {visited.insert("home")} {visited.insert("about")} {visited.remove("settings")}",
     )
+    // Shared maps and sets keep no order.
+    var pages = 0
     for name in visited {
-        console.println("visited {name}")
+        if name == "home" or name == "about" {
+            pages += 1
+        }
     }
+    console.println("visited {pages} pages")
     match jobs.popFront() {
         some(job) => console.println("job {job}, {jobs.length()} left")
         none => console.println("no job")
@@ -64,8 +69,9 @@ fn main() {
         sync.CompareExchange.Exchanged(_) => console.println("removed two")
         sync.CompareExchange.Mismatch(_) => console.println("two is not 5")
     }
+    let snapshot = cache.snapshot()
     console.println(
-        "{cache.snapshot()} {orZero(cache.get("three"))} {orZero(cache.remove("three"))}",
+        "{snapshot.length()} {orZero(snapshot["one"])} {orZero(cache.get("three"))} {orZero(cache.remove("three"))}",
     )
 
     match slots.compareExchange(0, 10, 11) {
@@ -102,14 +108,13 @@ fn main() {
 // expect-stdout: true true 3
 // expect-stdout: top c
 // expect-stdout: [a, b] false true true
-// expect-stdout: visited home
-// expect-stdout: visited about
+// expect-stdout: visited 2 pages
 // expect-stdout: job first, 1 left
 // expect-stdout: [second, third]
 // expect-stdout: one became 100
 // expect-stdout: added three
 // expect-stdout: two is not 5
-// expect-stdout: [one: 100, two: 2, three: 3] 3 3
+// expect-stdout: 3 100 3 3
 // expect-stdout: slot was 10
 // expect-stdout: last was 0, now 7
 // expect-stdout: index 3 is out of range

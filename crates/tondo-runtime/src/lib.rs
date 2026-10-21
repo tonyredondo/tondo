@@ -12,6 +12,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+mod shared;
 mod sync;
 mod tasks;
 
@@ -414,7 +415,7 @@ pub unsafe extern "C" fn tondo_rt_fn_release(f: *mut FnObject) {
 #[repr(C)]
 pub struct ArrayHeader {
     rc: AtomicUsize,
-    len: usize,
+    pub(crate) len: usize,
     cap: usize,
     head: usize,
 }
@@ -436,7 +437,7 @@ unsafe fn position(a: *mut ArrayHeader, size: usize, position: usize) -> *mut u8
     unsafe { (a as *mut u8).add(ARRAY_HEADER + position * size) }
 }
 
-unsafe fn element(a: *mut ArrayHeader, size: usize, index: usize) -> *mut u8 {
+pub(crate) unsafe fn element(a: *mut ArrayHeader, size: usize, index: usize) -> *mut u8 {
     unsafe { position(a, size, (*a).head + index) }
 }
 
@@ -1178,12 +1179,12 @@ pub struct MapObject {
 /// The glue functions of a map's key and value types.
 #[repr(C)]
 pub struct MapGlue {
-    hash: HashGlue,
-    key_eq: EqualGlue,
-    key_retain: Option<Glue>,
-    key_release: Option<Glue>,
-    value_retain: Option<Glue>,
-    value_release: Option<Glue>,
+    pub(crate) hash: HashGlue,
+    pub(crate) key_eq: EqualGlue,
+    pub(crate) key_retain: Option<Glue>,
+    pub(crate) key_release: Option<Glue>,
+    pub(crate) value_retain: Option<Glue>,
+    pub(crate) value_release: Option<Glue>,
 }
 
 impl MapObject {
@@ -1772,6 +1773,8 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     let mut status = tasks::run_main(tondo_main);
+    // Memory the shared collections retired, kept while readers might see it.
+    shared::flush();
     if let Some(failure) = finish_stdout()
         && status == 0
     {
