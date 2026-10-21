@@ -104,6 +104,11 @@ pub enum Statement {
     Retain(Place),
     /// Releases every counted value inside the place.
     Release(Place),
+    /// Registers a `defer` cleanup with the runtime: the body to call and
+    /// the closure it receives, run if a panic unwinds the scope (15.7).
+    DeferPush(hir::FnId, Place),
+    /// Unregisters the most recent cleanup before running it normally.
+    DeferPop,
 }
 
 #[derive(Clone, Debug)]

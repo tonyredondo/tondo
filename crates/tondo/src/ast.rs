@@ -292,7 +292,15 @@ pub enum StmtKind {
         header: ForHeader,
         body: Block,
     },
+    /// `defer call(args)` or `defer { block }` (13.7).
+    Defer(Defer),
     Expr(Expr),
+}
+
+#[derive(Debug)]
+pub enum Defer {
+    Call(Expr),
+    Block(Block),
 }
 
 #[derive(Debug)]

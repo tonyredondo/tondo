@@ -1,0 +1,20 @@
+import std.console
+
+fn inner(values: Array[Int]): Int {
+    defer console.println("inner cleanup")
+    values[5]
+}
+
+fn main() {
+    defer console.println("main cleanup")
+    defer {
+        console.println("block cleanup")
+    }
+    let total = inner([1, 2])
+    console.println("unreachable {total}")
+}
+
+// expect-stdout: inner cleanup
+// expect-stdout: block cleanup
+// expect-stdout: main cleanup
+// expect-panic: P0001

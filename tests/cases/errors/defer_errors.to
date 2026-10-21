@@ -1,0 +1,22 @@
+fn parse(text: String): Int ! String {
+    fail "x"
+}
+
+fn mark(value: mut Int) {}
+
+fn main() {
+    defer parse("a")
+    defer {
+        return
+    }
+    var n = 1
+    defer mark(mut n)
+    defer {
+        defer parse("b")
+    }
+}
+
+// expect-error: E1410 a deferred call must return `Unit` and cannot fail
+// expect-error: E1410 a defer block cannot leave its scope
+// expect-error: E1410 a deferred call cannot borrow
+// expect-error: E1410 a defer block cannot register another `defer`

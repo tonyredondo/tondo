@@ -96,6 +96,13 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// `defer`: `closure` holds what the cleanup uses and is stored in
+    /// `local` now; `call` invokes it when the scope is left (13.7).
+    Defer {
+        local: LocalId,
+        closure: Expr,
+        call: Expr,
+    },
     /// An evaluated expression whose value is dropped (`_ =` or a `Unit` statement).
     Expr(Expr),
     Return(Option<Expr>),

@@ -205,3 +205,14 @@ like a bounded type parameter. The checker infers its witness from the
 body, requires one concrete type on every path, checks it against the
 published bounds and requires `Discard`. Monomorphization replaces the
 opaque type with the witness instantiated for each call.
+
+## 2026-10-21 — `defer` is a closure the runtime can also run
+
+A `defer` creates a closure when it registers: the block form captures
+values then, and the call form evaluates its operands then (13.7). It is
+stored in a hidden local and called on every exit of its scope in LIFO
+order. Registration also pushes the closure's body and address onto a
+runtime cleanup stack, popped before the normal call. A panic runs the
+remaining entries before terminating: since a panic ends the process,
+frames are still alive and the native stack never unwinds. A panic inside
+a cleanup is reported as suppressed and the other cleanups still run.

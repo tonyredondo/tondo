@@ -17,6 +17,7 @@ use crate::hir::{self, LocalId};
 use crate::mir::*;
 use crate::source::Span;
 use crate::types::{CursorKind, ERR, NONE, OK, SOME, Ty, TyKind, Types};
+use std::rc::Rc;
 
 pub fn lower(program: &hir::Program) -> Vec<Body> {
     program.functions.iter().map(|f| lower_function(&program.types, f)).collect()
@@ -29,6 +30,14 @@ struct LoopCx {
     frame_depth: usize,
 }
 
+/// One action of leaving a scope.
+#[derive(Clone)]
+enum Exit {
+    Release(Local),
+    /// The call of a registered `defer` (13.7).
+    Defer(Rc<hir::Expr>),
+}
+
 struct Builder<'a> {
     types: &'a Types,
     function: &'a hir::Function,
@@ -36,8 +45,9 @@ struct Builder<'a> {
     blocks: Vec<(Vec<Statement>, Option<Terminator>)>,
     current: BlockId,
     hir_locals: Vec<Option<Local>>,
-    /// Owned bindings per lexical scope.
-    scopes: Vec<Vec<Local>>,
+    /// What leaving each lexical scope does, in reverse order: release
+    /// owned bindings and run `defer` cleanups.
+    scopes: Vec<Vec<Exit>>,
     /// Owned temporaries per statement or conditional region.
     frames: Vec<Vec<Local>>,
     loops: Vec<LoopCx>,
@@ -301,7 +311,7 @@ impl Builder<'_> {
                 let local = self.bind(*id);
                 self.store(Place::local(local), Operand::Copy(place.clone()), pattern.span);
                 if self.needs_drop(self.locals[local.0 as usize]) {
-                    self.scopes.last_mut().unwrap().push(local);
+                    self.scopes.last_mut().unwrap().push(Exit::Release(local));
                 }
             }
             hir::PatKind::Fields(fields) => {
@@ -326,7 +336,7 @@ impl Builder<'_> {
                     let start = Some(Operand::Const(Const::Int(items.len() as i128, Ty::INT)));
                     let remainder = Rvalue::Slice(Operand::Copy(place.clone()), [start, None, None], pattern.span);
                     self.assign(Place::local(local), remainder, pattern.span);
-                    self.scopes.last_mut().unwrap().push(local);
+                    self.scopes.last_mut().unwrap().push(Exit::Release(local));
                 }
             }
         }
@@ -362,7 +372,7 @@ impl Builder<'_> {
                 }
             });
             let scope = self.scopes.pop().unwrap();
-            self.release_all(scope);
+            self.leave(scope);
             self.goto(join);
             self.switch_to(next);
         }
@@ -378,6 +388,26 @@ impl Builder<'_> {
         }
     }
 
+    /// Leaves a scope: its exits run in reverse order of registration.
+    fn leave(&mut self, scope: Vec<Exit>) {
+        for exit in scope.into_iter().rev() {
+            self.exit_action(exit);
+        }
+    }
+
+    fn exit_action(&mut self, exit: Exit) {
+        match exit {
+            Exit::Release(local) => self.push(Statement::Release(Place::local(local))),
+            Exit::Defer(call) => {
+                // Unregister it first, so a panic in the cleanup cannot run it again.
+                self.push(Statement::DeferPop);
+                self.in_frame(|b| {
+                    b.expr(&call);
+                });
+            }
+        }
+    }
+
     fn release_all(&mut self, locals: Vec<Local>) {
         for local in locals.into_iter().rev() {
             self.push(Statement::Release(Place::local(local)));
@@ -389,10 +419,12 @@ impl Builder<'_> {
     fn cleanup_to(&mut self, scope_depth: usize, frame_depth: usize) {
         let frames: Vec<Local> =
             self.frames[frame_depth..].iter().rev().flat_map(|f| f.iter().rev().copied()).collect();
-        let scopes: Vec<Local> =
-            self.scopes[scope_depth..].iter().rev().flat_map(|s| s.iter().rev().copied()).collect();
-        for local in frames.into_iter().chain(scopes) {
+        let scopes: Vec<Exit> = self.scopes[scope_depth..].iter().rev().flat_map(|s| s.iter().rev().cloned()).collect();
+        for local in frames {
             self.push(Statement::Release(Place::local(local)));
+        }
+        for exit in scopes {
+            self.exit_action(exit);
         }
     }
 
@@ -584,7 +616,7 @@ impl Builder<'_> {
         // part of it the block yields) to a temporary of the enclosing frame.
         if let Operand::Copy(place) = &value
             && self.needs_drop(block.ty)
-            && self.scopes.last().unwrap().contains(&place.local)
+            && self.scopes.last().unwrap().iter().any(|e| matches!(e, Exit::Release(l) if *l == place.local))
         {
             let copy = self.new_local(block.ty);
             self.assign(Place::local(copy), Rvalue::Use(value), Span::default());
@@ -593,7 +625,7 @@ impl Builder<'_> {
             value = Operand::local(copy);
         }
         let scope = self.scopes.pop().unwrap();
-        self.release_all(scope);
+        self.leave(scope);
         value
     }
 
@@ -604,7 +636,7 @@ impl Builder<'_> {
                 let local = self.bind(*id);
                 self.store(Place::local(local), value, Span::default());
                 if self.needs_drop(self.locals[local.0 as usize]) {
-                    self.scopes.last_mut().unwrap().push(local);
+                    self.scopes.last_mut().unwrap().push(Exit::Release(local));
                 }
             }
             hir::Stmt::Destructure(pattern, value) => {
@@ -654,6 +686,21 @@ impl Builder<'_> {
             }
             hir::Stmt::Expr(value) => {
                 self.expr(value);
+            }
+            hir::Stmt::Defer { local, closure, call } => {
+                // The closure is stored now; the runtime keeps its body and
+                // address to run it if a panic unwinds this scope (15.7).
+                let value = self.expr(closure);
+                let local = self.bind(*local);
+                self.store(Place::local(local), value, closure.span);
+                if self.needs_drop(closure.ty) {
+                    self.scopes.last_mut().unwrap().push(Exit::Release(local));
+                }
+                let hir::ExprKind::Call(hir::Callee::Fn(body), _, _) = &call.kind else {
+                    unreachable!("monomorphization calls a deferred closure directly")
+                };
+                self.push(Statement::DeferPush(*body, Place::local(local)));
+                self.scopes.last_mut().unwrap().push(Exit::Defer(Rc::new(call.clone())));
             }
             hir::Stmt::Return(value) => {
                 let value = value.as_ref().map_or(Operand::Const(Const::Unit), |v| self.expr(v));
@@ -733,7 +780,7 @@ impl Builder<'_> {
                 self.bind_pattern(pattern, &element);
                 self.in_frame(|b| b.block(body));
                 let scope = self.scopes.pop().unwrap();
-                self.release_all(scope);
+                self.leave(scope);
                 self.loops.pop();
                 self.goto(step);
                 self.switch_to(step);

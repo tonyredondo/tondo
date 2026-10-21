@@ -671,8 +671,12 @@ impl Parser<'_> {
             Tok::Kw(Kw::Return | Kw::Fail | Kw::Break | Kw::Continue) => self.transfer()?,
             Tok::Kw(Kw::For) => self.for_statement()?,
             Tok::Kw(Kw::Defer) => {
-                self.diags.unsupported(start, "`defer`");
-                return Err(());
+                self.bump();
+                if self.at(&Tok::LBrace) {
+                    StmtKind::Defer(Defer::Block(self.block()?))
+                } else {
+                    StmtKind::Defer(Defer::Call(self.expression()?))
+                }
             }
             Tok::Ident(name) if name == "_" && self.nth(1) == &Tok::Eq => {
                 self.bump();

@@ -1,0 +1,78 @@
+import std.console
+
+fn log(message: String) {
+    console.println(message)
+}
+
+fn early(flag: Bool): Int {
+    defer log("early: cleanup")
+    if flag {
+        return 1
+    }
+    defer log("early: second")
+    2
+}
+
+fn parse(text: String): Int ! String {
+    defer log("parse: cleanup")
+    if text.isEmpty() {
+        fail "empty"
+    }
+    text.length()
+}
+
+fn load(text: String): Int ! String {
+    defer log("load: cleanup")
+    let n = parse(text)?
+    n * 10
+}
+
+fn main() {
+    var label = "first"
+    defer log("main: last {label}")
+    defer {
+        console.println("main: block sees {label}")
+    }
+    label = "changed"
+    {
+        defer log("inner: 1")
+        defer log("inner: 2")
+        log("inner: body")
+    }
+    for i in 0..3 {
+        defer log("loop {i}")
+        if i == 1 {
+            continue
+        }
+        if i == 2 {
+            break
+        }
+        log("body {i}")
+    }
+    log("early returned {early(true)}")
+    log("early returned {early(false)}")
+    match load("") {
+        ok(n) => log("loaded {n}")
+        err(e) => log("failed {e}")
+    }
+    log("main: end {label}")
+}
+
+// expect-stdout: inner: body
+// expect-stdout: inner: 2
+// expect-stdout: inner: 1
+// expect-stdout: body 0
+// expect-stdout: loop 0
+// expect-stdout: loop 1
+// expect-stdout: loop 2
+// expect-stdout: early: cleanup
+// expect-stdout: early returned 1
+// expect-stdout: early: second
+// expect-stdout: early: cleanup
+// expect-stdout: early returned 2
+// expect-stdout: parse: cleanup
+// expect-stdout: load: cleanup
+// expect-stdout: failed empty
+// expect-stdout: main: end changed
+// expect-stdout: main: block sees first
+// expect-stdout: main: last first

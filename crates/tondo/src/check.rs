@@ -353,6 +353,8 @@ struct FnCx {
     infer_result: bool,
     /// For each local: how it was passed if it is a parameter (16.3).
     params: Vec<Option<ast::Mode>>,
+    /// The body of a `defer` block, which cannot leave its scope (13.7).
+    deferred: bool,
 }
 
 /// A binding a closure captures: read from `source` in the enclosing
@@ -1945,6 +1947,7 @@ impl Checker<'_> {
             mutates: false,
             infer_result: false,
             params: Vec::new(),
+            deferred: false,
         }
     }
 
@@ -2103,11 +2106,27 @@ impl Checker<'_> {
     /// bindings it captures; its body is a function whose first parameter
     /// is the closure, generic over the enclosing type parameters.
     fn closure(&mut self, cx: &mut FnCx, closure: &ast::Closure, expected: Option<Ty>, span: Span) -> hir::Expr {
+        self.closure_parts(cx, &closure.params, closure.result.as_ref(), &closure.body, expected, false, span)
+    }
+
+    /// A closure from its parts; a `defer` block is a closure without
+    /// parameters whose body cannot leave its scope (13.7).
+    #[allow(clippy::too_many_arguments)]
+    fn closure_parts(
+        &mut self,
+        cx: &mut FnCx,
+        closure_params: &[ast::ClosureParam],
+        closure_result: Option<&ast::TypeExpr>,
+        closure_body: &ast::Block,
+        expected: Option<Ty>,
+        deferred: bool,
+        span: Span,
+    ) -> hir::Expr {
         let expected =
             expected.and_then(|t| self.callable(t)).map(|(params, result, variadic, _)| (params, result, variadic));
         let mut params = Vec::new();
         let mut variadic = false;
-        for (index, param) in closure.params.iter().enumerate() {
+        for (index, param) in closure_params.iter().enumerate() {
             let ty = match (&param.ty, &expected) {
                 (Some(ty), _) => {
                     let ty = self.resolve_type(ty);
@@ -2131,11 +2150,8 @@ impl Checker<'_> {
             };
             params.push(ty);
         }
-        let declared = closure
-            .result
-            .as_ref()
-            .map(|t| self.resolve_type(t))
-            .or(expected.as_ref().map(|e| e.1).filter(|&r| r != Ty::ERROR));
+        let declared =
+            closure_result.map(|t| self.resolve_type(t)).or(expected.as_ref().map(|e| e.1).filter(|&r| r != Ty::ERROR));
         let generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
         let template = self.types.declare_template("closure".into(), generics.clone());
         let env_ty = self.types.instantiate(template, generics.clone());
@@ -2154,17 +2170,18 @@ impl Checker<'_> {
         // The body is checked in its own context, nested in the current one.
         let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
         inner.infer_result = declared.is_none();
+        inner.deferred = deferred;
         let outer = std::mem::replace(cx, inner);
         cx.parent = Some(Box::new(outer));
         let env = self.hidden_local(cx, env_ty);
         cx.mutable[env.0 as usize] = true;
         cx.env = Some(env);
         let mut locals = vec![env];
-        for (param, &ty) in closure.params.iter().zip(&params) {
+        for (param, &ty) in closure_params.iter().zip(&params) {
             locals.push(self.declare(cx, &param.name, ty, false));
         }
         let success = (!cx.infer_result).then_some(cx.result);
-        let body = self.block(cx, &closure.body, success);
+        let body = self.block(cx, closure_body, success);
         let result = match declared {
             Some(declared) => declared,
             None if cx.result != Ty::ERROR => cx.result,
@@ -2192,6 +2209,98 @@ impl Checker<'_> {
         // The closure value holds the captured values, read now.
         let values = inner.captures.into_iter().enumerate().map(|(i, c)| (i as u32, c.source)).collect();
         Self::mk(hir::ExprKind::Record(values), env_ty, span)
+    }
+
+    /// `defer call(args)` or `defer { block }` (13.7): a closure created
+    /// now, holding the values the cleanup uses, and called when the scope
+    /// is left in any way, in LIFO order, or while a panic unwinds.
+    fn defer(&mut self, cx: &mut FnCx, deferred: &ast::Defer, span: Span) -> Option<hir::Stmt> {
+        let closure = match deferred {
+            ast::Defer::Block(block) => {
+                let closure = self.closure_parts(cx, &[], None, block, None, true, span);
+                let result = self.types.closure(closure.ty).map_or(Ty::UNIT, |(_, _, info)| info.result);
+                if result != Ty::UNIT && result != Ty::NEVER && !self.types.has_error(result) {
+                    let message = format!(
+                        "a defer block ends with a value of type {}; discard it with `_ =`",
+                        self.display(result)
+                    );
+                    self.diags.error("E1410", span, message);
+                }
+                closure
+            }
+            ast::Defer::Call(call) => {
+                if !matches!(call.kind, ast::ExprKind::Call { .. }) {
+                    self.diags.error(
+                        "E1410",
+                        call.span,
+                        "`defer` takes a call, such as `defer close(file)`, or a block",
+                    );
+                    return None;
+                }
+                let value = self.expr(cx, call, Some(Ty::UNIT));
+                if value.ty != Ty::UNIT && !self.types.has_error(value.ty) {
+                    let message = format!(
+                        "a deferred call must return `Unit` and cannot fail, but this one returns {}; handle it in `defer {{ ... }}`",
+                        self.display(value.ty)
+                    );
+                    self.diags.error("E1410", call.span, message);
+                    return None;
+                }
+                self.deferred_call(cx, value, span)?
+            }
+        };
+        let local = self.hidden_local(cx, closure.ty);
+        cx.mutable[local.0 as usize] = true;
+        let read = Self::mk(hir::ExprKind::Local(local), closure.ty, span);
+        let call = Self::mk(hir::ExprKind::CallValue(Box::new(read), Vec::new()), Ty::UNIT, span);
+        Some(hir::Stmt::Defer { local, closure, call })
+    }
+
+    /// The closure of `defer call(args)`: its operands are evaluated now
+    /// and the call is made at the end of the scope.
+    fn deferred_call(&mut self, cx: &mut FnCx, call: hir::Expr, span: Span) -> Option<hir::Expr> {
+        let (callee, type_args, args) = match call.kind {
+            hir::ExprKind::Call(callee, type_args, args) => (callee, type_args, args),
+            hir::ExprKind::Error => return None,
+            _ => {
+                self.diags.error("E1410", span, "this call cannot be deferred; write it in a `defer { ... }` block");
+                return None;
+            }
+        };
+        if args.iter().any(|a| matches!(a.kind, hir::ExprKind::Loan(_))) {
+            self.diags.error("E1410", span, "a deferred call cannot borrow: loans end before the scope does");
+            return None;
+        }
+        let generics: Vec<Ty> = self.type_params.iter().map(|&(_, t)| t).collect();
+        let template = self.types.declare_template("defer".into(), generics.clone());
+        let fields = args.iter().enumerate().map(|(i, a)| Field { name: format!("argument{i}"), ty: a.ty }).collect();
+        self.types.define_template(template, AdtKind::Record(fields));
+        let env_ty = self.types.instantiate(template, generics.clone());
+        let index = self.closure_functions.len();
+        let body_id = FnId(self.closure_base + index as u32);
+        let info =
+            ClosureInfo { body: body_id.0, params: Vec::new(), result: Ty::UNIT, variadic: false, mutates: false };
+        self.types.declare_closure(template, info);
+        let env = Self::mk(hir::ExprKind::Local(LocalId(0)), env_ty, span);
+        let fields: Vec<hir::Expr> = args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| Self::mk(hir::ExprKind::Field(Box::new(env.clone()), i as u32), a.ty, a.span))
+            .collect();
+        let invoke = Self::mk(hir::ExprKind::Call(callee, type_args, fields), Ty::UNIT, span);
+        let body = hir::Block { stmts: vec![hir::Stmt::Expr(invoke)], tail: None, ty: Ty::UNIT };
+        self.closure_functions.push(Some(hir::Function {
+            name: "defer".into(),
+            generics,
+            params: vec![LocalId(0)],
+            loans: vec![true],
+            locals: vec![hir::Local { name: "<defer>".into(), ty: env_ty }],
+            result: Ty::UNIT,
+            body,
+        }));
+        let _ = cx;
+        let values = args.into_iter().enumerate().map(|(i, a)| (i as u32, a)).collect();
+        Some(Self::mk(hir::ExprKind::Record(values), env_ty, span))
     }
 
     /// A local that no name refers to, such as the value of `for _ in ...`.
@@ -2320,6 +2429,16 @@ impl Checker<'_> {
                 cx.diverged |= value.ty == Ty::NEVER;
                 Some(hir::Stmt::Expr(value))
             }
+            ast::StmtKind::Return(_) | ast::StmtKind::Fail(_) if cx.deferred => {
+                let message = "a defer block cannot leave its scope; handle the case inside the block";
+                self.diags.error("E1410", stmt.span, message);
+                None
+            }
+            ast::StmtKind::Defer(_) if cx.deferred => {
+                self.diags.error("E1410", stmt.span, "a defer block cannot register another `defer`");
+                None
+            }
+            ast::StmtKind::Defer(deferred) => self.defer(cx, deferred, stmt.span),
             ast::StmtKind::Return(value) => {
                 let result = cx.result;
                 let value = match value {
@@ -3828,6 +3947,9 @@ impl Checker<'_> {
     /// `value?` propagates `none` or an error out of the enclosing function
     /// and otherwise yields the payload (15.2).
     fn try_expr(&mut self, cx: &mut FnCx, inner: &ast::Expr, span: Span) -> hir::Expr {
+        if cx.deferred {
+            self.diags.error("E1410", span, "a defer block cannot propagate an error; handle it inside the block");
+        }
         let value = self.expr(cx, inner, None);
         match self.types.kind(value.ty).clone() {
             TyKind::Option(payload) => {

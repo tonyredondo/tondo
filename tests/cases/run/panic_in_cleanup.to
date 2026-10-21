@@ -1,0 +1,15 @@
+import std.console
+
+fn main() {
+    defer console.println("outer cleanup still runs")
+    defer {
+        let values = [1]
+        console.println("cleanup that panics")
+        let x = values[3]
+    }
+    panic("first")
+}
+
+// expect-stdout: cleanup that panics
+// expect-stdout: outer cleanup still runs
+// expect-panic: P0008

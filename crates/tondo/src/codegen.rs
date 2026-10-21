@@ -111,6 +111,8 @@ enum Rt {
     FnNew,
     FnRetain,
     FnRelease,
+    DeferPush,
+    DeferPop,
     SbMap,
     StrHash,
 }
@@ -189,6 +191,8 @@ impl Rt {
             Rt::FnNew => ("tondo_rt_fn_new", &[I64, I64, I64], &[I64]),
             Rt::FnRetain => ("tondo_rt_fn_retain", &[I64], &[]),
             Rt::FnRelease => ("tondo_rt_fn_release", &[I64], &[]),
+            Rt::DeferPush => ("tondo_rt_defer_push", &[I64, I64], &[]),
+            Rt::DeferPop => ("tondo_rt_defer_pop", &[], &[]),
             Rt::SbMap => ("tondo_rt_sb_map", &[I64, I64, I64, I64], &[]),
             Rt::StrHash => ("tondo_rt_str_hash", &[I64], &[I64]),
         }
@@ -1690,6 +1694,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Assign(place, rvalue, span) => self.assign(place, rvalue, *span),
+            Statement::DeferPush(body, place) => {
+                let callee =
+                    self.e.cg.module.declare_func_in_func(self.e.cg.functions[body.0 as usize], self.e.fb.func);
+                let code = self.e.fb.ins().func_addr(POINTER, callee);
+                let mut spilled = Vec::new();
+                let closure = self.loan_address(place, &mut spilled);
+                self.e.call_rt(Rt::DeferPush, &[code, closure]);
+            }
+            Statement::DeferPop => {
+                self.e.call_rt(Rt::DeferPop, &[]);
+            }
             Statement::Retain(place) | Statement::Release(place) => {
                 let ty = self.place_ty(place);
                 if !self.e.cg.types.needs_drop(ty) {

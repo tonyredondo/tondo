@@ -158,6 +158,10 @@ impl Mono<'_> {
             Stmt::Let(_, value) | Stmt::Expr(value) | Stmt::Fail(value) | Stmt::Return(Some(value)) => {
                 self.expr(value, map)
             }
+            Stmt::Defer { closure, call, .. } => {
+                self.expr(closure, map);
+                self.expr(call, map);
+            }
             Stmt::Destructure(pattern, value) => {
                 self.pattern(pattern, map);
                 self.expr(value, map);

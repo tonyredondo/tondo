@@ -1612,8 +1612,40 @@ fn panic_name(code: u32) -> &'static str {
     }
 }
 
-/// Reports a language panic (spec 15.7, codes in 22.2) and terminates.
-/// `message` may be null; `location` is a static `file:line:column` string.
+/// A registered `defer` cleanup: its code and the closure it receives.
+type Cleanup = unsafe extern "C" fn(*mut u8);
+
+/// Cleanups of the scopes being executed, innermost last (13.7). Generated
+/// code pushes one when a `defer` registers and pops it before running it
+/// on a normal exit; a panic runs the rest. Frames stay alive meanwhile:
+/// a panic ends the process, so it never unwinds the native stack.
+static CLEANUPS: Mutex<Vec<(Cleanup, usize)>> = Mutex::new(Vec::new());
+static PANICKING: AtomicUsize = AtomicUsize::new(0);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_defer_push(code: Cleanup, closure: *mut u8) {
+    CLEANUPS.lock().unwrap_or_else(|e| e.into_inner()).push((code, closure as usize));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_defer_pop() {
+    CLEANUPS.lock().unwrap_or_else(|e| e.into_inner()).pop();
+}
+
+/// Runs the registered cleanups in LIFO order, each removed first so that
+/// a panic inside one never runs it twice.
+fn run_cleanups() {
+    loop {
+        let next = CLEANUPS.lock().unwrap_or_else(|e| e.into_inner()).pop();
+        let Some((code, closure)) = next else { break };
+        unsafe { code(closure as *mut u8) };
+    }
+}
+
+/// Reports a language panic (spec 15.7, codes in 22.2), runs the pending
+/// `defer` cleanups and terminates. A panic inside a cleanup is reported
+/// as suppressed and the remaining cleanups still run. `message` may be
+/// null; `location` is a static `file:line:column` string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_panic(code: u32, message: *const Str, location: *const Str) -> ! {
     flush_stdout();
@@ -1623,7 +1655,11 @@ pub unsafe extern "C" fn tondo_rt_panic(code: u32, message: *const Str, location
         text.push_str(&String::from_utf8_lossy(unsafe { str_bytes(message) }));
     }
     let location = String::from_utf8_lossy(unsafe { str_bytes(location) });
-    let _ = writeln!(std::io::stderr(), "{text}\n --> {location}");
+    let suppressed = PANICKING.fetch_add(1, Ordering::SeqCst) > 0;
+    let prefix = if suppressed { "suppressed while unwinding: " } else { "" };
+    let _ = writeln!(std::io::stderr(), "{prefix}{text}\n --> {location}");
+    run_cleanups();
+    flush_stdout();
     std::process::exit(PANIC_EXIT_CODE)
 }
 
